@@ -81,10 +81,12 @@ impl<'de> Deserialize<'de> for Digest {
 
 /// Feeds values into a hash unambiguously: every value is preceded by its
 /// length, so that no two different sequences produce the same input.
-struct Encoder(Sha256);
+pub struct Encoder(Sha256);
 
 impl Encoder {
-    fn new(scheme: &str) -> Self {
+    /// An encoder of the scheme `scheme`, which names what is digested and
+    /// how, so that two schemes never give one digest.
+    pub fn new(scheme: &str) -> Self {
         let mut encoder = Encoder(Sha256::new());
         encoder.bytes(scheme.as_bytes());
         encoder
@@ -95,7 +97,7 @@ impl Encoder {
         self.0.update(bytes);
     }
 
-    fn str(&mut self, s: &str) {
+    pub fn str(&mut self, s: &str) {
         self.bytes(s.as_bytes());
     }
 
@@ -127,7 +129,7 @@ impl Encoder {
         self.str(&out);
     }
 
-    fn finish(self) -> Digest {
+    pub fn finish(self) -> Digest {
         Digest(self.0.finalize().into())
     }
 }
@@ -362,13 +364,6 @@ impl ContentDigest {
     pub fn finish(self) -> Digest {
         self.0.finish()
     }
-}
-
-/// The digest of a skill's body as it was loaded (issue 22).
-pub fn skill(body: &str) -> Digest {
-    let mut e = Encoder::new("caelumora.skill.v1");
-    e.str(body);
-    e.finish()
 }
 
 /// The digest of a prompt part: the system prompt, or any other text an

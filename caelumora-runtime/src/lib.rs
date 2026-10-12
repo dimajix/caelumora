@@ -25,10 +25,9 @@ pub mod seed;
 pub mod view;
 pub mod terminal;
 pub mod workspace;
-pub mod skill;
 pub mod artifact;
 pub mod group;
 mod template;
 pub mod scoped;
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 pub mod testing;

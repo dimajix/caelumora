@@ -4,7 +4,6 @@ use crate::channel::ChannelId;
 use crate::command::Command;
 use crate::group::GroupId;
 use crate::role::RoleId;
-use crate::skill;
 use crate::store::EntityKind;
 use crate::store::query::FieldValue;
 use crate::tool::ToolCall;
@@ -17,7 +16,6 @@ use crate::artifact::Artifact;
 use crate::channel::Channel;
 use crate::group::Group;
 use crate::session::Session;
-use crate::skill::Skill;
 use crate::workspace::Workspace;
 use crate::removal::Stored;
 
@@ -42,8 +40,9 @@ pub enum ActionType<'a> {
     ///   downloading, the tools that only read (what its access list grants
     ///   `Read`); an agent using it through a channel is bounded by the
     ///   channel besides. Its files are changed by `WRITE`.
-    /// - a skill (issue 22): its name, description and body; loading it into
-    ///   a turn is `skill::USE`, apart from reading it.
+    /// - a skill (issue 22, the plugin `caelumora-skills`): its name,
+    ///   description and body; loading it into a turn is its verb `USE`,
+    ///   apart from reading it.
     /// - an artifact (issue 271): the artifact, or a version's content with
     ///   what reads that version - the artifact's attributes with the
     ///   version's own list (`Artifact::version_attributes`); adding a
@@ -168,7 +167,7 @@ impl<'a> ActionType<'a> {
     }
 
     /// Doing a kind's own `verb` with an entity of `kind` that has
-    /// `attributes`, such as using a skill (`skill::USE`).
+    /// `attributes`, such as using a skill (its verb `USE`).
     pub const fn custom(kind: EntityKind, verb: &'static CustomVerb, attributes: &'a SecurityAttributes) -> Self {
         Self::entity(kind, Verb::Custom(verb), attributes)
     }
@@ -643,17 +642,10 @@ pub trait AccessQuestions {
     /// for good (`Purge`, issue 164).
     async fn may_purge(&self, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes) -> bool;
 
-    /// Whether `context` may change the skill with `skill` attributes - its
-    /// name, description, body, classification - and delete it
-    /// (`UpdateSkill`, issue 22).
-    async fn may_change_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool;
     /// Whether `context` may rename a group with these attributes, change
     /// its members and delete it (`UpdateGroup`, issue 286).
     async fn may_change_group(&self, context: &SecurityContext, group: &SecurityAttributes) -> bool;
 
-    /// Whether `context` may load the skill with `skill` attributes into a
-    /// turn (`UseSkill`, issue 22).
-    async fn may_use_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool;
 }
 
 #[async_trait]
@@ -738,13 +730,6 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
         self.check(context, ActionType::update(Group::KIND, group)).await
     }
 
-    async fn may_change_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::update(Skill::KIND, skill)).await
-    }
-
-    async fn may_use_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::custom(Skill::KIND, &skill::USE, skill)).await
-    }
 }
 
 /// The one way an operation checks its own permission (issue 95): asked as
@@ -989,6 +974,9 @@ mod tests {
     use crate::value::name::ScopedName;
     use crate::user::UserId;
 
+    /// A plugin's kind (issue 323), as skills are.
+    const SKILL: EntityKind = EntityKind::new("skill");
+
     fn user() -> ActorId {
         ActorId::User(UserId::new())
     }
@@ -1117,11 +1105,13 @@ mod tests {
         assert!(!allows(alice, run(&owners, &theirs)).await && !allows(alice, show(&owners, &theirs)).await, "not a member who does not own it");
         assert!(!allows(bob, ActionType::update(Session::KIND, &hers)).await);
         assert!(!allows(bob, ActionType::delete(Session::KIND, &hers)).await);
-        // A skill (issue 22) is used as it is read; changed by its owner.
-        assert!(allows(bob, ActionType::custom(Skill::KIND, &skill::USE, &hers)).await, "a reader uses it");
-        assert!(!allows(carol, ActionType::custom(Skill::KIND, &skill::USE, &hers)).await, "nobody else");
-        assert!(allows(carol, ActionType::custom(Skill::KIND, &skill::USE, &systems)).await, "the system's, everybody");
-        assert!(allows(bob, ActionType::get(Skill::KIND, &hers)).await && !allows(bob, ActionType::update(Skill::KIND, &hers)).await, "read, not changed");
+        // A plugin's verb that requires reading - using a skill, issue 22 -
+        // is granted as reading; changing stays the owner's.
+        const USE: CustomVerb = CustomVerb { name: "Use", requires: Requirement::Grant(Grant::Read) };
+        assert!(allows(bob, ActionType::custom(SKILL, &USE, &hers)).await, "a reader uses it");
+        assert!(!allows(carol, ActionType::custom(SKILL, &USE, &hers)).await, "nobody else");
+        assert!(allows(carol, ActionType::custom(SKILL, &USE, &systems)).await, "the system's, everybody");
+        assert!(allows(bob, ActionType::get(SKILL, &hers)).await && !allows(bob, ActionType::update(SKILL, &hers)).await, "read, not changed");
     }
 
     #[tokio::test]
@@ -1222,11 +1212,11 @@ mod tests {
         let policy = OwnershipSecurityManager::new();
         let his_context = context(bob).with_roles(vec![hr, staff], None);
         let his_agents = context(bob).next(agent, bob).with_roles(vec![hr, staff], Some(vec![staff]));
-        assert!(policy.check(&his_context, ActionType::get(Skill::KIND, &hers)).await, "who holds the role");
-        assert!(!policy.check(&his_agents, ActionType::get(Skill::KIND, &hers)).await, "not his agent, limited below it");
-        assert!(!policy.check(&context(bob).next(agent, bob), ActionType::get(Skill::KIND, &hers)).await, "nor a context continued without roles: the initiator lends none");
+        assert!(policy.check(&his_context, ActionType::get(SKILL, &hers)).await, "who holds the role");
+        assert!(!policy.check(&his_agents, ActionType::get(SKILL, &hers)).await, "not his agent, limited below it");
+        assert!(!policy.check(&context(bob).next(agent, bob), ActionType::get(SKILL, &hers)).await, "nor a context continued without roles: the initiator lends none");
         let his = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Read);
-        assert!(policy.check(&his_agents, ActionType::get(Skill::KIND, &his)).await, "what he is granted as a person, his agent is too");
+        assert!(policy.check(&his_agents, ActionType::get(SKILL, &his)).await, "what he is granted as a person, his agent is too");
     }
 
     #[tokio::test]

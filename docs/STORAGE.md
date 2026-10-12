@@ -21,7 +21,8 @@ The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived d
 *   **Workspaces**: a tree of files a user owns and attaches to sessions (see
     [WORKSPACE.md](WORKSPACE.md)). The document names the storage its files lie in; the files are
     no part of it.
-*   **Skills**: procedures written down for agents (see [SKILLS.md](SKILLS.md)).
+*   **Skills**: procedures written down for agents, a kind of the plugin `caelumora-skills` (see
+    [SKILLS.md](SKILLS.md)).
 *   **Artifacts**: results an agent published, each a user's, with its versions. Their content lies
     in a configured artifact storage, not in the document.
 *   **Groups**: lists of actors an access list names as one subject - a user's teams, and the
@@ -167,11 +168,12 @@ state](#deleting-state)).
 ### Demo data
 
 Demo data is not part of any binary. The files the configuration's `seed` names hold preconfigured
-components, personalities, session templates and skills as the stores keep them, with fixed ids, and
-the sections of the plugins, each seeded by the plugin that claims it (`SeedSection`); a section no
-plugin claims is an error before anything is stored. At startup both binaries put into the stores
-whatever they do not have yet, by id, as the system (`RuntimeManager::seed`): restarting changes
-nothing, and a document changed in the store stays as it is.
+components, personalities and session templates as the stores keep them, with fixed ids, and the
+sections of the plugins - `skills` among them -, each seeded by the plugin that claims it
+(`SeedSection`); a section no plugin claims is an error before anything is stored. At startup both
+binaries put into the stores whatever they do not have yet, by id, as the system
+(`RuntimeManager::seed`): restarting changes nothing, and a document changed in the store stays as
+it is.
 
 ## The state store
 

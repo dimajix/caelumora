@@ -17,7 +17,6 @@ use crate::view::{ContextError, ViewError};
 use crate::channel::ChannelError;
 use crate::terminal::TerminalError;
 use crate::workspace::WorkspaceError;
-use crate::skill::SkillError;
 use caelumora_model::security::Refused;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::TemplateError;
@@ -56,12 +55,6 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
             // the workspace and what the caller wrote, never a place.
             match e {
                 WorkspaceError::Store(e) => store_message(e),
-                _ => Some(e.to_string()),
-            }
-        } else if let Some(e) = e.downcast_ref::<SkillError>() {
-            // As a workspace's: its store errors are judged as store errors.
-            match e {
-                SkillError::Store(e) => store_message(e),
                 _ => Some(e.to_string()),
             }
         } else if let Some(e) = e.downcast_ref::<crate::artifact::ArtifactError>() {
@@ -145,10 +138,10 @@ mod tests {
 
     #[test]
     fn a_refusal_is_found_through_wrappers_whatever_their_type() {
-        let refused = Refused { subject: "skill", action: "UpdateSkill".to_string() };
+        let refused = Refused { subject: "workspace", action: "UpdateWorkspace".to_string() };
         // Transparent around the store's error, which holds the refusal as
         // its source - as a plugin's error does, in the core's `anyhow`.
-        let error = anyhow::Error::new(SkillError::Store(StoreError::PermissionDenied(refused.clone()))).context("deleting what lies in the scope");
+        let error = anyhow::Error::new(WorkspaceError::Store(StoreError::PermissionDenied(refused.clone()))).context("deleting what lies in the scope");
         assert_eq!(refusal(&error), Some(&refused));
         assert!(!is_forbidden(&anyhow::Error::new(StoreError::Backend("x".to_string()))));
     }

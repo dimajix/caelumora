@@ -9,6 +9,7 @@ members = [
     "caelumora-rest-api",
     "caelumora-rest-client",
     "caelumora-rest-server",
+    "caelumora-skills",
 ]
 resolver = "2"
 

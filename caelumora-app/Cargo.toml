@@ -13,6 +13,7 @@ web-ui = ["dep:rust-embed", "dep:mime_guess"]
 caelumora-model = { path = "../caelumora-model" }
 caelumora-runtime = { path = "../caelumora-runtime" }
 caelumora-rest-server = { path = "../caelumora-rest-server" }
+caelumora-skills = { path = "../caelumora-skills" }
 axum = "0.8.9"
 tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"

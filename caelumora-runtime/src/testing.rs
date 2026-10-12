@@ -36,7 +36,24 @@ use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
 use crate::component::ComponentRegistry;
-use crate::runtime::RuntimeManager;
+use crate::runtime::{RuntimeBuilder, RuntimeManager};
+use crate::plugin::Plugin;
+use crate::agent::state::AgentStateHandle;
+use crate::agent::turn::Turn;
+use crate::channel::ChannelLoop;
+use crate::actor::user::ChannelWatch;
+use crate::component::{ComponentFacets, ComponentKind};
+use crate::llm::{LLMClient, LLMResult};
+use crate::view::ViewsFactory;
+use caelumora_model::actor::{ActorEvent, EventContext};
+use caelumora_model::agent::AgentChannelState;
+use caelumora_model::context::ModelProfile;
+use caelumora_model::message::{Message, MessageEvent};
+use caelumora_model::tool::Tool;
+use futures::stream::BoxStream;
+use futures::StreamExt;
+use std::time::Duration;
+use tokio::time::{sleep, timeout};
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use crate::error::refusal;
 use crate::view::Viewer;
@@ -172,6 +189,12 @@ impl World {
     /// The world, with the component kinds `register` adds besides the
     /// built-in ones.
     pub async fn with_kinds(register: impl FnOnce(&mut ComponentRegistry)) -> Self {
+        Self::with(&[], register).await
+    }
+
+    /// The world with `plugins` (issue 323), and the component kinds
+    /// `register` adds besides the built-in ones.
+    pub async fn with(plugins: &[&dyn Plugin], register: impl FnOnce(&mut ComponentRegistry)) -> Self {
         let roles = Roles::new([(*STAFF, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
         // The policy learns who takes part where from the store it guards
@@ -188,13 +211,26 @@ impl World {
         let shell = StorageConfig::Local { root: files.path().join("shell"), shell: true, destination: Some(Classification::general(Confidentiality::Internal)), max_run_secs: DEFAULT_MAX_RUN_SECS };
         let workspaces = WorkspacesConfig { storage: [("main".to_string(), StorageConfig::Local { root: files.path().to_path_buf(), shell: false, destination: None, max_run_secs: DEFAULT_MAX_RUN_SECS }), ("shell".to_string(), shell)].into(), ..Default::default() };
         let artifacts = ArtifactsConfig { storage: [("kept".to_string(), ArtifactStorageConfig::Local { root: files.path().join("artifacts"), destination: None })].into(), ..Default::default() };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::<Recorder>::clone(&recorder), &AppConfig { workspaces, artifacts, ..Default::default() }, registry).unwrap());
+        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::<Recorder>::clone(&recorder), &AppConfig { workspaces, artifacts, ..Default::default() }, registry).unwrap();
+        for plugin in plugins {
+            builder.plugin(*plugin).unwrap();
+        }
+        let runtime = Arc::new(builder.build().unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let mut world = Self { policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
         world.alice = world.user("alice").await;
         world.bob = world.user("bob").await;
         world.carol = world.user("carol").await;
         world
+    }
+
+    /// A turn of `agent`, of `owner`, in the first channel of `session`,
+    /// begun in `state` - for what a component does in a turn.
+    pub fn turn<'a>(session: &SessionLoop, agent: AgentId, owner: UserId, state: &'a mut AgentChannelState) -> Turn<'a> {
+        let channel = &session.channels()[0];
+        let context = SecurityContext::new(ActorId::User(owner), session.id(), channel.id()).next(ActorId::Agent(agent), ActorId::User(owner)).with_roles(vec![*STAFF], None);
+        state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), context, channel.classification(), Vec::new(), Default::default());
+        Turn::of(agent, agent.to_string(), state, AgentStateHandle::detached(), views_in(session, channel, ActorId::Agent(agent))).expect("a turn was begun")
     }
 
     pub fn system() -> SecurityContext {
@@ -374,4 +410,67 @@ pub fn not_found(error: &Error) -> bool {
 /// A refusal, with what was refused (issue 323).
 pub fn denied(error: &Error) -> bool {
     refusal(error).is_some()
+}
+
+/// What `actor` navigates from `channel` of `session`, as its turns do
+/// (`ActorRuntime::views`).
+pub fn views_in(session: &SessionLoop, channel: &Arc<ChannelLoop>, actor: ActorId) -> ViewsFactory {
+    session.views_of(channel, actor)
+}
+
+/// A model that answers its first call with `answer`, and no other.
+#[derive(Debug)]
+pub struct Once(pub Mutex<Option<Message>>);
+
+#[async_trait]
+impl LLMClient for Once {
+    async fn chat_completion(&self, _: &[Message], _: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>> {
+        match self.0.lock().unwrap().take() {
+            Some(answer) => futures::stream::iter([Ok(MessageEvent::Complete(answer))]).boxed(),
+            None => futures::stream::pending().boxed(),
+        }
+    }
+
+    fn profile(&self) -> ModelProfile {
+        Default::default()
+    }
+}
+
+/// A model component of the kind `kind` that answers its first call with
+/// `answer`, registered with `registry`.
+pub fn register_once(registry: &mut ComponentRegistry, kind: &str, answer: Message) {
+    let model = Arc::new(Once(Mutex::new(Some(answer))));
+    registry.register(ComponentKind::new(kind).provides::<dyn LLMClient>(), move |_, _| {
+        let mut facets = ComponentFacets::empty();
+        facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
+        Ok(facets)
+    });
+}
+
+/// Waits until the policy of `world` was asked `line`.
+pub async fn asked_for(world: &World, line: &str) {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let names = world.policy.names.lock().unwrap().clone();
+            let asked = world.policy.asked.lock().unwrap().iter()
+                .map(|l| names.iter().fold(l.clone(), |l, (actor, name)| l.replace(&actor.to_string(), name)))
+                .any(|l| l == line);
+            if asked {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("asked");
+}
+
+/// What `watch` is shown next of the kind `wanted`.
+pub async fn shown(watch: &mut ChannelWatch, wanted: &str) -> ActorEvent {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = watch.events.recv().await.expect("the channel runs");
+            if envelope.event.kind() == wanted {
+                break envelope.event;
+            }
+        }
+    }).await.unwrap_or_else(|_| panic!("{wanted} is shown"))
 }

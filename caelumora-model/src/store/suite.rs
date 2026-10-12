@@ -21,7 +21,6 @@ use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, Ses
 use crate::removal::{Deletable, Removal};
 use crate::user::{User, UserId, UserProfile};
 use crate::workspace::{Workspace, WorkspaceId};
-use crate::skill::{Skill, SkillId};
 use crate::group::{Group, GroupId};
 use crate::artifact::{Artifact, ArtifactField, ArtifactId};
 use chrono::Utc;
@@ -161,20 +160,6 @@ fn user(username: &str) -> User {
 
 fn workspace(owner: UserId) -> Workspace {
     workspace_named(ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap())
-}
-
-fn skill(owner: UserId) -> Skill {
-    skill_named(ScopedName::new("release-notes", Scope::UserScope { user_id: owner }).unwrap())
-}
-
-/// A skill of `name`, owned by the user whose scope it lies in, else by
-/// another.
-fn skill_named(name: ScopedName) -> Skill {
-    let owner = match name.scope {
-        Scope::UserScope { user_id } => user_id,
-        _ => UserId::new(),
-    };
-    Skill::new(name, crate::value::text::Description::new("How we write a release note").unwrap(), crate::value::text::SkillBody::new("Collect, group, write.").unwrap(), Classification::CHANNEL_DEFAULT, ActorId::User(owner))
 }
 
 fn group(owner: UserId) -> Group {
@@ -388,8 +373,6 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
         create, get, update, delete, list);
     lifecycle!(stores.workspaces.as_ref(), workspace(UserId::new()), |v: &Workspace| v.id, name.name, "workspace",
         create, get, update, delete, list);
-    lifecycle!(stores.skills.as_ref(), skill(UserId::new()), |v: &Skill| v.id, name.name, "skill",
-        create, get, update, delete, list);
     lifecycle!(stores.artifacts.as_ref(), artifact(UserId::new()), |v: &Artifact| v.id, name.name, "artifact",
         create, get, update, delete, list);
     lifecycle!(stores.groups.as_ref(), group(UserId::new()), |v: &Group| v.id, name.name, "group",
@@ -426,11 +409,6 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
         create, delete, find_by_name);
     let nobodys = stores.workspaces.create(&ctx, &Workspace { security_attributes: Default::default(), ..workspace(UserId::new()) }).await;
     assert!(matches!(nobodys, Err(StoreError::Validation(_))), "workspace: one that belongs to no user is not stored, got {nobodys:?}");
-
-    found_by_name!(stores.skills.as_ref(), skill_named, "skill",
-        create, delete, find_by_name);
-    let nobodys = stores.skills.create(&ctx, &Skill { security_attributes: Default::default(), ..skill(UserId::new()) }).await;
-    assert!(matches!(nobodys, Err(StoreError::Validation(_))), "skill: one that belongs to nobody is not stored, got {nobodys:?}");
 
     found_by_name!(stores.groups.as_ref(), group_named, "group",
         create, delete, find_by_name);
@@ -503,10 +481,6 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
     unique_by_name!(stores.workspaces.as_ref(), |name| Workspace { name: in_scope(name, &global), id: WorkspaceId::new(), ..workspace(alice) },
         elsewhere: |name| Workspace { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: WorkspaceId::new(), ..workspace(bob) },
         rename: |value: Workspace, name| Workspace { name: in_scope(name, &value.name.scope), ..value }, "workspace",
-        create, update, delete, restore);
-    unique_by_name!(stores.skills.as_ref(), |name| Skill { name: in_scope(name, &global), id: SkillId::new(), ..skill(alice) },
-        elsewhere: |name| Skill { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: SkillId::new(), ..skill(bob) },
-        rename: |value: Skill, name| Skill { name: in_scope(name, &value.name.scope), ..value }, "skill",
         create, update, delete, restore);
     unique_by_name!(stores.artifacts.as_ref(), |name| Artifact { name: in_scope(name, &global), id: ArtifactId::new(), ..artifact(alice) },
         elsewhere: |name| Artifact { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: ArtifactId::new(), ..artifact(bob) },

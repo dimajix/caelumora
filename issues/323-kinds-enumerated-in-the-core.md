@@ -899,3 +899,31 @@ groups; a plugin's route behind the login; the backend's stores per kind. Checke
 program: the API and the UI under the live configuration, a session made, deleted and restored, a
 misspelt section of the configuration and an unclaimed section of a seed refused at startup, the
 TUI started. Stored data: none.
+
+**2026-10-12** — Step 10, on branch `issue-323-skills`: skills are the crate `caelumora-skills`,
+with the features of cut 11 - without features `skill` (the entity, `SkillBody`, `SkillSnapshot`,
+the digest of a body, the verb `USE`) and `api` (the wire types); `runtime` adds `manager`
+(`SkillManager`, `SkillError`), `view` (`SkillView` and `SkillViews` on `Views`), `access`
+(`SkillAccess` on every `SecurityManager`), `component` (the `skills` component with its
+`KnowledgeRestorer`) and `plugin` (`SkillsPlugin`: the store of skills, the manager as a service
+and a scope member, the component, the seed section `skills`); `server` adds `routes`, the
+`RestPlugin` with a state of its own and `From<SkillError> for ApiError`. `caelumora-app` lists it
+with its routes, `caelumora-tui` with `runtime` alone. The core names no skill any more: gone are
+`EntityStores::skills`, the skill questions of `AccessQuestions`, `ViewError::SkillNotFound` and
+`NoSkillNamed` (now `SkillError::NotFound` and `NoSkillNamed`), `Seed::skills`, the skill arms of
+`user_message` and of `From<anyhow::Error>`, and `digest::skill`; `digest::Encoder` is public.
+`SkillError::Store` carries the store's error as its source, so that `user_message` judges it as a
+store error, as it judged the plugin's error before; its other variants are no longer known there
+and are shown as a failure. What the plugin needed of the runtime was opened: the helpers of
+`scoped`, `ApprovalMode`, `ApiError::bad_request`. The tests: the skill tests of the security
+suite, of the component and of the views run in the plugin (`tests/skills.rs`), in the suite's
+world, which takes plugins (`World::with`) and makes a turn of an agent (`World::turn`); the helpers
+the suite and the plugin share moved there (`register_once`, `asked_for`, `shown`). The core tests
+the compaction with a restorer of its own, and its model tests use workspaces where they used
+skills as an example. The tests of the example seed - which holds skills - moved to
+`caelumora-app`, where the program's plugins are. Not done: `SkillsClient` (feature `client`),
+since there is no REST client yet - issue [307](307-load-and-performance-tests.md) takes it up
+with the client. Checked against the program: the skills of the seed listed, a skill made, read,
+renamed, deleted, listed as deleted and restored, an unknown one `404 skill_not_found`, a blank
+name `400 invalid_value`, `401` without login; the TUI lists the skills an agent can load. Stored
+data: none - the store keeps skills where it kept them (`entities/skill`).

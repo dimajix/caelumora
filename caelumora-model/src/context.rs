@@ -122,7 +122,7 @@ pub enum KnowledgeSource {
     /// channel it is used in, with the digest of a file's content as it
     /// was read - `None` for a listing or a search -; a skill (issue 22),
     /// loaded into the turn, with the digest of its body as it was loaded
-    /// (`digest::skill`).
+    /// (the skills plugin's `skill::digest`).
     Entity { kind: EntityKind, id: Uuid, digest: Option<Digest> },
 }
 

@@ -55,8 +55,8 @@ impl AgentStateHandle {
 
     /// A handle of an empty state, stored in a store of its own and
     /// announced to nobody - for turns in tests.
-    #[cfg(test)]
-    pub(crate) fn detached() -> Arc<Self> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn detached() -> Arc<Self> {
         let state_store = Arc::new(caelumora_model::store::memory::MemoryStore::new());
         Arc::new(Self::new(AgentId::default(), AgentState::default(), state_store, Arc::new(()), SecurityAttributes::default()))
     }

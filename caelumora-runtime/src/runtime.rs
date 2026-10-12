@@ -36,7 +36,6 @@ use crate::agent::manager::AgentManager;
 use crate::group::GroupManager;
 use crate::artifact::ArtifactManager;
 use crate::scoped::{ScopeMember, ScopedEntities, Unowned};
-use crate::skill::SkillManager;
 use crate::workspace::WorkspaceManager;
 
 #[derive(Debug)]
@@ -61,8 +60,6 @@ pub struct RuntimeManager {
     agent_states: Arc<AgentStates>,
     /// The one owner of workspaces and their places (issue 253).
     workspaces: Arc<WorkspaceManager>,
-    /// The one writer of skills (issue 22).
-    skills: Arc<SkillManager>,
     /// The one owner of artifacts and their content (issue 271).
     artifacts: Arc<ArtifactManager>,
     /// The one writer of teams (issue 286).
@@ -326,7 +323,6 @@ pub struct RuntimeBuilder {
     controller_manager: Arc<ControllerManager>,
     agent_states: Arc<AgentStates>,
     workspaces: Arc<WorkspaceManager>,
-    skills: Arc<SkillManager>,
     artifacts: Arc<ArtifactManager>,
     groups: Arc<GroupManager>,
     agents: Arc<AgentManager>,
@@ -381,7 +377,6 @@ impl RuntimeBuilder {
         let controller_manager = Arc::new(ControllerManager::new(entity_stores.clone(), Arc::clone(&event_bus)));
         let agent_states = Arc::new(AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
         let workspaces = WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), Arc::clone(&controller_manager), &secret_manager, &config.workspaces)?;
-        let skills = Arc::new(SkillManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&confidentiality)));
         let artifacts = Arc::new(ArtifactManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), &config.artifacts)?);
         let groups = Arc::new(GroupManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager)));
         let agents = Arc::new(AgentManager::new(&entity_stores, Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
@@ -390,7 +385,6 @@ impl RuntimeBuilder {
             Arc::new(Unowned(Arc::clone(&entity_stores.session_templates))),
             Arc::<AgentManager>::clone(&agents),
             Arc::<WorkspaceManager>::clone(&workspaces),
-            Arc::<SkillManager>::clone(&skills),
             Arc::<ArtifactManager>::clone(&artifacts),
         ];
         let services = Services::empty()
@@ -414,7 +408,6 @@ impl RuntimeBuilder {
             controller_manager,
             agent_states,
             workspaces,
-            skills,
             artifacts,
             groups,
             agents,
@@ -570,7 +563,6 @@ impl RuntimeBuilder {
             approval_rules: self.approval_rules,
             agent_states: self.agent_states,
             workspaces: self.workspaces,
-            skills: self.skills,
             artifacts: self.artifacts,
             groups: self.groups,
             agents: self.agents,
@@ -668,11 +660,6 @@ impl RuntimeManager {
     /// The one owner of workspaces and their places (issue 253).
     pub fn workspace_manager(&self) -> &Arc<WorkspaceManager> {
         &self.workspaces
-    }
-
-    /// The one writer of skills (issue 22).
-    pub fn skill_manager(&self) -> &Arc<SkillManager> {
-        &self.skills
     }
 
     /// The one owner of artifacts and their content (issue 271).

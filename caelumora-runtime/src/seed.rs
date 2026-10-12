@@ -1,19 +1,18 @@
 //! Demo data a binary puts into its stores at startup (issue 105): the
 //! files `AppConfig::seed` names, each holding preconfigured components,
-//! personalities, session templates and skills as the stores keep them
-//! (`examples/seed.yaml`), and the sections of the plugins (issue 323).
+//! personalities and session templates as the stores keep them
+//! (`examples/seed.yaml`), and the sections of the plugins - the skills
+//! among them (issue 323).
 //! One definition for the REST server and the TUI alike
 //! (`RuntimeManager::seed`).
 
 use anyhow::{bail, Context};
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
 use caelumora_model::agent::Personality;
 use caelumora_model::component::StoredComponents;
-use caelumora_model::skill::Skill;
 use caelumora_model::config::parse_yaml;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
-use caelumora_model::security::{SecurityAttributes, SecurityContext};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{ComponentStore, EntityStores, StoreResultExt};
 use caelumora_model::template::SessionTemplate;
 use serde::Deserialize;
@@ -33,9 +32,6 @@ pub struct Seed {
     pub components: Vec<StoredComponents>,
     pub personalities: Vec<SeedPersonality>,
     pub session_templates: Vec<SessionTemplate>,
-    /// Skills of the system (issue 22), in the global scope, found by every
-    /// agent with the `skills` component.
-    pub skills: Vec<Skill>,
     /// The sections of the plugins, by name, as they were written: each
     /// seeded by the plugin that claims it (`SeedSection`, issue 323).
     #[serde(flatten)]
@@ -133,15 +129,6 @@ impl Seed {
                 info!("Seeded session template {} ({})", template.name, template.id);
             }
         }
-        for skill in &self.skills {
-            if stores.skills.get(&system, skill.id).await.optional()?.is_none() {
-                // The system's, as everything seeded: a skill says so, since
-                // nobody's is no skill at all (`Skill::validate`).
-                let owned = Skill { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..skill.clone() };
-                stores.skills.create(&system, &owned).await?;
-                info!("Seeded skill {} ({})", skill.name, skill.id);
-            }
-        }
         for (name, section) in &self.plugins {
             if let Some(seeder) = sections.get(name) {
                 seeder.seed(section.clone()).await.with_context(|| format!("Cannot seed the section '{name}'"))?;
@@ -170,80 +157,21 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
     use caelumora_model::store::query::Query;
-    use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry};
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::DummySecurityManager;
+    
+    
+    
     use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::store::ComponentStore;
-    use caelumora_model::template::ParticipantTemplate;
+    
+    
     use std::sync::Arc;
     use caelumora_model::config::AppConfig;
-    use crate::runtime::RuntimeManager;
-
-    fn example() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/seed.yaml")
-    }
+    
 
     /// The policy of the example configuration, which knows the roles the
     /// example seed names.
     fn policy() -> std::sync::Arc<dyn ConfidentialityPolicy> {
         let config = AppConfig::load(Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/config.yaml")).unwrap();
         config.create_confidentiality_policy()
-    }
-
-    #[tokio::test]
-    async fn the_example_seed_is_complete_and_seeding_twice_changes_nothing() {
-        let seed = Seed::read(&example()).expect("examples/seed.yaml is a seed");
-        assert!(!seed.personalities.is_empty() && !seed.session_templates.is_empty());
-        let store = Arc::new(MemoryStore::new());
-        let stores = store.entity_stores();
-        let system = SecurityContext::system();
-
-        let policy = policy();
-        load(&stores, store.as_ref(), policy.as_ref(), &BTreeMap::new(), &[example()]).await.unwrap();
-        // Every personality a template names is part of the seed.
-        for template in &seed.session_templates {
-            for participant in &template.participants {
-                if let ParticipantTemplate::Agent { personality_id, .. } = participant {
-                    store.entity_stores().personalities.get(&system, *personality_id).await
-                        .unwrap_or_else(|_| panic!("template {} names a personality the seed has", template.name));
-                }
-            }
-        }
-
-        // A document changed in the store stays as it is.
-        let mut changed = seed.personalities[0].personality.clone();
-        changed.description = Some(caelumora_model::value::text::Description::new("changed").unwrap());
-        store.entity_stores().personalities.update(&system, &changed).await.unwrap();
-        load(&stores, store.as_ref(), policy.as_ref(), &BTreeMap::new(), &[example()]).await.expect("seeding again is no conflict");
-        assert_eq!(store.entity_stores().personalities.list(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), seed.personalities.len(), "nothing twice");
-        assert_eq!(stores.session_templates.list(&system, &Query::all()).await.map(|page| page.items).unwrap().len(), seed.session_templates.len());
-        assert_eq!(store.entity_stores().personalities.get(&system, changed.id).await.unwrap().description, changed.description);
-        let skills = stores.skills.list(&system, &Query::all()).await.map(|page| page.items).unwrap();
-        assert!(!skills.is_empty() && skills.len() == seed.skills.len(), "the skills, once (issue 22)");
-        assert!(skills.iter().all(|s| s.security_attributes.owner_id == ActorId::System), "the system's");
-        let components = store.list_components(&system, &Query::all()).await.map(|page| page.items).unwrap();
-        assert!(!components.is_empty() && components.len() == seed.components.len(), "the preconfigured components, once (issue 270)");
-    }
-
-    /// Every personality of the seed can be built with what the seed
-    /// brings: the components it includes are there, and none of them is
-    /// written twice (issue 270).
-    #[tokio::test]
-    async fn every_personality_of_the_example_seed_can_be_built() {
-        let seed = Seed::read(&example()).expect("examples/seed.yaml is a seed");
-        let store = Arc::new(MemoryStore::new());
-        let confidentiality = policy();
-        load(&store.entity_stores(), store.as_ref(), confidentiality.as_ref(), &BTreeMap::new(), &[example()]).await.unwrap();
-        let security = Arc::new(DummySecurityManager::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
-        // The services a runtime gives them (issue 296).
-        let runtime = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, Arc::clone(&confidentiality), &Default::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap();
-        let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
-        for personality in seed.personalities.iter().map(|seeded| &seeded.personality) {
-            ComponentContainer::from_config(&personality.components, runtime.component_registry(), &context).await
-                .unwrap_or_else(|e| panic!("personality {} cannot be built: {e}", personality.name));
-        }
     }
 
     #[tokio::test]

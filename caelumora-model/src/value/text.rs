@@ -143,19 +143,6 @@ impl TextRule for DescriptionRule {
 
 pub type Description = Text<DescriptionRule>;
 
-/// What a skill tells the model to do (issue 22): instructions in Markdown,
-/// loaded into a turn when the skill is used - twice a briefing, enough for
-/// a procedure, not for a manual.
-pub enum SkillBodyRule {}
-
-impl TextRule for SkillBodyRule {
-    const FIELD: &'static str = "body";
-    const MAX_CHARS: usize = 32_000;
-    const ONE_LINE: bool = false;
-}
-
-pub type SkillBody = Text<SkillBodyRule>;
-
 #[cfg(test)]
 mod tests {
     use super::*;

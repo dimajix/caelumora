@@ -13,6 +13,8 @@ use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Co
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use crate::view::{Viewer, Views};
+#[cfg(any(test, feature = "test-support"))]
+use crate::view::ViewsFactory;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::store::{EntityKind, EntityStores, StoreError, StoreResult};
 use caelumora_model::scope::Scope;
@@ -176,6 +178,15 @@ async fn require_attachable(workspaces: &WorkspaceManager, security: &dyn Securi
 }
 
 impl SessionLoop {
+    /// What `actor` navigates from `channel` of this session, as its turns
+    /// do (`ActorRuntime::views`) - for tests, where no actor runs.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn views_of(&self, channel: &Arc<ChannelLoop>, actor: ActorId) -> ViewsFactory {
+        let channel_runtime = ChannelRuntime::new(Arc::clone(&self.runtime_manager), Arc::clone(&self.commands), Arc::clone(&self.session_controller));
+        channel_runtime.attach(channel);
+        channel_runtime.new_actor_runtime(actor, self.id(), channel.id()).views()
+    }
+
     /// The loop of `session`, with its `channels` - documents of their own
     /// (issue 70), in the order the session lists them - each attached to
     /// it, so that a channel reaches the others of its session (issues 17,
