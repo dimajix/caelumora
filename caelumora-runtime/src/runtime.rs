@@ -27,7 +27,7 @@ use std::sync::{Arc, OnceLock, Weak};
 use crate::agent::manager::AgentManager;
 use crate::group::GroupManager;
 use crate::artifact::ArtifactManager;
-use crate::scoped::ScopedEntities;
+use crate::scoped::{ScopeMember, ScopedEntities, Unowned};
 use crate::skill::SkillManager;
 use crate::workspace::WorkspaceManager;
 
@@ -330,7 +330,15 @@ impl RuntimeManager {
         let artifacts = Arc::new(ArtifactManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), &config.artifacts)?);
         let groups = Arc::new(GroupManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager)));
         let agents = Arc::new(AgentManager::new(&entity_stores, Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
-        let scoped = Arc::new(ScopedEntities::new(&entity_stores, Arc::clone(&agents), Arc::clone(&workspaces), Arc::clone(&skills), Arc::clone(&artifacts), Arc::clone(&groups)));
+        let scope_members: Vec<Arc<dyn ScopeMember>> = vec![
+            Arc::new(Unowned(Arc::clone(&entity_stores.personalities))),
+            Arc::new(Unowned(Arc::clone(&entity_stores.session_templates))),
+            Arc::<AgentManager>::clone(&agents),
+            Arc::<WorkspaceManager>::clone(&workspaces),
+            Arc::<SkillManager>::clone(&skills),
+            Arc::<ArtifactManager>::clone(&artifacts),
+        ];
+        let scoped = Arc::new(ScopedEntities::new(scope_members, Arc::clone(&groups)));
 
         let component_services = ComponentServices::empty()
             .with(Arc::clone(&security_manager))

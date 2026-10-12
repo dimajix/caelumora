@@ -630,3 +630,15 @@ the views take it from `EntityStores`. `Entities`, `EntityStores::entities` and
 its own, and whoever uses a kind holds its store. Step 3 is done; the plugin of skills can make its
 store as the backends make theirs.
 
+
+**2026-10-12** — Step 4, on branch `issue-323-scope-member`: `ScopeMember` is the trait of a kind
+that may lie in a scope (`kind`, `delete_lying_in`, `restore_lying_in`, `purge_lying_in`, each
+failing with `anyhow::Error`), implemented by the agent, workspace, skill, artifact and group
+managers, whose methods of the same names moved into it. Personalities and session templates,
+which have no manager, are members by their store: `Unowned<T>`, generic over the kind, in place of
+the two inline loops. `ScopedEntities` keeps the members in a list, made by the runtime in the order
+of before, and the `GroupManager` beside it, since the rule that groups go last, and only once
+nothing else is left, is the scope's. Groups are now purged after all others too, no longer between
+skills and workspaces; nothing purged depends on that order. `restored_unless_refused` takes what
+was deleted and logs its kind and id instead of a kind written out by each caller. Nothing stored
+changed.

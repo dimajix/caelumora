@@ -27,10 +27,14 @@ with `SessionError::ScopeNotEmpty`, saying how much of which kind is left; what 
 stays deleted, and the session comes back all the same. The session is marked before its scope is
 deleted, so that what goes with it is deleted with it, not before it; if something is left, the
 mark is taken away again in the runtime's name, and what was deleted stays deleted - restored by
-hand, not with the session. Purging is done in the runtime's name. What has a manager of its own -
-agents, workspaces, skills, artifacts, groups - is deleted, restored and purged by it
-(`…_lying_in`), and announced as it announces its own deletions: an artifact to whoever reads any of
-its versions, as when it is deleted alone (issue 319).
+hand, not with the session. Purging is done in the runtime's name. Each kind that may lie in a scope
+is a `ScopeMember` (issue 323), and `ScopedEntities` goes through them in the order they were
+registered, the groups after all others: they are deleted only once nothing else is left, a rule of
+the scope as a whole, not of a member. What has a manager of its own - agents, workspaces, skills,
+artifacts, groups - is a member by it (`…_lying_in`), deleted, restored and purged by it and
+announced as it announces its own deletions: an artifact to whoever reads any of its versions, as
+when it is deleted alone (issue 319). Personalities and session templates, which have none, are
+members by their store (`Unowned`), which marks them and announces nothing.
 
 That holds because what lies in a session's or a channel's scope is used only within it
 (`Scope::admits`): an agent of it takes part only in that session's channels, or in that channel,
