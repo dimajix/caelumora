@@ -124,9 +124,10 @@ pub fn change_error(error: anyhow::Error, code: &'static str, subject: Subject, 
     }
 }
 
-/// All routes. Everything except `/auth/login` and `/auth/logout` requires a
-/// session (see `crate::auth`).
-pub fn create_router(state: Arc<AppState>) -> Router {
+/// The routes of the core, as the API serves them below the path the
+/// application nests them at (issue 323). Everything except `/auth/login`
+/// and `/auth/logout` requires a session (see `crate::auth`).
+pub fn core(state: Arc<AppState>) -> Router {
     let protected = Router::new()
         .route("/templates", get(templates::list_templates))
         .route("/compartments", get(compartments::list_compartments))

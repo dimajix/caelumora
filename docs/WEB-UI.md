@@ -13,9 +13,15 @@ npm install
 npm run dev
 ```
 
-The development server proxies `/api` to the REST server on `http://localhost:3000`, stripping the
-prefix (`vite.config.ts`); the REST server is started as described in the [README](../README.md).
-`npm run build` type-checks and builds into `dist/`, `npm run lint` runs ESLint.
+The development server proxies `/api` to the program on `http://localhost:3000` (`vite.config.ts`),
+which serves the API there; the program is started as described in the [README](../README.md).
+`npm run lint` runs ESLint.
+
+`npm run build` type-checks and builds into `dist/`, which `caelumora-app` serves from the binary:
+embedded in a release build, read from `dist/` in a debug build, where a new build of the UI shows
+without building the program again (see [REST-SERVER.md](REST-SERVER.md#the-program)). A build of
+the program with the UI built in fails while `dist/` is empty; `CAELUMORA_BUILD_UI=1` has it build
+the UI first.
 
 ## What the UI decides, and what it does not
 

@@ -20,11 +20,16 @@ The project is a Rust workspace, with a web UI next to it:
 *   **`caelumora-rest-api`** - the wire of the REST API: the requests and responses, as `serde`
     reads and writes them, made from the model's entities and snapshots. It depends on the model
     alone, so that a client reads the API without the server (issue 323).
-*   **`caelumora-rest-server`** - the REST API and the server-sent event streams, with
+*   **`caelumora-rest-server`** - a library: the REST API and the server-sent event streams, with
     authentication. It maps what the runtime answers to the responses of `caelumora-rest-api` and
-    decides nothing itself. See [REST-SERVER.md](REST-SERVER.md).
-*   **`caelumora-web-ui`** - the browser frontend (React, TypeScript), built on the REST server. See
-    [WEB-UI.md](WEB-UI.md).
+    decides nothing itself. Its handlers' building blocks - the logged-in user, `ApiError`, the
+    extractors, the shared state - are public, and the core's routes are a `Router` to nest. See
+    [REST-SERVER.md](REST-SERVER.md).
+*   **`caelumora-app`** - the program: the composition root that builds the runtime from the
+    configuration, serves the REST API under `/api` and the web UI from the binary (feature
+    `web-ui`, on by default).
+*   **`caelumora-web-ui`** - the browser frontend (React, TypeScript), built on the REST API and
+    served by `caelumora-app`. See [WEB-UI.md](WEB-UI.md).
 *   **`caelumora-tui`** - a terminal frontend that runs the runtime in its own process.
 *   **`caelumora-client-api`**, **`caelumora-local-client`**, **`caelumora-rest-client`** - reserved
     for a client interface and its in-process and REST implementations; empty so far.

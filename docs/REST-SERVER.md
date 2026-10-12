@@ -1,9 +1,10 @@
 # REST Server
 
 `caelumora-rest-server` makes the runtime available over HTTP: a REST API, two server-sent event
-streams, and the login that guards both. It decides nothing itself - what a user may see or do is
-decided by the runtime, and the server maps the answers to responses. The browser frontend built on
-it is described in [WEB-UI.md](WEB-UI.md), the policy behind the permissions in
+streams, and the login that guards both. It is a library; the program that serves it is
+`caelumora-app`, under `/api`, with the web UI beside it. It decides nothing itself - what a user
+may see or do is decided by the runtime, and the server maps the answers to responses. The browser
+frontend built on it is described in [WEB-UI.md](WEB-UI.md), the policy behind the permissions in
 [SECURITY.md](SECURITY.md), and its configuration (`server`, `auth`) in
 [CONFIGURATION.md](CONFIGURATION.md).
 
@@ -11,10 +12,9 @@ it is described in [WEB-UI.md](WEB-UI.md), the policy behind the permissions in
 
 | File | Holds |
 |---|---|
-| `main.rs` | Startup: configuration, stores, runtime, the router and its layers (request span, request id) |
 | `state.rs` | `AppState`: the `Auth`, the `RuntimeManager` and the `SessionManager` every handler reaches |
 | `auth.rs` | Login, logout, renewal, and the middleware `require_auth` and `require_stream_auth` |
-| `routes/` | The handlers, by resource |
+| `routes/` | The handlers, by resource, and `routes::core`, the router of all of them |
 | `error.rs` | `ApiError` and the problem details it answers with; the `Json` and `Path` extractors |
 | `sse.rs` | What both event streams have in common |
 
@@ -24,6 +24,28 @@ that a client reads them without the server (issue 323). A response is made ther
 entities and snapshots, by `From` or an `of`. What only the runtime knows - the names of the places
 a message's knowledge was read in, a file of a workspace, a command of its shell - the handler puts
 into the response itself.
+
+### The program
+
+`caelumora-app` is the composition root: its `main.rs` reads the configuration, makes the stores,
+the runtime and the `AppState`, and serves:
+
+*   the API under `/api` - `routes::core` nested there, every path of this document below it, and a
+    path no route takes answered as a problem (`404 not_found`) like every other error;
+*   the web UI everywhere else, with the feature `web-ui` (on by default): the files `npm run build`
+    made in `caelumora-web-ui/dist`, embedded in a release build and read from there in a debug
+    build. A path that names no file is answered with `index.html`, which is never cached; the files
+    under `assets/`, whose names change with their content, are cached for long. Without the feature
+    the program serves the API alone.
+
+The build does not build the UI: `build.rs` checks that `dist/index.html` is there and otherwise
+fails, saying how to build it; with `CAELUMORA_BUILD_UI=1` it runs `npm ci` and `npm run build`
+itself. Node is a requirement of a build with the UI built in, not of every `cargo build`.
+
+The request span and the request id (`error::request_id`) are layers the program puts around
+everything it serves. Routes beyond the core's are merged beside `routes::core` where the program
+nests the API; a handler builds on the public modules of this library - `auth`, `error`, `state`,
+`sse`.
 
 ## How a handler works
 
@@ -49,7 +71,8 @@ A handler translates; it does not decide. Every handler derives its `SecurityCon
 
 ## Endpoints
 
-Everything except `POST /auth/login` and `POST /auth/logout` requires a logged-in user. `…` stands
+Every path below lies under `/api`. Everything except `POST /auth/login` and `POST /auth/logout`
+requires a logged-in user. `…` stands
 for `/sessions/{id}/channels/{cid}` (or `/sessions/{id}` for the list of channels). What each
 operation does in the runtime is described with it - channels and participants in
 [CHANNELS.md](CHANNELS.md), approvals and questions in [APPROVALS.md](APPROVALS.md), commands in

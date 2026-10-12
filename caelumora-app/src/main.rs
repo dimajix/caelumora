@@ -1,32 +1,37 @@
+//! Caelumora as one program (issue 323): the composition root that builds
+//! the runtime, serves the REST API under `/api` and - with the feature
+//! `web-ui` - the web UI at `/`, from the binary.
+
+use axum::Router;
 use caelumora_model::config::AppConfig;
-use caelumora_model::secret::{SecretError, SecretManager};
-use caelumora_model::security::SecurityContext;
+use caelumora_model::store::memberships::StoreMemberships;
+use caelumora_rest_server::auth::{Auth, TokenService};
+use caelumora_rest_server::error::{self, ApiError};
+use caelumora_rest_server::routes;
+use caelumora_rest_server::state::AppState;
 use caelumora_runtime::component::ComponentRegistry;
+use caelumora_runtime::event::EventBus;
+use caelumora_runtime::logging::{self, LogTarget};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::seed;
 use caelumora_runtime::session::SessionManager;
 use clap::Parser;
+use std::path::PathBuf;
 use std::sync::Arc;
-use caelumora_runtime::logging::{self, LogTarget};
-use caelumora_runtime::event::EventBus;
 use tower_http::trace::TraceLayer;
 
-mod auth;
-mod error;
-mod routes;
-mod sse;
-mod state;
+#[cfg(feature = "web-ui")]
+mod web_ui;
 
-use crate::auth::{Auth, TokenService};
-use crate::state::AppState;
-use caelumora_model::store::memberships::StoreMemberships;
+/// Where the REST API is served: the web UI speaks to it there.
+const API_PATH: &str = "/api";
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Caelumora REST Server")]
+#[command(author, version, about = "Caelumora")]
 struct Args {
     /// Path to a specific config file
     #[arg(short, long)]
-    config: Option<std::path::PathBuf>,
+    config: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -70,9 +75,8 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("No user providers configured (`users` section): nobody can log in. \
             See examples/config.yaml.");
     }
-    let signing_key = jwt_signing_key(&secret_manager, &config.auth.jwt_secret).await?;
     let auth = Arc::new(Auth {
-        tokens: TokenService::new(&signing_key, &config.auth)?,
+        tokens: TokenService::from_secret(&secret_manager, &config.auth).await?,
         users: user_manager,
         controllers: Arc::clone(runtime_manager.controller_manager()),
     });
@@ -100,32 +104,46 @@ async fn main() -> anyhow::Result<()> {
         )
     });
     // The request id is set inside the request span, which is the outer layer.
-    let app = routes::create_router(state)
+    let app = app(routes::core(state))
         .layer(axum::middleware::from_fn(error::request_id))
         .layer(trace_layer);
 
     let listener = tokio::net::TcpListener::bind(config.server.address).await?;
-    tracing::info!(
-        "Caelumora REST server listening on {}",
-        listener.local_addr()?
-    );
+    tracing::info!("Caelumora listening on {}", listener.local_addr()?);
     axum::serve(listener, app).await?;
 
     Ok(())
 }
 
-/// Resolves the key for signing session tokens through the secret chain. If
-/// the secret does not exist, a random key is generated - sessions then do not
-/// survive a restart, which is fine for development and loudly announced.
-async fn jwt_signing_key(secrets: &SecretManager, name: &str) -> anyhow::Result<Vec<u8>> {
-    match secrets.resolve(&SecurityContext::system(), name).await {
-        Ok(key) => Ok(key.into_bytes()),
-        Err(SecretError::NotFound(_)) => {
-            tracing::warn!("Secret '{}' not found: signing session tokens with a random key. \
-                Every restart logs all users out.", name);
-            let key: [u8; 32] = rand::random();
-            Ok(key.to_vec())
-        }
-        Err(e) => Err(e.into()),
+/// What the program serves: `api` under `/api`, where a path no route
+/// takes is answered as a problem like every other error of the API, and
+/// the web UI everywhere else if it is built in.
+fn app(api: Router) -> Router {
+    let api = api.fallback(|| async { ApiError::not_found("not_found", "There is nothing at this path of the API") });
+    let app = Router::new().nest(API_PATH, api);
+    #[cfg(feature = "web-ui")]
+    let app = app.fallback_service(axum::routing::get(web_ui::serve));
+    app
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use axum::routing::get;
+    use tower::ServiceExt;
+
+    async fn status_of(app: &Router, uri: &str) -> (StatusCode, Option<String>) {
+        let response = app.clone().oneshot(Request::get(uri).body(Body::empty()).unwrap()).await.unwrap();
+        let content_type = response.headers().get("content-type").map(|v| v.to_str().unwrap().to_string());
+        (response.status(), content_type)
+    }
+
+    #[tokio::test]
+    async fn the_api_is_served_under_its_path_and_answers_a_wrong_path_as_a_problem() {
+        let app = app(Router::new().route("/sessions", get(|| async { "listed" })));
+        assert_eq!(status_of(&app, "/api/sessions").await.0, StatusCode::OK);
+        assert_eq!(status_of(&app, "/api/nothing").await, (StatusCode::NOT_FOUND, Some("application/problem+json".to_string())), "not the web UI");
     }
 }

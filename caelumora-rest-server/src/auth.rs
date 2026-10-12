@@ -23,9 +23,10 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
-use crate::error::Json;
-use crate::error::ApiError;
+use crate::error::{ApiError, Json};
+use caelumora_rest_api::auth::{LoginRequest, UserResponse};
 use caelumora_model::config::AuthConfig;
+use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StoreError;
 use caelumora_model::user::UserId;
@@ -76,6 +77,28 @@ pub struct TokenService {
 }
 
 impl TokenService {
+    /// Creates the service from the `auth` configuration, with the signing
+    /// key resolved through `secrets` by the name it gives. If the secret
+    /// does not exist, a random key is made - sessions then do not survive
+    /// a restart, which is fine for development and loudly announced.
+    ///
+    /// # Errors
+    /// What `secrets` reports other than a missing secret, and what `new`
+    /// reports.
+    pub async fn from_secret(secrets: &SecretManager, config: &AuthConfig) -> anyhow::Result<Self> {
+        let key = match secrets.resolve(&SecurityContext::system(), &config.jwt_secret).await {
+            Ok(key) => key.into_bytes(),
+            Err(SecretError::NotFound(_)) => {
+                tracing::warn!("Secret '{}' not found: signing session tokens with a random key. \
+                    Every restart logs all users out.", config.jwt_secret);
+                let key: [u8; 32] = rand::random();
+                key.to_vec()
+            }
+            Err(e) => return Err(e.into()),
+        };
+        Self::new(&key, config)
+    }
+
     /// Creates the service from the signing key and the `auth` configuration.
     ///
     /// # Errors
@@ -327,21 +350,6 @@ async fn authenticate(auth: Arc<Auth>, mut request: Request, next: Next, renew: 
         set_cookies(&mut response, cookies);
     }
     response
-}
-
-#[derive(Deserialize)]
-pub struct LoginRequest {
-    pub username: String,
-    pub password: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct UserResponse {
-    pub id: UserId,
-    pub username: String,
-    /// Lifetime of a session token in seconds, so that a client knows how
-    /// often to renew even if it cannot read the expiry cookie.
-    pub token_lifetime_secs: u64,
 }
 
 async fn login(State(auth): State<Arc<Auth>>, Json(request): Json<LoginRequest>) -> Response {
