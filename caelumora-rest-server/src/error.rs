@@ -29,7 +29,6 @@ use caelumora_runtime::command::CommandError;
 use caelumora_runtime::error::{refusal, user_message};
 use caelumora_runtime::group::GroupError;
 use caelumora_runtime::session::SessionError;
-use caelumora_runtime::skill::SkillError;
 use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::view::{ContextError, ViewError};
 use caelumora_runtime::workspace::WorkspaceError;
@@ -155,7 +154,7 @@ impl ApiError {
         Self::new(StatusCode::FORBIDDEN, format!("{}_forbidden", refused.subject), detail)
     }
 
-    fn bad_request(code: impl Into<Cow<'static, str>>, detail: impl Into<String>) -> Self {
+    pub fn bad_request(code: impl Into<Cow<'static, str>>, detail: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, code, detail)
     }
 }
@@ -217,7 +216,6 @@ impl From<ViewError> for ApiError {
             ViewError::ChannelNotFound { .. } | ViewError::NoChannelNamed(_) => Self::not_found("channel_not_found", detail),
             ViewError::MemberNotFound { .. } => Self::not_found("actor_not_found", detail),
             ViewError::WorkspaceNotFound(_) => Self::not_found("workspace_not_found", detail),
-            ViewError::SkillNotFound(_) | ViewError::NoSkillNamed(_) => Self::not_found("skill_not_found", detail),
             ViewError::GroupNotFound(_) => Self::not_found("group_not_found", detail),
             ViewError::ArtifactNotFound(_) => Self::not_found("artifact_not_found", detail),
             ViewError::NoContext { .. } => Self::not_found("context_not_recorded", detail),
@@ -244,22 +242,6 @@ impl From<WorkspaceError> for ApiError {
             WorkspaceError::Store(e) => Self::of_store(e),
             // A caller that is no user: not the client's request.
             WorkspaceError::OwnerNotAUser => Self::internal("internal_error", "the request", &error.into()),
-        }
-    }
-}
-
-impl From<SkillError> for ApiError {
-    fn from(error: SkillError) -> Self {
-        let detail = error.to_string();
-        match error {
-            SkillError::NotFound(_) | SkillError::Store(StoreError::NotFound { .. }) => Self::not_found("skill_not_found", detail),
-            SkillError::ClassificationRefused => Self::bad_request("invalid_classification", detail),
-            SkillError::NotCleared => Self::forbidden("not_cleared", detail),
-            SkillError::Invalid(e) => e.into(),
-            SkillError::Store(StoreError::Validation(_)) => Self::bad_request("invalid_scope", detail),
-            SkillError::Store(e) => Self::of_store(e),
-            // A caller that is no user: not the client's request.
-            SkillError::OwnerNotAUser => Self::internal("internal_error", "the request", &error.into()),
         }
     }
 }
@@ -398,7 +380,7 @@ impl From<anyhow::Error> for ApiError {
                 };
             )*};
         }
-        answer_as!(error, ContextError, ViewError, WorkspaceError, SkillError, GroupError, ArtifactError, TerminalError, SessionError, ChannelError, CommandError, TemplateError);
+        answer_as!(error, ContextError, ViewError, WorkspaceError, GroupError, ArtifactError, TerminalError, SessionError, ChannelError, CommandError, TemplateError);
         if error.chain().any(|e| matches!(e.downcast_ref(), Some(StoreError::NameTaken { .. }))) {
             return Self::conflict("name_taken", user_message(&error).unwrap_or_else(|| error.to_string()));
         }

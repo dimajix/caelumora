@@ -23,7 +23,6 @@ use crate::template::SessionTemplate;
 use crate::user::{User, UserProfile};
 use crate::value::name::ScopedName;
 use crate::workspace::Workspace;
-use crate::skill::Skill;
 use crate::group::Group;
 use crate::intern::intern;
 use crate::artifact::Artifact;
@@ -215,7 +214,6 @@ pub trait EntityStoreFactory {
 /// itself (`EntityStoreFactory`).
 #[derive(Debug, Clone)]
 pub struct EntityStores {
-    pub skills: Arc<dyn EntityStore<Skill>>,
     pub workspaces: Arc<dyn EntityStore<Workspace>>,
     pub artifacts: Arc<dyn EntityStore<Artifact>>,
     pub groups: Arc<dyn EntityStore<Group>>,
@@ -235,7 +233,6 @@ impl EntityStores {
     /// If one cannot be opened.
     pub fn open<F: EntityStoreFactory>(factory: &F) -> Result<Self, F::Error> {
         Ok(Self {
-            skills: factory.entity_store()?,
             workspaces: factory.entity_store()?,
             artifacts: factory.entity_store()?,
             groups: factory.entity_store()?,

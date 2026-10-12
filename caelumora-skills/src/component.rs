@@ -31,26 +31,28 @@
 //! compaction summarises is given again, as it is now - where it may still
 //! be loaded (`KnowledgeRestorer`, issue 323).
 
-use crate::agent::turn::Turn;
-use crate::agent::work::AgentWork;
-use crate::compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
-use crate::command::{AgentCommandProvider, CommandError, CommandResult, ProvidesCommands};
-use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::context::{titled, Prompt, PromptPosition, PromptProvider};
-use crate::skill::SkillError;
-use crate::tool::{arguments, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
-use crate::view::{SessionView, SkillView, ViewError};
+use crate::manager::SkillError;
+use crate::skill::{Skill, SkillId};
+use crate::view::{SkillView, SkillViews};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::question::Answers;
-use caelumora_model::scope::Scope;
 use caelumora_model::removal::Stored;
-use caelumora_model::skill::{Skill, SkillId};
+use caelumora_model::scope::Scope;
 use caelumora_model::store::{EntityKind, StoreError};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_runtime::agent::turn::Turn;
+use caelumora_runtime::agent::work::AgentWork;
+use caelumora_runtime::command::{AgentCommandProvider, CommandError, CommandResult, ProvidesCommands};
+use caelumora_runtime::compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
+use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::context::{titled, Prompt, PromptPosition, PromptProvider};
+use caelumora_runtime::tool::{arguments, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_runtime::view::SessionView;
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -77,10 +79,10 @@ const CATALOGUE_TITLE: &str = "Skills you can load";
 
 #[derive(Debug)]
 pub struct SkillsComponent {
-    pub(crate) position: PromptPosition,
+    pub position: PromptPosition,
     /// Whether writing a skill is approved first: always, unless the
     /// parameter `requires_approval` says `false`.
-    pub(crate) requires_approval: ApprovalMode,
+    pub requires_approval: ApprovalMode,
 }
 
 /// What the component is configured with besides its position.
@@ -163,18 +165,22 @@ impl SkillScope {
     }
 }
 
-/// What the model is told when writing a skill failed: what it can
-/// correct, such as a name taken, text that does not fit or a skill not its
-/// owner's, as such; the rest as a failure.
-fn tool_error(error: SkillError) -> ToolError {
-    match error {
-        SkillError::Invalid(e) => ToolError::InvalidParameter(e.to_string()),
-        SkillError::Store(StoreError::NameTaken { .. }) => ToolError::InvalidParameter("a skill of that name exists there already; update it instead".to_string()),
-        SkillError::Store(StoreError::PermissionDenied(_)) => ToolError::PermissionDenied("you may write only skills of your owner's".to_string()),
-        SkillError::NotFound(_) => ToolError::InvalidParameter("there is no such skill you may change".to_string()),
-        SkillError::OwnerNotAUser => ToolError::InvalidParameter("a skill belongs to a user, and your owner is none".to_string()),
-        SkillError::ClassificationRefused | SkillError::NotCleared => ToolError::PermissionDenied("the skill may not be classified as what you have seen".to_string()),
-        SkillError::Store(e) => ToolError::ExecutionFailed(format!("the skill could not be stored: {e}")),
+/// What the model is told when reaching or writing a skill failed: what it
+/// can correct, such as a name taken, text that does not fit or a skill not
+/// its owner's, as such; the rest as a failure.
+impl From<SkillError> for ToolError {
+    fn from(error: SkillError) -> Self {
+        match error {
+            SkillError::Invalid(e) => ToolError::InvalidParameter(e.to_string()),
+            SkillError::Store(StoreError::NameTaken { .. }) => ToolError::InvalidParameter("a skill of that name exists there already; update it instead".to_string()),
+            SkillError::Store(StoreError::PermissionDenied(_)) => ToolError::PermissionDenied("you may write only skills of your owner's".to_string()),
+            SkillError::NotFound(_) => ToolError::InvalidParameter("there is no such skill you may change".to_string()),
+            SkillError::NoSkillNamed(_) => ToolError::InvalidParameter(error.to_string()),
+            SkillError::OwnerNotAUser => ToolError::InvalidParameter("a skill belongs to a user, and your owner is none".to_string()),
+            SkillError::ClassificationRefused | SkillError::NotCleared => ToolError::PermissionDenied("the skill may not be classified as what you have seen".to_string()),
+            SkillError::NotJoined => ToolError::ExecutionFailed(error.to_string()),
+            SkillError::Store(e) => ToolError::ExecutionFailed(format!("the skill could not be stored: {e}")),
+        }
     }
 }
 
@@ -314,9 +320,8 @@ impl ToolProvider for SkillsComponent {
                         None => return Err(ToolError::InvalidParameter("your owner is no user: write a skill of this session".to_string())),
                     },
                 };
-                let made = session.views().skill_manager()
-                    .create(&context, name.trim(), scope, &description, &body, turn.label()).await
-                    .map_err(tool_error)?;
+                let made = session.views().skill_manager()?
+                    .create(&context, name.trim(), scope, &description, &body, turn.label()).await?;
                 Ok(ToolOutput::classified(serde_json::json!({ "status": "created", "name": made.name.name.as_str(), "skill_id": made.id }), turn.label()))
             }
             UPDATE_SKILL_TOOL_NAME => {
@@ -327,18 +332,19 @@ impl ToolProvider for SkillsComponent {
                 let session = session_of(turn).await?;
                 let skill = session.views().usable_skill_named(name.trim()).await?;
                 let context = turn.security_context().clone();
-                let manager = session.views().skill_manager();
+                let views = session.views();
+                let manager = views.skill_manager()?;
                 // What the turn saw goes into the skill: raised to it first,
                 // so that nothing of it is ever held lower.
                 let raised = skill.classification().join_within(&turn.label(), &turn.classification());
                 if raised != *skill.classification() {
-                    manager.reclassify(&context, skill.id(), raised.clone()).await.map_err(tool_error)?;
+                    manager.reclassify(&context, skill.id(), raised.clone()).await?;
                 }
                 if let Some(description) = description {
-                    manager.describe(&context, skill.id(), &description).await.map_err(tool_error)?;
+                    manager.describe(&context, skill.id(), &description).await?;
                 }
                 if let Some(body) = body {
-                    manager.rewrite(&context, skill.id(), &body).await.map_err(tool_error)?;
+                    manager.rewrite(&context, skill.id(), &body).await?;
                 }
                 Ok(ToolOutput::classified(serde_json::json!({ "status": "updated", "name": skill.name(), "skill_id": skill.id(), "classification": raised.to_string() }), turn.label()))
             }
@@ -369,10 +375,10 @@ impl ProvidesCommands for SkillsComponent {
 /// What a command answers when a skill cannot be reached: one it may not
 /// load is the issuer's to correct, as a name that does not exist; a
 /// failure to read is the command's.
-fn command_error(command: &str, error: ViewError) -> CommandError {
+fn command_error(command: &str, error: SkillError) -> CommandError {
     match error {
-        ViewError::Failed(e) => {
-            tracing::warn!("/{} could not read the skills: {:#}", command, e);
+        SkillError::Store(_) | SkillError::NotJoined => {
+            tracing::warn!("/{} could not read the skills: {:#}", command, error);
             CommandError::Failed { command: command.to_string(), reason: "the skills could not be read".to_string() }
         }
         other => CommandError::InvalidArguments { command: command.to_string(), reason: other.to_string() },
@@ -411,7 +417,7 @@ impl AgentCommandProvider for SkillsComponent {
                     sender_name: issuer_name.unwrap_or_else(|| "a user".to_string()),
                     role: MessageRole::User,
                     content: Some(skill.as_given()),
-                    timestamp: chrono::Utc::now(),
+                    timestamp: Utc::now(),
                     ..Message::new(skill.classification().clone())
                 };
                 // Nothing can fail from here on: what is given is written at once.
@@ -457,7 +463,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             .provides::<dyn KnowledgeRestorer>(),
         |descriptor, _context| {
             let position = PromptPosition::of_params(&descriptor.params)?;
-            let SkillsConfig { requires_approval } = crate::component::config_of_params(&descriptor.params)?;
+            let SkillsConfig { requires_approval } = config_of_params(&descriptor.params)?;
             let component = Arc::new(SkillsComponent { position, requires_approval });
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::<SkillsComponent>::clone(&component));
@@ -467,121 +473,4 @@ pub fn register(registry: &mut ComponentRegistry) {
             Ok(facets)
         },
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use caelumora_model::store::query::Query;
-    use caelumora_model::context::KnowledgeRef;
-    use caelumora_model::digest;
-    use crate::workspace::testing::session_with_workspace;
-    use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::confidentiality::Confidentiality;
-    use caelumora_model::scope::Scope;
-    use caelumora_model::security::SecurityContext;
-
-    #[tokio::test]
-    async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as_knowledge() {
-        let world = session_with_workspace().await;
-        let component = SkillsComponent { position: PromptPosition::Start, requires_approval: ApprovalMode::Always };
-        let mut state = AgentChannelState::default();
-        let prompt = component.get_prompt(&world.turn(&mut state).work()).await.unwrap();
-        assert_eq!(prompt.text, "", "nothing to list, no part");
-
-        let internal = Classification::general(Confidentiality::Internal);
-        let made = world.runtime.skill_manager()
-            .create(&SecurityContext::system(), "release-notes", Scope::GlobalScope, "How we write a release note", "1. Collect.\n2. Group.", internal.clone()).await.unwrap();
-        let mut state = AgentChannelState::default();
-        let prompt = component.get_prompt(&world.turn(&mut state).work()).await.unwrap();
-        assert!(prompt.text.starts_with("[Skills you can load]") && prompt.text.contains("- release-notes: How we write a release note"), "{}", prompt.text);
-        assert!(!prompt.text.contains("Collect"), "the catalogue, not the text");
-        assert_eq!(prompt.classification, Some(internal.clone()));
-
-        let mut turn = world.turn(&mut state);
-        let listed = ToolProvider::execute(&component, LIST_SKILLS_TOOL_NAME, &serde_json::json!({}), None, &mut turn).await.unwrap();
-        assert_eq!(listed.value, serde_json::json!({ "skills": [{ "name": "release-notes", "description": "How we write a release note", "skill_id": made.id }] }), "each with its id, for a frontend to link to");
-        assert_eq!(listed.classification, Some(internal.clone()));
-        drop(turn);
-
-        let mut turn = world.turn(&mut state);
-        let loaded = ToolProvider::execute(&component, LOAD_SKILL_TOOL_NAME, &serde_json::json!({ "name": "release-notes" }), None, &mut turn).await.unwrap();
-        assert_eq!(loaded.value, Value::String("[Skill: release-notes]\n1. Collect.\n2. Group.\n".to_string()), "the text, under its title");
-        assert_eq!(loaded.classification, Some(internal));
-        drop(turn);
-        let read = state.turn.as_ref().unwrap().work.context.knowledge.clone();
-        assert!(matches!(read.as_slice(), [KnowledgeRef { source, .. }] if source.about::<Skill>() == Some((made.id, Some(digest::skill("1. Collect.\n2. Group."))))), "{read:?}");
-
-        let mut turn = world.turn(&mut state);
-        let absent = ToolProvider::execute(&component, LOAD_SKILL_TOOL_NAME, &serde_json::json!({ "name": "nothing" }), None, &mut turn).await;
-        assert!(matches!(absent, Err(ToolError::InvalidParameter(_))), "the model's to correct");
-    }
-
-    async fn call(component: &SkillsComponent, turn: &mut Turn<'_>, name: &str, params: Value) -> ToolResult<ToolOutput> {
-        ToolProvider::execute(component, name, &params, None, turn).await
-    }
-
-    #[tokio::test]
-    async fn an_agent_writes_a_skill_of_its_owners_classified_as_what_it_saw_and_raises_one_it_changes() {
-        let world = session_with_workspace().await;
-        let component = SkillsComponent { position: PromptPosition::Start, requires_approval: ApprovalMode::Always };
-        let mut state = AgentChannelState::default();
-        let mut turn = world.turn(&mut state);
-        let created = call(&component, &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.", "scope": "session" })).await.unwrap();
-        assert_eq!(created.value["status"], "created");
-        let created_id = created.value["skill_id"].clone();
-        let global = call(&component, &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "other", "description": "d", "body": "b", "scope": "global" })).await;
-        assert!(matches!(global, Err(ToolError::InvalidParameter(_))), "never global");
-        let twice = call(&component, &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "Deploy", "description": "d", "body": "b", "scope": "session" })).await;
-        assert!(matches!(twice, Err(ToolError::InvalidParameter(ref m)) if m.contains("update it instead")), "{twice:?}");
-        let mine = call(&component, &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "notes", "description": "How we take notes", "body": "Short.", "scope": "user" })).await;
-        assert!(mine.is_ok(), "{mine:?}");
-        drop(turn);
-
-        let skills = world.runtime.entity_stores().skills.list(&SecurityContext::system(), &Query::all()).await.map(|page| page.items).unwrap();
-        let deploy = skills.iter().find(|s| s.name.name.as_str() == "deploy").expect("made");
-        let owner = world.context.principal_id;
-        assert_eq!((deploy.security_attributes.owner_id, &deploy.name.scope), (owner, &Scope::SessionScope { session_id: world.session.id() }), "its owner's, in the session");
-        assert_eq!(deploy.classification, Classification::PUBLIC, "what the turn had seen: nothing above public");
-        let notes = skills.iter().find(|s| s.name.name.as_str() == "notes").expect("made");
-        assert_eq!(notes.name.scope, Scope::UserScope { user_id: owner.as_user_id().unwrap() });
-
-        // A turn that saw something internal writes it into the skill: raised first.
-        let internal = Classification::general(Confidentiality::Internal);
-        let mut state = AgentChannelState::default();
-        let mut turn = world.turn(&mut state);
-        turn.see(&internal);
-        let updated = call(&component, &mut turn, UPDATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "deploy", "body": "1. Build.\n2. Ship." })).await.unwrap();
-        assert_eq!(updated.value["status"], "updated");
-        assert_eq!(updated.value["skill_id"], created_id, "the skill it changed, for a frontend to link to");
-        let nothing = call(&component, &mut turn, UPDATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "deploy" })).await;
-        assert!(matches!(nothing, Err(ToolError::InvalidParameter(_))), "nothing to change");
-        drop(turn);
-        let deploy = world.runtime.entity_stores().skills.get(&SecurityContext::system(), deploy.id).await.unwrap();
-        assert_eq!((deploy.body.as_str(), &deploy.classification), ("1. Build.\n2. Ship.", &internal), "the new steps, classified as what was seen");
-        assert_eq!(created_id, serde_json::json!(deploy.id), "the skill it made");
-    }
-
-    #[test]
-    fn an_approver_is_shown_the_skill_whole() {
-        let component = SkillsComponent { position: PromptPosition::Start, requires_approval: ApprovalMode::Always };
-        let shown = component.describe(CREATE_SKILL_TOOL_NAME, &serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.\n2. Ship.", "scope": "user" })).unwrap();
-        assert_eq!(shown, "Write the skill \"deploy\" (for every session of the agent's owner): How we deploy\n\n1. Build.\n2. Ship.");
-        let tools = component.tools();
-        assert!(tools.iter().filter(|t| t.name == CREATE_SKILL_TOOL_NAME || t.name == UPDATE_SKILL_TOOL_NAME).all(|t| t.requires_approval), "approved by default");
-        let unapproved = SkillsComponent { position: PromptPosition::Start, requires_approval: ApprovalMode::Never }.tools();
-        assert!(unapproved.iter().all(|t| !t.requires_approval), "unless configured otherwise");
-    }
-
-    #[test]
-    fn load_skill_shows_the_channel_which_skill_it_loaded_not_what_it_gave() {
-        let tools = SkillsComponent { position: PromptPosition::Start, requires_approval: ApprovalMode::Always }.tools();
-        let load = tools.iter().find(|t| t.name == LOAD_SKILL_TOOL_NAME).unwrap();
-        assert_eq!(load.visibility, ToolVisibility::WITHOUT_RESULT);
-        let skills: Vec<_> = tools.iter().filter(|t| t.presentation == SKILL_PRESENTATION).map(|t| t.name.as_str()).collect();
-        assert_eq!(skills, [LOAD_SKILL_TOOL_NAME, CREATE_SKILL_TOOL_NAME, UPDATE_SKILL_TOOL_NAME], "shown as a skill");
-        let list = tools.iter().find(|t| t.name == LIST_SKILLS_TOOL_NAME).unwrap();
-        assert_eq!((list.presentation, list.visibility), (SKILL_LIST_PRESENTATION, ToolVisibility::SHOWN), "the catalogue as a list of skills");
-        assert!(tools.iter().filter(|t| t.name == LOAD_SKILL_TOOL_NAME || t.name == LIST_SKILLS_TOOL_NAME).all(|t| !t.requires_approval), "reading needs no approval");
-    }
 }

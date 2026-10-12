@@ -375,7 +375,7 @@ impl Admission {
 /// read (issue 246), as the provider tells them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(try_from = "Value")]
-pub(crate) enum ApprovalMode {
+pub enum ApprovalMode {
     #[default]
     Always,
     Never,
@@ -385,7 +385,7 @@ pub(crate) enum ApprovalMode {
 impl ApprovalMode {
     /// Whether calls of a tool require approval, which only reads if
     /// `read_only`.
-    pub(crate) fn required(self, read_only: bool) -> bool {
+    pub fn required(self, read_only: bool) -> bool {
         match self {
             ApprovalMode::Always => true,
             ApprovalMode::Never => false,

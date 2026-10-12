@@ -211,7 +211,7 @@ where
 
 /// Whether `deleted` says it was deleted; `false` also if it was not the
 /// caller's to delete (issue 320), which leaves it.
-pub(crate) fn deleted_unless_refused(deleted: StoreResult<bool>) -> StoreResult<bool> {
+pub fn deleted_unless_refused(deleted: StoreResult<bool>) -> StoreResult<bool> {
     match deleted {
         Err(StoreError::PermissionDenied(_)) => Ok(false),
         deleted => deleted,
@@ -221,7 +221,7 @@ pub(crate) fn deleted_unless_refused(deleted: StoreResult<bool>) -> StoreResult<
 /// What `restored` says was restored of `deleted`; `None` if it stays
 /// deleted: its name was taken meanwhile, or it is not the caller's to
 /// restore (issue 320).
-pub(crate) fn restored_unless_refused<D: Stored, T>(restored: StoreResult<T>, deleted: &D) -> StoreResult<Option<T>> {
+pub fn restored_unless_refused<D: Stored, T>(restored: StoreResult<T>, deleted: &D) -> StoreResult<Option<T>> {
     match restored {
         Ok(value) => Ok(Some(value)),
         Err(StoreError::NameTaken { .. }) => {
@@ -238,12 +238,12 @@ pub(crate) fn restored_unless_refused<D: Stored, T>(restored: StoreResult<T>, de
 
 /// The query of what lies in `holder` or within it (issue 293), which the
 /// store answers by the scope.
-pub(crate) fn within<F: ScopedField>(holder: &Scope) -> Query<F> {
+pub fn within<F: ScopedField>(holder: &Scope) -> Query<F> {
     Query { filter: holder.within(), ..Query::all() }
 }
 
 /// Those of `deleted` that were deleted at `since` or later - a comparison
 /// a query does not make yet.
-pub(crate) fn deleted_since<D: Stored>(deleted: Vec<D>, since: DateTime<Utc>) -> Vec<D> {
+pub fn deleted_since<D: Stored>(deleted: Vec<D>, since: DateTime<Utc>) -> Vec<D> {
     deleted.into_iter().filter(|d| d.deleted().is_some_and(|removal| removal.at >= since)).collect()
 }

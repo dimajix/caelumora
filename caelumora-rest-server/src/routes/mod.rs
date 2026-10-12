@@ -26,7 +26,6 @@ mod profile;
 mod sessions;
 mod templates;
 mod workspaces;
-mod skills;
 mod groups;
 
 pub async fn ensure_session(
@@ -131,13 +130,6 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
         .route("/agents/{id}", axum::routing::delete(agents::delete_agent))
         .route("/agents/{id}/restore", post(agents::restore_agent))
         .route("/agents/{id}/purge", post(agents::purge_agent))
-        .route("/skills", get(skills::list_skills).post(skills::create_skill))
-        .route("/skills/{id}", get(skills::get_skill).patch(skills::rename_skill).delete(skills::delete_skill))
-        .route("/skills/{id}/description", axum::routing::put(skills::describe_skill))
-        .route("/skills/{id}/body", axum::routing::put(skills::rewrite_skill))
-        .route("/skills/{id}/classification", axum::routing::put(skills::reclassify_skill))
-        .route("/skills/{id}/restore", post(skills::restore_skill))
-        .route("/skills/{id}/purge", post(skills::purge_skill))
         .route("/groups", get(groups::list_groups).post(groups::create_group))
         .route("/groups/{id}", get(groups::get_group).patch(groups::rename_group).delete(groups::delete_group))
         .route("/groups/{id}/members", axum::routing::put(groups::set_members))

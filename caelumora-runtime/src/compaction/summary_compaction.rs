@@ -307,18 +307,50 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::AgentCommandProvider;
-    use crate::component_impl::skills::{SkillsComponent, SKILL_COMMAND_NAME};
-    use crate::context::PromptPosition;
-    use crate::tool::ApprovalMode;
     use crate::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
-    use caelumora_model::scope::Scope;
-    use caelumora_model::security::SecurityContext;
-    use caelumora_model::skill::{Skill, SkillId};
+    use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
+    use caelumora_model::removal::Stored;
+    use caelumora_model::store::EntityKind;
     use caelumora_model::tool::Tool;
+    use caelumora_model::workspace::{Workspace, WorkspaceId};
     use std::sync::Mutex;
+
+    /// What the agent of a test is given, as a plugin gives it - a skill,
+    /// say: a workspace, here, and its text.
+    const GIVEN: &str = "[Skill: release-notes]
+1. Collect.
+";
+
+    /// That `id` was given to the agent of `world`.
+    fn knowledge(world: &WithWorkspace, id: WorkspaceId) -> KnowledgeRef {
+        KnowledgeRef { channel: world.session.channels()[0].id(), session: world.session.id(), source: KnowledgeSource::entity::<Workspace>(id, None), classification: Some(Classification::general(Confidentiality::Internal)) }
+    }
+
+    /// Gives again what it knows, as the component that gave it would:
+    /// `Some` the one id it can still give.
+    #[derive(Debug)]
+    struct Restorer(Option<WorkspaceId>);
+
+    #[async_trait]
+    impl KnowledgeRestorer for Restorer {
+        fn kind(&self) -> EntityKind {
+            Workspace::KIND
+        }
+
+        async fn give_again(&self, turn: &mut Turn<'_>, given: &[Uuid]) -> Result<Vec<GivenAgain>, CompactionError> {
+            Ok(given.iter().filter(|id| self.0.is_some_and(|known| known == WorkspaceId::from(**id))).map(|id| GivenAgain {
+                name: "release-notes".to_string(),
+                text: GIVEN.to_string(),
+                knowledge: KnowledgeRef { source: KnowledgeSource::entity::<Workspace>(WorkspaceId::from(*id), None), ..turn_knowledge(turn) },
+            }).collect())
+        }
+    }
+
+    fn turn_knowledge(turn: &Turn<'_>) -> KnowledgeRef {
+        KnowledgeRef { channel: turn.channel_id(), session: turn.session_id(), source: KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), None), classification: Some(Classification::general(Confidentiality::Internal)) }
+    }
 
     /// A model that summarises everything as `"They want release notes."`,
     /// keeping what it was given.
@@ -406,18 +438,16 @@ mod tests {
         assert_eq!(kept_whole(entries.iter(), under_way), HashSet::from([under_way, lowered]));
     }
 
-    /// The world's agent heard `u1`, was given the skill `release-notes`
-    /// with `/skill`, answered `a1` in a turn of its own, then heard `u2`.
-    async fn an_agent_with_a_skill_given(world: &WithWorkspace, state: &mut AgentChannelState) -> SkillId {
-        let internal = Classification::general(Confidentiality::Internal);
-        let skill = world.runtime.skill_manager()
-            .create(&SecurityContext::system(), "release-notes", Scope::GlobalScope, "How we write a release note", "1. Collect.", internal).await.unwrap();
+    /// The world's agent heard `u1`, was given `release-notes` - as a
+    /// member gives a skill with `/skill` -, answered `a1` in a turn of its
+    /// own, then heard `u2`.
+    async fn an_agent_with_a_skill_given(world: &WithWorkspace, state: &mut AgentChannelState) -> WorkspaceId {
+        let skill = WorkspaceId::new();
         let heard = |text: &str| Message { content: Some(text.to_string()), ..Message::new(Classification::PUBLIC) };
         let u1 = heard("u1");
         state.perceive(vec![u1.clone()], vec![u1]);
-        let skills = SkillsComponent { position: PromptPosition::Start, requires_approval: ApprovalMode::Always };
         let mut turn = world.turn(state);
-        AgentCommandProvider::execute(&skills, SKILL_COMMAND_NAME, "release-notes", &mut turn).await.expect("given");
+        turn.give(Message { content: Some(GIVEN.to_string()), ..Message::new(Classification::general(Confidentiality::Internal)) }, knowledge(world, skill));
         drop(turn);
         let given = state.turn.take().unwrap().work.turn_id;
         state.finish_turn(given, ActorId::Agent(world.agent), Vec::new(), Vec::new(), None);
@@ -427,36 +457,35 @@ mod tests {
         state.finish_turn(answered, ActorId::Agent(world.agent), Vec::new(), Vec::new(), None);
         let u2 = heard("u2");
         state.perceive(vec![u2.clone()], vec![u2]);
-        skill.id
+        skill
     }
 
     #[tokio::test]
-    async fn the_older_messages_are_replaced_by_a_summary_and_the_skills_given_again() {
+    async fn the_older_messages_are_replaced_by_a_summary_and_what_was_given_given_again() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let skill = an_agent_with_a_skill_given(&world, &mut state).await;
         let before = state.transcript.digest().unwrap();
         let model = Arc::new(Summariser::default());
-        let skills = SkillsComponent { position: PromptPosition::Start, requires_approval: ApprovalMode::Always };
-        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep_last: 1, restorers: vec![Arc::new(skills)] };
+        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep_last: 1, restorers: vec![Arc::new(Restorer(Some(skill)))] };
 
         let mut turn = world.turn(&mut state);
         let compaction = strategy.compact(&mut turn).await.expect("compacted");
         drop(turn);
 
-        assert_eq!(compaction, Some(Compaction { replaced: 3, kept: 1, given_again: vec!["skill release-notes".to_string()], lost: 0 }));
+        assert_eq!(compaction, Some(Compaction { replaced: 3, kept: 1, given_again: vec!["workspace release-notes".to_string()], lost: 0 }));
         let given = model.0.lock().unwrap().pop().expect("its model was asked");
         let texts: Vec<_> = given.iter().filter_map(|m| m.content.clone()).collect();
         assert!(texts.iter().any(|t| t == "u1") && texts.iter().any(|t| t == "a1") && !texts.iter().any(|t| t == "u2"), "the older messages, not those kept: {texts:?}");
         assert_eq!(texts.last(), Some(&strategy.instruction()), "asked for the summary last");
-        assert!(strategy.instruction().ends_with("Leave out the text of anything given to you as a skill: it is given to you again."), "and to leave out what is given again");
+        assert!(strategy.instruction().ends_with("Leave out the text of anything given to you as a workspace: it is given to you again."), "and to leave out what is given again");
 
         let now: Vec<_> = state.transcript.messages().into_iter().map(|m| m.content.unwrap_or_default()).collect();
         assert_eq!(now, ["[Summary of the conversation so far]\nThey want release notes.\n", "[Skill: release-notes]\n1. Collect.\n", "u2"]);
-        assert!(matches!(state.transcript.entries().nth(1).map(|n| &n.entry), Some(TranscriptEntry::Given { source, .. }) if source.about::<Skill>().is_some_and(|(s, _)| s == skill)), "the skill as given");
+        assert!(matches!(state.transcript.entries().nth(1).map(|n| &n.entry), Some(TranscriptEntry::Given { source, .. }) if source.about::<Workspace>().is_some_and(|(s, _)| s == skill)), "the skill as given");
         assert!(state.transcript.prefix(&before).is_some(), "what it saw before stays");
         let knowledge = &state.turn.as_ref().unwrap().work.context.knowledge;
-        assert!(knowledge.iter().any(|k| k.source.about::<Skill>().is_some_and(|(s, _)| s == skill)), "the turn has read it");
+        assert!(knowledge.iter().any(|k| k.source.about::<Workspace>().is_some_and(|(s, _)| s == skill)), "the turn has read it");
         let usage = state.usage(ActorId::Agent(world.agent)).expect("the summary's call");
         assert_eq!(usage.last_call_tokens, 48);
     }
@@ -468,10 +497,9 @@ mod tests {
     async fn what_can_no_longer_be_given_is_counted_as_lost() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let skill = an_agent_with_a_skill_given(&world, &mut state).await;
-        world.runtime.skill_manager().delete(&SecurityContext::system(), skill).await.expect("deleted");
-        let skills = SkillsComponent { position: PromptPosition::Start, requires_approval: ApprovalMode::Always };
-        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep_last: 1, restorers: vec![Arc::new(skills)] };
+        an_agent_with_a_skill_given(&world, &mut state).await;
+        // Deleted meanwhile: its restorer gives it no more.
+        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep_last: 1, restorers: vec![Arc::new(Restorer(None))] };
 
         let mut turn = world.turn(&mut state);
         let compaction = strategy.compact(&mut turn).await.expect("compacted");

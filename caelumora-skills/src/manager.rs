@@ -1,6 +1,6 @@
 //! The one writer of skills (issue 22): it makes, changes, deletes,
 //! restores and purges them - stored first, then announced. Reading them is
-//! the views' (`view::SkillView`). Those of a session's scope it deletes,
+//! the views' (`view::SkillViews`). Those of a session's scope it deletes,
 //! restores and purges with the session (`…_lying_in`, called by `scoped`).
 //!
 //! A skill belongs to whoever it is made for - the principal of the context
@@ -11,8 +11,7 @@
 //! not read. A skill named by its id is reached by the store, as the views
 //! reach it: read and cleared for (issues 312, 322).
 
-use crate::event::EventBus;
-use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused, within};
+use crate::skill::{Skill, SkillBody, SkillId, SkillUpdateEvent};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
@@ -20,11 +19,12 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::removal::Stored;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::skill::{Skill, SkillId, SkillUpdateEvent};
-use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
-use caelumora_model::value::text::{Description, SkillBody};
+use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
+use caelumora_runtime::event::EventBus;
+use caelumora_runtime::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, within, ScopeMember};
 use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
@@ -43,9 +43,18 @@ pub enum SkillError {
     ClassificationRefused,
     #[error("you are not cleared for the classification of the skill")]
     NotCleared,
+    /// What an agent asks for by name: no skill of the name it may load
+    /// where it is, alike whether there is one at all (issue 22).
+    #[error("there is no skill named \"{0}\" that can be loaded here")]
+    NoSkillNamed(String),
+    /// The runtime was built without the plugin (issue 323).
+    #[error("skills are not offered here")]
+    NotJoined,
     #[error(transparent)]
     Invalid(#[from] ValueError),
-    #[error(transparent)]
+    /// What the store reported, as its source: judged as a store error
+    /// wherever errors are turned into messages.
+    #[error("{0}")]
     Store(#[from] StoreError),
 }
 
@@ -76,11 +85,16 @@ impl fmt::Debug for SkillManager {
 }
 
 impl SkillManager {
-    /// Who may do what is asked by the store of skills of `stores`, which
-    /// every write goes through - the clearance for a skill reached
-    /// included (issue 322); the manager asks the flow alone (issue 304).
-    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
-        Self { skills: Arc::clone(&stores.skills), events, confidentiality, writing: Mutex::new(()) }
+    /// Who may do what is asked by `skills`, the store every write goes
+    /// through - the clearance for a skill reached included (issue 322);
+    /// the manager asks the flow alone (issue 304).
+    pub fn new(skills: Arc<dyn EntityStore<Skill>>, events: Arc<EventBus>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+        Self { skills, events, confidentiality, writing: Mutex::new(()) }
+    }
+
+    /// The store of skills, which the views read (`SkillViews`).
+    pub(crate) fn store(&self) -> &Arc<dyn EntityStore<Skill>> {
+        &self.skills
     }
 
     /// Whether the one `ctx` acts for is cleared for `classification`: what
@@ -175,7 +189,7 @@ impl SkillManager {
                 skill.classification = classification.clone();
             }
         }
-        skill.updated_at = chrono::Utc::now();
+        skill.updated_at = Utc::now();
         self.skills.update(ctx, &skill).await.map_err(store_error(id))?;
         self.events.publish_classified(GlobalEvent::updated::<Skill>(&id, &event), skill.security_attributes.clone(), &[had, skill.classification.clone()]);
         info!(skill = %id, by = %ctx.caller_id, "Skill changed");

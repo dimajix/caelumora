@@ -31,7 +31,6 @@ mod context;
 mod group;
 mod member;
 mod session;
-mod skill;
 mod workspace;
 
 pub use artifact::ArtifactView;
@@ -39,7 +38,6 @@ pub use channel::{ChannelView, MemberView};
 pub use context::{AgentContextView, ContextError};
 pub use group::GroupView;
 pub use session::{PrivateNotesElsewhere, SessionView};
-pub use skill::SkillView;
 pub use workspace::WorkspaceView;
 
 use caelumora_model::artifact::{ArtifactField, ArtifactId};
@@ -56,18 +54,14 @@ use caelumora_model::security::{AccessQuestions, AclEntry, Refused, SecurityAttr
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::{AccessSnapshot, AgentSnapshot, DeletedSnapshot};
 use caelumora_model::workspace::WorkspaceId;
-use caelumora_model::skill::SkillId;
 use caelumora_model::group::{Group, GroupField, GroupId};
-use caelumora_model::scope::{found_from, Scope, Scoped};
-use caelumora_model::value::name::Name;
+use caelumora_model::scope::Scope;
 use crate::workspace::WorkspaceManager;
-use crate::skill::SkillManager;
 use caelumora_model::store::{EntityStores, StateStore, StoreError, StoreResultExt};
 use crate::component::ComponentRegistry;
 use std::sync::Arc;
 use caelumora_model::artifact::Artifact;
 use caelumora_model::session::Session;
-use caelumora_model::skill::Skill;
 use caelumora_model::workspace::Workspace;
 use caelumora_model::removal::Stored;
 
@@ -118,12 +112,6 @@ pub enum ViewError {
     ChannelNotFound { session: SessionId, channel: ChannelId },
     #[error("There is no workspace {0}")]
     WorkspaceNotFound(WorkspaceId),
-    #[error("There is no skill {0}")]
-    SkillNotFound(SkillId),
-    /// What an agent asks for by name: no skill of the name it may load
-    /// where it is, alike whether there is one at all (issue 22).
-    #[error("there is no skill named \"{0}\" that can be loaded here")]
-    NoSkillNamed(String),
     #[error("There is no artifact {0}")]
     ArtifactNotFound(ArtifactId),
     #[error("There is no group {0}")]
@@ -207,7 +195,6 @@ pub struct Views {
     states: Arc<dyn StateStore>,
     components: Arc<ComponentRegistry>,
     workspaces: Arc<WorkspaceManager>,
-    skills: Arc<SkillManager>,
     artifacts: Arc<crate::artifact::ArtifactManager>,
     running: Arc<dyn RunningSessions>,
     viewer: Viewer,
@@ -223,7 +210,6 @@ impl Views {
             states: Arc::clone(runtime.state_store()),
             components: Arc::clone(runtime.component_registry()),
             workspaces: Arc::clone(runtime.workspace_manager()),
-            skills: Arc::clone(runtime.skill_manager()),
             artifacts: Arc::clone(runtime.artifact_manager()),
             running,
             viewer,
@@ -276,12 +262,6 @@ impl Views {
 
     pub(crate) fn workspace_manager(&self) -> &Arc<WorkspaceManager> {
         &self.workspaces
-    }
-
-    /// Where an agent's tools write skills (issue 22), as its file tools
-    /// reach the workspace manager.
-    pub(crate) fn skill_manager(&self) -> &Arc<SkillManager> {
-        &self.skills
     }
 
     pub(crate) fn artifact_manager(&self) -> &Arc<crate::artifact::ArtifactManager> {
@@ -746,98 +726,6 @@ impl Views {
     /// (issues 316, 322).
     pub(super) fn cleared_for(&self, classification: &Classification) -> bool {
         self.confidentiality.cleared_for(self.viewer.context(), classification)
-    }
-
-    /// The skills the store lists for the viewer (issues 22, 322): their
-    /// own, those shared with them, the system's, that they are cleared
-    /// for.
-    ///
-    /// # Errors
-    /// `Failed` if the store cannot list them.
-    pub async fn skills(&self) -> ViewResult<Vec<SkillView>> {
-        let skills = self.stores.skills.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
-            .map_err(|e| ViewError::failed(e, "listing the skills"))?;
-        Ok(skills.into_iter().map(|skill| SkillView::of(self.clone(), skill)).collect())
-    }
-
-    /// Skill `id`, if the store lets the viewer reach it - read it and be
-    /// cleared for it.
-    ///
-    /// # Errors
-    /// `SkillNotFound` if there is none they may reach.
-    pub async fn skill(&self, id: SkillId) -> ViewResult<SkillView> {
-        match self.stores.skills.get(self.viewer.context(), id).await.optional() {
-            Ok(Some(skill)) => Ok(SkillView::of(self.clone(), skill)),
-            Ok(None) => Err(ViewError::SkillNotFound(id)),
-            Err(e) => Err(ViewError::failed(e, "reading a skill")),
-        }
-    }
-
-    /// The skills the viewer deleted and may read as such: the trash of
-    /// skills.
-    ///
-    /// # Errors
-    /// `Failed` if the store cannot list them.
-    pub async fn deleted_skills(&self) -> ViewResult<Vec<DeletedSnapshot<SkillId>>> {
-        let skills = self.stores.skills.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
-            .map_err(|e| ViewError::failed(e, "listing the deleted skills"))?;
-        let policy = &self.security;
-        let mut deleted = Vec::with_capacity(skills.len());
-        for skill in skills {
-            let Some(removal) = skill.deleted.clone() else { continue };
-            let attributes = &skill.security_attributes;
-            deleted.push(DeletedSnapshot {
-                id: skill.id,
-                name: skill.name.to_string(),
-                deleted: removal,
-                can_restore: policy.may_restore(self.viewer.context(), Skill::KIND, attributes).await,
-                can_purge: policy.may_purge(self.viewer.context(), Skill::KIND, attributes).await,
-            });
-        }
-        Ok(deleted)
-    }
-
-    /// The skills an agent may load where it reads from (issue 22): of those
-    /// the store lists for it - read and cleared for, as for a user (issues
-    /// 304, 322) -, each it may use (`UseSkill`) and whose classification it
-    /// may put into its channel (`may_publish`, as what a turn writes is
-    /// asked) - and of those, for every name the one found from its channel
-    /// (the innermost: the session's before its owner's before the global
-    /// one). By name. None for a viewer who reads from no place: skills are loaded
-    /// into turns.
-    ///
-    /// # Errors
-    /// `Failed` if the store cannot list them.
-    pub async fn usable_skills(&self) -> ViewResult<Vec<SkillView>> {
-        let Some(place) = self.viewer.place() else { return Ok(Vec::new()) };
-        let context = self.viewer.context();
-        let failed = |e| ViewError::failed(e, "listing the skills");
-        let here = Scope::ChannelScope { session_id: place.session.id, channel_id: place.channel };
-        let owner = context.principal_id.as_user_id();
-        // Those seen from here, which the store is asked for alone (issue 293).
-        let seen = Query::filtered(Scope::seen_from(&here, owner));
-        let skills = self.stores.skills.list(context, &seen).await.map_err(failed)?.items;
-        let mut usable = Vec::with_capacity(skills.len());
-        for skill in skills {
-            if self.security.may_use_skill(context, &skill.security_attributes).await
-                && self.confidentiality.may_publish(context, &skill.classification, &place.classification)
-            {
-                usable.push(skill);
-            }
-        }
-        Ok(found_from(&usable, &here, owner).into_iter().map(|skill| SkillView::of(self.clone(), skill.clone())).collect())
-    }
-
-    /// The skill of `name` the agent may load where it reads from
-    /// (`usable_skills`).
-    ///
-    /// # Errors
-    /// `NoSkillNamed` if there is none, and equally if it may not be used
-    /// here; `Failed` if the store cannot list them.
-    pub async fn usable_skill_named(&self, name: &str) -> ViewResult<SkillView> {
-        let not_found = || ViewError::NoSkillNamed(name.to_string());
-        let wanted = Name::new(name).map_err(|_| not_found())?;
-        self.usable_skills().await?.into_iter().find(|skill| skill.scoped_name().name == wanted).ok_or_else(not_found)
     }
 }
 
@@ -1350,50 +1238,6 @@ mod tests {
         assert!(from_team.all_channels().await.iter().all(|c| c.id() != hers.id), "nor entry by entry");
         let own: Vec<_> = from_team.own_private_notes().await.into_iter().map(|found| (found.name, found.notes[0].text.clone())).collect();
         assert_eq!(own, [("hers".to_string(), "noted for itself".to_string())], "what it wrote there itself, by the flow rule alone");
-    }
-
-    #[tokio::test]
-    async fn an_agent_loads_the_skills_its_owner_may_use_that_flow_into_its_channel_the_innermost_of_each_name() {
-        use caelumora_model::confidentiality::Confidentiality;
-        use caelumora_model::skill::Skill;
-        use caelumora_model::value::text::{Description, SkillBody};
-
-        let (store, manager) = owned_runtime(Default::default());
-        let (alice, bob) = (UserId::new(), UserId::new());
-        let helper = an_agent_of(&store, ActorId::User(bob)).await;
-        let (session_id, channel) = (SessionId::new(), ChannelId::new());
-        let skill = |name: &str, scope: Scope, owner: ActorId, classification: Classification| Skill::new(
-            ScopedName::new(name, scope).unwrap(), Description::new(format!("{name}, described")).unwrap(),
-            SkillBody::new(format!("{name}: how it is done")).unwrap(), classification, owner,
-        );
-        let system = SecurityContext::system();
-        let secret = Classification::general(Confidentiality::StrictlyConfidential);
-        for made in [
-            skill("notes", Scope::GlobalScope, ActorId::System, Classification::CHANNEL_DEFAULT),
-            skill("notes", Scope::SessionScope { session_id }, ActorId::User(bob), Classification::CHANNEL_DEFAULT),
-            skill("deploy", Scope::UserScope { user_id: bob }, ActorId::User(bob), Classification::CHANNEL_DEFAULT),
-            skill("secret", Scope::UserScope { user_id: bob }, ActorId::User(bob), secret),
-            skill("hers", Scope::GlobalScope, ActorId::User(alice), Classification::CHANNEL_DEFAULT),
-            Skill { security_attributes: SecurityAttributes::owned_by(ActorId::User(alice)).granting(caelumora_model::security::Subject::Actor(ActorId::User(bob)), caelumora_model::security::Grant::Read), ..skill("review", Scope::GlobalScope, ActorId::User(alice), Classification::CHANNEL_DEFAULT) },
-            skill("elsewhere", Scope::SessionScope { session_id: SessionId::new() }, ActorId::User(bob), Classification::CHANNEL_DEFAULT),
-        ] {
-            store.entity_stores().skills.create(&system, &made).await.unwrap();
-        }
-
-        let context = SecurityContext::new(ActorId::User(bob), session_id, channel).next(ActorId::Agent(helper.id), ActorId::User(bob));
-        let from = Place { channel, classification: Classification::CHANNEL_DEFAULT, session: SessionPrivacy { id: session_id, ..SessionPrivacy::default() } };
-        let views = manager.views(Viewer::from_place(context, from));
-        let usable: Vec<(String, Scope)> = views.usable_skills().await.unwrap().iter().map(|s| (s.name().to_string(), s.scope().clone())).collect();
-        assert_eq!(usable, [
-            ("deploy".to_string(), Scope::UserScope { user_id: bob }),
-            ("notes".to_string(), Scope::SessionScope { session_id }),
-            ("review".to_string(), Scope::GlobalScope),
-        ], "its owner's, the session's before the global one of a name, one shared with him; not one above the channel, not another's, not another session's");
-        assert_eq!(views.usable_skill_named("Notes").await.unwrap().body().as_str(), "notes: how it is done", "found as names are compared");
-        for absent in ["secret", "hers", "elsewhere", "nothing", ""] {
-            assert!(matches!(views.usable_skill_named(absent).await, Err(ViewError::NoSkillNamed(_))), "{absent:?} answers as absent");
-        }
-        assert!(manager.views(as_user(bob)).usable_skills().await.unwrap().is_empty(), "a user loads none: skills are loaded into turns");
     }
 
     #[tokio::test]

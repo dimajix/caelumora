@@ -20,7 +20,6 @@ pub mod history;
 pub mod profile;
 pub mod scope;
 pub mod session;
-pub mod skill;
 pub mod stream;
 pub mod template;
 pub mod trash;

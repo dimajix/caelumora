@@ -4,16 +4,18 @@
 //! only: a skill tells the model how to do something with the tools it has,
 //! and brings none of its own. One classification holds for the whole of it.
 
-use crate::actor::ActorId;
-use crate::confidentiality::Classification;
-use crate::removal::{Deletable, Removal, Stored};
-use crate::scope::{Scope, ScopeField, Scoped};
-use crate::security::{CustomVerb, Grant, Requirement, Secured, SecurityAttributes};
-use crate::value::name::ScopedName;
-use crate::value::text::{Description, SkillBody};
+use caelumora_model::actor::ActorId;
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::define_id;
+use caelumora_model::digest::{Digest, Encoder};
+use caelumora_model::removal::{Deletable, Removal, Stored};
+use caelumora_model::scope::{Scope, ScopeField, Scoped};
+use caelumora_model::security::{CustomVerb, Grant, Requirement, Secured, SecurityAttributes};
+use caelumora_model::store::EntityKind;
+use caelumora_model::value::name::ScopedName;
+use caelumora_model::value::text::{Description, Text, TextRule};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::store::EntityKind;
 
 define_id!(SkillId);
 
@@ -149,12 +151,49 @@ impl Scoped for Skill {
     }
 }
 
+/// What a skill tells the model to do (issue 22): instructions in Markdown,
+/// loaded into a turn when the skill is used - twice a briefing, enough for
+/// a procedure, not for a manual.
+pub enum SkillBodyRule {}
+
+impl TextRule for SkillBodyRule {
+    const FIELD: &'static str = "body";
+    const MAX_CHARS: usize = 32_000;
+    const ONE_LINE: bool = false;
+}
+
+pub type SkillBody = Text<SkillBodyRule>;
+
+/// The digest of a skill's body as it was loaded (issue 22).
+pub fn digest(body: &str) -> Digest {
+    let mut e = Encoder::new("caelumora.skill.v1");
+    e.str(body);
+    e.finish()
+}
+
+/// A skill as the viewer sees it (issue 22), without its body, which is
+/// read on its own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillSnapshot {
+    pub id: SkillId,
+    pub name: String,
+    /// Where it lies: the global scope, its owner's or a session's.
+    pub scope: Scope,
+    pub description: Description,
+    pub classification: Classification,
+    /// Whose it is.
+    pub owner: ActorId,
+    /// Whether the viewer may change it - rename, describe, rewrite,
+    /// reclassify - and delete it (`UpdateSkill`).
+    pub can_change: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use Stored;
-    use crate::session::{ChannelId, SessionId};
-    use crate::user::UserId;
+    use caelumora_model::agent::AgentId;
+    use caelumora_model::session::{ChannelId, SessionId};
+    use caelumora_model::user::UserId;
 
     fn skill(scope: Scope, owner: ActorId) -> Skill {
         Skill::new(
@@ -183,6 +222,6 @@ mod tests {
         assert!(skill(Scope::GlobalScope, ActorId::System).validate().is_ok());
         assert!(skill(Scope::SessionScope { session_id: SessionId::new() }, ActorId::System).validate().is_err());
         assert!(skill(Scope::GlobalScope, ActorId::None).validate().is_err(), "nobody's");
-        assert!(skill(Scope::GlobalScope, ActorId::Agent(crate::agent::AgentId::new())).validate().is_err(), "an agent's: its owner's");
+        assert!(skill(Scope::GlobalScope, ActorId::Agent(AgentId::new())).validate().is_err(), "an agent's: its owner's");
     }
 }

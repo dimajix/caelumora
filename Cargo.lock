@@ -330,6 +330,7 @@ dependencies = [
  "caelumora-model",
  "caelumora-rest-server",
  "caelumora-runtime",
+ "caelumora-skills",
  "clap",
  "mime_guess",
  "rust-embed",
@@ -464,12 +465,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "caelumora-skills"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "caelumora-model",
+ "caelumora-rest-api",
+ "caelumora-rest-server",
+ "caelumora-runtime",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "caelumora-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "caelumora-model",
  "caelumora-runtime",
+ "caelumora-skills",
  "chrono",
  "clap",
  "rustyline",

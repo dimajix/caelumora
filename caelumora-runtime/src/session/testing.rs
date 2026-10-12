@@ -10,8 +10,7 @@ use std::sync::Arc;
 use crate::session::{ChannelSpec, SessionLoop, SessionManager};
 use caelumora_model::value::name::Name;
 use crate::channel::ChannelLoop;
-use crate::runtime::{ChannelRuntime, RuntimeManager};
-use crate::view::ViewsFactory;
+use crate::runtime::RuntimeManager;
 use caelumora_model::actor::ActorId;
 use caelumora_model::group::GroupId;
 use caelumora_model::session::Participant;
@@ -175,13 +174,7 @@ pub(crate) async fn running_session_of_a_user(manager: &SessionManager) -> (Arc<
     (session_loop, ctx, other_id)
 }
 
-/// What `actor` navigates from `channel` of `session`, as its turns do
-/// (`ActorRuntime::views`).
-pub(crate) fn views_in(session: &SessionLoop, channel: &Arc<ChannelLoop>, actor: ActorId) -> ViewsFactory {
-    let channel_runtime = ChannelRuntime::new(Arc::clone(&session.runtime_manager), Arc::clone(&session.commands), Arc::clone(&session.session_controller));
-    channel_runtime.attach(channel);
-    channel_runtime.new_actor_runtime(actor, session.id(), channel.id()).views()
-}
+pub(crate) use crate::testing::views_in;
 
 pub(crate) fn spec(name: &str, participants: Vec<caelumora_model::actor::ActorId>) -> ChannelSpec {
     ChannelSpec { name: name.to_string(), components: Default::default(), participants, classification: None, language: None, uses_workspace: None }
