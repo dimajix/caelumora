@@ -324,10 +324,10 @@ pub(crate) async fn queries_behave(stores: &EntityStores) {
     use crate::group::GroupField;
     let mut his = group(alice);
     his.members.push(ActorId::User(bob));
-    store.create_group(&ctx, &his).await.unwrap();
-    store.create_group(&ctx, &group(UserId::new())).await.unwrap();
+    stores.groups.create(&ctx, &his).await.unwrap();
+    stores.groups.create(&ctx, &group(UserId::new())).await.unwrap();
     let belonging = Filter::any(GroupField::Members, Filter::eq(GroupField::Member, ActorId::User(bob)));
-    let found = store.list_groups(&ctx, &Query::filtered(belonging)).await.unwrap();
+    let found = stores.groups.list(&ctx, &Query::filtered(belonging)).await.unwrap();
     assert_eq!(found.items.iter().map(|g| g.id).collect::<Vec<_>>(), [his.id], "the groups of a member, not those of their owner");
 }
 
@@ -394,8 +394,8 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
         create, get, update, delete, list);
     lifecycle!(stores.artifacts.as_ref(), artifact(UserId::new()), |v: &Artifact| v.id, name.name, "artifact",
         create, get, update, delete, list);
-    lifecycle!(store, group(UserId::new()), |v: &Group| v.id, name.name, "group",
-        create_group, get_group, update_group, delete_group, list_groups);
+    lifecycle!(stores.groups.as_ref(), group(UserId::new()), |v: &Group| v.id, name.name, "group",
+        create, get, update, delete, list);
 
     let ctx = SecurityContext::default();
     let alice = user("alice");
@@ -434,9 +434,9 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
     let nobodys = stores.skills.create(&ctx, &Skill { security_attributes: Default::default(), ..skill(UserId::new()) }).await;
     assert!(matches!(nobodys, Err(StoreError::Validation(_))), "skill: one that belongs to nobody is not stored, got {nobodys:?}");
 
-    found_by_name!(store, group_named, "group",
-        create_group, delete_group, find_group_by_name);
-    let stray = store.create_group(&ctx, &Group { name: ScopedName::new("participants", Scope::SessionScope { session_id: SessionId::new() }).unwrap(), ..group(UserId::new()) }).await;
+    found_by_name!(stores.groups.as_ref(), group_named, "group",
+        create, delete, find_by_name);
+    let stray = stores.groups.create(&ctx, &Group { name: ScopedName::new("participants", Scope::SessionScope { session_id: SessionId::new() }).unwrap(), ..group(UserId::new()) }).await;
     assert!(matches!(stray, Err(StoreError::Validation(_))), "group: one in a session's scope that is not its participants is not stored, got {stray:?}");
 
     found_by_name!(stores.artifacts.as_ref(), artifact_named, "artifact",
@@ -515,10 +515,10 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
         elsewhere: |name| Artifact { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: ArtifactId::new(), ..artifact(bob) },
         rename: |value: Artifact, name| Artifact { name: in_scope(name, &value.name.scope), ..value }, "artifact",
         create, update, delete, restore);
-    unique_by_name!(store, |name| Group { name: in_scope(name, &global), id: GroupId::new(), ..group(alice) },
+    unique_by_name!(stores.groups.as_ref(), |name| Group { name: in_scope(name, &global), id: GroupId::new(), ..group(alice) },
         elsewhere: |name| Group { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: GroupId::new(), ..group(bob) },
         rename: |value: Group, name| Group { name: in_scope(name, &value.name.scope), ..value }, "group",
-        create_group, update_group, delete_group, restore_group);
+        create, update, delete, restore);
 
     // Moved into a scope where its name is taken.
     let ctx = SecurityContext::default();

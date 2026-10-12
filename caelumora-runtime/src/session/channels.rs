@@ -115,7 +115,7 @@ impl SessionLoop {
         require_classification(&self.runtime_manager, &classification)?;
         let language = match language {
             Some(language) => Some(language),
-            None => preferred_language(self.entities.as_ref(), context).await?,
+            None => preferred_language(self.stores.entities.as_ref(), context).await?,
         };
 
         // The creator first, if they take part in the session at all.
@@ -143,9 +143,9 @@ impl SessionLoop {
         self.security
             .require(context, ActionType::create(Channel::KIND, &channel.security_attributes), || StoreError::PermissionDenied).await?;
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
-        let store = &self.entities;
+        let store = &self.stores.entities;
         store.create_channel(context, &channel).await?;
-        let added = match keep_participants(store.as_ref(), Group::of_channel(&channel)).await {
+        let added = match keep_participants(self.stores.groups.as_ref(), Group::of_channel(&channel)).await {
             Ok(()) => self.session_controller.add_channel(context, channel.id).await,
             Err(e) => Err(e),
         };
@@ -216,7 +216,7 @@ impl SessionLoop {
         // part in no other channel (`Scope::admits`). If either fails, the
         // channel is put back - in the runtime's name: its deletion was
         // permitted - and runs on, without what was deleted.
-        let deleted = match self.entities.delete_channel(context, channel_id).await {
+        let deleted = match self.stores.entities.delete_channel(context, channel_id).await {
             Ok(_) => self.scoped.delete_lying_in(context, &scope).await,
             Err(error) => Err(error.into()),
         };
@@ -257,7 +257,7 @@ impl SessionLoop {
     ///   channel or change the session; nothing is changed then.
     pub async fn restore_channel(self: &Arc<Self>, context: &SecurityContext, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
         let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
-        let store = &self.entities;
+        let store = &self.stores.entities;
         let channel = match store.get_deleted_channel(context, channel_id).await.optional()? {
             Some(channel) if channel.session_id == self.id => channel,
             _ => return Err(not_found().into()),
@@ -300,7 +300,7 @@ impl SessionLoop {
     /// session again, last, and its mark taken away, if it was marked.
     async fn keep_channel(&self, channel_id: ChannelId) {
         let system = SecurityContext::system();
-        if let Err(e) = self.entities.restore_channel(&system, channel_id).await.optional() {
+        if let Err(e) = self.stores.entities.restore_channel(&system, channel_id).await.optional() {
             warn!("Channel {} of session {} could not be deleted and not be unmarked again: {}", channel_id, self.id, e);
         }
         if let Err(e) = self.session_controller.add_channel(&system, channel_id).await {
@@ -311,7 +311,7 @@ impl SessionLoop {
     /// Deletes the stored channel `channel_id` again after creating it failed
     /// half-way - in the runtime's name: its creation was permitted.
     async fn discard_channel(&self, channel_id: ChannelId) {
-        if let Err(e) = purge_channel_document(self.entities.as_ref(), channel_id).await {
+        if let Err(e) = purge_channel_document(&self.stores, channel_id).await {
             warn!("Channel {} of session {} could not be deleted again: {}", channel_id, self.id, e);
         }
     }

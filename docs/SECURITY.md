@@ -235,9 +235,10 @@ lose theirs.
     *   `Group` - a team, or the participants of a session or a channel. A member counts wherever
         they act, not only in that place.
 *   **What the policy learns.** Who belongs to a group is a fact neither the attributes nor the
-    context carry. The policy asks a `Memberships` source, only where an entry names a group, and
-    only about that one group - never what an actor is a member of, which may be thousands of
-    places. Until the source is bound, nobody is a member of anything.
+    context carry. The policy asks a `Memberships` source - the store of groups, read in the
+    system's name (`StoreMemberships`) -, only where an entry names a group, and only about that
+    one group - never what an actor is a member of, which may be thousands of places. Until the
+    source is bound, nobody is a member of anything.
 *   **Who may name a group.** Whoever writes an access list names a group in it only if they read
     the group (`GetGroup`): naming one grants its members something, and nobody grants what they
     cannot tell to whom. It is asked after the permission to change the list, and only of a group

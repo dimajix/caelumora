@@ -461,7 +461,7 @@ async fn main() -> anyhow::Result<()> {
     let state_store = config.create_state_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
     let entity_stores = config.create_entity_stores(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
     let entity_store = Arc::clone(&entity_stores.entities);
-    memberships.bind(&entity_store);
+    memberships.bind(&entity_stores.groups);
     let component_store = config.create_component_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
     let secret_manager = config.create_secret_manager(Arc::clone(&security_manager))?;
 

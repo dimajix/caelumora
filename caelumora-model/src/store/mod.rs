@@ -23,7 +23,7 @@ use crate::user::{User, UserId, UserProfile};
 use crate::value::name::ScopedName;
 use crate::workspace::Workspace;
 use crate::skill::Skill;
-use crate::group::{Group, GroupField, GroupId};
+use crate::group::Group;
 use crate::artifact::Artifact;
 use crate::channel::ChannelField;
 use crate::scope::ScopeField;
@@ -180,6 +180,7 @@ pub struct EntityStores {
     pub skills: Arc<dyn EntityStore<Skill>>,
     pub workspaces: Arc<dyn EntityStore<Workspace>>,
     pub artifacts: Arc<dyn EntityStore<Artifact>>,
+    pub groups: Arc<dyn EntityStore<Group>>,
 }
 
 /// Every kind's entities at once, as one store offered them before each
@@ -306,18 +307,6 @@ pub trait Entities : Debug + Sync + Send {
 
 
 
-    // Groups (issue 286) - teams, and the participants of sessions and
-    // channels, kept by those.
-    async fn create_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()>;
-    async fn get_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group>;
-    async fn update_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()>;
-    async fn delete_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool>;
-    async fn list_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>>;
-    async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group>;
-    async fn purge_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool>;
-    async fn get_deleted_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group>;
-    async fn list_deleted_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>>;
-    async fn find_group_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group>;
 }
 
 /// The preconfigured components: runtime configuration that personalities

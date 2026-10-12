@@ -36,7 +36,7 @@ use caelumora_model::channel::Channel;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::Session;
-use caelumora_model::store::{Entities, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityStores, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::user::UserId;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -63,7 +63,7 @@ type Registry<K, C> = Arc<Mutex<HashMap<K, Weak<C>>>>;
 ///   and fallible.
 #[derive(Debug)]
 pub struct ControllerManager {
-    entity_store: Arc<dyn Entities>,
+    stores: EntityStores,
     event_bus: Arc<EventBus>,
     agents: Registry<AgentId, AgentController>,
     users: Registry<UserId, UserController>,
@@ -73,9 +73,9 @@ pub struct ControllerManager {
 }
 
 impl ControllerManager {
-    pub fn new(entity_store: Arc<dyn Entities>, event_bus: Arc<EventBus>) -> Self {
+    pub fn new(stores: EntityStores, event_bus: Arc<EventBus>) -> Self {
         Self {
-            entity_store,
+            stores,
             event_bus,
             agents: Default::default(),
             users: Default::default(),
@@ -84,11 +84,11 @@ impl ControllerManager {
     }
 
     pub fn new_session_controller(&self, session: Session) -> Arc<SessionController> {
-        Arc::new(SessionController::new(session, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.entity_store)))
+        Arc::new(SessionController::new(session, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.stores.entities)))
     }
 
     pub fn new_channel_controller(&self, channel: Channel) -> Arc<ChannelController> {
-        Arc::new(ChannelController::new(channel, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.entity_store)))
+        Arc::new(ChannelController::new(channel, Arc::<EventBus>::clone(&self.event_bus), &self.stores))
     }
 
     /// The controller of agent `id` in this instance: the one its actors
@@ -105,14 +105,14 @@ impl ControllerManager {
         if let Some(controller) = agents.get(&id).and_then(Weak::upgrade) {
             return Ok(controller);
         }
-        let agent = self.entity_store.get_agent(&SecurityContext::system(), id).await?;
+        let agent = self.stores.entities.get_agent(&SecurityContext::system(), id).await?;
         // Its owner's roles are what it acts with (issue 304): an owner who
         // is gone leaves it none.
         let owner = match agent.security_attributes.owner_id {
             ActorId::User(owner) => self.user_controller(owner).await.optional()?,
             _ => None,
         };
-        let controller = Arc::new(AgentController::new(agent, owner, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.entity_store)));
+        let controller = Arc::new(AgentController::new(agent, owner, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.stores.entities)));
         remember(&mut agents, id, &controller);
         Ok(controller)
     }
@@ -129,9 +129,9 @@ impl ControllerManager {
         if let Some(controller) = users.get(&id).and_then(Weak::upgrade) {
             return Ok(controller);
         }
-        let user = self.entity_store.get_user(&SecurityContext::system(), id).await?;
-        let profile = self.entity_store.get_user_profile(&SecurityContext::system(), id).await.optional()?;
-        let controller = Arc::new(UserController::new(user, profile, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.entity_store)));
+        let user = self.stores.entities.get_user(&SecurityContext::system(), id).await?;
+        let profile = self.stores.entities.get_user_profile(&SecurityContext::system(), id).await.optional()?;
+        let controller = Arc::new(UserController::new(user, profile, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.stores.entities)));
         remember(&mut users, id, &controller);
         Ok(controller)
     }
@@ -210,7 +210,7 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::DummySecurityManager;
-    use caelumora_model::store::StoreError;
+    use caelumora_model::store::{Entities, StoreError};
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::{User, UserUpdateEvent};
     use std::time::Duration;
@@ -219,7 +219,7 @@ mod tests {
     fn manager() -> (Arc<MemoryStore>, Arc<EventBus>, ControllerManager) {
         let store = Arc::new(MemoryStore::new());
         let bus = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())));
-        let manager = ControllerManager::new(Arc::<MemoryStore>::clone(&store), Arc::clone(&bus));
+        let manager = ControllerManager::new(store.entity_stores(), Arc::clone(&bus));
         (store, bus, manager)
     }
 

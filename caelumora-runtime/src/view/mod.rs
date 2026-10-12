@@ -457,7 +457,7 @@ impl Views {
         let principal = context.principal_id;
         let roles = context.roles.iter().copied().filter(|role| context.has_role(*role));
         let belonging = Filter::any(GroupField::Members, Filter::eq(GroupField::Member, principal));
-        let groups = self.stores.entities.list_groups(&SecurityContext::system(), &Query::filtered(belonging)).await.map_err(failed)?.items;
+        let groups = self.stores.groups.list(&SecurityContext::system(), &Query::filtered(belonging)).await.map_err(failed)?.items;
         let teams = groups.iter().filter(|group| !group.is_participants()).map(|group| Subject::Group(group.id));
         let subjects: Vec<Subject> = std::iter::once(Subject::Actor(principal)).chain(roles.map(Subject::Role)).chain(teams).collect();
         let named = Filter::is_in(ArtifactField::Subject, subjects);
@@ -524,7 +524,7 @@ impl Views {
                 Subject::Actor(ActorId::User(user)) => (self.stores.entities.get_user(&system, user).await.optional().ok().flatten().map(|u| u.username.to_string()), None),
                 Subject::Actor(_) => (None, None),
                 Subject::Role(role) => (self.confidentiality.roles().and_then(|roles| roles.name_of(role)).map(str::to_string), None),
-                Subject::Group(group) => match self.stores.entities.get_group(&system, group).await.optional().ok().flatten() {
+                Subject::Group(group) => match self.stores.groups.get(&system, group).await.optional().ok().flatten() {
                     Some(group) => (self.group_name(&group).await, Some(group.name.scope)),
                     None => (None, None),
                 },
@@ -553,7 +553,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store fails.
     pub async fn groups(&self) -> ViewResult<Vec<GroupView>> {
-        let groups = self.stores.entities.list_groups(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let groups = self.stores.groups.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the groups"))?;
         Ok(groups.into_iter().filter(|group| !group.is_participants()).map(|group| GroupView::of(self.clone(), group)).collect())
     }
@@ -564,7 +564,7 @@ impl Views {
     /// # Errors
     /// `GroupNotFound` if there is none they may read, alike.
     pub async fn group(&self, id: GroupId) -> ViewResult<GroupView> {
-        match self.stores.entities.get_group(self.viewer.context(), id).await.optional() {
+        match self.stores.groups.get(self.viewer.context(), id).await.optional() {
             Ok(Some(group)) => Ok(GroupView::of(self.clone(), group)),
             Ok(None) => Err(ViewError::GroupNotFound(id)),
             Err(e) => Err(ViewError::failed(e, "reading a group")),
@@ -578,7 +578,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store fails.
     pub async fn deleted_groups(&self) -> ViewResult<Vec<DeletedSnapshot<GroupId>>> {
-        let groups = self.stores.entities.list_deleted_groups(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let groups = self.stores.groups.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted groups"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(groups.len());
@@ -989,16 +989,16 @@ mod tests {
 
     /// Stores `session` as the runtime does, with the group of its
     /// participants (issue 286).
-    async fn stored_session(store: &MemoryStore, session: &Session) {
+    async fn stored_session(store: &Arc<MemoryStore>, session: &Session) {
         store.create_session(&SecurityContext::system(), session).await.unwrap();
-        keep_participants(store, Group::of_session(session)).await.unwrap();
+        keep_participants(store.entity_stores().groups.as_ref(), Group::of_session(session)).await.unwrap();
     }
 
     /// Stores `channel` as the runtime does, with the group of its
     /// participants.
-    async fn stored_channel(store: &MemoryStore, channel: &Channel) {
+    async fn stored_channel(store: &Arc<MemoryStore>, channel: &Channel) {
         store.create_channel(&SecurityContext::system(), channel).await.unwrap();
-        keep_participants(store, Group::of_channel(channel)).await.unwrap();
+        keep_participants(store.entity_stores().groups.as_ref(), Group::of_channel(channel)).await.unwrap();
     }
 
     /// Another channel like `template`, named `name`: an id of its own,

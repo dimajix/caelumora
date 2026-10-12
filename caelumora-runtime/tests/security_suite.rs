@@ -195,8 +195,7 @@ impl World {
         let recorder = Arc::new(Recorder { policy: OwnershipSecurityManager::with_memberships(Arc::<StoreMemberships>::clone(&memberships)), rules, asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
         let policy: Arc<dyn SecurityManager> = Arc::<Recorder>::clone(&recorder);
         let store = Arc::new(MemoryStore::with_policies(Arc::clone(&policy), Arc::<Recorder>::clone(&recorder)));
-        let entities: Arc<dyn Entities> = Arc::<MemoryStore>::clone(&store);
-        memberships.bind(&entities);
+        memberships.bind(&store.entity_stores().groups);
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
         let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
         register(&mut registry);
@@ -354,9 +353,9 @@ impl World {
         // Each with the group of its participants, as the runtime stores them
         // (issue 286).
         self.store.create_session(&Self::system(), &session).await.unwrap();
-        self.store.create_group(&Self::system(), &Group::of_session(&session)).await.unwrap();
+        self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_session(&session)).await.unwrap();
         self.store.create_channel(&Self::system(), &channel).await.unwrap();
-        self.store.create_group(&Self::system(), &Group::of_channel(&channel)).await.unwrap();
+        self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_channel(&channel)).await.unwrap();
         self.manager.open_session(&Self::as_user(self.alice), session.id).await.expect("alice opens her session")
     }
 
@@ -2848,12 +2847,12 @@ async fn the_group_of_a_channels_participants_follows_who_takes_part() {
         async move { manager.views(Viewer::new(World::as_user(user))).session(session_id).await.unwrap().channel(channel_id).await.is_ok() }
     };
     assert!(readable(world.bob).await, "bob takes part, and reads it");
-    let group = world.store.get_group(&World::system(), GroupId::of_channel(main.id())).await.expect("the channel's participants are a group");
+    let group = world.runtime.entity_stores().groups.get(&World::system(), GroupId::of_channel(main.id())).await.expect("the channel's participants are a group");
     assert!(group.has_member(ActorId::User(world.bob)));
 
     main.remove_participant(&World::as_user(world.alice), ActorId::User(world.bob)).await.expect("alice removes him");
     assert!(!readable(world.bob).await, "removed, he no longer reads it");
-    let group = world.store.get_group(&World::system(), GroupId::of_channel(main.id())).await.unwrap();
+    let group = world.runtime.entity_stores().groups.get(&World::system(), GroupId::of_channel(main.id())).await.unwrap();
     assert!(!group.has_member(ActorId::User(world.bob)), "the group followed");
     let refused = world.runtime.group_manager().set_members(&World::as_user(world.alice), group.id, vec![world.bob]).await;
     assert!(matches!(refused, Err(GroupError::Participants(_))), "nor is it changed by hand, not even by its owner: {refused:?}");

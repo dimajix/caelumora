@@ -427,7 +427,6 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use caelumora_model::security::DummySecurityManager;
-    use caelumora_model::store::Entities;
     use caelumora_runtime::event::EventBus;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user_provider::UserProvider;
@@ -446,16 +445,18 @@ mod tests {
     }
 
     /// Auth asking `providers`, the users recorded in `store` (issue 306).
-    fn auth(store: Arc<dyn Entities>, providers: Vec<Arc<dyn UserProvider>>) -> Arc<Auth> {
+    fn auth(store: Arc<MemoryStore>, providers: Vec<Arc<dyn UserProvider>>) -> Arc<Auth> {
+        let stores = store.entity_stores();
         let events = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())));
-        let controllers = Arc::new(ControllerManager::new(Arc::clone(&store), Arc::<EventBus>::clone(&events)));
-        Arc::new(Auth { tokens: tokens(), users: Arc::new(UserManager::new(providers, store, events)), controllers })
+        let controllers = Arc::new(ControllerManager::new(stores.clone(), Arc::<EventBus>::clone(&events)));
+        Arc::new(Auth { tokens: tokens(), users: Arc::new(UserManager::new(providers, stores.entities, events)), controllers })
     }
 
     /// Auth that accepts anybody, finding and recording users in one store.
     fn accepting_any() -> Arc<Auth> {
-        let store: Arc<dyn Entities> = Arc::new(MemoryStore::new());
-        auth(Arc::clone(&store), vec![Arc::new(AcceptAnyUserProvider::new(store))])
+        let store = Arc::new(MemoryStore::new());
+        let entities = Arc::clone(&store.entity_stores().entities);
+        auth(store, vec![Arc::new(AcceptAnyUserProvider::new(entities))])
     }
 
     fn set_cookie(response: &Response, name: &str) -> Option<String> {

@@ -584,3 +584,11 @@ is made with `&EntityStores` and takes the stores it uses - the `WorkspaceManage
 Step 3d: artifacts on their own store. The `ArtifactManager` keeps it beside the facade, which it
 still reads groups through; the views reach the stores of the kinds as `Views::stores`.
 
+Step 3e: groups on their own store. Groups are read and written beyond their manager: the
+`GroupManager`, the access lists the workspace and artifact managers are given
+(`require_nameable`), the groups of participants that sessions, channels and the
+`ChannelController` keep (`keep_participants`, `purge_participants`), and the policy's
+`StoreMemberships`, now bound to the store of groups. The free functions take that store; the
+`SessionLoop`, the `SessionManager` and the `ControllerManager` hold `EntityStores`, as the views
+do, since they use many kinds; the `ArtifactManager` no longer needs the facade.
+

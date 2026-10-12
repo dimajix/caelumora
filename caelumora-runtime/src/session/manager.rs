@@ -10,7 +10,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use crate::view::{Viewer, Views};
-use caelumora_model::store::{Entities, StoreError};
+use caelumora_model::store::{EntityStores, StoreError};
 use tracing::{info, warn};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
@@ -39,7 +39,7 @@ pub struct SessionManager {
     /// The services it works with, taken from `runtime_manager` once (issue
     /// 229).
     security: Arc<dyn SecurityManager>,
-    entities: Arc<dyn Entities>,
+    stores: EntityStores,
     events: Arc<EventBus>,
     workspaces: Arc<WorkspaceManager>,
     /// What goes with a session deleted, restored or purged (issue 178).
@@ -73,7 +73,7 @@ impl SessionManager {
             handles: DashMap::new(),
             starts: DashMap::new(),
             security: Arc::clone(runtime_manager.security_manager()),
-            entities: Arc::clone(runtime_manager.entity_store()),
+            stores: runtime_manager.entity_stores().clone(),
             events: Arc::clone(runtime_manager.event_bus()),
             workspaces: Arc::clone(runtime_manager.workspace_manager()),
             scoped: Arc::clone(runtime_manager.scoped_entities()),
@@ -124,7 +124,7 @@ impl SessionManager {
                     .require(context, ActionType::get(Session::KIND, &attributes), || StoreError::NotFound { entity: "session", id: id.to_string() }).await?;
                 Ok(Found::Running(session_loop))
             }
-            None => Ok(Found::Stored(self.entities.get_session(context, id).await?)),
+            None => Ok(Found::Stored(self.stores.entities.get_session(context, id).await?)),
         }
     }
 
@@ -146,7 +146,7 @@ impl SessionManager {
         let owner = context.principal_id.as_user_id().ok_or(SessionError::OwnerNotAUser(context.principal_id))?;
         // Before anything is found or made for it.
         let name = Name::optional(name)?;
-        let store = &self.entities;
+        let store = &self.stores.entities;
         let template = store.get_session_template(context, template_id).await?;
         let id = SessionId::new();
         // Its own verb before anything of others is asked or anything is
@@ -225,15 +225,15 @@ impl SessionManager {
         for channel in &channels {
             crate::channel::require_admitted(&self.runtime_manager, context, channel).await?;
         }
-        let store = &self.entities;
+        let store = &self.stores.entities;
         store.create_session(context, &session).await?;
         // Each with the group of its participants (issue 286), which it is
         // read by.
         let made = async {
-            keep_participants(store.as_ref(), Group::of_session(&session)).await?;
+            keep_participants(self.stores.groups.as_ref(), Group::of_session(&session)).await?;
             for channel in &channels {
                 store.create_channel(context, channel).await?;
-                keep_participants(store.as_ref(), Group::of_channel(channel)).await?;
+                keep_participants(self.stores.groups.as_ref(), Group::of_channel(channel)).await?;
             }
             Ok::<_, StoreError>(())
         }.await;
@@ -243,9 +243,9 @@ impl SessionManager {
             // was not made yet is not found, which is no matter.
             let system = SecurityContext::system();
             for channel in &channels {
-                let _ = purge_channel_document(store.as_ref(), channel.id).await;
+                let _ = purge_channel_document(&self.stores, channel.id).await;
             }
-            let _ = purge_participants(store.as_ref(), GroupId::of_session(id)).await;
+            let _ = purge_participants(self.stores.groups.as_ref(), GroupId::of_session(id)).await;
             if store.delete_session(&system, id).await.is_ok() {
                 let _ = store.purge_session(&system, id).await;
             }
@@ -265,7 +265,7 @@ impl SessionManager {
     /// session the caller may read follows from an action already permitted,
     /// and it must not fail because the caller is not in one of its channels.
     async fn load_channels(&self, session: &Session) -> Result<Vec<Channel>> {
-        let store = &self.entities;
+        let store = &self.stores.entities;
         let system = SecurityContext::system();
         let mut channels = Vec::with_capacity(session.channels.len());
         for id in &session.channels {
@@ -369,7 +369,7 @@ impl SessionManager {
         // its session - until it is purged. Marked before what lies in its
         // scope, so that all of that is deleted with it, not before it: it
         // comes back with it (`restore_session`, issue 178).
-        if !self.entities.delete_session(context, id).await? {
+        if !self.stores.entities.delete_session(context, id).await? {
             return Ok(false);
         }
         // What lies in its scope and in its channels' goes as far as
@@ -379,7 +379,7 @@ impl SessionManager {
         // deleted, and `context` is told what is left. Its agents take part
         // in no other session (`Scope::admits`): they leave nothing.
         if let Err(left) = self.scoped.delete_lying_in(context, &Scope::SessionScope { session_id: id }).await {
-            if let Err(undo) = self.entities.restore_session(&SecurityContext::system(), id).await {
+            if let Err(undo) = self.stores.entities.restore_session(&SecurityContext::system(), id).await {
                 warn!("Session {} could not be deleted and not be unmarked again: {}", id, undo);
             }
             return Err(left);
@@ -410,7 +410,7 @@ impl SessionManager {
         // restored.
         let start = self.start_lock(id);
         let _starting = start.lock().await;
-        let store = &self.entities;
+        let store = &self.stores.entities;
         // When it was deleted, read before the mark goes - as `context`, so
         // that whoever may not see it learns nothing more: what was deleted
         // with it comes back with it (issue 178).
@@ -441,7 +441,7 @@ impl SessionManager {
     pub async fn purge_session(&self, context: &SecurityContext, id: SessionId) -> Result<()> {
         let start = self.start_lock(id);
         let _starting = start.lock().await;
-        let store = &self.entities;
+        let store = &self.stores.entities;
         let session = store.get_deleted_session(context, id).await?;
         if !store.purge_session(context, id).await? {
             return Err(StoreError::NotFound { entity: "session", id: id.to_string() }.into());
@@ -453,7 +453,7 @@ impl SessionManager {
         // than the session's.
         let state_store = self.runtime_manager.state_store();
         for channel_id in channels {
-            purge_channel_document(store.as_ref(), channel_id).await?;
+            purge_channel_document(&self.stores, channel_id).await?;
             state_store.delete_channel_state(channel_id).await?;
         }
         // And what lay in its scope and in its channels' (issue 178).

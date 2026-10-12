@@ -59,6 +59,7 @@ use tokio::sync::{broadcast, Mutex};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
 use caelumora_model::removal::Stored;
+use caelumora_model::group::Group;
 
 /// How often the commands of the storages are checked besides the events
 /// that can change who may run them (issue 254).
@@ -114,6 +115,7 @@ fn store_error(id: WorkspaceId) -> impl FnOnce(StoreError) -> WorkspaceError {
 pub struct WorkspaceManager {
     entities: Arc<dyn Entities>,
     workspaces: Arc<dyn EntityStore<Workspace>>,
+    groups: Arc<dyn EntityStore<Group>>,
     events: Arc<EventBus>,
     security: Arc<dyn SecurityManager>,
     /// What may flow where, and who is cleared for what (issue 304).
@@ -164,7 +166,7 @@ impl WorkspaceManager {
             })
             .collect::<ComponentResult<_>>()?;
         let with_shell = storages.values().any(|provider| provider.has_shell());
-        let manager = Arc::new(Self { entities: Arc::clone(&stores.entities), workspaces: Arc::clone(&stores.workspaces), events, security, confidentiality, controllers, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()), checker: OnceLock::new() });
+        let manager = Arc::new(Self { entities: Arc::clone(&stores.entities), workspaces: Arc::clone(&stores.workspaces), groups: Arc::clone(&stores.groups), events, security, confidentiality, controllers, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()), checker: OnceLock::new() });
         if with_shell {
             let runtime = tokio::runtime::Handle::try_current()
                 .map_err(|_| ComponentError::InvalidConfig("a storage of workspaces with a shell needs a running runtime".to_string()))?;
@@ -291,7 +293,7 @@ impl WorkspaceManager {
     /// says, under the lock of writing.
     async fn store_access(&self, ctx: &SecurityContext, mut workspace: Workspace, acl: Vec<AclEntry>) -> WorkspaceResult<Workspace> {
         let id = workspace.id;
-        crate::group::require_nameable(self.entities.as_ref(), ctx, &workspace.security_attributes.acl, &acl).await?;
+        crate::group::require_nameable(self.groups.as_ref(), ctx, &workspace.security_attributes.acl, &acl).await?;
         workspace.security_attributes.acl = acl;
         workspace.updated_at = chrono::Utc::now();
         self.workspaces.update(ctx, &workspace).await.map_err(store_error(id))?;

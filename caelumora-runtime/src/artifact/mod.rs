@@ -34,8 +34,8 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityAttributes, SecurityContext, SecurityManager, Subject, WRITE};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::group::GroupId;
-use caelumora_model::store::{Entities, EntityStore, EntityStores, StoreError, StoreResultExt};
+use caelumora_model::group::{Group, GroupId};
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -112,8 +112,8 @@ pub(crate) trait ArtifactStorage: Send + Sync + fmt::Debug {
 }
 
 pub struct ArtifactManager {
-    entities: Arc<dyn Entities>,
     artifacts: Arc<dyn EntityStore<Artifact>>,
+    groups: Arc<dyn EntityStore<Group>>,
     events: Arc<EventBus>,
     security: Arc<dyn SecurityManager>,
     /// What may flow where (issue 304): into a storage that keeps it.
@@ -144,7 +144,7 @@ impl ArtifactManager {
                 (name.clone(), storage)
             })
             .collect();
-        Ok(Self { entities: Arc::clone(&stores.entities), artifacts: Arc::clone(&stores.artifacts), events, security, confidentiality, storages, publish_to: config.publish_to().map(String::from), max_bytes: config.max_bytes, writing: Mutex::new(()) })
+        Ok(Self { artifacts: Arc::clone(&stores.artifacts), groups: Arc::clone(&stores.groups), events, security, confidentiality, storages, publish_to: config.publish_to().map(String::from), max_bytes: config.max_bytes, writing: Mutex::new(()) })
     }
 
     /// Whether artifacts can be published: a storage is configured.
@@ -294,7 +294,7 @@ impl ArtifactManager {
     pub async fn set_access(&self, ctx: &SecurityContext, id: ArtifactId, acl: Vec<AclEntry>) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
         let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
-        crate::group::require_nameable(self.entities.as_ref(), ctx, &artifact.security_attributes.acl, &acl).await?;
+        crate::group::require_nameable(self.groups.as_ref(), ctx, &artifact.security_attributes.acl, &acl).await?;
         artifact.security_attributes.acl = acl;
         artifact.updated_at = Utc::now();
         self.artifacts.update(ctx, &artifact).await?;

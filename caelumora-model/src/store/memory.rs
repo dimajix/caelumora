@@ -3,7 +3,7 @@ use crate::artifact::Artifact;
 use crate::channel::{Channel, ChannelField, ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
-use crate::group::{Group, GroupField, GroupId};
+use crate::group::Group;
 use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::{Scope, ScopeField};
 use crate::security::{ActionType, DummySecurityManager, SecurityContext, SecurityManager};
@@ -39,7 +39,7 @@ pub struct MemoryStore {
     workspaces: Arc<MemoryEntityStore<Workspace>>,
     skills: Arc<MemoryEntityStore<Skill>>,
     artifacts: Arc<MemoryEntityStore<Artifact>>,
-    groups: MemoryEntityStore<Group>,
+    groups: Arc<MemoryEntityStore<Group>>,
     components: MemoryEntityStore<StoredComponents>,
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
@@ -75,7 +75,7 @@ impl MemoryStore {
             workspaces: Arc::new(MemoryEntityStore::new(&policies)),
             skills: Arc::new(MemoryEntityStore::new(&policies)),
             artifacts: Arc::new(MemoryEntityStore::new(&policies)),
-            groups: MemoryEntityStore::new(&policies),
+            groups: Arc::new(MemoryEntityStore::new(&policies)),
             components: MemoryEntityStore::new(&policies),
             agent_states: Default::default(),
             agent_channel_states: Default::default(),
@@ -93,6 +93,7 @@ impl MemoryStore {
             skills: Arc::<MemoryEntityStore<Skill>>::clone(&self.skills),
             workspaces: Arc::<MemoryEntityStore<Workspace>>::clone(&self.workspaces),
             artifacts: Arc::<MemoryEntityStore<Artifact>>::clone(&self.artifacts),
+            groups: Arc::<MemoryEntityStore<Group>>::clone(&self.groups),
         }
     }
 }
@@ -477,36 +478,6 @@ impl Entities for MemoryStore {
     }
     async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
         self.user_profiles.list_deleted(ctx, query).await
-    }
-    async fn create_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
-        self.groups.create(ctx, value).await
-    }
-    async fn get_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
-        self.groups.get(ctx, id).await
-    }
-    async fn update_group(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
-        self.groups.update(ctx, value).await
-    }
-    async fn delete_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
-        self.groups.delete(ctx, id).await
-    }
-    async fn list_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
-        self.groups.list(ctx, query).await
-    }
-    async fn restore_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
-        self.groups.restore(ctx, id).await
-    }
-    async fn purge_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
-        self.groups.purge(ctx, id).await
-    }
-    async fn get_deleted_group(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
-        self.groups.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_groups(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
-        self.groups.list_deleted(ctx, query).await
-    }
-    async fn find_group_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group> {
-        self.groups.find_by_name(ctx, name).await
     }
 }
 
