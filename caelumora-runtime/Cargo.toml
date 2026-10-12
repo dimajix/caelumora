@@ -27,7 +27,6 @@ arc-swap = "1.9.2"
 aho-corasick = "1.1"
 regex = "1.12"
 meval = "0.2.0"
-rmcp = { version = "3.4", features = ["client", "transport-streamable-http-client-reqwest"] }
 bollard = "0.21"
 tracing = "0.1.44"
 tempfile = { version = "3.27", optional = true }
@@ -39,9 +38,7 @@ test-support = ["dep:tempfile"]
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["full"] }
-rmcp = { version = "3.4", features = ["client", "transport-streamable-http-client-reqwest", "transport-streamable-http-server"] }
 axum = { version = "0.8.9", features = ["multipart"] }
-schemars = "1.2"
 tempfile = "3.27"
 caelumora-runtime = { path = ".", features = ["test-support"] }
 

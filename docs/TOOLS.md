@@ -127,8 +127,13 @@ An `mcp_tool` component exposes the tools of a remote MCP server, reached over t
 transport:
 
 ```json
-{ "id": "github-mcp", "kind": "mcp_tool", "params": { "url": "https://mcp.example.com/mcp", "auth": { "type": "bearer", "secret": "GITHUB_MCP_TOKEN" } } }
+{ "id": "github-mcp", "kind": "mcp_tool", "params": { "endpoint": { "url": "https://mcp.example.com/mcp", "auth": { "type": "bearer", "secret": "GITHUB_MCP_TOKEN" } } } }
 ```
+
+The kind lives in the plugin `caelumora-mcp` (issue 325), with `rmcp`, so that the runtime does not
+depend on it; `caelumora-app` and `caelumora-tui` list the plugin, and a personality names the kind
+as before. What such a component kind may use of the runtime is said in
+[COMPONENTS.md](COMPONENTS.md#what-a-component-kind-outside-the-core-may-use).
 
 *   **Several servers.** Each server is an instance of its own; its tools are named
     `{component_id}__{remote_tool_name}`, so that servers cannot collide.
@@ -139,9 +144,11 @@ transport:
     generic text.
 *   **Credentials.** `auth.secret` names a secret, resolved through the secret chain (see
     [SECURITY.md](SECURITY.md)); it is never a literal credential.
-*   **Parameters.** `url` (required), `auth` (optional, `bearer`), `timeout_secs` (default 10),
-    `requires_approval` (`true` by default, `false` or `"unless_read_only"`; see [What needs
-    approval](APPROVALS.md#what-needs-approval)), `classification` and `description`.
+*   **Parameters.** `endpoint` (required: `url`, `auth` - optional, `bearer` -, `timeout_secs` -
+    default 10; see [COMPONENTS.md](COMPONENTS.md#remote-endpoints)), `requires_approval` (`true`
+    by default, `false` or `"unless_read_only"`; see
+    [What needs approval](APPROVALS.md#what-needs-approval)), `classification`, `description` and
+    `destination`.
 *   **Calls.** Each call opens a connection, and so an MCP session, of its own. An interrupted call
     drops it, which ends the session; whether the remote tool stops is up to the server.
 

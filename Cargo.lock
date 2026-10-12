@@ -328,6 +328,7 @@ dependencies = [
  "anyhow",
  "axum",
  "caelumora-logging",
+ "caelumora-mcp",
  "caelumora-model",
  "caelumora-rest-server",
  "caelumora-runtime",
@@ -335,6 +336,7 @@ dependencies = [
  "clap",
  "mime_guess",
  "rust-embed",
+ "serde_json",
  "tokio",
  "tower",
  "tower-http 0.7.1",
@@ -372,6 +374,25 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "caelumora-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "caelumora-model",
+ "caelumora-runtime",
+ "chrono",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -463,8 +484,6 @@ dependencies = [
  "rand 0.10.3",
  "regex",
  "reqwest",
- "rmcp",
- "schemars",
  "serde",
  "serde_json",
  "sse-stream",
@@ -504,6 +523,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "caelumora-logging",
+ "caelumora-mcp",
  "caelumora-model",
  "caelumora-runtime",
  "caelumora-skills",

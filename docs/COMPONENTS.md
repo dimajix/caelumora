@@ -171,7 +171,7 @@ purpose. That module's `mod.rs` holds the facet trait - with what consumes it, s
 
 | Module | Components |
 |---|---|
-| `tool/` | tool providers (`calculator_tool`, `mcp_tool`, ...) |
+| `tool/` | tool providers (`calculator_tool`, `terminal_tool`, ...) |
 | `command/` | command providers (`help_command`, `wakeup_command`, `nudge_command`) |
 | `llm/` | language models (`ollama_client`) |
 | `moderator/` | the moderator and its responder policies |
@@ -205,7 +205,8 @@ which a tool passes on with `?`.
 A plugin (issue 323) is a crate linked into the program that brings a subject the core does not
 know - a kind of entity with what keeps it, its components, its views and its routes. It implements
 `caelumora_runtime::plugin::Plugin` - a name for messages and `register` - and the program lists
-it: `caelumora-app` in `plugins()`, `caelumora-tui` in its own. `RuntimeBuilder::new` makes the
+it: `caelumora-app` in `rest_plugins()` if it serves routes, otherwise in `plugins()`, and builds
+its runtime with both; `caelumora-tui` in its own `plugins()`. `RuntimeBuilder::new` makes the
 core's services and managers first; then each plugin registers, and `build` makes the runtime.
 `RuntimeBuilder::from_config` makes what a program builds from the configuration - the policies,
 the stores, the secrets, the built-in component kinds -, `RuntimeManager::new` is the builder
@@ -224,13 +225,33 @@ without plugins. While it registers, a plugin
     files (`seed_section`, a `SeedSection`). Both sections stand at the top level of their files;
     one that no plugin claims is an error, so that a misspelt section is found.
 
-Its views are an extension trait on `Views`, built from what `Views` opens: the viewer's
-`context`, the `security` and `confidentiality` policies, its manager as a `service`, and
-`channel_reading`. Its routes come from `caelumora_rest_server::plugin::RestPlugin`, a `Plugin`
-that builds a `Router` with the `AppState`; the API serves them behind the same login as the core's
-(`routes::api`). Its tests use the world of the security suite - the runtime with the recording
-ownership policy and three users -, `caelumora_runtime::testing`, as a dev-dependency with the
-feature `test-support`.
+Its views are an extension trait on `Views`, built from what `Views` opens: the viewer's `context`,
+the `security` and `confidentiality` policies, its manager as a `service`, and `channel_reading`.
+Its routes come from `caelumora_rest_server::plugin::RestPlugin`, a `Plugin` that builds a `Router`
+with the `AppState`; the API serves them behind the same login as the core's (`routes::api`). A
+plugin that brings a component kind alone, such as `caelumora-mcp` (issue 325), implements `Plugin`
+only and registers the kind in `register`. A plugin's tests use the world of the security suite -
+the runtime with the recording ownership policy and three users -, `caelumora_runtime::testing`, as
+a dev-dependency with the feature `test-support`.
+
+### What a component kind outside the core may use
+
+A component kind in a crate of its own uses the runtime through what a component of the core uses
+too, and nothing else - there is no prelude that re-exports at large, so that it shows which types
+a plugin depends on:
+
+*   **To register it:** `ComponentRegistry::register` or `register_async`, `ComponentKind` with the
+    facets it `provides` and the services it `uses`, `ComponentFacets`, and `config_of_params` to
+    read its `params`.
+*   **While it is built:** the `ComponentContext` - `security_context`, in whose name it is built,
+    and `service::<T>()`, the services of the runtime it declared.
+*   **The facets it offers**, with what their signatures name: for a tool provider `ToolProvider`,
+    `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in.
+*   **The model's types** of what it handles: `Tool`, `RemoteEndpoint`, `SecretManager`,
+    `Classification`, ...
+
+What a plugin needs beyond that is made visible when a plugin needs it, as part of the runtime's
+API, rather than reached around (issue 325).
 
 ## Built-in components
 
@@ -263,7 +284,7 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `stop_tool` | `ToolProvider` | - | The tools `stop`, `bye` and `silence`, with which the agent ends its turn: asleep after `stop` and `bye`, idle and without an answer after `silence` ([TOOLS.md](TOOLS.md#built-in-tools)). |
 | `ask_user_tool` | `ToolProvider` | - | The tool `ask_user`, with which the agent asks users of its channel and waits for their answers. |
 | `create_plan_tool` | `ToolProvider`, `PromptProvider` | - | The tool `create_plan` and a system prompt part telling the model when to plan. |
-| `mcp_tool` | `ToolProvider` | `endpoint` (timeout 10 s, per call or discovery), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but the tools the server marks read-only), `classification` (the channel's), `description` (the server's `instructions`), `destination` (`public`) | The tools of a remote MCP server. `classification` is how their results are classified, `description` what they are for, as their tool set tells it, `destination` what the server is cleared for - its tools are not offered in a channel that may not flow there. |
+| `mcp_tool` | `ToolProvider` | `endpoint` (timeout 10 s, per call or discovery), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but the tools the server marks read-only), `classification` (the channel's), `description` (the server's `instructions`), `destination` (`public`) | Of the plugin `caelumora-mcp`, registered where it is joined. The tools of a remote MCP server. `classification` is how their results are classified, `description` what they are for, as their tool set tells it, `destination` what the server is cleared for - its tools are not offered in a channel that may not flow there. |
 | `notes` | `ToolProvider`, `PromptProvider` | - | Public notes of the agents in a channel: `write_note`, `update_note`, `revoke_note`, `read_notes`, `reclassify_note` (asks for approval) and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `private_notes` | `ToolProvider`, `PromptProvider` | - | The agent's private notes: `write_private_note`, `update_private_note`, `revoke_private_note`, `reclassify_private_note` (asks for approval), all `HIDDEN`, and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `agent_memory` | `ToolProvider`, `PromptProvider` | - | What the agent remembers across channels and sessions: `remember`, `update_memory`, `forget`, `reclassify_memory` (asks for approval), all `HIDDEN`, and a prompt part ([MEMORY.md](MEMORY.md)). |
