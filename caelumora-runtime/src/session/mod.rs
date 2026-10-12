@@ -10,12 +10,11 @@ use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, Participant};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
-use caelumora_model::value::language::Language;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use crate::view::{Viewer, Views};
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::group::GroupId;
@@ -94,18 +93,6 @@ fn shown_left(left: &[(EntityKind, usize)]) -> String {
 fn require_classification(runtime_manager: &RuntimeManager, classification: &Classification) -> Result<()> {
     runtime_manager.confidentiality().require_classifiable(classification, || SessionError::ClassificationRefused(classification.clone()))?;
     Ok(())
-}
-
-/// The language the user `context` acts for prefers (issue 56), which
-/// what they create is held in unless they say otherwise; none if they
-/// prefer none or act for no user.
-///
-/// # Errors
-/// Whatever reading their profile reports, except that there is none.
-async fn preferred_language(store: &dyn EntityStore, context: &SecurityContext) -> StoreResult<Option<Language>> {
-    let Some(user) = context.principal_id.as_user_id() else { return Ok(None) };
-    let profile = store.get_user_profile(context, user).await.optional()?;
-    Ok(profile.and_then(|profile| profile.preferred_language))
 }
 
 /// A channel of the session and, once `run` started it, its task.

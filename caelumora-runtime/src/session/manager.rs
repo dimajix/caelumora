@@ -23,7 +23,7 @@ use crate::workspace::WorkspaceManager;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
-use super::{SessionError, SessionLoop, preferred_language, purge_channel_document, require_attachable, require_classification};
+use super::{SessionError, SessionLoop, purge_channel_document, require_attachable, require_classification};
 use caelumora_model::removal::Stored;
 
 pub struct SessionManager {
@@ -163,7 +163,6 @@ impl SessionManager {
         };
         let participants = crate::template::resolve_participants(store.as_ref(), context, &template, id, owner).await?;
         let name = name.unwrap_or_else(|| template.name.name.clone());
-        let language = preferred_language(store.as_ref(), context).await?;
         // What is to be found or made: the template's, unless one was chosen.
         let wanted = match workspace {
             None => template.workspace.clone(),
@@ -171,7 +170,7 @@ impl SessionManager {
                 Some(WorkspaceTemplate { name: name.clone(), scope: ScopeTemplate::SessionScope, storage, classification, description: None }),
             Some(WorkspaceChoice::None | WorkspaceChoice::Existing { .. }) => None,
         };
-        let (mut session, channels) = template.build(id, owner, name, language.as_ref(), participants)?;
+        let (mut session, channels) = template.build(id, owner, name, participants)?;
         let workspaces = self.runtime_manager.workspace_manager();
         let workspace = match &wanted {
             Some(wanted) => Some(crate::template::resolve_workspace(workspaces, store.as_ref(), context, wanted, id, owner).await?),
@@ -840,7 +839,7 @@ mod tests {
         assert_eq!(session.session().security_attributes.owner_id, ActorId::User(owner));
         let main = session.channel_by_name("main").expect("the template's channel runs");
         assert!(main.user_actor(owner).is_some(), "the owner is the template's \"user\"");
-        assert_eq!(main.channel().language, profile.preferred_language, "held in the language the owner prefers");
+        assert_eq!(main.channel().language, None, "not in the one the owner prefers: that is the frontend's to set (issue 331)");
         let stored = store.get_channel(&hers, main.id()).await.unwrap();
         assert!(stored.participants.iter().any(|p| matches!(p, Participant::Approver(a) if a.strategy == ApprovalStrategy::All)), "the template's approver");
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();

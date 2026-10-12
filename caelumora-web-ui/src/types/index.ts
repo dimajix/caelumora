@@ -23,7 +23,7 @@ export interface UserResponse {
 export interface ProfileResponse {
   introduction: string | null;
   max_introduction_chars: number;
-  /** The language you prefer, a BCP 47 tag such as `de` (issue 56); your new channels are held in it. */
+  /** The language you prefer, a BCP 47 tag such as `de` (issue 56); the web UI holds your new channels in it (issue 331). */
   preferred_language: string | null;
   /** Your answers to tool calls given in advance (issue 13): rules that allow or deny, each within a reach. */
   approval_rules: ApprovalRule[];
@@ -798,7 +798,7 @@ export interface CreateChannelRequest {
   participants: ActorId[];
   /** The classification of the channel's contents; the server's default if absent. */
   classification?: Classification;
-  /** The language its conversation is held in (issue 56); the one you prefer if absent. */
+  /** The language its conversation is held in (issue 56); none in particular if absent (issue 331). */
   language?: string;
   /** Whether its members work on the session's workspace in it (issue 253); yes if absent. */
   uses_workspace?: boolean;

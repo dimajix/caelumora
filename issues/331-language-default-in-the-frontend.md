@@ -1,6 +1,6 @@
 # 331 — The core falls back to the creator's preferred language
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -57,3 +57,11 @@ it that does not name its own (both through `preferred_language` in
 - **2026-10-12** — Opened from the maintainer's question whether the fallback to the preferred
   language belongs in the UI rather than in the core. Decided: it does, and for sessions the web UI
   sets the language with a second call instead of a new parameter.
+- **2026-10-12** — Done. The core no longer reads the creator's profile when it creates a channel or
+  a session: `preferred_language` in `session/mod.rs` is gone, and `SessionTemplate::build` and
+  `ChannelTemplate::instantiate` take no language - a channel is held in what the request or its
+  template names, else in none. The web UI's new-session dialog reads the profile and, after
+  creating the session, sets the preferred language on each channel held in none (`PUT
+  …/channels/{cid}/language`); a failure is reported and the session stays. The new-channel dialog
+  presets it as before. The TUI does the same for the session it creates and logs a failure. With
+  this, a channel held in no language can be created by someone who prefers one.

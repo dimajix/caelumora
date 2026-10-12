@@ -195,7 +195,7 @@ impl Channel {
     /// user and agent in it, whoever they are at the time - the group of its
     /// participants (issue 304), which whoever stores the channel stores
     /// with it (`Group::of_channel`). Held in
-    /// `language`, if any - by default the language its creator prefers.
+    /// `language`, if any.
     pub fn build(session_id: SessionId, owner: ActorId, name: Name, components: ComponentConfig, classification: Classification, language: Option<Language>, mut participants: Vec<Participant>) -> Self {
         if !participants.iter().any(|p| matches!(p, Participant::Approver(_))) {
             participants.push(Participant::Approver(Approver {

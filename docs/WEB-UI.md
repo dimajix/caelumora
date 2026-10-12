@@ -122,9 +122,11 @@ more, though it only goes to the trash.
 
 The user's name at the foot of the sidebar opens their profile: how they introduce themselves to the
 agents - with the note that every agent in every channel they take part in is given it - the
-language they prefer, which the channels they create are held in, and their own rules on tool
-calls, each with where it reaches and until when, to take back. Whether a language tag is valid is
-the server's to decide.
+language they prefer, and their own rules on tool calls, each with where it reaches and until when,
+to take back. Whether a language tag is valid is the server's to decide. The preferred language is
+the web UI's to apply, not the server's (issue 331): the dialog for a new channel presets it, and
+after a new session is made it is set on each of its channels that the template holds in none - a
+failure to set it is reported, the session stays.
 
 "New Session" presets everything - the template used last in this browser, its name, the workspace
 the template names - so that Enter makes a session as its template has it. A workspace chosen there

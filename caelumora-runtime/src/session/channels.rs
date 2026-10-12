@@ -20,7 +20,7 @@ use caelumora_model::session::ChannelId;
 use caelumora_model::group::Group;
 use crate::group::keep_participants;
 use std::sync::Arc;
-use super::{ChannelEntry, SessionError, SessionLoop, preferred_language, purge_channel_document, require_classification};
+use super::{ChannelEntry, SessionError, SessionLoop, purge_channel_document, require_classification};
 use caelumora_model::removal::Stored;
 
 /// What a new channel should be (issue 09), as it was asked: its name and
@@ -39,8 +39,9 @@ pub struct ChannelSpec {
     /// for the default, as in a template. Set by whoever may create the
     /// channel - its owner.
     pub classification: Option<Classification>,
-    /// The language its conversation is held in (issue 56); `None` for the
-    /// one its creator prefers, if they prefer one.
+    /// The language its conversation is held in (issue 56); `None` for none
+    /// in particular. Offering the one its creator prefers is the
+    /// frontend's (issue 331).
     pub language: Option<String>,
     /// Whether its members work on the session's workspace in it (issue
     /// 253); `None` for the default, as in a template.
@@ -113,10 +114,6 @@ impl SessionLoop {
         let language = Language::optional(spec.language.as_deref())?;
         let classification = spec.classification.unwrap_or_default();
         require_classification(&self.runtime_manager, &classification)?;
-        let language = match language {
-            Some(language) => Some(language),
-            None => preferred_language(self.entities.as_ref(), context).await?,
-        };
 
         // The creator first, if they take part in the session at all.
         let mut ids = vec![context.initiator_id];
@@ -368,24 +365,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_channel_is_held_in_the_language_its_creator_prefers_unless_asked_otherwise() {
+    async fn a_channel_is_held_in_the_language_asked_for_and_in_none_otherwise() {
         use caelumora_model::user::UserProfile;
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
         let language = |tag: &str| Some(Language::new(tag).unwrap());
 
-        let unsaid = session.create_channel(&ctx, spec("unsaid", vec![])).await.unwrap();
-        assert_eq!(unsaid.channel().language, None, "no profile, no language");
-
         let owner = ctx.initiator_id.as_user_id().unwrap();
         let mut profile = UserProfile::new(owner, None);
         profile.preferred_language = language("de");
         runtime.entity_store().create_user_profile(&ctx, &profile).await.unwrap();
-        let preferred = session.create_channel(&ctx, spec("preferred", vec![])).await.unwrap();
-        assert_eq!(preferred.channel().language, language("de"), "the one the creator prefers");
+        let unsaid = session.create_channel(&ctx, spec("unsaid", vec![])).await.unwrap();
+        assert_eq!(unsaid.channel().language, None, "not the one the creator prefers: that is the frontend's to offer (issue 331)");
         let asked = session.create_channel(&ctx, ChannelSpec { language: Some("en".to_string()), ..spec("asked", vec![]) }).await.unwrap();
-        assert_eq!(asked.channel().language, language("en"), "unless another is asked for");
+        assert_eq!(asked.channel().language, language("en"), "the one asked for");
 
         asked.update_language(&ctx, None).await.expect("the owner changes it");
         assert_eq!(asked.channel().language, None);

@@ -1,7 +1,9 @@
 // Making a session (issues 40, 266): its template - the one used last in this browser preselected -,
 // its name, and its workspace: as its template says, none, one of the user's own, or a new one for
 // the session alone, in a storage the user chooses and classified as they say. Everything is preset,
-// so that opening the dialog and pressing Enter makes a session as the template has it.
+// so that opening the dialog and pressing Enter makes a session as the template has it. Its channels
+// are held in the language the user prefers where the template names none (issue 331): the server
+// holds them in none, and the dialog sets it on each after making the session.
 
 import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
@@ -27,6 +29,14 @@ interface NewSessionDialogProps {
   onClose: () => void;
 }
 
+/** Sets `language` on each channel of the session `sessionId` that is held in none. */
+async function holdChannelsIn(sessionId: string, language: string): Promise<void> {
+  const channels = await api.getChannels(sessionId);
+  await Promise.all(channels
+    .filter(channel => channel.language === null)
+    .map(channel => api.setChannelLanguage(sessionId, channel.id, language)));
+}
+
 export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, onCreated, onClose}) => {
   const [templates, setTemplates] = useState<SessionTemplate[] | null>(null);
   const [lastTemplateId] = useState<string | null>(() => loadLastTemplate());
@@ -40,6 +50,8 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
   const [storages, setStorages] = useState<StorageResponse[] | null>(null);
   const [storage, setStorage] = useState<string | null>(null);
   const [classification, setClassification] = useState<Classification>(DEFAULT_CLASSIFICATION);
+  // The language the user prefers, set on the channels the template holds in none.
+  const [preferredLanguage, setPreferredLanguage] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -56,6 +68,9 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
         reportError('Failed to fetch the storages', error);
         setStorages([]);
       });
+    api.getProfile()
+      .then(profile => setPreferredLanguage(profile.preferred_language))
+      .catch(error => reportError('Failed to fetch the profile', error));
   }, []);
 
   // The chosen template if it still exists, else the first (the server sorts them by name).
@@ -89,6 +104,11 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
     try {
       const session = await api.createSession(template.id, sessionName.trim(), workspaceRequest());
       saveLastTemplate(template.id);
+      if (preferredLanguage) {
+        // The session exists either way; one whose language could not be set is reported, not undone.
+        await holdChannelsIn(session.id, preferredLanguage)
+          .catch(error => reportError('The session was created, but the language of its channels could not be set', error));
+      }
       onCreated(session);
     } catch (error) {
       // What the server says about the request - a workspace not the user's, a classification

@@ -53,8 +53,8 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
       .catch(error => reportError('Failed to fetch the compartments', error));
   }, []);
 
-  // The language the user prefers, offered as the channel's - which is what
-  // the server takes if none is sent.
+  // The language the user prefers, offered as the channel's (issue 331): the
+  // server holds a channel in none if none is sent.
   useEffect(() => {
     api.getProfile()
       .then(profile => setLanguage(current => current || (profile.preferred_language ?? '')))

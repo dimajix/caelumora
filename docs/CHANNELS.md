@@ -111,10 +111,13 @@ deleted again.
 ### Its language
 
 A channel may be held in a language, a BCP 47 tag (`Language`). A channel is held in the language
-its creator prefers unless the request or its template names another - a template for a channel
-whose purpose comes with its language, such as a German quiz; one whose creator prefers none is held
-in none. Whoever may change the channel changes it or takes it back. Its agents are told by a prompt
-part (see [AGENT-TURN.md](AGENT-TURN.md#the-channels-language)); nothing said before is translated.
+the request or its template names - a template for a channel whose purpose comes with its language,
+such as a German quiz - and in none otherwise. The server does not fall back to the language its
+creator prefers: offering that is the frontend's, where the user sees what is chosen (issue 331).
+The web UI presets it when a channel is created, and sets it after creating a session on each of its
+channels that the template holds in none. Whoever may change the channel changes it or takes it
+back. Its agents are told by a prompt part (see
+[AGENT-TURN.md](AGENT-TURN.md#the-channels-language)); nothing said before is translated.
 
 ### What it is for
 

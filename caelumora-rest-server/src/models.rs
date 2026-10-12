@@ -894,7 +894,7 @@ pub struct CreateChannelRequest {
     /// configured; `internal` without compartments if absent.
     pub classification: Option<Classification>,
     /// The language its conversation is held in (issue 56), a BCP 47 tag;
-    /// the one the requesting user prefers if absent.
+    /// none in particular if absent (issue 331).
     #[serde(default)]
     pub language: Option<String>,
     /// Whether its members work on the session's workspace in it (issue
@@ -1629,7 +1629,7 @@ mod tests {
         let request: ProfileRequest = serde_json::from_str(r#"{"preferred_language": "Deutsch"}"#).unwrap();
         assert_eq!(request.preferred_language.as_deref(), Some("Deutsch"), "checked by the profile, not as the request is read");
         let request: CreateChannelRequest = serde_json::from_str(r#"{"name": "side"}"#).unwrap();
-        assert_eq!(request.language, None, "the preferred one when left out");
+        assert_eq!(request.language, None, "none when left out, whichever the user prefers (issue 331)");
     }
 
     #[test]

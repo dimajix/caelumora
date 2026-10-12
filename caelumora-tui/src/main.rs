@@ -1,4 +1,5 @@
 use caelumora_model::store::query::Query;
+use caelumora_model::store::StoreResultExt;
 use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
@@ -500,6 +501,18 @@ async fn main() -> anyhow::Result<()> {
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
     let session_loop = session_manager.create_from_template(&security, template.id, Some("default-session"), None).await?;
     let session_id = session_loop.id();
+
+    // Its channels held in the language the user prefers where the template
+    // names none: the frontend's to set, not the server's (issue 331).
+    let preferred = entity_store.get_user_profile(&security, owner).await.optional()?.and_then(|profile| profile.preferred_language);
+    if let Some(language) = preferred {
+        for channel in session_loop.channels().into_iter().filter(|channel| channel.channel().language.is_none()) {
+            // The session exists either way; reported, not undone.
+            if let Err(e) = channel.update_language(&security, Some(language.as_str())).await {
+                tracing::warn!(channel = %channel.id(), "The language of the channel could not be set: {e:#}");
+            }
+        }
+    }
 
     // The template's first channel, whatever it is called.
     let channel = session_loop.channels().into_iter().next()

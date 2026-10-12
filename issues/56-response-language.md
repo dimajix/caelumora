@@ -89,3 +89,6 @@ participant reads as it is (and which history, notes, digests and `read_history`
   which then holds for whoever creates the session, before the language they prefer: a channel
   whose purpose comes with a language - the German quiz of the demo template `sassy-session` - is
   held in it. Templates are not seen over REST, so the web UI does not change.
+- **2026-10-12** — The fallback to the creator's preferred language moved from the core to the
+  frontends ([331](331-language-default-in-the-frontend.md)); a channel held in no language can now
+  be created by someone who prefers one.

@@ -94,7 +94,8 @@ pub struct ChannelTemplate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub briefing: Option<Briefing>,
     /// The language the channel is held in (issue 56), whoever creates it;
-    /// the one its creator prefers unless named.
+    /// none in particular unless named - a frontend may then set the one its
+    /// creator prefers (issue 331).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
     /// The channel's components (issue 174): its moderator and the policy
@@ -125,15 +126,15 @@ impl ChannelTemplate {
     /// its name in the session template, which is what `self.participants`
     /// refers to - not the user's or agent's own name: the template's "user"
     /// is whoever the session was created for. Held in the template's
-    /// language, else in `language`, the one the owner prefers (issue 56).
-    pub fn instantiate(&self, session_id: SessionId, owner: UserId, language: Option<&Language>, session_participants: &[(String, Participant)]) -> TemplateResult<Channel> {
+    /// language, if it names one (issue 56).
+    pub fn instantiate(&self, session_id: SessionId, owner: UserId, session_participants: &[(String, Participant)]) -> TemplateResult<Channel> {
         let participants = self.participants.iter()
             .map(|name| session_participants.iter()
                 .find(|(template_name, _)| template_name == name)
                 .map(|(_, participant)| participant.clone())
                 .ok_or_else(|| TemplateError::ParticipantNotFound(name.clone())))
             .collect::<TemplateResult<Vec<_>>>()?;
-        let channel = Channel::build(session_id, ActorId::User(owner), self.name.clone(), self.components.clone(), self.classification.clone(), self.language.as_ref().or(language).cloned(), participants);
+        let channel = Channel::build(session_id, ActorId::User(owner), self.name.clone(), self.components.clone(), self.classification.clone(), self.language.clone(), participants);
         Ok(Channel { approval_rules: self.approval_rules.clone(), summary: self.summary.clone(), briefing: self.briefing.clone(), uses_workspace: self.uses_workspace, ..channel })
     }
 }
@@ -259,13 +260,11 @@ impl SessionTemplate {
     /// documents of their own, which the session lists by id (issue 70).
     /// `participants` are the template's participants as found or created
     /// for it (`ParticipantTemplate::request`), each with its name in the
-    /// template. Its channels are held in `language`, the language the
-    /// owner prefers, unless their template names one (issue 56). Nothing is
-    /// stored: that is the caller's, so that it can announce the session
-    /// where it is created.
-    pub fn build(&self, id: SessionId, owner: UserId, name: Name, language: Option<&Language>, participants: Vec<(String, Participant)>) -> TemplateResult<(Session, Vec<Channel>)> {
+    /// template. Nothing is stored: that is the caller's, so that it can
+    /// announce the session where it is created.
+    pub fn build(&self, id: SessionId, owner: UserId, name: Name, participants: Vec<(String, Participant)>) -> TemplateResult<(Session, Vec<Channel>)> {
         let channels = self.channels.iter()
-            .map(|channel| channel.instantiate(id, owner, language, &participants))
+            .map(|channel| channel.instantiate(id, owner, &participants))
             .collect::<TemplateResult<Vec<_>>>()?;
         let participants: Vec<Participant> = participants.into_iter().map(|(_, participant)| participant).collect();
         let security_attributes = Session::attributes_of(id, owner);
@@ -421,7 +420,7 @@ mod tests {
         template.briefing = Some(Briefing::new("Review before you merge.").unwrap());
         template.channels[0].summary = Some(Summary::new("Where the pairing happens").unwrap());
         let (id, owner) = (SessionId::new(), UserId::new());
-        let (session, channels) = template.build(id, owner, Name::new("s").unwrap(), None, resolved(&template, id, owner)).unwrap();
+        let (session, channels) = template.build(id, owner, Name::new("s").unwrap(), resolved(&template, id, owner)).unwrap();
         assert_eq!((session.summary.as_ref().map(Summary::as_str), session.briefing.as_ref().map(Briefing::as_str)), (Some("Pair programming"), Some("Review before you merge.")), "copied");
         assert_eq!((channels[0].summary.as_ref().map(Summary::as_str), channels[0].briefing.as_ref()), (Some("Where the pairing happens"), None));
         assert_eq!(channels[1].summary, None, "a channel that says nothing");
@@ -433,14 +432,13 @@ mod tests {
     }
 
     #[test]
-    fn a_channel_is_held_in_its_templates_language_before_the_one_its_owner_prefers() {
+    fn a_channel_is_held_in_the_language_its_template_names() {
         let mut template = template();
         template.channels[0].language = Some(Language::new("de").unwrap());
-        let preferred = Language::new("fr").unwrap();
         let (id, owner) = (SessionId::new(), UserId::new());
-        let (_, channels) = template.build(id, owner, Name::new("s").unwrap(), Some(&preferred), resolved(&template, id, owner)).unwrap();
+        let (_, channels) = template.build(id, owner, Name::new("s").unwrap(), resolved(&template, id, owner)).unwrap();
         assert_eq!(channels[0].language.as_ref().map(Language::as_str), Some("de"), "the template's");
-        assert_eq!(channels[1].language.as_ref(), Some(&preferred), "a template that names none: the owner's");
+        assert_eq!(channels[1].language, None, "a template that names none: none in particular (issue 331)");
 
         let named: ChannelTemplate = serde_json::from_value(serde_json::json!({"name": "main", "language": "de", "participants": []})).unwrap();
         assert_eq!(named.language, template.channels[0].language, "a seed names it by its tag");
@@ -468,7 +466,7 @@ mod tests {
         let template = template();
         let (id, owner) = (SessionId::new(), UserId::new());
 
-        let (session, channels) = template.build(id, owner, Name::new("s").unwrap(), None, resolved(&template, id, owner)).unwrap();
+        let (session, channels) = template.build(id, owner, Name::new("s").unwrap(), resolved(&template, id, owner)).unwrap();
         assert_eq!(session.channels, channels.iter().map(|c| c.id).collect::<Vec<_>>(), "the session lists its channels by id");
         assert_eq!(session.participants.len(), 3, "every actor of the template");
 
@@ -481,13 +479,13 @@ mod tests {
         assert_eq!(channels[0].classification, Classification::CHANNEL_DEFAULT);
         assert_eq!(session.privacy, PrivacyConfig::Private, "private unless the template says otherwise");
         let shared = SessionTemplate { privacy: PrivacyConfig::SharedAudience, ..template.clone() };
-        let (session, _) = shared.build(id, owner, Name::new("s").unwrap(), None, resolved(&shared, id, owner)).unwrap();
+        let (session, _) = shared.build(id, owner, Name::new("s").unwrap(), resolved(&shared, id, owner)).unwrap();
         assert_eq!(session.privacy, PrivacyConfig::SharedAudience, "the template's policy");
 
         // A channel naming someone the template does not have.
         let mut stray = template.clone();
         stray.channels[1].participants.push("ghost".to_string());
-        assert!(matches!(stray.build(id, owner, Name::new("x").unwrap(), None, resolved(&stray, id, owner)), Err(TemplateError::ParticipantNotFound(_))));
+        assert!(matches!(stray.build(id, owner, Name::new("x").unwrap(), resolved(&stray, id, owner)), Err(TemplateError::ParticipantNotFound(_))));
 
         let unnamed: ChannelTemplate = serde_json::from_value(serde_json::json!({"name": "main", "participants": []})).unwrap();
         assert_eq!(unnamed.classification, Classification::general(crate::confidentiality::Confidentiality::Internal), "the default");
