@@ -163,3 +163,7 @@ and the numbers that show it.
   its own on tokio; `caelumora-rest-client` made into a real client and used by the suite; the
   model faked as an Ollama server in the suite (B), not as a component of the runtime. Not decided
   yet.
+- **2026-10-12** — Issue [323](323-kinds-enumerated-in-the-core.md) takes the wire types out of
+  the server into a crate `caelumora-rest-api` of their own (its step 7), on which the server and
+  `caelumora-rest-client` both depend: the client of this issue builds on that crate rather than
+  holding the types itself, so that the server does not depend on the client.
