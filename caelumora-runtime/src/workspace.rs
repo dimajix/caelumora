@@ -31,14 +31,13 @@ use crate::component::{ComponentError, ComponentResult};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused, within};
-use crate::terminal::{CommandKey, CommandState, DockerProvider, LocalProvider, Shell, SharedProvider, Terminal, TerminalError, TerminalProvider};
+use crate::terminal::{CommandKey, CommandState, Shell, Terminal, TerminalError, TerminalProvider};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::config::{StorageConfig, WorkspacesConfig};
+use caelumora_model::config::WorkspacesConfig;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
-use caelumora_model::secret::SecretManager;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
 use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, Refused, SecurityContext, SecurityManager, Subject, WRITE};
@@ -144,32 +143,17 @@ impl fmt::Debug for WorkspaceManager {
 }
 
 impl WorkspaceManager {
-    /// The manager of the workspaces of `stores`, whose files lie in the
-    /// storages `config` names. Where one of them has a shell, it starts
+    /// The manager of the workspaces of `stores`, whose files lie in
+    /// `storages`, by their names - the storages its configuration names,
+    /// made as backends (issue 324) -, and of which a person may put files
+    /// as large as `config` says. Where one of them has a shell, it starts
     /// the task that ends the commands nobody may run any longer (issue
     /// 254).
     ///
     /// # Errors
-    /// `ComponentError::InvalidConfig` for a storage whose provider cannot
-    /// be made, naming it, or for a storage with a shell outside a Tokio
-    /// runtime.
-    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, controllers: Arc<ControllerManager>, secrets: &Arc<SecretManager>, config: &WorkspacesConfig) -> ComponentResult<Arc<Self>> {
-        let storages: BTreeMap<String, Arc<dyn TerminalProvider>> = config.storage.iter()
-            .map(|(name, storage)| {
-                let invalid = |e: TerminalError| ComponentError::InvalidConfig(format!("the storage '{name}' of workspaces: {e}"));
-                let max_run = storage.max_run();
-                let provider: Arc<dyn TerminalProvider> = match storage {
-                    StorageConfig::Local { root, shell, destination, .. } => Arc::new(LocalProvider::new(root.clone(), *shell, max_run, destination.clone())),
-                    StorageConfig::OpenTerminalShared { endpoint, mount, destination, .. } => Arc::new(
-                        SharedProvider::new(endpoint.clone(), mount, max_run, destination.clone(), Arc::clone(secrets)).map_err(invalid)?,
-                    ),
-                    StorageConfig::OpenTerminalDocker { image, network, idle_stop_secs, destination, .. } => Arc::new(
-                        DockerProvider::new(name, image, network, Duration::from_secs(*idle_stop_secs), max_run, destination.clone()).map_err(invalid)?,
-                    ),
-                };
-                Ok((name.clone(), provider))
-            })
-            .collect::<ComponentResult<_>>()?;
+    /// `ComponentError::InvalidConfig` for a storage with a shell outside a
+    /// Tokio runtime.
+    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, controllers: Arc<ControllerManager>, storages: BTreeMap<String, Arc<dyn TerminalProvider>>, config: &WorkspacesConfig) -> ComponentResult<Arc<Self>> {
         let with_shell = storages.values().any(|provider| provider.has_shell());
         let manager = Arc::new(Self { sessions: Arc::clone(&stores.sessions), workspaces: Arc::clone(&stores.workspaces), channels: Arc::clone(&stores.channels), groups: Arc::clone(&stores.groups), events, security, confidentiality, controllers, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()), checker: OnceLock::new() });
         if with_shell {
@@ -780,7 +764,8 @@ pub(crate) mod testing {
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_model::channel::{Channel, Participant};
-    use caelumora_model::config::{ArtifactStorageConfig, ArtifactsConfig, StorageConfig, WorkspacesConfig, DEFAULT_MAX_RUN_SECS};
+    use caelumora_model::config::{ArtifactsConfig, BackendConfig, WorkspacesConfig};
+    use serde_json::json;
     use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
     use caelumora_model::scope::Scope;
     use caelumora_model::secret::SecretManager;
@@ -832,10 +817,10 @@ pub(crate) mod testing {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
         let files = tempfile::tempdir().unwrap();
         let internal = Classification::general(Confidentiality::Internal);
-        let storage = StorageConfig::Local { root: files.path().to_path_buf(), shell: true, destination: Some(internal.clone()), max_run_secs: DEFAULT_MAX_RUN_SECS };
+        let storage = BackendConfig::new("local", json!({ "root": files.path(), "shell": true, "destination": { "level": "internal" } }));
         let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
         let artifacts = tempfile::tempdir().unwrap();
-        let kept = ArtifactsConfig { storage: [("kept".to_string(), ArtifactStorageConfig::Local { root: artifacts.path().to_path_buf(), destination: None })].into(), ..Default::default() };
+        let kept = ArtifactsConfig { storage: [("kept".to_string(), BackendConfig::new("local", json!({ "root": artifacts.path() })))].into(), ..Default::default() };
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig { workspaces, artifacts: kept, ..Default::default() }, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 

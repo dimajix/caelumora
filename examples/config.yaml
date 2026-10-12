@@ -27,7 +27,7 @@ seed:
 #    - type: env
 
 # Where the files of workspaces lie (issues 251, 253): storages by name, each
-# with its provider. `local` keeps a directory per workspace under `root`.
+# with its type. `local` keeps a directory per workspace under `root`.
 # `shell: true` lets agents run commands there with `terminal_tool` - on
 # Caelumora's host, as its user, with no isolation but the directory: only
 # for development. A storage with a shell takes no workspace classified
@@ -37,10 +37,10 @@ workspaces:
   max_file_bytes: 52428800
   storage:
     files:
-      provider: local
+      type: local
       root: "local/workspaces/files"
 #    dev:
-#      provider: local
+#      type: local
 #      root: "local/workspaces/dev"
 #      shell: true
 #      destination: { level: internal }
@@ -50,7 +50,7 @@ workspaces:
     # local/secrets.json. Every workspace of it lies in the one instance: a
     # command in one reaches every other.
     sandbox:
-      provider: open_terminal_shared
+      type: open_terminal_shared
       endpoint:
         url: "http://localhost:8000"
         auth: { type: bearer, secret: OPEN_TERMINAL_API_KEY }
@@ -63,14 +63,14 @@ workspaces:
     # workspace's commands are kept to its container, which reaches what
     # its network reaches.
 #    isolated:
-#      provider: open_terminal_docker
+#      type: open_terminal_docker
 #      image: "ghcr.io/open-webui/open-terminal:0.14.0"
 #      network: bridge
 #      idle_stop_secs: 900
 #      destination: { level: confidential }
 
 # Where the content of published artifacts lies (issue 271): storages by
-# name, each with its provider, and the one new artifacts go to where there
+# name, each with its type, and the one new artifacts go to where there
 # are several (`publish_to`). `local` keeps a directory per artifact under
 # `root`, a file per version. A storage takes no artifact classified above
 # its `destination`, if it has one.
@@ -78,7 +78,7 @@ artifacts:
   max_bytes: 52428800
   storage:
     kept:
-      provider: local
+      type: local
       root: "local/artifacts"
 
 # Where users and their credentials come from. Without this section nobody

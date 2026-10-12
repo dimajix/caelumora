@@ -16,6 +16,7 @@ use caelumora_model::store::ComponentStore;
 use caelumora_model::value::name::Name;
 use caelumora_runtime::agent::state::AgentStates;
 use caelumora_runtime::agent::turn::Turn;
+use caelumora_runtime::backend::Backends;
 use caelumora_runtime::command::CommandExecutor;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentRegistry, PRECONFIGURED_REF_KIND};
 use caelumora_runtime::runtime::{ChannelRuntime, RuntimeBuilder, RuntimeManager};
@@ -80,7 +81,8 @@ async fn start_test_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
 fn runtime(store: &Arc<MemoryStore>) -> RuntimeManager {
     let security = Arc::new(DummySecurityManager::new());
     let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
-    let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store))).unwrap();
+    let backends = Backends::with_plugins(&[&McpPlugin]);
+    let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)), &backends).unwrap();
     builder.plugin(&McpPlugin).unwrap();
     builder.build().unwrap()
 }

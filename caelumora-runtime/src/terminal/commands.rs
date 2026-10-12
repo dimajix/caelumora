@@ -20,7 +20,7 @@ pub(super) const KEPT_AFTER_END: Duration = Duration::from_secs(300);
 
 /// A command, as its storage knows it: its workspace, the scope it was
 /// started with, its id.
-pub(crate) type CommandKey = (WorkspaceId, String, String);
+pub type CommandKey = (WorkspaceId, String, String);
 
 /// A lock of these few, never held across an await, taken also if a holder
 /// panicked: nothing under it is left half changed.

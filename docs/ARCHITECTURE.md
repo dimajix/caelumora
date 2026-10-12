@@ -61,6 +61,26 @@ plugin is one crate, cut into layers by Cargo features rather than crates. The f
 
 Details: [COMPONENTS.md](COMPONENTS.md#plugins).
 
+## Backends
+
+Some services of the core are served by one of a choice of **backends**, named in the configuration
+by their `type` (issue 324): the storages of workspaces (`TerminalProvider`) and of artifacts
+(`ArtifactStorage`), the secret providers (`SecretProvider`) and the user providers
+(`UserProvider`). A backend is made by the factory registered under its type for its service, in
+`Backends` (`caelumora_runtime::backend`), which reads its parameters and asks the services it is
+given for what it needs. The core registers its own (`Backends::built_in`); a plugin adds one by
+registering its factory in `Plugin::backends`, which is asked before anything is made - so a new
+storage or provider is a crate linked into the program, and no edit of the core. The backends are
+made once, when the runtime is built (`RuntimeBuilder::from_config`): the secret providers first,
+then the storages and the user providers with the secrets and the records of the users at hand.
+Unlike a component, a backend serves the whole process and lives in no container, which is why it
+is no component.
+
+The persistence is not among them: its stores open a store for any kind, generic over the kind, so
+it stays a closed choice of the core (`PersistenceBackend`, see [STORAGE.md](STORAGE.md)).
+
+Details: [CONFIGURATION.md](CONFIGURATION.md#backends).
+
 ## The domain
 
 A **session** is one piece of work, such as a conversation about a topic. It has participants -

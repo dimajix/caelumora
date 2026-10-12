@@ -17,6 +17,7 @@ pub mod command;
 pub mod compaction;
 pub mod controller;
 pub mod message;
+pub mod backend;
 pub mod component;
 pub mod component_impl;
 pub mod context;

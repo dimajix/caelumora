@@ -39,12 +39,10 @@ mod docker;
 mod shared;
 mod wire;
 
-pub(crate) use docker::DockerProvider;
-pub(crate) use shared::SharedProvider;
-
 use super::commands::{locked, Commands, Kept};
 use caelumora_model::workspace::CommandStatus;
 use super::{ByteStream, CommandKey, CommandState, FileEntry, Shell, Terminal, TerminalError, TerminalResult, WorkspacePath};
+use crate::backend::Backends;
 use async_trait::async_trait;
 use caelumora_model::workspace::WorkspaceId;
 use chrono::{DateTime, Utc};
@@ -368,6 +366,13 @@ impl Shell for OpenTerminalShell {
         client.success(answer)?;
         self.output(id, offset, KILL_WAIT).await
     }
+}
+
+/// Registers the storages `open_terminal_shared` and `open_terminal_docker`
+/// with `backends`.
+pub(super) fn register_backends(backends: &mut Backends) {
+    shared::register_backend(backends);
+    docker::register_backend(backends);
 }
 
 #[cfg(test)]

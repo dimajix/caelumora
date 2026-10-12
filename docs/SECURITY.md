@@ -506,7 +506,9 @@ channel is read.
 
 Where users come from and how their credentials are verified is pluggable, in the same way as
 secrets. A `UserProvider` is one source of users; the `UserManager` holds an ordered chain of them,
-configured in the `users` section.
+configured in the `users` section, each a backend that a plugin may add (see
+[ARCHITECTURE.md](ARCHITECTURE.md#backends)). The runtime makes the manager when it is built and
+offers it (`RuntimeManager::user_manager`), since it records users on the runtime's event bus.
 
 Looking a user up and verifying a credential are separate operations. Verification never hands out
 the stored credential, so backends that verify by binding (LDAP) fit the same trait as backends that
@@ -531,7 +533,8 @@ The user chain fails differently from the secret chain:
 
 There is no default provider. The only built-in one so far, `accept_any`, is a development stand-in:
 it accepts any username and password and finds users in the `EntityStore`. It must be enabled
-explicitly and warns at startup. It gives users the roles its configuration names for them; what
+explicitly and warns at startup. It gives users the roles its configuration names for them, which
+must be configured roles - refused when it is made otherwise; what
 roles grant - clearances - is described in [CONFIDENTIALITY.md](CONFIDENTIALITY.md#clearances).
 
 ## Authentication
@@ -548,7 +551,8 @@ Component configuration - such as an `mcp_tool`'s `auth.secret` - may need to re
 without embedding them in persisted configuration. A `SecretProvider` is a pluggable source of
 secrets; the `SecretManager` tries its providers in turn and returns the first match. Built in are a
 JSON key/value file, re-read on every lookup so that secrets can rotate without a restart, and the
-process environment; the `secrets` section sets the chain.
+process environment; the `secrets` section sets the chain, each provider a backend that a plugin may
+add (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)).
 
 Every lookup is checked with the `SecurityManager` (`ReadSecret`) before any provider is consulted.
 The ownership policy allows every one: a secret is a key and a value, with no owner and no access

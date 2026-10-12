@@ -459,11 +459,9 @@ async fn main() -> anyhow::Result<()> {
     // Into a file by default: log lines on the terminal would break the prompt.
     caelumora_logging::init(&config.logging, LogTarget::File(PathBuf::from("local/tui.log")), "info")?;
 
-    let mut builder = RuntimeBuilder::from_config(&config)?;
-    for plugin in plugins() {
-        builder.plugin(plugin.as_ref())?;
-    }
-    let runtime = Arc::new(builder.build()?);
+    let plugins = plugins();
+    let plugins: Vec<&dyn Plugin> = plugins.iter().map(Box::as_ref).collect();
+    let runtime = Arc::new(RuntimeBuilder::from_config(&config, &plugins)?.build()?);
     runtime.seed(&config.seed).await?;
     let entity_stores = runtime.entity_stores();
 

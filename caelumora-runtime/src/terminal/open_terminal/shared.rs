@@ -8,15 +8,62 @@
 use super::client::{Client, Key};
 use super::{OpenCommands, OpenTerminal};
 use caelumora_model::remote::RemoteEndpoint;
-use crate::terminal::{CommandKey, Terminal, TerminalError, TerminalProvider, TerminalResult};
+use crate::backend::Backends;
+use crate::component::{config_of_params, service_of, ComponentError, ComponentResult};
+use crate::terminal::{default_max_run_secs, max_run, CommandKey, Terminal, TerminalError, TerminalProvider, TerminalResult};
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::workspace::WorkspaceId;
 use reqwest::{Method, StatusCode};
+use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
+
+/// The parameters of `open_terminal_shared`: the instance at `endpoint`,
+/// and where it has the storage.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SharedStorageConfig {
+    endpoint: RemoteEndpoint,
+    /// Where the instance has the storage: absolute, in the instance.
+    mount: String,
+    /// What may be put into this storage; `public` unless given - a
+    /// command may send anything anywhere.
+    #[serde(default)]
+    destination: Option<Classification>,
+    /// How long a command may run (issue 254), bounded by the instance
+    /// itself: one an earlier run of Caelumora left ends then too.
+    #[serde(default = "default_max_run_secs")]
+    max_run_secs: u64,
+}
+
+impl SharedStorageConfig {
+    /// Its `mount`, if it is absolute and stays where it says.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` if it does not.
+    fn mount(&self) -> ComponentResult<&str> {
+        let mount = &self.mount;
+        if !mount.starts_with('/') || mount.contains('\0') || mount.split('/').any(|part| part == "..") {
+            return Err(ComponentError::InvalidConfig(format!("the mount '{mount}' is not an absolute path that stays where it says")));
+        }
+        Ok(mount)
+    }
+}
+
+/// Registers the storage `open_terminal_shared` with `backends`: its key is
+/// resolved through the `SecretManager`.
+pub(super) fn register_backend(backends: &mut Backends) {
+    backends.register::<dyn TerminalProvider, _>("open_terminal_shared", |_, params, services| {
+        let config: SharedStorageConfig = config_of_params(params)?;
+        let secrets = Arc::clone(service_of::<SecretManager>(services)?);
+        let provider = SharedProvider::new(config.endpoint.clone(), config.mount()?, max_run(config.max_run_secs)?, config.destination.clone(), secrets)
+            .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+        Ok(Arc::new(provider))
+    });
+}
 
 #[derive(Debug)]
 pub(crate) struct SharedProvider {
@@ -35,7 +82,7 @@ impl SharedProvider {
     /// whose key is resolved through `secrets`, whose commands run for
     /// `max_run` at most; what may be put into it at most `destination`,
     /// `public` unless given - a command may send anything anywhere. `mount`
-    /// is as the configuration checked it (`StorageConfig::check`).
+    /// is as its parameters checked it (`SharedStorageConfig::mount`).
     ///
     /// # Errors
     /// `Unavailable` for an endpoint that is no URL.
@@ -107,6 +154,8 @@ impl TerminalProvider for SharedProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::DEFAULT_MAX_RUN_SECS;
+    use serde_json::json;
     use caelumora_model::remote::RemoteAuthConfig;
     use crate::terminal::open_terminal::stand_in::{self, StandIn, KEY, MOUNT};
     use crate::terminal::{ByteStream, WorkspacePath};
@@ -352,5 +401,19 @@ mod tests {
 
         provider.remove(id).await.unwrap();
         assert!(matches!(provider.terminal_for(id).await, Err(TerminalError::Unavailable(_))));
+    }
+
+    #[test]
+    fn its_parameters_name_the_instance_and_where_it_has_the_storage() {
+        let params = |mount: &str| json!({ "endpoint": { "url": "http://open-terminal:8000", "auth": { "type": "bearer", "secret": "OPEN_TERMINAL_API_KEY" } }, "mount": mount });
+        let config: SharedStorageConfig = config_of_params(&params("/workspaces")).expect("a shared Open Terminal");
+        assert_eq!((config.endpoint.url.as_str(), config.mount().unwrap(), &config.destination, config.max_run_secs), ("http://open-terminal:8000", "/workspaces", &None, DEFAULT_MAX_RUN_SECS));
+        for mount in ["workspaces", "/a/../b"] {
+            let config: SharedStorageConfig = config_of_params(&params(mount)).unwrap();
+            let refused = config.mount().unwrap_err().to_string();
+            assert!(refused.contains("mount"), "{refused}");
+        }
+        let without = json!({ "endpoint": { "url": "http://open-terminal:8000" } });
+        assert!(config_of_params::<SharedStorageConfig>(&without).is_err(), "a mount is needed");
     }
 }

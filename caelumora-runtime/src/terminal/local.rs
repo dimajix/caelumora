@@ -6,11 +6,14 @@
 //! one gap, closed only by a provider that keeps commands elsewhere.
 
 use super::local_shell::{LocalCommands, LocalShell};
-use super::{ByteStream, CommandKey, FileEntry, Shell, Terminal, TerminalError, TerminalProvider, TerminalResult, WorkspacePath};
+use super::{default_max_run_secs, max_run, ByteStream, CommandKey, FileEntry, Shell, Terminal, TerminalError, TerminalProvider, TerminalResult, WorkspacePath};
+use crate::backend::Backends;
+use crate::component::config_of_params;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::workspace::WorkspaceId;
 use futures::StreamExt;
+use serde::Deserialize;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,6 +22,36 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 use tracing::warn;
+
+/// The parameters of `local`: a directory per workspace under `root`, on
+/// Caelumora's host, read and written by Caelumora itself. With `shell`,
+/// agents run commands there - on Caelumora's host, as its user: for
+/// development and tests, never where the host is to be protected.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LocalStorageConfig {
+    root: PathBuf,
+    #[serde(default)]
+    shell: bool,
+    /// What may be put into this storage (issue 251): the classification a
+    /// workspace in it may have at most. Without it, `public` where it has
+    /// a shell - a command may send anything anywhere - and no bound where
+    /// it has none, since nothing then leaves the process.
+    #[serde(default)]
+    destination: Option<Classification>,
+    /// How long a command may run (issue 254): killed, with what it
+    /// started, once it ran so long. Of use only with `shell`.
+    #[serde(default = "default_max_run_secs")]
+    max_run_secs: u64,
+}
+
+/// Registers the storage `local` with `backends`.
+pub(super) fn register_backend(backends: &mut Backends) {
+    backends.register::<dyn TerminalProvider, _>("local", |_, params, _| {
+        let config: LocalStorageConfig = config_of_params(params)?;
+        Ok(Arc::new(LocalProvider::new(config.root, config.shell, max_run(config.max_run_secs)?, config.destination)))
+    });
+}
 
 #[derive(Debug)]
 pub(crate) struct LocalProvider {
@@ -295,6 +328,9 @@ impl Terminal for LocalTerminal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::Services;
+    use caelumora_model::config::BackendConfig;
+    use serde_json::json;
     use caelumora_model::workspace::CommandStatus;
     use bytes::Bytes;
 
@@ -431,5 +467,21 @@ mod tests {
     fn an_error_names_no_more_than_the_caller_wrote() {
         let error = failed(&path("docs/a.md"), std::io::Error::new(ErrorKind::PermissionDenied, "/srv/secret/path"));
         assert!(!error.to_string().contains("/srv"), "{error}");
+    }
+
+    #[test]
+    fn its_parameters_are_a_root_and_what_it_takes_by_default() {
+        let make = |params: serde_json::Value| {
+            let storages = [("dev".to_string(), BackendConfig::new("local", params))].into();
+            Backends::built_in().make_named::<dyn TerminalProvider>("storage of workspaces", &storages, &Services::empty())
+        };
+        let plain = make(json!({ "root": "x" })).expect("a root alone");
+        assert!(!plain["dev"].has_shell() && plain["dev"].destination().is_none(), "no shell, no bound");
+        let shell = make(json!({ "root": "x", "shell": true })).expect("with a shell");
+        assert_eq!(shell["dev"].destination(), Some(&Classification::PUBLIC), "public, where it has a shell");
+        for (params, why) in [(json!({ "root": "x", "max_run_secs": 0 }), "max_run_secs"), (json!({ "root": "x", "rot": "y" }), "rot"), (json!({}), "root")] {
+            let refused = make(params).map(|_| ()).unwrap_err().to_string();
+            assert!(refused.contains("the storage of workspaces 'dev' (local)") && refused.contains(why), "{refused}");
+        }
     }
 }

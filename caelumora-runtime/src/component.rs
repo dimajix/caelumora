@@ -53,6 +53,11 @@ pub enum ComponentError {
     /// offending component on its own (issue 02).
     #[error("component '{component}' ({kind}) cannot be built: {cause}")]
     Build { component: String, kind: String, cause: Box<ComponentError> },
+    /// A backend of a service could not be made (issue 324): `backend`
+    /// names it - "the storage of workspaces 'main'" -, `kind` is its
+    /// type, as `Build` names a component.
+    #[error("{backend} ({kind}) cannot be made: {cause}")]
+    Backend { backend: String, kind: String, cause: Box<ComponentError> },
 }
 
 impl ComponentError {
@@ -94,6 +99,15 @@ pub fn config_of_params<T: DeserializeOwned>(params: &serde_json::Value) -> Comp
         params => T::deserialize(params),
     };
     result.map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {e}")))
+}
+
+/// The service `T` of `services`, for what is made with them: a component
+/// (`ComponentContext::service`), a backend (`Backends`).
+///
+/// # Errors
+/// `ComponentError::NoService` if there is none.
+pub fn service_of<T: ?Sized + Send + Sync + 'static>(services: &Services) -> ComponentResult<&Arc<T>> {
+    services.get::<T>().ok_or(ComponentError::NoService(TypeKey::of::<T>().name))
 }
 
 /// What a component is built with: the environment of the whole graph - the
@@ -141,7 +155,7 @@ impl ComponentContext {
     /// `ComponentError::NoService` if the kind does not declare it, or the
     /// runtime has none.
     pub fn service<T: ?Sized + Send + Sync + 'static>(&self) -> ComponentResult<&Arc<T>> {
-        self.services.get::<T>().ok_or(ComponentError::NoService(TypeKey::of::<T>().name))
+        service_of(&self.services)
     }
 
     /// The context for a component of a kind that uses `services`: this one,
