@@ -575,3 +575,9 @@ own store: the `SkillManager`, the views, the seed and the tests take `EntitySto
 that follows changes only the field it uses. Paths written out in the lines this step touched are
 imports.
 
+Step 3c: workspaces on their own store. The `WorkspaceManager` keeps it beside the facade, which it
+still reads sessions, channels and groups through, and finds a workspace by name for a template
+(`find_by_name`), so that `template::resolve_workspace` no longer reaches into the store. A manager
+is made with `&EntityStores` and takes the stores it uses - the `WorkspaceManager` and the
+`SkillManager` alike -, so that its constructor does not grow with every kind that moves.
+

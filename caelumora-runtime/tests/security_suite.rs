@@ -2581,19 +2581,19 @@ async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
     assert_eq!(asked, checks(&["alice: UpdateSession(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: UpdateWorkspace(alice's) yes", "alice: GetSession(alice's) yes", "alice: UpdateSession(alice's) yes"]));
     assert_eq!(session.session().workspace, Some(hers.id));
     let members = Subject::Group(GroupId::of_session(session.id()));
-    assert!(world.store.get_workspace(&alice, hers.id).await.unwrap().security_attributes.acl.is_empty(), "attaching alone shares nothing");
+    assert!(world.runtime.entity_stores().workspaces.get(&alice, hers.id).await.unwrap().security_attributes.acl.is_empty(), "attaching alone shares nothing");
 
     session.set_workspace(&alice, Some(hers.id), Some(Grant::Read)).await.expect("shared with its members to read");
-    let acl = world.store.get_workspace(&alice, hers.id).await.unwrap().security_attributes.acl;
+    let acl = world.runtime.entity_stores().workspaces.get(&alice, hers.id).await.unwrap().security_attributes.acl;
     assert_eq!(acl, [caelumora_model::security::AclEntry { subject: members, grant: Grant::Read }]);
     session.set_workspace(&alice, Some(hers.id), Some(Grant::Write)).await.expect("and widened to write");
-    let acl = world.store.get_workspace(&alice, hers.id).await.unwrap().security_attributes.acl;
+    let acl = world.runtime.entity_stores().workspaces.get(&alice, hers.id).await.unwrap().security_attributes.acl;
     assert_eq!(acl, [caelumora_model::security::AclEntry { subject: members, grant: Grant::Write }], "one entry, widened");
 
     assert!(denied(&session.set_workspace(&bob, None, None).await.unwrap_err()), "bob does not take it away");
     session.set_workspace(&alice, None, None).await.expect("alice does");
     assert_eq!(session.session().workspace, None);
-    assert_eq!(world.store.get_workspace(&alice, hers.id).await.unwrap().security_attributes.acl.len(), 1, "the list is the workspace's, and stays");
+    assert_eq!(world.runtime.entity_stores().workspaces.get(&alice, hers.id).await.unwrap().security_attributes.acl.len(), 1, "the list is the workspace's, and stays");
     world.manager.stop_session(&alice, session.id()).await.unwrap();
 }
 
@@ -3354,7 +3354,7 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
     let second = world.manager.create_from_template(&alice, template, None, None).await.unwrap();
     let (mine, others) = (first.session().workspace.expect("attached"), second.session().workspace.expect("attached"));
     assert_ne!(mine, others, "one for every session");
-    let made = world.store.get_workspace(&alice, mine).await.expect("hers");
+    let made = world.runtime.entity_stores().workspaces.get(&alice, mine).await.expect("hers");
     assert_eq!(made.name.scope, Scope::SessionScope { session_id: first.id() });
 
     assert_eq!(made.security_attributes.acl, [AclEntry { subject: Subject::Group(GroupId::of_session(first.id())), grant: Grant::Write }], "its members' to work on (issue 23)");
@@ -3363,9 +3363,9 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
     assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::WorkspaceOutOfScope(_))), "nor attached to another session: {refused}");
 
     world.manager.delete_session(&alice, first.id()).await.unwrap();
-    assert!(world.store.get_deleted_workspace(&alice, mine).await.is_ok(), "deleted with it");
+    assert!(world.runtime.entity_stores().workspaces.get_deleted(&alice, mine).await.is_ok(), "deleted with it");
     world.manager.restore_session(&alice, first.id()).await.unwrap();
-    assert!(world.store.get_workspace(&alice, mine).await.is_ok(), "restored with it");
+    assert!(world.runtime.entity_stores().workspaces.get(&alice, mine).await.is_ok(), "restored with it");
     world.manager.delete_session(&alice, first.id()).await.unwrap();
     world.manager.purge_session(&World::system(), first.id()).await.unwrap();
     assert!(!world.files.path().join(mine.to_string()).exists(), "purged with it, its files too");
@@ -3429,7 +3429,7 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
     assert_eq!(asked, checks(&["alice: GetSessionTemplate(system's) yes", "alice: CreateSession(alice's) yes", "alice: GetWorkspace(bob's) no"]), "refused before anything is made");
 
     let made = world.manager.create_from_template(&alice, template, Some("Report"), Some(WorkspaceChoice::New { storage: "main".to_string(), classification: internal.clone() })).await.expect("one of its own");
-    let own = world.store.get_workspace(&alice, made.session().workspace.expect("attached")).await.unwrap();
+    let own = world.runtime.entity_stores().workspaces.get(&alice, made.session().workspace.expect("attached")).await.unwrap();
     assert_eq!((own.name.name.as_str(), &own.name.scope, own.storage.as_str()), ("Report", &Scope::SessionScope { session_id: made.id() }, "main"));
     assert_eq!(own.owner(), Some(world.alice));
     let refused = world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::Existing { id: own.id, share: None })).await.unwrap_err();

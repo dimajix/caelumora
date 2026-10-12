@@ -322,24 +322,24 @@ mod tests {
         let staff = RoleId::new();
         let roles = Roles::new([(staff, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
-        let store = MemoryStore::with_policies(Arc::new(DummySecurityManager::new()), Arc::new(rules));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(DummySecurityManager::new()), Arc::new(rules))).entity_stores().workspaces;
         let owner = UserId::new();
         let cleared = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default()).with_roles(vec![staff], None);
         let uncleared = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
         let workspace = Workspace::new(ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(), "main", Classification::general(Confidentiality::Internal), owner);
-        store.create_workspace(&cleared, &workspace).await.unwrap();
+        store.create(&cleared, &workspace).await.unwrap();
 
-        assert!(matches!(store.get_workspace(&uncleared, workspace.id).await, Err(StoreError::NotFound { .. })), "not by its id");
-        assert!(store.list_workspaces(&uncleared, &Query::all()).await.unwrap().items.is_empty(), "not in a list");
-        assert!(matches!(store.update_workspace(&uncleared, &workspace).await, Err(StoreError::NotFound { .. })), "not to change");
-        assert!(!store.delete_workspace(&uncleared, workspace.id).await.unwrap(), "not to delete");
-        assert!(store.get_workspace(&cleared, workspace.id).await.is_ok(), "who is cleared finds it");
+        assert!(matches!(store.get(&uncleared, workspace.id).await, Err(StoreError::NotFound { .. })), "not by its id");
+        assert!(store.list(&uncleared, &Query::all()).await.unwrap().items.is_empty(), "not in a list");
+        assert!(matches!(store.update(&uncleared, &workspace).await, Err(StoreError::NotFound { .. })), "not to change");
+        assert!(!store.delete(&uncleared, workspace.id).await.unwrap(), "not to delete");
+        assert!(store.get(&cleared, workspace.id).await.is_ok(), "who is cleared finds it");
 
-        assert!(store.delete_workspace(&cleared, workspace.id).await.unwrap());
-        assert!(store.list_deleted_workspaces(&uncleared, &Query::all()).await.unwrap().items.is_empty(), "nor in the trash");
-        assert!(matches!(store.restore_workspace(&uncleared, workspace.id).await, Err(StoreError::NotFound { .. })), "nor to restore");
-        assert!(!store.purge_workspace(&uncleared, workspace.id).await.unwrap(), "nor to purge");
-        assert_eq!(store.list_deleted_workspaces(&cleared, &Query::all()).await.unwrap().items.len(), 1, "where it is, for who is cleared");
+        assert!(store.delete(&cleared, workspace.id).await.unwrap());
+        assert!(store.list_deleted(&uncleared, &Query::all()).await.unwrap().items.is_empty(), "nor in the trash");
+        assert!(matches!(store.restore(&uncleared, workspace.id).await, Err(StoreError::NotFound { .. })), "nor to restore");
+        assert!(!store.purge(&uncleared, workspace.id).await.unwrap(), "nor to purge");
+        assert_eq!(store.list_deleted(&cleared, &Query::all()).await.unwrap().items.len(), 1, "where it is, for who is cleared");
     }
 
     #[tokio::test]

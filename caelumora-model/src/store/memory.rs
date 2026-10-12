@@ -15,7 +15,7 @@ use crate::store::{ComponentStore, Entities, EntityStore, EntityStores, Journale
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use crate::value::name::ScopedName;
-use crate::workspace::{Workspace, WorkspaceId};
+use crate::workspace::Workspace;
 use async_trait::async_trait;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -36,7 +36,7 @@ pub struct MemoryStore {
     channels: MemoryEntityStore<Channel>,
     users: MemoryEntityStore<User>,
     user_profiles: MemoryEntityStore<UserProfile>,
-    workspaces: MemoryEntityStore<Workspace>,
+    workspaces: Arc<MemoryEntityStore<Workspace>>,
     skills: Arc<MemoryEntityStore<Skill>>,
     artifacts: MemoryEntityStore<Artifact>,
     groups: MemoryEntityStore<Group>,
@@ -72,7 +72,7 @@ impl MemoryStore {
             channels: MemoryEntityStore::new(&policies),
             users: MemoryEntityStore::new(&policies),
             user_profiles: MemoryEntityStore::new(&policies),
-            workspaces: MemoryEntityStore::new(&policies),
+            workspaces: Arc::new(MemoryEntityStore::new(&policies)),
             skills: Arc::new(MemoryEntityStore::new(&policies)),
             artifacts: MemoryEntityStore::new(&policies),
             groups: MemoryEntityStore::new(&policies),
@@ -88,7 +88,11 @@ impl MemoryStore {
     /// The store of every kind (issue 323): this store's, the kinds that
     /// have one of their own as such.
     pub fn entity_stores(self: &Arc<Self>) -> EntityStores {
-        EntityStores { entities: Arc::<Self>::clone(self), skills: Arc::<MemoryEntityStore<Skill>>::clone(&self.skills) }
+        EntityStores {
+            entities: Arc::<Self>::clone(self),
+            skills: Arc::<MemoryEntityStore<Skill>>::clone(&self.skills),
+            workspaces: Arc::<MemoryEntityStore<Workspace>>::clone(&self.workspaces),
+        }
     }
 }
 
@@ -472,36 +476,6 @@ impl Entities for MemoryStore {
     }
     async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
         self.user_profiles.list_deleted(ctx, query).await
-    }
-    async fn create_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()> {
-        self.workspaces.create(ctx, value).await
-    }
-    async fn get_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.workspaces.get(ctx, id).await
-    }
-    async fn update_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()> {
-        self.workspaces.update(ctx, value).await
-    }
-    async fn delete_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
-        self.workspaces.delete(ctx, id).await
-    }
-    async fn list_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
-        self.workspaces.list(ctx, query).await
-    }
-    async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.workspaces.restore(ctx, id).await
-    }
-    async fn purge_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
-        self.workspaces.purge(ctx, id).await
-    }
-    async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.workspaces.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
-        self.workspaces.list_deleted(ctx, query).await
-    }
-    async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace> {
-        self.workspaces.find_by_name(ctx, name).await
     }
     async fn create_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
         self.artifacts.create(ctx, value).await

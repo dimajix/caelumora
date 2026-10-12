@@ -15,7 +15,7 @@ use crate::store::{ComponentStore, Entities, EntityStore, EntityStores, Journale
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use crate::value::name::ScopedName;
-use crate::workspace::{Workspace, WorkspaceId};
+use crate::workspace::Workspace;
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -54,7 +54,7 @@ pub struct JsonFileStore {
     channels: JsonEntityStore<Channel>,
     users: JsonEntityStore<User>,
     user_profiles: JsonEntityStore<UserProfile>,
-    workspaces: JsonEntityStore<Workspace>,
+    workspaces: Arc<JsonEntityStore<Workspace>>,
     skills: Arc<JsonEntityStore<Skill>>,
     artifacts: JsonEntityStore<Artifact>,
     groups: JsonEntityStore<Group>,
@@ -78,7 +78,7 @@ impl JsonFileStore {
             channels: JsonEntityStore::new(&root, &policies)?,
             users: JsonEntityStore::new(&root, &policies)?,
             user_profiles: JsonEntityStore::new(&root, &policies)?,
-            workspaces: JsonEntityStore::new(&root, &policies)?,
+            workspaces: Arc::new(JsonEntityStore::new(&root, &policies)?),
             skills: Arc::new(JsonEntityStore::new(&root, &policies)?),
             artifacts: JsonEntityStore::new(&root, &policies)?,
             groups: JsonEntityStore::new(&root, &policies)?,
@@ -92,7 +92,11 @@ impl JsonFileStore {
     /// The store of every kind (issue 323): this store's, the kinds that
     /// have one of their own as such.
     pub fn entity_stores(self: &Arc<Self>) -> EntityStores {
-        EntityStores { entities: Arc::<Self>::clone(self), skills: Arc::<JsonEntityStore<Skill>>::clone(&self.skills) }
+        EntityStores {
+            entities: Arc::<Self>::clone(self),
+            skills: Arc::<JsonEntityStore<Skill>>::clone(&self.skills),
+            workspaces: Arc::<JsonEntityStore<Workspace>>::clone(&self.workspaces),
+        }
     }
 
     /// With a journal folded into its snapshot once it is `bytes` large, if
@@ -721,36 +725,6 @@ impl Entities for JsonFileStore {
     }
     async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>> {
         self.user_profiles.list_deleted(ctx, query).await
-    }
-    async fn create_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()> {
-        self.workspaces.create(ctx, value).await
-    }
-    async fn get_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.workspaces.get(ctx, id).await
-    }
-    async fn update_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()> {
-        self.workspaces.update(ctx, value).await
-    }
-    async fn delete_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
-        self.workspaces.delete(ctx, id).await
-    }
-    async fn list_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
-        self.workspaces.list(ctx, query).await
-    }
-    async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.workspaces.restore(ctx, id).await
-    }
-    async fn purge_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool> {
-        self.workspaces.purge(ctx, id).await
-    }
-    async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace> {
-        self.workspaces.get_deleted(ctx, id).await
-    }
-    async fn list_deleted_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>> {
-        self.workspaces.list_deleted(ctx, query).await
-    }
-    async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace> {
-        self.workspaces.find_by_name(ctx, name).await
     }
     async fn create_artifact(&self, ctx: &SecurityContext, value: &Artifact) -> StoreResult<()> {
         self.artifacts.create(ctx, value).await

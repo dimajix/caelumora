@@ -388,8 +388,8 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
         create_user, get_user, update_user, delete_user, list_users);
     lifecycle!(store, UserProfile::new(UserId::new(), None), |v: &UserProfile| v.user_id(), introduction = Some(Introduction::new("renamed").unwrap()), "user_profile",
         create_user_profile, get_user_profile, update_user_profile, delete_user_profile, list_user_profiles);
-    lifecycle!(store, workspace(UserId::new()), |v: &Workspace| v.id, name.name, "workspace",
-        create_workspace, get_workspace, update_workspace, delete_workspace, list_workspaces);
+    lifecycle!(stores.workspaces.as_ref(), workspace(UserId::new()), |v: &Workspace| v.id, name.name, "workspace",
+        create, get, update, delete, list);
     lifecycle!(stores.skills.as_ref(), skill(UserId::new()), |v: &Skill| v.id, name.name, "skill",
         create, get, update, delete, list);
     lifecycle!(store, artifact(UserId::new()), |v: &Artifact| v.id, name.name, "artifact",
@@ -424,9 +424,9 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
     found_by_name!(store, |name| Agent::new(name, &personality(), crate::actor::ActorId::None), "agent",
         create_agent, delete_agent, find_agent_by_name);
 
-    found_by_name!(store, workspace_named, "workspace",
-        create_workspace, delete_workspace, find_workspace_by_name);
-    let nobodys = store.create_workspace(&ctx, &Workspace { security_attributes: Default::default(), ..workspace(UserId::new()) }).await;
+    found_by_name!(stores.workspaces.as_ref(), workspace_named, "workspace",
+        create, delete, find_by_name);
+    let nobodys = stores.workspaces.create(&ctx, &Workspace { security_attributes: Default::default(), ..workspace(UserId::new()) }).await;
     assert!(matches!(nobodys, Err(StoreError::Validation(_))), "workspace: one that belongs to no user is not stored, got {nobodys:?}");
 
     found_by_name!(stores.skills.as_ref(), skill_named, "skill",
@@ -503,10 +503,10 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
     unique_by_name!(store, user, rename: |value: User, name| User { username: Name::new(name).unwrap(), ..value }, "user",
         create_user, update_user, delete_user, restore_user);
     let (alice, bob) = (UserId::new(), UserId::new());
-    unique_by_name!(store, |name| Workspace { name: in_scope(name, &global), id: WorkspaceId::new(), ..workspace(alice) },
+    unique_by_name!(stores.workspaces.as_ref(), |name| Workspace { name: in_scope(name, &global), id: WorkspaceId::new(), ..workspace(alice) },
         elsewhere: |name| Workspace { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: WorkspaceId::new(), ..workspace(bob) },
         rename: |value: Workspace, name| Workspace { name: in_scope(name, &value.name.scope), ..value }, "workspace",
-        create_workspace, update_workspace, delete_workspace, restore_workspace);
+        create, update, delete, restore);
     unique_by_name!(stores.skills.as_ref(), |name| Skill { name: in_scope(name, &global), id: SkillId::new(), ..skill(alice) },
         elsewhere: |name| Skill { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: SkillId::new(), ..skill(bob) },
         rename: |value: Skill, name| Skill { name: in_scope(name, &value.name.scope), ..value }, "skill",

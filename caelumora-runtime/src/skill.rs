@@ -19,7 +19,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::skill::{Skill, SkillId, SkillUpdateEvent};
-use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::{Description, SkillBody};
 use caelumora_model::value::ValueError;
@@ -74,11 +74,11 @@ impl fmt::Debug for SkillManager {
 }
 
 impl SkillManager {
-    /// Who may do what is asked by the store `skills`, which every write
-    /// goes through - the clearance for a skill reached included (issue
-    /// 322); the manager asks the flow alone (issue 304).
-    pub(crate) fn new(skills: Arc<dyn EntityStore<Skill>>, events: Arc<EventBus>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
-        Self { skills, events, confidentiality, writing: Mutex::new(()) }
+    /// Who may do what is asked by the store of skills of `stores`, which
+    /// every write goes through - the clearance for a skill reached
+    /// included (issue 322); the manager asks the flow alone (issue 304).
+    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+        Self { skills: Arc::clone(&stores.skills), events, confidentiality, writing: Mutex::new(()) }
     }
 
     /// Whether the one `ctx` acts for is cleared for `classification`: what

@@ -21,7 +21,7 @@ use crate::session::{Session, SessionId};
 use crate::template::{SessionTemplate, SessionTemplateId};
 use crate::user::{User, UserId, UserProfile};
 use crate::value::name::ScopedName;
-use crate::workspace::{Workspace, WorkspaceId};
+use crate::workspace::Workspace;
 use crate::skill::Skill;
 use crate::group::{Group, GroupField, GroupId};
 use crate::artifact::{Artifact, ArtifactField, ArtifactId};
@@ -178,6 +178,7 @@ pub trait EntityStore<T: Deletable + Send + Sync + 'static>: Debug + Send + Sync
 pub struct EntityStores {
     pub entities: Arc<dyn Entities>,
     pub skills: Arc<dyn EntityStore<Skill>>,
+    pub workspaces: Arc<dyn EntityStore<Workspace>>,
 }
 
 /// Every kind's entities at once, as one store offered them before each
@@ -302,18 +303,6 @@ pub trait Entities : Debug + Sync + Send {
     async fn get_deleted_user_profile(&self, ctx: &SecurityContext, id: UserId) -> StoreResult<UserProfile>;
     async fn list_deleted_user_profiles(&self, ctx: &SecurityContext, query: &Query<NoField>) -> StoreResult<Page<UserProfile>>;
 
-    // Workspaces (issue 253) - their files are no part of the document, and
-    // whoever purges one removes them.
-    async fn create_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()>;
-    async fn get_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace>;
-    async fn update_workspace(&self, ctx: &SecurityContext, value: &Workspace) -> StoreResult<()>;
-    async fn delete_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool>;
-    async fn list_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>>;
-    async fn restore_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace>;
-    async fn purge_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<bool>;
-    async fn get_deleted_workspace(&self, ctx: &SecurityContext, id: WorkspaceId) -> StoreResult<Workspace>;
-    async fn list_deleted_workspaces(&self, ctx: &SecurityContext, query: &Query<ScopeField>) -> StoreResult<Page<Workspace>>;
-    async fn find_workspace_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Workspace>;
 
     // Artifacts (issue 271) - their content is no part of the document, and
     // whoever purges one removes it.

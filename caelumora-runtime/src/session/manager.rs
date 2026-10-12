@@ -174,7 +174,7 @@ impl SessionManager {
         let (mut session, channels) = template.build(id, owner, name, language.as_ref(), participants)?;
         let workspaces = self.runtime_manager.workspace_manager();
         let workspace = match &wanted {
-            Some(wanted) => Some(crate::template::resolve_workspace(workspaces, store.as_ref(), context, wanted, id, owner).await?),
+            Some(wanted) => Some(crate::template::resolve_workspace(workspaces, context, wanted, id, owner).await?),
             None => existing.map(|(chosen, _)| (chosen, false)),
         };
         session.workspace = workspace.as_ref().map(|(found, _)| *found);

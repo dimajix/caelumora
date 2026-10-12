@@ -33,9 +33,9 @@ There are two implementations: `MemoryEntityStore<T>`, for tests, and `JsonEntit
 keeps one JSON file per document in the kind's directory, `entities/<kind>/<id>.json`, and holds
 the kind's lock for names. `MemoryStore` and `JsonFileStore` hold one of them per kind beside the
 runtime state, and hand them out as `EntityStores`, which the configuration makes
-(`create_entity_stores`) and the runtime is given: a store per kind, which it passes to the manager
-of that kind. Until every kind has moved, `EntityStores::entities` offers the others at once
-(`Entities`).
+(`create_entity_stores`) and the runtime is given: a store per kind. A manager is made with
+`&EntityStores` and keeps the stores of the kinds it uses as fields, as every service is held.
+Until every kind has moved, `EntityStores::entities` offers the others at once (`Entities`).
 
 Every stored type says what it is to its store (`Stored`): its kind, `Stored::KIND`, an
 `EntityKind` named by a string (`"skill"`) that is unique among the kinds; its id and the fields a

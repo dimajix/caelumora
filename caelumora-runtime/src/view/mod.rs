@@ -415,7 +415,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn workspaces(&self) -> ViewResult<Vec<WorkspaceView>> {
-        let workspaces = self.stores.entities.list_workspaces(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let workspaces = self.stores.workspaces.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the workspaces"))?;
         Ok(workspaces.into_iter().map(|workspace| WorkspaceView::of(self.clone(), workspace)).collect())
     }
@@ -426,7 +426,7 @@ impl Views {
     /// # Errors
     /// `WorkspaceNotFound` if there is none they may reach.
     pub async fn workspace(&self, id: WorkspaceId) -> ViewResult<WorkspaceView> {
-        match self.stores.entities.get_workspace(self.viewer.context(), id).await.optional() {
+        match self.stores.workspaces.get(self.viewer.context(), id).await.optional() {
             Ok(Some(workspace)) => Ok(WorkspaceView::of(self.clone(), workspace)),
             Ok(None) => Err(ViewError::WorkspaceNotFound(id)),
             Err(e) => Err(ViewError::failed(e, "reading a workspace")),
@@ -621,7 +621,7 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn deleted_workspaces(&self) -> ViewResult<Vec<DeletedSnapshot<WorkspaceId>>> {
-        let workspaces = self.stores.entities.list_deleted_workspaces(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let workspaces = self.stores.workspaces.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted workspaces"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(workspaces.len());

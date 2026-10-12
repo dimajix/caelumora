@@ -105,15 +105,15 @@ async fn existing_agent(store: &dyn Entities, context: &SecurityContext, name: &
 /// another storage, `UnsupportedScope` for a group scope; a
 /// `WorkspaceError` of making it - `NameTaken` if the one of its name lies
 /// where `context` may not read it; whatever else the store reports.
-pub(crate) async fn resolve_workspace(workspaces: &WorkspaceManager, store: &dyn Entities, context: &SecurityContext, template: &WorkspaceTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<(WorkspaceId, bool)> {
+pub(crate) async fn resolve_workspace(workspaces: &WorkspaceManager, context: &SecurityContext, template: &WorkspaceTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<(WorkspaceId, bool)> {
     let name = template.scoped_name(session_id, owner)?;
-    if let Some(found) = existing_workspace(store, context, &name, template).await? {
+    if let Some(found) = existing_workspace(workspaces, context, &name, template).await? {
         return Ok((found, false));
     }
     let description = template.description.as_ref().map(|d| d.as_str());
     match workspaces.create(context, name.name.as_str(), name.scope.clone(), &template.storage, description, template.classification.clone()).await {
         Ok(made) => Ok((made.id, true)),
-        Err(taken @ WorkspaceError::Store(StoreError::NameTaken { .. })) => match existing_workspace(store, context, &name, template).await? {
+        Err(taken @ WorkspaceError::Store(StoreError::NameTaken { .. })) => match existing_workspace(workspaces, context, &name, template).await? {
             Some(found) => Ok((found, false)),
             None => Err(taken.into()),
         },
@@ -127,8 +127,8 @@ pub(crate) async fn resolve_workspace(workspaces: &WorkspaceManager, store: &dyn
 /// # Errors
 /// `TemplateError::WorkspaceNameTaken` if it is in another storage;
 /// whatever the store reports - never "none" for a lookup that failed.
-async fn existing_workspace(store: &dyn Entities, context: &SecurityContext, name: &ScopedName, template: &WorkspaceTemplate) -> anyhow::Result<Option<WorkspaceId>> {
-    match store.find_workspace_by_name(context, name).await.optional()? {
+async fn existing_workspace(workspaces: &WorkspaceManager, context: &SecurityContext, name: &ScopedName, template: &WorkspaceTemplate) -> anyhow::Result<Option<WorkspaceId>> {
+    match workspaces.find_by_name(context, name).await.optional()? {
         Some(workspace) if workspace.storage == template.storage => Ok(Some(workspace.id)),
         Some(_) => Err(TemplateError::WorkspaceNameTaken(name.name.clone()).into()),
         None => Ok(None),
