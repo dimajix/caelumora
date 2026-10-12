@@ -232,6 +232,7 @@ published before anyone else can take it.
 | [44](44-mentions-only-moderator.md) | done | Every moderator makes some agent answer every message; there is none under which agents respond only when they are `@`-mentioned. |
 | [45](45-agent-mentions.md) | done | An `@`-mention written by an agent does not make the mentioned agent respond, so agents cannot hand questions to each other. |
 | [56](56-response-language.md) | done | Agents often answer in English, and a user has no way to choose the language the agents of a channel answer in. |
+| [331](331-language-default-in-the-frontend.md) | open | The core holds a new channel or session in its creator's preferred language where nothing else is said, a decision that belongs to the frontend. |
 | [80](80-stored-channel-response.md) | done | A channel that is not running is reported as not changeable and its agents' context as not readable, because the REST server picks and asks the access questions itself, in response builders spread over three modules. |
 | [102](102-rest-channel-lookup.md) | done | The REST server repeats the session/channel lookup twelve times and decides itself what a viewer may see. |
 | [103](103-rest-error-mappers.md) | done | Six REST functions map runtime errors to problem details with the same pattern. |
