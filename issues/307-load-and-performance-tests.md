@@ -170,3 +170,8 @@ and the numbers that show it.
 - **2026-10-12** — Step 7 of issue [323](323-kinds-enumerated-in-the-core.md) is done:
   `caelumora-rest-api` holds the requests and responses, one module per subject, and depends on the
   model alone. The client of this issue reads them from there.
+- **2026-10-12** — Issue [323](323-kinds-enumerated-in-the-core.md) is done. Besides
+  `caelumora-rest-api`, a plugin brings wire types of its own (`caelumora_skills::api`, readable
+  without the runtime with `default-features = false`); its plan foresaw a feature `client` per
+  plugin with typed calls as an extension trait on this issue's client (`SkillsClient`), not made
+  since there is no client yet. The client of this issue is where it begins.

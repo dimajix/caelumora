@@ -64,3 +64,22 @@ Artifacts try seams that skills do not, and each of these needs a decision that 
 
 - **2026-10-12** — Opened from the discussion of which subjects besides skills could move into
   crates of their own (issue 323), with what artifacts need beyond what skills do.
+- **2026-10-12** — Issue 323 is done, skills moved into `caelumora-skills`; what that settled
+  and showed for artifacts. Settled by its steps: the event beyond the lifecycle - publishing the
+  first version is `created`, a later one `updated` with `ArtifactUpdateEvent::VersionPublished`
+  (step 5) -; the presentation of `artifact_tool`, a `ToolPresentation` of its own (step 6). The
+  way in is there: a `Plugin` registers the store of its kind, its manager as a service and scope
+  member, its component kinds and seed or configuration sections with the `RuntimeBuilder`
+  (step 9); its views are an extension trait on `Views` (`SkillViews`), its questions one on every
+  `SecurityManager` (`SkillAccess`), its routes a `RestPlugin` with a state of its own, its errors
+  its own with `From<…> for ApiError` (step 10). Shown by skills, and to be expected here: the
+  runtime's internals the plugin uses have to be opened (for skills the helpers of `scoped`,
+  `ApprovalMode`, `ApiError::bad_request`); the `ViewError` variants of the kind become the
+  plugin's errors, which `user_message` then no longer knows (issue
+  [336](336-errors-of-a-plugin-shown-as-a-failure.md)); the tests that use the kind as an example
+  in the core take another kind, and the plugin's own run in the world of the security suite
+  (`World::with`, `World::turn`). Still open here: the channel's view (an extension of the channel's
+  view, or a listing of the plugin's views by channel), the shared verb `WRITE`, the dependency on
+  workspaces - now issue [333](333-workspaces-woven-into-sessions.md), which recommends moving
+  artifacts first -, and how an artifact published in a channel is announced as lying there
+  (issue [335](335-channel-events-name-their-session.md)).
