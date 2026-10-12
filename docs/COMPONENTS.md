@@ -176,7 +176,7 @@ purpose. That module's `mod.rs` holds the facet trait - with what consumes it, s
 | `llm/` | language models (`ollama_client`) |
 | `moderator/` | the moderator and its responder policies |
 | `compaction/` | `/compact` (`compaction`, in `command.rs`, since a module cannot hold a file of its own name) and the compaction strategies (`summary_compaction`) |
-| `external/` | the ways to reach an external agent - a module per kind (`a2a_agent/`) |
+| `external/` | the facet through which an external agent is reached, and no kind: each protocol is a plugin (`a2a_agent` in `caelumora-a2a`) |
 | `component_impl/` | everything else, and every component that offers several facets |
 
 A component that offers several facets - `create_plan_tool`, `notes` and the other memory components
@@ -229,10 +229,10 @@ Its views are an extension trait on `Views`, built from what `Views` opens: the 
 the `security` and `confidentiality` policies, its manager as a `service`, and `channel_reading`.
 Its routes come from `caelumora_rest_server::plugin::RestPlugin`, a `Plugin` that builds a `Router`
 with the `AppState`; the API serves them behind the same login as the core's (`routes::api`). A
-plugin that brings a component kind alone, such as `caelumora-mcp` (issue 325), implements `Plugin`
-only and registers the kind in `register`. A plugin's tests use the world of the security suite -
-the runtime with the recording ownership policy and three users -, `caelumora_runtime::testing`, as
-a dev-dependency with the feature `test-support`.
+plugin that brings a component kind alone, such as `caelumora-mcp` (issue 325) or `caelumora-a2a`
+(issue 326), implements `Plugin` only and registers the kind in `register`. A plugin's tests use
+the world of the security suite - the runtime with the recording ownership policy and three users -,
+`caelumora_runtime::testing`, as a dev-dependency with the feature `test-support`.
 
 ### What a component kind outside the core may use
 
@@ -246,7 +246,11 @@ a plugin depends on:
 *   **While it is built:** the `ComponentContext` - `security_context`, in whose name it is built,
     and `service::<T>()`, the services of the runtime it declared.
 *   **The facets it offers**, with what their signatures name: for a tool provider `ToolProvider`,
-    `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in.
+    `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
+    for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,
+    `ExternalStream`, `ExternalAgentError` and `ExternalAgentResult`.
+*   **If it talks to a remote system:** `caelumora_runtime::remote`, which describes its errors
+    as the core's are described - `describe_request_error`, `describe_chain` (issue 326).
 *   **The model's types** of what it handles: `Tool`, `RemoteEndpoint`, `SecretManager`,
     `Classification`, ...
 
@@ -300,7 +304,7 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `tool_sets_prompt_provider` | `PromptProvider` | `position` (`start`) | Tells the model which of its tool sets are unavailable and why, nothing while all are available ([TOOLS.md](TOOLS.md#tool-sets)). |
 | `turn_context_provider` | `ContextProvider` | - | The default context provider of an agent run here: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
 | `external_context_provider` | `ContextProvider` | - | The default context provider of an external agent: each prompt part on its own, for its actor to give the remote agent when it changed ([CHANNELS.md](CHANNELS.md)). |
-| `a2a_agent` | `ExternalAgent` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`) | An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
+| `a2a_agent` | `ExternalAgent` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`) | Of the plugin `caelumora-a2a`, registered where it is joined. An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
 | `ollama_client` | `LLMClient` | `endpoint` (`http://127.0.0.1:11434`, no timeout, no `auth`), `model` (`gemma4:26b`), `think`, `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `context_size` (Ollama's default) | The default model: a model served by Ollama ([CONFIGURATION.md](CONFIGURATION.md#the-model)). Defuses the model's control tokens in every text it sends. |
 | `policy_moderator` | `Moderator` | `max_agent_hops` (`3`) | The default moderator of a channel: routes as every channel does and asks its `ResponderPolicy` whom to ask; ends a chain between agents after `max_agent_hops` hops ([CHANNELS.md](CHANNELS.md#chains-between-agents)). |
 | `broadcast_policy` | `ResponderPolicy` | - | Asks every agent. |

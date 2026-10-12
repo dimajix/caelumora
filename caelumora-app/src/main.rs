@@ -5,6 +5,7 @@
 
 use axum::Router;
 use caelumora_logging::LogTarget;
+use caelumora_a2a::plugin::A2aPlugin;
 use caelumora_mcp::plugin::McpPlugin;
 use caelumora_model::config::AppConfig;
 use caelumora_rest_server::auth::{Auth, TokenService};
@@ -108,7 +109,7 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
 /// The plugins of the program that bring no routes (issue 325), which only
 /// its runtime is built with.
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(McpPlugin)]
+    vec![Box::new(McpPlugin), Box::new(A2aPlugin)]
 }
 
 /// The runtime of `builder`, with every plugin of the program: `rest_plugins`

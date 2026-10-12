@@ -4,20 +4,25 @@
 //! knows nothing of `ExternalEvent`s.
 
 use super::wire::{is_version_1, AgentCard, RpcError, RpcRequest, RpcResponse, StreamResponse, A2A_VERSION, CARD_PATH, JSONRPC_BINDING};
-use crate::component::ComponentError;
-use crate::external::{ExternalAgentError, ExternalAgentResult};
-use crate::remote::{describe_chain, describe_request_error};
-use caelumora_model::remote::{redact_endpoint, RemoteEndpoint};
 use arc_swap::ArcSwapOption;
+use bytes::Buf;
+use caelumora_model::remote::{redact_endpoint, RemoteEndpoint};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
-use futures::stream::BoxStream;
-use futures::StreamExt;
-use serde::de::DeserializeOwned;
+use caelumora_runtime::component::ComponentError;
+use caelumora_runtime::external::{ExternalAgentError, ExternalAgentResult};
+use caelumora_runtime::remote::{describe_chain, describe_request_error};
+use futures::stream::{once, BoxStream};
+use futures::{Stream, StreamExt};
+use reqwest::header::{ACCEPT, CONTENT_TYPE};
+use reqwest::{Client, Response};
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use sse_stream::SseStream;
+use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::time::timeout;
 use tracing::{debug, trace};
 
 /// The responses of a streamed request, as they come; it ends after an
@@ -42,7 +47,7 @@ pub(super) struct A2aClient {
     /// How long one request may take to be answered - a streamed one until
     /// its stream begins.
     timeout: Duration,
-    http: reqwest::Client,
+    http: Client,
     secret_manager: Arc<SecretManager>,
     interface: ArcSwapOption<Interface>,
 }
@@ -54,7 +59,7 @@ impl A2aClient {
     /// # Errors
     /// If no HTTP client can be made.
     pub(super) fn new(id: String, endpoint: RemoteEndpoint, timeout: Duration, secret_manager: Arc<SecretManager>) -> Result<Self, ComponentError> {
-        let http = reqwest::Client::builder()
+        let http = Client::builder()
             .connect_timeout(timeout)
             .build()
             .map_err(|e| ComponentError::InvalidConfig(format!("no HTTP client for '{}': {e}", endpoint.shown())))?;
@@ -91,14 +96,14 @@ impl A2aClient {
     pub(super) async fn stream(&self, security: &SecurityContext, method: &str, params: impl Serialize) -> ExternalAgentResult<Responses> {
         let response = self.post(security, method, params, true).await?;
         self.require_success(&response)?;
-        let is_stream = response.headers().get(reqwest::header::CONTENT_TYPE)
+        let is_stream = response.headers().get(CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .is_some_and(|v| v.starts_with("text/event-stream"));
         if !is_stream {
             // Refused before it began: a JSON-RPC error, not a stream.
             let answer: RpcResponse<StreamResponse> = self.json_of(response).await?;
             let response = answer.into_result(&self.shown())?.map_err(|error| self.rejected(error))?;
-            return Ok(Box::pin(futures::stream::once(async move { Ok(response) })));
+            return Ok(Box::pin(once(async move { Ok(response) })));
         }
         let bytes = response.bytes_stream().map(|chunk| chunk.map_err(reqwest::Error::without_url));
         Ok(Box::pin(responses_of(bytes, self.shown())))
@@ -163,14 +168,14 @@ impl A2aClient {
     }
 
     /// The body of `response` as `T`, if it answered successfully.
-    async fn json_of<T: DeserializeOwned>(&self, response: reqwest::Response) -> ExternalAgentResult<T> {
+    async fn json_of<T: DeserializeOwned>(&self, response: Response) -> ExternalAgentResult<T> {
         self.require_success(&response)?;
         let text = response.text().await.map_err(|e| self.connection(e))?;
         serde_json::from_str(&text).map_err(|e| ExternalAgentError::InvalidResponse { endpoint: self.shown(), reason: e.to_string() })
     }
 
     /// Refuses `response` unless it answered successfully.
-    fn require_success(&self, response: &reqwest::Response) -> ExternalAgentResult<()> {
+    fn require_success(&self, response: &Response) -> ExternalAgentResult<()> {
         let status = response.status();
         if status.is_success() {
             Ok(())
@@ -182,20 +187,20 @@ impl A2aClient {
     /// Posts the JSON-RPC request `method` with `params`, streamed or not:
     /// either is answered within the timeout, a streamed one with the
     /// beginning of its stream (issue 186).
-    async fn post(&self, security: &SecurityContext, method: &str, params: impl Serialize, streamed: bool) -> ExternalAgentResult<reqwest::Response> {
+    async fn post(&self, security: &SecurityContext, method: &str, params: impl Serialize, streamed: bool) -> ExternalAgentResult<Response> {
         let interface = self.interface(security).await?;
         let body = RpcRequest::new(method, params);
         trace!("A2A agent component '{}' sends {}: {}", self.id, method, serde_json::to_string(&body).unwrap_or_default());
         let mut request = self.http.post(&interface.url).header("A2A-Version", A2A_VERSION).json(&body);
         request = if streamed {
-            request.header(reqwest::header::ACCEPT, "text/event-stream")
+            request.header(ACCEPT, "text/event-stream")
         } else {
             request.timeout(self.timeout)
         };
         if let Some(token) = self.token(security).await? {
             request = request.bearer_auth(token);
         }
-        match tokio::time::timeout(self.timeout, request.send()).await {
+        match timeout(self.timeout, request.send()).await {
             Ok(response) => response.map_err(|e| self.connection(e)),
             Err(_) => Err(ExternalAgentError::Connection { endpoint: self.shown(), reason: format!("no answer within {} s", self.timeout.as_secs()) }),
         }
@@ -207,14 +212,14 @@ impl A2aClient {
 /// `endpoint`. Ends with the stream, or after an error - a JSON-RPC error
 /// among them. The events are framed in bytes, so a character or a line
 /// end the network splits arrives whole (issue 185).
-fn responses_of<S, D, E>(bytes: S, endpoint: String) -> impl futures::Stream<Item = ExternalAgentResult<StreamResponse>> + Send + 'static
+fn responses_of<S, D, E>(bytes: S, endpoint: String) -> impl Stream<Item = ExternalAgentResult<StreamResponse>> + Send + 'static
 where
-    S: futures::Stream<Item = Result<D, E>> + Send + 'static,
-    D: bytes::Buf + Send + 'static,
+    S: Stream<Item = Result<D, E>> + Send + 'static,
+    D: Buf + Send + 'static,
     E: std::error::Error + Send + Sync + 'static,
 {
     async_stream::stream! {
-        let mut sse = std::pin::pin!(SseStream::from_bytes_stream(bytes));
+        let mut sse = pin!(SseStream::from_bytes_stream(bytes));
         while let Some(event) = sse.next().await {
             let data = match event {
                 Ok(event) => event.data.unwrap_or_default(),
@@ -247,6 +252,8 @@ where
 mod tests {
     use super::*;
     use super::super::wire::WireTaskState;
+    use bytes::Bytes;
+    use futures::stream::iter;
     use caelumora_model::security::DummySecurityManager;
     use serde_json::{json, Value};
 
@@ -261,8 +268,8 @@ mod tests {
     }
 
     /// `body` as the network may hand it over: each byte a chunk of its own.
-    fn bytewise(body: String) -> impl futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + 'static {
-        futures::stream::iter(body.into_bytes().into_iter().map(|b| Ok(bytes::Bytes::from(vec![b]))))
+    fn bytewise(body: String) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static {
+        iter(body.into_bytes().into_iter().map(|b| Ok(Bytes::from(vec![b]))))
     }
 
     #[test]
@@ -293,10 +300,10 @@ mod tests {
     #[tokio::test]
     async fn a_stream_ends_after_it_breaks_off_or_is_answered_with_an_error() {
         let working = event(json!({ "task": { "id": "t-1", "status": { "state": "TASK_STATE_WORKING" } } }));
-        let broken = futures::stream::iter(vec![
-            Ok(bytes::Bytes::from(working.clone())),
+        let broken = iter(vec![
+            Ok(Bytes::from(working.clone())),
             Err(std::io::Error::other("connection reset")),
-            Ok(bytes::Bytes::from(working.clone())),
+            Ok(Bytes::from(working.clone())),
         ]);
         let responses: Vec<_> = responses_of(broken, "agent".to_string()).collect().await;
         assert_eq!(responses.len(), 2, "what came before, then the error, then nothing");

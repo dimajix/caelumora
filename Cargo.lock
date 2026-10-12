@@ -322,11 +322,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
+name = "caelumora-a2a"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-stream",
+ "async-trait",
+ "axum",
+ "bytes",
+ "caelumora-model",
+ "caelumora-runtime",
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sse-stream",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "caelumora-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "caelumora-a2a",
  "caelumora-logging",
  "caelumora-mcp",
  "caelumora-model",
@@ -522,6 +545,7 @@ name = "caelumora-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "caelumora-a2a",
  "caelumora-logging",
  "caelumora-mcp",
  "caelumora-model",
