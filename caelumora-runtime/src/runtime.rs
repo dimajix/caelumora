@@ -1,10 +1,10 @@
 use crate::channel::ChannelLoop;
 use crate::command::{CommandExecutor, ChannelCommandProvider};
-use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult, ComponentServices};
+use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult};
 use crate::controller::{ControllerManager, SessionController};
 use crate::event::EventBus;
 use crate::recorder::{BlackholeRecorder, Recorder};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::approval::ApprovalRule;
@@ -12,7 +12,6 @@ use caelumora_model::channel::ChannelId;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::StoreResult;
 use crate::agent::state::{AgentStateHandle, AgentStates};
 use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::view::ViewsFactory;
@@ -21,7 +20,16 @@ use caelumora_model::config::AppConfig;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::session::Session;
-use caelumora_model::store::{EntityStores, StateStore};
+use caelumora_model::removal::Deletable;
+use caelumora_model::store::memberships::StoreMemberships;
+use caelumora_model::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, StateStore, StoreBackend, StoreResult};
+use caelumora_model::type_map::TypeMap;
+use crate::plugin::Plugin;
+use crate::seed::{self, SeedSection};
+use serde::de::DeserializeOwned;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::path::PathBuf;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use std::sync::{Arc, OnceLock, Weak};
 use crate::agent::manager::AgentManager;
@@ -39,6 +47,8 @@ pub struct RuntimeManager {
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     state_store: Arc<dyn StateStore>,
     entity_stores: EntityStores,
+    /// The preconfigured components, which the seed puts in.
+    component_store: Arc<dyn ComponentStore>,
     secret_manager: Arc<SecretManager>,
     component_registry: Arc<ComponentRegistry>,
     event_bus: Arc<EventBus>,
@@ -63,8 +73,10 @@ pub struct RuntimeManager {
     /// holds it (issues 178, 319).
     scoped: Arc<ScopedEntities>,
     /// The services components may use (issue 296), each given to the
-    /// kinds that declare it (`ComponentKind::uses`).
-    component_services: ComponentServices,
+    /// kinds that declare it (`ComponentKind::uses`), and the views.
+    services: Services,
+    /// The sections of the seed the plugins claimed (issue 323).
+    seed_sections: BTreeMap<String, Arc<dyn SeedSection>>,
 }
 
 /// What a channel runs with: the process-wide services of the
@@ -125,7 +137,7 @@ impl ChannelRuntime {
 
     pub fn secret_manager(&self) -> &Arc<SecretManager> { self.runtime_manager.secret_manager() }
 
-    pub fn component_services(&self) -> &ComponentServices { self.runtime_manager.component_services() }
+    pub fn services(&self) -> &Services { self.runtime_manager.services() }
 
     pub fn component_registry(&self) -> &Arc<ComponentRegistry> { self.runtime_manager.component_registry() }
 
@@ -174,7 +186,7 @@ impl ActorRuntime {
 
     pub fn secret_manager(&self) -> &Arc<SecretManager> { self.runtime.runtime_manager.secret_manager() }
 
-    pub fn component_services(&self) -> &ComponentServices { self.runtime.runtime_manager.component_services() }
+    pub fn services(&self) -> &Services { self.runtime.runtime_manager.services() }
 
     pub fn component_registry(&self) -> &Arc<ComponentRegistry> {
         self.runtime.runtime_manager.component_registry()
@@ -288,40 +300,83 @@ impl ChannelRuntime {
     }
 }
 
-impl RuntimeManager {
-    /// The runtime everything in a process shares. `security_manager` is the
-    /// one the whole process was configured with: it decides tool calls and
-    /// what may be done to a channel, so it must be the same instance the
-    /// stores were built with, not a second one made up here; so is
-    /// `confidentiality`, which decides what may flow where (issue 304). Of `config`,
-    /// the runtime takes what it runs by itself, so that a binary cannot
-    /// drop a configured part for a default: the global user commands
-    /// (`commands`), the components that replace built-in defaults of facets
-    /// of which an agent has one (`component_defaults`, issue 99), what the
-    /// system restricts of tool calls (`approvals`, issue 13) and the
-    /// storages workspaces are made in (`workspaces`, issue 253).
-    /// `component_registry` holds the component kinds agents and sessions
-    /// are built from -
-    /// `ComponentRegistry::built_in`, to which a test may add stand-ins,
-    /// such as a model of its own (issue 130); it is checked here.
+/// The services of the runtime, by type (issues 296, 323): the policy, the
+/// secrets, the managers of the core that components use and what the
+/// plugins provide. A component is given those its kind uses
+/// (`ComponentKind::uses`), the views and a plugin's routes reach them all.
+pub type Services = TypeMap;
+
+/// What builds the `RuntimeManager` (issue 323): the core's services and
+/// managers, made first, and what the plugins register with it
+/// (`Plugin::register`) - their component kinds, the stores of their kinds,
+/// the services they provide, the members of a scope, their sections of
+/// the configuration and of the seed. `build` makes the runtime of it.
+pub struct RuntimeBuilder {
+    backend: StoreBackend,
+    state_store: Arc<dyn StateStore>,
+    entity_stores: EntityStores,
+    secret_manager: Arc<SecretManager>,
+    security_manager: Arc<dyn SecurityManager>,
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    component_registry: ComponentRegistry,
+    component_defaults: ComponentConfig,
+    commands: ComponentConfig,
+    approval_rules: Arc<[ApprovalRule]>,
+    event_bus: Arc<EventBus>,
+    controller_manager: Arc<ControllerManager>,
+    agent_states: Arc<AgentStates>,
+    workspaces: Arc<WorkspaceManager>,
+    skills: Arc<SkillManager>,
+    artifacts: Arc<ArtifactManager>,
+    groups: Arc<GroupManager>,
+    agents: Arc<AgentManager>,
+    scope_members: Vec<Arc<dyn ScopeMember>>,
+    services: Services,
+    /// The sections of the configuration that no plugin claimed yet.
+    sections: BTreeMap<String, serde_json::Value>,
+    /// The names of the sections of the configuration that were claimed.
+    claimed: BTreeSet<String>,
+    seed_sections: BTreeMap<String, Arc<dyn SeedSection>>,
+}
+
+impl fmt::Debug for RuntimeBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RuntimeBuilder").field("services", &self.services.names()).finish_non_exhaustive()
+    }
+}
+
+impl RuntimeBuilder {
+    /// The builder of the runtime everything in a process shares, with the
+    /// core's services and managers made. `security_manager` is the one the
+    /// whole process was configured with: it decides tool calls and what may
+    /// be done to a channel, so it must be the same instance the stores were
+    /// built with, not a second one made up here; so is `confidentiality`,
+    /// which decides what may flow where (issue 304). `backend` keeps the
+    /// entities of every kind, the core's and the plugins'. Of `config`, the
+    /// runtime takes what it runs by itself, so that a binary cannot drop a
+    /// configured part for a default: the global user commands (`commands`),
+    /// the components that replace built-in defaults of facets of which an
+    /// agent has one (`component_defaults`, issue 99), what the system
+    /// restricts of tool calls (`approvals`, issue 13), the storages
+    /// workspaces are made in (`workspaces`, issue 253) and the sections of
+    /// the plugins. `component_registry` holds the component kinds agents
+    /// and sessions are built from - `ComponentRegistry::built_in`, to which
+    /// a test may add stand-ins, such as a model of its own (issue 130).
     ///
     /// # Errors
-    /// A `ComponentError` if a default kind of the registry is missing or
-    /// does not provide its facet (`ComponentRegistry::verify`), or if
-    /// `component_defaults` cannot replace a default (see
-    /// `ComponentRegistry::set_defaults`) - the process does not start
-    /// then.
+    /// If a store of the core's kinds cannot be opened, or the storages of
+    /// workspaces or artifacts are not what their managers can use.
     pub fn new(
         state_store: Arc<dyn StateStore>,
-        entity_stores: EntityStores,
+        backend: impl Into<StoreBackend>,
         secret_manager: Arc<SecretManager>,
         security_manager: Arc<dyn SecurityManager>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
         config: &AppConfig,
-        mut component_registry: ComponentRegistry,
-    ) -> ComponentResult<Self> {
-        component_registry.set_defaults(&config.component_defaults)?;
-
+        component_registry: ComponentRegistry,
+    ) -> Result<Self> {
+        let backend = backend.into();
+        let entity_stores = backend.entity_stores()?;
         let event_bus = Arc::new(EventBus::new(Arc::clone(&security_manager), Arc::clone(&confidentiality)));
         let controller_manager = Arc::new(ControllerManager::new(entity_stores.clone(), Arc::clone(&event_bus)));
         let agent_states = Arc::new(AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
@@ -338,34 +393,219 @@ impl RuntimeManager {
             Arc::<SkillManager>::clone(&skills),
             Arc::<ArtifactManager>::clone(&artifacts),
         ];
-        let scoped = Arc::new(ScopedEntities::new(scope_members, Arc::clone(&groups)));
-
-        let component_services = ComponentServices::empty()
+        let services = Services::empty()
             .with(Arc::clone(&security_manager))
             .with(Arc::clone(&confidentiality))
             .with(Arc::clone(&secret_manager))
             .with(Arc::clone(&workspaces))
             .with(Arc::clone(&artifacts));
         Ok(Self {
-            security_manager,
-            confidentiality,
+            backend,
             state_store,
             entity_stores,
             secret_manager,
-            component_registry: Arc::new(component_registry),
-            event_bus,
-            controller_manager,
+            security_manager,
+            confidentiality,
+            component_registry,
+            component_defaults: config.component_defaults.clone(),
             commands: config.commands.clone(),
             approval_rules: config.approvals.rules.clone().into(),
+            event_bus,
+            controller_manager,
             agent_states,
             workspaces,
             skills,
             artifacts,
             groups,
             agents,
-            scoped,
-            component_services,
+            scope_members,
+            services,
+            sections: config.plugins.clone(),
+            claimed: BTreeSet::new(),
+            seed_sections: BTreeMap::new(),
         })
+    }
+
+    /// The builder of the runtime as `config` describes it: the policy,
+    /// learning who belongs to a group from the store it guards (issue 23),
+    /// the policy of what may flow where (issue 304), the stores, the
+    /// secrets and the built-in component kinds - what a program builds its
+    /// runtime from before it adds its plugins.
+    ///
+    /// # Errors
+    /// If a store cannot be opened, or as `new`.
+    pub fn from_config(config: &AppConfig) -> Result<Self> {
+        // The policy is made before the store it guards, and bound to it
+        // once it exists.
+        let memberships = Arc::new(StoreMemberships::new());
+        let security_manager = config.create_security_manager(Arc::<StoreMemberships>::clone(&memberships));
+        let confidentiality = config.create_confidentiality_policy();
+        let state_store = config.create_state_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
+        let backend = config.open_entity_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
+        memberships.bind(&backend.entity_stores()?.groups);
+        let secret_manager = config.create_secret_manager(Arc::clone(&security_manager))?;
+        let registry = ComponentRegistry::built_in(backend.component_store());
+        Self::new(state_store, backend, secret_manager, security_manager, confidentiality, config, registry)
+    }
+
+    /// Registers what `plugin` brings.
+    ///
+    /// # Errors
+    /// Whatever its registration fails with, naming the plugin.
+    pub fn plugin(&mut self, plugin: &dyn Plugin) -> Result<()> {
+        plugin.register(self).with_context(|| format!("Cannot register the plugin {}", plugin.name()))
+    }
+
+    /// The store of the entities of `T`, a plugin's kind - the same for
+    /// whoever asks.
+    ///
+    /// # Errors
+    /// `StoreError::Conflict` if another kind has its name; if it cannot be
+    /// opened.
+    pub fn entity_store<T: Deletable>(&self) -> StoreResult<Arc<dyn EntityStore<T>>> {
+        self.backend.entity_store()
+    }
+
+    /// The stores of the core's kinds.
+    pub fn entity_stores(&self) -> &EntityStores {
+        &self.entity_stores
+    }
+
+    pub fn event_bus(&self) -> &Arc<EventBus> {
+        &self.event_bus
+    }
+
+    pub fn security_manager(&self) -> &Arc<dyn SecurityManager> {
+        &self.security_manager
+    }
+
+    pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
+        &self.confidentiality
+    }
+
+    pub fn secret_manager(&self) -> &Arc<SecretManager> {
+        &self.secret_manager
+    }
+
+    pub fn controller_manager(&self) -> &Arc<ControllerManager> {
+        &self.controller_manager
+    }
+
+    /// The component kinds, to register a plugin's own with.
+    pub fn components(&mut self) -> &mut ComponentRegistry {
+        &mut self.component_registry
+    }
+
+    /// Offers `service` - a plugin's manager, say - to the component kinds
+    /// that use it, to the views and to the routes (`Services`).
+    pub fn provide<T: ?Sized + Send + Sync + 'static>(&mut self, service: Arc<T>) {
+        self.services.insert(service);
+    }
+
+    /// The service `T`, if the core or a plugin registered before provides
+    /// it.
+    pub fn service<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
+        self.services.get::<T>()
+    }
+
+    /// Makes `member` go with what holds the scope it lies in: deleted,
+    /// restored and purged with it, after the core's kinds.
+    pub fn scope_member(&mut self, member: Arc<dyn ScopeMember>) {
+        self.scope_members.push(member);
+    }
+
+    /// Claims the section `name` of the configuration and reads it as `C`;
+    /// left out, it is `C::default()`.
+    ///
+    /// # Errors
+    /// If another plugin claimed it, or it is not a `C`.
+    pub fn config<C: DeserializeOwned + Default>(&mut self, name: &str) -> Result<C> {
+        if !self.claimed.insert(name.to_string()) {
+            bail!("The section '{name}' of the configuration is claimed twice");
+        }
+        match self.sections.remove(name) {
+            Some(section) => serde_json::from_value(section).with_context(|| format!("Cannot read the section '{name}' of the configuration")),
+            None => Ok(C::default()),
+        }
+    }
+
+    /// Claims the section `name` of the seed files: `section` seeds what
+    /// it holds.
+    ///
+    /// # Errors
+    /// If another plugin claimed it.
+    pub fn seed_section(&mut self, name: &str, section: Arc<dyn SeedSection>) -> Result<()> {
+        if self.seed_sections.insert(name.to_string(), section).is_some() {
+            bail!("The section '{name}' of the seed is claimed twice");
+        }
+        Ok(())
+    }
+
+    /// The runtime, with everything registered.
+    ///
+    /// # Errors
+    /// If a section of the configuration is claimed by no plugin; a
+    /// `ComponentError` if a default kind of the registry is missing or
+    /// does not provide its facet (`ComponentRegistry::verify`), or if
+    /// `component_defaults` cannot replace a default (see
+    /// `ComponentRegistry::set_defaults`) - the process does not start
+    /// then.
+    pub fn build(mut self) -> Result<RuntimeManager> {
+        if let Some(name) = self.sections.keys().next() {
+            bail!("The configuration has a section '{name}' that no plugin claims");
+        }
+        self.component_registry.set_defaults(&self.component_defaults)?;
+        let scoped = Arc::new(ScopedEntities::new(self.scope_members, Arc::clone(&self.groups)));
+        Ok(RuntimeManager {
+            security_manager: self.security_manager,
+            confidentiality: self.confidentiality,
+            state_store: self.state_store,
+            entity_stores: self.entity_stores,
+            component_store: self.backend.component_store(),
+            secret_manager: self.secret_manager,
+            component_registry: Arc::new(self.component_registry),
+            event_bus: self.event_bus,
+            controller_manager: self.controller_manager,
+            commands: self.commands,
+            approval_rules: self.approval_rules,
+            agent_states: self.agent_states,
+            workspaces: self.workspaces,
+            skills: self.skills,
+            artifacts: self.artifacts,
+            groups: self.groups,
+            agents: self.agents,
+            scoped,
+            services: self.services,
+            seed_sections: self.seed_sections,
+        })
+    }
+}
+
+impl RuntimeManager {
+    /// The runtime of the core alone, without plugins: as `RuntimeBuilder`
+    /// builds it from the same parts.
+    ///
+    /// # Errors
+    /// As `RuntimeBuilder::new` and `RuntimeBuilder::build`.
+    pub fn new(
+        state_store: Arc<dyn StateStore>,
+        backend: impl Into<StoreBackend>,
+        secret_manager: Arc<SecretManager>,
+        security_manager: Arc<dyn SecurityManager>,
+        confidentiality: Arc<dyn ConfidentialityPolicy>,
+        config: &AppConfig,
+        component_registry: ComponentRegistry,
+    ) -> Result<Self> {
+        RuntimeBuilder::new(state_store, backend, secret_manager, security_manager, confidentiality, config, component_registry)?.build()
+    }
+
+    /// Puts what the seed files `paths` hold into the stores (issue 105):
+    /// the core's sections and those the plugins claimed.
+    ///
+    /// # Errors
+    /// As `seed::load`.
+    pub async fn seed(&self, paths: &[PathBuf]) -> Result<()> {
+        seed::load(&self.entity_stores, self.component_store.as_ref(), self.confidentiality.as_ref(), &self.seed_sections, paths).await
     }
 
     /// The executor for the user commands of `session`: the global ones and
@@ -378,7 +618,7 @@ impl RuntimeManager {
     pub async fn new_command_executor(&self, session: &Session) -> ComponentResult<CommandExecutor<dyn ChannelCommandProvider>> {
         let owner: ActorId = session.security_attributes.owner_id;
         let security = SecurityContext::new(owner, session.id, Default::default());
-        let context = ComponentContext::new(security, self.component_services().clone());
+        let context = ComponentContext::new(security, self.services().clone());
         let mut providers = Vec::new();
         // Each configuration on its own, so that component ids only need to
         // be unique within one of them.
@@ -405,7 +645,7 @@ impl RuntimeManager {
 
     pub fn secret_manager(&self) -> &Arc<SecretManager> { &self.secret_manager }
 
-    pub fn component_services(&self) -> &ComponentServices { &self.component_services }
+    pub fn services(&self) -> &Services { &self.services }
 
     pub fn component_registry(&self) -> &Arc<ComponentRegistry> {
         &self.component_registry
@@ -473,7 +713,7 @@ mod tests {
     fn channel_runtime() -> ChannelRuntime {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let commands = Arc::new(CommandExecutor::empty(Arc::clone(manager.security_manager())));
         ChannelRuntime::outside_a_session(manager, commands, SessionId::new())
     }
@@ -497,7 +737,7 @@ mod tests {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
             let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
-            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)))
+            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)))
         };
         // As in `examples/config.yaml`.
         assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());

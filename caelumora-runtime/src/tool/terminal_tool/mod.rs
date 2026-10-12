@@ -216,7 +216,7 @@ mod tests {
         register(&mut registry);
         let config = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("terminal", TERMINAL_TOOL_KIND)] };
         let world = session_with_workspace().await;
-        let context = ComponentContext::new(SecurityContext::default(), world.runtime.component_services().clone());
+        let context = ComponentContext::new(SecurityContext::default(), world.runtime.services().clone());
         let container = ComponentContainer::from_config(&config, &Arc::new(registry), &context).await;
         assert!(container.is_ok(), "{:?}", container.err());
     }

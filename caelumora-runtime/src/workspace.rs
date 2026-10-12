@@ -836,7 +836,7 @@ pub(crate) mod testing {
         let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
         let artifacts = tempfile::tempdir().unwrap();
         let kept = ArtifactsConfig { storage: [("kept".to_string(), ArtifactStorageConfig::Local { root: artifacts.path().to_path_buf(), destination: None })].into(), ..Default::default() };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), store.entity_stores(), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig { workspaces, artifacts: kept, ..Default::default() }, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig { workspaces, artifacts: kept, ..Default::default() }, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
         let owner = UserId::new();

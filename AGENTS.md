@@ -70,10 +70,13 @@ The reasons and details are in [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md)
     is made and keeps them as fields; it does not fetch them through the runtime at every use.
 *   A pure access question is a method of `AccessQuestions`, an operation checks its own permission
     with `Enforcement::require` - before it asks anything of others - and a frontend never asks the
-    `SecurityManager` itself (see [SECURITY.md](docs/SECURITY.md)).
+    `SecurityManager` itself (see [SECURITY.md](docs/SECURITY.md)). A plugin does the same through
+    extension traits of its own - its questions on `AccessQuestions`, its views on `Views` - and
+    adds nothing about its kind to the core (see [COMPONENTS.md](docs/COMPONENTS.md#plugins)).
 *   A new action that acts in someone's name, or a change to what an action asks, comes with its
     test in the security suite (`caelumora-runtime/tests/security_suite.rs`, see
-    [SECURITY.md](docs/SECURITY.md#the-security-suite)).
+    [SECURITY.md](docs/SECURITY.md#the-security-suite)) - a plugin's in its own tests, in the
+    suite's world (`caelumora_runtime::testing`, feature `test-support`).
 *   Stored data need not stay readable: until further notice, old data may be deleted. A change to
     what is stored comes without compatibility code - no `serde` aliases, no readers of an older
     form. Instead, say in the summary which stored data has to be deleted.

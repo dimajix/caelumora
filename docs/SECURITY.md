@@ -443,6 +443,11 @@ that changes is a change of the permissions an action needs, and is reviewed as 
 runtime asks in someone's name on its own, while an action runs, is not the action's: the suite
 leaves it out of the action's questions and records it in a test of its own.
 
+The world the suite runs in - the runtime, the recording policy, the users alice, bob and carol, and
+the helpers that put what the system starts from into the store - is `caelumora_runtime::testing`,
+public behind the feature `test-support` (issue 323). A plugin's actions are tested in the plugin,
+in the same world, taken as a dev-dependency with that feature, and follow the same rule.
+
 ### Filters
 
 `SecurityManager::check` is called directly only by `AccessQuestions`, by `Enforcement` and by

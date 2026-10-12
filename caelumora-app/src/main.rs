@@ -1,19 +1,18 @@
-//! Caelumora as one program (issue 323): the composition root that builds
-//! the runtime, serves the REST API under `/api` and - with the feature
-//! `web-ui` - the web UI at `/`, from the binary.
+//! Caelumora as one program (issue 323): the composition root that lists
+//! the plugins, builds the runtime with them, serves the REST API with
+//! their routes under `/api` and - with the feature `web-ui` - the web UI at
+//! `/`, from the binary.
 
 use axum::Router;
 use caelumora_model::config::AppConfig;
-use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::{self, ApiError};
+use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes;
 use caelumora_rest_server::state::AppState;
-use caelumora_runtime::component::ComponentRegistry;
 use caelumora_runtime::event::EventBus;
 use caelumora_runtime::logging::{self, LogTarget};
-use caelumora_runtime::runtime::RuntimeManager;
-use caelumora_runtime::seed;
+use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
 use clap::Parser;
 use std::path::PathBuf;
@@ -47,41 +46,27 @@ async fn main() -> anyhow::Result<()> {
 
     logging::init(&config.logging, LogTarget::Stderr, "info,tower_http=debug,axum::rejection=trace")?;
 
-    // The policy learns who takes part where from the store it guards
-    // (issue 23): made before the store, bound to it once it exists.
-    let memberships = Arc::new(StoreMemberships::new());
-    let security_manager = config.create_security_manager(Arc::<StoreMemberships>::clone(&memberships));
-    // What may flow where, decided apart from who may do what (issue 304).
-    let confidentiality = config.create_confidentiality_policy();
-    let state_store = config.create_state_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
-    let entity_stores = config.create_entity_stores(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
-    memberships.bind(&entity_stores.groups);
-    let component_store = config.create_component_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
-    let secret_manager = config.create_secret_manager(Arc::clone(&security_manager))?;
-    let runtime_manager = Arc::new(RuntimeManager::new(
-        state_store,
-        entity_stores.clone(),
-        Arc::clone(&secret_manager),
-        Arc::clone(&security_manager),
-        Arc::clone(&confidentiality),
-        &config,
-        ComponentRegistry::built_in(Arc::clone(&component_store)),
-    )?);
+    let plugins = plugins();
+    let mut builder = RuntimeBuilder::from_config(&config)?;
+    for plugin in &plugins {
+        builder.plugin(plugin.as_ref())?;
+    }
+    let runtime_manager = Arc::new(builder.build()?);
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime_manager)));
     // Users are recorded and their changes announced on the runtime's event
     // bus (issue 306), so the user manager comes after the runtime.
-    let user_manager = config.create_user_manager(Arc::clone(&entity_stores.users), Arc::<EventBus>::clone(runtime_manager.event_bus()))?;
+    let user_manager = config.create_user_manager(Arc::clone(&runtime_manager.entity_stores().users), Arc::<EventBus>::clone(runtime_manager.event_bus()))?;
     if user_manager.is_empty() {
         tracing::warn!("No user providers configured (`users` section): nobody can log in. \
             See examples/config.yaml.");
     }
     let auth = Arc::new(Auth {
-        tokens: TokenService::from_secret(&secret_manager, &config.auth).await?,
+        tokens: TokenService::from_secret(runtime_manager.secret_manager(), &config.auth).await?,
         users: user_manager,
         controllers: Arc::clone(runtime_manager.controller_manager()),
     });
 
-    seed::load(&entity_stores, component_store.as_ref(), confidentiality.as_ref(), &config.seed).await?;
+    runtime_manager.seed(&config.seed).await?;
 
     let state = Arc::new(AppState {
         auth,
@@ -104,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
         )
     });
     // The request id is set inside the request span, which is the outer layer.
-    let app = app(routes::core(state))
+    let app = app(routes::api(state, &plugins))
         .layer(axum::middleware::from_fn(error::request_id))
         .layer(trace_layer);
 
@@ -113,6 +98,12 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// The plugins of the program (issue 323), which it builds its runtime and
+/// its API with: none yet.
+fn plugins() -> Vec<Box<dyn RestPlugin>> {
+    Vec::new()
 }
 
 /// What the program serves: `api` under `/api`, where a path no route

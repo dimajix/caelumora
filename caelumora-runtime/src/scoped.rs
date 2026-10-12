@@ -46,9 +46,10 @@ use tracing::{info, warn};
 /// A kind that may lie in a scope and goes with what holds it (issue 178):
 /// deleted, restored and purged with the session or channel whose scope it
 /// lies in. Implemented by the owner of the kind, which announces what it
-/// deletes and restores, or by `Unowned` for a kind without one.
+/// deletes and restores, or by `Unowned` for a kind without one; a
+/// plugin's kind is registered as one (`RuntimeBuilder::scope_member`).
 #[async_trait]
-pub(crate) trait ScopeMember: Send + Sync {
+pub trait ScopeMember: Send + Sync {
     /// The kind this member deletes, restores and purges.
     fn kind(&self) -> EntityKind;
 
@@ -172,12 +173,12 @@ impl ScopedEntities {
 /// A kind without an owner of its own - personalities and session
 /// templates - as a `ScopeMember`: marked and purged in its store alone,
 /// with nothing announced.
-pub(crate) struct Unowned<T: Deletable + Send + Sync + 'static>(pub(crate) Arc<dyn EntityStore<T>>);
+pub(crate) struct Unowned<T: Deletable>(pub(crate) Arc<dyn EntityStore<T>>);
 
 #[async_trait]
 impl<T> ScopeMember for Unowned<T>
 where
-    T: Deletable + Send + Sync + 'static,
+    T: Deletable,
     T::Field: ScopedField,
 {
     fn kind(&self) -> EntityKind {

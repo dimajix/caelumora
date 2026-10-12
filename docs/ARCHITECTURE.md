@@ -23,16 +23,31 @@ The project is a Rust workspace, with a web UI next to it:
 *   **`caelumora-rest-server`** - a library: the REST API and the server-sent event streams, with
     authentication. It maps what the runtime answers to the responses of `caelumora-rest-api` and
     decides nothing itself. Its handlers' building blocks - the logged-in user, `ApiError`, the
-    extractors, the shared state - are public, and the core's routes are a `Router` to nest. See
-    [REST-SERVER.md](REST-SERVER.md).
-*   **`caelumora-app`** - the program: the composition root that builds the runtime from the
-    configuration, serves the REST API under `/api` and the web UI from the binary (feature
-    `web-ui`, on by default).
+    extractors, the shared state - are public, and the routes of the API, the plugins' among them,
+    are a `Router` to nest. See [REST-SERVER.md](REST-SERVER.md).
+*   **`caelumora-app`** - the program: the composition root that lists the plugins, builds the
+    runtime from the configuration with them, serves the REST API under `/api` and the web UI from
+    the binary (feature `web-ui`, on by default).
 *   **`caelumora-web-ui`** - the browser frontend (React, TypeScript), built on the REST API and
     served by `caelumora-app`. See [WEB-UI.md](WEB-UI.md).
 *   **`caelumora-tui`** - a terminal frontend that runs the runtime in its own process.
 *   **`caelumora-client-api`**, **`caelumora-local-client`**, **`caelumora-rest-client`** - reserved
     for a client interface and its in-process and REST implementations; empty so far.
+
+## Plugins
+
+A subject that is not the core's - a kind of entity with its manager, its components, its views and
+its routes - can be a **plugin**: a crate linked into the program, not loaded at run time (issue
+323). It implements `Plugin` and registers what it brings with the `RuntimeBuilder` when the runtime
+is built: its component kinds, the store of its kind, which the configured backend opens for any
+kind, its manager as a service of the runtime, which its components, its views and its routes reach,
+the members of a scope, and its sections of the configuration and of the seed. On the REST side,
+`RestPlugin` adds its routes, served behind the same login as the core's. A plugin's views are an
+extension trait on the runtime's `Views`, built from what they open. Which plugins are in is the
+program's choice: `caelumora-app` and `caelumora-tui` each list theirs; the core knows none. A
+plugin is one crate, cut into layers by Cargo features rather than crates.
+
+Details: [COMPONENTS.md](COMPONENTS.md#plugins).
 
 ## The domain
 
@@ -194,8 +209,9 @@ Details: [SECURITY.md](SECURITY.md#views), [MEMORY.md](MEMORY.md#reading-other-c
 Two stores, configured separately:
 
 *   the **`EntityStore`** keeps long-lived documents - personalities, templates, agents, users and
-    their profiles, sessions and channels - and, beside it, the **`ComponentStore`** the
-    preconfigured components that personalities and templates refer to;
+    their profiles, sessions and channels, and the kinds of the plugins, one store per kind, which
+    the backend opens for any kind - and, beside it, the **`ComponentStore`** the preconfigured
+    components that personalities and templates refer to;
 *   the **`StateStore`** keeps what changes while a session runs - the channel's history, each
     agent's state in each channel, and each agent's own state.
 

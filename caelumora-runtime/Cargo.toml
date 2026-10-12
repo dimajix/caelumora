@@ -31,6 +31,12 @@ rmcp = { version = "3.4", features = ["client", "transport-streamable-http-clien
 bollard = "0.21"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+tempfile = { version = "3.27", optional = true }
+
+[features]
+# The world of the security suite (`testing`), for the suite and for the
+# tests of a plugin (issue 323).
+test-support = ["dep:tempfile"]
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["full"] }
@@ -38,6 +44,7 @@ rmcp = { version = "3.4", features = ["client", "transport-streamable-http-clien
 axum = { version = "0.8.9", features = ["multipart"] }
 schemars = "1.2"
 tempfile = "3.27"
+caelumora-runtime = { path = ".", features = ["test-support"] }
 
 [lints]
 workspace = true

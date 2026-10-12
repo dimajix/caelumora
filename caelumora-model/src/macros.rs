@@ -4,9 +4,17 @@
 #[macro_export]
 macro_rules! define_id {
     ($name:ident) => {
-        #[derive(Debug, Clone, Copy, Default, derive_more::Display, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+        #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
         #[serde(transparent)]
         pub struct $name(pub uuid::Uuid);
+
+        // Written out rather than derived, so that a crate using the macro
+        // - a plugin's (issue 323) - needs no `derive_more`.
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                std::fmt::Display::fmt(&self.0, f)
+            }
+        }
 
         impl $name {
             pub fn new() -> Self {

@@ -14,6 +14,7 @@ use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::str::FromStr;
 use chrono::{DateTime, Utc};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// That something was deleted, or left: by whom - the caller of the act,
@@ -36,7 +37,9 @@ impl Removal {
 /// An entity the `EntityStore` keeps: what the stores are generic over,
 /// besides `Secured`. Whether it was deleted is asked of every kind alike,
 /// so that every kind is read the same way; only a `Deletable` kind can be.
-pub trait Stored: Secured {
+/// A store keeps it as it is serialized, and hands out copies, so that a
+/// backend can keep any kind (issue 323).
+pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync + 'static {
     /// Its kind (issue 323), by which what is done with it is asked and
     /// named.
     const KIND: EntityKind;

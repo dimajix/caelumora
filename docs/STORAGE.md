@@ -26,23 +26,30 @@ The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived d
     in a configured artifact storage, not in the document.
 *   **Groups**: lists of actors an access list names as one subject - a user's teams, and the
     participants of every session and channel (see [SECURITY.md](SECURITY.md#groups)).
+*   **The kinds of the plugins** (see [COMPONENTS.md](COMPONENTS.md#plugins)), kept like the
+    core's.
 
 Each kind is kept by a store of its own, `EntityStore<T>` (issue
 [323](../issues/323-kinds-enumerated-in-the-core.md)), with the same operations for every kind.
 There are two implementations: `MemoryEntityStore<T>`, for tests, and `JsonEntityStore<T>`, which
 keeps one JSON file per document in the kind's directory, `entities/<kind>/<id>.json`, and holds
-the kind's lock for names. `MemoryStore` and `JsonFileStore` hold one of them per kind beside the
-runtime state, and hand them out as `EntityStores`, which the configuration makes
-(`create_entity_stores`) and the runtime is given: a store per kind. A manager is made with
-`&EntityStores` and keeps the stores of the kinds it uses as fields, as every service is held.
+the kind's lock for names. `MemoryStore` and `JsonFileStore` open one of them for any kind that is
+asked for (`EntityStoreFactory::entity_store::<T>()`), once, beside the runtime state: whoever asks
+for a kind again - the core, a plugin - is given the same store. What the configuration opens is a
+`StoreBackend` (`AppConfig::open_entity_store`), which gives the stores of the entities, the
+component store and the state store, and refuses a kind whose name another kind has. The stores of
+the core's kinds are `EntityStores`, which the runtime is given; a plugin asks for the store of its
+kind while it registers. A manager is made with `&EntityStores` - or the store of its kind - and
+keeps the stores of the kinds it uses as fields, as every service is held.
 
 Every stored type says what it is to its store (`Stored`): its kind, `Stored::KIND`, an
 `EntityKind` named by a string (`"skill"`) that is unique among the kinds; its id and the fields a
 query names; and, if its kind is `Scoped`, the name that is unique in its scope
 (`Stored::unique_name`). The stores take all of it from the type they read and write: what is asked
 of the `SecurityManager` (`ActionType::get(T::KIND, …)`), the name in errors, logs and the JSON
-store's directory, and which names to keep unique. A new kind is added without a change to the
-stores or to `EntityKind`.
+store's directory, and which names to keep unique. A stored type can be copied and serialized
+(`Stored` requires it), which is all a backend needs to keep it. A new kind is added without a
+change to the stores or to `EntityKind`.
 
 ### Artifact content
 
@@ -160,9 +167,11 @@ state](#deleting-state)).
 ### Demo data
 
 Demo data is not part of any binary. The files the configuration's `seed` names hold preconfigured
-components, personalities, session templates and skills as the stores keep them, with fixed ids. At
-startup both binaries put into the stores whatever they do not have yet, by id, as the system
-(`seed::load`): restarting changes nothing, and a document changed in the store stays as it is.
+components, personalities, session templates and skills as the stores keep them, with fixed ids, and
+the sections of the plugins, each seeded by the plugin that claims it (`SeedSection`); a section no
+plugin claims is an error before anything is stored. At startup both binaries put into the stores
+whatever they do not have yet, by id, as the system (`RuntimeManager::seed`): restarting changes
+nothing, and a document changed in the store stays as it is.
 
 ## The state store
 
