@@ -47,11 +47,11 @@ impl AgentCommandProvider for CompactionComponent {
             .ok_or_else(|| invalid(&format!("there is nothing to compact: {} keeps the newest part of its context as it is", turn.agent_name())))?;
 
         let mut answer = format!("{} compacted its context: {} messages replaced, {} kept as they were.", turn.agent_name(), compaction.replaced, compaction.kept);
-        if !compaction.skills_given.is_empty() {
-            answer.push_str(&format!(" Skills given again: {}.", compaction.skills_given.join(", ")));
+        if !compaction.given_again.is_empty() {
+            answer.push_str(&format!(" Given again: {}.", compaction.given_again.join(", ")));
         }
-        if compaction.skills_lost > 0 {
-            answer.push_str(&format!(" {} skill(s) it had loaded can no longer be loaded here and were not given again.", compaction.skills_lost));
+        if compaction.lost > 0 {
+            answer.push_str(&format!(" {} of what it had been given can no longer be given here and was not given again.", compaction.lost));
         }
         Ok(CommandOutput::channel(answer))
     }
@@ -106,10 +106,10 @@ mod tests {
 
     #[tokio::test]
     async fn compact_tells_the_channel_what_its_strategy_did() {
-        let (answer, _) = compact(|| Ok(Some(Compaction { replaced: 3, kept: 1, skills_given: vec!["release-notes".to_string()], skills_lost: 1 })), "").await;
+        let (answer, _) = compact(|| Ok(Some(Compaction { replaced: 3, kept: 1, given_again: vec!["skill release-notes".to_string()], lost: 1 })), "").await;
         let answer = answer.expect("compacted");
-        assert_eq!(answer.text, "Jonathan compacted its context: 3 messages replaced, 1 kept as they were. Skills given again: release-notes. \
-            1 skill(s) it had loaded can no longer be loaded here and were not given again.");
+        assert_eq!(answer.text, "Jonathan compacted its context: 3 messages replaced, 1 kept as they were. Given again: skill release-notes. \
+            1 of what it had been given can no longer be given here and was not given again.");
         assert_eq!(answer.visibility, CommandVisibility::Channel, "everyone should know");
     }
 

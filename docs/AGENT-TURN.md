@@ -146,9 +146,10 @@ with the publication the turn had and withdraws the approval requests of the cal
 external agent publishes its answers through the same `Answering`.
 
 **A message given** to the agent to read - a skill a member loaded for it - is recorded by
-`Turn::give`: into the transcript as a `Given` entry, which keeps what knowledge it is; into the
-history without a context, since the agent did not produce it. It is not published, the turn has
-seen it, and its digest is that of the message, since the model is given the same.
+`Turn::give`: into the transcript as a `Given` entry, which keeps what knowledge it is - of an
+entity, `KnowledgeSource::Entity { kind, id, digest }` (issue 323) -; into the history without a
+context, since the agent did not produce it. It is not published, the turn has seen it, and its
+digest is that of the message, since the model is given the same.
 
 ### A command turn
 
@@ -322,7 +323,7 @@ All of this relies on nothing ever being removed from the transcript. A compacti
 old one but does not continue it:
 
 *   **A branch of its own.** The transcript begins anew from the root with what replaces the older
-    messages - a summary, the skills given again - and then copies of the entries kept, as they
+    messages - a summary, what is given again - and then copies of the entries kept, as they
     stand. Every copy gets a digest of its own, since what precedes it is another.
 *   **The old branch stays.** Every reference recorded before resolves to what it did; the resolver
     does not know there was a compaction. Prompt parts placed after an entry of the old branch are
@@ -337,6 +338,15 @@ the `compaction` component's, which carries out `/compact`; how is the agent's o
 messages, and with a tool's result the call it answers; it may cut a finished turn apart, never the
 turn under way nor one given up as `Lowered`. The agent's own model summarises the rest, and the
 summary is classified as the turn's label.
+
+What the agent had been given in the part summarised and is not still there in the part kept is
+given again after the summary, as it is now, by the component that gave it: a `KnowledgeRestorer`
+(issue 323), a facet that names its kind and answers, of the entities of that kind recorded as
+given - as `KnowledgeSource::Entity`, in a `Given` entry or as what a turn read -, which it gives
+again and as what text. The `skills` component gives the skills the agent may still load there
+([SKILLS.md](SKILLS.md)); what no component gives again - a workspace's files - is not, and the
+strategy knows no kind itself. `/compact` tells the channel what was given again, by kind and name,
+and how much could no longer be given.
 
 ## Prompt parts
 

@@ -82,6 +82,7 @@ facet trait lives next to the code that uses it, not among the implementations.
 | `Moderator` | how a channel routes its events and who is asked to respond | `crate::moderator` |
 | `ResponderPolicy` | whom the `policy_moderator` asks when nobody was mentioned | `crate::moderator` |
 | `CompactionStrategy` | how an agent's context is compacted | `crate::compaction` |
+| `KnowledgeRestorer` | what a component gave the agent - a skill loaded -, given again after a compaction | `crate::compaction` |
 
 `PerceiveInProcessor` and `EmitOutProcessor` have no built-in implementation; they are extension
 points. A processor returns what is to be processed - it may drop, change or add messages - and
@@ -233,7 +234,7 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `notes` | `ToolProvider`, `PromptProvider` | - | Public notes of the agents in a channel: `write_note`, `update_note`, `revoke_note`, `read_notes`, `reclassify_note` (asks for approval) and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `private_notes` | `ToolProvider`, `PromptProvider` | - | The agent's private notes: `write_private_note`, `update_private_note`, `revoke_private_note`, `reclassify_private_note` (asks for approval), all `HIDDEN`, and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `agent_memory` | `ToolProvider`, `PromptProvider` | - | What the agent remembers across channels and sessions: `remember`, `update_memory`, `forget`, `reclassify_memory` (asks for approval), all `HIDDEN`, and a prompt part ([MEMORY.md](MEMORY.md)). |
-| `skills` | `PromptProvider`, `ToolProvider`, `AgentCommandProvider` | `position` (`start`), `requires_approval` (`true`, for writing) | Skills: the catalogue of those the agent may load, `list_skills`, `load_skill` (`WITHOUT_RESULT`), `create_skill`, `update_skill`, and the commands `/skill` and `/skills` ([SKILLS.md](SKILLS.md)). |
+| `skills` | `PromptProvider`, `ToolProvider`, `AgentCommandProvider`, `KnowledgeRestorer` | `position` (`start`), `requires_approval` (`true`, for writing) | Skills: the catalogue of those the agent may load, `list_skills`, `load_skill` (`WITHOUT_RESULT`), `create_skill`, `update_skill`, and the commands `/skill` and `/skills` ([SKILLS.md](SKILLS.md)). |
 | `channel_history` | `ToolProvider` | - | The tool `read_history` for other channels of the session ([MEMORY.md](MEMORY.md)). |
 | `terminal_tool` | `ToolProvider` | `max_wait_secs` (60, at most 300), `max_output_bytes` (64 KiB, of a command's output or a file), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but `list_files`, `read_file` and `grep_files`; `command_output`, `kill_command` and `publish_file` never ask), `description` (built in) | The session's workspace, where the agent's channel may use it: its files - `list_files`, `read_file`, `grep_files`, `write_file`, `replace_in_file`, `move_file`, `delete_file`, `publish_file` - and a shell in it - `run_command`, `command_output`, `kill_command` ([TOOLS.md](TOOLS.md#the-workspace)). What it can do is what the workspace's terminal can. |
 | `artifact_tool` | `ToolProvider` | `requires_approval` (`true`; `false` - `"unless_read_only"` asks too, since publishing changes what is kept), `description` (built in) | `publish_artifact`: a file of the session's workspace published as a version of an artifact, kept beyond the workspace ([TOOLS.md](TOOLS.md#artifacts)). Without an artifact storage configured, its calls fail and say so. |
@@ -253,7 +254,7 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `random_policy` | `ResponderPolicy` | - | Asks one agent, chosen at random. |
 | `mentions_only_policy` | `ResponderPolicy` | - | Asks nobody: agents answer only when mentioned. |
 | `compaction` | `AgentCommandProvider` | - | The command `/compact`, for the agent's owners: asks the agent's `CompactionStrategy` to compact its context and tells the channel what it did ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |
-| `summary_compaction` | `CompactionStrategy` | `keep_last` (10, the messages kept as they stand) | The default strategy: the agent's own model summarises the older part of its transcript ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LLMClient`. |
+| `summary_compaction` | `CompactionStrategy` | `keep_last` (10, the messages kept as they stand) | The default strategy: the agent's own model summarises the older part of its transcript, and the agent's `KnowledgeRestorer`s give again what it had been given there ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LLMClient`. |
 | `help_command` | `ChannelCommandProvider` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
 | `wakeup_command` | `ChannelCommandProvider` | - | The user command `/wakeup`. |
 | `nudge_command` | `ChannelCommandProvider` | - | The user command `/nudge`. |

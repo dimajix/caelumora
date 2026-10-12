@@ -21,6 +21,7 @@
 //! channel, but the agent's owner sees them, and the prompt part, in the
 //! context panel - the audit view of the one responsible for the agent.
 
+use crate::component_impl::notes::NOTE_PRESENTATION;
 use crate::agent::notes::{AgentNotes, NoteKind};
 use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
@@ -35,7 +36,7 @@ use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
 use caelumora_model::security::SecurityManager;
-use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -79,7 +80,7 @@ impl ToolProvider for PrivateNotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
-                presentation: ToolPresentation::Note,
+                presentation: NOTE_PRESENTATION,
             },
             Tool {
                 name: UPDATE_PRIVATE_NOTE_TOOL_NAME.to_string(),
@@ -93,7 +94,7 @@ impl ToolProvider for PrivateNotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
-                presentation: ToolPresentation::Note,
+                presentation: NOTE_PRESENTATION,
             },
             Tool {
                 name: REVOKE_PRIVATE_NOTE_TOOL_NAME.to_string(),
@@ -106,7 +107,7 @@ impl ToolProvider for PrivateNotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
-                presentation: ToolPresentation::Note,
+                presentation: NOTE_PRESENTATION,
             },
             Tool {
                 name: RECLASSIFY_PRIVATE_NOTE_TOOL_NAME.to_string(),
@@ -118,7 +119,7 @@ impl ToolProvider for PrivateNotesComponent {
                 requires_approval: true,
                 visibility: ToolVisibility::HIDDEN,
                 classification: None,
-                presentation: ToolPresentation::Note,
+                presentation: NOTE_PRESENTATION,
             },
         ]
     }
@@ -300,6 +301,6 @@ mod tests {
     #[test]
     fn every_private_note_acted_on_is_shown_as_a_note_to_the_owner_alone() {
         let tools = PrivateNotesComponent { security_manager: Arc::new(caelumora_model::security::OwnershipSecurityManager::new()), confidentiality: Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()) }.tools();
-        assert!(tools.iter().all(|t| (t.presentation, t.visibility) == (ToolPresentation::Note, ToolVisibility::HIDDEN)));
+        assert!(tools.iter().all(|t| (t.presentation, t.visibility) == (NOTE_PRESENTATION, ToolVisibility::HIDDEN)));
     }
 }

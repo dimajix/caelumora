@@ -278,7 +278,8 @@ impl TranscriptEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::digest::message_chain;
+    use crate::digest::{self, message_chain};
+    use crate::skill::{Skill, SkillId};
     use crate::message::tests::{id, make_message};
 
     #[test]
@@ -298,7 +299,7 @@ mod tests {
 
     #[test]
     fn a_message_given_is_read_as_its_message_and_hashed_as_one() {
-        let source = KnowledgeSource::Skill { skill: crate::skill::SkillId::new(), digest: crate::digest::skill("steps") };
+        let source = KnowledgeSource::entity::<Skill>(SkillId::new(), Some(digest::skill("steps")));
         let (mut given, mut said) = (Transcript::default(), Transcript::default());
         given.push(make_message(id(1)));
         said.push(make_message(id(1)));

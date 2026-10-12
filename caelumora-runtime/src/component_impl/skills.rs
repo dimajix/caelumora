@@ -27,10 +27,13 @@
 //! message of the channel: only through the agent's own transcript, so that
 //! the prompt cache holds, what it saw is recorded by digest, and nobody in
 //! the channel is handed a text they may not read. Every load is recorded
-//! as knowledge (`KnowledgeSource::Skill`).
+//! as knowledge (`KnowledgeSource::Entity`), and a skill loaded in what a
+//! compaction summarises is given again, as it is now - where it may still
+//! be loaded (`KnowledgeRestorer`, issue 323).
 
 use crate::agent::turn::Turn;
 use crate::agent::work::AgentWork;
+use crate::compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
 use crate::command::{AgentCommandProvider, CommandError, CommandResult, ProvidesCommands};
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::context::{titled, Prompt, PromptPosition, PromptProvider};
@@ -44,11 +47,23 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::question::Answers;
 use caelumora_model::scope::Scope;
-use caelumora_model::store::StoreError;
+use caelumora_model::removal::Stored;
+use caelumora_model::skill::{Skill, SkillId};
+use caelumora_model::store::{EntityKind, StoreError};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
+use uuid::Uuid;
+
+/// A skill loaded, written or changed (issue 281): its `name`, and
+/// where the arguments hold them its `description` and its `body`, as
+/// Markdown; its result's `skill_id`, where it has one, to link to.
+pub const SKILL_PRESENTATION: ToolPresentation = ToolPresentation::new("skill");
+
+/// The skills an agent may load, listed (issue 301): the `skills` of its
+/// result - each `name`, `description` and `skill_id`, to link to.
+pub const SKILL_LIST_PRESENTATION: ToolPresentation = ToolPresentation::new("skill_list");
 
 pub const SKILLS_KIND: &str = "skills";
 pub const LIST_SKILLS_TOOL_NAME: &str = "list_skills";
@@ -192,7 +207,7 @@ impl ToolProvider for SkillsComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: ToolPresentation::SkillList,
+                presentation: SKILL_LIST_PRESENTATION,
             },
             Tool {
                 name: LOAD_SKILL_TOOL_NAME.to_string(),
@@ -203,7 +218,7 @@ impl ToolProvider for SkillsComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::WITHOUT_RESULT,
                 classification: None,
-                presentation: ToolPresentation::Skill,
+                presentation: SKILL_PRESENTATION,
             },
             Tool {
                 name: CREATE_SKILL_TOOL_NAME.to_string(),
@@ -225,7 +240,7 @@ impl ToolProvider for SkillsComponent {
                 requires_approval: self.requires_approval.required(false),
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: ToolPresentation::Skill,
+                presentation: SKILL_PRESENTATION,
             },
             Tool {
                 name: UPDATE_SKILL_TOOL_NAME.to_string(),
@@ -243,7 +258,7 @@ impl ToolProvider for SkillsComponent {
                 requires_approval: self.requires_approval.required(false),
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: ToolPresentation::Skill,
+                presentation: SKILL_PRESENTATION,
             },
         ]
     }
@@ -409,12 +424,37 @@ impl AgentCommandProvider for SkillsComponent {
     }
 }
 
+#[async_trait]
+impl KnowledgeRestorer for SkillsComponent {
+    fn kind(&self) -> EntityKind {
+        Skill::KIND
+    }
+
+    /// The skills of `given` the agent may still load where it is.
+    async fn give_again(&self, turn: &mut Turn<'_>, given: &[Uuid]) -> Result<Vec<GivenAgain>, CompactionError> {
+        let session = turn.session().await.ok_or(CompactionError::NoSession)?;
+        let usable = session.views().usable_skills().await.map_err(|e| {
+            tracing::warn!("Agent {}: the skills it had loaded could not be read again: {:#}", turn.agent_id(), e);
+            CompactionError::KnowledgeUnreadable
+        })?;
+        Ok(given.iter()
+            .filter_map(|id| usable.iter().find(|skill| skill.id() == SkillId::from(*id)))
+            .map(|skill| GivenAgain {
+                name: skill.name().to_string(),
+                text: skill.as_given(),
+                knowledge: skill.knowledge(turn.channel_id(), turn.session_id()),
+            })
+            .collect())
+    }
+}
+
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(SKILLS_KIND)
             .provides::<dyn PromptProvider>()
             .provides::<dyn ToolProvider>()
-            .provides::<dyn AgentCommandProvider>(),
+            .provides::<dyn AgentCommandProvider>()
+            .provides::<dyn KnowledgeRestorer>(),
         |descriptor, _context| {
             let position = PromptPosition::of_params(&descriptor.params)?;
             let SkillsConfig { requires_approval } = crate::component::config_of_params(&descriptor.params)?;
@@ -422,7 +462,8 @@ pub fn register(registry: &mut ComponentRegistry) {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::<SkillsComponent>::clone(&component));
             facets.insert::<dyn ToolProvider>(Arc::<SkillsComponent>::clone(&component));
-            facets.insert::<dyn AgentCommandProvider>(component);
+            facets.insert::<dyn AgentCommandProvider>(Arc::<SkillsComponent>::clone(&component));
+            facets.insert::<dyn KnowledgeRestorer>(component);
             Ok(facets)
         },
     );
@@ -432,7 +473,8 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use caelumora_model::store::query::Query;
-    use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
+    use caelumora_model::context::KnowledgeRef;
+    use caelumora_model::digest;
     use crate::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::Confidentiality;
@@ -468,7 +510,7 @@ mod tests {
         assert_eq!(loaded.classification, Some(internal));
         drop(turn);
         let read = state.turn.as_ref().unwrap().work.context.knowledge.clone();
-        assert!(matches!(read.as_slice(), [KnowledgeRef { source: KnowledgeSource::Skill { skill, digest }, .. }] if *skill == made.id && *digest == caelumora_model::digest::skill("1. Collect.\n2. Group.")), "{read:?}");
+        assert!(matches!(read.as_slice(), [KnowledgeRef { source, .. }] if source.about::<Skill>() == Some((made.id, Some(digest::skill("1. Collect.\n2. Group."))))), "{read:?}");
 
         let mut turn = world.turn(&mut state);
         let absent = ToolProvider::execute(&component, LOAD_SKILL_TOOL_NAME, &serde_json::json!({ "name": "nothing" }), None, &mut turn).await;
@@ -536,10 +578,10 @@ mod tests {
         let tools = SkillsComponent { position: PromptPosition::Start, requires_approval: ApprovalMode::Always }.tools();
         let load = tools.iter().find(|t| t.name == LOAD_SKILL_TOOL_NAME).unwrap();
         assert_eq!(load.visibility, ToolVisibility::WITHOUT_RESULT);
-        let skills: Vec<_> = tools.iter().filter(|t| t.presentation == ToolPresentation::Skill).map(|t| t.name.as_str()).collect();
+        let skills: Vec<_> = tools.iter().filter(|t| t.presentation == SKILL_PRESENTATION).map(|t| t.name.as_str()).collect();
         assert_eq!(skills, [LOAD_SKILL_TOOL_NAME, CREATE_SKILL_TOOL_NAME, UPDATE_SKILL_TOOL_NAME], "shown as a skill");
         let list = tools.iter().find(|t| t.name == LIST_SKILLS_TOOL_NAME).unwrap();
-        assert_eq!((list.presentation, list.visibility), (ToolPresentation::SkillList, ToolVisibility::SHOWN), "the catalogue as a list of skills");
+        assert_eq!((list.presentation, list.visibility), (SKILL_LIST_PRESENTATION, ToolVisibility::SHOWN), "the catalogue as a list of skills");
         assert!(tools.iter().filter(|t| t.name == LOAD_SKILL_TOOL_NAME || t.name == LIST_SKILLS_TOOL_NAME).all(|t| !t.requires_approval), "reading needs no approval");
     }
 }

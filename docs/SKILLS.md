@@ -76,7 +76,8 @@ classified at least so.
 
 A compaction by summary gives again every skill loaded in the part of the transcript it summarises -
 given or loaded by the model - as it is now and only if the agent may still load it, unless the part
-kept still holds it.
+kept still holds it. The compaction asks the `skills` component for it, as its `KnowledgeRestorer`
+(issue 323): it knows no skills itself.
 
 ## Agents write skills
 

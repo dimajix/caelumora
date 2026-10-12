@@ -26,6 +26,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+/// A file published as a version of an artifact (issue 271): its
+/// `name`, `version`, `size`, `description` and the `artifact` it is
+/// downloaded from.
+pub const ARTIFACT_PUBLISH_PRESENTATION: ToolPresentation = ToolPresentation::new("artifact_publish");
+
 pub const ARTIFACT_TOOL_KIND: &str = "artifact_tool";
 pub const PUBLISH_ARTIFACT: &str = "publish_artifact";
 
@@ -95,7 +100,7 @@ impl ToolProvider for ArtifactTool {
             requires_approval: self.config.requires_approval.required(false),
             visibility: ToolVisibility::SHOWN,
             classification: None,
-            presentation: ToolPresentation::ArtifactPublish,
+            presentation: ARTIFACT_PUBLISH_PRESENTATION,
         }]
     }
 
@@ -208,7 +213,7 @@ mod tests {
         assert!(asks(json!(true)) && asks(json!("unless_read_only")), "it changes what is kept");
         assert!(!asks(json!(false)));
         assert!(tool(&world, json!({})).tools()[0].requires_approval, "unless configured");
-        assert_eq!(tool(&world, json!({})).tools()[0].presentation, ToolPresentation::ArtifactPublish);
+        assert_eq!(tool(&world, json!({})).tools()[0].presentation, ARTIFACT_PUBLISH_PRESENTATION);
         assert_eq!(tool(&world, json!({})).describe(PUBLISH_ARTIFACT, &json!({ "path": "out/r.csv", "name": "Report.csv" })).unwrap(), "Publish 'out/r.csv' in the workspace as the artifact 'Report.csv'");
     }
 }
