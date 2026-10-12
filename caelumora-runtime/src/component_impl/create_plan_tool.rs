@@ -16,6 +16,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
+/// A plan (issue 263): its `summary` and its `steps`, numbered.
+pub const PLAN_PRESENTATION: ToolPresentation = ToolPresentation::new("plan");
+
 pub const CREATE_PLAN_TOOL_KIND: &str = "create_plan_tool";
 
 pub const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
@@ -116,7 +119,7 @@ impl ToolProvider for CreatePlanToolProvider {
             requires_approval: false,
             visibility: ToolVisibility::SHOWN,
             classification: None,
-            presentation: ToolPresentation::Plan,
+            presentation: PLAN_PRESENTATION,
         }]
     }
 
@@ -186,7 +189,7 @@ mod tests {
 
     #[test]
     fn create_plan_calls_are_shown_as_a_plan() {
-        assert_eq!(CreatePlanToolProvider.tools().remove(0).presentation, ToolPresentation::Plan);
+        assert_eq!(CreatePlanToolProvider.tools().remove(0).presentation, PLAN_PRESENTATION);
     }
 
     #[tokio::test]

@@ -6,6 +6,7 @@ use super::Views;
 use crate::context::titled;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
+use caelumora_model::digest;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::scope::{Scope, Scoped};
 use caelumora_model::security::AccessQuestions;
@@ -59,12 +60,12 @@ impl SkillView {
     }
 
     /// That it was loaded in `channel` of `session`, as it is now: knowledge
-    /// of the turn it was loaded into (`KnowledgeSource::Skill`).
+    /// of the turn it was loaded into (`KnowledgeSource::Entity`).
     pub fn knowledge(&self, channel: ChannelId, session: SessionId) -> KnowledgeRef {
         KnowledgeRef {
             channel,
             session,
-            source: KnowledgeSource::Skill { skill: self.skill.id, digest: caelumora_model::digest::skill(self.skill.body.as_str()) },
+            source: KnowledgeSource::entity::<Skill>(self.skill.id, Some(digest::skill(self.skill.body.as_str()))),
             classification: Some(self.skill.classification.clone()),
         }
     }

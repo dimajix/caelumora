@@ -32,6 +32,18 @@ use serde_json::Value;
 use std::sync::Arc;
 use tracing::warn;
 
+/// One of an agent's notes, private notes or memory entries acted on
+/// (issue 303): its `id` and what was done to it (`status`), its new
+/// `text` where the arguments hold one - written or updated -, and for a
+/// reclassification its new `classification`. What was revoked,
+/// forgotten or reclassified is named by its number alone.
+pub const NOTE_PRESENTATION: ToolPresentation = ToolPresentation::new("note");
+
+/// The notes of channels read (issue 303): the `channels` of its result,
+/// each with its `channel` name and its `notes` - each `by` whom, its
+/// `text` and, in the reader's own channel, its `id`.
+pub const NOTE_LIST_PRESENTATION: ToolPresentation = ToolPresentation::new("note_list");
+
 pub const NOTES_KIND: &str = "notes";
 
 pub const WRITE_NOTE_TOOL_NAME: &str = "write_note";
@@ -72,7 +84,7 @@ impl ToolProvider for NotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: ToolPresentation::Note,
+                presentation: NOTE_PRESENTATION,
             },
             Tool {
                 name: UPDATE_NOTE_TOOL_NAME.to_string(),
@@ -86,7 +98,7 @@ impl ToolProvider for NotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: ToolPresentation::Note,
+                presentation: NOTE_PRESENTATION,
             },
             Tool {
                 name: REVOKE_NOTE_TOOL_NAME.to_string(),
@@ -100,7 +112,7 @@ impl ToolProvider for NotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: ToolPresentation::Note,
+                presentation: NOTE_PRESENTATION,
             },
             Tool {
                 name: RECLASSIFY_NOTE_TOOL_NAME.to_string(),
@@ -111,7 +123,7 @@ impl ToolProvider for NotesComponent {
                 requires_approval: true,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: ToolPresentation::Note,
+                presentation: NOTE_PRESENTATION,
             },
             Tool {
                 name: READ_NOTES_TOOL_NAME.to_string(),
@@ -128,7 +140,7 @@ impl ToolProvider for NotesComponent {
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,
-                presentation: ToolPresentation::NoteList,
+                presentation: NOTE_LIST_PRESENTATION,
             },
         ]
     }
@@ -445,9 +457,9 @@ mod tests {
     #[test]
     fn a_note_acted_on_is_shown_as_a_note_and_the_notes_read_as_a_list() {
         let tools = NotesComponent { security_manager: Arc::new(caelumora_model::security::OwnershipSecurityManager::new()), confidentiality: Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()) }.tools();
-        let notes: Vec<_> = tools.iter().filter(|t| t.presentation == ToolPresentation::Note).map(|t| t.name.as_str()).collect();
+        let notes: Vec<_> = tools.iter().filter(|t| t.presentation == NOTE_PRESENTATION).map(|t| t.name.as_str()).collect();
         assert_eq!(notes, [WRITE_NOTE_TOOL_NAME, UPDATE_NOTE_TOOL_NAME, REVOKE_NOTE_TOOL_NAME, RECLASSIFY_NOTE_TOOL_NAME]);
         let read = tools.iter().find(|t| t.name == READ_NOTES_TOOL_NAME).unwrap();
-        assert_eq!(read.presentation, ToolPresentation::NoteList);
+        assert_eq!(read.presentation, NOTE_LIST_PRESENTATION);
     }
 }

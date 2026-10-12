@@ -4,7 +4,7 @@
 //! `WorkspacePath`s before anything is asked.
 //!
 //! - `list_files`, `read_file` and `grep_files` only read; what they read
-//!   is recorded as the turn's knowledge (`KnowledgeSource::Workspace`), a
+//!   is recorded as the turn's knowledge (`KnowledgeSource::Entity`), a
 //!   file's content by its digest. `publish_file` reads too: it offers a
 //!   file for download as a link to it as it is now, with its digest
 //!   (issue 273), to those who may use the workspace in the channel - which
@@ -31,6 +31,40 @@ use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+
+/// A file read (issue 251): its `path`, and the `content` of its result
+/// as text, with the lines it covers - `start_line`, `end_line`,
+/// `total_lines` - and where to read on (`next`).
+pub const FILE_READ_PRESENTATION: ToolPresentation = ToolPresentation::new("file_read");
+
+/// A file written: its `path` and its `content` as text, and how many
+/// `bytes` its result says were written.
+pub const FILE_WRITE_PRESENTATION: ToolPresentation = ToolPresentation::new("file_write");
+
+/// A replacement in a file: its `path`, its `old_text` and `new_text`
+/// as text, whether it replaces every occurrence (`replace_all`), and
+/// how many `replacements` its result counts.
+pub const FILE_EDIT_PRESENTATION: ToolPresentation = ToolPresentation::new("file_edit");
+
+/// A directory listed (issue 265): its `path`, and the `entries` of its
+/// result - each `name`, `is_dir`, `size` and `modified` - and whether
+/// they are `complete`.
+pub const FILE_LIST_PRESENTATION: ToolPresentation = ToolPresentation::new("file_list");
+
+/// Files searched (issue 265): its `pattern` and `path`, and the
+/// `matches` of its result - each `path`, `line` and `text` - with how
+/// many files were searched and skipped, and whether it is `complete`.
+pub const FILE_SEARCH_PRESENTATION: ToolPresentation = ToolPresentation::new("file_search");
+
+/// A file or directory moved or renamed (issue 267): its `from` and
+/// `to`, and whether its result says it was `renamed` - moved within
+/// its directory.
+pub const FILE_MOVE_PRESENTATION: ToolPresentation = ToolPresentation::new("file_move");
+
+/// A file of the workspace offered for download (issue 273): its
+/// `name`, `size`, `description` and `path`, and whether the file is
+/// still as it was (`size`, `modified`) or gone.
+pub const FILE_PUBLISH_PRESENTATION: ToolPresentation = ToolPresentation::new("file_publish");
 
 pub const LIST_FILES: &str = "list_files";
 pub const READ_FILE: &str = "read_file";
@@ -153,7 +187,7 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
             "List a directory of the session's workspace: each entry's name, whether it is a directory, its size and when it was changed.".to_string(),
             ToolParameters::object([("path", string("The directory, relative to the workspace's top; the top unless given"))], Vec::<&str>::new()),
             asks(LIST_FILES),
-            ToolPresentation::FileList,
+            FILE_LIST_PRESENTATION,
         ),
         tool(
             READ_FILE,
@@ -167,7 +201,7 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
                 ["path"],
             ),
             asks(READ_FILE),
-            ToolPresentation::FileRead,
+            FILE_READ_PRESENTATION,
         ),
         tool(
             GREP_FILES,
@@ -181,14 +215,14 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
                 ["pattern"],
             ),
             asks(GREP_FILES),
-            ToolPresentation::FileSearch,
+            FILE_SEARCH_PRESENTATION,
         ),
         tool(
             WRITE_FILE,
             "Write a text file of the session's workspace, replacing what it held; the directories it lies in are made.".to_string(),
             ToolParameters::object([("path", string("The file, relative to the workspace's top")), ("content", string("What the file is to hold"))], ["path", "content"]),
             asks(WRITE_FILE),
-            ToolPresentation::FileWrite,
+            FILE_WRITE_PRESENTATION,
         ),
         tool(
             REPLACE_IN_FILE,
@@ -203,7 +237,7 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
                 ["path", "old_text", "new_text"],
             ),
             asks(REPLACE_IN_FILE),
-            ToolPresentation::FileEdit,
+            FILE_EDIT_PRESENTATION,
         ),
         tool(
             MOVE_FILE,
@@ -216,14 +250,14 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
                 ["from", "to"],
             ),
             asks(MOVE_FILE),
-            ToolPresentation::FileMove,
+            FILE_MOVE_PRESENTATION,
         ),
         tool(
             DELETE_FILE,
             "Delete a file, or an empty directory, of the session's workspace.".to_string(),
             ToolParameters::object([("path", string("The file or directory, relative to the workspace's top"))], ["path"]),
             asks(DELETE_FILE),
-            ToolPresentation::Default,
+            ToolPresentation::DEFAULT,
         ),
         tool(
             PUBLISH_FILE,
@@ -239,7 +273,7 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
             // Never asked (issue 275): it changes nothing, and hands the file
             // to nobody who could not download it already.
             false,
-            ToolPresentation::FilePublish,
+            FILE_PUBLISH_PRESENTATION,
         ),
     ]
 }
@@ -405,7 +439,7 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
     let read = |turn: &mut Turn<'_>, digest| turn.record_knowledge(KnowledgeRef {
         channel: turn.channel_id(),
         session: turn.session_id(),
-        source: KnowledgeSource::Workspace { workspace: workspace.id, digest },
+        source: KnowledgeSource::entity::<Workspace>(workspace.id, digest),
         classification: Some(workspace.classification.clone()),
     });
     match name {
@@ -522,6 +556,7 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::digest::Digest;
     use crate::tool::ToolProvider;
     use crate::tool::terminal_tool::tests::tool as terminal_tool;
     use crate::workspace::testing::session_with_workspace;
@@ -578,12 +613,12 @@ mod tests {
         assert!(matches!(outside, Err(ToolError::InvalidParameter(_))), "the model's to correct");
 
         drop(turn);
-        let read: Vec<Option<caelumora_model::digest::Digest>> = knowledge(&state).into_iter().map(|k| match k.source {
-            KnowledgeSource::Workspace { workspace, digest } => {
+        let read: Vec<Option<Digest>> = knowledge(&state).into_iter().map(|k| match k.source.about::<Workspace>() {
+            Some((workspace, digest)) => {
                 assert_eq!((workspace, k.classification.as_ref(), k.channel), (world.workspace.id, Some(&world.workspace.classification), world.session.channels()[0].id()));
                 digest
             }
-            other => panic!("{other:?}"),
+            None => panic!("{:?}", k.source),
         }).collect();
         // The listing and the search are one entry, each content read is
         // one: the file as written, after the first replacement, after the
@@ -679,7 +714,7 @@ mod tests {
 
         drop(turn);
         let read: Vec<_> = knowledge(&state).into_iter().map(|k| k.source).collect();
-        assert!(matches!(&read[..], [KnowledgeSource::Workspace { digest: Some(d), .. }] if *d == digest), "what was read, once: {read:?}");
+        assert!(matches!(&read[..], [source] if source.about::<Workspace>().is_some_and(|(_, d)| d == Some(digest))), "what was read, once: {read:?}");
     }
 
     #[tokio::test]
@@ -719,13 +754,13 @@ mod tests {
     async fn the_file_tools_are_presented_as_what_they_do_to_files() {
         let world = session_with_workspace().await;
         let presented: BTreeMap<String, ToolPresentation> = terminal_tool(&world, json!({})).tools().into_iter().map(|t| (t.name, t.presentation)).collect();
-        assert_eq!(presented[LIST_FILES], ToolPresentation::FileList);
-        assert_eq!(presented[READ_FILE], ToolPresentation::FileRead);
-        assert_eq!(presented[GREP_FILES], ToolPresentation::FileSearch);
-        assert_eq!(presented[WRITE_FILE], ToolPresentation::FileWrite);
-        assert_eq!(presented[REPLACE_IN_FILE], ToolPresentation::FileEdit);
-        assert_eq!(presented[MOVE_FILE], ToolPresentation::FileMove);
-        assert_eq!(presented[PUBLISH_FILE], ToolPresentation::FilePublish);
-        assert_eq!(presented[DELETE_FILE], ToolPresentation::Default, "a deletion as every call");
+        assert_eq!(presented[LIST_FILES], FILE_LIST_PRESENTATION);
+        assert_eq!(presented[READ_FILE], FILE_READ_PRESENTATION);
+        assert_eq!(presented[GREP_FILES], FILE_SEARCH_PRESENTATION);
+        assert_eq!(presented[WRITE_FILE], FILE_WRITE_PRESENTATION);
+        assert_eq!(presented[REPLACE_IN_FILE], FILE_EDIT_PRESENTATION);
+        assert_eq!(presented[MOVE_FILE], FILE_MOVE_PRESENTATION);
+        assert_eq!(presented[PUBLISH_FILE], FILE_PUBLISH_PRESENTATION);
+        assert_eq!(presented[DELETE_FILE], ToolPresentation::DEFAULT, "a deletion as every call");
     }
 }

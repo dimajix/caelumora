@@ -156,9 +156,12 @@ function knowledgeLabel(knowledge: KnowledgeRef, sessionId: string): string {
     case 'skill':
       // The digest is the skill's text as it was loaded (issue 22).
       return `A skill, loaded in ${channel}`;
-    default:
+    case 'history':
       // A reader who joined later saw only part of it (issue 72).
       return knowledge.history_start ? `History of ${channel}, from when it was granted` : `History of ${channel}`;
+    default:
+      // An entity of a kind this view does not know (issue 323).
+      return `A ${knowledge.source.replace(/_/g, ' ')}, read in ${channel}`;
   }
 }
 

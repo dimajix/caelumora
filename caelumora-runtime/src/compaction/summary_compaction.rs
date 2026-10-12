@@ -3,11 +3,12 @@
 //! default compaction strategy of an agent.
 //!
 //! The newest messages - at least `keep_last`, and with a tool's result the
-//! call it answers - are kept as they stand; the skills loaded in the part
-//! summarised are given again, as they are now.
+//! call it answers - are kept as they stand; what the agent was given in the
+//! part summarised - a skill loaded - is given again, as it is now, by the
+//! component that gave it (`KnowledgeRestorer`, issue 323).
 
 use crate::agent::turn::Turn;
-use crate::compaction::{Compaction, CompactionError, CompactionStrategy};
+use crate::compaction::{Compaction, CompactionError, CompactionStrategy, GivenAgain, KnowledgeRestorer};
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::context::titled;
 use crate::llm::LLMClient;
@@ -17,7 +18,7 @@ use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::digest::Digest;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::message_history::{HistoryEntry, MessageHistory};
-use caelumora_model::skill::SkillId;
+use caelumora_model::store::EntityKind;
 use caelumora_model::transcript::{as_they_stand, TranscriptEntry};
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::work::TurnId;
@@ -25,6 +26,7 @@ use futures::StreamExt;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use uuid::Uuid;
 
 pub const SUMMARY_COMPACTION_KIND: &str = "summary_compaction";
 
@@ -37,8 +39,7 @@ const SUMMARY_TITLE: &str = "Summary of the conversation so far";
 /// from the summary alone.
 const SUMMARY_INSTRUCTION: &str = "Summarise the conversation above for yourself, so that you can go on from the summary alone: \
     what the task is and who asked for it, what was decided and agreed, what was done - with which files, tools and results \
-    that still matter -, and what is still open. Keep names, numbers and identifiers exact. Leave out the text of skills: \
-    they are given to you again. Answer with the summary only.";
+    that still matter -, and what is still open. Keep names, numbers and identifiers exact. Answer with the summary only.";
 
 #[derive(Debug)]
 pub struct SummaryCompaction {
@@ -46,6 +47,9 @@ pub struct SummaryCompaction {
     llm_client: Arc<dyn LLMClient>,
     /// How many of the newest messages are kept as they stand.
     keep_last: usize,
+    /// The components of the agent that give again what they gave it, each
+    /// for its kind.
+    restorers: Vec<Arc<dyn KnowledgeRestorer>>,
 }
 
 /// What the component is configured with.
@@ -59,10 +63,21 @@ fn default_keep_last() -> usize {
     DEFAULT_KEEP_LAST
 }
 
+/// What the agent was given: an entity of a kind (`KnowledgeSource::Entity`).
+type Given = (EntityKind, Uuid);
+
 /// An entry of the active path of a transcript, as a compaction reads it:
-/// its digest, the skill it gives if it is one given (`TranscriptEntry::Given`),
+/// its digest, what it gives if it is one given (`TranscriptEntry::Given`),
 /// and its message as it stands, if it holds one.
-type Entry = (Digest, Option<SkillId>, Option<Message>);
+type Entry = (Digest, Option<Given>, Option<Message>);
+
+/// What `source` gave, if it is knowledge of an entity.
+fn given(source: &KnowledgeSource) -> Option<Given> {
+    match *source {
+        KnowledgeSource::Entity { kind, id, .. } => Some((kind, id)),
+        _ => None,
+    }
+}
 
 /// Where the entries `path` are cut so that at least the last `keep_last`
 /// messages are kept: the index of the first entry kept - `path.len()` to
@@ -106,39 +121,66 @@ fn kept_whole<'a>(entries: impl Iterator<Item = &'a TranscriptEntry>, under_way:
         .collect()
 }
 
-/// The skills loaded in `entries`, each once, in the order they were first
-/// loaded: each given (`TranscriptEntry::Given`), and each a turn read -
-/// recorded as knowledge with what it said afterwards (`load_skill`), as
-/// `read` holds it by message.
-fn skills_in(entries: &[Entry], read: &HashMap<MessageId, Vec<SkillId>>) -> Vec<SkillId> {
-    let mut skills = Vec::new();
-    for (_, given, message) in entries {
+/// What was given in `entries`, each once, in the order it was first
+/// given: each given (`TranscriptEntry::Given`), and each a turn read -
+/// recorded as knowledge with what it said afterwards (`load_skill`, say),
+/// as `read` holds it by message.
+fn given_in(entries: &[Entry], read: &HashMap<MessageId, Vec<Given>>) -> Vec<Given> {
+    let mut given = Vec::new();
+    for (_, gives, message) in entries {
         let read = message.as_ref().and_then(|m| read.get(&m.id)).into_iter().flatten();
-        for skill in given.iter().chain(read) {
-            if !skills.contains(skill) {
-                skills.push(*skill);
+        for what in gives.iter().chain(read) {
+            if !given.contains(what) {
+                given.push(*what);
             }
         }
     }
-    skills
+    given
 }
 
-/// The skills each message of `history` was produced after reading, by
-/// message: what its context records as knowledge (`KnowledgeSource::Skill`).
-fn skills_read(history: &MessageHistory) -> HashMap<MessageId, Vec<SkillId>> {
+/// What each message of `history` was produced after reading, by message:
+/// the entities its context records as knowledge.
+fn given_read(history: &MessageHistory) -> HashMap<MessageId, Vec<Given>> {
     history.all_entries()
         .filter_map(|node| match &node.entry {
-            HistoryEntry::Said { message, context: Some(context) } => Some((message.id, context.knowledge.iter().filter_map(|k| match k.source {
-                KnowledgeSource::Skill { skill, .. } => Some(skill),
-                _ => None,
-            }).collect::<Vec<_>>())),
+            HistoryEntry::Said { message, context: Some(context) } => Some((message.id, context.knowledge.iter().filter_map(|k| given(&k.source)).collect::<Vec<_>>())),
             _ => None,
         })
-        .filter(|(_, skills)| !skills.is_empty())
+        .filter(|(_, given)| !given.is_empty())
         .collect()
 }
 
 impl SummaryCompaction {
+    /// What the model is asked to summarise for: `SUMMARY_INSTRUCTION`, and
+    /// to leave out what is given again.
+    fn instruction(&self) -> String {
+        let kinds: Vec<_> = self.restorers.iter().map(|r| r.kind().to_string()).collect();
+        match kinds.is_empty() {
+            true => SUMMARY_INSTRUCTION.to_string(),
+            false => format!("{} Leave out the text of anything given to you as a {}: it is given to you again.", SUMMARY_INSTRUCTION, kinds.join(" or ")),
+        }
+    }
+
+    /// What `wanted` - given in the part summarised and not in the part
+    /// kept - is given again by the restorer of its kind, with that kind,
+    /// and how much of it can no longer be given. What no restorer gives -
+    /// a workspace's files - is not given again, and not lost either.
+    async fn give_again(&self, turn: &mut Turn<'_>, wanted: &[Given]) -> Result<(Vec<(EntityKind, GivenAgain)>, usize), CompactionError> {
+        let mut restored = Vec::new();
+        let mut lost = 0;
+        for restorer in &self.restorers {
+            let kind = restorer.kind();
+            let ids: Vec<Uuid> = wanted.iter().filter(|(of, _)| *of == kind).map(|(_, id)| *id).collect();
+            if ids.is_empty() {
+                continue;
+            }
+            let given = restorer.give_again(turn, &ids).await?;
+            lost += ids.len().saturating_sub(given.len());
+            restored.extend(given.into_iter().map(|given| (kind, given)));
+        }
+        Ok((restored, lost))
+    }
+
     /// The summary of the transcript up to and including `last`, written by
     /// the agent's model: its text, and the message its model answered with,
     /// for the tokens of the call.
@@ -149,7 +191,7 @@ impl SummaryCompaction {
         })?;
         input.push(Message {
             role: MessageRole::User,
-            content: Some(SUMMARY_INSTRUCTION.to_string()),
+            content: Some(self.instruction()),
             sender_id: ActorId::Agent(turn.agent_id()),
             sender_name: turn.agent_name().to_string(),
             ..Message::new(turn.classification())
@@ -184,11 +226,11 @@ impl CompactionStrategy for SummaryCompaction {
         let whole = kept_whole(turn.agent_channel_state().transcript.entries().map(|node| &node.entry), turn.turn_id());
         let path: Vec<Entry> = as_they_stand(turn.agent_channel_state().transcript.entries())
             .map(|(node, message)| {
-                let given = match &node.entry {
-                    TranscriptEntry::Given { source: KnowledgeSource::Skill { skill, .. }, .. } => Some(*skill),
+                let gives = match &node.entry {
+                    TranscriptEntry::Given { source, .. } => given(source),
                     _ => None,
                 };
-                (node.digest, given, message)
+                (node.digest, gives, message)
             })
             .collect();
         let Some(cut) = cut_at(&path, self.keep_last, &whole) else {
@@ -201,19 +243,11 @@ impl CompactionStrategy for SummaryCompaction {
         let count = |entries: &[Entry]| entries.iter().filter(|(_, _, m)| m.is_some()).count();
         let keep_from = kept.first().map(|(digest, _, _)| *digest);
 
-        // Skills still there as they were loaded are not given twice.
-        let read = skills_read(&turn.agent_channel_state().history);
-        let still_there = skills_in(kept, &read);
-        let wanted: Vec<SkillId> = skills_in(summarised, &read).into_iter().filter(|s| !still_there.contains(s)).collect();
-        let usable = match (wanted.is_empty(), turn.session().await) {
-            (true, _) => Vec::new(),
-            (false, Some(session)) => session.views().usable_skills().await.map_err(|e| {
-                tracing::warn!("Agent {}: a compaction could not read the skills: {:#}", turn.agent_id(), e);
-                CompactionError::SkillsUnreadable
-            })?,
-            (false, None) => return Err(CompactionError::NoSession),
-        };
-        let skills: Vec<_> = wanted.iter().filter_map(|id| usable.iter().find(|s| s.id() == *id)).collect();
+        // What is still there as it was given is not given twice.
+        let read = given_read(&turn.agent_channel_state().history);
+        let still_there = given_in(kept, &read);
+        let wanted: Vec<Given> = given_in(summarised, &read).into_iter().filter(|g| !still_there.contains(g)).collect();
+        let (restored, lost) = self.give_again(turn, &wanted).await?;
 
         let (text, answer) = self.summarise(turn, *last_summarised).await?;
         let summary = Message {
@@ -230,17 +264,17 @@ impl CompactionStrategy for SummaryCompaction {
             ..Message::new(turn.label())
         };
         let mut replacement: Vec<(Message, Option<KnowledgeRef>)> = vec![(summary, None)];
-        for skill in &skills {
-            let given = Message {
+        for (_, given) in &restored {
+            let message = Message {
                 id: MessageId::new(),
                 sender_id: agent,
                 sender_name: turn.agent_name().to_string(),
                 role: MessageRole::User,
-                content: Some(skill.as_given()),
+                content: Some(given.text.clone()),
                 timestamp: chrono::Utc::now(),
-                ..Message::new(skill.classification().clone())
+                ..Message::new(given.knowledge.classification.clone().unwrap_or_else(|| turn.label()))
             };
-            replacement.push((given, Some(skill.knowledge(turn.channel_id(), turn.session_id()))));
+            replacement.push((message, Some(given.knowledge.clone())));
         }
         // Nothing can fail from here on: the transcript changes at once.
         turn.compact(replacement, keep_from).ok_or(CompactionError::NotReplaced)?;
@@ -248,8 +282,8 @@ impl CompactionStrategy for SummaryCompaction {
         Ok(Some(Compaction {
             replaced: count(summarised),
             kept: count(kept),
-            skills_given: skills.iter().map(|s| s.name().to_string()).collect(),
-            skills_lost: wanted.len() - skills.len(),
+            given_again: restored.iter().map(|(kind, given)| format!("{} {}", kind, given.name)).collect(),
+            lost,
         }))
     }
 }
@@ -261,8 +295,10 @@ pub fn register(registry: &mut ComponentRegistry) {
             let SummaryCompactionConfig { keep_last } = crate::component::config_of_params(&descriptor.params)?;
             // The agent's own model writes the summary.
             let llm_client = context.one::<dyn LLMClient>().await?.facet;
+            // What the agent's components give again, each of its kind.
+            let restorers = context.all::<dyn KnowledgeRestorer>().await?.into_iter().map(|restorer| restorer.facet).collect();
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn CompactionStrategy>(Arc::new(SummaryCompaction { llm_client, keep_last }));
+            facets.insert::<dyn CompactionStrategy>(Arc::new(SummaryCompaction { llm_client, keep_last, restorers }));
             Ok(facets)
         },
     );
@@ -280,6 +316,7 @@ mod tests {
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::scope::Scope;
     use caelumora_model::security::SecurityContext;
+    use caelumora_model::skill::{Skill, SkillId};
     use caelumora_model::tool::Tool;
     use std::sync::Mutex;
 
@@ -400,26 +437,49 @@ mod tests {
         let skill = an_agent_with_a_skill_given(&world, &mut state).await;
         let before = state.transcript.digest().unwrap();
         let model = Arc::new(Summariser::default());
-        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep_last: 1 };
+        let skills = SkillsComponent { position: PromptPosition::Start, requires_approval: ApprovalMode::Always };
+        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep_last: 1, restorers: vec![Arc::new(skills)] };
 
         let mut turn = world.turn(&mut state);
         let compaction = strategy.compact(&mut turn).await.expect("compacted");
         drop(turn);
 
-        assert_eq!(compaction, Some(Compaction { replaced: 3, kept: 1, skills_given: vec!["release-notes".to_string()], skills_lost: 0 }));
+        assert_eq!(compaction, Some(Compaction { replaced: 3, kept: 1, given_again: vec!["skill release-notes".to_string()], lost: 0 }));
         let given = model.0.lock().unwrap().pop().expect("its model was asked");
         let texts: Vec<_> = given.iter().filter_map(|m| m.content.clone()).collect();
         assert!(texts.iter().any(|t| t == "u1") && texts.iter().any(|t| t == "a1") && !texts.iter().any(|t| t == "u2"), "the older messages, not those kept: {texts:?}");
-        assert_eq!(texts.last().map(String::as_str), Some(SUMMARY_INSTRUCTION), "asked for the summary last");
+        assert_eq!(texts.last(), Some(&strategy.instruction()), "asked for the summary last");
+        assert!(strategy.instruction().ends_with("Leave out the text of anything given to you as a skill: it is given to you again."), "and to leave out what is given again");
 
         let now: Vec<_> = state.transcript.messages().into_iter().map(|m| m.content.unwrap_or_default()).collect();
         assert_eq!(now, ["[Summary of the conversation so far]\nThey want release notes.\n", "[Skill: release-notes]\n1. Collect.\n", "u2"]);
-        assert!(matches!(state.transcript.entries().nth(1).map(|n| &n.entry), Some(TranscriptEntry::Given { source: KnowledgeSource::Skill { skill: s, .. }, .. }) if *s == skill), "the skill as given");
+        assert!(matches!(state.transcript.entries().nth(1).map(|n| &n.entry), Some(TranscriptEntry::Given { source, .. }) if source.about::<Skill>().is_some_and(|(s, _)| s == skill)), "the skill as given");
         assert!(state.transcript.prefix(&before).is_some(), "what it saw before stays");
         let knowledge = &state.turn.as_ref().unwrap().work.context.knowledge;
-        assert!(knowledge.iter().any(|k| matches!(k.source, KnowledgeSource::Skill { skill: s, .. } if s == skill)), "the turn has read it");
+        assert!(knowledge.iter().any(|k| k.source.about::<Skill>().is_some_and(|(s, _)| s == skill)), "the turn has read it");
         let usage = state.usage(ActorId::Agent(world.agent)).expect("the summary's call");
         assert_eq!(usage.last_call_tokens, 48);
+    }
+
+    /// Issue 323: what can no longer be given where the agent is - a skill
+    /// deleted meanwhile - is not given again, and the owners are told how
+    /// much.
+    #[tokio::test]
+    async fn what_can_no_longer_be_given_is_counted_as_lost() {
+        let world = session_with_workspace().await;
+        let mut state = AgentChannelState::default();
+        let skill = an_agent_with_a_skill_given(&world, &mut state).await;
+        world.runtime.skill_manager().delete(&SecurityContext::system(), skill).await.expect("deleted");
+        let skills = SkillsComponent { position: PromptPosition::Start, requires_approval: ApprovalMode::Always };
+        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep_last: 1, restorers: vec![Arc::new(skills)] };
+
+        let mut turn = world.turn(&mut state);
+        let compaction = strategy.compact(&mut turn).await.expect("compacted");
+        drop(turn);
+
+        assert_eq!(compaction, Some(Compaction { replaced: 3, kept: 1, given_again: Vec::new(), lost: 1 }));
+        let now: Vec<_> = state.transcript.messages().into_iter().map(|m| m.content.unwrap_or_default()).collect();
+        assert_eq!(now, ["[Summary of the conversation so far]\nThey want release notes.\n", "u2"]);
     }
 
     #[tokio::test]
@@ -429,7 +489,7 @@ mod tests {
         an_agent_with_a_skill_given(&world, &mut state).await;
         let before = state.transcript.digest();
         let model = Arc::new(Summariser::default());
-        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep_last: 10 };
+        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep_last: 10, restorers: Vec::new() };
 
         let mut turn = world.turn(&mut state);
         let compaction = strategy.compact(&mut turn).await.expect("nothing to do is no failure");

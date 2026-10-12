@@ -20,6 +20,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
 
+/// A shell command (issue 251): its `command` as a line of code, its
+/// `output` as a terminal shows it, and its exit code.
+pub const SHELL_PRESENTATION: ToolPresentation = ToolPresentation::new("shell");
+
 pub const RUN_COMMAND: &str = "run_command";
 pub const COMMAND_OUTPUT: &str = "command_output";
 pub const KILL_COMMAND: &str = "kill_command";
@@ -133,7 +137,7 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
                 ["command"],
             ),
             config.requires_approval.required(false),
-            ToolPresentation::Shell,
+            SHELL_PRESENTATION,
         ),
         tool(
             COMMAND_OUTPUT,
@@ -147,14 +151,14 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
                 ["id"],
             ),
             false,
-            ToolPresentation::Shell,
+            SHELL_PRESENTATION,
         ),
         tool(
             KILL_COMMAND,
             "End a command that is still running, with everything it started.".to_string(),
             ToolParameters::object([("id", ToolParameters::string("The id of the command"))], ["id"]),
             false,
-            ToolPresentation::Shell,
+            SHELL_PRESENTATION,
         ),
     ]
 }
@@ -261,7 +265,7 @@ mod tests {
         let world = session_with_workspace().await;
         let tool = the_tool(&world);
         assert_eq!(tool.describe(RUN_COMMAND, &json!({ "command": "rm -rf build && make" })).unwrap(), "Run in the workspace:\nrm -rf build && make");
-        assert!(tool.tools().iter().filter(|t| TOOLS.contains(&t.name.as_str())).all(|t| t.presentation == ToolPresentation::Shell));
+        assert!(tool.tools().iter().filter(|t| TOOLS.contains(&t.name.as_str())).all(|t| t.presentation == SHELL_PRESENTATION));
     }
 
     #[test]

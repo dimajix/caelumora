@@ -150,8 +150,10 @@ transport:
 The tools that come with Caelumora are listed with the components that offer them, their parameters
 and their approval defaults in [COMPONENTS.md](COMPONENTS.md#the-components); what the model is told
 of each - its description and arguments - is the tool's own, in the code. How frontends show the
-calls of a tool is said by its `ToolPresentation`. Notes, private notes and agent memory are
-described in [MEMORY.md](MEMORY.md), skills in [SKILLS.md](SKILLS.md).
+calls of a tool is said by its `ToolPresentation`: a name, defined as a constant next to the tools
+shown so (`SHELL_PRESENTATION`, `SKILL_PRESENTATION`, …) with what it shows of their arguments and
+results; a frontend shows those it knows, and every other as `default` (issue 323). Notes, private
+notes and agent memory are described in [MEMORY.md](MEMORY.md), skills in [SKILLS.md](SKILLS.md).
 
 `stop`, `bye` and `silence` end the turn with the current tool step: after `stop` and `bye` the
 agent sleeps, after `silence` it stays idle without an answer. `create_plan` submits a multi-step

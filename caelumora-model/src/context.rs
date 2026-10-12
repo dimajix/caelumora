@@ -17,6 +17,9 @@
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
+use crate::removal::Stored;
+use crate::store::EntityKind;
+use uuid::Uuid;
 use crate::agent::AgentChannelState;
 use crate::chain::Node;
 use crate::digest::Digest;
@@ -114,13 +117,35 @@ pub enum KnowledgeSource {
     /// were written in, so that knowledge from another session can be told
     /// (issue 134).
     Memory { agent: crate::agent::AgentId, digest: Option<Digest> },
-    /// The files of a workspace (issue 251), read through the channel it
-    /// is used in; the digest of a file's content as it was read, `None`
-    /// for a listing or a search.
-    Workspace { workspace: crate::workspace::WorkspaceId, digest: Option<Digest> },
-    /// A skill (issue 22), loaded into the turn; the digest of its body as
-    /// it was loaded (`digest::skill`).
-    Skill { skill: crate::skill::SkillId, digest: Digest },
+    /// An entity of whatever kind (issue 323), as its kind records what was
+    /// read of it: the files of a workspace (issue 251), read through the
+    /// channel it is used in, with the digest of a file's content as it
+    /// was read - `None` for a listing or a search -; a skill (issue 22),
+    /// loaded into the turn, with the digest of its body as it was loaded
+    /// (`digest::skill`).
+    Entity { kind: EntityKind, id: Uuid, digest: Option<Digest> },
+}
+
+impl KnowledgeSource {
+    /// That the entity of kind `T` with `id` was read, as `digest` says.
+    pub fn entity<T: Stored>(id: T::Id, digest: Option<Digest>) -> Self
+    where
+        T::Id: Into<Uuid>,
+    {
+        Self::Entity { kind: T::KIND, id: id.into(), digest }
+    }
+
+    /// The id of the entity of kind `T` this is the knowledge of, and the
+    /// digest of what was read; `None` for knowledge of anything else.
+    pub fn about<T: Stored>(&self) -> Option<(T::Id, Option<Digest>)>
+    where
+        T::Id: From<Uuid>,
+    {
+        match *self {
+            Self::Entity { kind, id, digest } if kind == T::KIND => Some((T::Id::from(id), digest)),
+            _ => None,
+        }
+    }
 }
 
 /// Which reasoning of the messages in its context a model is given back

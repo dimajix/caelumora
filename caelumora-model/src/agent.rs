@@ -790,6 +790,8 @@ pub(crate) mod tests {
     use crate::actor::ActorState;
     use crate::confidentiality::Confidentiality;
     use crate::context::{ContextResolver, KnowledgeSource};
+    use crate::digest;
+    use crate::skill::{Skill, SkillId};
     use crate::tool::{ToolParameters, ToolVisibility};
 
     #[test]
@@ -918,7 +920,7 @@ pub(crate) mod tests {
         begin(&mut state, Vec::new());
         let turn_id = state.turn.as_ref().unwrap().work.turn_id;
         let skill = Message { role: MessageRole::User, ..said("Collect, group, write.", Classification::PUBLIC) };
-        let source = KnowledgeSource::Skill { skill: crate::skill::SkillId::new(), digest: crate::digest::skill("Collect, group, write.") };
+        let source = KnowledgeSource::entity::<Skill>(SkillId::new(), Some(digest::skill("Collect, group, write.")));
         let knowledge = KnowledgeRef { channel: Default::default(), session: Default::default(), source, classification: Some(Classification::CHANNEL_DEFAULT) };
 
         state.given(skill.clone(), knowledge.clone());
@@ -958,7 +960,7 @@ pub(crate) mod tests {
         assert_eq!(state.transcript.digest(), head, "nothing changed");
 
         let summary = Message { sender_id: agent, role: MessageRole::User, prompt_tokens: Some(50), ..said("[Summary] they greeted", Classification::PUBLIC) };
-        let source = KnowledgeSource::Skill { skill: crate::skill::SkillId::new(), digest: crate::digest::skill("steps") };
+        let source = KnowledgeSource::entity::<Skill>(SkillId::new(), Some(digest::skill("steps")));
         let knowledge = KnowledgeRef { channel: Default::default(), session: Default::default(), source, classification: Some(Classification::CHANNEL_DEFAULT) };
         let skill = said("[Skill: steps]", Classification::PUBLIC);
         let (from, to) = state.compact(agent, vec![(summary.clone(), None), (skill.clone(), Some(knowledge.clone()))], Some(answered)).expect("compacted");

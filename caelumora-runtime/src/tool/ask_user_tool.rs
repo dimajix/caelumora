@@ -17,6 +17,11 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
+/// Questions put to users (issue 268): its `questions` as they were
+/// put, and whom they wait for (`ask`); once answered, nothing beyond
+/// the record of the answers every call that asked shows.
+pub const QUESTIONS_PRESENTATION: ToolPresentation = ToolPresentation::new("questions");
+
 pub const ASK_USER_TOOL_KIND: &str = "ask_user_tool";
 
 pub const ASK_USER_TOOL_NAME: &str = "ask_user";
@@ -81,7 +86,7 @@ impl ToolProvider for AskUserToolProvider {
             requires_approval: false,
             visibility: ToolVisibility::SHOWN,
             classification: None,
-            presentation: ToolPresentation::Questions,
+            presentation: QUESTIONS_PRESENTATION,
         }]
     }
 
@@ -145,7 +150,7 @@ mod tests {
 
     #[test]
     fn its_calls_are_presented_as_questions() {
-        assert_eq!(AskUserToolProvider.tools().remove(0).presentation, ToolPresentation::Questions);
+        assert_eq!(AskUserToolProvider.tools().remove(0).presentation, QUESTIONS_PRESENTATION);
     }
 
     #[tokio::test]

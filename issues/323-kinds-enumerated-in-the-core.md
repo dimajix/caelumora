@@ -669,3 +669,21 @@ version as created and the others, their access, scope and description as an
 `ArtifactUpdateEvent`, as the other kinds do. The controllers, the session loop and
 `changes_who_may_run` read the new form; the web UI reads an entity event by its kind
 (`entityEvent`), and its trash follows a deletion or restoring of any kind. Nothing stored changed.
+
+**2026-10-12** — Step 6, on branch `issue-323-knowledge`. `KnowledgeSource::Entity { kind, id,
+digest }` replaces `Skill` and `Workspace` alike - decided in this step, since a workspace's files
+are the same shape with an optional digest, and workspaces are to become a plugin as well -, made
+and read by kind (`KnowledgeSource::entity::<Skill>`, `about::<Workspace>()`), as the events are.
+The id is a `Uuid` here, not text as in an event: knowledge is stored with every message and stays
+`Copy`, and every kind's id is one. `KnowledgeRestorer` is a facet in `crate::compaction`: it names
+its kind and answers which of the entities recorded as given it gives again, and as what text; the
+`skills` component implements it, and `summary_compaction` takes the restorers of the agent's
+components when it is built, asks each for its kind, and knows none itself - also not in what it
+asks the model to leave out, which names the restorers' kinds. `Compaction` tells `given_again` by
+kind and name and how much was `lost`; `CompactionError::KnowledgeUnreadable` replaces
+`SkillsUnreadable`. `ToolPresentation` is a name, written as before; its values are constants next
+to the tools (`SHELL_PRESENTATION`, …), `DEFAULT` its own. The REST server tells knowledge of an
+entity by its kind as `source` and its `entity_id` in place of `workspace_id` and `skill_id`,
+which the web UI did not read; it names a kind it does not know as such rather than as a history.
+Stored data: the state store has to be deleted - transcripts and histories hold `KnowledgeSource`
+in its old form.

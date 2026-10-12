@@ -1035,11 +1035,14 @@ export interface KnowledgeRef {
   channel_name: string | null;
   /** Whether the channel was deleted (issue 164) - told only to whoever could read it were it there. */
   channel_deleted: boolean;
-  source: 'notes' | 'private_notes' | 'history' | 'memory' | 'workspace' | 'skill';
-  /** The workspace whose files were read, for `workspace` (issue 251). */
-  workspace_id?: string;
-  /** The skill loaded, for `skill` (issue 22). */
-  skill_id?: string;
+  /**
+   * What was read: `notes`, `private_notes`, `history`, `memory`, or an entity
+   * by its kind (issue 323) - a `workspace`'s files (issue 251), a `skill`
+   * loaded (issue 22), or a kind of a plugin.
+   */
+  source: string;
+  /** The entity read, for a kind. */
+  entity_id?: string;
   /** Whose notes or memory, for `notes`, `private_notes` and `memory`. */
   agent_id: ActorId | null;
   agent_name: string | null;
