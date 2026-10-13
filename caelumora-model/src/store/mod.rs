@@ -320,7 +320,7 @@ impl EntityStoreFactory for StoreBackend {
             let mut kinds = self.kinds.lock().unwrap_or_else(PoisonError::into_inner);
             let named = *kinds.entry(T::KIND).or_insert(kind);
             if named.id != kind.id {
-                return Err(StoreError::Conflict(format!("the kinds {} and {} are both named '{}'", named.name, kind.name, T::KIND)));
+                return Err(StoreError::Conflict(format!("the kinds {} and {} are both named '{}'", named.name(), kind.name(), T::KIND)));
             }
         }
         match &self.store {

@@ -114,7 +114,7 @@ pub fn config_of_params<T: DeserializeOwned>(params: &serde_json::Value) -> Comp
 /// # Errors
 /// `ComponentError::NoService` if there is none.
 pub fn service_of<T: ?Sized + Send + Sync + 'static>(services: &Services) -> ComponentResult<&Arc<T>> {
-    services.get::<T>().ok_or(ComponentError::NoService(TypeKey::of::<T>().name))
+    services.get::<T>().ok_or(ComponentError::NoService(TypeKey::of::<T>().name()))
 }
 
 /// What a component is built with: the environment of the whole graph - the
@@ -279,7 +279,7 @@ impl std::fmt::Debug for ComponentRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ComponentRegistry")
             .field("kind_count", &self.kinds.len())
-            .field("singles", &self.singles.values().map(|s| s.facet.name).collect::<Vec<_>>())
+            .field("singles", &self.singles.values().map(|s| s.facet.name()).collect::<Vec<_>>())
             .finish()
     }
 }
@@ -356,10 +356,10 @@ impl ComponentRegistry {
     pub fn set_default_kind<T: ?Sized + 'static>(&mut self, kind: &str) -> ComponentResult<()> {
         let facet = TypeKey::of::<T>();
         if !self.provides(kind).is_some_and(|facets| facets.iter().any(|f| f.id == facet.id)) {
-            return Err(ComponentError::InvalidConfig(format!("the default kind '{kind}' of {} is not registered as providing it", facet.name)));
+            return Err(ComponentError::InvalidConfig(format!("the default kind '{kind}' of {} is not registered as providing it", facet.name())));
         }
         let single = self.singles.get_mut(&facet.id)
-            .ok_or_else(|| ComponentError::InvalidConfig(format!("{} is not a facet of which there is one", facet.name)))?;
+            .ok_or_else(|| ComponentError::InvalidConfig(format!("{} is not a facet of which there is one", facet.name())))?;
         single.default_kind = Some(kind.to_string());
         Ok(())
     }
@@ -400,7 +400,7 @@ impl ComponentRegistry {
             };
             if let Some(other) = defaults.insert(single.facet.id, node.clone()) {
                 return Err(ComponentError::InvalidConfig(format!(
-                    "component defaults '{}' and '{}' both provide {}", other.id, node.id, single.facet.name
+                    "component defaults '{}' and '{}' both provide {}", other.id, node.id, single.facet.name()
                 )));
             }
         }
@@ -623,7 +623,7 @@ impl Graph {
         let context = ComponentContext { building: Some((Arc::clone(self), descriptor.id.clone())), ..self.context.clone() };
         let facets = self.registry.dispatch(descriptor.clone(), context).map_err(failed)?.await.map_err(failed)?;
 
-        let mut declared: Vec<&'static str> = provides.iter().map(|f| f.name).collect();
+        let mut declared: Vec<&'static str> = provides.iter().map(|f| f.name()).collect();
         declared.sort_unstable();
         if facets.names() != declared {
             return Err(failed(ComponentError::InvalidConfig(format!(
@@ -656,7 +656,7 @@ impl Graph {
     /// the default.
     async fn one<T: ?Sized + Send + Sync + 'static>(self: &Arc<Self>, asking: Option<&str>) -> ComponentResult<ComponentImpl<T>> {
         let facet = TypeKey::of::<T>();
-        let not_single = || ComponentError::InvalidConfig(format!("{} is not a facet of which there is one", facet.name));
+        let not_single = || ComponentError::InvalidConfig(format!("{} is not a facet of which there is one", facet.name()));
         if !self.registry.singles.contains_key(&facet.id) {
             return Err(not_single());
         }
@@ -678,7 +678,7 @@ impl Graph {
     async fn default(self: &Arc<Self>, facet: TypeKey, asked: Option<(&str, TypeKey)>) -> ComponentResult<Arc<ComponentNode>> {
         let descriptor = self.own_defaults.get(&facet.id).cloned()
             .or_else(|| self.registry.default_of(facet.id))
-            .ok_or_else(|| ComponentError::InvalidConfig(format!("no component provides {}, and it has no default", facet.name)))?;
+            .ok_or_else(|| ComponentError::InvalidConfig(format!("no component provides {}, and it has no default", facet.name())))?;
         {
             let mut defaults = self.defaults.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             match defaults.get(&facet.id) {
@@ -693,7 +693,7 @@ impl Graph {
             // registered without the facet: a mistake no configuration can
             // make, found the first time the default is needed.
             return Err(ComponentError::InvalidConfig(format!(
-                "the default kind '{}' of {} is not registered as providing it", descriptor.kind, facet.name
+                "the default kind '{}' of {} is not registered as providing it", descriptor.kind, facet.name()
             )));
         }
         let node = self.construct(&descriptor, &provides).await?;
@@ -705,7 +705,7 @@ impl Graph {
 /// The error for asking for a component that is being built.
 fn cycle(asked: Option<(String, TypeKey)>, other: &str) -> ComponentError {
     match asked {
-        Some((component, facet)) => ComponentError::Cycle { component, facet: facet.name, other: other.to_string() },
+        Some((component, facet)) => ComponentError::Cycle { component, facet: facet.name(), other: other.to_string() },
         // Only a component being built asks for another while the graph is
         // built; anything else waits for it.
         None => ComponentError::InvalidConfig(format!("component '{other}' is being built")),
@@ -784,7 +784,7 @@ impl ComponentContainer {
                 .collect();
             if let [first, second, ..] = providers.as_slice() {
                 return Err(ComponentError::InvalidConfig(format!(
-                    "components '{first}' and '{second}' both provide {}, of which there is one", single.facet.name
+                    "components '{first}' and '{second}' both provide {}, of which there is one", single.facet.name()
                 )));
             }
         }
