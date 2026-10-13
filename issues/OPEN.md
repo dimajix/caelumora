@@ -54,6 +54,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [310](310-secrets-have-no-owner.md) | open | Any secret can be named by whoever writes a component: secrets have no owner and no access list, and the policy allows every `ReadSecret`. |
 | [339](339-default-access-of-new-versions.md) | open | Whom a new version of an artifact reaches is fixed to the channel it is published in, and neither a default for new versions nor a version's own list can be changed. |
 | [340](340-teams-as-owners.md) | open | Only a person owns anything: no team can own what is done in its name, as a company does, so what is a team's result is one member's and goes with them. |
+| [341](341-identity-ownership-delegation.md) | open | A security context cannot tell an agent's owner from the one it acts for: `principal_id` stands for both, so a check that means the owner silently asks whoever it acts for once they differ. |
 | [332](332-policy-as-a-predicate.md) | open | The policy decides entity by entity, so a store filters a list after reading it and no database could put who may read into its query. |
 
 ## Tools and approvals
