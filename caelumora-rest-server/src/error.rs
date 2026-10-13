@@ -217,6 +217,7 @@ impl From<ViewError> for ApiError {
             ViewError::MemberNotFound { .. } => Self::not_found("actor_not_found", detail),
             ViewError::WorkspaceNotFound(_) => Self::not_found("workspace_not_found", detail),
             ViewError::GroupNotFound(_) => Self::not_found("group_not_found", detail),
+            ViewError::AgentNotFound(_) => Self::not_found("agent_not_found", detail),
             ViewError::NoContext { .. } => Self::not_found("context_not_recorded", detail),
             ViewError::Forbidden { ref refused, .. } | ViewError::NotPermitted(ref refused) => Self::refused(refused, detail),
             ViewError::Failed(e) => e.into(),

@@ -23,7 +23,11 @@ pub async fn list_agents(State(state): State<Arc<AppState>>, Query(options): Que
         return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>()).into_response());
     }
     let agents = views.agents().await?;
-    Ok(Json(agents.into_iter().map(AgentResponse::from).collect::<Vec<_>>()).into_response())
+    let mut listed = Vec::with_capacity(agents.len());
+    for agent in agents {
+        listed.push(AgentResponse::from(agent.snapshot().await?));
+    }
+    Ok(Json(listed).into_response())
 }
 
 /// Deletes agent `id`: it rests in the channels it takes part in, as a
@@ -43,9 +47,8 @@ pub async fn restore_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uu
     let agent_id = AgentId(id);
     state.runtime_manager.agent_manager().restore(&user.security_context(), agent_id).await?;
     // As the list shows it: what the user may do with it is the views' to say.
-    let agents = crate::routes::views(&state, &user).agents().await?;
-    agents.into_iter().find(|agent| agent.id == agent_id).map(|agent| Json(agent.into()))
-        .ok_or_else(|| ApiError::not_found("agent_not_found", format!("Agent {agent_id} is not there")))
+    let agent = crate::routes::views(&state, &user).agent(agent_id).await?;
+    Ok(Json(agent.snapshot().await?.into()))
 }
 
 /// Removes the deleted agent `id` for good, with its state - as the policy

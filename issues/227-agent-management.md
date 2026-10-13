@@ -87,3 +87,9 @@ notes of all channels, its usage as a whole.
   personality is read -, announces it and fails with `AgentError`, which the manager's other
   operations now answer too. The template only finds an agent (`template::agent`) and has the
   manager make one; `Agent::new` takes the personality's id.
+- **2026-10-13** — Second step: the views reach an agent on its own (`Views::agent`, `AgentView`),
+  its snapshot names its scope, owner and personality and whether the viewer may rename it
+  (`may_change_agent`, `UpdateAgent`); `AgentView::channels` lists the channels it takes part in
+  that the viewer reaches through their sessions. `Views::personalities` lists those the viewer may
+  make an agent of. The REST server answers `AgentResponse` as before; its new fields and routes are
+  the next step.

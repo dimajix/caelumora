@@ -45,7 +45,8 @@ use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalEv
 use caelumora_runtime::testing::{asked_as_a_call_on_the_workspace, asked_for, attributes, calling, denied, not_found, quiet, register_once, shown, Once, World, ONCE_MODEL_KIND, STAFF};
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
 use caelumora_runtime::terminal::{ByteStream, Terminal, TerminalError, WorkspacePath};
-use caelumora_runtime::view::{ViewError, Viewer};
+use caelumora_runtime::view::{ChannelView, ViewError, Viewer};
+use caelumora_model::snapshot::PersonalitySnapshot;
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_runtime::group::GroupError;
 use caelumora_model::workspace::{CommandStatus, WorkspaceChoice, WorkspaceId};
@@ -1883,6 +1884,49 @@ async fn making_an_agent_needs_creating_it_then_its_personality() {
     assert!(matches!(refused, Err(AgentError::Store(StoreError::NotFound { .. }))), "answered as not there: {refused:?}");
     assert_eq!(asked, checks(&["alice: CreateAgent(alice's) yes", "alice: GetPersonality(bob's) no"]), "nothing is made");
     assert_eq!(world.runtime.entity_stores().agents.list(&World::system(), &Query::all()).await.map(|page| page.items).unwrap().len(), 1, "only hers");
+}
+
+/// Seeing an agent on its own (issue 227): who may read it (`GetAgent`)
+/// sees it, with whether they may rename (`UpdateAgent`) and delete it
+/// (`DeleteAgent`) - its owner, not who it is shared with -, and of the
+/// channels it takes part in only those they may read: reading the agent
+/// grants nothing of where it takes part. The personalities are those one
+/// may read (`GetPersonality`).
+#[tokio::test]
+async fn an_agent_is_seen_by_who_may_read_it_with_the_channels_they_may_read() {
+    let world = World::new().await;
+    let personality = world.personality("shared", Some(world.bob), &[world.alice]).await;
+    world.personality("bobs", Some(world.bob), &[]).await;
+    let helper = world.agent("helper", world.alice, &personality).await;
+    let together = world.session_of(&[world.bob], &[helper], &[]).await;
+    let alone = world.session_of(&[], &[helper], &[]).await;
+    let (alice, bob) = (Viewer::new(World::as_user(world.alice)), Viewer::new(World::as_user(world.bob)));
+    let channels = |found: Vec<ChannelView>| found.iter().map(|channel| channel.session().id()).collect::<Vec<_>>();
+
+    let hers = world.manager.views(alice.clone()).agent(helper).await.expect("hers");
+    let seen = hers.snapshot().await.unwrap();
+    assert_eq!((seen.owner, seen.personality.as_deref(), seen.can_change, seen.can_delete), (ActorId::User(world.alice), Some("shared"), true, true));
+    let mut taking_part = channels(hers.channels().await.unwrap());
+    taking_part.sort();
+    let mut both = vec![together.id(), alone.id()];
+    both.sort();
+    assert_eq!(taking_part, both, "the channels of both her sessions");
+
+    assert!(matches!(world.manager.views(bob.clone()).agent(helper).await, Err(ViewError::AgentNotFound(_))), "not his to read");
+    assert!(world.manager.views(bob.clone()).agents().await.unwrap().is_empty());
+
+    let mut shared = world.runtime.entity_stores().agents.get(&World::system(), helper).await.unwrap();
+    shared.security_attributes = shared.security_attributes.granting(Subject::Actor(ActorId::User(world.bob)), Grant::Read);
+    world.runtime.entity_stores().agents.update(&World::system(), &shared).await.unwrap();
+    let (seen, asked) = world.asked(async { world.manager.views(bob.clone()).agent(helper).await.expect("shared with him").snapshot().await.unwrap() }).await;
+    assert_eq!((seen.can_change, seen.can_delete), (false, false), "read, not changed");
+    assert_eq!(asked, checks(&["bob: GetAgent(alice's) yes", "bob: UpdateAgent(alice's) no", "bob: DeleteAgent(alice's) no"]));
+    let his = world.manager.views(bob.clone()).agent(helper).await.unwrap();
+    assert_eq!(channels(his.channels().await.unwrap()), [together.id()], "only where he may read");
+
+    let names = |listed: Vec<PersonalitySnapshot>| listed.into_iter().map(|p| p.name).collect::<Vec<_>>();
+    assert_eq!(names(world.manager.views(alice).personalities().await.unwrap()), ["shared"]);
+    assert_eq!(names(world.manager.views(bob).personalities().await.unwrap()), ["bobs", "shared"]);
 }
 
 /// Opening (starting) a session: reading it.
