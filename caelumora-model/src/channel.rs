@@ -4,7 +4,7 @@ use crate::approval::{ApprovalRule, ApprovalStrategy, Approver, ApproverId};
 use crate::chain::Stored;
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
-use crate::removal::{self, Deletable, Removal};
+use crate::removal::{Deletable, Removal};
 use crate::value::language::Language;
 use crate::message::MessageId;
 use crate::message_history::{HistoryEntry, MessageHistory};
@@ -15,7 +15,7 @@ use crate::value::ValueError;
 use crate::group::GroupId;
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::{Session, SessionId};
-use crate::store::{EntityKind, Journaled};
+use crate::store::{self, EntityKind, Journaled};
 use crate::store::query::Field;
 use crate::user::UserId;
 use serde::{Deserialize, Serialize};
@@ -161,8 +161,8 @@ pub struct HistoryLimit {
     pub start: HistoryStart,
 }
 
-// `removal::Stored`, beside the `chain::Stored` of the channel's history.
-impl removal::Stored for Channel {
+// `store::Stored`, beside the `chain::Stored` of the channel's history.
+impl store::Stored for Channel {
     const KIND: EntityKind = EntityKind::new("channel");
     type Id = ChannelId;
     type Within = Session;

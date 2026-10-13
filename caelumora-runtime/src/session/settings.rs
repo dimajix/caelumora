@@ -4,13 +4,12 @@ use caelumora_model::approval::ApprovalRule;
 use anyhow::Result;
 use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityContext, Subject};
 use caelumora_model::privacy::PrivacyConfig;
-use caelumora_model::store::StoreError;
+use caelumora_model::store::{StoreError, Stored};
 use tracing::info;
 use caelumora_model::group::GroupId;
 use caelumora_model::workspace::WorkspaceId;
 use super::{SessionLoop, require_attachable};
 use caelumora_model::session::Session;
-use caelumora_model::removal::Stored;
 
 impl SessionLoop {
     /// Renames the session on behalf of `context`.

@@ -45,13 +45,13 @@ mod tests {
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::define_id;
     use caelumora_model::group::Group;
-    use caelumora_model::removal::{Deletable, NoEntity, Removal, Stored};
+    use caelumora_model::removal::{Deletable, Removal};
     use caelumora_model::secret::{SecretManager, SecretProvider, SecretResult};
     use crate::component::config_of_params;
     use caelumora_model::security::{DummySecurityManager, Secured, SecurityAttributes, SecurityContext};
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::NoField;
-    use caelumora_model::store::{EntityKind, EntityStore, EntityStoreFactory, StoreError};
+    use caelumora_model::store::{EntityKind, EntityStore, EntityStoreFactory, NoEntity, StoreError, Stored};
     use caelumora_model::type_map::TypeKey;
     use serde::{Deserialize, Serialize};
     use std::sync::Arc;

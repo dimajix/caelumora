@@ -13,7 +13,7 @@ use caelumora_model::value::language::Language;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext};
 use crate::view::{channel_reading, ChannelReader};
-use caelumora_model::store::{StoreError, StoreResultExt};
+use caelumora_model::store::{StoreError, StoreResultExt, Stored};
 use tracing::{info, warn};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::ChannelId;
@@ -21,7 +21,6 @@ use caelumora_model::group::Group;
 use crate::group::keep_participants;
 use std::sync::Arc;
 use super::{ChannelEntry, SessionError, SessionLoop, purge_channel_document, require_classification};
-use caelumora_model::removal::Stored;
 
 /// What a new channel should be (issue 09), as it was asked: its name and
 /// language are made from it by `create_channel` (issue 248).

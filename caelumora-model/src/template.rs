@@ -13,7 +13,7 @@ use crate::value::language::Language;
 use crate::scope::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Briefing, Description, Summary};
-use crate::removal::{Deletable, NoEntity, Removal, Stored};
+use crate::removal::{Deletable, Removal};
 use crate::scope::{Scope, ScopeField, Scoped};
 use crate::privacy::PrivacyConfig;
 use crate::session::{Session, SessionId};
@@ -23,7 +23,7 @@ use uuid::Uuid;
 use crate::actor::ActorId;
 use crate::security::{AclEntry, Secured, SecurityAttributes};
 use crate::user::UserId;
-use crate::store::EntityKind;
+use crate::store::{EntityKind, NoEntity, Stored};
 
 /// A template that cannot be made into a session. The messages are meant
 /// for users (see `caelumora_runtime::error::user_message`).

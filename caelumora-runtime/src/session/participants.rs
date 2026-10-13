@@ -5,10 +5,9 @@
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, ChannelId, HistoryAccess, Participant};
-use caelumora_model::removal::Stored;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext};
 use caelumora_model::session::Session;
-use caelumora_model::store::StoreError;
+use caelumora_model::store::{StoreError, Stored};
 use std::sync::Arc;
 use tracing::info;
 use crate::channel::{ChannelLoop, Member};

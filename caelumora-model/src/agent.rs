@@ -16,13 +16,13 @@ use crate::turn::GivenUpReason;
 use crate::turn::{CommandRequest, TurnState};
 use crate::work::{TurnId, Work};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
-use crate::removal::{self, Deletable, NoEntity, Removal};
+use crate::removal::{Deletable, Removal};
 use crate::role::RoleId;
 use crate::scope::{ScopeField, Scoped};
 use crate::value::name::ScopedName;
 use crate::value::text::{Description, Introduction};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
-use crate::store::{EntityKind, Journaled};
+use crate::store::{self, EntityKind, Journaled, NoEntity};
 use crate::tool::{RecordedToolSets, Tool, ToolSet};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -129,8 +129,8 @@ impl Personality {
     }
 }
 
-// `removal::Stored`, beside the `chain::Stored` of an agent's state.
-impl removal::Stored for Personality {
+// `store::Stored`, beside the `chain::Stored` of an agent's state.
+impl store::Stored for Personality {
     const KIND: EntityKind = EntityKind::new("personality");
     type Id = PersonalityId;
     type Within = NoEntity;
@@ -155,7 +155,7 @@ impl Deletable for Personality {
     }
 }
 
-impl removal::Stored for Agent {
+impl store::Stored for Agent {
     const KIND: EntityKind = EntityKind::new("agent");
     type Id = AgentId;
     type Within = NoEntity;
@@ -809,7 +809,7 @@ pub(crate) mod tests {
     use crate::digest;
     use crate::workspace::{Workspace, WorkspaceId};
     use crate::tool::{ToolParameters, ToolVisibility};
-    use crate::removal::Stored;
+    use crate::store::Stored;
     use crate::user::UserId;
 
     #[test]

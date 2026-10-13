@@ -9,8 +9,8 @@ use crate::value::name::{Name, ScopedName};
 use crate::value::text::Introduction;
 use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
-use crate::removal::{Deletable, NoEntity, Removal, Stored};
-use crate::store::EntityKind;
+use crate::removal::{Deletable, Removal};
+use crate::store::{EntityKind, NoEntity, Stored};
 use crate::store::query::{Field, NoField};
 
 define_id!(UserId);

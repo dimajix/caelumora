@@ -7,7 +7,7 @@
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
-use crate::removal::{Deletable, NoEntity, Removal, Stored};
+use crate::removal::{Deletable, Removal};
 use crate::scope::{Scope, ScopeField, Scoped};
 use crate::group::GroupId;
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
@@ -16,7 +16,7 @@ use crate::value::name::ScopedName;
 use crate::value::text::Description;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::store::EntityKind;
+use crate::store::{EntityKind, NoEntity, Stored};
 
 define_id!(WorkspaceId);
 

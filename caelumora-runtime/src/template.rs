@@ -146,7 +146,7 @@ mod tests {
     use caelumora_model::agent::Personality;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::{ActionType, SecurityManager, Verb};
-    use caelumora_model::removal::Stored;
+    use caelumora_model::store::Stored;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, SessionTemplateId, TemplateError};
     use caelumora_model::user::User;

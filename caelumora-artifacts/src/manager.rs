@@ -26,11 +26,10 @@ use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Co
 use caelumora_model::digest::ContentDigest;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId};
-use caelumora_model::removal::Stored;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager, Subject, WRITE};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;

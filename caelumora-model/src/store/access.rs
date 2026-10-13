@@ -35,12 +35,11 @@
 //! answer the store gives - "not found" for what the caller may not see -
 //! except filtering a list, which is a question.
 
-use crate::removal::Stored;
 use std::future::Future;
 use crate::store::query::{self, Cursor, Field, Page, Query};
 use crate::confidentiality::{may_reach, ConfidentialityPolicy, ConfidentialityQuestions};
 use crate::security::{ActionType, Enforcement, Refused, SecurityContext, SecurityManager};
-use crate::store::{StoreError, StoreResult};
+use crate::store::{StoreError, StoreResult, Stored};
 
 
 // Every method takes the kind of entity it asks about (issue 323): every
@@ -236,9 +235,8 @@ fn valid<T: Stored>(value: &T) -> StoreResult<()> {
 mod tests {
     use crate::actor::ActorId;
     use crate::security::{ActionType, SecurityAttributes, SecurityContext, SecurityManager, Subject, Verb};
-    use crate::removal::Stored;
     use crate::session::{Session, SessionId};
-    use crate::store::StoreError;
+    use crate::store::{StoreError, Stored};
     use crate::store::query::{NoField, Query};
     use crate::store::memory::MemoryStore;
     use crate::user::UserId;

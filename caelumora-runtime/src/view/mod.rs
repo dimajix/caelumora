@@ -54,12 +54,11 @@ use caelumora_model::workspace::WorkspaceId;
 use caelumora_model::group::{Group, GroupField, GroupId};
 use caelumora_model::scope::Scope;
 use crate::workspace::WorkspaceManager;
-use caelumora_model::store::{EntityStores, StateStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
 use crate::component::ComponentRegistry;
 use std::sync::Arc;
 use caelumora_model::session::Session;
 use caelumora_model::workspace::Workspace;
-use caelumora_model::removal::Stored;
 
 /// Who navigates: in whose name every edge asks its question (issue 131),
 /// and - for an agent - from where.

@@ -16,7 +16,7 @@ use crate::view::{Viewer, Views};
 #[cfg(any(test, feature = "test-support"))]
 use crate::view::ViewsFactory;
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::store::{EntityKind, EntityStores, StoreError, StoreResult};
+use caelumora_model::store::{EntityKind, EntityStores, StoreError, StoreResult, Stored};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
 use caelumora_model::template::SessionTemplateId;
@@ -24,7 +24,6 @@ use caelumora_model::group::GroupId;
 use crate::group::purge_participants;
 use caelumora_model::security::Grant;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
-use caelumora_model::removal::Stored;
 use crate::workspace::WorkspaceManager;
 use crate::controller::{ControllerManager, SessionController};
 use dashmap::DashMap;

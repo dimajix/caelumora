@@ -35,7 +35,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, Grant, SecurityAttributes, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::store::{ComponentStore, StateStore, StoreError};
+use caelumora_model::store::{ComponentStore, StateStore, StoreError, Stored};
 use caelumora_model::template::{ScopeTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
 use caelumora_model::user::{UserId, UserProfile};
 use caelumora_model::work::TurnId;
@@ -49,7 +49,6 @@ use caelumora_runtime::view::{ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_runtime::group::GroupError;
 use caelumora_model::workspace::{CommandStatus, WorkspaceChoice, WorkspaceId};
-use caelumora_model::removal::Stored;
 
 // --- Personalities and agents ---------------------------------------------
 

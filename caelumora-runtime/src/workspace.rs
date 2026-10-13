@@ -44,7 +44,7 @@ use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforceme
 use crate::view::{channel_reading, ChannelReader};
 use caelumora_model::channel::{self, Participant};
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
-use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -58,7 +58,6 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{broadcast, Mutex};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
-use caelumora_model::removal::Stored;
 use caelumora_model::group::Group;
 use caelumora_model::agent::Agent;
 use caelumora_model::event::EntityChange;

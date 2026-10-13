@@ -13,8 +13,8 @@ use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
 use crate::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
-use crate::removal::{Deletable, NoEntity, Removal, Stored};
-use crate::store::EntityKind;
+use crate::removal::{Deletable, Removal};
+use crate::store::{EntityKind, NoEntity, Stored};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionUpdateEvent {

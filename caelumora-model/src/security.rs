@@ -4,7 +4,7 @@ use crate::channel::ChannelId;
 use crate::command::Command;
 use crate::group::GroupId;
 use crate::role::RoleId;
-use crate::store::EntityKind;
+use crate::store::{EntityKind, Stored};
 use crate::store::query::FieldValue;
 use crate::tool::ToolCall;
 use async_trait::async_trait;
@@ -16,7 +16,6 @@ use crate::channel::Channel;
 use crate::group::Group;
 use crate::session::Session;
 use crate::workspace::Workspace;
-use crate::removal::Stored;
 
 /// Everything the `SecurityManager` is asked about.
 ///

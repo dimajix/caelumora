@@ -19,7 +19,7 @@
 
 use crate::actor::ActorId;
 use crate::channel::{Channel, Participant};
-use crate::removal::{Deletable, NoEntity, Removal, Stored};
+use crate::removal::{Deletable, Removal};
 use crate::scope::{Scope, Scoped, ScopedField};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::{ChannelId, Session, SessionId};
@@ -28,7 +28,7 @@ use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::store::EntityKind;
+use crate::store::{EntityKind, NoEntity, Stored};
 
 define_id!(GroupId);
 

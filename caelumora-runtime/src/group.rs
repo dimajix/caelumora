@@ -32,7 +32,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject};
-use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::ValueError;
@@ -41,7 +41,6 @@ use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
-use caelumora_model::removal::Stored;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GroupError {

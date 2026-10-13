@@ -341,7 +341,7 @@ mod tests {
     use caelumora_model::channel::{self, ChannelUpdateEvent};
     use caelumora_model::security::{Grant, Subject};
     use caelumora_model::event::EntityChange;
-    use caelumora_model::removal::Stored;
+    use caelumora_model::store::Stored;
     use caelumora_model::workspace::{Workspace, WorkspaceId};
 
     fn bus() -> EventBus {

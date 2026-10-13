@@ -18,7 +18,7 @@ use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, Channe
 use super::history::history_start;
 use super::member::agent_exists;
 use caelumora_model::channel::Channel;
-use caelumora_model::removal::Stored;
+use caelumora_model::store::Stored;
 
 impl ChannelLoop {
     /// Adds `participant` - a participant of the session - to the channel on

@@ -17,8 +17,7 @@
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
-use crate::removal::Stored;
-use crate::store::EntityKind;
+use crate::store::{EntityKind, Stored};
 use uuid::Uuid;
 use crate::agent::AgentChannelState;
 use crate::chain::Node;

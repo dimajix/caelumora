@@ -19,12 +19,11 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
-use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
 use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tracing::info;
-use caelumora_model::removal::Stored;
 
 /// The one owner of agents' lifecycle (issue 314).
 pub struct AgentManager {

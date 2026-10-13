@@ -33,11 +33,11 @@
 use crate::group::GroupManager;
 use crate::session::SessionError;
 use async_trait::async_trait;
-use caelumora_model::removal::{Deletable, Stored};
+use caelumora_model::removal::Deletable;
 use caelumora_model::scope::{Scope, ScopedField};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::query::Query;
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult};
+use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, Stored};
 use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;

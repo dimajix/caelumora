@@ -13,10 +13,9 @@ use caelumora_model::role::RoleId;
 use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext, SecurityManager, JOIN};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
 use std::sync::Arc;
 use super::ChannelError;
-use caelumora_model::removal::Stored;
 
 /// A participant with what its actor is built from: the instance's
 /// controller of its user or agent (issue 121), or the approver itself. An

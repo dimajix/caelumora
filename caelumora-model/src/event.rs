@@ -1,8 +1,7 @@
 use crate::confidentiality::Classification;
 use crate::intern::intern;
-use crate::removal::{Address, Enclosing, Stored};
 use crate::security::SecurityAttributes;
-use crate::store::EntityKind;
+use crate::store::{Address, Enclosing, EntityKind, Stored};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;

@@ -311,8 +311,7 @@ mod tests {
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
-    use caelumora_model::removal::Stored;
-    use caelumora_model::store::EntityKind;
+    use caelumora_model::store::{EntityKind, Stored};
     use caelumora_model::tool::Tool;
     use caelumora_model::workspace::{Workspace, WorkspaceId};
     use std::sync::Mutex;

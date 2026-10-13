@@ -55,7 +55,7 @@ hook refuses a commit of Rust code while `cargo clippy --workspace --all-targets
 The reasons and details are in [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md).
 
 *   Import what you use with `use` at the top of the module and write it by its name: `impl
-    Stored for Skill`, `Skill::KIND` - never `impl crate::removal::Stored for Skill` or
+    Stored for Skill`, `Skill::KIND` - never `impl crate::store::Stored for Skill` or
     `caelumora_model::skill::Skill::KIND`, also not for a single use or in a test. A path is
     written out only where an import cannot serve (see
     [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md#imports)).

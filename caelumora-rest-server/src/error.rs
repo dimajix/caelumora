@@ -436,7 +436,7 @@ mod tests {
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::MessageId;
     use caelumora_model::question::QuestionId;
-    use caelumora_model::removal::Stored;
+    use caelumora_model::store::Stored;
     use caelumora_model::scope::Scope;
     use caelumora_model::session::{ChannelId, SessionId};
     use caelumora_model::template::SessionTemplateId;

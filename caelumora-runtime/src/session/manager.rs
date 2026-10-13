@@ -11,7 +11,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::actor::ActorId;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager, Subject, JOIN};
 use crate::view::{Viewer, Views};
-use caelumora_model::store::{EntityStores, StoreError};
+use caelumora_model::store::{EntityStores, StoreError, Stored};
 use tracing::{info, warn};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
@@ -25,7 +25,6 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use super::{SessionError, SessionLoop, purge_channel_document, require_attachable, require_classification};
-use caelumora_model::removal::Stored;
 use caelumora_model::session;
 
 pub struct SessionManager {

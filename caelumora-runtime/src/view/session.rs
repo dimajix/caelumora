@@ -18,12 +18,11 @@ use super::{channel_reading, ChannelReader, ChannelReading};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::{CandidateRefusal, CandidateSnapshot, DeletedSnapshot, Detail, ParticipantSnapshot, SessionSnapshot};
 use caelumora_model::scope::ScopeField;
-use caelumora_model::store::StoreError;
+use caelumora_model::store::{StoreError, Stored};
 use caelumora_model::user::UserField;
 use crate::channel::ChannelError;
 use std::sync::Arc;
 use tracing::warn;
-use caelumora_model::removal::Stored;
 
 /// An agent's private notes in another channel of its session, as far as
 /// they may be read where it reads from (`SessionView::own_private_notes`):

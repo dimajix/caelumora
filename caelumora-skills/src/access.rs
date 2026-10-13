@@ -6,7 +6,7 @@
 
 use crate::skill::{Skill, USE};
 use async_trait::async_trait;
-use caelumora_model::removal::Stored;
+use caelumora_model::store::Stored;
 use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext, SecurityManager};
 
 #[async_trait]
