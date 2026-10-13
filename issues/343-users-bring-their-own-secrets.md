@@ -102,3 +102,10 @@ other case: it is theirs, and only they decide who may use it.
   [310](310-secrets-have-no-owner.md): users should be able to build agents of their own that reach
   remote systems with their own credentials. Builds on 310, which decides the question asked of a
   secret and how the configured chain is filtered by it.
+- **2026-10-13** — Issue [310](310-secrets-have-no-owner.md) decided that a reference names its
+  vault (`vault/KEY`) and that `user` is the reserved name of the principal's own vault. A secret
+  a user brings is therefore named `user/KEY`, not found by a search through the scopes: what is
+  said under *Where it fits* about finding it from the principal's place, and about a session's
+  scope hiding one, no longer applies. A fallback from `user` to a vault of the configuration -
+  one's own token, else the team's - was left open: in the configuration it would be the same for
+  every user, and it may belong into the reference instead.
