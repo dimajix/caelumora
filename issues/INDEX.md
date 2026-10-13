@@ -312,6 +312,7 @@ published before anyone else can take it.
 | [256](256-workspace-versions.md) | open | A workspace has no versions: what a person, a file tool or a command overwrote cannot be taken back, and who changed what is not recorded. |
 | [271](271-publishing-artifacts.md) | done | An agent cannot offer a file for download, and nothing it hands over outlives the workspace it lies in. |
 | [272](272-artifacts-in-s3.md) | open | Artifacts can be kept only on the server's own disk, not in S3 or another object storage. |
+| [338](338-artifacts-go-with-their-session.md) | open | An artifact is published into its session's scope and is deleted with the session unless its owner keeps it elsewhere, though it is meant to outlive the conversation. |
 | [98](98-context-provider-facet.md) | done | `ContextProvider` is a facet with one implementation, and a second one would silently overwrite the first. |
 | [101](101-chain-component-helpers.md) | done | The three chain components copy their helpers, and `AgentNotes`/`AgentMemory` are constructed only to be called once. |
 | [117](117-message-prev-id.md) | done | `Message::prev_id` is excluded from the digest because the chain owns it, yet two places still set it. |

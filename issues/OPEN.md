@@ -93,6 +93,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 | [256](256-workspace-versions.md) | open | A workspace has no versions: what a person, a file tool or a command overwrote cannot be taken back, and who changed what is not recorded. |
 | [272](272-artifacts-in-s3.md) | open | Artifacts can be kept only on the server's own disk, not in S3 or another object storage. |
+| [338](338-artifacts-go-with-their-session.md) | open | An artifact is published into its session's scope and is deleted with the session unless its owner keeps it elsewhere, though it is meant to outlive the conversation. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 | [284](284-automatic-context-compaction.md) | open | An agent's context is compacted only when somebody asks for it; nothing compacts it before a model call that would not fit, least of all within the turn that makes it. |
 | [305](305-skill-versions.md) | open | A skill keeps only its current text: every change overwrites what it said, nobody sees what changed, and an earlier version cannot be made current again. |
