@@ -254,6 +254,7 @@ impl From<AgentError> for ApiError {
         match error {
             AgentError::NotFound(_) => Self::not_found("agent_not_found", detail),
             AgentError::PersonalityOutOfScope(_) => Self::bad_request("personality_out_of_scope", detail),
+            AgentError::Invalid(e) => e.into(),
             AgentError::Store(e) => e.into(),
         }
     }

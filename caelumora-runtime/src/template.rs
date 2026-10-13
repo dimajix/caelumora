@@ -68,7 +68,7 @@ async fn agent(store: &dyn EntityStore<Agent>, agents: &AgentManager, context: &
     if let Some(found) = existing_agent(store, context, &name, personality_id).await? {
         return Ok(found);
     }
-    match agents.create(context, name.clone(), personality_id).await {
+    match agents.create(context, name.name.as_str(), name.scope.clone(), personality_id).await {
         Ok(agent) => Ok(agent.id),
         Err(taken @ AgentError::Store(StoreError::NameTaken { .. })) => match existing_agent(store, context, &name, personality_id).await? {
             Some(found) => Ok(found),

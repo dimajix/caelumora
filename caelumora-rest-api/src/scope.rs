@@ -1,7 +1,8 @@
-//! Where something lies that is kept in a scope: a workspace, a skill, an artifact, a group.
+//! Where something lies that is kept in a scope: a workspace, a skill, an artifact, a group,
+//! an agent, a personality.
 
 use caelumora_model::scope::Scope;
-use caelumora_model::session::SessionId;
+use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::user::UserId;
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +31,19 @@ impl ScopeKind {
             Scope::SessionScope { session_id } => (ScopeKind::Session, Some(*session_id)),
             Scope::UserScope { .. } => (ScopeKind::User, None),
             _ => (ScopeKind::Global, None),
+        }
+    }
+
+    /// The kind of `scope` of what may lie in a channel's scope too - a
+    /// group, an agent, a personality -, with the session it names and its
+    /// channel if it is a channel's: `session` for both.
+    pub fn placed(scope: &Scope) -> (Self, Option<SessionId>, Option<ChannelId>) {
+        match scope {
+            Scope::ChannelScope { session_id, channel_id } => (ScopeKind::Session, Some(*session_id), Some(*channel_id)),
+            scope => {
+                let (kind, session_id) = Self::of(scope);
+                (kind, session_id, None)
+            }
         }
     }
 

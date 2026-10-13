@@ -1869,9 +1869,9 @@ async fn making_an_agent_needs_creating_it_then_its_personality() {
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let bobs = world.personality("bobs", Some(world.bob), &[]).await;
     let (agents, alice) = (world.runtime.agent_manager(), World::as_user(world.alice));
-    let hers = |name: &str| ScopedName::new(name, Scope::UserScope { user_id: world.alice }).unwrap();
+    let hers = Scope::UserScope { user_id: world.alice };
 
-    let (made, asked) = world.asked(agents.create(&alice, hers("helper"), shared.id)).await;
+    let (made, asked) = world.asked(agents.create(&alice, "helper", hers.clone(), shared.id)).await;
     let made = made.expect("hers to make");
     assert_eq!((made.personality_id, made.security_attributes.owner_id), (shared.id, ActorId::User(world.alice)));
     assert_eq!(asked, checks(&[
@@ -1880,7 +1880,7 @@ async fn making_an_agent_needs_creating_it_then_its_personality() {
         "alice: CreateAgent(alice's) yes",
     ]));
 
-    let (refused, asked) = world.asked(agents.create(&alice, hers("other"), bobs.id)).await;
+    let (refused, asked) = world.asked(agents.create(&alice, "other", hers, bobs.id)).await;
     assert!(matches!(refused, Err(AgentError::Store(StoreError::NotFound { .. }))), "answered as not there: {refused:?}");
     assert_eq!(asked, checks(&["alice: CreateAgent(alice's) yes", "alice: GetPersonality(bob's) no"]), "nothing is made");
     assert_eq!(world.runtime.entity_stores().agents.list(&World::system(), &Query::all()).await.map(|page| page.items).unwrap().len(), 1, "only hers");
@@ -1927,6 +1927,35 @@ async fn an_agent_is_seen_by_who_may_read_it_with_the_channels_they_may_read() {
     let names = |listed: Vec<PersonalitySnapshot>| listed.into_iter().map(|p| p.name).collect::<Vec<_>>();
     assert_eq!(names(world.manager.views(alice).personalities().await.unwrap()), ["shared"]);
     assert_eq!(names(world.manager.views(bob).personalities().await.unwrap()), ["bobs", "shared"]);
+}
+
+/// Renaming an agent (issue 227), through the controller this instance
+/// shares: the store asks reading it and changing it - its owner's alone.
+/// Who may not read it finds none; who reads it is refused, and the agent
+/// keeps its name.
+#[tokio::test]
+async fn renaming_an_agent_needs_changing_it() {
+    let world = World::new().await;
+    let personality = world.personality("plain", None, &[]).await;
+    let helper = world.agent("helper", world.alice, &personality).await;
+    let agent = world.runtime.controller_manager().agent_controller(helper).await.unwrap();
+
+    let (renamed, asked) = world.asked(agent.update_name(&World::as_user(world.bob), "his")).await;
+    assert!(matches!(renamed, Err(StoreError::NotFound { .. })), "not his to read: {renamed:?}");
+    assert_eq!(asked, checks(&["bob: GetAgent(alice's) no"]));
+
+    let mut shared = world.runtime.entity_stores().agents.get(&World::system(), helper).await.unwrap();
+    shared.security_attributes = shared.security_attributes.granting(Subject::Actor(ActorId::User(world.bob)), Grant::Read);
+    world.runtime.entity_stores().agents.update(&World::system(), &shared).await.unwrap();
+    let (renamed, asked) = world.asked(agent.update_name(&World::as_user(world.bob), "his")).await;
+    assert!(matches!(renamed, Err(StoreError::PermissionDenied(_))), "his to read, not to change: {renamed:?}");
+    assert_eq!(asked, checks(&["bob: GetAgent(alice's) yes", "bob: UpdateAgent(alice's) no"]));
+    assert_eq!(agent.name(), "helper", "nothing changed");
+
+    let (renamed, asked) = world.asked(agent.update_name(&World::as_user(world.alice), "assistant")).await;
+    renamed.expect("hers to rename");
+    assert_eq!(asked, checks(&["alice: GetAgent(alice's) yes", "alice: UpdateAgent(alice's) yes"]));
+    assert_eq!(world.runtime.entity_stores().agents.get(&World::system(), helper).await.unwrap().name.as_str(), "assistant");
 }
 
 /// Opening (starting) a session: reading it.

@@ -125,10 +125,11 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
         .route("/profile", get(profile::get_profile).put(profile::update_profile))
         .route("/profile/approval-rules", post(profile::add_approval_rule))
         .route("/profile/approval-rules/{id}", axum::routing::delete(profile::remove_approval_rule))
-        .route("/agents", get(agents::list_agents))
-        .route("/agents/{id}", axum::routing::delete(agents::delete_agent))
+        .route("/agents", get(agents::list_agents).post(agents::create_agent))
+        .route("/agents/{id}", get(agents::get_agent).patch(agents::rename_agent).delete(agents::delete_agent))
         .route("/agents/{id}/restore", post(agents::restore_agent))
         .route("/agents/{id}/purge", post(agents::purge_agent))
+        .route("/personalities", get(agents::list_personalities))
         .route("/groups", get(groups::list_groups).post(groups::create_group))
         .route("/groups/{id}", get(groups::get_group).patch(groups::rename_group).delete(groups::delete_group))
         .route("/groups/{id}/members", axum::routing::put(groups::set_members))
@@ -220,7 +221,7 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::auth::{Auth, TokenService, SESSION_COOKIE};
     use axum::body::Body;
@@ -261,6 +262,12 @@ mod tests {
 
     /// The API with `plugins`, which lets anybody log in.
     fn api_with(plugins: &[Box<dyn RestPlugin>]) -> Router {
+        api(state(), plugins)
+    }
+
+    /// The state of an API that lets anybody log in and permits everything,
+    /// on a runtime of memory stores.
+    pub(crate) fn state() -> Arc<AppState> {
         let store = Arc::new(MemoryStore::new());
         let security = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
@@ -272,7 +279,15 @@ mod tests {
             controllers: Arc::clone(runtime.controller_manager()),
         });
         let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
-        api(Arc::new(AppState { auth, runtime_manager: runtime, session_manager, compartments: Default::default() }), plugins)
+        Arc::new(AppState { auth, runtime_manager: runtime, session_manager, compartments: Default::default() })
+    }
+
+    /// The cookie `api` answers `username` logging in with.
+    pub(crate) async fn login(api: &Router, username: &str) -> String {
+        let body = format!(r#"{{"username":"{username}","password":"x"}}"#);
+        let login = Request::post("/auth/login").header("content-type", "application/json").body(Body::from(body)).unwrap();
+        let logged_in = api.clone().oneshot(login).await.unwrap();
+        logged_in.headers().get(SET_COOKIE).and_then(|v| v.to_str().ok()).and_then(|v| v.split(';').next()).unwrap().to_string()
     }
 
     #[tokio::test]
@@ -281,9 +296,7 @@ mod tests {
         let anonymous = api.clone().oneshot(Request::get("/hello").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
 
-        let login = Request::post("/auth/login").header("content-type", "application/json").body(Body::from(r#"{"username":"alice","password":"x"}"#)).unwrap();
-        let logged_in = api.clone().oneshot(login).await.unwrap();
-        let cookie = logged_in.headers().get(SET_COOKIE).and_then(|v| v.to_str().ok()).and_then(|v| v.split(';').next()).unwrap().to_string();
+        let cookie = login(&api, "alice").await;
         assert!(cookie.starts_with(SESSION_COOKIE), "{cookie}");
         let asked = api.oneshot(Request::get("/hello").header(COOKIE, cookie).body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(asked.status(), StatusCode::OK);

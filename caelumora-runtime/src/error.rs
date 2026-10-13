@@ -66,7 +66,7 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
             }
         } else if let Some(e) = e.downcast_ref::<AgentError>() {
             // As a workspace's: its store errors are judged as store errors
-            // are, the rest name the agent or its personality.
+            // are, the rest name the agent, its personality or its name.
             match e {
                 AgentError::Store(e) => store_message(e),
                 _ => Some(e.to_string()),

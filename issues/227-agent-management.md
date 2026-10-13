@@ -93,3 +93,11 @@ notes of all channels, its usage as a whole.
   that the viewer reaches through their sessions. `Views::personalities` lists those the viewer may
   make an agent of. The REST server answers `AgentResponse` as before; its new fields and routes are
   the next step.
+- **2026-10-13** — Third step: the REST server makes an agent of a personality (`POST /agents`), in
+  the user's scope or the global one, as groups and workspaces are made; one of a session's scope
+  is refused (`invalid_scope`) until it is decided how it is made. It reads one agent with the
+  channels it takes part in that the user may read (`GET /agents/{id}`), renames it through its
+  controller (`PATCH /agents/{id}`) and lists the personalities (`GET /personalities`);
+  `AgentResponse` names its scope, owner and personality and whether the user may rename it.
+  `AgentManager::create` takes the name as text and the scope, as the `GroupManager` and the
+  `WorkspaceManager` do, and fails with `Invalid` for a name that does not fit.

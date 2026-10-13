@@ -23,6 +23,7 @@ use caelumora_model::removal::Stored;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::value::ValueError;
 use caelumora_model::value::name::{Name, ScopedName};
 use chrono::{DateTime, Utc};
 use std::fmt;
@@ -39,6 +40,10 @@ pub enum AgentError {
     /// the agent would not lie in (issue 178).
     #[error("the personality '{0}' cannot make an agent outside the session or channel it lies in")]
     PersonalityOutOfScope(Name),
+    /// What a value was given as does not fit it: the name of an agent to
+    /// make.
+    #[error(transparent)]
+    Invalid(#[from] ValueError),
     #[error(transparent)]
     Store(#[from] StoreError),
 }
@@ -74,20 +79,21 @@ impl AgentManager {
         Self { agents: Arc::clone(&stores.agents), personalities: Arc::clone(&stores.personalities), states, events, security }
     }
 
-    /// Makes an agent of the personality `personality_id`, of `name` in its
-    /// scope, on behalf of `context`, whose principal owns it (`CreateAgent`),
+    /// Makes an agent of the personality `personality_id`, of `name` in
+    /// `scope`, on behalf of `context`, whose principal owns it (`CreateAgent`),
     /// and announces it. Making it is asked before the personality is read,
     /// in `context`'s name (`GetPersonality`, issue 221): who may not make the
     /// agent learns nothing of the personality.
     ///
     /// # Errors
-    /// `PersonalityOutOfScope` if the personality lies in a session's or a
-    /// channel's scope the agent would not; a `StoreError` -
+    /// `Invalid` for a name that does not fit, `PersonalityOutOfScope` if
+    /// the personality lies in a session's or a channel's scope the agent
+    /// would not; a `StoreError` -
     /// `PermissionDenied` if they may not make it or not read the
     /// personality, `NotFound` if there is no such personality, `NameTaken`
     /// if an agent of `name` lies in its scope already (issue 250).
-    pub async fn create(&self, context: &SecurityContext, name: ScopedName, personality_id: PersonalityId) -> AgentResult<Agent> {
-        let agent = Agent::new(name, personality_id, context.principal_id);
+    pub async fn create(&self, context: &SecurityContext, name: &str, scope: Scope, personality_id: PersonalityId) -> AgentResult<Agent> {
+        let agent = Agent::new(ScopedName::new(name, scope)?, personality_id, context.principal_id);
         self.security
             .require(context, ActionType::create(Agent::KIND, &agent.security_attributes), StoreError::PermissionDenied).await?;
         let personality = self.personalities.get(context, personality_id).await?;
