@@ -411,6 +411,7 @@ published before anyone else can take it.
 | [333](333-workspaces-woven-into-sessions.md) | open | Workspaces are part of what sessions, channels and templates are - an attached workspace, its use per channel, one made by a template -, so they cannot leave the core as skills did. |
 | [334](334-groups-are-part-of-the-access-model.md) | rejected | Groups are the participants of sessions and channels and the teams users make in one kind, which the policy reads, so only teams could become a plugin. |
 | [335](335-channel-events-name-their-session.md) | open | The events of channels and their members are variants of their own beside `GlobalEvent::Entity`, which cannot say where an entity lies, so a plugin's kind that lies in a channel has no way to announce it. |
+| [337](337-components-nobody-asks-for.md) | open | A container builds every component it is configured with, also those its owner never asks for, so a tool in a channel reads its owner's secret and connects for nothing. |
 
 ## Integrations
 

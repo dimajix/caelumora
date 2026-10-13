@@ -105,6 +105,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [329](329-ollama-named-by-the-core.md) | open | The core names `ollama_client` as the default model, so the choice of a model provider is not the deployment's and a second provider cannot become the default without configuration. |
 | [333](333-workspaces-woven-into-sessions.md) | open | Workspaces are part of what sessions, channels and templates are - an attached workspace, its use per channel, one made by a template -, so they cannot leave the core as skills did. |
 | [335](335-channel-events-name-their-session.md) | open | The events of channels and their members are variants of their own beside `GlobalEvent::Entity`, which cannot say where an entity lies, so a plugin's kind that lies in a channel has no way to announce it. |
+| [337](337-components-nobody-asks-for.md) | open | A container builds every component it is configured with, also those its owner never asks for, so a tool in a channel reads its owner's secret and connects for nothing. |
 
 ## Open architecture questions
 
