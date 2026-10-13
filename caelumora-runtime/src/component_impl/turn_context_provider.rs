@@ -6,8 +6,7 @@
 use crate::agent::work::AgentWork;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use crate::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
-use crate::context::{ContextProvider, PromptPosition, PromptProvider};
-use anyhow::Result;
+use crate::context::{ContextError, ContextProvider, PromptPosition, PromptProvider};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
@@ -27,12 +26,12 @@ pub struct TurnContextProvider {
 
 #[async_trait]
 impl ContextProvider for TurnContextProvider {
-    async fn current_context(&self, work: &AgentWork<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>)> {
+    async fn current_context(&self, work: &AgentWork<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError> {
         let mut start = Vec::new();
         let mut before_input = Vec::new();
         let mut knowledge = Vec::new();
         for provider in &self.prompt_providers {
-            let Some(contribution) = provider.apply_fail_policy(provider.get_prompt(work).await)? else { continue };
+            let Some(contribution) = provider.prompt_for(work).await? else { continue };
             let text = contribution.text.trim();
             if text.is_empty() {
                 continue;
@@ -137,8 +136,8 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PromptProvider for Unavailable {
-        async fn get_prompt(&self, _work: &crate::agent::work::AgentWork<'_>) -> anyhow::Result<crate::context::Prompt> {
-            Err(anyhow::anyhow!("unavailable"))
+        async fn get_prompt(&self, _work: &crate::agent::work::AgentWork<'_>) -> Result<crate::context::Prompt, ContextError> {
+            Err(ContextError::Failed("unavailable".to_string()))
         }
     }
 

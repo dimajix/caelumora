@@ -139,6 +139,9 @@ Errors carry what failed, and only what may be shown goes to users.
 *   Use `anyhow::Result` for general application logic, especially in the runtime, where diverse
     error types are aggregated.
 *   Use `thiserror` for domain-specific error types, as in `caelumora-model`.
+*   A trait that a component or a plugin implements - a facet, a `ScopeMember` - names an error
+    type of the core, never `anyhow`: the core can only judge what it knows (see
+    [PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-core-in-the-cores-types)).
 *   Avoid `unwrap()` and `expect()` in production code. Use `?` or handle the error explicitly.
 
 ### Messages name what failed
@@ -160,7 +163,10 @@ What users may see is decided in one place, `caelumora_runtime::error::user_mess
 through an error chain for a domain error written to be read and returns its message. Anything else
 stays in the log.
 
-A new error type meant for users must meet the rules above and be added to `user_message`.
+A new error type of the core meant for users must meet the rules above and be added to
+`user_message`. A plugin's error type is never added there: where the plugin answers the core, it
+answers in a type of the core's (see
+[PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-core-in-the-cores-types)).
 
 ### Errors in a turn end the turn, not the agent
 

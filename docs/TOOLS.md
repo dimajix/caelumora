@@ -133,7 +133,7 @@ transport:
 The kind lives in the plugin `caelumora-mcp` (issue 325), with `rmcp`, so that the runtime does not
 depend on it; `caelumora-app` and `caelumora-tui` list the plugin, and a personality names the kind
 as before. What such a component kind may use of the runtime is said in
-[COMPONENTS.md](COMPONENTS.md#what-a-component-kind-outside-the-core-may-use).
+[PLUGINS.md](PLUGINS.md#what-a-component-kind-outside-the-core-may-use).
 
 *   **Several servers.** Each server is an instance of its own; its tools are named
     `{component_id}__{remote_tool_name}`, so that servers cannot collide.

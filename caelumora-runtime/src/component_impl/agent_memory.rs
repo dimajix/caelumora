@@ -23,10 +23,9 @@ use crate::component_impl::notes::NOTE_PRESENTATION;
 use crate::agent::memory::AgentMemory;
 use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::context::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
 use crate::agent::work::AgentWork;
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
-use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::question::Answers;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
@@ -185,7 +184,7 @@ impl PromptProvider for AgentMemoryComponent {
         PromptPosition::BeforeTurnInput
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
+    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
         let recalled = AgentMemory::recalled(work, self.confidentiality.as_ref()).await;
         if recalled.is_empty() {
             return Ok(Prompt::default());

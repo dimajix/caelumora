@@ -58,8 +58,10 @@ program's choice: `caelumora-app` and `caelumora-tui` each list theirs; the core
 plugin is one crate, cut into layers by Cargo features rather than crates. The first is
 `caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)); `caelumora-mcp`
 ([TOOLS.md](TOOLS.md#mcp-servers)) and `caelumora-a2a` are ones that bring a component kind alone.
+Where the core calls a plugin, the plugin answers in the core's error types, not in its own: the
+core decides by the types it knows what a person is told of an error.
 
-Details: [COMPONENTS.md](COMPONENTS.md#plugins).
+Details: [PLUGINS.md](PLUGINS.md).
 
 ## Backends
 

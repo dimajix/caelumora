@@ -123,7 +123,7 @@ impl ScopeMember for AgentManager {
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let mut left = 0;
         for agent in self.agents.list(&system, &within(holder)).await?.items {
@@ -144,7 +144,7 @@ impl ScopeMember for AgentManager {
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
         let system = SecurityContext::system();
         for agent in deleted_since(self.agents.list_deleted(&system, &within(holder)).await?.items, since) {
             if let Some(restored) = restored_unless_refused(self.agents.restore(ctx, agent.id).await, &agent)? {
@@ -159,7 +159,7 @@ impl ScopeMember for AgentManager {
     ///
     /// # Errors
     /// Whatever the stores report; what was purged before stays purged.
-    async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()> {
+    async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         for agent in self.agents.list_deleted(&system, &within(holder)).await?.items {
             self.agents.purge(&system, agent.id).await?;

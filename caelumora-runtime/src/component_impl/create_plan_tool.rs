@@ -3,10 +3,9 @@
 
 use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::context::{titled, Prompt, PromptProvider};
+use crate::context::{ContextError, titled, Prompt, PromptProvider};
 use crate::agent::work::AgentWork;
 use crate::tool::{arguments, ToolOutput, ToolProvider, ToolResult};
-use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::question::Answers;
 use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
@@ -49,7 +48,7 @@ pub struct CreatePlanToolProvider;
 
 #[async_trait]
 impl PromptProvider for CreatePlanToolProvider {
-    async fn get_prompt(&self, _work: &AgentWork<'_>) -> Result<Prompt> {
+    async fn get_prompt(&self, _work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
         // A fixed text of the runtime's: nothing confidential (issue 168).
         Ok(Prompt::classified(titled("Planning", PLANNING_SYSTEM_PROMPT), Classification::PUBLIC))
     }

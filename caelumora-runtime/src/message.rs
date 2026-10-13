@@ -6,16 +6,38 @@
 //! transcript.
 
 use crate::component::ComponentImpl;
+use crate::view::ViewError;
+use anyhow::Context;
 use async_trait::async_trait;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
+use caelumora_model::store::StoreError;
 
 #[async_trait]
 pub trait MessageProcessor: Send + Sync + std::fmt::Debug {
     /// What is made of `input` - filtered, changed, added to - for the actor
     /// whose context is `security`: who perceives or emits it, and where.
-    async fn process_messages(&self, input: Vec<Message>, security: &SecurityContext) -> anyhow::Result<Vec<Message>>;
+    ///
+    /// # Errors
+    /// `ProcessingError` if the messages cannot be processed.
+    async fn process_messages(&self, input: Vec<Message>, security: &SecurityContext) -> Result<Vec<Message>, ProcessingError>;
+}
+
+/// Why a `MessageProcessor` cannot process what it was given (issue 336).
+/// A plugin's processor translates its own errors into it, deciding there
+/// what may be shown; `crate::error::user_message` judges each variant.
+#[derive(Debug, thiserror::Error)]
+pub enum ProcessingError {
+    /// A failure in words that may be shown to users.
+    #[error("{0}")]
+    Failed(String),
+    /// What reading through the views reported, judged as view errors are.
+    #[error("{0}")]
+    View(#[from] ViewError),
+    /// What the store reported, judged as store errors are.
+    #[error("{0}")]
+    Store(#[from] StoreError),
 }
 
 pub trait PerceiveInProcessor: MessageProcessor {}
@@ -37,7 +59,8 @@ where
         // What it was given, should it be left out.
         let kept = matches!(stage_processor.fail_policy, ComponentFailPolicy::FailOpen).then(|| input.clone());
         let output = stage_processor.process_messages(input, security).await;
-        input = match stage_processor.apply_fail_policy(output)? {
+        let output = stage_processor.apply_fail_policy(output).with_context(|| format!("component '{}' failed", stage_processor.id))?;
+        input = match output {
             Some(output) => output,
             None => kept.unwrap_or_default(),
         };
@@ -78,8 +101,8 @@ pub(crate) mod testing {
 
     #[async_trait]
     impl MessageProcessor for Without {
-        async fn process_messages(&self, input: Vec<Message>, _security: &SecurityContext) -> anyhow::Result<Vec<Message>> {
-            let Some(word) = self.0 else { return Err(anyhow::anyhow!("broken")) };
+        async fn process_messages(&self, input: Vec<Message>, _security: &SecurityContext) -> Result<Vec<Message>, ProcessingError> {
+            let Some(word) = self.0 else { return Err(ProcessingError::Failed("broken".to_string())) };
             Ok(input.into_iter().filter(|m| !m.content.as_deref().unwrap_or_default().contains(word)).collect())
         }
     }

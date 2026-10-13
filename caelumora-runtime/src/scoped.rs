@@ -57,26 +57,28 @@ pub trait ScopeMember: Send + Sync {
     /// `ctx`, as far as they may; answers how many are left.
     ///
     /// # Errors
-    /// Whatever else the store or the owner reports; what was deleted
-    /// before stays deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<usize>;
+    /// Whatever else the store reports; what was deleted before stays
+    /// deleted.
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize>;
 
     /// Restores what of its kind lies in `holder` or within it and was
     /// deleted at `since` or later on behalf of `ctx`. One whose name was
     /// taken meanwhile stays deleted, as does one `ctx` may not restore.
     ///
     /// # Errors
-    /// Whatever else the store or the owner reports; what was restored
-    /// before stays restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()>;
+    /// Whatever else the store reports; what was restored before stays
+    /// restored.
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()>;
 
     /// Purges what of its kind lies in `holder` or within it and is
     /// deleted, with what its owner purges with it, in the runtime's name.
     ///
     /// # Errors
-    /// Whatever the store or the owner reports; what was purged before
-    /// stays purged.
-    async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()>;
+    /// Whatever the store reports, and as `StoreError::Backend` a failure
+    /// to remove what lies behind an entity - a workspace's place, an
+    /// artifact's content -, which is its storage too; what was purged
+    /// before stays purged.
+    async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()>;
 }
 
 /// Deletes, restores and purges what lies in a scope with what holds it
@@ -115,8 +117,7 @@ impl ScopedEntities {
     /// # Errors
     /// `SessionError::ScopeNotEmpty` if something is left that `ctx` may
     /// not delete - what they may is deleted all the same -, or whatever
-    /// the store or an owner reports; what was deleted before stays
-    /// deleted.
+    /// the store reports; what was deleted before stays deleted.
     pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<()> {
         let mut left = Vec::new();
         for member in &self.members {
@@ -146,9 +147,9 @@ impl ScopedEntities {
     /// restored all the same.
     ///
     /// # Errors
-    /// Whatever else the store or an owner reports; what was restored
-    /// before stays restored.
-    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()> {
+    /// Whatever else the store reports; what was restored before stays
+    /// restored.
+    pub(crate) async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
         for member in &self.members {
             member.restore_lying_in(ctx, holder, since).await?;
         }
@@ -160,9 +161,10 @@ impl ScopedEntities {
     /// the artifacts' content.
     ///
     /// # Errors
-    /// Whatever the store or an owner reports; what was purged before stays
-    /// purged.
-    pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()> {
+    /// Whatever the store reports, a place or a content that cannot be
+    /// removed among it (`ScopeMember::purge_lying_in`); what was purged
+    /// before stays purged.
+    pub(crate) async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         for member in &self.members {
             member.purge_lying_in(holder).await?;
         }
@@ -185,7 +187,7 @@ where
         T::KIND
     }
 
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
         let mut left = 0;
         for entity in self.0.list(&SecurityContext::system(), &within(holder)).await?.items {
             left += usize::from(!deleted_unless_refused(self.0.delete(ctx, entity.id()).await)?);
@@ -193,14 +195,14 @@ where
         Ok(left)
     }
 
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
         for entity in deleted_since(self.0.list_deleted(&SecurityContext::system(), &within(holder)).await?.items, since) {
             restored_unless_refused(self.0.restore(ctx, entity.id()).await, &entity)?;
         }
         Ok(())
     }
 
-    async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()> {
+    async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         for entity in self.0.list_deleted(&system, &within(holder)).await?.items {
             self.0.purge(&system, entity.id()).await?;

@@ -19,12 +19,11 @@
 //! that cannot be reached leaves the files out, not the turn.
 
 use crate::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
-use crate::context::{titled, Prompt, PromptPosition, PromptProvider};
+use crate::context::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
 use crate::terminal::{TerminalError, WorkspacePath};
 use crate::view::WorkspaceView;
 use crate::workspace::WorkspaceManager;
 use crate::agent::work::AgentWork;
-use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use serde::Deserialize;
@@ -159,7 +158,7 @@ impl PromptProvider for WorkspacePromptProvider {
         self.position
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
+    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
         // Work that reaches no session (`AgentWork::session`) has no workspace to tell of.
         let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let channel = session.channel(work.channel_id()).await?;

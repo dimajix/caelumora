@@ -226,7 +226,7 @@ impl AgentActor {
         // give the model. Parts that may be left out are the prompt
         // providers', each by its own policy.
         let (parts, knowledge) = self.context_provider.current_context(&turn.work()).await
-            .map_err(|e| e.context(format!("component '{}' could not assemble the context", self.context_provider.id)))?;
+            .with_context(|| format!("component '{}' could not assemble the context", self.context_provider.id))?;
         turn.set_context(parts, knowledge);
         Ok(())
     }

@@ -20,9 +20,8 @@
 //! `changes_only`), as the roster and the language are.
 
 use crate::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::context::{titled, Prompt, PromptPosition, PromptProvider};
+use crate::context::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
 use crate::agent::work::AgentWork;
-use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::value::text::{Briefing, Summary};
@@ -80,7 +79,7 @@ impl PromptProvider for ChannelBriefingPromptProvider {
         self.position
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
+    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
         // Work that reaches no session (`AgentWork::session`) has no place to describe.
         let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let channel = session.channel(work.channel_id()).await?;

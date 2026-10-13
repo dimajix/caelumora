@@ -19,7 +19,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::removal::Stored;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -253,7 +253,7 @@ impl ScopeMember for SkillManager {
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
@@ -275,7 +275,7 @@ impl ScopeMember for SkillManager {
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for skill in deleted_since(self.skills.list_deleted(&system, &within(holder)).await?.items, since) {
@@ -291,7 +291,7 @@ impl ScopeMember for SkillManager {
     ///
     /// # Errors
     /// Whatever the store reports; what was purged before stays purged.
-    async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()> {
+    async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for skill in self.skills.list_deleted(&system, &within(holder)).await?.items {

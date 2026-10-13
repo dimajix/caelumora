@@ -59,10 +59,10 @@ impl AgentContextView {
     /// `NotRecorded` if the agent did not produce the message, or what it
     /// saw is not known here; `Unavailable` if what was recorded cannot be
     /// resolved any more.
-    pub fn context_of(&self, message: MessageId) -> Result<ResolvedContext, ContextError> {
+    pub fn context_of(&self, message: MessageId) -> Result<ResolvedContext, AgentContextError> {
         let (reference, turn) = self.state.recorded_context_of(message)
-            .ok_or(ContextError::NotRecorded { actor: self.actor, message })?;
-        ContextResolver::of(&self.state).resolve(&reference, turn, self.actor).ok_or(ContextError::Unavailable { actor: self.actor, message })
+            .ok_or(AgentContextError::NotRecorded { actor: self.actor, message })?;
+        ContextResolver::of(&self.state).resolve(&reference, turn, self.actor).ok_or(AgentContextError::Unavailable { actor: self.actor, message })
     }
 
     /// The classification of the message `message` the agent produced, as
@@ -101,7 +101,7 @@ impl AgentContextView {
 /// Why a message's context cannot be shown. The messages are meant for
 /// users (see `crate::error::user_message`).
 #[derive(Debug, thiserror::Error)]
-pub enum ContextError {
+pub enum AgentContextError {
     #[error("No context is recorded for message {message} by {actor}")]
     NotRecorded { actor: ActorId, message: MessageId },
     #[error("The context of message {message} by {actor} is no longer available")]
@@ -156,7 +156,7 @@ mod tests {
             ContextItem::Prompt { .. } => None,
         }).collect();
         assert_eq!(ids, vec![question.id]);
-        assert!(matches!(view.context_of(question.id), Err(ContextError::NotRecorded { .. })), "someone else wrote it");
+        assert!(matches!(view.context_of(question.id), Err(AgentContextError::NotRecorded { .. })), "someone else wrote it");
         assert_eq!(view.classification_of(answer.id), Some(Classification::CHANNEL_DEFAULT), "the label it was written with");
         assert_eq!(view.classification_of(MessageId::new()), None);
         let said = |items: Vec<HistoryEntry>| items.into_iter().filter_map(|item| match item {
@@ -190,6 +190,6 @@ mod tests {
         let gone = PromptRef { text: prompt("gone"), role: MessageRole::System, after: None, classification: None };
         state.history.push(lost.clone(), Some(ContextRef { transcript: before, prompts: vec![gone], tools: None, knowledge: Vec::new(), profile: Default::default() }));
         let view = AgentContextView::of(actor, state);
-        assert!(matches!(view.context_of(lost.id), Err(ContextError::Unavailable { .. })));
+        assert!(matches!(view.context_of(lost.id), Err(AgentContextError::Unavailable { .. })));
     }
 }
