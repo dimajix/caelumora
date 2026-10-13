@@ -38,13 +38,14 @@ tools; the issuer is given as their actor. Commands come from two places:
 *   `SessionTemplate::commands`, for commands that belong to what a session is for, copied into the
     session, so a running session keeps its set.
 
-Both are built once per session into a `CommandExecutor` shared by the session's channels - the
-counterpart of an agent's `ToolExecutor`, which likewise receives ready providers and is no
-component. Two commands of one name keep the session from starting. The executor is generic over the
-facet: finding a command, refusing two of one name and asking the policy are the same whoever runs
-the commands; only what a command is given to run with - the session, or an agent's turn - is the
-facet's. It checks permissions itself: how a command runs is the command's business, and there is
-nothing about running commands to try out.
+Both are built once per session, in the name of its owner
+([COMPONENTS.md](COMPONENTS.md#what-a-component-may-reach)), into a `CommandExecutor` shared by the
+session's channels - the counterpart of an agent's `ToolExecutor`, which likewise receives ready
+providers and is no component. Two commands of one name keep the session from starting. The
+executor is generic over the facet: finding a command, refusing two of one name and asking the
+policy are the same whoever runs the commands; only what a command is given to run with - the
+session, or an agent's turn - is the facet's. It checks permissions itself: how a command runs is
+the command's business, and there is nothing about running commands to try out.
 
 ### Seeing and running
 

@@ -23,7 +23,7 @@ use caelumora_model::message::{Message, MessageId};
 use caelumora_model::work::TurnId;
 use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
+use caelumora_model::store::{EntityStore, StateStore, StoreError};
 use caelumora_model::user::UserId;
 use tracing::{info, warn};
 use std::any::Any;
@@ -251,16 +251,11 @@ impl ChannelLoop {
         let id = channel.id;
         let session_id = channel.session_id;
         let state_store = Arc::clone(runtime.state_store());
-        // Its components (issue 174) act on behalf of the channel's owner,
-        // as an agent's act on behalf of its owner - with the owner's roles
-        // as they are when it is built (issue 304).
-        let security_context = match channel.security_attributes.owner_id {
-            ActorId::User(owner) => match runtime.controller_manager().user_controller(owner).await.optional()? {
-                Some(owner) => owner.security_context(session_id, id),
-                None => SecurityContext::new(channel.security_attributes.owner_id, session_id, id),
-            },
-            other => SecurityContext::new(other, session_id, id),
-        };
+        // Its components (issue 174) are built in its owner's name, as an
+        // agent's are in the agent's, with the roles of now (issue 321):
+        // what they ask is asked as they are built; routing, they act in
+        // the context of the event they route.
+        let security_context = runtime.controller_manager().owner_context(channel.security_attributes.owner_id, session_id, id).await?;
         let components = ComponentContainer::from_config(
             &channel.components,
             runtime.component_registry(),

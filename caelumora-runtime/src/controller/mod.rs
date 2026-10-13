@@ -32,10 +32,10 @@ use crate::event::EventBus;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::approval::ApprovalRule;
-use caelumora_model::channel::Channel;
+use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::event::EntityChange;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::session::Session;
+use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::{EntityStores, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::user::{User, UserId, UserProfile};
 use std::collections::HashMap;
@@ -136,6 +136,25 @@ impl ControllerManager {
         Ok(controller)
     }
 
+    /// The context in which what `owner` owns is built, in `channel` of
+    /// `session`: a channel's components, a session's commands (issue
+    /// 321). A user's as their controller gives it, with their roles as they
+    /// are now; a user who no longer exists, or an owner that is no user,
+    /// with none - as an agent whose owner is gone (`agent_controller`).
+    ///
+    /// # Errors
+    /// Whatever the store reports, other than that the user is gone.
+    pub async fn owner_context(&self, owner: ActorId, session: SessionId, channel: ChannelId) -> StoreResult<SecurityContext> {
+        let user = match owner {
+            ActorId::User(id) => self.user_controller(id).await.optional()?,
+            _ => None,
+        };
+        Ok(match user {
+            Some(user) => user.security_context(session, channel),
+            None => SecurityContext::new(owner, session, channel),
+        })
+    }
+
     /// The name `actor` is shown with: its fixed one (`ActorId::fixed_name`),
     /// or its user's or agent's current one, from the controller this
     /// instance shares - an actor that runs holds it already.
@@ -205,6 +224,7 @@ mod tests {
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::agent::{Agent, AgentUpdateEvent, Personality, PersonalityId};
     use caelumora_model::actor::ActorId;
+    use caelumora_model::role::RoleId;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::store::StoreError;
@@ -313,5 +333,26 @@ mod tests {
         // the name it set, so the last one leaves the last name.
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(controller.name(), "second");
+    }
+
+    /// What is built for a user is built with their roles as they are now;
+    /// for one who is gone, or an owner that is no user, with none (issue
+    /// 321).
+    #[tokio::test]
+    async fn an_owner_builds_with_the_roles_of_now() {
+        let (store, _bus, manager) = manager();
+        let staff = RoleId::new();
+        let alice = User { roles: vec![staff], ..user_in(&store).await };
+        store.entity_stores().users.update(&SecurityContext::system(), &alice).await.unwrap();
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+
+        let hers = manager.owner_context(ActorId::User(alice.id), session, channel).await.unwrap();
+        assert_eq!(hers.principal_id, ActorId::User(alice.id));
+        assert!(hers.has_role(staff), "her roles");
+        assert_eq!((hers.session_id, hers.channel_id), (session, channel));
+        let gone = manager.owner_context(ActorId::User(UserId::new()), session, channel).await.unwrap();
+        assert!(gone.roles.is_empty(), "a user who is gone has none");
+        let system = manager.owner_context(ActorId::System, session, channel).await.unwrap();
+        assert_eq!(system.principal_id, ActorId::System);
     }
 }

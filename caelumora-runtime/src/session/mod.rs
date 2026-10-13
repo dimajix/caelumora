@@ -51,7 +51,9 @@ pub(crate) use manager::Found;
 pub enum SessionError {
     /// The channel's components do not make a moderator (issue 174): a kind
     /// that does not exist, two moderators, two policies. Found when the
-    /// channel is built; a channel created so is taken back out.
+    /// channel is built; a channel created so is taken back out. Or they
+    /// name preconfigured components whoever creates the channel may not
+    /// read, found before it is created (issue 321).
     #[error("The channel's moderator cannot be built: {0}")]
     InvalidModerator(#[source] crate::component::ComponentError),
     #[error("{participant} is not a participant of session {session}")]

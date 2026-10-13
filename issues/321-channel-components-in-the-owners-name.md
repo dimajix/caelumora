@@ -1,6 +1,6 @@
 # 321 — A channel's components act in its owner's name, with the roles of when it was built
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -46,3 +46,19 @@ when the channel was built.
 
 - **2026-10-11** — Opened from issue 312, which took it over from issue 304 (F18) and handed it on
   as a decision of its own.
+- **2026-10-13** — Decided and done: components are built in their owner's name - a channel's
+  components and a session's commands in the owner's, with the roles of when they are built, as an
+  agent's are in the agent's -, and the name is the build's alone. What a component asks, it asks
+  while it is built (a `ref`, a secret); none keeps the context, and what a channel's components
+  do later - routing - they do in the context of the event, so the "per act" consideration was
+  already how they work. A change of the owner's roles reaches them when they are built again, as
+  it reaches an agent's components. An owner who cannot be found builds with no roles, as an agent
+  whose owner is gone acts with none. The channel as an actor of its own was not taken: it would
+  need rights given to channels, and nothing has any. Two things were done: whoever creates a
+  channel - not necessarily its owner - names only preconfigured components they may read
+  (`ComponentRegistry::require_readable`, asked before `CreateChannel`); and the owner's context
+  is made in one place (`ControllerManager::owner_context`), which the session's commands now use
+  too, so that they are built with the owner's roles, not without any. Recorded in
+  PERMISSION-CHECKS.md under "Decided in issue 321". That a container builds components nobody
+  asks for - a tool in a channel, built with its owner's secret - became issue
+  [337](337-components-nobody-asks-for.md).
