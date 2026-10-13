@@ -310,7 +310,7 @@ impl ScopeMember for GroupManager {
 /// # Errors
 /// `StoreError::Validation` naming the first group `ctx` may not read, or
 /// whatever else the store reports.
-pub(crate) async fn require_nameable(store: &dyn EntityStore<Group>, ctx: &SecurityContext, before: &[AclEntry], entries: &[AclEntry]) -> StoreResult<()> {
+pub async fn require_nameable(store: &dyn EntityStore<Group>, ctx: &SecurityContext, before: &[AclEntry], entries: &[AclEntry]) -> StoreResult<()> {
     for entry in entries {
         let Subject::Group(group) = entry.subject else { continue };
         if before.iter().any(|named| named.subject == entry.subject) {

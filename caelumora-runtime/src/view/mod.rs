@@ -25,7 +25,6 @@
 //! for a client that lists and offers: the node's data with its questions
 //! answered at one moment.
 
-mod artifact;
 mod channel;
 mod context;
 mod group;
@@ -33,14 +32,12 @@ mod member;
 mod session;
 mod workspace;
 
-pub use artifact::ArtifactView;
 pub use channel::{ChannelView, MemberView};
 pub use context::{AgentContextView, AgentContextError};
 pub use group::GroupView;
 pub use session::{PrivateNotesElsewhere, SessionView};
 pub use workspace::WorkspaceView;
 
-use caelumora_model::artifact::{ArtifactField, ArtifactId};
 use caelumora_model::store::query::{Filter, Query};
 use crate::runtime::{ActorRuntime, RuntimeManager, Services};
 use crate::session::{Found, SessionLoop, SessionManager};
@@ -60,7 +57,6 @@ use crate::workspace::WorkspaceManager;
 use caelumora_model::store::{EntityStores, StateStore, StoreError, StoreResult, StoreResultExt};
 use crate::component::ComponentRegistry;
 use std::sync::Arc;
-use caelumora_model::artifact::Artifact;
 use caelumora_model::session::Session;
 use caelumora_model::workspace::Workspace;
 use caelumora_model::removal::Stored;
@@ -112,8 +108,6 @@ pub enum ViewError {
     ChannelNotFound { session: SessionId, channel: ChannelId },
     #[error("There is no workspace {0}")]
     WorkspaceNotFound(WorkspaceId),
-    #[error("There is no artifact {0}")]
-    ArtifactNotFound(ArtifactId),
     #[error("There is no group {0}")]
     GroupNotFound(GroupId),
     /// Asked for by name, as an agent's tools do: no such channel, or
@@ -195,7 +189,6 @@ pub struct Views {
     states: Arc<dyn StateStore>,
     components: Arc<ComponentRegistry>,
     workspaces: Arc<WorkspaceManager>,
-    artifacts: Arc<crate::artifact::ArtifactManager>,
     running: Arc<dyn RunningSessions>,
     viewer: Viewer,
 }
@@ -210,7 +203,6 @@ impl Views {
             states: Arc::clone(runtime.state_store()),
             components: Arc::clone(runtime.component_registry()),
             workspaces: Arc::clone(runtime.workspace_manager()),
-            artifacts: Arc::clone(runtime.artifact_manager()),
             running,
             viewer,
         }
@@ -262,10 +254,6 @@ impl Views {
 
     pub(crate) fn workspace_manager(&self) -> &Arc<WorkspaceManager> {
         &self.workspaces
-    }
-
-    pub(crate) fn artifact_manager(&self) -> &Arc<crate::artifact::ArtifactManager> {
-        &self.artifacts
     }
 
     /// Every session the viewer may read, in the order the store lists
@@ -425,64 +413,19 @@ impl Views {
         }
     }
 
-    /// The viewer's artifacts (issues 271, 23, 293, 308, 316): those they own
-    /// and those shared with them by name - an entry of the artifact's list
-    /// naming them, one of their roles or a team they belong to -, each with
-    /// the versions they may read, if they are cleared for it. What they read
-    /// only as a member of a channel is found through that channel
-    /// (`ChannelView::artifacts`), so the participants of a session or
-    /// channel are not named. The store is asked for these alone, in the
-    /// viewer's name.
+    /// Whom an entry of an access list may name the viewer by (issues 293,
+    /// 308): themselves, the roles they hold and the teams they belong to -
+    /// not those they only own -, as the policy resolves an entry. What a
+    /// kind lists as shared with them by name asks the store for these.
     ///
     /// # Errors
-    /// `Failed` if the store cannot list them.
-    pub async fn artifacts(&self) -> ViewResult<Vec<ArtifactView>> {
-        let failed = |e| ViewError::failed(e, "listing the artifacts");
+    /// What the store reports.
+    pub async fn subjects(&self) -> StoreResult<Vec<Subject>> {
         let context = self.viewer.context();
         let principal = context.principal_id;
         let roles = context.roles.iter().copied().filter(|role| context.has_role(*role));
-        // The teams they belong to, by which the policy resolves an entry
-        // naming one - not those they only own.
-        let teams = self.teams().await.map_err(failed)?.into_iter().filter(|team| team.has_member(principal)).map(|team| Subject::Group(team.id));
-        let subjects: Vec<Subject> = std::iter::once(Subject::Actor(principal)).chain(roles.map(Subject::Role)).chain(teams).collect();
-        let named = Filter::is_in(ArtifactField::Subject, subjects);
-        let theirs = Filter::Or(vec![Filter::eq(ArtifactField::Owner, principal), Filter::any(ArtifactField::Acl, named)]);
-        let artifacts = self.stores.artifacts.list(context, &Query::filtered(theirs)).await.map_err(failed)?.items;
-        let mut readable = Vec::with_capacity(artifacts.len());
-        for artifact in artifacts {
-            readable.push(self.readable_artifact(artifact).await);
-        }
-        Ok(readable)
-    }
-
-    /// Artifact `id`, with the versions the viewer may read, if they may
-    /// read it and are cleared for it (issues 271, 23, 316).
-    ///
-    /// # Errors
-    /// `ArtifactNotFound` if they may not read it - one they are not
-    /// cleared for is the same -; `Failed` if the store cannot read it.
-    pub async fn artifact(&self, id: ArtifactId) -> ViewResult<ArtifactView> {
-        let found = self.stores.artifacts.get(self.viewer.context(), id).await.optional()
-            .map_err(|e| ViewError::failed(e, "reading an artifact"))?;
-        match found {
-            Some(artifact) => Ok(self.readable_artifact(artifact).await),
-            None => Err(ViewError::ArtifactNotFound(id)),
-        }
-    }
-
-    /// `artifact`, as the store handed it to the viewer - who reads it -,
-    /// with the versions whose own list lets them read them as well (issue
-    /// 316).
-    pub(super) async fn readable_artifact(&self, mut artifact: Artifact) -> ArtifactView {
-        let context = self.viewer.context();
-        let mut readable = Vec::with_capacity(artifact.versions.len());
-        for version in std::mem::take(&mut artifact.versions) {
-            if self.security.may_read_artifact(context, &artifact.version_attributes(&version)).await {
-                readable.push(version);
-            }
-        }
-        artifact.versions = readable;
-        ArtifactView::of(self.clone(), artifact)
+        let teams = self.teams().await?.into_iter().filter(|team| team.has_member(principal)).map(|team| Subject::Group(team.id));
+        Ok(std::iter::once(Subject::Actor(principal)).chain(roles.map(Subject::Role)).chain(teams).collect())
     }
 
     /// The entries `acl` with whom each names called by name (issue 23),
@@ -490,7 +433,7 @@ impl Views {
     /// who may name a session or user they cannot read themselves. A group
     /// is called by its name - the group of the participants of a session or
     /// channel by the session's or channel's -, and says where it lies.
-    pub(crate) async fn access_snapshots(&self, acl: &[AclEntry]) -> Vec<AccessSnapshot> {
+    pub async fn access_snapshots(&self, acl: &[AclEntry]) -> Vec<AccessSnapshot> {
         let system = SecurityContext::system();
         let mut access = Vec::with_capacity(acl.len());
         for entry in acl {
@@ -533,7 +476,7 @@ impl Views {
 
     /// The teams the viewer owns or belongs to (issue 317), which the store
     /// is asked for alone, in their name: the teams of `groups`, and those
-    /// `artifacts` names them by.
+    /// `subjects` names them by.
     async fn teams(&self) -> StoreResult<Vec<Group>> {
         let principal = self.viewer.context().principal_id;
         let theirs = Filter::Or(vec![
@@ -577,30 +520,6 @@ impl Views {
                 deleted: removal,
                 can_restore: policy.may_restore(self.viewer.context(), Group::KIND, attributes).await,
                 can_purge: policy.may_purge(self.viewer.context(), Group::KIND, attributes).await,
-            });
-        }
-        Ok(deleted)
-    }
-
-    /// The artifacts the viewer deleted and may read as such (issue 271):
-    /// the trash of artifacts.
-    ///
-    /// # Errors
-    /// `Failed` if the store cannot list them.
-    pub async fn deleted_artifacts(&self) -> ViewResult<Vec<DeletedSnapshot<ArtifactId>>> {
-        let artifacts = self.stores.artifacts.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
-            .map_err(|e| ViewError::failed(e, "listing the deleted artifacts"))?;
-        let policy = &self.security;
-        let mut deleted = Vec::with_capacity(artifacts.len());
-        for artifact in artifacts {
-            let Some(removal) = artifact.deleted.clone() else { continue };
-            let attributes = &artifact.security_attributes;
-            deleted.push(DeletedSnapshot {
-                id: artifact.id,
-                name: artifact.name.to_string(),
-                deleted: removal,
-                can_restore: policy.may_restore(self.viewer.context(), Artifact::KIND, attributes).await,
-                can_purge: policy.may_purge(self.viewer.context(), Artifact::KIND, attributes).await,
             });
         }
         Ok(deleted)

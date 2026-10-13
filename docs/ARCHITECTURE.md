@@ -10,7 +10,7 @@ that holds the details; the list at the end names them all.
 The project is a Rust workspace, with a web UI next to it:
 
 *   **`caelumora-model`** - the domain: entities (`Session`, `Channel`, `Agent`, `Personality`,
-    `User`, `SessionTemplate`, `Workspace`, `Skill`, `Artifact`, `Group`), the values with rules
+    `User`, `SessionTemplate`, `Workspace`, `Group`), the values with rules
     their fields hold (`value`: `Name`, `Language`, free text such as `Summary`), messages and
     events, the traits of the stores, the security and confidentiality model, and the configuration
     (`AppConfig`). It holds data and rules, but runs nothing.
@@ -30,6 +30,10 @@ The project is a Rust workspace, with a web UI next to it:
     the binary (feature `web-ui`, on by default).
 *   **`caelumora-skills`** - skills, the first plugin (see [Plugins](#plugins)): the entity, its
     manager, component, views and routes, in layers by Cargo features.
+*   **`caelumora-artifacts`** - artifacts, a plugin built as `caelumora-skills` is, which brings
+    besides the storages of its content - a service of its own, with `local` as its backend - and
+    extends the view of a channel with what was published in it (issue 328). See
+    [TOOLS.md](TOOLS.md#artifacts).
 *   **`caelumora-mcp`** - the tools of MCP servers, a plugin that brings nothing but its component
     kind `mcp_tool`, and with it `rmcp` (issue 325). See [TOOLS.md](TOOLS.md#mcp-servers).
 *   **`caelumora-a2a`** - external agents reached over the Agent2Agent protocol, a plugin that
@@ -61,35 +65,37 @@ is built: its component kinds, the store of its kind, which the configured backe
 kind, its manager as a service of the runtime, which its components, its views and its routes reach,
 the members of a scope, and its sections of the configuration and of the seed. On the REST side,
 `RestPlugin` adds its routes, served behind the same login as the core's. A plugin's views are an
-extension trait on the runtime's `Views`, built from what they open. Which plugins are in is the
-program's choice: `caelumora-app` and `caelumora-tui` each list theirs, and name the defaults the
-core leaves open - the model; the core knows none. A plugin is one crate, cut into layers by Cargo
-features rather than crates. The first is `caelumora-skills`
-([SKILLS.md](SKILLS.md#where-the-code-lives)); `caelumora-mcp` ([TOOLS.md](TOOLS.md#mcp-servers)),
-`caelumora-a2a` and `caelumora-ollama` are ones that bring a component kind alone,
-`caelumora-open-terminal` one that brings backends alone.
-Where the core calls a plugin, the plugin answers in the core's error types, not in its own: the
-core decides by the types it knows what a person is told of an error.
+extension trait on the runtime's `Views`, built from what they open, and what a channel's view lists
+of its kind one on `ChannelView`. A service of its own may be served by backends, which it makes
+from its section as the core makes its own. Which plugins are in is the program's choice:
+`caelumora-app` and `caelumora-tui` each list theirs, and name the defaults the core leaves open -
+the model; the core knows none. A plugin is one crate, cut into layers by Cargo features rather than
+crates. The first is `caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)), the second
+`caelumora-artifacts`, which depends on the core's workspaces; `caelumora-mcp`
+([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a` and `caelumora-ollama` are ones that bring a
+component kind alone, `caelumora-open-terminal` one that brings backends alone. Where the core calls
+a plugin, the plugin answers in the core's error types, not in its own: the core decides by the
+types it knows what a person is told of an error.
 
 Details: [PLUGINS.md](PLUGINS.md).
 
 ## Backends
 
 Some services of the core are served by one of a choice of **backends**, named in the configuration
-by their `type` (issue 324): the storages of workspaces (`TerminalProvider`) and of artifacts
-(`ArtifactStorage`), the secret providers (`SecretProvider`) and the user providers
-(`UserProvider`). A backend is made by the factory registered under its type for its service, in
-`Backends` (`caelumora_runtime::backend`), which reads its parameters and asks the services it is
-given for what it needs. The core registers its own (`Backends::built_in`); a plugin adds one by
-registering its factory in `Plugin::backends`, which is asked before anything is made - so a new
-storage or provider is a crate linked into the program, and no edit of the core, as the Open
-Terminal storages of `caelumora-open-terminal` are (issue 327). The backends are
-made once, when the runtime is built (`RuntimeBuilder::from_config`): the secret providers first,
-then the storages and the user providers with the secrets and the records of the users at hand.
-A plugin's service may be served by backends too: the plugin makes them from its section while it
-registers (`RuntimeBuilder::make_named`), and another crate may register one for it (issue 328).
-Unlike a component, a backend serves the whole process and lives in no container, which is why it
-is no component.
+by their `type` (issue 324): the storages of workspaces (`TerminalProvider`), the secret providers
+(`SecretProvider`) and the user providers (`UserProvider`). A backend is made by the factory
+registered under its type for its service, in `Backends` (`caelumora_runtime::backend`), which reads
+its parameters and asks the services it is given for what it needs. The core registers its own
+(`Backends::built_in`); a plugin adds one by registering its factory in `Plugin::backends`, which is
+asked before anything is made - so a new storage or provider is a crate linked into the program, and
+no edit of the core, as the Open Terminal storages of `caelumora-open-terminal` are (issue 327). The
+backends are made once, when the runtime is built (`RuntimeBuilder::from_config`): the secret
+providers first, then the storages and the user providers with the secrets and the records of the
+users at hand. A plugin's service may be served by backends too - the storages of artifacts
+(`ArtifactStorage`) -: the plugin makes them from its section while it registers
+(`RuntimeBuilder::make_named`), and another crate may register one for it (issue 328). Unlike a
+component, a backend serves the whole process and lives in no container, which is why it is no
+component.
 
 The persistence is not among them: its stores open a store for any kind, generic over the kind, so
 it stays a closed choice of the core (`PersistenceBackend`, see [STORAGE.md](STORAGE.md)).
@@ -126,9 +132,10 @@ for, made if there is none - and stores and starts the session
 A session may have a **workspace** attached: a tree of files that belongs to a user, with one
 classification, used by the members of those channels of the session where it and the channel flow
 both ways. Its files lie in a configured storage and are reached through a `Terminal`. What an agent
-hands over to keep it publishes as an **artifact**: a fixed copy of a file, in a version of an
-artifact that belongs to a user, kept in an artifact storage beyond the workspace and downloaded
-where it was published. Details: [WORKSPACE.md](WORKSPACE.md).
+hands over to keep it publishes as an **artifact** (the plugin `caelumora-artifacts`): a fixed copy
+of a file, in a version of an artifact that belongs to a user, kept in an artifact storage beyond
+the workspace and downloaded where it was published. Details: [WORKSPACE.md](WORKSPACE.md),
+[TOOLS.md](TOOLS.md#artifacts).
 
 Sessions and channels hold their users and agents by reference - `Participant::User(UserId)`,
 `Participant::Agent(AgentId)` - not as copies. The records live in the `EntityStore`; a channel

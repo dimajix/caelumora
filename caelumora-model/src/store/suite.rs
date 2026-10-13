@@ -22,7 +22,6 @@ use crate::removal::{Deletable, Removal, Stored};
 use crate::user::{User, UserId, UserProfile};
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::group::{Group, GroupId};
-use crate::artifact::{Artifact, ArtifactId};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -185,20 +184,6 @@ fn workspace_named(name: ScopedName) -> Workspace {
         _ => UserId::new(),
     };
     Workspace::new(name, "main", Classification::CHANNEL_DEFAULT, owner)
-}
-
-fn artifact(owner: UserId) -> Artifact {
-    artifact_named(ScopedName::new("report.csv", Scope::UserScope { user_id: owner }).unwrap())
-}
-
-/// An artifact of `name`, owned by the user whose scope it lies in, else by
-/// another.
-fn artifact_named(name: ScopedName) -> Artifact {
-    let owner = match name.scope {
-        Scope::UserScope { user_id } => user_id,
-        _ => UserId::new(),
-    };
-    Artifact::new(ArtifactId::new(), name, "files", Classification::CHANNEL_DEFAULT, owner, crate::artifact::tests::version(b"a,b", SessionId::new()))
 }
 
 define_id!(FolderId);
@@ -470,8 +455,6 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
         create, get, update, delete, list);
     lifecycle!(stores.workspaces.as_ref(), workspace(UserId::new()), |v: &Workspace| v.id, name.name, "workspace",
         create, get, update, delete, list);
-    lifecycle!(stores.artifacts.as_ref(), artifact(UserId::new()), |v: &Artifact| v.id, name.name, "artifact",
-        create, get, update, delete, list);
     lifecycle!(stores.groups.as_ref(), group(UserId::new()), |v: &Group| v.id, name.name, "group",
         create, get, update, delete, list);
 
@@ -511,11 +494,6 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
         create, delete, find_by_name);
     let stray = stores.groups.create(&ctx, &Group { name: ScopedName::new("participants", Scope::SessionScope { session_id: SessionId::new() }).unwrap(), ..group(UserId::new()) }).await;
     assert!(matches!(stray, Err(StoreError::Validation(_))), "group: one in a session's scope that is not its participants is not stored, got {stray:?}");
-
-    found_by_name!(stores.artifacts.as_ref(), artifact_named, "artifact",
-        create, delete, find_by_name);
-    let versionless = stores.artifacts.create(&ctx, &Artifact { versions: vec![], ..artifact(UserId::new()) }).await;
-    assert!(matches!(versionless, Err(StoreError::Validation(_))), "artifact: one without a version is not stored, got {versionless:?}");
 }
 
 /// Of one kind, a name is unique in its name space (issue 250): creating,
@@ -578,10 +556,6 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
     unique_by_name!(stores.workspaces.as_ref(), |name| Workspace { name: in_scope(name, &global), id: WorkspaceId::new(), ..workspace(alice) },
         elsewhere: |name| Workspace { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: WorkspaceId::new(), ..workspace(bob) },
         rename: |value: Workspace, name| Workspace { name: in_scope(name, &value.name.scope), ..value }, "workspace",
-        create, update, delete, restore);
-    unique_by_name!(stores.artifacts.as_ref(), |name| Artifact { name: in_scope(name, &global), id: ArtifactId::new(), ..artifact(alice) },
-        elsewhere: |name| Artifact { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: ArtifactId::new(), ..artifact(bob) },
-        rename: |value: Artifact, name| Artifact { name: in_scope(name, &value.name.scope), ..value }, "artifact",
         create, update, delete, restore);
     unique_by_name!(stores.groups.as_ref(), |name| Group { name: in_scope(name, &global), id: GroupId::new(), ..group(alice) },
         elsewhere: |name| Group { name: in_scope(name, &Scope::UserScope { user_id: bob }), id: GroupId::new(), ..group(bob) },

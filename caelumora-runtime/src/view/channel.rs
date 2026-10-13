@@ -1,7 +1,5 @@
 //! A channel as its viewer reached it, and its members.
 
-use caelumora_model::artifact::ArtifactField;
-use caelumora_model::store::query::{Filter, Query};
 use super::member::{member_state, AgentMember, MemberState};
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
 use crate::channel::{visible_part, ChannelLoop, VisibleHistory};
@@ -76,38 +74,6 @@ impl ChannelView {
         let usable = self.views().workspace_manager().usable_in(self.views().context(), self.session.as_session(), &self.channel).await
             .map_err(|e| ViewError::failed(e, "reading the session's workspace"))?;
         Ok(usable.map(|workspace| WorkspaceView::of(self.views().clone(), workspace)))
-    }
-
-    /// The artifacts with a version published in this channel that the
-    /// viewer may read, each with those versions alone that they may read
-    /// as well (issues 271, 23, 316), if they read the channel as a whole;
-    /// none otherwise. Their content is
-    /// reached by the artifact, never through the channel.
-    ///
-    /// # Errors
-    /// What the artifacts' manager reports.
-    pub async fn artifacts(&self) -> ViewResult<Vec<super::ArtifactView>> {
-        if self.readable != ChannelReading::Whole {
-            return Ok(Vec::new());
-        }
-        let failed = |e| ViewError::failed(e, "listing the artifacts");
-        let (session, channel) = (self.session.id(), self.channel.id);
-        // Those with a version published here, which the store is asked for
-        // alone (issue 293).
-        let here = Filter::And(vec![
-            Filter::eq(ArtifactField::VersionSession, session),
-            Filter::eq(ArtifactField::VersionChannel, channel),
-        ]);
-        let all = self.views().stores().artifacts.list(self.views().context(), &Query::filtered(Filter::any(ArtifactField::Versions, here))).await.map_err(failed)?.items;
-        let mut published = Vec::new();
-        for mut artifact in all {
-            artifact.versions.retain(|version| version.session_id == session && version.channel_id == channel);
-            let view = self.views().readable_artifact(artifact).await;
-            if !view.artifact().versions.is_empty() {
-                published.push(view);
-            }
-        }
-        Ok(published)
     }
 
     pub fn id(&self) -> ChannelId {

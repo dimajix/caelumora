@@ -33,7 +33,6 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, Grant, SecurityAttributes, SecurityContext, Subject};
-use caelumora_model::snapshot::{Detail, PublicationSnapshot};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::{ComponentStore, StateStore, StoreError};
 use caelumora_model::template::{ScopeTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
@@ -42,15 +41,13 @@ use caelumora_model::work::TurnId;
 use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, PRECONFIGURED_REF_KIND};
 use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
-use caelumora_runtime::testing::{asked_for, attributes, denied, not_found, quiet, register_once, shown, Once, World, STAFF};
+use caelumora_runtime::testing::{asked_as_a_call_on_the_workspace, asked_for, attributes, calling, denied, not_found, quiet, register_once, shown, Once, World, ONCE_MODEL_KIND, STAFF};
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
 use caelumora_runtime::terminal::{ByteStream, Terminal, TerminalError, WorkspacePath};
 use caelumora_runtime::view::{ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
-use caelumora_runtime::artifact::ArtifactError;
 use caelumora_runtime::group::GroupError;
 use caelumora_model::workspace::{CommandStatus, WorkspaceChoice, WorkspaceId};
-use caelumora_model::artifact::Artifact;
 use caelumora_model::removal::Stored;
 
 // --- Personalities and agents ---------------------------------------------
@@ -1764,6 +1761,27 @@ async fn deleting_a_session_needs_owning_it() {
     assert!(world.runtime.entity_stores().agents.get(&World::system(), bobs.id).await.is_err(), "deleted before the session, bob's agent stays deleted");
 }
 
+/// Issue 320: what went with a session comes back with it in the name of
+/// whoever restores it, as far as they may; the session comes back all the
+/// same, and what they may not restore - an agent of bob's in its scope -
+/// stays deleted for its owner to restore.
+#[tokio::test]
+async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it_may() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let alice = World::as_user(world.alice);
+    let personality = world.personality("plain", None, &[]).await;
+    let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), &personality, ActorId::User(world.bob));
+    world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
+    world.manager.delete_session(&World::system(), session.id()).await.expect("the system's to delete, all of it");
+
+    let (restored, asked) = world.asked(world.manager.restore_session(&alice, session.id())).await;
+    restored.expect("restored all the same");
+    assert!(asked.contains(&"alice: ReadDeletedAgent(bob's) no".to_string()), "asked in her name: {asked:?}");
+    assert!(world.runtime.entity_stores().agents.get_deleted(&World::system(), bobs.id).await.is_ok(), "bob's agent stays deleted: not hers to restore");
+    world.runtime.agent_manager().restore(&World::as_user(world.bob), bobs.id).await.expect("bob restores his");
+}
+
 /// Creating a channel: the classification it is given, creating it - as
 /// its session's owner -, then everyone's clearance for it (issue 312), and
 /// the store creating it again and changing the session that lists it.
@@ -2074,16 +2092,6 @@ async fn read(terminal: &dyn Terminal, path: &str) -> String {
     let (_, content) = terminal.read(&WorkspacePath::parse(path).unwrap()).await.unwrap();
     let chunks: Vec<_> = content.collect().await;
     String::from_utf8(chunks.into_iter().flat_map(|chunk| chunk.unwrap().to_vec()).collect()).unwrap()
-}
-
-/// Publishes the file `at` of the workspace of channel `channel` as a
-/// version of the artifact `name`, in `ctx`'s name, as `artifact_tool` does
-/// (issue 296): the workspace reached there for reading, the file read, and
-/// what was read handed to the `ArtifactManager`.
-async fn publish(world: &World, ctx: &SecurityContext, session: SessionId, channel: ChannelId, at: &WorkspacePath, name: &str, description: Option<&str>) -> Result<(caelumora_model::artifact::Artifact, u32), ArtifactError> {
-    let (workspace, terminal) = world.runtime.workspace_manager().terminal_in(ctx, session, channel, Grant::Read).await.expect("the workspace, to read");
-    let content = terminal.read(at).await.expect("the file");
-    world.runtime.artifact_manager().publish(ctx, content, &workspace.classification, name, description, session, channel).await
 }
 
 /// A workspace is its owner's alone (issue 251, decision 12): made by a
@@ -2507,54 +2515,6 @@ async fn the_group_of_a_channels_participants_follows_who_takes_part() {
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// G4 (issue 308): an artifact shared with a team is among the artifacts
-/// of its members while they are members - with its versions where it was
-/// shared with them, without where it was not, since reading a version
-/// needs its own list besides the artifact's (issue 316). What was
-/// published in a channel is shared with the channel's participants and
-/// stays found through it, not among theirs.
-#[tokio::test]
-async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
-    let world = World::new().await;
-    let (alice, bob, carol) = (World::as_user(world.alice), World::as_user(world.bob), World::as_user(world.carol));
-    let groups = world.runtime.group_manager();
-    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
-    let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.expect("hers to use");
-    let at = WorkspacePath::parse("report.md").unwrap();
-    terminal.write(&at, file("final"), 100).await.unwrap();
-    let (whole, _) = publish(&world, &alice, session_id, main, &at, "report.md", None).await.expect("one to share with its versions");
-    let (alone, _) = publish(&world, &alice, session_id, main, &at, "notes.md", None).await.expect("one to share without them");
-    let listed = |ctx: &SecurityContext| {
-        let views = world.manager.views(Viewer::new(ctx.clone()));
-        async move {
-            let mut ids = views.artifacts().await.unwrap().iter().map(|a| a.artifact().id).collect::<Vec<_>>();
-            ids.sort_by_key(|id| id.to_string());
-            ids
-        }
-    };
-    assert!(listed(&bob).await.is_empty(), "the participants of the channel are not named");
-
-    let project = groups.create(&alice, "project", Scope::UserScope { user_id: world.alice }).await.unwrap();
-    groups.set_members(&alice, project.id, vec![world.carol]).await.unwrap();
-    let the_team = AclEntry { subject: Subject::Group(project.id), grant: Grant::Read };
-    let with_the_team = |artifact: &Artifact| [artifact.security_attributes.acl.clone(), vec![the_team]].concat();
-    world.runtime.artifact_manager().set_access(&alice, whole.id, with_the_team(&whole), true).await.expect("shared with the team, with its versions");
-    world.runtime.artifact_manager().set_access(&alice, alone.id, with_the_team(&alone), false).await.expect("shared with the team alone");
-
-    let mut both = vec![whole.id, alone.id];
-    both.sort_by_key(|id| id.to_string());
-    assert_eq!(listed(&carol).await, both, "a member finds both among hers");
-    assert_eq!(read_version(&world, &carol, whole.id, 1).await, Read::Content(5, "final".to_string()), "and reads the version of the one shared with its versions");
-    assert_eq!(read_version(&world, &carol, alone.id, 1).await, Read::NoVersion, "not that of the other, whose own list does not name the team");
-    assert!(listed(&bob).await.is_empty(), "who is not in the team does not");
-    groups.set_members(&alice, project.id, Vec::new()).await.unwrap();
-    assert!(listed(&carol).await.is_empty(), "who left it no longer does");
-    world.manager.stop_session(&alice, session_id).await.unwrap();
-}
-
 /// Who takes part in the session but not in the channel does not use the
 /// channel's workspace there - an agent of alice's waiting in the session,
 /// say.
@@ -2574,193 +2534,6 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
     world.manager.stop_session(&alice, session.id()).await.unwrap();
 }
 
-/// The content of an artifact's version, as text.
-async fn kept(content: caelumora_runtime::terminal::ByteStream) -> String {
-    let chunks: Vec<_> = content.collect().await;
-    String::from_utf8(chunks.into_iter().flat_map(|chunk| chunk.unwrap().to_vec()).collect()).unwrap()
-}
-
-/// How reading version `number` of artifact `id` in `ctx`'s name went, as a
-/// frontend reads it - through the views (issue 292): its size and text, the
-/// artifact not being there for them, or the version not.
-#[derive(Debug, PartialEq)]
-enum Read {
-    Content(u64, String),
-    NoArtifact,
-    NoVersion,
-}
-
-async fn read_version(world: &World, ctx: &SecurityContext, id: caelumora_model::artifact::ArtifactId, number: u32) -> Read {
-    let artifact = match world.manager.views(Viewer::new(ctx.clone())).artifact(id).await {
-        Ok(artifact) => artifact,
-        Err(ViewError::ArtifactNotFound(_)) => return Read::NoArtifact,
-        Err(e) => panic!("{e}"),
-    };
-    match artifact.content(number).await {
-        Ok((size, content)) => Read::Content(size, kept(content).await),
-        Err(ArtifactError::VersionNotFound { .. }) => Read::NoVersion,
-        Err(e) => panic!("{e}"),
-    }
-}
-
-/// An artifact (issue 271) is published from the workspace of a channel,
-/// in the name of whoever publishes - its owner, who makes it
-/// (`CreateArtifact`), or whom its list lets add a version
-/// (`WriteArtifact`, issue 23) -, into the session's scope. Its owner reads
-/// every version; a version is read by the members of the channel it was
-/// published in, by the artifact, wherever they act; only its owner shares
-/// and keeps it beyond the session, and what is not kept goes with the
-/// session, its content too.
-#[tokio::test]
-async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who_reads_the_channel() {
-    let world = World::new().await;
-    let artifacts = world.runtime.artifact_manager();
-    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
-    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
-    let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    let (session_id, main) = (session.id(), session.channels()[0].id());
-    let in_main = |ctx: &SecurityContext| {
-        let views = world.manager.views(Viewer::new(ctx.clone()));
-        async move { views.session(session_id).await.unwrap().channel(main).await.unwrap() }
-    };
-    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.expect("hers to use");
-    let at = WorkspacePath::parse("out/report.csv").unwrap();
-    terminal.write(&at, file("a,b"), 100).await.unwrap();
-
-    let (published, asked) = world.asked(publish(&world, &alice, session_id, main, &at, "report.csv", Some("The figures"))).await;
-    let (artifact, first) = published.expect("published");
-    assert_eq!((first, &artifact.name.scope, artifact.owner()), (1, &Scope::SessionScope { session_id }, Some(world.alice)));
-    assert!(asked.contains(&"alice: CreateArtifact(alice's) yes".to_string()), "made in her name: {asked:?}");
-    terminal.write(&at, file("a,b\n1,2"), 100).await.unwrap();
-    let (published, asked) = world.asked(publish(&world, &alice, session_id, main, &at, "report.csv", None)).await;
-    assert_eq!(published.expect("a second version").1, 2);
-    assert!(asked.contains(&"alice: WriteArtifact(alice's) yes".to_string()), "added to as hers: {asked:?}");
-
-    assert_eq!(read_version(&world, &alice, artifact.id, 1).await, Read::Content(3, "a,b".to_string()), "its owner reads every version, as it was then");
-    let elsewhere = SecurityContext::new(ActorId::User(world.bob), SessionId::new(), ChannelId::new()).with_roles(vec![*STAFF], None);
-    assert_eq!(read_version(&world, &elsewhere, artifact.id, 2).await, Read::Content(7, "a,b\n1,2".to_string()), "a member of the channel reads what was published there, wherever he acts");
-    assert_eq!(read_version(&world, &bob, artifact.id, 3).await, Read::NoVersion);
-    assert_eq!(read_version(&world, &World::as_user(world.carol), artifact.id, 1).await, Read::NoArtifact, "nobody else, who learns nothing");
-    let (found, asked) = world.asked(world.runtime.entity_stores().artifacts.get(&bob, artifact.id)).await;
-    assert!(found.is_ok(), "the store finds it in his name, by its list, which publishing gave the channel's members (issue 316)");
-    assert_eq!(asked.first().map(String::as_str), Some("bob: GetArtifact(alice's) yes"), "asked in his name: {asked:?}");
-    assert!(world.runtime.entity_stores().artifacts.get(&World::as_user(world.carol), artifact.id).await.is_err(), "not in carol's");
-
-    assert!(in_main(&bob).await.workspace().await.unwrap().is_some(), "bob uses it too");
-    let refused = publish(&world, &bob, session_id, main, &at, "report.csv", None).await;
-    assert!(matches!(refused, Err(ArtifactError::Store(StoreError::PermissionDenied(_)))), "nor adds to alice's artifact of that name: {refused:?}");
-    let listed = |ctx: &SecurityContext| {
-        let views = world.manager.views(Viewer::new(ctx.clone()));
-        async move { views.artifacts().await.unwrap().iter().map(|a| a.artifact().id).collect::<Vec<_>>() }
-    };
-    let in_channel = in_main(&bob).await.artifacts().await.unwrap().iter().map(|a| a.artifact().id).collect::<Vec<_>>();
-    assert_eq!(in_channel, [artifact.id], "a member finds what was published in the channel there");
-    assert!(listed(&bob).await.is_empty(), "not among his own (issue 293): it was shared with the channel, not with him");
-    assert_eq!(listed(&alice).await, [artifact.id], "among its owner's");
-    let writers = SecurityAttributes { owner_id: ActorId::User(world.alice), acl: artifact.security_attributes.acl.clone() }.granting(Subject::Actor(ActorId::User(world.bob)), Grant::Write).acl;
-    let refused = artifacts.set_access(&bob, artifact.id, writers.clone(), true).await;
-    assert!(matches!(refused, Err(ArtifactError::Store(StoreError::PermissionDenied(_)))), "nor shares it - refused, since he reads it (issue 316): {refused:?}");
-    artifacts.set_access(&alice, artifact.id, writers, true).await.expect("its owner shares it");
-    assert_eq!(listed(&bob).await, [artifact.id], "shared with him by name, it is among his");
-    let (added, third) = publish(&world, &bob, session_id, main, &at, "report.csv", None).await.expect("whom it is shared with to write adds a version");
-    assert_eq!((third, added.owner()), (3, Some(world.alice)), "hers still");
-    assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::UserScope { user_id: world.bob }).await, Err(ArtifactError::InvalidScope)), "not in his scope, whose it is not");
-    assert!(matches!(artifacts.keep(&bob, artifact.id, Scope::GlobalScope).await, Err(ArtifactError::Store(StoreError::PermissionDenied(_)))), "nor keeps it at all");
-    let kept_one = artifacts.keep(&alice, artifact.id, Scope::UserScope { user_id: world.alice }).await.expect("its owner keeps it");
-    assert_eq!(kept_one.name.scope, Scope::UserScope { user_id: world.alice });
-    let (left, _) = publish(&world, &alice, session_id, main, &at, "draft.csv", None).await.unwrap();
-
-    world.manager.stop_session(&alice, session_id).await.unwrap();
-    world.manager.delete_session(&alice, session_id).await.unwrap();
-    world.manager.purge_session(&World::system(), session_id).await.unwrap();
-    assert!(world.runtime.entity_stores().artifacts.get(&alice, artifact.id).await.is_ok(), "what was kept stays");
-    assert!(world.files.path().join("artifacts").join(artifact.id.to_string()).is_dir(), "with its content");
-    assert!(world.runtime.entity_stores().artifacts.get_deleted(&World::system(), left.id).await.is_err(), "what was not kept went with the session");
-    assert!(!world.files.path().join("artifacts").join(left.id.to_string()).exists(), "its content too");
-}
-
-/// A session of alice's with her workspace attached for writing and a file
-/// in it, and an artifact published from it in its channel "main" by each
-/// of alice and bob - each his publisher's (issue 271), in the session's
-/// scope.
-async fn session_with_artifacts(world: &World) -> (Arc<SessionLoop>, caelumora_model::artifact::Artifact, caelumora_model::artifact::Artifact) {
-    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
-    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
-    let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.unwrap();
-    let at = WorkspacePath::parse("out/report.csv").unwrap();
-    terminal.write(&at, file("a,b"), 100).await.unwrap();
-    let (hers, _) = publish(world, &alice, session_id, main, &at, "hers.csv", None).await.unwrap();
-    let (his, _) = publish(world, &bob, session_id, main, &at, "his.csv", None).await.unwrap();
-    assert_eq!((hers.owner(), his.owner()), (Some(world.alice), Some(world.bob)));
-    (session, hers, his)
-}
-
-/// Issue 320: what lies in a session's scope goes with it in the name of
-/// whoever deletes it, as far as they may. An artifact another participant
-/// published in the session is his: deleting the session deletes hers, in
-/// her name, and keeps the session, telling her what is left - until he
-/// keeps his elsewhere.
-#[tokio::test]
-async fn a_session_goes_with_what_lies_in_it_only_as_far_as_whoever_deletes_it_may() {
-    let world = World::new().await;
-    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
-    let (session, hers, his) = session_with_artifacts(&world).await;
-    let session_id = session.id();
-
-    let (refused, asked) = world.asked(world.manager.delete_session(&alice, session_id)).await;
-    let refused = refused.expect_err("bob's artifact is left");
-    assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty { left, .. }) if *left == [(Artifact::KIND, 1)]), "{refused}");
-    assert!(refused.to_string().contains("1 artifact") && !refused.to_string().contains("his.csv"), "what is left, by kind, not by name: {refused}");
-    let (session_checks, artifact_checks) = asked.split_at(4.min(asked.len()));
-    assert_eq!(session_checks, checks(&[
-        "alice: GetSession(alice's) yes",
-        "alice: DeleteSession(alice's) yes",
-        "alice: GetSession(alice's) yes",
-        "alice: DeleteSession(alice's) yes",
-    ]), "asked in her name");
-    // The artifacts in the order the store lists them, which is by id: each
-    // read, her clearance for it (issue 322), and deleted - bob's read by
-    // the list of its version published in the channel, which she reads
-    // (issue 316), but not hers to delete.
-    let his_checks = checks(&["alice: GetArtifact(bob's) yes", "alice: JoinChannel(alice) yes", "alice: DeleteArtifact(bob's) no"]);
-    let her_checks = checks(&["alice: GetArtifact(alice's) yes", "alice: JoinChannel(alice) yes", "alice: DeleteArtifact(alice's) yes"]);
-    assert!(artifact_checks == [his_checks.clone(), her_checks.clone()].concat() || artifact_checks == [her_checks, his_checks].concat(),
-        "asked in her name, who reads bob's but may not delete it: {artifact_checks:?}");
-    assert!(world.runtime.entity_stores().sessions.get(&alice, session_id).await.is_ok(), "the session is kept");
-    assert!(world.manager.views(Viewer::new(alice.clone())).session(session_id).await.is_ok(), "and runs on");
-    assert!(world.runtime.entity_stores().artifacts.get(&bob, his.id).await.is_ok(), "bob's artifact stays");
-    let removal = world.runtime.entity_stores().artifacts.get_deleted(&World::system(), hers.id).await.unwrap().deleted.expect("hers went");
-    assert_eq!(removal.by, ActorId::User(world.alice), "in her name");
-
-    world.runtime.artifact_manager().keep(&bob, his.id, Scope::UserScope { user_id: world.bob }).await.expect("bob keeps his");
-    assert!(world.manager.delete_session(&alice, session_id).await.expect("nothing of anybody else's is left"));
-    assert!(world.runtime.entity_stores().artifacts.get(&bob, his.id).await.is_ok(), "what bob kept stays");
-}
-
-/// Issue 320: what went with a session comes back with it in the name of
-/// whoever restores it, as far as they may; the session comes back all the
-/// same, and what they may not restore stays deleted for its owner to
-/// restore.
-#[tokio::test]
-async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it_may() {
-    let world = World::new().await;
-    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
-    let (session, hers, his) = session_with_artifacts(&world).await;
-    let session_id = session.id();
-    world.manager.delete_session(&World::system(), session_id).await.expect("the system's to delete, all of it");
-
-    let (restored, asked) = world.asked(world.manager.restore_session(&alice, session_id)).await;
-    restored.expect("restored all the same");
-    assert!(asked.contains(&"alice: ReadDeletedArtifact(bob's) no".to_string()), "asked in her name: {asked:?}");
-    assert!(world.runtime.entity_stores().artifacts.get(&alice, hers.id).await.is_ok(), "hers comes back with it");
-    assert!(world.runtime.entity_stores().artifacts.get_deleted(&World::system(), his.id).await.is_ok(), "bob's stays deleted: not hers to restore");
-    world.runtime.artifact_manager().restore(&bob, his.id).await.expect("bob restores his");
-}
-
 /// Waits until `events` has received each of `wanted`, in any order -
 /// compared as they are shown, since an event has no equality.
 async fn hears<const N: usize>(events: &mut caelumora_runtime::event::EventSubscription, wanted: [GlobalEvent; N]) {
@@ -2775,170 +2548,33 @@ async fn hears<const N: usize>(events: &mut caelumora_runtime::event::EventSubsc
     assert!(missing.is_empty(), "not heard: {missing:?}");
 }
 
-/// Issue 319: what is said of an artifact as a whole reaches whoever reads
-/// it, however it went or came back - here with its session, to a member of
-/// the channel a version was published in, whom publishing let read it
-/// (issue 316). And the groups of the participants, deleted
-/// and restored with the session, are announced as a team is.
+/// Issue 319: the groups of the participants of a session, deleted and
+/// restored with it, are announced as a team is - to bob, who belongs to
+/// them.
 #[tokio::test]
-async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_it() {
+async fn the_groups_of_a_session_go_and_come_back_with_it_announced() {
     let world = World::new().await;
     let alice = World::as_user(world.alice);
-    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.unwrap();
-    let at = WorkspacePath::parse("out/report.csv").unwrap();
-    terminal.write(&at, file("a,b"), 100).await.unwrap();
-    let (artifact, _) = publish(&world, &alice, session_id, main, &at, "report.csv", None).await.unwrap();
-    let id = artifact.id;
     let (of_session, of_channel) = (GroupId::of_session(session_id), GroupId::of_channel(main));
-    assert_eq!(artifact.security_attributes.acl, [AclEntry { subject: Subject::Group(of_channel), grant: Grant::Read }], "bob reads it as a member of the channel");
 
     let mut bobs = world.runtime.event_bus().subscribe_as(World::as_user(world.bob));
     world.manager.stop_session(&alice, session_id).await.unwrap();
     world.manager.delete_session(&alice, session_id).await.unwrap();
-    hears(&mut bobs, [GlobalEvent::deleted::<Artifact>(&id), GlobalEvent::deleted::<Group>(&of_session), GlobalEvent::deleted::<Group>(&of_channel)]).await;
+    hears(&mut bobs, [GlobalEvent::deleted::<Group>(&of_session), GlobalEvent::deleted::<Group>(&of_channel)]).await;
 
     world.manager.restore_session(&alice, session_id).await.unwrap();
-    hears(&mut bobs, [GlobalEvent::restored::<Artifact>(&id), GlobalEvent::restored::<Group>(&of_session), GlobalEvent::restored::<Group>(&of_channel)]).await;
-}
-
-/// Issues 23, 316: a version is read by the members of the channel it was
-/// published in, of those who read the artifact - publishing lets them read
-/// it -, so drafts published where alice works alone reach nobody who
-/// reads the version she published to the team, nor does what she said of
-/// them.
-#[tokio::test]
-async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
-    let world = World::new().await;
-    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
-    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
-    let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    let drafts = session.create_channel(&alice, ChannelSpec { name: "drafts".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.expect("hers alone").id();
-    let (session_id, main) = (session.id(), session.channels()[0].id());
-    let workspaces = world.runtime.workspace_manager();
-    let write_in = |channel, text| {
-        let alice = &alice;
-        async move {
-            let (_, terminal) = workspaces.terminal_in(alice, session_id, channel, Grant::Write).await.expect("hers to use");
-            terminal.write(&WorkspacePath::parse("report.md").unwrap(), file(text), 100).await.unwrap();
-        }
-    };
-    let at = WorkspacePath::parse("report.md").unwrap();
-    write_in(drafts, "rough").await;
-    let (artifact, _) = publish(&world, &alice, session_id, drafts, &at, "report.md", Some("Still wrong about Q3")).await.expect("a draft");
-    write_in(main, "final").await;
-    let (_, final_one) = publish(&world, &alice, session_id, main, &at, "report.md", Some("The report")).await.expect("the final one");
-    assert_eq!(final_one, 2);
-
-    let his = world.manager.views(Viewer::new(bob.clone())).artifact(artifact.id).await.expect("bob reads what reached the team").snapshot(Detail::PUBLICATIONS).await;
-    assert_eq!(his.artifact.versions.iter().map(|v| v.number).collect::<Vec<_>>(), [2], "the final one alone");
-    assert_eq!(his.artifact.versions[0].description.as_ref().map(|d| d.to_string()), Some("The report".to_string()));
-    assert!(his.artifact.description.is_none() && his.access.is_empty() && his.version_access.is_empty(), "nothing said of the draft, nor whom it reaches");
-    let where_published = |publication: &PublicationSnapshot| (publication.channel_name.clone(), publication.published_by.clone());
-    assert_eq!(his.publications.values().map(where_published).collect::<Vec<_>>(), [("main".to_string(), Some("alice".to_string()))], "where it was published and by whom, as a member of the channel");
-    assert_eq!(read_version(&world, &bob, artifact.id, 1).await, Read::NoVersion, "not the draft");
-    assert_eq!(read_version(&world, &bob, artifact.id, 2).await, Read::Content(5, "final".to_string()), "the final one");
-
-    let hers = world.manager.views(Viewer::new(alice.clone())).artifact(artifact.id).await.unwrap().snapshot(Detail::PUBLICATIONS).await;
-    assert_eq!(hers.artifact.versions.len(), 2, "its owner reads both");
-    let names: Vec<Option<String>> = hers.version_access.values().map(|access| access[0].name.clone()).collect();
-    assert_eq!(names, [Some("drafts".to_string()), Some("main".to_string())], "and sees where each reaches");
-    assert_eq!(hers.publications.values().map(|p| p.channel_name.clone()).collect::<Vec<_>>(), ["drafts", "main"], "and where each was published");
-
-    // Shared by name with carol, who takes part in neither channel: she
-    // reads both, and learns nothing of where they were published.
-    let carol = World::as_user(world.carol);
-    let shared = [hers.artifact.security_attributes.acl.clone(), vec![AclEntry { subject: Subject::Actor(ActorId::User(world.carol)), grant: Grant::Read }]].concat();
-    world.runtime.artifact_manager().set_access(&alice, artifact.id, shared, true).await.unwrap();
-    let theirs = world.manager.views(Viewer::new(carol.clone())).artifact(artifact.id).await.expect("shared with carol").snapshot(Detail::PUBLICATIONS).await;
-    assert_eq!(theirs.artifact.versions.len(), 2, "carol reads both");
-    assert!(theirs.publications.is_empty(), "but not where they were published, nor by whom");
-    world.manager.stop_session(&alice, session_id).await.unwrap();
+    hears(&mut bobs, [GlobalEvent::restored::<Group>(&of_session), GlobalEvent::restored::<Group>(&of_channel)]).await;
 }
 
 /// What is asked when the agent of `owner`, asked by bob, makes `call` in the
 /// session's workspace, where the files `present` lie already - one that
 /// leaves `made`, a file of the workspace.
 async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json::Value, present: &[&str], made: &str, owner: fn(&World) -> UserId) -> Vec<String> {
+    let world = World::with_kinds(|registry| register_once(registry, ONCE_MODEL_KIND, calling(function, arguments))).await;
     let kind = caelumora_runtime::tool::terminal_tool::TERMINAL_TOOL_KIND;
-    asked_for_a_call(kind, function, arguments, present, |_, place| place.join(made).is_file(), owner).await
-}
-
-/// What is asked when the agent of `owner`, with a component of `kind`,
-/// asked by bob, makes `call` in the session's workspace, where the files
-/// `present` lie already - until `done` says the call arrived, given where
-/// the storages keep their files and where the workspace's lie.
-async fn asked_for_a_call(kind: &str, function: &str, arguments: serde_json::Value, present: &[&str], done: impl Fn(&std::path::Path, &std::path::Path) -> bool, owner: fn(&World) -> UserId) -> Vec<String> {
-    use caelumora_model::message::{Message, MessageRole};
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
-
-    let call = Message {
-        role: MessageRole::Assistant,
-        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: function.to_string(), arguments, visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
-        ..Message::new(Classification::general(Confidentiality::Internal))
-    };
-    let model = Arc::new(Once(Mutex::new(Some(call))));
-    let world = World::with_kinds(|registry| registry.register(ComponentKind::new("once").provides::<dyn caelumora_runtime::llm::LLMClient>(), move |_, _| {
-        let mut facets = ComponentFacets::empty();
-        facets.insert::<dyn caelumora_runtime::llm::LLMClient>(Arc::<Once>::clone(&model));
-        Ok(facets)
-    })).await;
-    let working = Personality {
-        components: ComponentConfig { component_nodes: vec![
-            ComponentDescriptor::new("model", "once"),
-            ComponentDescriptor {
-                params: serde_json::json!({ "requires_approval": false }),
-                ..ComponentDescriptor::new("workspace", kind)
-            },
-        ] },
-        ..world.personality("working", None, &[]).await
-    };
-    world.runtime.entity_stores().personalities.update(&World::system(), &working).await.unwrap();
-    let helper = world.agent("helper", owner(&world), &working).await;
-    let alice = World::as_user(world.alice);
-    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
-    let session = world.shared_session(&[helper], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    let main = Arc::clone(&session.channels()[0]);
-
-    let place = world.files.path().join("shell").join(docs.id.to_string());
-    for file in present {
-        std::fs::create_dir_all(place.join(file).parent().unwrap()).unwrap();
-        std::fs::write(place.join(file), "present").unwrap();
-    }
-    let (_, asked) = world.asked(async {
-        main.user_actor(world.bob).unwrap().send_message("@helper do it".to_string(), None).await.expect("sent");
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while !done(world.files.path(), &place) {
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        }).await.expect("the call reached the workspace");
-    }).await;
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
-    asked
-}
-
-/// That `asked` asked for an agent's call on the workspace: all of it in
-/// one context (issue 255) - the call and the workspace with alice's
-/// rights, its owner's, asked by bob - and the workspace through the
-/// channel as the agent reads every other place, with its owner's
-/// clearance (issue 142): its terminal reached through the session, its
-/// access list asked (`GetWorkspace`, issue 23), its flow both ways, before
-/// anything is sent to the storage.
-fn asked_as_a_call_on_the_workspace(asked: &[String]) {
-    let calling: Vec<&String> = asked.iter().filter(|line| line.contains("CallTool")).collect();
-    assert!(!calling.is_empty() && calling.iter().all(|line| *line == "alice as helper, asked by bob: CallTool yes"), "the call as its owner, asked by bob: {asked:?}");
-    let agents: Vec<&String> = asked.iter().filter(|line| line.contains("as helper")).collect();
-    assert!(agents.iter().all(|line| line.starts_with("alice as helper, asked by bob:") && line.ends_with(" yes")), "one context for all the turn does: {asked:?}");
-    assert!(agents.contains(&&"alice as helper, asked by bob: GetSession(alice's) yes".to_string()), "its terminal through the session: {asked:?}");
-    let listed: Vec<&String> = agents.iter().copied().filter(|line| line.contains("Workspace")).collect();
-    assert!(listed.iter().any(|line| line.contains("GetWorkspace")), "its list asked: {asked:?}");
-    assert!(listed.iter().all(|line| line.ends_with("Workspace(alice's) yes")), "and only of the workspace attached: {asked:?}");
-    assert!(agents.iter().filter(|line| line.contains("Publish")).count() >= 4, "the flow both ways, for the workspace and its terminal: {asked:?}");
+    world.asked_for_a_call(kind, present, |_, place| place.join(made).is_file(), owner(&world)).await
 }
 
 /// An agent's command (issue 251).
@@ -2963,18 +2599,6 @@ async fn an_agents_file_tool_asks_what_a_command_asks() {
 async fn an_agents_move_of_a_file_asks_what_a_change_asks() {
     let asked = asked_for_a_call_on_the_workspace("move_file", serde_json::json!({ "from": "notes/a.md", "to": "archive/a.md" }), &["notes/a.md"], "archive/a.md", |world| world.alice).await;
     asked_as_a_call_on_the_workspace(&asked);
-}
-
-/// An agent's publication of an artifact (issue 271) asks what a call on
-/// the workspace asks, and makes the artifact its owner's - asked in the
-/// same context, `CreateArtifact` for alice.
-#[tokio::test]
-async fn an_agents_artifact_is_published_for_its_owner() {
-    let kind = caelumora_runtime::tool::artifact_tool::ARTIFACT_TOOL_KIND;
-    let kept = |files: &std::path::Path, _: &std::path::Path| std::fs::read_dir(files.join("artifacts")).is_ok_and(|mut entries| entries.next().is_some());
-    let asked = asked_for_a_call(kind, "publish_artifact", serde_json::json!({ "path": "notes/a.md" }), &["notes/a.md"], kept, |world| world.alice).await;
-    asked_as_a_call_on_the_workspace(&asked);
-    assert!(asked.contains(&"alice as helper, asked by bob: CreateArtifact(alice's) yes".to_string()), "its owner's: {asked:?}");
 }
 
 /// An agent reaches the workspace of a session its owner does not take

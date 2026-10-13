@@ -1,14 +1,14 @@
-//! Artifacts (issue 271): as their owner or a reader of a channel sees them, and how they are kept.
+//! The wire of artifacts (issue 271): as their owner or a reader of a
+//! channel sees them, and how they are kept.
 
-use crate::access::AccessEntry;
-use crate::scope::ScopeKind;
-use caelumora_model::snapshot;
+use crate::artifact::{ArtifactId, ArtifactSnapshot};
 use caelumora_model::actor::ActorId;
-use caelumora_model::artifact::ArtifactId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::Digest;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::value::text::Description;
+use caelumora_rest_api::access::AccessEntry;
+use caelumora_rest_api::scope::ScopeKind;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -69,8 +69,8 @@ pub struct ArtifactVersionResponse {
     pub access: Vec<AccessEntry>,
 }
 
-impl From<snapshot::ArtifactSnapshot> for ArtifactResponse {
-    fn from(view: snapshot::ArtifactSnapshot) -> Self {
+impl From<ArtifactSnapshot> for ArtifactResponse {
+    fn from(view: ArtifactSnapshot) -> Self {
         let artifact = view.artifact;
         let (scope, session_id) = ScopeKind::of(&artifact.name.scope);
         let (mut version_access, mut publications) = (view.version_access, view.publications);

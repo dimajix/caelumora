@@ -104,11 +104,11 @@ its handler's doc comment.
 | `GET /workspaces/{id}/files?path=`; `GET`, `PUT`, `DELETE /workspaces/{id}/files/{path}` | List a directory of a workspace, download, upload or delete a file |
 | `GET`, `POST /skills`; `GET`, `PATCH`, `DELETE /skills/{id}`; `PUT /skills/{id}/description`, `…/body`, `…/classification`; `POST /skills/{id}/restore`, `…/purge` | Skills, served by the plugin `caelumora-skills`: list without bodies, make, fetch with body, rename, delete, change, restore, purge |
 | `GET`, `POST /groups`; `GET`, `PATCH`, `DELETE /groups/{id}`; `PUT /groups/{id}/members`; `POST /groups/{id}/restore`, `…/purge` | Teams, and the groups of the participants of a session or channel the user reads: list, make, fetch, rename, delete, set a team's members, restore, purge |
-| `GET /artifacts`; `GET`, `DELETE /artifacts/{id}`; `PUT /artifacts/{id}/scope`, `…/description`, `…/access`; `POST /artifacts/{id}/restore`, `…/purge` | Artifacts: list the user's own and those shared with them, fetch, delete, keep beyond the session, describe, share, restore, purge |
-| `GET /artifacts/{id}/versions/{n}/content` | Download a version's content |
+| `GET /artifacts`; `GET`, `DELETE /artifacts/{id}`; `PUT /artifacts/{id}/scope`, `…/description`, `…/access`; `POST /artifacts/{id}/restore`, `…/purge` | Artifacts, served by the plugin `caelumora-artifacts`: list the user's own and those shared with them, fetch, delete, keep beyond the session, describe, share, restore, purge |
+| `GET /artifacts/{id}/versions/{n}/content` | Download a version's content (the plugin's) |
 | `GET`, `POST …/channels`; `GET`, `DELETE …/channels/{cid}`; `POST …/channels/{cid}/restore` | Channels: list, create, fetch (with its former members), delete, restore |
 | `PUT …/channels/{cid}/classification`, `…/language`, `…/description`, `…/uses-workspace`, `…/approval-rules` | Change a channel: reclassify it, its language, what it is for, whether it uses the session's workspace, what it restricts of tool calls |
-| `GET …/channels/{cid}/artifacts` | The artifacts with a version published in the channel |
+| `GET …/channels/{cid}/artifacts` | The artifacts with a version published in the channel (the plugin's) |
 | `POST …/channels/{cid}/commands/{command_id}/kill` | End a command of the workspace's shell started in the channel, with what it started |
 | `GET …/history`, `POST …/messages` | The channel's history as items; write a message |
 | `PUT`, `DELETE …/messages/{mid}`; `PUT …/messages/{mid}/classification`; `POST …/messages/{mid}/retry` | Modify or take back one's own message; reclassify a message; ask the agent that said it to answer again |

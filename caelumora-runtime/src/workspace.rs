@@ -766,7 +766,7 @@ pub(crate) mod testing {
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_model::channel::{Channel, Participant};
-    use caelumora_model::config::{ArtifactsConfig, BackendConfig, WorkspacesConfig};
+    use caelumora_model::config::{BackendConfig, WorkspacesConfig};
     use serde_json::json;
     use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
     use caelumora_model::scope::Scope;
@@ -788,8 +788,6 @@ pub(crate) mod testing {
     pub(crate) struct WithWorkspace {
         /// Where the storage keeps the workspace's files.
         pub(crate) files: tempfile::TempDir,
-        /// Where the storage of artifacts keeps their content (issue 271).
-        pub(crate) artifacts: tempfile::TempDir,
         pub(crate) session: Arc<SessionLoop>,
         pub(crate) agent: AgentId,
         /// What the agent acts in: for the workspace's owner.
@@ -821,9 +819,7 @@ pub(crate) mod testing {
         let internal = Classification::general(Confidentiality::Internal);
         let storage = BackendConfig::new("local", json!({ "root": files.path(), "shell": true, "destination": { "level": "internal" } }));
         let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
-        let artifacts = tempfile::tempdir().unwrap();
-        let kept = ArtifactsConfig { storage: [("kept".to_string(), BackendConfig::new("local", json!({ "root": artifacts.path() })))].into(), ..Default::default() };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig { workspaces, artifacts: kept, ..Default::default() }, test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig { workspaces, ..Default::default() }, test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
         let owner = UserId::new();
@@ -853,7 +849,7 @@ pub(crate) mod testing {
         store.entity_stores().channels.create(&system, &channel).await.unwrap();
         let session = SessionLoop::new(session, vec![channel], Arc::clone(&runtime)).await.unwrap();
         let context = SecurityContext::new(ActorId::User(owner), session_id, session.channels()[0].id()).next(ActorId::Agent(agent.id), ActorId::User(owner));
-        WithWorkspace { files, artifacts, session, agent: agent.id, context, workspace, runtime }
+        WithWorkspace { files, session, agent: agent.id, context, workspace, runtime }
     }
 }
 

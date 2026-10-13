@@ -21,6 +21,7 @@ use caelumora_runtime::llm::LLMClient;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
+use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_skills::plugin::SkillsPlugin;
 use clap::Parser;
 use std::path::PathBuf;
@@ -108,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
 /// The plugins of the program that serve routes (issue 323), which it
 /// builds its runtime and its API with.
 fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
-    vec![Box::new(SkillsPlugin)]
+    vec![Box::new(SkillsPlugin), Box::new(ArtifactsPlugin)]
 }
 
 /// The plugins of the program that bring no routes (issues 325, 327, 329),

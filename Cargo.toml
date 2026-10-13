@@ -11,6 +11,7 @@ members = [
     "caelumora-rest-client",
     "caelumora-rest-server",
     "caelumora-skills",
+    "caelumora-artifacts",
     "caelumora-mcp",
     "caelumora-a2a",
     "caelumora-open-terminal",

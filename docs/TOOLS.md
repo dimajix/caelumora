@@ -215,11 +215,11 @@ command lives and when the runtime ends it is in [WORKSPACE.md](WORKSPACE.md#com
 
 ### Artifacts
 
-`publish_artifact` (component `artifact_tool`) publishes a file of the session's workspace as a
-version of an artifact: a fixed copy, kept in an artifact storage beyond the workspace, downloaded
-at the message that published it. `publish_file` offers a link to a file as it is now; a model is
-told the difference in their descriptions - a link for a look now, an artifact for a result to be
-kept.
+`publish_artifact` (component `artifact_tool`, of the plugin `caelumora-artifacts`, issue 328)
+publishes a file of the session's workspace as a version of an artifact: a fixed copy, kept in an
+artifact storage beyond the workspace, downloaded at the message that published it. `publish_file`
+offers a link to a file as it is now; a model is told the difference in their descriptions - a link
+for a look now, an artifact for a result to be kept.
 
 The file is read from the workspace as the file tools read it and handed to the `ArtifactManager`.
 It publishes in the name of whoever the agent acts for: its owner, who makes the artifact

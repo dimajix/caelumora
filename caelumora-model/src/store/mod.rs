@@ -25,7 +25,6 @@ use crate::value::name::ScopedName;
 use crate::workspace::Workspace;
 use crate::group::Group;
 use crate::intern::intern;
-use crate::artifact::Artifact;
 use crate::store::json::JsonFileStore;
 use crate::store::memory::MemoryStore;
 use crate::store::query::{NoField, Page, Query};
@@ -215,7 +214,6 @@ pub trait EntityStoreFactory {
 #[derive(Debug, Clone)]
 pub struct EntityStores {
     pub workspaces: Arc<dyn EntityStore<Workspace>>,
-    pub artifacts: Arc<dyn EntityStore<Artifact>>,
     pub groups: Arc<dyn EntityStore<Group>>,
     pub session_templates: Arc<dyn EntityStore<SessionTemplate>>,
     pub user_profiles: Arc<dyn EntityStore<UserProfile>>,
@@ -234,7 +232,6 @@ impl EntityStores {
     pub fn open<F: EntityStoreFactory>(factory: &F) -> Result<Self, F::Error> {
         Ok(Self {
             workspaces: factory.entity_store()?,
-            artifacts: factory.entity_store()?,
             groups: factory.entity_store()?,
             session_templates: factory.entity_store()?,
             user_profiles: factory.entity_store()?,

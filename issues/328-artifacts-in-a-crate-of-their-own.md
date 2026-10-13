@@ -1,6 +1,6 @@
 # 328 — Artifacts are enumerated in the core and cannot leave it
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -108,4 +108,23 @@ Artifacts try seams that skills do not, and each of these needs a decision that 
   - Issues 335 and 338 are not part of this one: the web UI asks for a channel's artifacts when it
     shows them, and the `ArtifactManager` stays a member of the scope
     (`RuntimeBuilder::scope_member`) until 338 is decided.
-
+- **2026-10-13** — Step 1: the seams prepared in the core, without a change of behaviour - the
+  `ChannelView` opens its `views` and `reading`, `WRITE` is documented as the core's, `write_whole`
+  and `WriteFailure` are opened, a terminal's error becomes a `ToolError` by `From`, the
+  `RuntimeBuilder` keeps the backends and makes a plugin's (`make_named`), and the store's suite
+  asks for parts of a kind of its own (`Folder`).
+- **2026-10-13** — Step 2: artifacts moved into `caelumora-artifacts`, layered as
+  `caelumora-skills` is: the entity, `ArtifactSnapshot` and the wire types without features; the
+  `ArtifactManager` with `ArtifactsConfig` and `ArtifactStorage`, the storage `local`, the views
+  (`ArtifactViews` on `Views`, `ArtifactChannelViews` on `ChannelView`), the questions
+  (`ArtifactAccess`), `artifact_tool` and the plugin with `runtime`; the routes and the answers of
+  `ArtifactError` with `server`. The core names artifacts nowhere in its code. What the move asked
+  of the core besides step 1: `Views::subjects` - whom an entry of an access list may name the
+  viewer by, which the listing of artifacts asked of the private `teams` -, and opened
+  `Views::access_snapshots`, `group::require_nameable`, `scope::validate_users_own`,
+  `AccessEntry::of` and `routes::attachment_response`. `Detail::PUBLICATIONS` went: where its
+  versions were published is asked of an artifact's view (`snapshot_with_publications`). The world
+  of the security suite takes the sections of a plugin (`World::configured`), and an agent's call on
+  the workspace is made there (`World::asked_for_a_call`), so that the plugin's tests run it; the
+  tests that used artifacts as an example in the core - what a session leaves when it is restored,
+  the groups announced with it - take an agent and the groups alone. The REST API is unchanged.

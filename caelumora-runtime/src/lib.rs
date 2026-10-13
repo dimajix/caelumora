@@ -26,7 +26,6 @@ pub mod seed;
 pub mod view;
 pub mod terminal;
 pub mod workspace;
-pub mod artifact;
 pub mod group;
 mod template;
 pub mod scoped;

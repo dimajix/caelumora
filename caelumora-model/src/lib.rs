@@ -43,5 +43,4 @@ pub mod user_provider;
 pub mod snapshot;
 pub mod workspace;
 pub mod group;
-pub mod artifact;
 pub mod type_map;

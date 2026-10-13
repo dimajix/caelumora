@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::sync::Arc;
 use crate::agent::Agent;
-use crate::artifact::Artifact;
 use crate::channel::Channel;
 use crate::group::Group;
 use crate::session::Session;
@@ -43,9 +42,9 @@ pub enum ActionType<'a> {
     /// - a skill (issue 22, the plugin `caelumora-skills`): its name,
     ///   description and body; loading it into a turn is its verb `USE`,
     ///   apart from reading it.
-    /// - an artifact (issue 271): the artifact - its name, description and
-    ///   which versions it has -, or a version's content, asked with the
-    ///   version's own list (`Artifact::version_attributes`) besides the
+    /// - an artifact (issue 271, the plugin `caelumora-artifacts`): the
+    ///   artifact - its name, description and which versions it has -, or a
+    ///   version's content, asked with the version's own list besides the
     ///   artifact's: reading a version needs both (issue 316), as a file in
     ///   HDFS needs its directory. Adding a version is `WRITE`.
     /// - a group (issue 286): who belongs to it, granted to its owner and,
@@ -590,19 +589,6 @@ pub trait AccessQuestions {
     /// workspace is reached, as a channel is (issue 304).
     async fn may_read_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool;
 
-    /// Whether `context` may change an artifact with these attributes -
-    /// keep it in another scope, describe it, share it, delete it
-    /// (`UpdateArtifact`, issue 271).
-    async fn may_change_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool;
-
-    /// Whether `context` may read what has these attributes - an artifact,
-    /// or one of its versions (`GetArtifact`, issue 23).
-    async fn may_read_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool;
-
-    /// Whether `context` may add a version to an artifact with these
-    /// attributes (`WriteArtifact`, issue 23).
-    async fn may_write_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool;
-
     /// Whether `context` may see what the agent with `agent` attributes saw
     /// when it wrote a message (`ReadAgentContext`, issue 41).
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
@@ -678,18 +664,6 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_read_workspace(&self, context: &SecurityContext, workspace: &SecurityAttributes) -> bool {
         self.check(context, ActionType::get(Workspace::KIND, workspace)).await
-    }
-
-    async fn may_change_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::update(Artifact::KIND, artifact)).await
-    }
-
-    async fn may_read_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::get(Artifact::KIND, artifact)).await
-    }
-
-    async fn may_write_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
-        self.check(context, ActionType::custom(Artifact::KIND, &WRITE, artifact)).await
     }
 
     async fn may_read_agent_context(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {

@@ -36,7 +36,6 @@ use caelumora_model::confidentiality::ConfidentialityPolicy;
 use std::sync::{Arc, OnceLock, Weak};
 use crate::agent::manager::AgentManager;
 use crate::group::GroupManager;
-use crate::artifact::{ArtifactManager, ArtifactStorage};
 use crate::terminal::TerminalProvider;
 use crate::scoped::{ScopeMember, ScopedEntities, Unowned};
 use crate::workspace::WorkspaceManager;
@@ -65,8 +64,6 @@ pub struct RuntimeManager {
     agent_states: Arc<AgentStates>,
     /// The one owner of workspaces and their places (issue 253).
     workspaces: Arc<WorkspaceManager>,
-    /// The one owner of artifacts and their content (issue 271).
-    artifacts: Arc<ArtifactManager>,
     /// The one writer of teams (issue 286).
     groups: Arc<GroupManager>,
     /// The one owner of agents' lifecycle (issue 314).
@@ -330,7 +327,6 @@ pub struct RuntimeBuilder {
     controller_manager: Arc<ControllerManager>,
     agent_states: Arc<AgentStates>,
     workspaces: Arc<WorkspaceManager>,
-    artifacts: Arc<ArtifactManager>,
     groups: Arc<GroupManager>,
     agents: Arc<AgentManager>,
     scope_members: Vec<Arc<dyn ScopeMember>>,
@@ -365,9 +361,8 @@ impl RuntimeBuilder {
     /// the components that replace built-in defaults of facets of which an
     /// agent has one (`component_defaults`, issue 99), what the system
     /// restricts of tool calls (`approvals`, issue 13), the storages
-    /// workspaces are made in (`workspaces`, issue 253), those artifacts
-    /// are kept in (`artifacts`, issue 271), the user providers (`users`)
-    /// and the sections of the plugins. `component_registry` holds the
+    /// workspaces are made in (`workspaces`, issue 253), the user providers
+    /// (`users`) and the sections of the plugins. `component_registry` holds the
     /// component kinds agents and sessions are built from -
     /// `ComponentRegistry::built_in`, to which a test may add stand-ins,
     /// such as a model of its own (issue 130). `backends` makes the
@@ -377,7 +372,7 @@ impl RuntimeBuilder {
     ///
     /// # Errors
     /// If a store of the core's kinds cannot be opened, or a storage of
-    /// workspaces or artifacts or a user provider cannot be made.
+    /// workspaces or a user provider cannot be made.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         state_store: Arc<dyn StateStore>,
@@ -403,8 +398,6 @@ impl RuntimeBuilder {
             .with(Arc::clone(&entity_stores.users));
         let storages = backends.make_named::<dyn TerminalProvider>("storage of workspaces", &config.workspaces.storage, &backend_services)?;
         let workspaces = WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), Arc::clone(&controller_manager), storages, &config.workspaces)?;
-        let storages = backends.make_named::<dyn ArtifactStorage>("storage of artifacts", &config.artifacts.storage, &backend_services)?;
-        let artifacts = Arc::new(ArtifactManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), storages, &config.artifacts)?);
         // Users are recorded and their changes announced on the event bus
         // (issue 306).
         let user_providers = backends.make_chain::<dyn UserProvider>("user provider", &config.users.providers, &backend_services)?;
@@ -416,14 +409,12 @@ impl RuntimeBuilder {
             Arc::new(Unowned(Arc::clone(&entity_stores.session_templates))),
             Arc::<AgentManager>::clone(&agents),
             Arc::<WorkspaceManager>::clone(&workspaces),
-            Arc::<ArtifactManager>::clone(&artifacts),
         ];
         let services = Services::empty()
             .with(Arc::clone(&security_manager))
             .with(Arc::clone(&confidentiality))
             .with(Arc::clone(&secret_manager))
-            .with(Arc::clone(&workspaces))
-            .with(Arc::clone(&artifacts));
+            .with(Arc::clone(&workspaces));
         Ok(Self {
             backend,
             state_store,
@@ -440,7 +431,6 @@ impl RuntimeBuilder {
             controller_manager,
             agent_states,
             workspaces,
-            artifacts,
             groups,
             agents,
             scope_members,
@@ -618,7 +608,6 @@ impl RuntimeBuilder {
             approval_rules: self.approval_rules,
             agent_states: self.agent_states,
             workspaces: self.workspaces,
-            artifacts: self.artifacts,
             groups: self.groups,
             agents: self.agents,
             scoped,
@@ -722,10 +711,6 @@ impl RuntimeManager {
         &self.workspaces
     }
 
-    /// The one owner of artifacts and their content (issue 271).
-    pub fn artifact_manager(&self) -> &Arc<ArtifactManager> {
-        &self.artifacts
-    }
 
     /// The one writer of teams (issue 286).
     pub fn group_manager(&self) -> &Arc<GroupManager> {
@@ -806,7 +791,6 @@ mod tests {
         for (yaml, names) in [
             ("workspaces:\n  storage:\n    main:\n      type: nfs\n", ["the storage of workspaces 'main' (nfs)", "known are: local"]),
             ("workspaces:\n  storage:\n    dev:\n      type: local\n      root: x\n      max_run_secs: 0\n", ["'dev'", "max_run_secs"]),
-            ("artifacts:\n  storage:\n    kept:\n      type: local\n", ["the storage of artifacts 'kept' (local)", "root"]),
             ("users:\n  providers:\n    - type: accept_any\n      default_roles: [staff]\n", ["the user provider 1 (accept_any)", "staff"]),
             ("secrets:\n  providers:\n    - type: env\n    - type: vault\n", ["the secret provider 2 (vault)", "known are: env, file"]),
         ] {

@@ -11,17 +11,17 @@
 //! uses. Without an artifact storage configured, a call fails and says so. The result is
 //! classified as the artifact, which is classified as the workspace.
 
-use crate::agent::turn::Turn;
-use crate::artifact::{ArtifactError, ArtifactManager};
-use crate::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::terminal::WorkspacePath;
-use crate::tool::{arguments, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
-use crate::workspace::WorkspaceManager;
-use caelumora_model::security::Grant;
+use crate::manager::{ArtifactError, ArtifactManager};
 use async_trait::async_trait;
 use caelumora_model::question::Answers;
+use caelumora_model::security::Grant;
 use caelumora_model::store::StoreError;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_runtime::agent::turn::Turn;
+use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
+use caelumora_runtime::terminal::WorkspacePath;
+use caelumora_runtime::tool::{arguments, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_runtime::workspace::WorkspaceManager;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -65,14 +65,27 @@ struct Publish {
     description: Option<String>,
 }
 
+impl ArtifactTool {
+    /// The tool of a component configured with `params`, publishing a file
+    /// of the workspace `workspaces` reach through `artifacts`.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` for parameters it does not take.
+    pub fn new(params: &Value, workspaces: Arc<WorkspaceManager>, artifacts: Arc<ArtifactManager>) -> ComponentResult<Self> {
+        Ok(Self { config: config_of_params(params)?, workspaces, artifacts })
+    }
+}
+
 /// What publishing failed of, as the model is told it: what it can correct
 /// - a name, a file, a label - is a parameter; the storage failing is not.
-fn failed(error: ArtifactError) -> ToolError {
-    match error {
-        ArtifactError::Invalid(_) | ArtifactError::ClassifiedOtherwise(_) | ArtifactError::TooLarge { .. } | ArtifactError::Changed => ToolError::InvalidParameter(error.to_string()),
-        ArtifactError::Store(StoreError::NameTaken { .. }) => ToolError::InvalidParameter("an artifact of that name in this session is someone else's: publish under another name".to_string()),
-        ArtifactError::Store(StoreError::PermissionDenied(_)) => ToolError::PermissionDenied("publishing an artifact here".to_string()),
-        error => ToolError::ExecutionFailed(error.to_string()),
+impl From<ArtifactError> for ToolError {
+    fn from(error: ArtifactError) -> Self {
+        match error {
+            ArtifactError::Invalid(_) | ArtifactError::ClassifiedOtherwise(_) | ArtifactError::TooLarge { .. } | ArtifactError::Changed => ToolError::InvalidParameter(error.to_string()),
+            ArtifactError::Store(StoreError::NameTaken { .. }) => ToolError::InvalidParameter("an artifact of that name in this session is someone else's: publish under another name".to_string()),
+            ArtifactError::Store(StoreError::PermissionDenied(_)) => ToolError::PermissionDenied("publishing an artifact here".to_string()),
+            error => ToolError::ExecutionFailed(error.to_string()),
+        }
     }
 }
 
@@ -131,7 +144,7 @@ impl ToolProvider for ArtifactTool {
         let (workspace, terminal) = self.workspaces.terminal_in(ctx, session, channel, Grant::Read).await
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         let content = terminal.read(&at).await?;
-        let (artifact, number) = self.artifacts.publish(ctx, content, &workspace.classification, &name, description, session, channel).await.map_err(failed)?;
+        let (artifact, number) = self.artifacts.publish(ctx, content, &workspace.classification, &name, description, session, channel).await?;
         let version = artifact.version(number).ok_or_else(|| ToolError::ExecutionFailed(format!("version {number} of the artifact is missing")))?;
         let mut result = json!({
             "artifact": artifact.id,
@@ -153,67 +166,10 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(ARTIFACT_TOOL_KIND).provides::<dyn ToolProvider>().uses::<WorkspaceManager>().uses::<ArtifactManager>(),
         |descriptor, context| {
-            let config: ArtifactToolConfig = config_of_params(&descriptor.params)?;
             let (workspaces, artifacts) = (Arc::clone(context.service::<WorkspaceManager>()?), Arc::clone(context.service::<ArtifactManager>()?));
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactTool { config, workspaces, artifacts }));
+            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactTool::new(&descriptor.params, workspaces, artifacts)?));
             Ok(facets)
         },
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::workspace::testing::{session_with_workspace, WithWorkspace};
-    use caelumora_model::agent::AgentChannelState;
-
-    fn tool(world: &WithWorkspace, params: Value) -> ArtifactTool {
-        let (workspaces, artifacts) = (Arc::clone(world.runtime.workspace_manager()), Arc::clone(world.runtime.artifact_manager()));
-        ArtifactTool { config: serde_json::from_value(params).unwrap(), workspaces, artifacts }
-    }
-
-    #[tokio::test]
-    async fn a_file_is_published_as_versions_of_an_artifact_kept_apart_from_the_workspace() {
-        let world = session_with_workspace().await;
-        let mut state = AgentChannelState::default();
-        let mut turn = world.turn(&mut state);
-        let tool = tool(&world, json!({}));
-        std::fs::create_dir_all(world.dir().join("out")).unwrap();
-        std::fs::write(world.dir().join("out/report.csv"), "a,b").unwrap();
-
-        let first = tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out/report.csv", "description": "The figures" }), None, &mut turn).await.unwrap();
-        assert_eq!(first.classification.as_ref(), Some(&world.workspace.classification), "classified as the workspace");
-        let first = first.value;
-        assert_eq!((first["name"].as_str(), first["version"].as_u64(), first["size"].as_u64(), first["description"].as_str()), (Some("report.csv"), Some(1), Some(3), Some("The figures")));
-        assert_eq!(first["digest"], caelumora_model::digest::content(b"a,b").to_string());
-
-        std::fs::write(world.dir().join("out/report.csv"), "a,b\n1,2").unwrap();
-        let second = tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out/report.csv", "name": "report.csv" }), None, &mut turn).await.unwrap().value;
-        assert_eq!((second["artifact"].clone(), second["version"].as_u64()), (first["artifact"].clone(), Some(2)), "a version of the same artifact");
-        let kept = world.artifacts.path().join(first["artifact"].as_str().unwrap());
-        assert_eq!(std::fs::read_to_string(kept.join("1")).unwrap(), "a,b", "the first as it was");
-        assert_eq!(std::fs::read_to_string(kept.join("2")).unwrap(), "a,b\n1,2");
-        std::fs::remove_file(world.dir().join("out/report.csv")).unwrap();
-        assert!(kept.join("2").is_file(), "kept beyond the file");
-
-        let missing = tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out/report.csv" }), None, &mut turn).await;
-        assert!(matches!(missing, Err(ToolError::InvalidParameter(_))), "{missing:?}");
-        let directory = tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out" }), None, &mut turn).await;
-        assert!(matches!(directory, Err(ToolError::InvalidParameter(_))), "{directory:?}");
-        std::fs::write(world.dir().join("out/x.csv"), "x").unwrap();
-        let long = tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out/x.csv", "name": "x".repeat(101) }), None, &mut turn).await;
-        assert!(matches!(long, Err(ToolError::InvalidParameter(_))), "a name of at most 100 characters: {long:?}");
-    }
-
-    #[tokio::test]
-    async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
-        let world = session_with_workspace().await;
-        let asks = |mode: Value| tool(&world, json!({ "requires_approval": mode })).tools()[0].requires_approval;
-        assert!(asks(json!(true)) && asks(json!("unless_read_only")), "it changes what is kept");
-        assert!(!asks(json!(false)));
-        assert!(tool(&world, json!({})).tools()[0].requires_approval, "unless configured");
-        assert_eq!(tool(&world, json!({})).tools()[0].presentation, ARTIFACT_PUBLISH_PRESENTATION);
-        assert_eq!(tool(&world, json!({})).describe(PUBLISH_ARTIFACT, &json!({ "path": "out/r.csv", "name": "Report.csv" })).unwrap(), "Publish 'out/r.csv' in the workspace as the artifact 'Report.csv'");
-    }
 }

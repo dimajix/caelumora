@@ -18,36 +18,35 @@
 //! classification is the workspace's its first version was copied from;
 //! a later version from a workspace classified otherwise is refused.
 
-mod local;
-
-use crate::backend::Backends;
-use crate::component::{ComponentError, ComponentResult};
-use crate::event::EventBus;
-use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused, within};
-use crate::terminal::ByteStream;
+use crate::artifact::{Artifact, ArtifactId, ArtifactUpdateEvent, ArtifactVersion};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
-use caelumora_model::artifact::{Artifact, ArtifactId, ArtifactUpdateEvent, ArtifactVersion};
-use caelumora_model::config::ArtifactsConfig;
+use caelumora_model::config::{BackendConfig, DEFAULT_MAX_FILE_BYTES};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::digest::ContentDigest;
 use caelumora_model::event::GlobalEvent;
+use caelumora_model::group::{Group, GroupId};
+use caelumora_model::removal::Stored;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager, Subject, WRITE};
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::group::{Group, GroupId};
-use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
+use caelumora_runtime::component::{ComponentError, ComponentResult};
+use caelumora_runtime::event::EventBus;
+use caelumora_runtime::group::require_nameable;
+use caelumora_runtime::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, within, ScopeMember};
+use caelumora_runtime::terminal::ByteStream;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, Mutex as SyncMutex, PoisonError};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
-use caelumora_model::removal::Stored;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ArtifactError {
@@ -81,14 +80,58 @@ pub enum ArtifactError {
     Unavailable(String),
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// The runtime was built without the plugin, so there is no manager to
+    /// ask.
+    #[error("artifacts are not joined to this runtime")]
+    NotJoined,
 }
 
 pub type ArtifactResult<T> = Result<T, ArtifactError>;
 
-/// Registers the storages of artifacts the core brings with `backends`:
-/// `local`.
-pub(crate) fn register_backends(backends: &mut Backends) {
-    local::register_backend(backends);
+/// The section `artifacts` of the configuration: the storages artifacts
+/// are kept in (issue 271), each by the name an artifact refers to it with
+/// and a backend (`dyn ArtifactStorage`), which of them new artifacts go
+/// to, and how large a version may be. No storage unless configured: then
+/// no artifact can be published.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default, deny_unknown_fields)]
+pub struct ArtifactsConfig {
+    pub max_bytes: u64,
+    /// The storage new artifacts are made in; needed where there are
+    /// several, the one there is where there is one.
+    pub publish_to: Option<String>,
+    pub storage: BTreeMap<String, BackendConfig>,
+}
+
+impl Default for ArtifactsConfig {
+    fn default() -> Self {
+        Self { max_bytes: DEFAULT_MAX_FILE_BYTES, publish_to: None, storage: BTreeMap::new() }
+    }
+}
+
+impl ArtifactsConfig {
+    /// The storage new artifacts are made in: `publish_to`, or the one
+    /// configured; `None` where there is none.
+    pub fn publish_to(&self) -> Option<&str> {
+        match (&self.publish_to, self.storage.len()) {
+            (Some(name), _) => Some(name.as_str()),
+            (None, 1) => self.storage.keys().next().map(String::as_str),
+            (None, _) => None,
+        }
+    }
+
+    /// Whether it fits together: `publish_to` names a configured storage,
+    /// and is given where there are several.
+    ///
+    /// # Errors
+    /// What does not fit.
+    pub fn check(&self) -> Result<(), String> {
+        match &self.publish_to {
+            Some(name) if !self.storage.contains_key(name) => Err(format!("publish_to names '{name}', which is no storage of artifacts")),
+            None if self.storage.len() > 1 => Err("publish_to is needed where there are several storages of artifacts".to_string()),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// `NotFound` for artifact `id` where the store found nothing.
@@ -101,7 +144,9 @@ fn store_error(id: ArtifactId) -> impl FnOnce(StoreError) -> ArtifactError {
 
 /// Where the content of artifacts lies (issue 271): one piece per version,
 /// by artifact and number, without permissions - which are the manager's.
-/// The service a storage of artifacts is a backend of (issue 324).
+/// The service a storage of artifacts is a backend of (issues 324, 328):
+/// the plugin brings `local`, another crate may register one of its own
+/// (`Plugin::backends`).
 #[async_trait]
 pub trait ArtifactStorage: Send + Sync + fmt::Debug {
     /// Keeps `content` as version `version` of `artifact`, at most `limit`
@@ -141,16 +186,23 @@ impl fmt::Debug for ArtifactManager {
 }
 
 impl ArtifactManager {
-    /// The manager of the artifacts of `stores`, whose content lies in
-    /// `storages`, by their names - the storages `config` names, made as
-    /// backends (issue 324) -, new ones in the storage `config` says.
+    /// The manager of the artifacts of `artifacts`, naming the groups of
+    /// `groups` in their lists, whose content lies in `storages`, by their
+    /// names - the storages `config` names, made as backends (issue 324) -,
+    /// new ones in the storage `config` says.
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` where `config` does not fit
     /// together.
-    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: BTreeMap<String, Arc<dyn ArtifactStorage>>, config: &ArtifactsConfig) -> ComponentResult<Self> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(artifacts: Arc<dyn EntityStore<Artifact>>, groups: Arc<dyn EntityStore<Group>>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: BTreeMap<String, Arc<dyn ArtifactStorage>>, config: &ArtifactsConfig) -> ComponentResult<Self> {
         config.check().map_err(|why| ComponentError::InvalidConfig(format!("artifacts: {why}")))?;
-        Ok(Self { artifacts: Arc::clone(&stores.artifacts), groups: Arc::clone(&stores.groups), events, security, confidentiality, storages, publish_to: config.publish_to().map(String::from), max_bytes: config.max_bytes, writing: Mutex::new(()) })
+        Ok(Self { artifacts, groups, events, security, confidentiality, storages, publish_to: config.publish_to().map(String::from), max_bytes: config.max_bytes, writing: Mutex::new(()) })
+    }
+
+    /// The store of artifacts, which the views read in the viewer's name.
+    pub(crate) fn store(&self) -> &Arc<dyn EntityStore<Artifact>> {
+        &self.artifacts
     }
 
     /// Whether artifacts can be published: a storage is configured.
@@ -311,7 +363,7 @@ impl ArtifactManager {
     pub async fn set_access(&self, ctx: &SecurityContext, id: ArtifactId, acl: Vec<AclEntry>, versions: bool) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
         let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
-        crate::group::require_nameable(self.groups.as_ref(), ctx, &artifact.security_attributes.acl, &acl).await?;
+        require_nameable(self.groups.as_ref(), ctx, &artifact.security_attributes.acl, &acl).await?;
         if versions {
             let named: Vec<Subject> = acl.iter().map(|entry| entry.subject).filter(|subject| !artifact.security_attributes.acl.iter().any(|entry| entry.subject == *subject)).collect();
             for version in &mut artifact.versions {
@@ -480,5 +532,26 @@ impl ScopeMember for ArtifactManager {
             self.artifacts.purge(&system, artifact.id).await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::config::parse_yaml;
+
+    #[test]
+    fn artifacts_are_kept_in_the_storage_publish_to_names_or_the_one_there_is() {
+        let read = |yaml: &str| parse_yaml::<ArtifactsConfig>(yaml).expect("a section of artifacts");
+        let one = read("storage:\n  files:\n    type: local\n    root: local/artifacts\n");
+        assert_eq!(one.publish_to(), Some("files"));
+        assert_eq!(one.max_bytes, DEFAULT_MAX_FILE_BYTES);
+        assert_eq!(read("{}").publish_to(), None, "none configured");
+        let several = "storage:\n  a:\n    type: local\n    root: a\n  b:\n    type: local\n    root: b\n";
+        assert!(read(several).check().is_err(), "which one, among several, must be said");
+        let chosen = read(&format!("{several}publish_to: b\n"));
+        assert!(chosen.check().is_ok());
+        assert_eq!(chosen.publish_to(), Some("b"));
+        assert!(read(&format!("{several}publish_to: c\n")).check().is_err(), "not one that is not there");
     }
 }
