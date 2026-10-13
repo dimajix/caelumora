@@ -1,6 +1,6 @@
 # 65 — Component state is hard-wired into the agent state and the turn
 
-**Status:** open
+**Status:** rejected
 **Area:** Context & knowledge
 
 ## The problem
@@ -143,3 +143,14 @@ methods to the data model and the turn again.
   two variants with the same payload (`Note`, `PrivateNote`), and `NoteKind::change` and
   `NoteKind::of` in `agent_notes.rs` map between them. Folding them into `AgentChannelChange::Note {
   kind, change }` was deliberately left to this issue rather than done in passing.
+- **2026-10-13** — Rejected by the maintainer: the state of notes and memory stays named in the
+  core. Issue [193](193-external-state-rewritten-whole.md) (section 7) already dissolved the generic
+  staging this issue had introduced - `AgentChannelChange` and `AgentStateChange` - for fields of
+  their own in `TurnState`: with one kind per state, the generic layer was provision for what had
+  not come, and a further kind is a field and a push in `commit_turn`, no harder than a variant.
+  Branching, the strongest reason here, is not done (issue [08](08-retry-and-edit-past-answers.md)
+  is rejected). No second kind of state per agent and channel has appeared since, not even with
+  skills and artifacts moved into plugins; and notes are not an arbitrary component's state but
+  bound to confidentiality, the views and reading across channels, whose rules belong to the core.
+  Worth a new issue when a plugin needs state of its own per agent and channel: then the generic
+  shape has a second instance.

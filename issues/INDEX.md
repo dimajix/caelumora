@@ -304,7 +304,7 @@ published before anyone else can take it.
 | [60](60-note-ids-in-prompts.md) | done | Notes of its own that an agent is shown from other channels carry no usable id, so it cannot revoke them, and ids from other chains are ambiguous. |
 | [61](61-reasoning-leaves-the-agent.md) | done | An agent's reasoning travels with its messages to every user, and can disclose what a hidden tool call or private knowledge withholds. |
 | [63](63-reasoning-in-model-input.md) | done | Every model call gets the reasoning of all earlier messages back, other agents' included, although several reasoning models document that it must not be. |
-| [65](65-generic-component-state.md) | open | The state of notes is hard-wired into the agent state, the turn, the stores and REST, so every further kind of component state needs changes to the core and branching must be taught each one. |
+| [65](65-generic-component-state.md) | rejected | The state of notes is hard-wired into the agent state, the turn, the stores and REST, so every further kind of component state needs changes to the core and branching must be taught each one. |
 | [131](131-agent-memory-bypasses-policy.md) | done | Agent memory decides with the built-in rule which entries may be recalled in a channel, instead of asking the `SecurityManager` like the other reads across channels. |
 | [66](66-channel-level-in-prompt.md) | done | Private notes and results of tools the channel does not see are not marked as private for the model, which may quote them in its always-published answer. |
 | [72](72-history-digest-ignores-limit.md) | done | What `read_history` records as read names the whole history of the channel, although a reader who joined later with a limit saw only part of it. |

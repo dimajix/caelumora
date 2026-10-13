@@ -255,8 +255,9 @@ An agent's views are built per piece of work, with the agent's place; all in **T
   Likewise a tool's result is asked into the agent's context before the channel asks it into
   itself: two destinations.
 - **Memory.** An agent recalls its memory by the flow of each entry's origin itself - its own
-  knowledge, reached through itself as its private notes of other channels are. One enforcement for
-  every component's state is issue [65](../issues/65-generic-component-state.md).
+  knowledge, reached through itself as its private notes of other channels are. Memory and notes
+  are named in the core, each with its own enforcement; a generic one for every component's state
+  was rejected (issue [65](../issues/65-generic-component-state.md)).
 - **The reach is one function for offering and acting.** `channel_reading` and
   `WorkspaceManager::usable_in` are built from `may_*` and answer with an option: the views turn
   `None` into "not there", an operation into "not found". It is neither enforcing nor offering, but
