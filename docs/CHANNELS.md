@@ -306,6 +306,37 @@ Adding is asked first as `UpdateChannel`, before anything of the newcomer is loo
 `cleared` with the channel's classification, where a policy can hold the channel's level against the
 newcomer (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
+### Taking someone into the session
+
+Who is not in the session yet is taken into it first, and with a channel named into that channel at
+once - by whoever may change the session (`SessionLoop::add_participant`), or by their own act where
+an entry of the session's access list grants them `Join` (`SessionLoop::join`;
+`SessionManager::join` opens the session for one who may join but not read it). Who joins takes in
+themselves or their own agent, never someone else.
+
+*   **Everything is asked before anything is stored**: changing the session and the channel - or,
+    for one who joins, the `Join` entries of the session and the channel, in their own context -,
+    reading the one taken in - a user to know they exist, an agent so that nobody brings in an agent
+    whose tools they may not use -, and whether they may take part in the channel: where an agent
+    lies, and their clearance, an agent's by its owner and its personality. Only the channel is
+    cleared for; joining the session as such asks no clearance, since each of its channels is read
+    by those cleared for it.
+*   **The session first, then the channel.** One the channel refuses after all stays in the session.
+    Who is in the session already is added to a channel by whoever may change the channel alone.
+*   **Stored in the runtime's name** for one who joined: joining was the act that was permitted. A
+    personal `Join` entry - an invitation - is used up then, so that one removed later cannot take
+    themselves back in; an entry for a role, a group or everyone stays. Who joins a channel by
+    themselves sees all of its history: whoever let them join let them read it.
+*   **What follows**: the session's document gains the participant, the group of its participants
+    follows before it is announced (`SessionUpdateEvent::ParticipantAdded`), so that the new one
+    hears of it, too, and a running session follows an agent taken in as it follows those it started
+    with.
+
+Whom one could take in is the session view's to answer (`SessionView::candidates`): the users and
+agents whose names begin with what was typed, each with whether they take part already and why they
+could not be taken in - coarsely, never which clearance is missing. Only whoever may change the
+session searches: a search tells who exists.
+
 A removed participant is kept as a former one, with who removed it and when, not among those who
 take part now - so nothing that reads them changes. The views reach former members, so what an agent
 said and saw stays readable for whoever may read its context.

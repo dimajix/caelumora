@@ -319,6 +319,7 @@ impl World {
     /// the owner's scope, in one channel.
     pub async fn template(&self, owner: Option<UserId>, contributors: &[UserId], agent: &str, personality: PersonalityId) -> SessionTemplateId {
         let template = SessionTemplate {
+            access: Vec::new(),
             summary: None, briefing: None,
             approval_rules: Vec::new(),
             workspace: None,
@@ -330,6 +331,7 @@ impl World {
                 ParticipantTemplate::Agent { name: Name::new(agent).unwrap(), scope: ScopeTemplate::UserScope, personality_id: personality },
             ],
             channels: vec![ChannelTemplate {
+                access: Vec::new(),
                 summary: None, briefing: None, language: None,
                 approval_rules: Vec::new(),
                 uses_workspace: true,

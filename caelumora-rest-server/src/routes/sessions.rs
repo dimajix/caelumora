@@ -1,6 +1,6 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
-use caelumora_rest_api::session::{CreateSessionRequest, DescriptionRequest, PrivateNotesResponse, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
+use caelumora_rest_api::session::{AddSessionParticipantRequest, CandidateResponse, CandidatesQuery, CreateSessionRequest, DescriptionRequest, JoinSessionRequest, PrivateNotesResponse, RenameSessionRequest, SessionPrivacyRequest, SessionResponse, SessionSnapshot};
 use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
 use axum::response::{IntoResponse, Response};
@@ -165,5 +165,55 @@ pub async fn update_session_description(
 
     session_loop.update_description(&user.security_context(), payload.summary.as_deref(), payload.briefing.as_deref()).await?;
 
+    Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
+}
+
+/// Whom the user could take into session `id` (issue 221): the users and
+/// agents whose names begin with `prefix`, each with whether they take part
+/// already - in the session, in `channel` if named - and why they cannot be
+/// taken in. Only for whoever may change the session.
+pub async fn candidates(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<CandidatesQuery>,
+    user: AuthenticatedUser,
+) -> Result<Json<Vec<CandidateResponse>>, ApiError> {
+    let session_id = SessionId(id);
+    crate::routes::ensure_session(&state, &user, session_id).await?;
+    let session = crate::routes::views(&state, &user).session(session_id).await?;
+    let found = session.candidates(&query.prefix, query.channel).await?;
+    Ok(Json(found.into_iter().filter_map(CandidateResponse::of).collect()))
+}
+
+/// Takes a user or an agent into session `id` (issue 221), and with
+/// `channel` into that channel at once: whoever may change the session, and
+/// the channel. Answers the session as the snapshot shows it.
+pub async fn add_participant(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+    Json(payload): Json<AddSessionParticipantRequest>,
+) -> Result<Json<SessionSnapshot>, ApiError> {
+    let session_id = SessionId(id);
+    let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
+    let into = payload.channel.map(|channel| (channel, payload.history));
+    session_loop.add_participant(&user.security_context(), payload.participant, into).await?;
+    Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
+}
+
+/// Joins session `id` by the user's own act (issue 221) - the user, or
+/// their own agent -, where its access list lets them, and with `channel`
+/// that channel at once. `404` for a session they may neither join nor
+/// read.
+pub async fn join_session(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+    Json(payload): Json<JoinSessionRequest>,
+) -> Result<Json<SessionSnapshot>, ApiError> {
+    let session_id = SessionId(id);
+    let context = user.security_context();
+    let participant = payload.participant.unwrap_or(context.principal_id);
+    state.session_manager.join(&context, session_id, participant, payload.channel).await?;
     Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
 }

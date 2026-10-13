@@ -21,7 +21,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::actor::ActorId;
-use crate::security::{Secured, SecurityAttributes};
+use crate::security::{AclEntry, Secured, SecurityAttributes};
 use crate::user::UserId;
 use crate::store::EntityKind;
 
@@ -119,10 +119,16 @@ pub struct ChannelTemplate {
     /// does unless named otherwise.
     #[serde(default = "crate::channel::uses_workspace_by_default")]
     pub uses_workspace: bool,
+    /// What the channel grants besides what every channel does: entries of
+    /// its access list, such as whom it lets join (issue 221). None unless
+    /// named.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub access: Vec<AclEntry>,
 }
 
 impl ChannelTemplate {
-    /// Builds the channel of session `session_id`, owned by `owner`.
+    /// Builds the channel of session `session_id`, owned by `owner`, with
+    /// the entries of `access` besides those every channel has.
     /// `session_participants` pairs each participant of the session with
     /// its name in the session template, which is what `self.participants`
     /// refers to - not the user's or agent's own name: the template's "user"
@@ -136,7 +142,9 @@ impl ChannelTemplate {
                 .ok_or_else(|| TemplateError::ParticipantNotFound(name.clone())))
             .collect::<TemplateResult<Vec<_>>>()?;
         let channel = Channel::build(session_id, ActorId::User(owner), self.name.clone(), self.components.clone(), self.classification.clone(), self.language.clone(), participants);
-        Ok(Channel { approval_rules: self.approval_rules.clone(), summary: self.summary.clone(), briefing: self.briefing.clone(), uses_workspace: self.uses_workspace, ..channel })
+        let mut security_attributes = channel.security_attributes.clone();
+        security_attributes.acl.extend(self.access.iter().copied());
+        Ok(Channel { approval_rules: self.approval_rules.clone(), summary: self.summary.clone(), briefing: self.briefing.clone(), uses_workspace: self.uses_workspace, security_attributes, ..channel })
     }
 }
 
@@ -179,6 +187,13 @@ pub struct SessionTemplate {
     /// 13): rules that ask or deny. None unless named.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub approval_rules: Vec<ApprovalRule>,
+    /// What the sessions made from it grant besides what every session does
+    /// (`Session::attributes_of`): entries of their access lists, such as
+    /// whom they let join (issue 221) - `{ everyone, join }` for sessions
+    /// anybody may join. Each session's owner may change its own; none
+    /// unless named.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub access: Vec<AclEntry>,
     /// The workspace sessions made from it have (issue 251), found or made
     /// as they are made and attached to them; none unless named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -278,7 +293,7 @@ impl SessionTemplate {
             .map(|channel| channel.instantiate(id, owner, &participants))
             .collect::<TemplateResult<Vec<_>>>()?;
         let participants: Vec<Participant> = participants.into_iter().map(|(_, participant)| participant).collect();
-        let security_attributes = Session::attributes_of(id, owner);
+        let security_attributes = Session::attributes_of(id, owner, &self.access);
         let now = Utc::now();
         let session = Session {
             id,
@@ -374,6 +389,7 @@ mod tests {
 
     fn template() -> SessionTemplate {
         SessionTemplate {
+            access: Vec::new(),
             summary: None, briefing: None,
             approval_rules: Vec::new(),
             workspace: None,
@@ -388,6 +404,7 @@ mod tests {
             ],
             channels: vec![
                 ChannelTemplate {
+                    access: Vec::new(),
                     summary: None, briefing: None, language: None,
                     approval_rules: Vec::new(),
                     uses_workspace: true,
@@ -397,6 +414,7 @@ mod tests {
                     participants: vec!["user".to_string(), "helper".to_string(), "approval".to_string()],
                 },
                 ChannelTemplate {
+                    access: Vec::new(),
                     summary: None, briefing: None, language: None,
                     approval_rules: Vec::new(),
                     uses_workspace: true,

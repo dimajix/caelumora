@@ -17,10 +17,14 @@ const KIND_LABELS: Record<AccessEntry['kind'], string> = {
   session: 'Members of the session',
   channel: 'Members of the channel',
   group: 'Team',
+  everyone: 'Everyone',
 };
 
-/** What each grant lets whom an entry names do, as a reader is told. */
-export type GrantLabels = Record<Grant, string>;
+/**
+ * What each grant lets whom an entry names do, as a reader is told; joining (issue 221) only where
+ * what is shared is a session or channel - elsewhere an entry that grants it is shown as it is.
+ */
+export type GrantLabels = Record<Exclude<Grant, 'join'>, string> & {join?: string};
 
 interface AccessListProps {
   access: AccessEntry[];
@@ -44,10 +48,12 @@ export const AccessList: React.FC<AccessListProps> = ({access, onChange, nobody,
     ) : (
       <ul className="space-y-1 text-sm">
         {access.map((entry, index) => (
-          <li key={`${entry.kind}-${entry.id}`} className="flex items-center gap-2">
+          <li key={`${entry.kind}-${entry.id ?? ''}`} className="flex items-center gap-2">
             <span className="flex-1 min-w-0 truncate">
-              <span className="text-xs text-gray-500">{KIND_LABELS[entry.kind]}: </span>
-              {entry.name ?? <span className="italic text-gray-500">gone</span>}
+              {entry.kind === 'everyone' ? KIND_LABELS.everyone : (<>
+                <span className="text-xs text-gray-500">{KIND_LABELS[entry.kind]}: </span>
+                {entry.name ?? <span className="italic text-gray-500">gone</span>}
+              </>)}
             </span>
             <GrantSelect
               value={entry.grant}
@@ -94,6 +100,7 @@ const GrantSelect: React.FC<GrantSelectProps> = ({value, grants, onChange, label
   >
     <option value="read">{grants.read}</option>
     <option value="write">{grants.write}</option>
+    {(grants.join !== undefined || value === 'join') && <option value="join">{grants.join ?? 'May join'}</option>}
   </select>
 );
 

@@ -217,7 +217,7 @@ impl From<ViewError> for ApiError {
             ViewError::WorkspaceNotFound(_) => Self::not_found("workspace_not_found", detail),
             ViewError::GroupNotFound(_) => Self::not_found("group_not_found", detail),
             ViewError::NoContext { .. } => Self::not_found("context_not_recorded", detail),
-            ViewError::Forbidden { ref refused, .. } => Self::refused(refused, detail),
+            ViewError::Forbidden { ref refused, .. } | ViewError::NotPermitted(ref refused) => Self::refused(refused, detail),
             ViewError::Failed(e) => e.into(),
         }
     }
@@ -291,6 +291,8 @@ impl From<SessionError> for ApiError {
             SessionError::InvalidComponents(_) | SessionError::NotAParticipant { .. } | SessionError::ClassificationRefused(_) => Self::bad_request("invalid_channel", detail),
             SessionError::WorkspaceOutOfScope(_) => Self::bad_request("workspace_out_of_scope", detail),
             SessionError::ScopeNotEmpty { .. } => Self::conflict("scope_not_empty", detail),
+            SessionError::AlreadyParticipant { .. } => Self::conflict("already_participant", detail),
+            SessionError::CannotTakeIn(_) => Self::bad_request("invalid_participant", detail),
             // A caller that is no user: not the client's request.
             SessionError::OwnerNotAUser(_) => Self::internal("internal_error", "the request", &error.into()),
         }
@@ -438,6 +440,7 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::session::{ChannelId, SessionId};
     use caelumora_model::template::SessionTemplateId;
+    use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
     use caelumora_model::workspace::WorkspaceId;
 
@@ -579,6 +582,8 @@ mod tests {
         assert_eq!(question(QuestionError::ResponseCount(2)), (400, "invalid_answer".to_string()));
         assert_eq!(answer(TemplateError::UnsupportedScope("group")), (400, "template_invalid".to_string()));
         assert_eq!(answer(SessionError::WorkspaceOutOfScope(WorkspaceId::new())), (400, "workspace_out_of_scope".to_string()));
+        assert_eq!(answer(SessionError::AlreadyParticipant { session, participant: ActorId::User(UserId::new()) }), (409, "already_participant".to_string()));
+        assert_eq!(answer(SessionError::CannotTakeIn(ActorId::System)), (400, "invalid_participant".to_string()));
         let left = vec![(Agent::KIND, 1)];
         assert_eq!(answer(SessionError::ScopeNotEmpty { holder: Scope::SessionScope { session_id: session }, left }), (409, "scope_not_empty".to_string()), "what is left is the others' to take away (issue 320)");
     }

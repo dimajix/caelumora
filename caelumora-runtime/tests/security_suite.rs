@@ -331,6 +331,164 @@ async fn the_owner_changes_and_ends_the_session() {
     assert!(not_found(&world.manager.open_session(&alice, session.id()).await.expect_err("gone")));
 }
 
+// --- Taking someone into a session (issue 221) ------------------------------
+
+/// Whoever may change the session takes a user into it and into a channel
+/// at once - asked before anything of the one taken in; who may not learns
+/// nothing of them. Who is in the session already is added to a channel by
+/// whoever may change the channel alone.
+#[tokio::test]
+async fn taking_someone_in_is_for_whoever_may_change_the_session_and_the_channel() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let carol = ActorId::User(world.carol);
+
+    let (refused, asked) = world.asked(session.add_participant(&bob, carol, Some((main.id(), HistoryAccess::All)))).await;
+    assert!(denied(&refused.expect_err("not his session")));
+    assert_eq!(asked, checks(&["bob: UpdateSession(alice's) no"]), "nothing of carol is asked");
+
+    let (added, asked) = world.asked(session.add_participant(&alice, carol, Some((main.id(), HistoryAccess::All)))).await;
+    added.expect("alice's to take her in");
+    assert_eq!(asked, checks(&[
+        "alice: UpdateSession(alice's) yes",
+        "alice: GetChannel(alice's) yes",
+        "alice: JoinChannel(alice) yes",
+        "alice: UpdateChannel(alice's) yes",
+        "alice: GetUser(system's) yes",
+        "alice: JoinChannel(carol) yes",
+        "alice: GetSession(alice's) yes",
+        "alice: UpdateSession(alice's) yes",
+        "alice: UpdateChannel(alice's) yes",
+        "alice: JoinChannel(carol) yes",
+        "alice: GetChannel(alice's) yes",
+        "alice: JoinChannel(alice) yes",
+        "alice: UpdateChannel(alice's) yes",
+    ]), "changing the session and the channel, reading carol and whether she is cleared - then the store and the channel ask again as they store");
+    assert!(world.manager.open_session(&World::as_user(world.carol), session.id()).await.is_ok(), "carol reads the session now");
+    assert!(world.members(world.carol, session.id(), main.id()).await.contains(&carol), "and takes part in the channel");
+    world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+
+/// An agent is taken in only by who may read it (issue 14): nobody brings
+/// in an agent whose tools, and the credentials behind them, they may not
+/// use - and only one that may run, whose personality is its to read.
+#[tokio::test]
+async fn an_agent_is_taken_in_only_by_who_may_read_it_and_only_if_it_may_run() {
+    let world = World::new().await;
+    let shared = world.personality("shared", Some(world.bob), &[world.alice, world.carol]).await;
+    let bobs_helper = world.agent("bobs-helper", world.bob, &shared).await;
+    let alices_helper = world.agent("alices-helper", world.alice, &shared).await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let alice = World::as_user(world.alice);
+
+    let (refused, asked) = world.asked(session.add_participant(&alice, ActorId::Agent(bobs_helper), Some((main.id(), HistoryAccess::All)))).await;
+    assert!(not_found(&refused.expect_err("not hers to read")), "answered as not there");
+    assert_eq!(asked.last().map(String::as_str), Some("alice: GetAgent(bob's) no"), "asked after what is hers to ask: {asked:?}");
+
+    let withdrawn = Personality { security_attributes: attributes(Some(world.bob), &[world.carol]), ..shared };
+    world.runtime.entity_stores().personalities.update(&World::as_user(world.bob), &withdrawn).await.unwrap();
+    let (refused, asked) = world.asked(session.add_participant(&alice, ActorId::Agent(alices_helper), Some((main.id(), HistoryAccess::All)))).await;
+    assert!(denied(&refused.expect_err("it may not run")));
+    assert_eq!(asked.last().map(String::as_str), Some("alice as alices-helper: GetPersonality(bob's) no"), "its personality, in its own name: {asked:?}");
+    assert!(!session.session().participants.iter().any(|p| p.actor_id() == ActorId::Agent(alices_helper)), "nothing was stored");
+    world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+
+/// Who is not cleared for the channel is not taken in - into the channel,
+/// nor into the session: everything is asked before anything is stored. An
+/// agent is cleared by its owner and, if its personality limits it, by
+/// those roles, too.
+#[tokio::test]
+async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
+    let world = World::new().await;
+    let dave = caelumora_model::user::User { id: UserId::new(), username: Name::new("dave").unwrap(), email: String::new(), roles: vec![], deleted: None };
+    world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
+    let limited = Personality { roles: Some(vec![]), ..world.personality("limited", Some(world.alice), &[]).await };
+    world.runtime.entity_stores().personalities.update(&World::as_user(world.alice), &limited).await.unwrap();
+    let helper = world.agent("limited-helper", world.alice, &limited).await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let alice = World::as_user(world.alice);
+
+    for (who, what) in [(ActorId::User(dave.id), "a user without a role"), (ActorId::Agent(helper), "an agent its personality limits")] {
+        let refused = session.add_participant(&alice, who, Some((main.id(), HistoryAccess::All))).await.expect_err(what);
+        assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { .. })), "{what}: {refused:#}");
+        assert!(!session.session().participants.iter().any(|p| p.actor_id() == who), "{what}: not in the session either");
+    }
+    world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+
+/// Joining by one's own act needs an entry of the access list that lets one
+/// join - the session's, and the channel's for the channel -, asked in
+/// one's own context; who may neither join nor read the session finds
+/// nothing of it, and an invitation is used up as it is taken.
+#[tokio::test]
+async fn joining_needs_an_entry_that_lets_one_join() {
+    let world = World::new().await;
+    let shared = world.personality("shared", None, &[]).await;
+    let template_id = world.template(Some(world.alice), &[], "helper", shared.id).await;
+    let mut template = world.runtime.entity_stores().session_templates.get(&World::system(), template_id).await.unwrap();
+    let bob_joins = AclEntry { subject: Subject::Actor(ActorId::User(world.bob)), grant: Grant::Join };
+    template.access = vec![bob_joins];
+    template.channels[0].access = vec![AclEntry { subject: Subject::Everyone, grant: Grant::Join }];
+    world.runtime.entity_stores().session_templates.update(&World::system(), &template).await.unwrap();
+    let alice = World::as_user(world.alice);
+    let session = world.manager.create_from_template(&alice, template_id, None, None).await.unwrap();
+    let main = session.channels()[0].id();
+    let (bob, carol) = (World::as_user(world.bob), World::as_user(world.carol));
+
+    let (refused, asked) = world.asked(world.manager.join(&carol, session.id(), ActorId::User(world.carol), Some(main))).await;
+    assert!(not_found(&refused.expect_err("carol may neither join nor read it")), "nothing of it is told");
+    assert_eq!(asked, checks(&["carol: JoinSession(alice's) no", "carol: GetSession(alice's) no"]));
+
+    let (joined, asked) = world.asked(world.manager.join(&bob, session.id(), ActorId::User(world.bob), Some(main))).await;
+    joined.expect("bob is let in");
+    assert_eq!(asked, checks(&[
+        "bob: JoinSession(alice's) yes",
+        "bob: GetUser(system's) yes",
+        "bob: JoinChannel(bob) yes",
+        "bob: JoinSession(alice's) yes",
+        "bob: JoinChannel(alice's) yes",
+        "bob: JoinChannel(alice's) yes",
+        "bob: JoinChannel(bob) yes",
+    ]), "joining the session and the channel by the entries in his own name, and his clearance - stored in the runtime's");
+    assert!(world.members(world.bob, session.id(), main).await.contains(&ActorId::User(world.bob)), "in the channel");
+    assert!(!session.session().security_attributes.acl.contains(&bob_joins), "his invitation is used up");
+    world.manager.stop_session(&alice, session.id()).await.unwrap();
+}
+
+/// Searching whom to take in is for whoever may change the session: the
+/// search tells who exists. It shows who is found with whether they take
+/// part, and why they cannot be taken in - coarsely, never which clearance
+/// is missing.
+#[tokio::test]
+async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
+    use caelumora_model::snapshot::CandidateRefusal;
+    let world = World::new().await;
+    let dave = caelumora_model::user::User { id: UserId::new(), username: Name::new("dave").unwrap(), email: String::new(), roles: vec![], deleted: None };
+    world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
+    let session = world.shared_session(&[], &[]).await;
+    let main = session.channels()[0].id();
+    let views = |user| world.manager.views(Viewer::new(World::as_user(user)));
+
+    let his = views(world.bob).session(session.id()).await.unwrap();
+    assert!(matches!(his.candidates("ca", Some(main)).await, Err(ViewError::NotPermitted(_))), "bob may not change the session");
+
+    let hers = views(world.alice).session(session.id()).await.unwrap();
+    assert!(hers.candidates("c", Some(main)).await.unwrap().is_empty(), "a single character finds nobody");
+    let found = |prefix: &'static str| { let hers = hers.clone(); async move { hers.candidates(prefix, Some(main)).await.unwrap() } };
+    let carol = found("CA").await;
+    assert!(matches!(carol.as_slice(), [c] if c.id == ActorId::User(world.carol) && !c.in_session && c.refusal.is_none()), "carol, to be taken in: {carol:?}");
+    let bob = found("bo").await;
+    assert!(matches!(bob.as_slice(), [b] if b.in_session && b.in_channel), "bob takes part: {bob:?}");
+    let dave_found = found("da").await;
+    assert!(matches!(dave_found.as_slice(), [d] if d.id == ActorId::User(dave.id) && d.refusal == Some(CandidateRefusal::NotCleared)), "dave exists, but is not cleared: {dave_found:?}");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 // --- Messages ----------------------------------------------------------------
 
 

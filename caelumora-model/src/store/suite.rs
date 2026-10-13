@@ -88,6 +88,7 @@ fn personality() -> Personality {
 
 fn session_template() -> SessionTemplate {
     SessionTemplate {
+        access: Vec::new(),
         summary: None, briefing: None,
         approval_rules: Vec::new(),
         workspace: None,
@@ -99,6 +100,7 @@ fn session_template() -> SessionTemplate {
         description: None,
         participants: vec![ParticipantTemplate::User { name: "user".to_string() }],
         channels: vec![ChannelTemplate {
+            access: Vec::new(),
             summary: None, briefing: None, language: None,
             approval_rules: Vec::new(),
             uses_workspace: true,

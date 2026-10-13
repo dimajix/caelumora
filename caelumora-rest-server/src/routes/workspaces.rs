@@ -137,7 +137,7 @@ pub async fn delete_file(State(state): State<Arc<AppState>>, Path((id, path)): P
 /// the one it had: its owner's act.
 pub async fn set_access(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(entries): Json<Vec<AccessEntry>>) -> Result<Json<WorkspaceResponse>, ApiError> {
     let id = WorkspaceId(id);
-    let acl = entries.into_iter().map(AccessEntry::into_acl).collect();
+    let acl = AccessEntry::acl_of(entries).map_err(|e| ApiError::bad_request("invalid_access", e))?;
     state.runtime_manager.workspace_manager().set_access(&user.security_context(), id, acl).await?;
     Ok(Json(owned(&state, &user, id).await?))
 }

@@ -1,6 +1,7 @@
 import type {
   AccessEntry,
   AddParticipantRequest,
+  Candidate,
   Grant,
   CreateSkillRequest,
   SkillResponse,
@@ -229,6 +230,19 @@ export const api = {
       body: JSON.stringify(participant),
     });
     await ensureOk(res, 'Failed to add the participant');
+    return res.json();
+  },
+
+  /**
+   * Whom the user could take into the session (issue 221): the users and agents whose names begin
+   * with `prefix`, with whether they take part already - in `channelId` too - and why they cannot
+   * be taken in. Only for whoever may change the session.
+   */
+  async searchCandidates(sessionId: string, prefix: string, channelId?: string): Promise<Candidate[]> {
+    const query = new URLSearchParams({prefix});
+    if (channelId) query.set('channel', channelId);
+    const res = await request(`/sessions/${sessionId}/candidates?${query}`);
+    await ensureOk(res, 'Failed to search whom to add');
     return res.json();
   },
 

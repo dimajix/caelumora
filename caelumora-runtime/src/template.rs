@@ -166,6 +166,7 @@ mod tests {
 
     fn template(participants: Vec<ParticipantTemplate>) -> SessionTemplate {
         SessionTemplate {
+            access: Vec::new(),
             summary: None, briefing: None,
             approval_rules: Vec::new(),
             workspace: None,

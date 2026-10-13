@@ -7,6 +7,7 @@
 //! still asked afterwards, entity by entity; a limit is met by reading on.
 
 use crate::store::{StoreError, StoreResult};
+use crate::value::name::fold;
 use serde::Serialize;
 use serde_json::Value;
 use std::fmt::Debug;
@@ -100,6 +101,11 @@ pub enum Filter<F: Field> {
     /// Some element of the collection `F` meets the condition, whose fields
     /// lie within the element.
     Any(F, Box<Filter<F>>),
+    /// The field, a name, begins with the text as names are compared -
+    /// regardless of case, accents and runs of whitespace (`Name`): a search
+    /// by what one has typed so far (issue 221). A database compares the
+    /// folded forms with `LIKE`.
+    NamePrefix(F, String),
 }
 
 impl<F: Field> Filter<F> {
@@ -118,6 +124,11 @@ impl<F: Field> Filter<F> {
         Filter::Any(collection, Box::new(condition))
     }
 
+    /// `field`, a name, begins with `prefix` as names are compared.
+    pub fn name_prefix(field: F, prefix: &str) -> Self {
+        Filter::NamePrefix(field, prefix.to_string())
+    }
+
     /// Whether `document` - an entity as it is serialized, or an element of
     /// a collection in it - meets the condition.
     pub fn matches(&self, document: &Value) -> bool {
@@ -132,6 +143,7 @@ impl<F: Field> Filter<F> {
                 Some(Value::Array(elements)) => elements.iter().any(|element| condition.matches(element)),
                 _ => false,
             },
+            Filter::NamePrefix(field, prefix) => lookup(document, *field).and_then(Value::as_str).is_some_and(|name| fold(name).starts_with(&fold(prefix))),
         }
     }
 }
@@ -274,6 +286,17 @@ mod tests {
                 Doc::Missing => &["missing"],
             }
         }
+    }
+
+    #[test]
+    fn a_name_prefix_is_compared_as_names_are() {
+        let named = |name: &str| json!({ "owner": { "id": name } });
+        let starting = |prefix: &str| Filter::name_prefix(Doc::Owner, prefix);
+        assert!(starting("zo").matches(&named("Zoë Smith")), "regardless of case and accents");
+        assert!(starting("ZOE  S").matches(&named("Zoë Smith")), "and of runs of whitespace");
+        assert!(!starting("smith").matches(&named("Zoë Smith")), "from its beginning");
+        assert!(!starting("zo").matches(&json!({ "owner": { "id": 1 } })), "a name only");
+        assert!(!Filter::name_prefix(Doc::Missing, "").matches(&named("x")), "where there is one");
     }
 
     #[test]

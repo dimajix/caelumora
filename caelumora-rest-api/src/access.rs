@@ -12,13 +12,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// An entry of an access list (issue 23) as it is written and shown: whom
-/// it grants `read` or `write` - a user, a role, or the members of a
-/// session or a channel, by `kind` and `id` -, and how whom is called where
-/// it is shown and known.
+/// it grants `read`, `write` or `join` - a user, a role, or the members of a
+/// session or a channel, by `kind` and `id`, or everyone, without an id
+/// (issue 221) -, and how whom is called where it is shown and known.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AccessEntry {
     pub kind: AccessKind,
-    pub id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<Uuid>,
     pub grant: Grant,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -35,6 +36,8 @@ pub enum AccessKind {
     Channel,
     /// A team (issue 286), by its id.
     Group,
+    /// Every user (issue 221), without an id.
+    Everyone,
 }
 
 impl AccessEntry {
@@ -42,29 +45,43 @@ impl AccessEntry {
     /// or place, which no list stores.
     pub fn of(entry: snapshot::AccessSnapshot) -> Option<Self> {
         let (kind, id) = match entry.subject {
-            Subject::Actor(ActorId::User(user)) => (AccessKind::User, user.0),
+            Subject::Actor(ActorId::User(user)) => (AccessKind::User, Some(user.0)),
             Subject::Actor(_) => return None,
-            Subject::Role(role) => (AccessKind::Role, role.0),
+            Subject::Role(role) => (AccessKind::Role, Some(role.0)),
             // The participants of a session or channel are named by it: their
             // group has its id (issue 286).
             Subject::Group(group) => match entry.scope {
-                Some(Scope::SessionScope { .. }) => (AccessKind::Session, group.0),
-                Some(Scope::ChannelScope { .. }) => (AccessKind::Channel, group.0),
-                _ => (AccessKind::Group, group.0),
+                Some(Scope::SessionScope { .. }) => (AccessKind::Session, Some(group.0)),
+                Some(Scope::ChannelScope { .. }) => (AccessKind::Channel, Some(group.0)),
+                _ => (AccessKind::Group, Some(group.0)),
             },
+            Subject::Everyone => (AccessKind::Everyone, None),
         };
         Some(Self { kind, id, grant: entry.grant, name: entry.name })
     }
 
-    /// The entry as it is stored; its name, if written, is ignored.
-    pub fn into_acl(self) -> AclEntry {
-        let subject = match self.kind {
-            AccessKind::User => Subject::Actor(ActorId::User(UserId(self.id))),
-            AccessKind::Role => Subject::Role(RoleId(self.id)),
-            AccessKind::Session => Subject::Group(GroupId::of_session(SessionId(self.id))),
-            AccessKind::Channel => Subject::Group(GroupId::of_channel(ChannelId(self.id))),
-            AccessKind::Group => Subject::Group(GroupId(self.id)),
+    /// The entry as it is stored; its name, if written, is ignored. `None`
+    /// for one whose kind needs an id it does not have.
+    pub fn into_acl(self) -> Option<AclEntry> {
+        let subject = match (self.kind, self.id) {
+            (AccessKind::Everyone, _) => Subject::Everyone,
+            (_, None) => return None,
+            (AccessKind::User, Some(id)) => Subject::Actor(ActorId::User(UserId(id))),
+            (AccessKind::Role, Some(id)) => Subject::Role(RoleId(id)),
+            (AccessKind::Session, Some(id)) => Subject::Group(GroupId::of_session(SessionId(id))),
+            (AccessKind::Channel, Some(id)) => Subject::Group(GroupId::of_channel(ChannelId(id))),
+            (AccessKind::Group, Some(id)) => Subject::Group(GroupId(id)),
         };
-        AclEntry { subject, grant: self.grant }
+        Some(AclEntry { subject, grant: self.grant })
+    }
+
+    /// `entries` as they are stored.
+    ///
+    /// # Errors
+    /// What is wrong with the first that names nobody.
+    pub fn acl_of(entries: Vec<AccessEntry>) -> Result<Vec<AclEntry>, String> {
+        entries.into_iter()
+            .map(|entry| { let kind = entry.kind; entry.into_acl().ok_or_else(|| format!("an entry of kind {kind:?} needs an id")) })
+            .collect()
     }
 }

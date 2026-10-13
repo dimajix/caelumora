@@ -1,9 +1,11 @@
 // Adding a participant of the session to a running channel (issue 46), with
-// how much of the channel's history they may see.
+// how much of the channel's history they may see - or, for whoever may change
+// the session, someone found by name who is not in it yet, who is taken into
+// the session as well (issue 221).
 
 import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
-import type {ChannelResponse, HistoryAccess, SessionParticipant} from '../types';
+import type {Candidate, CandidateRefusal, ChannelResponse, HistoryAccess, SessionParticipant} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {actorKey} from '../mention';
@@ -21,6 +23,16 @@ function historyAccess(kind: HistoryKind, count: number): HistoryAccess {
   return kind === 'last_messages' || kind === 'last_days' ? {kind, count} : {kind};
 }
 
+/** Why someone found cannot be added, as the user is told. */
+const REFUSALS: Record<CandidateRefusal, string> = {
+  not_cleared: 'not cleared for this channel',
+  out_of_scope: 'belongs to another session or channel',
+  cannot_run: 'cannot run: its personality is not its to use',
+};
+
+/** The least of a name the server searches by. */
+const MIN_PREFIX = 2;
+
 interface AddParticipantDialogProps {
   sessionId: string;
   channel: ChannelResponse;
@@ -32,6 +44,12 @@ export const AddParticipantDialog: React.FC<AddParticipantDialogProps> = ({sessi
   // The participants of the session who are not in the channel yet; `null`
   // while they are loaded.
   const [candidates, setCandidates] = useState<SessionParticipant[] | null>(null);
+  // Whether the user may change the session, and so search whom else to add.
+  const [canSearch, setCanSearch] = useState(false);
+  const [prefix, setPrefix] = useState('');
+  // Those found by name who are in neither the channel nor the session's
+  // list above; `null` while nothing was searched.
+  const [found, setFound] = useState<Candidate[] | null>(null);
   const [chosen, setChosen] = useState<string>('');
   const [historyKind, setHistoryKind] = useState<HistoryKind>('all');
   const [count, setCount] = useState(10);
@@ -46,12 +64,29 @@ export const AddParticipantDialog: React.FC<AddParticipantDialogProps> = ({sessi
           .filter(p => p.kind !== 'approver' && !members.has(actorKey(p.id)))
           .sort((l, r) => l.name.localeCompare(r.name));
         setCandidates(outside);
+        setCanSearch(session.can_change);
         setChosen(outside[0] ? actorKey(outside[0].id) : '');
       })
       .catch(error => reportError('Failed to load the participants of the session', error));
   }, [sessionId, channel]);
 
-  const participant = candidates?.find(p => actorKey(p.id) === chosen);
+  // Searched as the user types, a moment after they stopped; what was found
+  // for a shorter prefix is not shown.
+  const searching = canSearch && prefix.trim().length >= MIN_PREFIX;
+  useEffect(() => {
+    if (!searching) return;
+    let current = true;
+    const timer = setTimeout(() => {
+      api.searchCandidates(sessionId, prefix.trim(), channel.id)
+        .then(result => { if (current) setFound(result.filter(c => !c.in_channel)); })
+        .catch(error => reportError('Failed to search whom to add', error));
+    }, 250);
+    return () => { current = false; clearTimeout(timer); };
+  }, [searching, prefix, sessionId, channel.id]);
+
+  const shown = searching ? found : null;
+  const fromSearch = shown?.find(c => actorKey(c.id) === chosen && !c.refusal);
+  const participant = candidates?.find(p => actorKey(p.id) === chosen) ?? fromSearch;
   const needsCount = historyKind === 'last_messages' || historyKind === 'last_days';
 
   const submit = async (e: React.FormEvent) => {
@@ -102,22 +137,67 @@ export const AddParticipantDialog: React.FC<AddParticipantDialogProps> = ({sessi
         <div className="space-y-4 p-4 text-sm">
           {candidates === null ? (
             <div className="text-xs italic text-gray-500">Loading…</div>
-          ) : candidates.length === 0 ? (
-            <div className="text-xs italic text-gray-500">Everyone in this session takes part already.</div>
           ) : (<>
-            <label className="block space-y-1">
-              <span className="text-xs text-gray-400">Participant</span>
-              <select
-                autoFocus
-                value={chosen}
-                onChange={(e) => setChosen(e.target.value)}
-                className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1"
-              >
-                {candidates.map(p => (
-                  <option key={actorKey(p.id)} value={actorKey(p.id)}>{p.name} ({p.kind})</option>
+            {candidates.length === 0 ? (
+              <div className="text-xs italic text-gray-500">Everyone in this session takes part already.</div>
+            ) : (
+              <label className="block space-y-1">
+                <span className="text-xs text-gray-400">From the session</span>
+                <select
+                  autoFocus
+                  value={candidates.some(p => actorKey(p.id) === chosen) ? chosen : ''}
+                  onChange={(e) => setChosen(e.target.value)}
+                  className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1"
+                >
+                  {!candidates.some(p => actorKey(p.id) === chosen) && <option value="">Someone found below</option>}
+                  {candidates.map(p => (
+                    <option key={actorKey(p.id)} value={actorKey(p.id)}>{p.name} ({p.kind})</option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {canSearch && (
+              <div className="space-y-1">
+                <label className="block space-y-1">
+                  <span className="text-xs text-gray-400">Someone not in the session yet</span>
+                  <input
+                    type="search"
+                    value={prefix}
+                    onChange={(e) => setPrefix(e.target.value)}
+                    placeholder="The beginning of their name"
+                    className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1"
+                  />
+                </label>
+                {shown !== null && (shown.length === 0 ? (
+                  <div className="text-xs italic text-gray-500">Nobody else of that name.</div>
+                ) : (
+                  <ul className="space-y-1">
+                    {shown.map(c => (
+                      <li key={actorKey(c.id)}>
+                        <label className={`flex items-start gap-2 ${c.refusal ? 'text-gray-500' : ''}`}>
+                          <input
+                            type="radio"
+                            name="found"
+                            disabled={!!c.refusal}
+                            checked={chosen === actorKey(c.id)}
+                            onChange={() => setChosen(actorKey(c.id))}
+                            className="mt-1"
+                          />
+                          <span>
+                            {c.name} ({c.kind})
+                            <span className="block text-xs text-gray-500">
+                              {c.refusal ? `Cannot be added: ${REFUSALS[c.refusal]}`
+                                : c.in_session ? 'In the session' : 'Not in the session yet - will be added to it'}
+                            </span>
+                          </span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
                 ))}
-              </select>
-            </label>
+              </div>
+            )}
 
             <fieldset className="space-y-1">
               <legend className="text-xs text-gray-400">History they may see</legend>

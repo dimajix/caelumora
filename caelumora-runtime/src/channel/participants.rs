@@ -23,23 +23,47 @@ use caelumora_model::removal::Stored;
 impl ChannelLoop {
     /// Adds `participant` - a participant of the session - to the channel on
     /// behalf of `context` (issue 46), seeing as much of the history as
-    /// `history` grants. Stored first (`UpdateChannel`, also asked as
-    /// `ConfidentialityPolicy::cleared`), then its actor built and given the part of the
-    /// history it may see (`Actor::catch_up`, issue 190), then started, the
-    /// moderator and the mention directory told, and the join announced.
-    /// A participant removed shortly before is added only once its old
-    /// actor has ended (`left`, issue 171).
+    /// `history` grants: whoever may change the channel (`UpdateChannel`),
+    /// asked before anything of the participant (issue 198, F2) - who may not
+    /// learns nothing of its clearance or its personality. Then taken in as
+    /// [`Self::take_in`] says.
+    ///
+    /// # Errors
+    /// `ChannelError::Forbidden` if `context` may not change the channel; as
+    /// [`Self::take_in`].
+    pub async fn add_participant(&self, context: &SecurityContext, participant: ActorId, history: HistoryAccess) -> Result<()> {
+        let attributes = self.security_attributes();
+        self.require(context, ActionType::update(Channel::KIND, &attributes), "adding a participant to").await?;
+        self.take_in(context, participant, history, false).await
+    }
+
+    /// Takes `participant` - a participant of the session, and whom `context`
+    /// acts for: themselves, or their own agent - into the channel by their
+    /// own act (issue 221), where an entry of the channel's access list lets
+    /// them join (`JOIN`). They see the whole history, as whoever may change
+    /// the channel let them by letting them join. Stored in the runtime's
+    /// name, once joining was permitted; then as [`Self::take_in`] says.
+    ///
+    /// # Errors
+    /// `ChannelError::Forbidden` if they may not join; as [`Self::take_in`].
+    pub async fn join(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
+        self.take_in(context, participant, HistoryAccess::All, true).await
+    }
+
+    /// Takes `participant` into the channel, on behalf of `context`, seeing
+    /// as much of the history as `history` grants; by their own act if
+    /// `joining`, which is asked once the member is found. Stored first
+    /// (also asked as `ConfidentialityPolicy::cleared`), then its actor built
+    /// and given the part of the history it may see (`Actor::catch_up`, issue
+    /// 190), then started, the moderator and the mention directory told, and
+    /// the join announced. A participant removed shortly before is added only
+    /// once its old actor has ended (`left`, issue 171).
     ///
     /// # Errors
     /// `ChannelError::NotInSession`, `OutOfScope`, `AlreadyParticipant`,
-    /// `StillLeaving` or `Forbidden`; a `StoreError` if `context` may not
-    /// change the channel.
-    pub async fn add_participant(&self, context: &SecurityContext, participant: ActorId, history: HistoryAccess) -> Result<()> {
-        // Whether the actor may change the channel at all, before anything
-        // is asked of the participant (issue 198, F2): who may not learns
-        // nothing of its clearance or its personality.
-        let attributes = self.security_attributes();
-        self.require(context, ActionType::update(Channel::KIND, &attributes), "adding a participant to").await?;
+    /// `StillLeaving`, `NotCleared` or `Forbidden`; a `StoreError` if
+    /// `context` may not change the channel.
+    async fn take_in(&self, context: &SecurityContext, participant: ActorId, history: HistoryAccess, joining: bool) -> Result<()> {
         if self.actors.load().contains_key(&participant) {
             return Err(ChannelError::AlreadyParticipant { participant, channel: self.id }.into());
         }
@@ -49,12 +73,21 @@ impl ChannelLoop {
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
         let member = self.member_of(&found).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
+        // Joining was permitted; storing is the runtime's.
+        let storing = if joining {
+            let channel = self.id;
+            member.require_joinable(self.security.as_ref(), context, Channel::KIND, &self.security_attributes(), self.session_id, channel,
+                |refused| ChannelError::Forbidden { action: "joining", channel, refused }).await?;
+            SecurityContext::system()
+        } else {
+            context.clone()
+        };
         member.require_in_scope(self.session_id, self.id)?;
         member.require_cleared(self.confidentiality.as_ref(), context, &self.classification(), self.session_id, self.id)?;
 
         let messages = self.history().await;
         let start = history_start(history, &messages, chrono::Utc::now());
-        self.channel.add_participant(context, found.clone(), start).await?;
+        self.channel.add_participant(&storing, found.clone(), start).await?;
 
         let started = async {
             let actor = Self::create_actor(Arc::clone(&self.channel), &member, &self.runtime).await?;

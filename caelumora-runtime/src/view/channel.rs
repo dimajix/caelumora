@@ -125,6 +125,12 @@ impl ChannelView {
         Place { channel: self.channel.id, classification: classification.clone(), session: self.session.privacy() }
     }
 
+    /// Whether `actor` is among the channel's participants - resting in it
+    /// included.
+    pub fn lists(&self, actor: ActorId) -> bool {
+        self.channel.participants.iter().any(|p| p.actor_id() == actor)
+    }
+
     /// Whether the channel runs: its loop is where an operation goes.
     pub fn running(&self) -> Option<&Arc<ChannelLoop>> {
         self.running.as_ref()
