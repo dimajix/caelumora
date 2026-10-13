@@ -23,7 +23,7 @@ use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::{Scope, Scoped, ScopedField};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::{ChannelId, Session, SessionId};
-use crate::store::query::Field;
+use crate::store::query::{Field, FieldValue, Filter};
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
 use chrono::{DateTime, Utc};
@@ -52,6 +52,8 @@ impl GroupId {
 pub enum GroupField {
     /// Where it lies: a `Scope`.
     Scope,
+    /// Who owns it: an `ActorId`.
+    Owner,
     /// Who belongs to it.
     Members,
     /// A member, within `Members`: an `ActorId`.
@@ -66,6 +68,7 @@ impl Field for GroupField {
     fn path(self) -> &'static [&'static str] {
         match self {
             GroupField::Scope => &["scope"],
+            GroupField::Owner => &["security_attributes", "owner_id"],
             GroupField::Members => &["members"],
             GroupField::Member => &[],
         }
@@ -160,6 +163,13 @@ impl Group {
         matches!(self.name.scope, Scope::SessionScope { .. } | Scope::ChannelScope { .. })
     }
 
+    /// The teams, as a query (issue 317): the groups that lie where a team
+    /// lies - the global scope or a user's -, not the participants of a
+    /// session or channel (`is_participants`).
+    pub fn teams() -> Filter<GroupField> {
+        Filter::is_in(GroupField::Scope, [FieldValue::variant("GlobalScope"), FieldValue::variant("UserScope")])
+    }
+
     /// Whether `actor` belongs to it.
     pub fn has_member(&self, actor: ActorId) -> bool {
         self.members.contains(&actor)
@@ -248,6 +258,20 @@ mod tests {
         let mut with_system = team(Scope::GlobalScope, alice);
         with_system.members.push(ActorId::System);
         assert!(with_system.validate().is_err());
+    }
+
+    /// The query for teams (issue 317) finds exactly the groups that are
+    /// not the participants of a session or channel.
+    #[test]
+    fn the_query_for_teams_finds_what_is_no_group_of_participants() {
+        let alice = UserId::new();
+        let session = SessionId::new();
+        let channel = Channel::build(session, ActorId::User(alice), Name::new("main").unwrap(), Default::default(), Default::default(), None, vec![Participant::User(alice)]);
+        let session_group = Group { id: GroupId::of_session(session), name: ScopedName { name: Group::participants_name(), scope: Scope::SessionScope { session_id: session } }, ..team(Scope::GlobalScope, alice) };
+        for group in [team(Scope::GlobalScope, alice), team(Scope::UserScope { user_id: alice }, alice), Group::of_channel(&channel), session_group] {
+            let document = serde_json::to_value(&group).unwrap();
+            assert_eq!(Group::teams().matches(&document), !group.is_participants(), "{:?}", group.name.scope);
+        }
     }
 
     #[test]
