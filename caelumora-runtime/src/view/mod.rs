@@ -875,7 +875,7 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
     use caelumora_model::config::AppConfig;
-    use crate::component::ComponentRegistry;
+    use crate::testing::test_registry;
     use caelumora_model::value::text::Introduction;
 
     fn as_user(id: UserId) -> Viewer {
@@ -1791,7 +1791,7 @@ use caelumora_model::turn::TurnState;
         
 
         let store = Arc::new(MemoryStore::new());
-        let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+        let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
         registry.register(crate::component::ComponentKind::new("silent").provides::<dyn crate::llm::LLMClient>(), |_descriptor, _context| {
             let mut facets = crate::component::ComponentFacets::empty();
             facets.insert::<dyn crate::llm::LLMClient>(Arc::new(Silent));

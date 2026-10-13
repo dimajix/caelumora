@@ -353,6 +353,7 @@ dependencies = [
  "caelumora-logging",
  "caelumora-mcp",
  "caelumora-model",
+ "caelumora-ollama",
  "caelumora-open-terminal",
  "caelumora-rest-server",
  "caelumora-runtime",
@@ -443,6 +444,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "caelumora-ollama"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "async-trait",
+ "axum",
+ "bytes",
+ "caelumora-model",
+ "caelumora-runtime",
+ "chrono",
+ "dashmap",
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "caelumora-open-terminal"
 version = "0.1.0"
 dependencies = [
@@ -517,7 +541,6 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "arc-swap",
- "async-stream",
  "async-trait",
  "axum",
  "bytes",
@@ -533,7 +556,6 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sse-stream",
  "tempfile",
  "thiserror",
  "tokio",
@@ -573,6 +595,7 @@ dependencies = [
  "caelumora-logging",
  "caelumora-mcp",
  "caelumora-model",
+ "caelumora-ollama",
  "caelumora-open-terminal",
  "caelumora-runtime",
  "caelumora-skills",

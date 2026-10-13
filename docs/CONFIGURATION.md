@@ -53,7 +53,7 @@ The persistence (`persistence`) is named the same way, but is the core's alone.
 | `approvals` | What the system restricts of tool calls everywhere: `rules`, each with a `matcher` (`tool`, `*` for every one, and optionally `arguments`, a regular expression per argument), a `decision` (`ask` or `deny` - the system never allows) and optionally `expires_at`. See [APPROVALS.md](APPROVALS.md#rules-of-a-place). | none |
 | `workspaces` | Where the files of workspaces lie: `max_file_bytes`, the largest file a person may put into one, and `storage`, the storages by name, each a [backend](#backends) - see [Workspace storages](#workspace-storages). A workspace names its storage when it is made. | 50 MiB; no storage - no workspace can be made |
 | `artifacts` | Where the content of published artifacts lies: `max_bytes`, the largest version; `storage`, the storages by name, each a [backend](#backends) - so far `type: local`, a directory per artifact under `root`, with `destination` (the most an artifact there may be classified; no bound unless given); and `publish_to`, the storage new artifacts are made in, needed where there are several. An artifact's later versions go where it was made. See [STORAGE.md](STORAGE.md). | 50 MiB; no storage - nothing can be published |
-| `component_defaults` | Components that replace the built-in default of a facet of which an agent or a channel has exactly one (`LLMClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults |
+| `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`LLMClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults, and the program's model ([The model](#the-model)) |
 
 The approval rules and the compartments are checked when the configuration is read; the backends,
 `component_defaults` and the sections of the plugins when the runtime is built.
@@ -83,8 +83,10 @@ the host.**
 
 The language model an agent talks to is a component: the `LLMClient` facet, of which an agent has
 exactly one. A personality may configure its own; every other agent gets the one
-`component_defaults` names, or else `ollama_client` with its defaults. There is no separate section
-for it, and no environment variable.
+`component_defaults` names, or else the default model of the program: `ollama_client` with its
+defaults in `caelumora-app` and `caelumora-tui`, which list its plugin `caelumora-ollama` and name it
+(issue 329) - the core names no model. There is no separate section for it, and no environment
+variable.
 
 ```yaml
 component_defaults:

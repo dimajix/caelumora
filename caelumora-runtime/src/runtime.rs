@@ -575,10 +575,8 @@ impl RuntimeBuilder {
     ///
     /// # Errors
     /// If a section of the configuration is claimed by no plugin; a
-    /// `ComponentError` if a default kind of the registry is missing or
-    /// does not provide its facet (`ComponentRegistry::verify`), or if
-    /// `component_defaults` cannot replace a default (see
-    /// `ComponentRegistry::set_defaults`) - the process does not start
+    /// `ComponentError` if `component_defaults` cannot replace a default
+    /// (see `ComponentRegistry::set_defaults`) - the process does not start
     /// then.
     pub fn build(mut self) -> Result<RuntimeManager> {
         if let Some(name) = self.sections.keys().next() {
@@ -735,6 +733,7 @@ impl RuntimeManager {
 mod tests {
     use super::*;
     use caelumora_model::agent::AgentId;
+    use crate::testing::test_registry;
     use caelumora_model::security::DummySecurityManager;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
@@ -744,7 +743,7 @@ mod tests {
     fn channel_runtime() -> ChannelRuntime {
         let store = Arc::new(MemoryStore::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
         let commands = Arc::new(CommandExecutor::empty(Arc::clone(manager.security_manager())));
         ChannelRuntime::outside_a_session(manager, commands, SessionId::new())
     }
@@ -768,7 +767,7 @@ mod tests {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
             let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
-            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)))
+            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, test_registry(Arc::<MemoryStore>::clone(&store)))
         };
         // As in `examples/config.yaml`.
         assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());

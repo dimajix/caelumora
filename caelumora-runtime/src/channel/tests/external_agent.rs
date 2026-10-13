@@ -6,6 +6,7 @@ use caelumora_model::value::name::Name;
 use crate::channel::ChannelLoop;
 use crate::command::CommandExecutor;
 use crate::runtime::{ChannelRuntime, RuntimeManager};
+use crate::testing::test_registry;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::Channel;
@@ -67,7 +68,7 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
 
     let security: Arc<dyn SecurityManager> = Arc::new(caelumora_model::security::DummySecurityManager::new());
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
-    let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+    let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
     registry.register(
         crate::component::ComponentKind::new("test_remote").provides::<dyn crate::external::ExternalAgent>(),
         move |_descriptor, _context| {
@@ -1126,7 +1127,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     let answer = |text: &str| vec![Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![answer("Hello."), answer("Hi, bob.")]));
     let store = Arc::new(MemoryStore::new());
-    let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+    let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
     registry.register(
         crate::component::ComponentKind::new("test_remote").provides::<dyn crate::external::ExternalAgent>(),
         { let remote = Arc::clone(&remote); move |_descriptor, _context| {
