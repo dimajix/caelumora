@@ -1,6 +1,6 @@
 # 327 — Open Terminal is part of the runtime crate
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -62,3 +62,16 @@ keeps its commands in; `Terminal` and `Shell`, the handles it gives out, are pub
   (`SharedStorageConfig`, `DockerStorageConfig`), and `TerminalProvider` and `CommandKey` are
   public; `Commands` and `Kept` are not yet. The remote helpers are public in the runtime (issue
   326), so nothing blocks it any longer.
+- **2026-10-13** — Done. `caelumora-open-terminal` holds both providers, their client, the wire
+  types and the stand-in; `OpenTerminalPlugin` registers `open_terminal_shared` and, behind the
+  feature `docker` (on by default), `open_terminal_docker` in `Plugin::backends`, and nothing in
+  `register`. `caelumora-app` and `caelumora-tui` list it; the configuration is unchanged. The
+  runtime no longer depends on `bollard`, nor on `reqwest`'s `multipart`. The terminal's API, as
+  decided before the move: `Commands` and `Kept` are public, with `Kept` implemented for an `Arc`
+  of what implements it (the orphan rule forbade `Kept for Arc<Started>` outside the runtime);
+  ending a command when told is a provided method `Shell::end` instead of the free `commands::end`
+  all three providers called; `max_run` and `default_max_run_secs` are public, rather than a type
+  `MaxRun` that reads and checks itself; `locked` stays private - Open Terminal keeps when a
+  command ended in a `OnceLock`, set once, as it was. Without `docker`, the variant `Key::Made`
+  and `Client::idle_for` are compiled out. `docs/WORKSPACE.md` says where the providers live and
+  what a provider has to offer.

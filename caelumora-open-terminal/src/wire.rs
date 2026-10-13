@@ -8,66 +8,66 @@ use std::collections::BTreeMap;
 
 /// `POST /execute`.
 #[derive(Debug, Serialize)]
-pub(super) struct ExecRequest<'a> {
-    pub(super) command: &'a str,
+pub(crate) struct ExecRequest<'a> {
+    pub(crate) command: &'a str,
     /// Absolute, inside the instance.
-    pub(super) cwd: &'a str,
+    pub(crate) cwd: &'a str,
     /// Merged into the instance's own environment.
-    pub(super) env: BTreeMap<&'static str, String>,
+    pub(crate) env: BTreeMap<&'static str, String>,
 }
 
 /// What `POST /execute` and `GET /execute/{id}/status` answer. `log_path`,
 /// a path inside the instance, and `command` are not read.
 #[derive(Debug, Deserialize)]
-pub(super) struct Process {
-    pub(super) id: String,
+pub(crate) struct Process {
+    pub(crate) id: String,
     /// `running`, `done` or `killed`.
-    pub(super) status: String,
-    pub(super) exit_code: Option<i32>,
-    pub(super) output: Vec<OutputEntry>,
+    pub(crate) status: String,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) output: Vec<OutputEntry>,
     /// Whether entries before the offset asked for, or between it and what
     /// is given, were dropped.
-    pub(super) truncated: bool,
+    pub(crate) truncated: bool,
     /// Counts entries, not bytes.
-    pub(super) next_offset: u64,
+    pub(crate) next_offset: u64,
 }
 
 /// A piece of what a process printed: `output` from a pseudo-terminal,
 /// `stdout` or `stderr` from pipes.
 #[derive(Debug, Deserialize)]
-pub(super) struct OutputEntry {
+pub(crate) struct OutputEntry {
     #[serde(rename = "type")]
-    pub(super) kind: String,
-    pub(super) data: String,
+    pub(crate) kind: String,
+    pub(crate) data: String,
 }
 
 /// What `GET /files/list` answers; `dir`, a path inside the instance, and
 /// `writable` are not read.
 #[derive(Debug, Deserialize)]
-pub(super) struct Listing {
-    pub(super) entries: Vec<ListedEntry>,
+pub(crate) struct Listing {
+    pub(crate) entries: Vec<ListedEntry>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct ListedEntry {
-    pub(super) name: String,
+pub(crate) struct ListedEntry {
+    pub(crate) name: String,
     /// `directory` or `file`, links followed.
     #[serde(rename = "type")]
-    pub(super) kind: String,
-    pub(super) size: u64,
+    pub(crate) kind: String,
+    pub(crate) size: u64,
     /// Seconds since the epoch.
-    pub(super) modified: Option<f64>,
+    pub(crate) modified: Option<f64>,
 }
 
 /// `POST /files/mkdir`.
 #[derive(Debug, Serialize)]
-pub(super) struct PathRequest<'a> {
-    pub(super) path: &'a str,
+pub(crate) struct PathRequest<'a> {
+    pub(crate) path: &'a str,
 }
 
 /// `POST /files/move`.
 #[derive(Debug, Serialize)]
-pub(super) struct MoveRequest<'a> {
-    pub(super) source: &'a str,
-    pub(super) destination: &'a str,
+pub(crate) struct MoveRequest<'a> {
+    pub(crate) source: &'a str,
+    pub(crate) destination: &'a str,
 }

@@ -87,7 +87,7 @@ pub(super) struct Command {
     _task: AbortOnDropHandle<()>,
 }
 
-impl Kept for Arc<Command> {
+impl Kept for Command {
     fn ended(&self) -> Option<Instant> {
         self.running.end.borrow().map(|end| end.at)
     }

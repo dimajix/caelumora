@@ -1,0 +1,38 @@
+[package]
+name = "caelumora-open-terminal"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+caelumora-model = { path = "../caelumora-model" }
+caelumora-runtime = { path = "../caelumora-runtime" }
+anyhow = "1.0"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "stream", "multipart", "native-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.53.1", features = ["rt", "sync", "time"] }
+tracing = "0.1.44"
+bollard = { version = "0.21", optional = true }
+tokio-util = { version = "0.7", features = ["rt"], optional = true }
+uuid = { version = "1.26", features = ["v4"], optional = true }
+
+[features]
+default = ["docker"]
+# The storage `open_terminal_docker`, a container per workspace started over
+# the Docker daemon (issue 327): without it, a deployment with one shared
+# instance builds without `bollard`.
+docker = ["dep:bollard", "dep:tokio-util", "dep:uuid"]
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["full"] }
+axum = { version = "0.8.9", features = ["multipart"] }
+bytes = "1"
+nix = { version = "0.31", features = ["signal", "process"] }
+tempfile = "3.27"
+uuid = { version = "1.26", features = ["v4"] }
+
+[lints]
+workspace = true

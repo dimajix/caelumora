@@ -136,7 +136,7 @@ impl TerminalProvider for LocalProvider {
     async fn end_command(&self, (workspace, scope, id): &CommandKey) -> TerminalResult<()> {
         let Some(commands) = &self.commands else { return Ok(()) };
         let shell = LocalShell { dir: self.place(*workspace), workspace: *workspace, scope: scope.clone(), commands: Arc::clone(commands), max_run: self.max_run };
-        super::commands::end(&shell, id).await
+        shell.end(id).await
     }
 
     fn destination(&self) -> Option<&Classification> {

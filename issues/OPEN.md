@@ -101,7 +101,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 
 | No. | Status | Issue |
 |---|---|---|
-| [327](327-open-terminal-in-a-crate-of-its-own.md) | open | The Open Terminal storages of workspaces are part of the runtime crate and named in `StorageConfig`, so `bollard` is built into everything that uses the runtime. |
 | [328](328-artifacts-in-a-crate-of-their-own.md) | open | Artifacts are enumerated in the core like skills, and need seams skills do not - the channel's view, an event that carries a version, a verb shared with workspaces, a dependency on workspaces. |
 | [329](329-ollama-named-by-the-core.md) | open | The core names `ollama_client` as the default model, so the choice of a model provider is not the deployment's and a second provider cannot become the default without configuration. |
 | [333](333-workspaces-woven-into-sessions.md) | open | Workspaces are part of what sessions, channels and templates are - an attached workspace, its use per channel, one made by a template -, so they cannot leave the core as skills did. |

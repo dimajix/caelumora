@@ -9,13 +9,23 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
+use nix::sys::signal::{killpg, Signal};
+use nix::unistd::Pid;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fs;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, UNIX_EPOCH};
+use tempfile::TempDir;
 use tokio::io::AsyncReadExt;
+use tokio::net::TcpListener;
+use tokio::process::Command;
+use tokio::time::{sleep, Instant};
+use uuid::Uuid;
 
 pub(crate) const MOUNT: &str = "/workspaces";
 pub(crate) const KEY: &str = "stand-in-key";
@@ -47,7 +57,7 @@ struct Instance {
 pub(crate) struct StandIn {
     pub(crate) url: String,
     /// Where the instance's `/workspaces` lies on the host.
-    pub(crate) root: tempfile::TempDir,
+    pub(crate) root: TempDir,
     pub(crate) seen: Arc<Mutex<Seen>>,
 }
 
@@ -81,8 +91,8 @@ macro_rules! guard {
 }
 
 fn modified(path: &Path) -> f64 {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+    fs::metadata(path).and_then(|m| m.modified()).ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map_or(0.0, |d| d.as_secs_f64())
 }
 
@@ -91,12 +101,12 @@ async fn list(State(instance): State<Instance>, headers: HeaderMap, Query(query)
     let directory = query.get("directory").cloned().unwrap_or_default();
     let Some(dir) = instance.host(&directory).filter(|d| d.is_dir()) else { return detail(StatusCode::NOT_FOUND, "Directory not found") };
     let mut entries = Vec::new();
-    let mut names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    let mut names: Vec<_> = fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     names.sort();
     for name in names {
         let full = dir.join(&name);
         let is_dir = full.is_dir();
-        entries.push(json!({ "name": name, "type": if is_dir { "directory" } else { "file" }, "size": std::fs::metadata(&full).map(|m| m.len()).unwrap_or(0), "modified": modified(&full), "writable": true }));
+        entries.push(json!({ "name": name, "type": if is_dir { "directory" } else { "file" }, "size": fs::metadata(&full).map(|m| m.len()).unwrap_or(0), "modified": modified(&full), "writable": true }));
     }
     Json(json!({ "dir": directory, "writable": true, "entries": entries })).into_response()
 }
@@ -104,7 +114,7 @@ async fn list(State(instance): State<Instance>, headers: HeaderMap, Query(query)
 async fn view(State(instance): State<Instance>, headers: HeaderMap, Query(query): Query<HashMap<String, String>>) -> Response {
     guard!(headers);
     let Some(file) = query.get("path").and_then(|p| instance.host(p)).filter(|f| f.is_file()) else { return detail(StatusCode::NOT_FOUND, "File not found") };
-    ([("content-type", "application/octet-stream")], std::fs::read(file).unwrap()).into_response()
+    ([("content-type", "application/octet-stream")], fs::read(file).unwrap()).into_response()
 }
 
 async fn upload(State(instance): State<Instance>, headers: HeaderMap, Query(query): Query<HashMap<String, String>>, mut multipart: Multipart) -> Response {
@@ -113,10 +123,10 @@ async fn upload(State(instance): State<Instance>, headers: HeaderMap, Query(quer
     let Ok(Some(field)) = multipart.next_field().await else { return detail(StatusCode::UNPROCESSABLE_ENTITY, "file missing") };
     let name = Path::new(field.file_name().unwrap_or("upload")).file_name().unwrap().to_owned();
     let content = field.bytes().await.unwrap();
-    if let Err(e) = std::fs::create_dir_all(&dir) {
+    if let Err(e) = fs::create_dir_all(&dir) {
         return detail(StatusCode::BAD_REQUEST, &format!("{e}: {}", dir.display()));
     }
-    match std::fs::write(dir.join(name), &content) {
+    match fs::write(dir.join(name), &content) {
         Ok(()) => Json(json!({ "path": "...", "size": content.len() })).into_response(),
         Err(e) => detail(StatusCode::BAD_REQUEST, &format!("{e}: {}", dir.display())),
     }
@@ -126,7 +136,7 @@ async fn remove(State(instance): State<Instance>, headers: HeaderMap, Query(quer
     guard!(headers);
     let Some(target) = query.get("path").and_then(|p| instance.host(p)).filter(|t| t.exists()) else { return detail(StatusCode::NOT_FOUND, "Path not found") };
     let is_dir = target.is_dir();
-    if is_dir { std::fs::remove_dir_all(&target).unwrap() } else { std::fs::remove_file(&target).unwrap() }
+    if is_dir { fs::remove_dir_all(&target).unwrap() } else { fs::remove_file(&target).unwrap() }
     Json(json!({ "path": "...", "type": if is_dir { "directory" } else { "file" } })).into_response()
 }
 
@@ -138,7 +148,7 @@ struct PathBody {
 async fn mkdir(State(instance): State<Instance>, headers: HeaderMap, Json(body): Json<PathBody>) -> Response {
     guard!(headers);
     let Some(dir) = instance.host(&body.path) else { return detail(StatusCode::FORBIDDEN, "Access denied") };
-    match std::fs::create_dir_all(&dir) {
+    match fs::create_dir_all(&dir) {
         Ok(()) => Json(json!({ "path": body.path })).into_response(),
         Err(e) => detail(StatusCode::BAD_REQUEST, &format!("{e}: {}", dir.display())),
     }
@@ -162,7 +172,7 @@ async fn move_entry(State(instance): State<Instance>, headers: HeaderMap, Json(b
     if destination.exists() {
         return detail(StatusCode::CONFLICT, "Destination already exists");
     }
-    std::fs::rename(source, destination).unwrap();
+    fs::rename(source, destination).unwrap();
     Json(json!({ "source": body.source, "destination": body.destination })).into_response()
 }
 
@@ -184,9 +194,9 @@ fn answer(id: &str, process: &Process, offset: usize, tail: Option<usize>) -> Va
 }
 
 async fn wait_for(process: &Arc<Mutex<Process>>, wait: f64) {
-    let until = tokio::time::Instant::now() + std::time::Duration::from_secs_f64(wait);
-    while process.lock().unwrap().status == "running" && tokio::time::Instant::now() < until {
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    let until = Instant::now() + Duration::from_secs_f64(wait);
+    while process.lock().unwrap().status == "running" && Instant::now() < until {
+        sleep(Duration::from_millis(10)).await;
     }
 }
 
@@ -199,11 +209,11 @@ async fn execute(State(instance): State<Instance>, headers: HeaderMap, Query(que
         seen.cwd.insert(body.command.clone(), cwd.clone());
     }
     let Some(dir) = instance.host(&cwd) else { return detail(StatusCode::INTERNAL_SERVER_ERROR, "no such directory") };
-    let mut command = tokio::process::Command::new("sh");
+    let mut command = Command::new("sh");
     command.arg("-c").arg(&body.command).current_dir(dir).env("OPEN_TERMINAL_API_KEY", KEY)
         .envs(body.env.unwrap_or_default()).stdout(Stdio::piped()).stderr(Stdio::null()).process_group(0);
     let mut child = command.spawn().unwrap();
-    let id = format!("20261008-120000-{}", &uuid::Uuid::new_v4().simple().to_string()[..6]);
+    let id = format!("20261008-120000-{}", &Uuid::new_v4().simple().to_string()[..6]);
     let process = Arc::new(Mutex::new(Process { session: session(&headers), status: "running".to_string(), group: child.id().map(|p| p as i32), ..Default::default() }));
     instance.processes.lock().unwrap().insert(id.clone(), Arc::clone(&process));
     let mut stdout = child.stdout.take().unwrap();
@@ -219,7 +229,6 @@ async fn execute(State(instance): State<Instance>, headers: HeaderMap, Query(que
         }
         let status = child.wait().await.unwrap();
         let mut running = running.lock().unwrap();
-        use std::os::unix::process::ExitStatusExt;
         running.exit_code = Some(status.code().unwrap_or_else(|| -status.signal().unwrap_or(0)));
         if running.status != "killed" {
             running.status = "done".to_string();
@@ -262,10 +271,10 @@ async fn kill(State(instance): State<Instance>, headers: HeaderMap, RoutePath(id
         process.group
     };
     if let Some(group) = group {
-        let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(group), nix::sys::signal::Signal::SIGKILL);
+        let _ = killpg(Pid::from_raw(group), Signal::SIGKILL);
     }
     while process.lock().unwrap().exit_code.is_none() {
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        sleep(Duration::from_millis(10)).await;
     }
     Json(json!({ "status": "killed" })).into_response()
 }
@@ -286,7 +295,7 @@ pub(crate) async fn start() -> StandIn {
         .route("/execute/{id}/status", get(status))
         .route("/execute/{id}", delete(kill))
         .with_state(instance);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     StandIn { url, root, seen }

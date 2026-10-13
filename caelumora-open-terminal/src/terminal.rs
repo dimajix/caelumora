@@ -34,23 +34,19 @@
 //!
 //! No message of the instance is passed on: they name paths inside it.
 
-mod client;
-mod docker;
-mod shared;
-mod wire;
-
-use super::commands::{locked, Commands, Kept};
-use caelumora_model::workspace::CommandStatus;
-use super::{ByteStream, CommandKey, CommandState, FileEntry, Shell, Terminal, TerminalError, TerminalResult, WorkspacePath};
-use crate::backend::Backends;
+use crate::client::Client;
+use crate::wire;
 use async_trait::async_trait;
-use caelumora_model::workspace::WorkspaceId;
+use caelumora_model::workspace::{CommandStatus, WorkspaceId};
+use caelumora_runtime::remote::describe_request_error;
+use caelumora_runtime::terminal::{ByteStream, CommandKey, CommandState, Commands, FileEntry, Kept, Shell, Terminal, TerminalError, TerminalResult, WorkspacePath};
 use chrono::{DateTime, Utc};
-use client::Client;
 use futures::{StreamExt, TryStreamExt};
+use reqwest::multipart::{Form, Part};
 use reqwest::{Method, StatusCode};
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::io::Error as IoError;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 /// The most pieces of output one answer holds - with a pseudo-terminal's
@@ -65,10 +61,11 @@ const KILL_WAIT: Duration = Duration::from_secs(2);
 /// A command as it was started here (issue 254): it may run until it is
 /// seen to have ended, or for `max_run` at most.
 #[derive(Debug)]
-struct Started {
+pub(crate) struct Started {
     at: Instant,
     max_run: Duration,
-    ended: Mutex<Option<Instant>>,
+    /// When it was seen to have ended; set once.
+    ended: OnceLock<Instant>,
 }
 
 impl Started {
@@ -78,24 +75,24 @@ impl Started {
     }
 }
 
-impl Kept for Arc<Started> {
+impl Kept for Started {
     fn ended(&self) -> Option<Instant> {
-        (*locked(&self.ended)).or_else(|| self.ran_out().then(|| self.at + self.max_run))
+        self.ended.get().copied().or_else(|| self.ran_out().then(|| self.at + self.max_run))
     }
 }
 
 /// The commands the workspaces of an Open Terminal storage were given.
-type OpenCommands = Commands<Arc<Started>>;
+pub(crate) type OpenCommands = Commands<Arc<Started>>;
 
 /// One workspace in an instance: its directory there, `base`, and the
 /// commands of its storage, which run for `max_run` at most.
 #[derive(Debug, Clone)]
-struct OpenTerminal {
-    client: Arc<Client>,
-    base: String,
-    workspace: WorkspaceId,
-    commands: Arc<OpenCommands>,
-    max_run: Duration,
+pub(crate) struct OpenTerminal {
+    pub(crate) client: Arc<Client>,
+    pub(crate) base: String,
+    pub(crate) workspace: WorkspaceId,
+    pub(crate) commands: Arc<OpenCommands>,
+    pub(crate) max_run: Duration,
 }
 
 impl OpenTerminal {
@@ -108,7 +105,7 @@ impl OpenTerminal {
     }
 
     /// The entries of the directory `dir`; `None` where there is none.
-    async fn listing(&self, dir: &WorkspacePath) -> TerminalResult<Option<Vec<FileEntry>>> {
+    pub(crate) async fn listing(&self, dir: &WorkspacePath) -> TerminalResult<Option<Vec<FileEntry>>> {
         let answer = self.client.send(Method::GET, &["files", "list"], &[("directory", self.at(dir))], None, Duration::ZERO, |r| r).await?;
         if answer.status() == StatusCode::NOT_FOUND {
             return Ok(None);
@@ -199,7 +196,7 @@ impl Terminal for OpenTerminal {
             Some(size) => size,
             None => self.stat(path).await?.size,
         };
-        let content = answer.bytes_stream().map_err(|e| std::io::Error::other(crate::remote::describe_request_error(e)));
+        let content = answer.bytes_stream().map_err(|e| IoError::other(describe_request_error(e)));
         Ok((size, Box::pin(content)))
     }
 
@@ -217,8 +214,8 @@ impl Terminal for OpenTerminal {
             held.extend_from_slice(&chunk);
         }
         let written = held.len() as u64;
-        let file = reqwest::multipart::Part::bytes(held).file_name(name.to_string());
-        let form = reqwest::multipart::Form::new().part("file", file);
+        let file = Part::bytes(held).file_name(name.to_string());
+        let form = Form::new().part("file", file);
         let answer = self.client.send(Method::POST, &["files", "upload"], &[("directory", self.at(&path.parent()))], None, Duration::ZERO, |r| r.multipart(form)).await?;
         match answer.status() {
             status if status.is_success() => Ok(written),
@@ -309,7 +306,7 @@ impl OpenTerminalShell {
             Err(error) => matches!(error, TerminalError::UnknownCommand(_)),
         };
         if let Some(started) = started.as_ref().filter(|_| ended) {
-            locked(&started.ended).get_or_insert_with(Instant::now);
+            started.ended.get_or_init(Instant::now);
         }
         asked.map(|mut state| {
             if state.status == CommandStatus::Failed && started.is_some_and(|started| started.ran_out()) {
@@ -340,7 +337,7 @@ impl Shell for OpenTerminalShell {
         // `wait=0` answers at once, whatever the instance's own default.
         let answer = terminal.client.send(Method::POST, &["execute"], &[("wait", "0".to_string())], Some(scope), Duration::ZERO, |r| r.json(&request)).await?;
         let process: wire::Process = terminal.client.parsed(answer).await?;
-        terminal.commands.insert(self.key(&process.id), Arc::new(Started { at, max_run: terminal.max_run, ended: Mutex::default() }));
+        terminal.commands.insert(self.key(&process.id), Arc::new(Started { at, max_run: terminal.max_run, ended: OnceLock::new() }));
         Ok(process.id)
     }
 
@@ -367,13 +364,3 @@ impl Shell for OpenTerminalShell {
         self.output(id, offset, KILL_WAIT).await
     }
 }
-
-/// Registers the storages `open_terminal_shared` and `open_terminal_docker`
-/// with `backends`.
-pub(super) fn register_backends(backends: &mut Backends) {
-    shared::register_backend(backends);
-    docker::register_backend(backends);
-}
-
-#[cfg(test)]
-mod stand_in;

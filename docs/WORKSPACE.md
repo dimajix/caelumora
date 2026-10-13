@@ -66,16 +66,30 @@ provider sees it.
 The providers - `local`, `open_terminal_shared` (one Open Terminal instance started outside
 Caelumora) and `open_terminal_docker` (a volume and a container per workspace, started by Caelumora)
 - differ in what their backend does; how each meets the rules of this document is in their module
-docs (`terminal::open_terminal`). A storage's key is resolved through the secret chain in the
-system's name, since the storage is the operator's.
+docs (`caelumora-open-terminal/src/terminal.rs` for Open Terminal). A storage's key is resolved
+through the secret chain in the system's name, since the storage is the operator's.
 
 A storage is a backend (issue 324, see [ARCHITECTURE.md](ARCHITECTURE.md#backends)): its provider
-is made by the factory registered for its `type`, which reads and checks its parameters. The three
-above are the core's, registered by `terminal::register_backends` beside their providers in
-`caelumora-runtime/src/terminal/`; another sandbox - a pod, a remote machine - is added by a plugin
-that registers a `TerminalProvider` of its own. What a provider has to offer is the
-`TerminalProvider` trait: making and removing the place of a workspace, its `Terminal`, whether it
-has a shell, the commands that may still run and ending one (`CommandKey`), and its `destination`.
+is made by the factory registered for its `type`, which reads and checks its parameters. The core
+brings `local` alone, registered by `terminal::register_backends` beside its provider in
+`caelumora-runtime/src/terminal/`, which tests and development need. The two Open Terminal storages
+are the plugin `caelumora-open-terminal` (issue 327), which the programs list; the Docker one, with
+`bollard`, is behind its feature `docker`, on by default, so that a deployment with one shared
+instance builds without it. Another sandbox - a pod, a remote machine - is added the same way, by a
+plugin that registers a `TerminalProvider` of its own.
+
+What a provider has to offer is the public API of `caelumora_runtime::terminal`:
+
+*   a `TerminalProvider`: making and removing the place of a workspace, its `Terminal`, whether it
+    has a shell, the commands that may still run and ending one (`CommandKey`), and its
+    `destination`;
+*   the `Terminal` it hands out, on `WorkspacePath`s, with files as `ByteStream`s and its failures
+    as `TerminalError`s, and, if it has one, its `Shell` for one scope - whose `end` ends a command
+    as a provider is told to;
+*   the commands of its storage, kept in `Commands` by what its shells keep of each (`Kept`), so
+    that they are listed and forgotten as the core's are;
+*   its parameter `max_run_secs`, read with `default_max_run_secs` and checked with `max_run`, so
+    that every storage bounds its commands alike.
 
 A storage bounds what may be put into it: its `destination`, the classification a workspace in it
 may have at most - where its files go, and for a storage with a shell where what a command reads can

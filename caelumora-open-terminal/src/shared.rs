@@ -5,16 +5,17 @@
 //! reaches every other: fit for a trusted team, one classification per
 //! storage.
 
-use super::client::{Client, Key};
-use super::{OpenCommands, OpenTerminal};
-use caelumora_model::remote::RemoteEndpoint;
-use crate::backend::Backends;
-use crate::component::{config_of_params, service_of, ComponentError, ComponentResult};
-use crate::terminal::{default_max_run_secs, max_run, CommandKey, Terminal, TerminalError, TerminalProvider, TerminalResult};
+use crate::client::{Client, Key};
+use crate::terminal::{OpenCommands, OpenTerminal};
+use crate::wire::PathRequest;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::workspace::WorkspaceId;
+use caelumora_runtime::backend::Backends;
+use caelumora_runtime::component::{config_of_params, service_of, ComponentError, ComponentResult};
+use caelumora_runtime::terminal::{default_max_run_secs, max_run, CommandKey, Terminal, TerminalError, TerminalProvider, TerminalResult, WorkspacePath};
 use reqwest::{Method, StatusCode};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -55,7 +56,7 @@ impl SharedStorageConfig {
 
 /// Registers the storage `open_terminal_shared` with `backends`: its key is
 /// resolved through the `SecretManager`.
-pub(super) fn register_backend(backends: &mut Backends) {
+pub(crate) fn register_backend(backends: &mut Backends) {
     backends.register::<dyn TerminalProvider, _>("open_terminal_shared", |_, params, services| {
         let config: SharedStorageConfig = config_of_params(params)?;
         let secrets = Arc::clone(service_of::<SecretManager>(services)?);
@@ -105,7 +106,7 @@ impl SharedProvider {
 impl TerminalProvider for SharedProvider {
     async fn create(&self, id: WorkspaceId) -> TerminalResult<()> {
         let place = self.place(id);
-        let answer = self.client.send(Method::POST, &["files", "mkdir"], &[], None, Duration::ZERO, |r| r.json(&super::wire::PathRequest { path: &place })).await?;
+        let answer = self.client.send(Method::POST, &["files", "mkdir"], &[], None, Duration::ZERO, |r| r.json(&PathRequest { path: &place })).await?;
         self.client.success(answer).map(|_| ())
     }
 
@@ -121,7 +122,7 @@ impl TerminalProvider for SharedProvider {
 
     async fn terminal_for(&self, id: WorkspaceId) -> TerminalResult<Arc<dyn Terminal>> {
         let terminal = self.terminal(id);
-        match terminal.listing(&crate::terminal::WorkspacePath::root()).await? {
+        match terminal.listing(&WorkspacePath::root()).await? {
             Some(_) => Ok(Arc::new(terminal)),
             None => {
                 warn!(workspace = %id, "The place of a workspace is gone from its Open Terminal");
@@ -141,7 +142,7 @@ impl TerminalProvider for SharedProvider {
     async fn end_command(&self, (workspace, scope, id): &CommandKey) -> TerminalResult<()> {
         let terminal = self.terminal(*workspace);
         match terminal.shell(scope) {
-            Some(shell) => crate::terminal::commands::end(shell.as_ref(), id).await,
+            Some(shell) => shell.end(id).await,
             None => Ok(()),
         }
     }
@@ -154,23 +155,28 @@ impl TerminalProvider for SharedProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::DEFAULT_MAX_RUN_SECS;
-    use serde_json::json;
-    use caelumora_model::remote::RemoteAuthConfig;
-    use crate::terminal::open_terminal::stand_in::{self, StandIn, KEY, MOUNT};
-    use crate::terminal::{ByteStream, WorkspacePath};
-    use caelumora_model::workspace::CommandStatus;
+    use crate::stand_in::{self, StandIn, KEY, MOUNT};
     use bytes::Bytes;
+    use caelumora_model::remote::RemoteAuthConfig;
+    use caelumora_model::secret::file::FileSecretProvider;
+    use caelumora_model::secret::{SecretProvider, SecretResult};
     use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::workspace::CommandStatus;
+    use caelumora_runtime::terminal::{ByteStream, DEFAULT_MAX_RUN_SECS};
     use futures::StreamExt;
+    use futures::stream;
+    use serde_json::json;
+    use std::env;
+    use std::slice;
+    use uuid::Uuid;
 
     /// Secrets that hold the stand-in's key, and one other.
     fn secrets(key: &str) -> Arc<SecretManager> {
         #[derive(Debug)]
         struct Fixed(String);
         #[async_trait]
-        impl caelumora_model::secret::SecretProvider for Fixed {
-            async fn get_secret(&self, key: &str) -> caelumora_model::secret::SecretResult<Option<String>> {
+        impl SecretProvider for Fixed {
+            async fn get_secret(&self, key: &str) -> SecretResult<Option<String>> {
                 Ok((key == "OPEN_TERMINAL_API_KEY").then(|| self.0.clone()))
             }
         }
@@ -202,7 +208,7 @@ mod tests {
     }
 
     fn content(text: &'static str) -> ByteStream {
-        Box::pin(futures::stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
+        Box::pin(stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
     }
 
     async fn text(terminal: &dyn Terminal, at: &str) -> String {
@@ -308,7 +314,7 @@ mod tests {
         shell.output(&short, 0, Duration::from_secs(5)).await.unwrap();
 
         let key = (id, "c".to_string(), long.clone());
-        assert_eq!(provider.commands(), std::slice::from_ref(&key), "what may still run");
+        assert_eq!(provider.commands(), slice::from_ref(&key), "what may still run");
         provider.end_command(&key).await.unwrap();
         assert_eq!(shell.output(&long, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed);
         assert!(provider.commands().is_empty());
@@ -366,8 +372,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs a running Open Terminal"]
     async fn against_a_real_instance() {
-        let url = std::env::var("CAELUMORA_OPEN_TERMINAL_URL").expect("CAELUMORA_OPEN_TERMINAL_URL");
-        let file = caelumora_model::secret::file::FileSecretProvider::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/secrets.json"));
+        let url = env::var("CAELUMORA_OPEN_TERMINAL_URL").expect("CAELUMORA_OPEN_TERMINAL_URL");
+        let file = FileSecretProvider::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/secrets.json"));
         let secrets = Arc::new(SecretManager::new(vec![Arc::new(file)], Arc::new(DummySecurityManager::new())));
         let provider = SharedProvider::new(endpoint(&url), "/tmp/caelumora-workspaces", MAX_RUN, None, secrets).unwrap();
         let id = WorkspaceId::new();
@@ -382,7 +388,7 @@ mod tests {
         assert!(matches!(terminal.delete(&path("docs")).await, Err(TerminalError::NotEmpty(_))));
         terminal.move_entry(&path("docs/a.md"), &path("b/a.md")).await.unwrap();
 
-        let scope = uuid::Uuid::new_v4().to_string();
+        let scope = Uuid::new_v4().to_string();
         let shell = terminal.shell(&scope).unwrap();
         let started = shell.start("cat b/a.md; echo; echo \"key=[$OPEN_TERMINAL_API_KEY]\"; pwd; exit 3").await.unwrap();
         let state = shell.output(&started, 0, Duration::from_secs(10)).await.unwrap();
