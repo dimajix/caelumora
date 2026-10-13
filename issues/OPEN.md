@@ -102,6 +102,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | No. | Status | Issue |
 |---|---|---|
 | [344](344-workspace-manager-owns-their-use.md) | open | The `WorkspaceManager` owns workspaces and also what is done in them - reaching terminals and shells for a caller, ending commands, holding the storages -, with the stores and policies that needs. |
+| [345](345-global-event-has-one-variant.md) | open | `GlobalEvent` is an enum with the single variant `Entity`, so every reader takes it apart with an irrefutable `let` and the event streams wrap every event in `{"Entity": …}`. |
 
 ## Open architecture questions
 
