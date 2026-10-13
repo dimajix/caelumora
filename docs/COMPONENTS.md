@@ -17,7 +17,9 @@ turn is in [AGENT-TURN.md](AGENT-TURN.md).
     Params left out count as `{}`.
 *   **`ComponentRegistry`** holds a factory per kind, together with the facets that kind provides.
     The binaries hand the built-in registry to the `RuntimeManager`, which applies
-    `component_defaults`; a test registers kinds of its own in it first.
+    `component_defaults`; a test registers kinds of its own in it first
+    (`caelumora_runtime::testing::test_registry`, with a model that is not to be asked as the
+    default).
 *   **`ComponentContainer`** builds the components of a `ComponentConfig` and hands out their
     facets.
 
@@ -120,20 +122,25 @@ Components are wired the way Spring Boot wires beans.
 Of some facets an agent has exactly one: the `ContextProvider`, the `LLMClient` and the
 `CompactionStrategy`; an external agent exactly one `ExternalAgent`; a channel exactly one
 `Moderator` and one `ResponderPolicy`. They are registered with `ComponentRegistry::single` by the
-module that holds the default kind.
+module that holds the default kind - or, where the core holds no kind, by the module of the facet,
+without one: the `LLMClient`, whose kinds are plugins (issue 329). The program names their default
+among the kinds its plugins brought (`ComponentRegistry::set_default_kind`, refused for a kind that
+is not registered as providing the facet): `caelumora-app` and `caelumora-tui` name `ollama_client`
+of `caelumora-ollama`.
 
 *   Two components of one container that provide such a facet are refused before anything is built.
 *   If none does, a default is built the first time the facet is asked for. A container that never
     asks - a session's commands, say - never builds one.
 *   A single may have no default where none makes sense: the remote agent of an `ExternalAgent` is
     always named. A container asked for it that provides none fails then; nothing is checked
-    beforehand.
+    beforehand. The `LLMClient` has no default in the core, only the one the program names.
 *   What a container's single is, is known without building it (`ComponentRegistry::kind_of`) -
     unless the container refers to preconfigured components, which might provide it.
 *   The default comes from, in this order: the container's own component; the defaults the
     container was built with (an external agent's actor gives its `ContextProvider` so,
     `external_context_provider`); the configuration (`AppConfig::component_defaults`, see
-    [CONFIGURATION.md](CONFIGURATION.md)); and finally the kind registered in code.
+    [CONFIGURATION.md](CONFIGURATION.md)); and finally the default kind - the program's
+    (`set_default_kind`), or else the one it was registered with.
 
 ### Factories and tags
 
@@ -180,7 +187,7 @@ purpose. That module's `mod.rs` holds the facet trait - with what consumes it, s
 |---|---|
 | `tool/` | tool providers (`calculator_tool`, `terminal_tool`, ...) |
 | `command/` | command providers (`help_command`, `wakeup_command`, `nudge_command`) |
-| `llm/` | language models (`ollama_client`) |
+| `llm/` | the facet through which an agent asks its model, the defusing of control tokens any kind may use, and no kind: each model provider is a plugin (`ollama_client` in `caelumora-ollama`) |
 | `moderator/` | the moderator and its responder policies |
 | `compaction/` | `/compact` (`compaction`, in `command.rs`, since a module cannot hold a file of its own name) and the compaction strategies (`summary_compaction`) |
 | `external/` | the facet through which an external agent is reached, and no kind: each protocol is a plugin (`a2a_agent` in `caelumora-a2a`) |

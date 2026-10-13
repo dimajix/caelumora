@@ -14,6 +14,8 @@ use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::Name;
 use caelumora_model::work::TurnId;
 use caelumora_runtime::channel::ChannelLoop;
+use caelumora_runtime::component::{ComponentError, ComponentRegistry};
+use caelumora_runtime::llm::LLMClient;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
@@ -21,6 +23,8 @@ use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_mcp::plugin::McpPlugin;
 use caelumora_a2a::plugin::A2aPlugin;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
+use caelumora_ollama::client::OLLAMA_CLIENT_KIND;
+use caelumora_ollama::plugin::OllamaPlugin;
 use caelumora_runtime::view::Viewer;
 use clap::Parser;
 use caelumora_logging::LogTarget;
@@ -443,7 +447,18 @@ struct Args {
 
 /// The plugins the terminal builds its runtime with (issue 323).
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(SkillsPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin)]
+    vec![Box::new(SkillsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin)]
+}
+
+/// Names the defaults of the facets of which an agent has one that the core
+/// leaves to the program (issue 329) among the kinds of `components`: the
+/// model is served by Ollama. `component_defaults` of the configuration
+/// still replaces them.
+///
+/// # Errors
+/// If a plugin that brings a default kind is not among `plugins`.
+fn default_kinds(components: &mut ComponentRegistry) -> Result<(), ComponentError> {
+    components.set_default_kind::<dyn LLMClient>(OLLAMA_CLIENT_KIND)
 }
 
 #[tokio::main]
@@ -462,7 +477,9 @@ async fn main() -> anyhow::Result<()> {
 
     let plugins = plugins();
     let plugins: Vec<&dyn Plugin> = plugins.iter().map(Box::as_ref).collect();
-    let runtime = Arc::new(RuntimeBuilder::from_config(&config, &plugins)?.build()?);
+    let mut builder = RuntimeBuilder::from_config(&config, &plugins)?;
+    default_kinds(builder.components())?;
+    let runtime = Arc::new(builder.build()?);
     runtime.seed(&config.seed).await?;
     let entity_stores = runtime.entity_stores();
 

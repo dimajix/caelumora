@@ -1,9 +1,9 @@
 //! Language models (issue 130): the facet `LLMClient`, through which an
-//! agent asks its model, and the built-in components that provide it, one
-//! file per component kind.
+//! agent asks its model, and what any kind that provides it may use - the
+//! defusing of control tokens (`control_tokens`). The kinds themselves are
+//! in crates of their own, and the program names the default (issue 329).
 
 pub mod control_tokens;
-pub mod ollama_client;
 
 use crate::component::ComponentRegistry;
 use async_trait::async_trait;
@@ -65,10 +65,10 @@ pub trait LLMClient: Send + Sync + Debug {
     fn profile(&self) -> ModelProfile;
 }
 
-/// Registers the model kinds with `registry`, and the `LLMClient` as a facet
-/// of which an agent has exactly one, with its default kind.
+/// Registers the `LLMClient` with `registry` as a facet of which an agent
+/// has exactly one - without a default kind: the core knows no model
+/// provider, the program names it (`ComponentRegistry::default_kind`,
+/// issue 329).
 pub fn register_all(registry: &mut ComponentRegistry) {
-    registry.single::<dyn LLMClient>(Some(ollama_client::OLLAMA_CLIENT_KIND));
-
-    ollama_client::register(registry);
+    registry.single::<dyn LLMClient>(None);
 }

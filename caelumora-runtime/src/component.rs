@@ -345,6 +345,25 @@ impl ComponentRegistry {
         self.singles.insert(facet.id, Single { facet, default_kind: default_kind.map(str::to_string) });
     }
 
+    /// Makes `kind` the default kind of the single `T`, in place of the one
+    /// it was declared with - for the program, which knows which kinds its
+    /// plugins brought (issue 329: the model). The configuration's defaults
+    /// (`set_defaults`) still replace it.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` if `T` is no facet of which there is
+    /// one, or `kind` is not registered or does not provide `T`.
+    pub fn set_default_kind<T: ?Sized + 'static>(&mut self, kind: &str) -> ComponentResult<()> {
+        let facet = TypeKey::of::<T>();
+        if !self.provides(kind).is_some_and(|facets| facets.iter().any(|f| f.id == facet.id)) {
+            return Err(ComponentError::InvalidConfig(format!("the default kind '{kind}' of {} is not registered as providing it", facet.name)));
+        }
+        let single = self.singles.get_mut(&facet.id)
+            .ok_or_else(|| ComponentError::InvalidConfig(format!("{} is not a facet of which there is one", facet.name)))?;
+        single.default_kind = Some(kind.to_string());
+        Ok(())
+    }
+
     /// Takes the configuration's defaults (`AppConfig::component_defaults`):
     /// each of its components replaces the default kind of the one single it
     /// provides, for every container.
@@ -1207,6 +1226,34 @@ mod tests {
         let built = ComponentContainer::from_config(&config(&[]), &registry, &test_context()).await.unwrap();
         let message = built.one::<dyn Named>().await.expect_err("a default kind that is not registered").to_string();
         assert!(message.contains("the default kind 'missing' of Named is not registered as providing it"), "{message}");
+    }
+
+    /// The program names the default kind of a single (issue 329), and the
+    /// configuration's default still replaces it.
+    #[tokio::test]
+    async fn the_program_names_the_default_kind_of_a_single() {
+        let (mut registry, built) = choices();
+        registry.set_default_kind::<dyn Choice>("other").expect("provides Choice");
+        for (kind, expected) in [
+            ("missing", "the default kind 'missing' of Choice is not registered as providing it"),
+            ("part", "the default kind 'part' of Choice is not registered as providing it"),
+        ] {
+            let message = registry.set_default_kind::<dyn Choice>(kind).expect_err(expected).to_string();
+            assert!(message.contains(expected), "{message}");
+        }
+        let message = registry.set_default_kind::<dyn Named>("part").expect_err("not a single").to_string();
+        assert!(message.contains("Named is not a facet of which there is one"), "{message}");
+        assert_eq!(registry.kind_of::<dyn Choice>(&config(&[])).as_deref(), Some("other"), "the program's, kept when refused");
+
+        let shared = Arc::new(registry);
+        let container = ComponentContainer::from_config(&config(&[]), &shared, &test_context()).await.unwrap();
+        assert_eq!(container.one::<dyn Choice>().await.unwrap().id, "other");
+        assert_eq!(built.load(Ordering::SeqCst), 0, "the declared default is not built");
+
+        let (mut registry, _) = choices();
+        registry.set_default_kind::<dyn Choice>("other").unwrap();
+        registry.set_defaults(&config(&[("configured", "default")])).unwrap();
+        assert_eq!(registry.kind_of::<dyn Choice>(&config(&[])).as_deref(), Some("default"), "the configuration's comes first");
     }
 
     #[test]

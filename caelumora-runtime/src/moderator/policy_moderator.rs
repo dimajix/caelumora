@@ -416,6 +416,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::moderator::Moderator;
+    use crate::testing::test_registry;
     use crate::moderator::{broadcast_policy, mentions_only_policy, random_policy, round_robin_policy, user_driven_policy};
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::AgentId;
@@ -545,7 +546,7 @@ mod tests {
         use crate::runtime::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let store = Arc::new(caelumora_model::store::memory::MemoryStore::new());
-        let registry = Arc::new(ComponentRegistry::built_in(store));
+        let registry = Arc::new(test_registry(store));
         let context = ComponentContext::new(SecurityContext::default(), Services::empty());
         let config = ComponentConfig { component_nodes: config.iter().map(|(id, kind)| ComponentDescriptor::new(id, kind)).collect() };
         let container = ComponentContainer::from_config(&config, &registry, &context).await.unwrap();
@@ -707,7 +708,7 @@ mod tests {
         use crate::runtime::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let store = Arc::new(caelumora_model::store::memory::MemoryStore::new());
-        let registry = Arc::new(ComponentRegistry::built_in(store));
+        let registry = Arc::new(test_registry(store));
         let context = ComponentContext::new(SecurityContext::default(), Services::empty());
         let configured = |max_agent_hops: serde_json::Value| ComponentConfig { component_nodes: vec![ComponentDescriptor {
             params: serde_json::json!({ "max_agent_hops": max_agent_hops }),

@@ -7,6 +7,7 @@ use crate::component::{ComponentImpl, ComponentKind, ComponentRegistry};
 use crate::context::ContextError;
 use crate::message::ProcessingError;
 use crate::runtime::{ChannelRuntime, RuntimeManager};
+use crate::testing::test_registry;
 use crate::transport::EventSender;
 use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
@@ -59,7 +60,7 @@ pub(super) async fn channel_with(users: &[&User], security: Arc<dyn SecurityMana
 
 /// A channel of `participants`, whose actors are read from `store`.
 async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
-    let registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+    let registry = test_registry(Arc::<MemoryStore>::clone(&store));
     channel_built(store, participants, security, registry, caelumora_model::channel::moderation_components(None, Some("broadcast_policy"))).await
 }
 
@@ -148,7 +149,7 @@ pub(super) async fn channel_moderated_by(users: &[&User], moderator: Arc<dyn cra
         store.entity_stores().users.create(&SecurityContext::system(), user).await.unwrap();
         participants.push(Participant::User(user.id));
     }
-    let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+    let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
     registry.register(ComponentKind::new("test_moderator").provides::<dyn crate::moderator::Moderator>(), move |_, _| {
         let mut facets = ComponentFacets::empty();
         facets.insert::<dyn crate::moderator::Moderator>(Arc::clone(&moderator));
@@ -290,7 +291,7 @@ pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
     // The model is a component (issue 130): the stand-in is registered as
     // a kind of its own and made every agent's default.
-    let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+    let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
     registry.register(
         ComponentKind::new("test_model").provides::<dyn LLMClient>(),
         move |_descriptor, _context| {

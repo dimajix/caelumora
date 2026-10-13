@@ -36,6 +36,10 @@ The project is a Rust workspace, with a web UI next to it:
     brings nothing but its component kind `a2a_agent`, so that the core keeps the facet
     `ExternalAgent` and names no protocol (issue 326). See
     [Agents that run elsewhere](#agents-that-run-elsewhere).
+*   **`caelumora-ollama`** - language models served by Ollama, a plugin that brings nothing but its
+    component kind `ollama_client`, so that the core keeps the facet `LLMClient` and names no
+    model provider; the programs name it as the default model (issue 329). See
+    [CONFIGURATION.md](CONFIGURATION.md#the-model).
 *   **`caelumora-open-terminal`** - the storages of workspaces backed by Open Terminal,
     `open_terminal_shared` and `open_terminal_docker`, a plugin that brings nothing but these
     backends, the Docker one with `bollard` behind the feature `docker` (issue 327). See
@@ -58,10 +62,11 @@ kind, its manager as a service of the runtime, which its components, its views a
 the members of a scope, and its sections of the configuration and of the seed. On the REST side,
 `RestPlugin` adds its routes, served behind the same login as the core's. A plugin's views are an
 extension trait on the runtime's `Views`, built from what they open. Which plugins are in is the
-program's choice: `caelumora-app` and `caelumora-tui` each list theirs; the core knows none. A
-plugin is one crate, cut into layers by Cargo features rather than crates. The first is
-`caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)); `caelumora-mcp`
-([TOOLS.md](TOOLS.md#mcp-servers)) and `caelumora-a2a` are ones that bring a component kind alone,
+program's choice: `caelumora-app` and `caelumora-tui` each list theirs, and name the defaults the
+core leaves open - the model; the core knows none. A plugin is one crate, cut into layers by Cargo
+features rather than crates. The first is `caelumora-skills`
+([SKILLS.md](SKILLS.md#where-the-code-lives)); `caelumora-mcp` ([TOOLS.md](TOOLS.md#mcp-servers)),
+`caelumora-a2a` and `caelumora-ollama` are ones that bring a component kind alone,
 `caelumora-open-terminal` one that brings backends alone.
 Where the core calls a plugin, the plugin answers in the core's error types, not in its own: the
 core decides by the types it knows what a person is told of an error.

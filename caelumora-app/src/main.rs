@@ -8,12 +8,16 @@ use caelumora_logging::LogTarget;
 use caelumora_a2a::plugin::A2aPlugin;
 use caelumora_mcp::plugin::McpPlugin;
 use caelumora_model::config::AppConfig;
+use caelumora_ollama::client::OLLAMA_CLIENT_KIND;
+use caelumora_ollama::plugin::OllamaPlugin;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::{self, ApiError};
 use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes;
 use caelumora_rest_server::state::AppState;
+use caelumora_runtime::component::{ComponentError, ComponentRegistry};
+use caelumora_runtime::llm::LLMClient;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
@@ -52,7 +56,9 @@ async fn main() -> anyhow::Result<()> {
 
     let rest_plugins = rest_plugins();
     let plugins = plugins();
-    let runtime_manager = Arc::new(RuntimeBuilder::from_config(&config, &all(&rest_plugins, &plugins))?.build()?);
+    let mut builder = RuntimeBuilder::from_config(&config, &all(&rest_plugins, &plugins))?;
+    default_kinds(builder.components())?;
+    let runtime_manager = Arc::new(builder.build()?);
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime_manager)));
     let user_manager = Arc::clone(runtime_manager.user_manager());
     if user_manager.is_empty() {
@@ -105,10 +111,21 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
     vec![Box::new(SkillsPlugin)]
 }
 
-/// The plugins of the program that bring no routes (issues 325, 327), which
-/// only its runtime is built with.
+/// The plugins of the program that bring no routes (issues 325, 327, 329),
+/// which only its runtime is built with.
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin)]
+    vec![Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin)]
+}
+
+/// Names the defaults of the facets of which an agent has one that the core
+/// leaves to the program (issue 329) among the kinds of `components`: the
+/// model is served by Ollama. `component_defaults` of the configuration
+/// still replaces them.
+///
+/// # Errors
+/// If a plugin that brings a default kind is not among `plugins`.
+fn default_kinds(components: &mut ComponentRegistry) -> Result<(), ComponentError> {
+    components.set_default_kind::<dyn LLMClient>(OLLAMA_CLIENT_KIND)
 }
 
 /// Every plugin of the program, which it builds its runtime with:
@@ -145,7 +162,7 @@ mod tests {
     use caelumora_model::template::ParticipantTemplate;
     use caelumora_model::value::text::Description;
     use caelumora_runtime::backend::Backends;
-    use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentRegistry};
+    use caelumora_runtime::component::{ComponentContainer, ComponentContext};
     use caelumora_model::config::BackendConfig;
     use caelumora_runtime::runtime::{RuntimeManager, Services};
     use caelumora_runtime::terminal::TerminalProvider;
@@ -174,7 +191,17 @@ mod tests {
         for plugin in plugins {
             builder.plugin(plugin).unwrap();
         }
+        default_kinds(builder.components()).unwrap();
         builder.build().unwrap()
+    }
+
+    /// An agent whose personality names no model, in a configuration that
+    /// names none either, talks to Ollama as before the kind moved into its
+    /// plugin (issue 329).
+    #[test]
+    fn the_default_model_is_served_by_ollama() {
+        let runtime = runtime(&Arc::new(MemoryStore::new()));
+        assert_eq!(runtime.component_registry().kind_of::<dyn LLMClient>(&ComponentConfig::default()).as_deref(), Some(OLLAMA_CLIENT_KIND));
     }
 
     #[tokio::test]

@@ -1,8 +1,9 @@
 //! The `ollama_client` component: the language model an agent talks to,
 //! served by Ollama (issue 130). It provides the `LLMClient` facet, of
 //! which an agent has exactly one: its personality's, the one
-//! `AppConfig::component_defaults` names, or this kind with its defaults -
-//! a local Ollama and the model `DEFAULT_MODEL`.
+//! `AppConfig::component_defaults` names, or the default kind the program
+//! names (issue 329) - which, where it is this one, is built with its
+//! defaults: a local Ollama and the model `DEFAULT_MODEL`.
 //!
 //! Parameters: `endpoint` (the Ollama server: its `url`, and its
 //! `timeout_secs`, how long a request may take to be answered - a streamed
@@ -35,10 +36,10 @@
 //! by a zero-width space (`ControlTokens`). If they cannot be read, the call
 //! fails rather than go out unprotected.
 
-use super::control_tokens::ControlTokens;
-use crate::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
-use crate::remote::{describe_chain, describe_request_error};
+use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::llm::control_tokens::ControlTokens;
+use caelumora_runtime::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
+use caelumora_runtime::remote::{describe_chain, describe_request_error};
 use caelumora_model::remote::RemoteEndpoint;
 use async_stream::stream;
 use async_trait::async_trait;
@@ -797,6 +798,7 @@ impl LLMClient for OllamaClient {
     }
 }
 
+/// Registers the kind `ollama_client` with `registry`.
 pub fn register(registry: &mut ComponentRegistry) {
     let control_tokens = Arc::new(ControlTokenCache::default());
     let running_context_sizes = Arc::new(RunningContextSizes::default());

@@ -450,7 +450,7 @@ mod tests {
     use tokio::sync::mpsc;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::config::AppConfig;
-    use crate::component::ComponentRegistry;
+    use crate::testing::test_registry;
 
     /// The approver of a channel of users, under the ownership policy, run
     /// on its own: the channel is built, so that its users have their
@@ -496,7 +496,7 @@ mod tests {
 
         let security: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
-        let registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+        let registry = test_registry(Arc::<MemoryStore>::clone(&store));
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
         let approver = Approver { id: ApproverId::new(), strategy };
         let mut participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();

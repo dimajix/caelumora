@@ -780,7 +780,7 @@ pub(crate) mod testing {
     use std::sync::Arc;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::config::AppConfig;
-    use crate::component::ComponentRegistry;
+    use crate::testing::test_registry;
 
     /// The largest file the workspace takes.
     pub(crate) const MAX_FILE_BYTES: u64 = 1024 * 1024;
@@ -823,7 +823,7 @@ pub(crate) mod testing {
         let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
         let artifacts = tempfile::tempdir().unwrap();
         let kept = ArtifactsConfig { storage: [("kept".to_string(), BackendConfig::new("local", json!({ "root": artifacts.path() })))].into(), ..Default::default() };
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig { workspaces, artifacts: kept, ..Default::default() }, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig { workspaces, artifacts: kept, ..Default::default() }, test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
         let owner = UserId::new();

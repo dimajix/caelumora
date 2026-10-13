@@ -234,6 +234,7 @@ mod tests {
     use super::*;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use crate::transport::Discard;
+    use crate::testing::test_registry;
     use crate::agent::state::{AgentStateHandle, AgentStates};
     use crate::runtime::RuntimeManager;
     use crate::session::SessionLoop;
@@ -320,7 +321,7 @@ mod tests {
         async fn under(policy: Arc<dyn SecurityManager>) -> Self {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(store)).unwrap());
+            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(store)).unwrap());
             Self { runtime, loops: HashMap::new() }
         }
 

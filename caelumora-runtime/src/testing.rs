@@ -33,7 +33,7 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{ActionType, Grant, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager, Subject};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::store::StoreError;
+use caelumora_model::store::{ComponentStore, StoreError};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
@@ -45,7 +45,7 @@ use crate::agent::turn::Turn;
 use crate::channel::ChannelLoop;
 use crate::actor::user::ChannelWatch;
 use crate::component::{ComponentFacets, ComponentKind};
-use crate::llm::{LLMClient, LLMResult};
+use crate::llm::{LLMClient, LLMError, LLMResult};
 use crate::view::ViewsFactory;
 use caelumora_model::actor::{ActorEvent, EventContext};
 use caelumora_model::agent::AgentChannelState;
@@ -207,7 +207,7 @@ impl World {
         let store = Arc::new(MemoryStore::with_policies(Arc::clone(&policy), Arc::<Recorder>::clone(&recorder)));
         memberships.bind(&store.entity_stores().groups);
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-        let mut registry = ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store));
+        let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
         register(&mut registry);
         let files = tempfile::tempdir().unwrap();
         let shell = BackendConfig::new("local", json!({ "root": files.path().join("shell"), "shell": true, "destination": { "level": "internal" } }));
@@ -419,6 +419,43 @@ pub fn denied(error: &Error) -> bool {
 /// (`ActorRuntime::views`).
 pub fn views_in(session: &SessionLoop, channel: &Arc<ChannelLoop>, actor: ActorId) -> ViewsFactory {
     session.views_of(channel, actor)
+}
+
+/// The kind of the model the agents of a test talk to unless they name one
+/// (`test_registry`).
+pub const UNASKED_MODEL_KIND: &str = "unasked_model";
+
+/// The model of a test that asks none: a call fails, as one to a model
+/// that cannot be reached.
+#[derive(Debug)]
+struct Unasked;
+
+#[async_trait]
+impl LLMClient for Unasked {
+    async fn chat_completion(&self, _: &[Message], _: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>> {
+        let refused = LLMError::Connection { endpoint: UNASKED_MODEL_KIND.to_string(), reason: "the model of a test is not to be asked".to_string() };
+        futures::stream::iter([Err(refused)]).boxed()
+    }
+
+    fn profile(&self) -> ModelProfile {
+        Default::default()
+    }
+}
+
+/// The component kinds the tests build with, resolving references to
+/// preconfigured components in `component_store`: the built-in ones, and
+/// a model that is not to be asked (`UNASKED_MODEL_KIND`) as the default -
+/// the core names none, each program names its own (issue 329), and so
+/// do the tests.
+pub fn test_registry(component_store: Arc<dyn ComponentStore>) -> ComponentRegistry {
+    let mut registry = ComponentRegistry::built_in(component_store);
+    registry.register(ComponentKind::new(UNASKED_MODEL_KIND).provides::<dyn LLMClient>(), |_, _| {
+        let mut facets = ComponentFacets::empty();
+        facets.insert::<dyn LLMClient>(Arc::new(Unasked));
+        Ok(facets)
+    });
+    registry.set_default_kind::<dyn LLMClient>(UNASKED_MODEL_KIND).expect("registered as providing it");
+    registry
 }
 
 /// A model that answers its first call with `answer`, and no other.
