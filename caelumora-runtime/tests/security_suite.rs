@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::StreamExt;
+use serde_json::json;
 use caelumora_model::actor::{ActorId, Rejection};
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
@@ -1794,6 +1795,44 @@ async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.bob), spec)).await;
     assert!(refused.is_err());
     assert_eq!(asked, checks(&["bob: CreateChannel(alice's) no"]));
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// The preconfigured components a new channel names are read in the name
+/// of whoever creates it, before creating it is asked (issue 321): the
+/// channel builds them in its owner's, but whoever names them names only
+/// what they may read. Once the share is withdrawn, the channel is refused
+/// before anything else is asked or stored.
+#[tokio::test]
+async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
+    let world = World::new().await;
+    let policy = StoredComponents::new("bobs-policy", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("policy", "broadcast_policy")] }, attributes(Some(world.bob), &[world.alice]));
+    world.store.create_components(&World::as_user(world.bob), &policy).await.expect("bob keeps his policy");
+    let session = world.shared_session(&[], &[]).await;
+    let spec = |name: &str| ChannelSpec {
+        name: name.to_string(),
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "id": "bobs-policy" }), ..ComponentDescriptor::new("policy", PRECONFIGURED_REF_KIND) }] },
+        participants: vec![], classification: None, language: None, uses_workspace: None,
+    };
+
+    let (created, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec("side"))).await;
+    assert!(created.is_ok(), "shared with her");
+    assert_eq!(asked, checks(&[
+        "alice: GetComponents(bob's) yes",
+        "alice: CreateChannel(alice's) yes",
+        "alice: JoinChannel(alice) yes",
+        "alice: CreateChannel(alice's) yes",
+        "alice: GetSession(alice's) yes",
+        "alice: UpdateSession(alice's) yes",
+        "alice: GetComponents(bob's) yes",
+    ]), "read as she names it, and again as the channel is built in its owner's name - hers");
+
+    let withdrawn = StoredComponents { security_attributes: attributes(Some(world.bob), &[]), ..policy };
+    world.store.update_components(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
+    let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec("other"))).await;
+    assert!(matches!(refused.err().and_then(|e| e.downcast::<SessionError>().ok()), Some(SessionError::InvalidModerator(_))));
+    assert_eq!(asked, checks(&["alice: GetComponents(bob's) no"]));
+    assert!(session.channel_by_name("other").is_none(), "nothing is created");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

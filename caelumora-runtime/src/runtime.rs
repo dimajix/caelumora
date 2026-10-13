@@ -1,6 +1,6 @@
 use crate::channel::ChannelLoop;
 use crate::command::{CommandExecutor, ChannelCommandProvider};
-use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult};
+use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry};
 use crate::controller::{ControllerManager, SessionController};
 use crate::event::EventBus;
 use crate::recorder::{BlackholeRecorder, Recorder};
@@ -639,15 +639,16 @@ impl RuntimeManager {
     }
 
     /// The executor for the user commands of `session`: the global ones and
-    /// the session's own (issue 28), built once for all of its channels,
-    /// under the security context of the session's owner.
+    /// the session's own (issue 28), built once for all of its channels, in
+    /// the name of the session's owner (`ControllerManager::owner_context`,
+    /// issue 321).
     ///
     /// # Errors
     /// A `ComponentError` if a command component cannot be built or two
-    /// provide the same command - the session does not start then.
-    pub async fn new_command_executor(&self, session: &Session) -> ComponentResult<CommandExecutor<dyn ChannelCommandProvider>> {
-        let owner: ActorId = session.security_attributes.owner_id;
-        let security = SecurityContext::new(owner, session.id, Default::default());
+    /// provide the same command - the session does not start then; whatever
+    /// the store reports reading its owner.
+    pub async fn new_command_executor(&self, session: &Session) -> Result<CommandExecutor<dyn ChannelCommandProvider>> {
+        let security = self.controller_manager.owner_context(session.security_attributes.owner_id, session.id, ChannelId::default()).await?;
         let context = ComponentContext::new(security, self.services().clone());
         let mut providers = Vec::new();
         // Each configuration on its own, so that component ids only need to
@@ -656,7 +657,7 @@ impl RuntimeManager {
             let container = ComponentContainer::from_config(config, &self.component_registry, &context).await?;
             providers.extend(container.get_all::<dyn ChannelCommandProvider>(None));
         }
-        CommandExecutor::new(Arc::clone(self.security_manager()), providers)
+        Ok(CommandExecutor::new(Arc::clone(self.security_manager()), providers)?)
     }
 
     pub fn event_bus(&self) -> &Arc<EventBus> {

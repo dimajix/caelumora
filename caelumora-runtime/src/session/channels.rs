@@ -95,17 +95,21 @@ impl SessionLoop {
     /// stored first (`CreateChannel`), and then listed in the session, which
     /// takes the permission to change the session (`UpdateSession`, asked
     /// by the store); the channel belongs to the session's owner, like the
-    /// session's others. In the order of issue 304: what `spec` asks for is
-    /// validated, then creating the channel is asked, then its members'
-    /// admission, and the store asks again as it stores (issue 312).
+    /// session's others, and its components are built in that owner's name
+    /// (issue 321). In the order of issue 304: what `spec` asks for is
+    /// validated - the preconfigured components it names read in the name
+    /// of `context`, who names them -, then creating the channel is asked,
+    /// then its members' admission, and the store asks again as it stores
+    /// (issue 312).
     ///
     /// # Errors
     /// - `ValueError` if its name is no name or its language no tag.
     /// - `StoreError::NameTaken` if the session has a channel of that name
     ///   (issue 250).
     /// - [`SessionError`] if `spec` asks for something that cannot be:
-    ///   components that make no moderator, or a participant who is not one
-    ///   of the session's.
+    ///   components that make no moderator, or name preconfigured ones
+    ///   `context` may not read, or a participant who is not one of the
+    ///   session's.
     /// - `StoreError::PermissionDenied` if `context` may not create the
     ///   channel or change the session; nothing is changed then.
     pub async fn create_channel(self: &Arc<Self>, context: &SecurityContext, spec: ChannelSpec) -> Result<Arc<ChannelLoop>> {
@@ -129,6 +133,11 @@ impl SessionLoop {
                 None => return Err(SessionError::NotAParticipant { session: self.id, participant: id }.into()),
             }
         }
+
+        // Whoever names preconfigured components names only what they may
+        // read themselves, though the channel builds them in its owner's
+        // name (issue 321): their own request, asked before the verb.
+        self.runtime_manager.component_registry().require_readable(&spec.components, context).await.map_err(SessionError::InvalidModerator)?;
 
         let mut channel = Channel::build(self.id, session.security_attributes.owner_id, name, spec.components, classification, language, participants);
         if let Some(uses) = spec.uses_workspace {

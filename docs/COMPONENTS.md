@@ -62,6 +62,10 @@ personalities:
 *   Only components are shared. A personality's kind, roles, introduction and reasoning visibility
     are its own.
 *   It serves every `ComponentConfig` alike - a channel's components and a session's commands too.
+*   A `ref` is read in the name the graph is built in, and also in the name of whoever names it,
+    where that is someone else: a channel's components are built in its owner's name, so whoever
+    creates the channel may name only lists they may read themselves
+    (`ComponentRegistry::require_readable`, issue 321).
 
 ## Facets
 
@@ -142,10 +146,13 @@ module that holds the default kind.
 
 A container is built with a `ComponentContext`, which holds:
 
-*   the `SecurityContext` the graph is built in - for an agent's components the agent's own, with
-    its owner's rights; for a channel's, its owner's. What a component reads while building - an MCP
-    server's tools, with its credential - it reads in it. What it asks while a turn runs, it asks in
-    the turn's context: one context per piece of work;
+*   the `SecurityContext` the graph is built in, the name of its owner - for an agent's components
+    the agent's own, with its owner's rights; for a channel's components and a session's commands,
+    the owner's, with their roles as they are when it is built (`ControllerManager::owner_context`).
+    What a component reads while building - a `ref` resolved, an MCP server's tools, with its
+    credential - it reads in it. It does not keep it: what it asks later it asks in the context of
+    the act it serves - a tool in its turn's, a moderator in the event's it routes -, one context
+    per piece of work;
 *   the services of the runtime its kind declares it uses - the `SecurityManager` for the questions
     a component asks (`AccessQuestions`), the `SecretManager`, the `WorkspaceManager`, the
     `ArtifactManager`, the manager a plugin provides - by type, not as fields of the context, so

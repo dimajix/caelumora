@@ -63,6 +63,11 @@ pub enum ComponentError {
 }
 
 impl ComponentError {
+    /// `cause`, as what went wrong with the component `entry` (`Build`).
+    fn of_component(entry: &ComponentDescriptor, cause: ComponentError) -> Self {
+        Self::Build { component: entry.id.clone(), kind: entry.kind.clone(), cause: Box::new(cause) }
+    }
+
     /// Whether it says that preconfigured components cannot be read
     /// (`Unavailable`) - itself, or as the cause of a component that could
     /// not be built.
@@ -121,6 +126,11 @@ pub fn service_of<T: ?Sized + Send + Sync + 'static>(services: &Services) -> Com
 /// declares it uses (`ComponentKind::uses`, issue 296).
 #[derive(Clone)]
 pub struct ComponentContext {
+    /// The name the graph is built in, that of its owner (issue 321): an
+    /// agent's own, a channel's owner's. What a component asks while it is
+    /// built - a `ref` resolved, a secret - it asks in this name. It does not
+    /// keep it: what it does later it does in the context of the act it
+    /// serves, as a tool does in its turn's.
     pub security_context: SecurityContext,
     /// The services of the runtime: all of them in the context a graph is
     /// built with, those its kind uses in the one a component is given.
@@ -415,21 +425,38 @@ impl ComponentRegistry {
         Some(ComponentDescriptor::new(kind, kind))
     }
 
+    /// Whether `context` may read every preconfigured component a `ref` of
+    /// `config` names, resolving them in its name: for whoever writes a
+    /// configuration that is built in someone else's name - the components
+    /// of a channel, built in its owner's (issue 321) -, so that they name
+    /// only what they may read themselves. Nothing is built.
+    ///
+    /// # Errors
+    /// As `ComponentContainer::from_config` for resolving a `ref`:
+    /// `ComponentError::Unavailable`, wrapped with the `ref`, for one
+    /// `context` may not read.
+    pub async fn require_readable(&self, config: &ComponentConfig, context: &SecurityContext) -> ComponentResult<()> {
+        for node in &config.component_nodes {
+            self.resolve(node, context).await.map_err(|cause| ComponentError::of_component(node, cause))?;
+        }
+        Ok(())
+    }
+
     /// `node` itself, or - for `kind: "ref"` - the preconfigured components
     /// it names, in their order (issue 270), fetched from the ComponentStore
-    /// fresh on every call, using the ComponentContext of whichever component
+    /// fresh on every call, in the name `context` of whichever component
     /// graph is referencing it. This ensures things like secret resolution
-    /// run under the actual caller's ComponentContext rather than a synthetic
-    /// one, at the cost of not sharing a single instance across references
-    /// (e.g. a preconfigured `mcp_tool` re-runs discovery for every
-    /// personality that references it).
-    async fn resolve(&self, node: &ComponentDescriptor, context: &ComponentContext) -> ComponentResult<Vec<ComponentDescriptor>> {
+    /// run under the actual caller's name rather than a synthetic one, at
+    /// the cost of not sharing a single instance across references (e.g. a
+    /// preconfigured `mcp_tool` re-runs discovery for every personality that
+    /// references it).
+    async fn resolve(&self, node: &ComponentDescriptor, context: &SecurityContext) -> ComponentResult<Vec<ComponentDescriptor>> {
         if node.kind != PRECONFIGURED_REF_KIND {
             return Ok(vec![node.clone()]);
         }
         let target: PreconfiguredRef = serde_json::from_value(node.params.clone())
             .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-        let components = match self.component_store.get_components(&context.security_context, &target.id).await {
+        let components = match self.component_store.get_components(context, &target.id).await {
             Ok(stored) => stored.components,
             Err(cause @ (StoreError::NotFound { .. } | StoreError::PermissionDenied(_))) => return Err(ComponentError::Unavailable { id: target.id, cause }),
             Err(e) => return Err(ComponentError::InvalidConfig(format!("no preconfigured component '{}': {}", target.id, e))),
@@ -573,7 +600,7 @@ impl Graph {
     /// Builds `descriptor` with a context through which it reaches the rest
     /// of the graph, and checks that it provides exactly `provides`.
     async fn construct(self: &Arc<Self>, descriptor: &ComponentDescriptor, provides: &[TypeKey]) -> ComponentResult<Arc<ComponentNode>> {
-        let failed = |cause| ComponentError::Build { component: descriptor.id.clone(), kind: descriptor.kind.clone(), cause: Box::new(cause) };
+        let failed = |cause| ComponentError::of_component(descriptor, cause);
         let context = ComponentContext { building: Some((Arc::clone(self), descriptor.id.clone())), ..self.context.clone() };
         let facets = self.registry.dispatch(descriptor.clone(), context).map_err(failed)?.await.map_err(failed)?;
 
@@ -718,16 +745,15 @@ impl ComponentContainer {
             if !entries.insert(node.id.as_str()) {
                 return Err(ComponentError::DuplicateId(node.id.clone()));
             }
-            let failed = |entry: &ComponentDescriptor, cause| ComponentError::Build { component: entry.id.clone(), kind: entry.kind.clone(), cause: Box::new(cause) };
-            for descriptor in registry.resolve(node, context).await.map_err(|cause| failed(node, cause))? {
+            for descriptor in registry.resolve(node, &context.security_context).await.map_err(|cause| ComponentError::of_component(node, cause))? {
                 if let Some(earlier) = ids.insert(descriptor.id.clone(), node) {
                     // Two plain entries of one id are caught above: at least
                     // one of the two is a ref, and it is named.
                     let entry = if node.kind == PRECONFIGURED_REF_KIND { node } else { earlier };
-                    return Err(failed(entry, ComponentError::DuplicateId(descriptor.id)));
+                    return Err(ComponentError::of_component(entry, ComponentError::DuplicateId(descriptor.id)));
                 }
                 let provides = registry.provides(&descriptor.kind)
-                    .ok_or_else(|| failed(node, ComponentError::UnsupportedKind(descriptor.kind.clone())))?
+                    .ok_or_else(|| ComponentError::of_component(node, ComponentError::UnsupportedKind(descriptor.kind.clone())))?
                     .to_vec();
                 planned.push(Planned { descriptor, provides });
             }

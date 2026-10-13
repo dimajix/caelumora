@@ -74,7 +74,8 @@ maps refusals to `403`, every `*NotFound` to `404`.
 Notation for whose name: **U** the user's own context; **T** a turn's (the agent as caller, its
 owner as principal, whoever asked as initiator); **A** the agent's own (its owner as initiator);
 **E** an envelope's, as its sender's actor set it; **V** a viewer's (U, or T with the place the
-agent reads from); **C** the channel owner's (the channel's components); **S** the system's, which
+agent reads from); **C** the owner's of a channel or session, with their roles as they are when
+it is built (its components, its commands - only while they are built); **S** the system's, which
 asks nothing. After the name the concept. The rule column names the reason it is asked (R1-R5,
 SECURITY.md); "store" is the store layer, in the context the caller passes. Every Read of the store
 of what is classified - a channel, a workspace, a skill, an artifact - is followed by `cleared_for`
@@ -102,7 +103,7 @@ in the same context (issue 322), named in the rows where it is the reason of a r
 | Operation | Questions in order | Rule | Again | Refusal |
 |---|---|---|---|---|
 | Reach a channel to act in it (`SessionLoop::channel_for`, the REST server's way) | `channel_reading`: `GetChannel` (U,1), `cleared_for` (U,2) | reach | by the views if the client navigated | `ChannelNotFound` for absent, refused and not cleared alike |
-| Create (`SessionLoop::create_channel`) | `require_classifiable`; store `GetUserProfile`; members of the session (structural); `CreateChannel` (U,1), before the others (issue 312); `require_admitted` (A `GetPersonality`, scope, U cleared with the member's roles); store `CreateChannel` (U,1); group in S; store `GetSession` + `UpdateSession` | R2 + R1 | `CreateChannel` (pair); `GetPersonality` as built | `PermissionDenied`, `ClassificationRefused`, `NotCleared`, `OutOfScope`, `NameTaken` |
+| Create (`SessionLoop::create_channel`) | `require_classifiable`; store `GetUserProfile`; members of the session (structural); the preconfigured components named: `GetComponents` (U,1, issue 321); `CreateChannel` (U,1), before the others (issue 312); `require_admitted` (A `GetPersonality`, scope, U cleared with the member's roles); store `CreateChannel` (U,1); group in S; store `GetSession` + `UpdateSession`; components built in C (`GetComponents`, `ReadSecret`) | R2 + R1 | `CreateChannel` (pair); `GetComponents` (U, then C); `GetPersonality` as built | `InvalidModerator`, `PermissionDenied`, `ClassificationRefused`, `NotCleared`, `OutOfScope`, `NameTaken` |
 | Delete (`SessionLoop::delete_channel`) | `channel_for`: `GetChannel` (U,1), `cleared_for` (U,2); `DeleteChannel` (U,1); store `UpdateSession` as the session drops it; store `GetChannel` + `DeleteChannel`; the scope listed in S, each item's store `Get…` + `Delete…` (U,1) - something left: listed and unmarked again in S; actors stopped | R2 + R1 | `GetChannel`, `DeleteChannel` (pair) | `ChannelNotFound`, `PermissionDenied`, `ScopeNotEmpty` |
 | Restore (`SessionLoop::restore_channel`) | store `ReadDeleted` (U,1), as the session's trash lists it; `Restore` (U,1), before the others (issue 312); `require_admitted` as creating; store `ReadDeleted` + `Restore`; store `GetSession` + `UpdateSession`; the scope as for a session | R2 + R1 | `ReadDeleted` (store), `Restore` (pair) | `ChannelNotFound`, `PermissionDenied`, `NotCleared`, `NameTaken` |
 | Rename, language, description, workspace switch, approval rules (`ChannelLoop::update_*`) | store `GetChannel` + `UpdateChannel` (U,1) | R1 | - | `PermissionDenied` |
@@ -291,7 +292,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 - **`UpdateWorkspace` twice for attaching and sharing.** Attaching asks before the session is
   changed, sharing is stored by the store's question alone.
 - **A channel's components in its owner's name** are issue
-  [321](../issues/321-channel-components-in-the-owners-name.md).
+  [321](../issues/321-channel-components-in-the-owners-name.md), decided below.
 - **What is listed is the store's to decide.** A view does not filter a store's list again: the
   trashes show what `ReadDeleted` lets through, and restoring and purging reach it alike.
 
@@ -309,6 +310,24 @@ An agent's views are built per piece of work, with the agent's place; all in **T
   [316](../issues/316-store-checks-artifact-without-versions.md).
 - **One question of reach.** The store's list filter and the event bus ask
   `confidentiality::may_reach`, so that both reach alike.
+
+### Decided in issue 321
+
+- **Components are built in their owner's name.** An agent's in A, a channel's components and a
+  session's commands in C, with the owner's roles as they are when they are built
+  (`ControllerManager::owner_context`); an owner who is gone builds with none, as an agent whose
+  owner is gone acts with none. Neither the channel as an actor of its own nor the system: the
+  first would need rights given to channels, which nothing has, the second would ask nothing of
+  what a configuration names.
+- **The name is the build's alone.** What is asked in C is asked while building - a `ref`, a
+  secret. No component keeps it; what it does later it does in the context of the act it serves:
+  a moderator routes in the event's, a tool runs in the turn's. So a change of the owner's roles
+  reaches the components when they are built again, as it reaches an agent's.
+- **Whoever names a `ref` may read it.** The creator of a channel is not necessarily its owner; the
+  preconfigured components they name are read in their name too, before the verb, as their own
+  request (`ComponentRegistry::require_readable`).
+- **Components nobody asks for** are still built, in C: issue
+  [337](../issues/337-components-nobody-asks-for.md).
 
 ### Open
 
