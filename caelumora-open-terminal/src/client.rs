@@ -4,13 +4,14 @@
 //! paths inside it - and logged with the endpoint, shown without
 //! credentials.
 
-use super::super::{TerminalError, TerminalResult};
-use crate::remote::describe_request_error;
+use caelumora_runtime::terminal::{TerminalError, TerminalResult};
+use caelumora_runtime::remote::describe_request_error;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
-use reqwest::{Method, RequestBuilder, Response, StatusCode, Url};
+use reqwest::{Client as HttpClient, Method, RequestBuilder, Response, StatusCode, Url};
 use serde::de::DeserializeOwned;
+use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::warn;
@@ -20,29 +21,31 @@ use tracing::warn;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The key an instance is reached with.
-pub(super) enum Key {
+pub(crate) enum Key {
     /// The one the endpoint's `auth` names, resolved through the secret
     /// chain on every request - an instance the operator started.
     Endpoint(Arc<SecretManager>),
     /// One made for the instance when Caelumora started it.
+    #[cfg(feature = "docker")]
     Made(String),
 }
 
-impl std::fmt::Debug for Key {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Key {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Endpoint(_) => f.write_str("Endpoint"),
+            #[cfg(feature = "docker")]
             Self::Made(_) => f.write_str("Made(..)"),
         }
     }
 }
 
 #[derive(Debug)]
-pub(super) struct Client {
+pub(crate) struct Client {
     endpoint: RemoteEndpoint,
     base: Url,
     key: Key,
-    http: reqwest::Client,
+    http: HttpClient,
     /// When a request was last sent.
     used: Mutex<Instant>,
 }
@@ -55,19 +58,20 @@ impl Client {
     /// # Errors
     /// `Unavailable` for a URL that is none, or a client that cannot be
     /// made.
-    pub(super) fn new(endpoint: RemoteEndpoint, key: Key, direct: bool) -> TerminalResult<Self> {
+    pub(crate) fn new(endpoint: RemoteEndpoint, key: Key, direct: bool) -> TerminalResult<Self> {
         let base = Url::parse(&endpoint.url).map_err(|_| TerminalError::Unavailable("the storage's endpoint is no URL".to_string()))?;
         if base.cannot_be_a_base() {
             return Err(TerminalError::Unavailable("the storage's endpoint is no URL".to_string()));
         }
-        let builder = reqwest::Client::builder();
+        let builder = HttpClient::builder();
         let http = match direct { true => builder.no_proxy(), false => builder }.build()
             .map_err(|e| TerminalError::Unavailable(format!("no client for Open Terminal: {}", describe_request_error(e))))?;
         Ok(Self { endpoint, base, key, http, used: Mutex::new(Instant::now()) })
     }
 
     /// How long no request was sent.
-    pub(super) fn idle_for(&self) -> Duration {
+    #[cfg(feature = "docker")]
+    pub(crate) fn idle_for(&self) -> Duration {
         self.used.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).elapsed()
     }
 
@@ -91,7 +95,7 @@ impl Client {
     ///
     /// # Errors
     /// `Unavailable` where the instance was not reached, or refused the key.
-    pub(super) async fn send(
+    pub(crate) async fn send(
         &self,
         method: Method,
         segments: &[&str],
@@ -110,6 +114,7 @@ impl Client {
                 warn!(endpoint = %self.endpoint.shown(), "The key of an Open Terminal storage could not be read: {e}");
                 TerminalError::Unavailable("the storage's key could not be read".to_string())
             })?,
+            #[cfg(feature = "docker")]
             Key::Made(key) => Some(key.clone()),
         };
         if let Some(key) = key {
@@ -136,7 +141,7 @@ impl Client {
     /// # Errors
     /// `Unavailable` for a status that is no success or a body that does
     /// not fit, naming what did not.
-    pub(super) async fn parsed<T: DeserializeOwned>(&self, answer: Response) -> TerminalResult<T> {
+    pub(crate) async fn parsed<T: DeserializeOwned>(&self, answer: Response) -> TerminalResult<T> {
         let answer = self.success(answer)?;
         let body = answer.bytes().await.map_err(|e| TerminalError::Unavailable(format!("Open Terminal's answer broke off: {}", describe_request_error(e))))?;
         serde_json::from_slice(&body).map_err(|e| {
@@ -149,7 +154,7 @@ impl Client {
     ///
     /// # Errors
     /// `Unavailable`, naming the status - never what the instance wrote.
-    pub(super) fn success(&self, answer: Response) -> TerminalResult<Response> {
+    pub(crate) fn success(&self, answer: Response) -> TerminalResult<Response> {
         match answer.status() {
             status if status.is_success() => Ok(answer),
             status => Err(self.refused(status)),
@@ -157,7 +162,7 @@ impl Client {
     }
 
     /// That the instance answered `status` where it should not have.
-    pub(super) fn refused(&self, status: StatusCode) -> TerminalError {
+    pub(crate) fn refused(&self, status: StatusCode) -> TerminalError {
         warn!(endpoint = %self.endpoint.shown(), %status, "Open Terminal refused a request");
         TerminalError::Unavailable(format!("Open Terminal answered {status}"))
     }

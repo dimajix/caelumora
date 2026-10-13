@@ -50,7 +50,9 @@ the `security` and `confidentiality` policies, its manager as a `service`, and `
 Its routes come from `caelumora_rest_server::plugin::RestPlugin`, a `Plugin` that builds a `Router`
 with the `AppState`; the API serves them behind the same login as the core's (`routes::api`). A
 plugin that brings a component kind alone, such as `caelumora-mcp` (issue 325) or `caelumora-a2a`
-(issue 326), implements `Plugin` only and registers the kind in `register`. A plugin's tests use
+(issue 326), implements `Plugin` only and registers the kind in `register`; one that brings
+backends alone, such as `caelumora-open-terminal` (issue 327), registers them in `backends` and
+nothing in `register`. A plugin's tests use
 the world of the security suite - the runtime with the recording ownership policy and three users -,
 `caelumora_runtime::testing`, as a dev-dependency with the feature `test-support`.
 

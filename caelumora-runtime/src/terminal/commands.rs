@@ -8,11 +8,14 @@
 //! A command is kept while it may run and for `KEPT_AFTER_END` after it
 //! ended, so that its output can still be asked for - as Open Terminal
 //! keeps its processes.
+//!
+//! `Commands` and `Kept` are public, so that a provider outside the core
+//! keeps its commands as the core's do (issue 327).
 
-use super::{Shell, TerminalError, TerminalResult};
+use super::{TerminalError, TerminalResult};
 use caelumora_model::workspace::WorkspaceId;
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 /// How long a command is kept after it ended.
@@ -28,28 +31,22 @@ pub(super) fn locked<T>(lock: &Mutex<T>) -> MutexGuard<'_, T> {
     lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Ends command `id` of `shell` with everything it started, as a provider
-/// ends one when told (`TerminalProvider::end_command`): one that ended
-/// meanwhile, or is no longer known, is no error.
-///
-/// # Errors
-/// A `TerminalError` of reaching its place.
-pub(super) async fn end(shell: &dyn Shell, id: &str) -> TerminalResult<()> {
-    match shell.kill(id, 0).await {
-        Ok(_) | Err(TerminalError::UnknownCommand(_)) => Ok(()),
-        Err(e) => Err(e),
-    }
-}
-
 /// What a shell keeps of a command: when it ended, as far as it knows.
-pub(super) trait Kept {
+pub trait Kept {
     /// When it ended; `None` while it may run.
     fn ended(&self) -> Option<Instant>;
 }
 
+/// A command shared between the storage and the shells that follow it.
+impl<T: Kept + ?Sized> Kept for Arc<T> {
+    fn ended(&self) -> Option<Instant> {
+        T::ended(self)
+    }
+}
+
 /// The commands of the workspaces of one storage.
 #[derive(Debug)]
-pub(super) struct Commands<C> {
+pub struct Commands<C> {
     commands: Mutex<HashMap<CommandKey, C>>,
 }
 
@@ -67,7 +64,7 @@ impl<C: Kept + Clone> Commands<C> {
         commands
     }
 
-    pub(super) fn insert(&self, key: CommandKey, command: C) {
+    pub fn insert(&self, key: CommandKey, command: C) {
         self.kept().insert(key, command);
     }
 
@@ -75,17 +72,17 @@ impl<C: Kept + Clone> Commands<C> {
     ///
     /// # Errors
     /// `UnknownCommand` if it was never started, or ended a while ago.
-    pub(super) fn get(&self, key: &CommandKey) -> TerminalResult<C> {
+    pub fn get(&self, key: &CommandKey) -> TerminalResult<C> {
         self.kept().get(key).cloned().ok_or_else(|| TerminalError::UnknownCommand(key.2.clone()))
     }
 
     /// The commands that may still run.
-    pub(super) fn running(&self) -> Vec<CommandKey> {
+    pub fn running(&self) -> Vec<CommandKey> {
         self.kept().iter().filter(|(_, command)| command.ended().is_none()).map(|(key, _)| key.clone()).collect()
     }
 
     /// Forgets the commands of workspace `id`: they ended with its place.
-    pub(super) fn forget(&self, id: WorkspaceId) {
+    pub fn forget(&self, id: WorkspaceId) {
         self.kept().retain(|(workspace, _, _), _| *workspace != id);
     }
 }
@@ -93,12 +90,11 @@ impl<C: Kept + Clone> Commands<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     #[derive(Debug, Default)]
     struct Fake(Mutex<Option<Instant>>);
 
-    impl Kept for Arc<Fake> {
+    impl Kept for Fake {
         fn ended(&self) -> Option<Instant> {
             *locked(&self.0)
         }

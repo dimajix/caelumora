@@ -18,16 +18,19 @@
 //! storage's `max_run`.
 //!
 //! A storage is a backend (issue 324): its provider is made by the factory
-//! registered for its type - `local`, `open_terminal_shared` and
-//! `open_terminal_docker` here (`register_backends`), others by a plugin -,
-//! from its parameters, which that factory reads and checks.
+//! registered for its type - `local` here (`register_backends`), others by a
+//! plugin, such as the Open Terminal storages of `caelumora-open-terminal`
+//! (issue 327) -, from its parameters, which that factory reads and checks.
+//! What a provider outside the core has to offer is this module's public
+//! API: a `TerminalProvider` with its `Terminal` and `Shell`, the commands
+//! of its storage kept in `Commands`, and its `max_run_secs` read as
+//! `max_run` reads it.
 
 mod commands;
 mod local;
 mod local_shell;
-mod open_terminal;
 
-pub use commands::CommandKey;
+pub use commands::{CommandKey, Commands, Kept};
 pub(crate) use local::{write_whole, WriteFailure};
 
 use crate::backend::Backends;
@@ -209,6 +212,19 @@ pub trait Shell: Send + Sync + Debug {
     /// Ends command `id` and what it started; what it printed since
     /// `offset`.
     async fn kill(&self, id: &str, offset: u64) -> TerminalResult<CommandState>;
+
+    /// Ends command `id` with everything it started, as a provider ends one
+    /// when told (`TerminalProvider::end_command`): one that ended
+    /// meanwhile, or is no longer known, is no error.
+    ///
+    /// # Errors
+    /// A `TerminalError` of reaching its place.
+    async fn end(&self, id: &str) -> TerminalResult<()> {
+        match self.kill(id, 0).await {
+            Ok(_) | Err(TerminalError::UnknownCommand(_)) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
 }
 
 /// What makes and reaches the places of the workspaces of one storage
@@ -257,7 +273,9 @@ pub trait TerminalProvider: Send + Sync + Debug {
 /// otherwise (issue 254): an hour.
 pub const DEFAULT_MAX_RUN_SECS: u64 = 3600;
 
-fn default_max_run_secs() -> u64 {
+/// The `max_run_secs` of a storage that names none - for its parameters'
+/// `#[serde(default = ...)]`.
+pub fn default_max_run_secs() -> u64 {
     DEFAULT_MAX_RUN_SECS
 }
 
@@ -266,18 +284,17 @@ fn default_max_run_secs() -> u64 {
 ///
 /// # Errors
 /// `ComponentError::InvalidConfig` for none at all.
-fn max_run(secs: u64) -> ComponentResult<Duration> {
+pub fn max_run(secs: u64) -> ComponentResult<Duration> {
     if secs == 0 {
         return Err(ComponentError::InvalidConfig("max_run_secs must be more than 0".to_string()));
     }
     Ok(Duration::from_secs(secs))
 }
 
-/// Registers the storages of workspaces the core brings with `backends`:
-/// `local`, `open_terminal_shared` and `open_terminal_docker`.
+/// Registers the storage of workspaces the core brings with `backends`:
+/// `local`.
 pub(crate) fn register_backends(backends: &mut Backends) {
     local::register_backend(backends);
-    open_terminal::register_backends(backends);
 }
 
 #[cfg(test)]

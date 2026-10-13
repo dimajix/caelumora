@@ -20,11 +20,8 @@
 //!   which are forgotten then; ending one when told (issue 254) does not
 //!   start a container that is not running.
 
-use super::client::{Client, Key};
-use super::{OpenCommands, OpenTerminal};
-use crate::backend::Backends;
-use crate::component::{config_of_params, ComponentError, ComponentResult};
-use crate::terminal::{default_max_run_secs, max_run, CommandKey, Terminal, TerminalError, TerminalProvider, TerminalResult};
+use crate::client::{Client, Key};
+use crate::terminal::{OpenCommands, OpenTerminal};
 use async_trait::async_trait;
 use bollard::errors::Error as DockerError;
 use bollard::exec::{CreateExecOptions, StartExecOptions};
@@ -34,15 +31,21 @@ use bollard::Docker;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::workspace::WorkspaceId;
+use caelumora_runtime::backend::Backends;
+use caelumora_runtime::component::{config_of_params, ComponentError, ComponentResult};
+use caelumora_runtime::terminal::{default_max_run_secs, max_run, CommandKey, Terminal, TerminalError, TerminalProvider, TerminalResult};
 use futures::StreamExt;
 use reqwest::Method;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 use std::time::Duration;
+use tokio::runtime::Handle;
 use tokio::sync::Mutex;
+use tokio::time::{sleep, Instant};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 /// The label naming the storage a container or volume belongs to.
 const STORAGE_LABEL: &str = "caelumora.storage";
@@ -115,7 +118,7 @@ impl DockerStorageConfig {
 
 /// Registers the storage `open_terminal_docker` with `backends`: its
 /// containers are labelled with the name of the storage.
-pub(super) fn register_backend(backends: &mut Backends) {
+pub(crate) fn register_backend(backends: &mut Backends) {
     backends.register::<dyn TerminalProvider, _>("open_terminal_docker", |storage, params, _| {
         let config: DockerStorageConfig = config_of_params(params)?;
         config.check()?;
@@ -147,9 +150,9 @@ struct Inner {
     max_run: Duration,
     destination: Classification,
     /// The workspaces used here, each with its instance while it runs.
-    slots: std::sync::Mutex<HashMap<WorkspaceId, Slot>>,
+    slots: StdMutex<HashMap<WorkspaceId, Slot>>,
     /// The task that stops what is not used; ends with the provider.
-    reaper: std::sync::OnceLock<AbortOnDropHandle<()>>,
+    reaper: OnceLock<AbortOnDropHandle<()>>,
 }
 
 /// The name of the container and of the volume of workspace `id`.
@@ -180,7 +183,7 @@ impl DockerProvider {
     /// `Unavailable` outside a Tokio runtime, or where no Docker daemon can
     /// be addressed.
     pub(crate) fn new(storage: &str, image: &str, network: &str, idle_stop: Duration, max_run: Duration, destination: Option<Classification>) -> TerminalResult<Self> {
-        let runtime = tokio::runtime::Handle::try_current()
+        let runtime = Handle::try_current()
             .map_err(|_| TerminalError::Unavailable("a Docker storage needs a running runtime".to_string()))?;
         let docker = Docker::connect_with_local_defaults().map_err(|e| failed("be addressed", e))?;
         let inner = Arc::new(Inner {
@@ -192,8 +195,8 @@ impl DockerProvider {
             commands: Arc::default(),
             max_run,
             destination: destination.unwrap_or(Classification::PUBLIC),
-            slots: std::sync::Mutex::default(),
-            reaper: std::sync::OnceLock::new(),
+            slots: StdMutex::default(),
+            reaper: OnceLock::new(),
         });
         let every = (idle_stop / 4).clamp(Duration::from_secs(1), Duration::from_secs(60));
         let _ = inner.reaper.set(AbortOnDropHandle::new(runtime.spawn(reap(Arc::downgrade(&inner), every))));
@@ -207,7 +210,7 @@ async fn reap(inner: Weak<Inner>, every: Duration) {
         let Some(inner) = inner.upgrade() else { return };
         inner.reap().await;
         drop(inner);
-        tokio::time::sleep(every).await;
+        sleep(every).await;
     }
 }
 
@@ -288,7 +291,7 @@ impl Inner {
     /// image pulled first if the daemon does not have it.
     async fn make(&self, id: WorkspaceId) -> TerminalResult<()> {
         let name = name(id);
-        let key = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+        let key = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let body = ContainerCreateBody {
             image: Some(self.image.clone()),
             env: Some(vec![format!("OPEN_TERMINAL_API_KEY={key}")]),
@@ -323,7 +326,7 @@ impl Inner {
         let exec = self.docker.create_exec(name, exec).await.map_err(|e| failed("prepare a workspace's container", e))?;
         self.docker.start_exec(&exec.id, Some(StartExecOptions { detach: true, ..Default::default() })).await
             .map_err(|e| failed("prepare a workspace's container", e))?;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let state = self.docker.inspect_exec(&exec.id).await.map_err(|e| failed("prepare a workspace's container", e))?;
             match (state.running, state.exit_code) {
@@ -332,25 +335,25 @@ impl Inner {
                     warn!(container = %name, ?code, "Giving the workspace to the image's user failed");
                     return Err(TerminalError::Unavailable("a workspace's container could not be prepared".to_string()));
                 }
-                _ if tokio::time::Instant::now() >= deadline => return Err(TerminalError::Unavailable("a workspace's container was not prepared in time".to_string())),
-                _ => tokio::time::sleep(Duration::from_millis(100)).await,
+                _ if Instant::now() >= deadline => return Err(TerminalError::Unavailable("a workspace's container was not prepared in time".to_string())),
+                _ => sleep(Duration::from_millis(100)).await,
             }
         }
     }
 
     /// Waits until the instance behind `client` answers.
     async fn ready(&self, client: &Client) -> TerminalResult<()> {
-        let deadline = tokio::time::Instant::now() + START_WAIT;
+        let deadline = Instant::now() + START_WAIT;
         loop {
             if let Ok(answer) = client.send(Method::GET, &["health"], &[], None, Duration::ZERO, |r| r).await {
                 if answer.status().is_success() {
                     return Ok(());
                 }
             }
-            if tokio::time::Instant::now() >= deadline {
+            if Instant::now() >= deadline {
                 return Err(TerminalError::Unavailable("a workspace's container did not answer in time".to_string()));
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            sleep(Duration::from_millis(250)).await;
         }
     }
 
@@ -384,7 +387,7 @@ impl Inner {
             Err(e) => return warn!(storage = %self.storage, "The containers of a Docker storage could not be listed: {e}"),
         };
         for container in running {
-            let Some(id) = container.labels.as_ref().and_then(|l| l.get(WORKSPACE_LABEL)).and_then(|id| id.parse::<uuid::Uuid>().ok()).map(WorkspaceId::from) else { continue };
+            let Some(id) = container.labels.as_ref().and_then(|l| l.get(WORKSPACE_LABEL)).and_then(|id| id.parse::<Uuid>().ok()).map(WorkspaceId::from) else { continue };
             let held = slots.iter().find(|(used, _)| *used == id).map(|(_, slot)| slot);
             let unheld = match held {
                 None => true,
@@ -450,7 +453,7 @@ impl TerminalProvider for DockerProvider {
             return Ok(());
         };
         match self.inner.terminal(*workspace, client).shell(scope) {
-            Some(shell) => crate::terminal::commands::end(shell.as_ref(), id).await,
+            Some(shell) => shell.end(id).await,
             None => Ok(()),
         }
     }
@@ -463,20 +466,24 @@ impl TerminalProvider for DockerProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::Services;
-    use crate::terminal::DEFAULT_MAX_RUN_SECS;
-    use caelumora_model::config::BackendConfig;
-    use serde_json::json;
-    use crate::terminal::{ByteStream, WorkspacePath};
-    use caelumora_model::workspace::CommandStatus;
+    use crate::plugin::OpenTerminalPlugin;
     use bytes::Bytes;
+    use caelumora_model::config::BackendConfig;
+    use caelumora_model::workspace::CommandStatus;
+    use caelumora_runtime::runtime::Services;
+    use caelumora_runtime::terminal::{ByteStream, WorkspacePath, DEFAULT_MAX_RUN_SECS};
+    use futures::stream;
+    use serde_json::json;
+    use std::env;
+    use std::slice;
+    use tokio::time::timeout;
 
     fn path(text: &str) -> WorkspacePath {
         WorkspacePath::parse(text).unwrap()
     }
 
     fn content(text: &'static str) -> ByteStream {
-        Box::pin(futures::stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
+        Box::pin(stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
     }
 
     async fn running(docker: &Docker, id: WorkspaceId) -> bool {
@@ -490,11 +497,11 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs a Docker daemon"]
     async fn a_container_per_workspace_is_started_stopped_found_again_and_removed() {
-        if std::env::var_os("CAELUMORA_DOCKER_TESTS").is_none() {
+        if env::var_os("CAELUMORA_DOCKER_TESTS").is_none() {
             return eprintln!("CAELUMORA_DOCKER_TESTS is not set");
         }
-        let image = std::env::var("CAELUMORA_DOCKER_IMAGE").unwrap_or_else(|_| "ghcr.io/open-webui/open-terminal:0.14.0".to_string());
-        let storage = format!("test-{}", uuid::Uuid::new_v4().simple());
+        let image = env::var("CAELUMORA_DOCKER_IMAGE").unwrap_or_else(|_| "ghcr.io/open-webui/open-terminal:0.14.0".to_string());
+        let storage = format!("test-{}", Uuid::new_v4().simple());
         let provider = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(3), Duration::from_secs(3600), None).unwrap();
         let docker = provider.inner.docker.clone();
         let id = WorkspaceId::new();
@@ -509,12 +516,12 @@ mod tests {
         assert_eq!((state.status, state.output.as_str()), (CommandStatus::Completed, "hello\n/workspace\n[]\n"));
         let long = shell.start("sleep 600").await.unwrap();
         let key = (id, "c".to_string(), long);
-        assert_eq!(provider.commands(), std::slice::from_ref(&key), "what may still run");
+        assert_eq!(provider.commands(), slice::from_ref(&key), "what may still run");
 
         // Unused, it is stopped, with the commands in it; used again,
         // started with the same key and the same files - also by a provider
         // of a later run.
-        tokio::time::timeout(Duration::from_secs(30), async { while running(&docker, id).await { tokio::time::sleep(Duration::from_millis(500)).await } }).await.expect("stopped when unused");
+        timeout(Duration::from_secs(30), async { while running(&docker, id).await { sleep(Duration::from_millis(500)).await } }).await.expect("stopped when unused");
         assert!(provider.commands().is_empty(), "ended with its container");
         provider.end_command(&key).await.expect("one that ended is no error");
         assert!(!running(&docker, id).await, "and its container is not started for it");
@@ -535,11 +542,11 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs a Docker daemon"]
     async fn what_an_earlier_run_left_running_is_stopped() {
-        if std::env::var_os("CAELUMORA_DOCKER_TESTS").is_none() {
+        if env::var_os("CAELUMORA_DOCKER_TESTS").is_none() {
             return eprintln!("CAELUMORA_DOCKER_TESTS is not set");
         }
-        let image = std::env::var("CAELUMORA_DOCKER_IMAGE").unwrap_or_else(|_| "ghcr.io/open-webui/open-terminal:0.14.0".to_string());
-        let storage = format!("test-{}", uuid::Uuid::new_v4().simple());
+        let image = env::var("CAELUMORA_DOCKER_IMAGE").unwrap_or_else(|_| "ghcr.io/open-webui/open-terminal:0.14.0".to_string());
+        let storage = format!("test-{}", Uuid::new_v4().simple());
         let earlier = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(600), Duration::from_secs(3600), None).unwrap();
         let docker = earlier.inner.docker.clone();
         let id = WorkspaceId::new();
@@ -549,7 +556,7 @@ mod tests {
         assert!(running(&docker, id).await, "left running");
 
         let later = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(600), Duration::from_secs(3600), None).unwrap();
-        tokio::time::timeout(Duration::from_secs(30), async { while running(&docker, id).await { tokio::time::sleep(Duration::from_millis(500)).await } }).await.expect("stopped at start");
+        timeout(Duration::from_secs(30), async { while running(&docker, id).await { sleep(Duration::from_millis(500)).await } }).await.expect("stopped at start");
         later.remove(id).await.unwrap();
     }
 
@@ -558,11 +565,11 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs a Docker daemon"]
     async fn a_command_is_killed_by_its_container_once_it_ran_as_long_as_it_may() {
-        if std::env::var_os("CAELUMORA_DOCKER_TESTS").is_none() {
+        if env::var_os("CAELUMORA_DOCKER_TESTS").is_none() {
             return eprintln!("CAELUMORA_DOCKER_TESTS is not set");
         }
-        let image = std::env::var("CAELUMORA_DOCKER_IMAGE").unwrap_or_else(|_| "ghcr.io/open-webui/open-terminal:0.14.0".to_string());
-        let storage = format!("test-{}", uuid::Uuid::new_v4().simple());
+        let image = env::var("CAELUMORA_DOCKER_IMAGE").unwrap_or_else(|_| "ghcr.io/open-webui/open-terminal:0.14.0".to_string());
+        let storage = format!("test-{}", Uuid::new_v4().simple());
         let provider = DockerProvider::new(&storage, &image, "bridge", Duration::from_secs(600), Duration::from_secs(2), None).unwrap();
         let id = WorkspaceId::new();
         provider.create(id).await.unwrap();
@@ -590,7 +597,7 @@ mod tests {
             assert!(refused.contains(why), "{refused}");
         }
         let storages = [("isolated".to_string(), BackendConfig::new("open_terminal_docker", json!({ "image": "x", "max_run_secs": 0 })))].into();
-        let refused = Backends::built_in().make_named::<dyn TerminalProvider>("storage of workspaces", &storages, &Services::empty()).map(|_| ()).unwrap_err().to_string();
+        let refused = Backends::with_plugins(&[&OpenTerminalPlugin]).make_named::<dyn TerminalProvider>("storage of workspaces", &storages, &Services::empty()).map(|_| ()).unwrap_err().to_string();
         assert!(refused.contains("'isolated'") && refused.contains("max_run_secs"), "{refused}");
     }
 }

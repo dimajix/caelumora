@@ -36,6 +36,10 @@ The project is a Rust workspace, with a web UI next to it:
     brings nothing but its component kind `a2a_agent`, so that the core keeps the facet
     `ExternalAgent` and names no protocol (issue 326). See
     [Agents that run elsewhere](#agents-that-run-elsewhere).
+*   **`caelumora-open-terminal`** - the storages of workspaces backed by Open Terminal,
+    `open_terminal_shared` and `open_terminal_docker`, a plugin that brings nothing but these
+    backends, the Docker one with `bollard` behind the feature `docker` (issue 327). See
+    [WORKSPACE.md](WORKSPACE.md#storages).
 *   **`caelumora-web-ui`** - the browser frontend (React, TypeScript), built on the REST API and
     served by `caelumora-app`. See [WEB-UI.md](WEB-UI.md).
 *   **`caelumora-tui`** - a terminal frontend that runs the runtime in its own process.
@@ -57,7 +61,8 @@ extension trait on the runtime's `Views`, built from what they open. Which plugi
 program's choice: `caelumora-app` and `caelumora-tui` each list theirs; the core knows none. A
 plugin is one crate, cut into layers by Cargo features rather than crates. The first is
 `caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)); `caelumora-mcp`
-([TOOLS.md](TOOLS.md#mcp-servers)) and `caelumora-a2a` are ones that bring a component kind alone.
+([TOOLS.md](TOOLS.md#mcp-servers)) and `caelumora-a2a` are ones that bring a component kind alone,
+`caelumora-open-terminal` one that brings backends alone.
 Where the core calls a plugin, the plugin answers in the core's error types, not in its own: the
 core decides by the types it knows what a person is told of an error.
 
@@ -72,7 +77,8 @@ by their `type` (issue 324): the storages of workspaces (`TerminalProvider`) and
 `Backends` (`caelumora_runtime::backend`), which reads its parameters and asks the services it is
 given for what it needs. The core registers its own (`Backends::built_in`); a plugin adds one by
 registering its factory in `Plugin::backends`, which is asked before anything is made - so a new
-storage or provider is a crate linked into the program, and no edit of the core. The backends are
+storage or provider is a crate linked into the program, and no edit of the core, as the Open
+Terminal storages of `caelumora-open-terminal` are (issue 327). The backends are
 made once, when the runtime is built (`RuntimeBuilder::from_config`): the secret providers first,
 then the storages and the user providers with the secrets and the records of the users at hand.
 Unlike a component, a backend serves the whole process and lives in no container, which is why it

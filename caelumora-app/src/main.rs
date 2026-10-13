@@ -8,6 +8,7 @@ use caelumora_logging::LogTarget;
 use caelumora_a2a::plugin::A2aPlugin;
 use caelumora_mcp::plugin::McpPlugin;
 use caelumora_model::config::AppConfig;
+use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::{self, ApiError};
 use caelumora_rest_server::plugin::RestPlugin;
@@ -104,10 +105,10 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
     vec![Box::new(SkillsPlugin)]
 }
 
-/// The plugins of the program that bring no routes (issue 325), which only
-/// its runtime is built with.
+/// The plugins of the program that bring no routes (issues 325, 327), which
+/// only its runtime is built with.
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(McpPlugin), Box::new(A2aPlugin)]
+    vec![Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin)]
 }
 
 /// Every plugin of the program, which it builds its runtime with:
@@ -145,7 +146,9 @@ mod tests {
     use caelumora_model::value::text::Description;
     use caelumora_runtime::backend::Backends;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentRegistry};
-    use caelumora_runtime::runtime::RuntimeManager;
+    use caelumora_model::config::BackendConfig;
+    use caelumora_runtime::runtime::{RuntimeManager, Services};
+    use caelumora_runtime::terminal::TerminalProvider;
     use caelumora_runtime::seed::Seed;
     use caelumora_runtime::tool::ToolProvider;
     use caelumora_skills::skill::Skill;
@@ -239,6 +242,24 @@ mod tests {
         let tools = container.get_all::<dyn ToolProvider>(None);
         assert_eq!(tools.len(), 1);
         assert!(tools[0].unavailable().is_some());
+    }
+
+    /// The storages of workspaces the example configuration names are made
+    /// with the program's plugins, `open_terminal_shared` as before it moved
+    /// into its plugin (issue 327); `open_terminal_docker` is known too,
+    /// checked without a Docker daemon by parameters it refuses.
+    #[tokio::test]
+    async fn the_storages_of_workspaces_are_made_with_the_program_s_plugins() {
+        let config = AppConfig::load(example("config.yaml")).unwrap();
+        let (rest_plugins, plugins) = (rest_plugins(), plugins());
+        let backends = Backends::with_plugins(&all(&rest_plugins, &plugins));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
+        let services = Services::empty().with(secrets);
+        let storages = backends.make_named::<dyn TerminalProvider>("storage of workspaces", &config.workspaces.storage, &services).expect("every type is known");
+        assert!(storages.contains_key("sandbox"), "the shared Open Terminal of the example");
+        let docker = [("isolated".to_string(), BackendConfig::new("open_terminal_docker", json!({ "image": "x", "max_run_secs": 0 })))].into();
+        let refused = backends.make_named::<dyn TerminalProvider>("storage of workspaces", &docker, &services).map(|_| ()).unwrap_err().to_string();
+        assert!(refused.contains("max_run_secs") && !refused.contains("no backend of this type"), "{refused}");
     }
 
     async fn status_of(app: &Router, uri: &str) -> (StatusCode, Option<String>) {
