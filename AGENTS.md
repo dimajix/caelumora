@@ -60,6 +60,8 @@ The reasons and details are in [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md)
     written out only where an import cannot serve (see
     [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md#imports)).
 *   No `unwrap()` or `expect()` in production code.
+*   A method of a trait answers a specific error type, never `anyhow` - except the few named in
+    [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md#types).
 *   Errors in a turn end the turn, not the agent: don't let a turn-time error escape
     `AgentActor::run`.
 *   Error messages name what failed and never contain secret values or file paths.

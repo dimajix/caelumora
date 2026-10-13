@@ -137,11 +137,19 @@ Errors carry what failed, and only what may be shown goes to users.
 ### Types
 
 *   Use `anyhow::Result` for general application logic, especially in the runtime, where diverse
-    error types are aggregated.
+    error types are aggregated: code that gathers errors and passes them on, within an operation
+    or at the top of a task - not at the boundary to implementations of others.
 *   Use `thiserror` for domain-specific error types, as in `caelumora-model`.
-*   A trait that a component or a plugin implements - a facet, a `ScopeMember` - names an error
-    type of the core, never `anyhow`: the core can only judge what it knows (see
-    [PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-core-in-the-cores-types)).
+*   A method of a trait answers a specific error type, never `anyhow`: who implements it is not
+    fixed - a module of the core today, a plugin tomorrow -, and its caller has to tell its errors
+    apart. The type is the contract: what the caller can distinguish - what may be shown, a
+    refusal, a store's error -, and the compiler makes every implementation translate into it.
+    Context that `anyhow` attaches with `.context(…)` becomes a variant of the type
+    (`ContextError::Component`). For a plugin, the type is one of the core's (see
+    [PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-core-in-the-cores-types)). The exceptions
+    are named, so that "its caller only logs it" is no excuse for the next one: traits whose only
+    caller is the top of the program or of a task and logs the error whole - `Plugin::register`,
+    `SeedSection::seed`, `Actor::run` and `Actor::catch_up`.
 *   Avoid `unwrap()` and `expect()` in production code. Use `?` or handle the error explicitly.
 
 ### Messages name what failed
