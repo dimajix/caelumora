@@ -120,6 +120,10 @@ pub enum ViewError {
     /// tools it has.
     #[error("You are not permitted to read this of {actor}")]
     Forbidden { actor: ActorId, #[source] refused: Refused },
+    /// Not the viewer's to do: searching whom to take into a session they
+    /// may not change (issue 221).
+    #[error("You are not permitted to do this")]
+    NotPermitted(#[source] Refused),
     /// Only agents have a context.
     #[error("There is nothing {actor} saw: it is no agent, or no longer exists")]
     NoContext { actor: ActorId },
@@ -414,9 +418,10 @@ impl Views {
     }
 
     /// Whom an entry of an access list may name the viewer by (issues 293,
-    /// 308): themselves, the roles they hold and the teams they belong to -
-    /// not those they only own -, as the policy resolves an entry. What a
-    /// kind lists as shared with them by name asks the store for these.
+    /// 308, 221): themselves, everyone if they are a user, the roles they
+    /// hold and the teams they belong to - not those they only own -, as the
+    /// policy resolves an entry. What a kind lists as shared with them by
+    /// name asks the store for these.
     ///
     /// # Errors
     /// What the store reports.
@@ -425,7 +430,9 @@ impl Views {
         let principal = context.principal_id;
         let roles = context.roles.iter().copied().filter(|role| context.has_role(*role));
         let teams = self.teams().await?.into_iter().filter(|team| team.has_member(principal)).map(|team| Subject::Group(team.id));
-        Ok(std::iter::once(Subject::Actor(principal)).chain(roles.map(Subject::Role)).chain(teams).collect())
+        // Every user is named by an entry for everyone (issue 221).
+        let everyone = matches!(principal, ActorId::User(_)).then_some(Subject::Everyone);
+        Ok(std::iter::once(Subject::Actor(principal)).chain(everyone).chain(roles.map(Subject::Role)).chain(teams).collect())
     }
 
     /// The entries `acl` with whom each names called by name (issue 23),
@@ -439,7 +446,7 @@ impl Views {
         for entry in acl {
             let (name, scope) = match entry.subject {
                 Subject::Actor(ActorId::User(user)) => (self.stores.users.get(&system, user).await.optional().ok().flatten().map(|u| u.username.to_string()), None),
-                Subject::Actor(_) => (None, None),
+                Subject::Actor(_) | Subject::Everyone => (None, None),
                 Subject::Role(role) => (self.confidentiality.roles().and_then(|roles| roles.name_of(role)).map(str::to_string), None),
                 Subject::Group(group) => match self.stores.groups.get(&system, group).await.optional().ok().flatten() {
                     Some(group) => (self.group_name(&group).await, Some(group.name.scope)),

@@ -134,17 +134,20 @@ pub trait ScopedField: Field {
     const SCOPE: Self;
 }
 
-/// The fields of a kind that a list asks by its scope alone: personalities,
-/// session templates, agents, workspaces, skills.
+/// The fields of a kind that a list asks by where it lies and what it is
+/// called: personalities, session templates, agents, workspaces, skills.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeField {
     Scope,
+    /// Its name within its scope (issue 221).
+    Name,
 }
 
 impl Field for ScopeField {
     fn path(self) -> &'static [&'static str] {
         match self {
             ScopeField::Scope => &["scope"],
+            ScopeField::Name => &["name"],
         }
     }
 }

@@ -52,8 +52,7 @@ mod tests;
 
 pub use history::VisibleHistory;
 pub(crate) use history::visible_part;
-pub(crate) use member::require_admitted;
-use member::Member;
+pub(crate) use member::{require_admitted, Member};
 
 /// A participant of a channel, with the handle it is `@`-mentioned by.
 #[derive(Debug, Clone, PartialEq)]
@@ -351,7 +350,7 @@ impl ChannelLoop {
 
     /// `participant` with what its actor is built from (`Member::of`).
     async fn member_of(&self, participant: &Participant) -> Result<Option<Member>> {
-        Member::of(participant, &self.channel.load(), self.agents.as_ref(), &self.controllers, self.security.as_ref()).await
+        Member::of(participant, self.session_id, self.id, self.agents.as_ref(), &self.controllers, self.security.as_ref()).await
     }
 
     /// Makes `session` the session of this channel. Called once by the

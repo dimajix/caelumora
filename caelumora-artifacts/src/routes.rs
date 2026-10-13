@@ -177,7 +177,7 @@ async fn channel_artifacts(State(state): State<Artifacts>, Path((id, cid)): Path
 /// every version there is as well, unless `?versions=false`.
 async fn set_access(State(state): State<Artifacts>, Path(id): Path<Uuid>, Query(options): Query<ShareOptions>, user: AuthenticatedUser, Json(entries): Json<Vec<AccessEntry>>) -> Result<Json<ArtifactResponse>, ApiError> {
     let id = ArtifactId(id);
-    let acl = entries.into_iter().map(AccessEntry::into_acl).collect();
+    let acl = AccessEntry::acl_of(entries).map_err(|e| ApiError::bad_request("invalid_access", e))?;
     state.manager.set_access(&user.security_context(), id, acl, options.versions).await?;
     Ok(Json(owned(&state, &user, id).await?))
 }

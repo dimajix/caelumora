@@ -382,3 +382,8 @@ Issues to open with it: a group of our own as a subject; a cache for `Membership
   the version's grants it was revised in issue
   [316](316-store-checks-artifact-without-versions.md): reading a version needs both, as in HDFS
   and ADLS, and publishing lets the channel's participants read the artifact as well.
+- **2026-10-13** — Decision 5 was replaced in issue
+  [221](221-adding-session-participants.md): whom a session or channel lets in is held in its
+  access list as `Join` entries, with a subject for everyone, rather than in an `admission` list
+  beside it; the owner's narrowing went with it, since inviting is widening. The capabilities of a
+  role (decision 4) stay open.

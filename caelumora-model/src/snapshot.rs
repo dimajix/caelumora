@@ -314,6 +314,36 @@ pub struct AccessSnapshot {
     pub scope: Option<Scope>,
 }
 
+/// A user or agent who could be taken into a session and one of its
+/// channels (issue 221), as whoever may change the session finds them by
+/// name: whether they take part already, and why they could not be taken
+/// in - shown, so that who searches sees that they exist.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CandidateSnapshot {
+    pub id: ActorId,
+    pub name: String,
+    pub in_session: bool,
+    /// In the channel asked about; `false` if none was.
+    pub in_channel: bool,
+    /// Why they cannot be taken in; `None` if they can, or take part.
+    pub refusal: Option<CandidateRefusal>,
+}
+
+/// Why someone cannot be taken into a session or channel (issue 221), as
+/// coarse as it is shown: never which clearance or role is missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateRefusal {
+    /// Not cleared for the channel - a user, or an agent by its owner or
+    /// its personality.
+    NotCleared,
+    /// An agent that lies where it cannot take part: in another session's
+    /// or channel's scope.
+    OutOfScope,
+    /// An agent that cannot run: its personality is not its to read.
+    CannotRun,
+}
+
 /// An agent as the viewer sees it in the list of agents (issue 164).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentSnapshot {

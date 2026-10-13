@@ -1,6 +1,6 @@
 # 221 — Nobody can join a session once it is created
 
-**Status:** open
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -132,3 +132,34 @@ personality the adder may not read.
 - **2026-10-11** — Noted from [314](314-session-manager-handles-agents.md): a running session
   subscribes to the events of the agents among its participants as it starts, to follow whether they
   are deleted or restored. An agent added to the session later has to be added to that subscription.
+- **2026-10-13** — Discussed and built. Since this issue was written, a session is read by the
+  group of its participants (issue 286) rather than by attributes derived from them, and `GET
+  /agents` exists. Decided with the maintainer:
+  1. The session does both, in that order: `SessionLoop::add_participant` takes a user or agent into
+     the session and, with a channel named, into that channel at once; everything is asked before
+     anything is stored, and one the channel refuses after all stays in the session.
+  2. Only the clearance for the channel joined is asked; joining the session as such asks none.
+  3. An agent is checked by its owner. That `principal_id` means the owner here only because an
+     agent always acts for its owner led to issue
+     [341](341-identity-ownership-delegation.md).
+  4. Whom to add is found by a prefix search of names (`SessionView::candidates`, `GET
+     /sessions/{id}/candidates`), for whoever may change the session; who cannot be added is shown
+     with a coarse reason - who searches sees that they exist.
+  5. Decision 5 of issue 23 - an `admission` list beside the access list, narrowed by the owner -
+     was built first and then replaced: whom a session or channel lets in is held in its access
+     list, as `Join` entries (`Grant::Join`, the verb `JOIN`), and `Subject::Everyone` names every
+     user. `Join` grants no reading, and reading no joining. A public session holds
+     `{ everyone, join }`; a personal entry is an invitation, used up as it is taken. Whoever may
+     change the session takes in anyone they may name, so the owner can no longer be kept from
+     widening whom a session takes in; the clearance at the door stays. Templates give their
+     sessions and channels entries of their own (`access`). Joining by one's own act is built here
+     (`SessionLoop::join`, `SessionManager::join`, `POST /sessions/{id}/join`); inviting, with an
+     event that can be declined, is issue [342](342-invitations.md).
+  6. Creating an agent from a personality belongs to issue [227](227-agent-management.md); the
+     dialog's shortcut to it comes with whichever of the two is done last.
+
+  Also: a running session follows an agent taken in later (`EventBus::follow`), the query of a
+  store compares a name prefix (`Filter::NamePrefix`), and the web UI's `AddParticipantDialog`
+  searches whom else to add. Not built: a list of the sessions one may join, and a web UI for
+  joining by oneself; changing a session's access list after it was made (with 342). Stored data
+  to delete: none needs to - `access` and the new grant and subject are additions.

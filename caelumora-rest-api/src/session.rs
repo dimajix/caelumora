@@ -6,6 +6,7 @@ use crate::workspace::WorkspaceResponse;
 use caelumora_model::snapshot;
 use caelumora_model::actor::ActorId;
 use caelumora_model::approval::ApprovalRule;
+use caelumora_model::channel::HistoryAccess;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
@@ -108,6 +109,58 @@ impl ParticipantKind {
             _ => None,
         }
     }
+}
+
+/// Someone to take into a session (issue 221), from a search by name: a
+/// user or an agent, whether they take part already - in the session, in
+/// the channel asked about -, and why they cannot be taken in, if they
+/// cannot.
+#[derive(Debug, Serialize)]
+pub struct CandidateResponse {
+    pub id: ActorId,
+    pub name: String,
+    pub kind: ParticipantKind,
+    pub in_session: bool,
+    pub in_channel: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<snapshot::CandidateRefusal>,
+}
+
+impl CandidateResponse {
+    /// `view` as the API shows it; `None` for an id that is no participant.
+    pub fn of(view: snapshot::CandidateSnapshot) -> Option<Self> {
+        Some(Self { kind: ParticipantKind::of(view.id)?, id: view.id, name: view.name, in_session: view.in_session, in_channel: view.in_channel, refusal: view.refusal })
+    }
+}
+
+/// A search of whom to take into a session (issue 221): by the beginning
+/// of their name, with whether they could be taken into `channel` too.
+#[derive(Debug, Deserialize)]
+pub struct CandidatesQuery {
+    pub prefix: String,
+    #[serde(default)]
+    pub channel: Option<ChannelId>,
+}
+
+/// Someone to take into a session (issue 221) - and with `channel` into
+/// that channel at once, seeing as much of its history as `history` grants.
+#[derive(Debug, Deserialize)]
+pub struct AddSessionParticipantRequest {
+    pub participant: ActorId,
+    #[serde(default)]
+    pub channel: Option<ChannelId>,
+    #[serde(default)]
+    pub history: HistoryAccess,
+}
+
+/// Joining a session by one's own act (issue 221): oneself, or with
+/// `participant` one's own agent, and with `channel` that channel at once.
+#[derive(Debug, Deserialize)]
+pub struct JoinSessionRequest {
+    #[serde(default)]
+    pub participant: Option<ActorId>,
+    #[serde(default)]
+    pub channel: Option<ChannelId>,
 }
 
 /// The private notes one agent wrote in one channel of a session (issue

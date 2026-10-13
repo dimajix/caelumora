@@ -332,7 +332,9 @@ answers - the channel's responder policy - is shown above it as its moderator, a
 What can be done with a member is in its menu, each entry only where the member offers it: its
 profile, its history, its private notes, its tools, removing it from the channel (where `can_change`
 is set, which also offers adding a participant of the session with how much of the history they
-may see), and deleting the agent - which asks once more, since the agent leaves every channel it
+may see - and, for whoever may change the session, someone found by the beginning of their name who
+is not in it yet, marked so and taken into it as well; whoever cannot be added is shown with why),
+and deleting the agent - which asks once more, since the agent leaves every channel it
 takes part in, not only this one, until it is restored.
 
 *   **The profile** shows name and handle; of an agent its personality, whether it runs here or

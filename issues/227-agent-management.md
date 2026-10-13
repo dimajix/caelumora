@@ -67,3 +67,9 @@ notes of all channels, its usage as a whole.
   making one from a personality belong there too. A deleted agent now rests in its channels and
   comes back into them when it is restored, so a mistaken delete is no longer final - only the
   trash in the web UI is missing.
+- **2026-10-13** — Decided with [221](221-adding-session-participants.md): creating an agent from a
+  personality without a template is this issue's - `AgentManager::create`, to which the
+  template's finding or making an agent (`template::agent`) moves, `POST /agents` and `GET
+  /personalities`. The dialog that adds a participant to a channel gets a shortcut to it - a new
+  agent from a personality, created and then taken in, in two calls - with whichever of the two
+  issues is done last; 221 was done first.

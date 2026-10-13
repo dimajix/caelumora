@@ -1,14 +1,19 @@
 use arc_swap::ArcSwap;
 use caelumora_model::approval::ApprovalRule;
+use caelumora_model::channel::Participant;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
+use caelumora_model::group::Group;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
 use caelumora_model::value::name::Name;
 use caelumora_model::value::ValueError;
-use caelumora_model::store::{EntityStore, StoreError, StoreResult};
+use caelumora_model::workspace::WorkspaceId;
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
 use chrono::Utc;
 use std::sync::Arc;
+use tracing::error;
+use crate::group::keep_participants;
 use super::check_restricting;
 
 /// The one writer of a session's document.
@@ -18,18 +23,20 @@ pub struct SessionController {
     session: ArcSwap<Session>,
     event_publisher: Arc<dyn EventPublisher>,
     sessions: Arc<dyn EntityStore<Session>>,
+    groups: Arc<dyn EntityStore<Group>>,
     /// Held while the session is changed and stored, so that two changes -
     /// say a rename and a new channel - cannot overwrite each other.
     write_lock: tokio::sync::Mutex<()>,
 }
 
 impl SessionController {
-    pub fn new(session: Session, event_publisher: Arc<dyn EventPublisher>, sessions: Arc<dyn EntityStore<Session>>) -> Self {
+    pub fn new(session: Session, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores) -> Self {
         Self {
             id: session.id,
             session: ArcSwap::from_pointee(session),
             event_publisher,
-            sessions,
+            sessions: Arc::clone(&stores.sessions),
+            groups: Arc::clone(&stores.groups),
             write_lock: tokio::sync::Mutex::new(()),
         }
     }
@@ -94,13 +101,27 @@ impl SessionController {
     ///
     /// # Errors
     /// See [`Self::update`].
-    pub async fn update_workspace(&self, ctx: &SecurityContext, workspace: Option<caelumora_model::workspace::WorkspaceId>) -> StoreResult<()> {
+    pub async fn update_workspace(&self, ctx: &SecurityContext, workspace: Option<WorkspaceId>) -> StoreResult<()> {
         self.update(ctx, SessionUpdateEvent::WorkspaceChanged(workspace)).await
+    }
+
+    /// Takes `participant` into the session on behalf of `ctx` (issue 221)
+    /// as [`Self::update`] does - whoever may change it (`UpdateSession`),
+    /// or the runtime for one who joined by themselves (`JOIN`) - using up
+    /// an invitation (`Session::take_in`). The group of its participants
+    /// follows before it is announced, so that the new one hears of it too.
+    /// Whether they may be taken in is the caller's to have asked.
+    ///
+    /// # Errors
+    /// See [`Self::update`].
+    pub async fn add_participant(&self, ctx: &SecurityContext, participant: Participant) -> StoreResult<()> {
+        self.update(ctx, SessionUpdateEvent::ParticipantAdded(participant)).await
     }
 
     /// Applies `event` on behalf of `ctx`: stored first - which is where the
     /// permission is checked (issue 11) - and only then changed live and
-    /// announced.
+    /// announced. A change of the participants lets the group of them follow
+    /// (issue 286) before it is announced.
     ///
     /// # Errors
     /// `StoreError::Invalid` if what it says does not fit the session,
@@ -110,6 +131,9 @@ impl SessionController {
         let _guard = self.write_lock.lock().await;
         let session = self.apply(&event)?;
         self.sessions.update(ctx, &session).await?;
+        if matches!(event, SessionUpdateEvent::ParticipantAdded(_)) {
+            self.keep_participants(&session).await;
+        }
         let attributes = session.security_attributes.clone();
         self.session.store(Arc::new(session));
         self.event_publisher.publish(GlobalEvent::updated::<Session>(&self.id, &event), attributes);
@@ -161,6 +185,16 @@ impl SessionController {
         }
     }
 
+    /// Lets the group of the participants of `session` follow them, in the
+    /// runtime's name (issue 286), as a channel's does: the change was
+    /// permitted and is stored. A failure is logged and corrected by the
+    /// next change, which derives the group anew.
+    async fn keep_participants(&self, session: &Session) {
+        if let Err(e) = keep_participants(self.groups.as_ref(), Group::of_session(session)).await {
+            error!(session = %session.id, "The group of the session's participants does not follow them: {e}");
+        }
+    }
+
     /// Stores `session` as changed by `ctx` and takes it over live.
     async fn store(&self, ctx: &SecurityContext, mut session: Session) -> StoreResult<()> {
         session.updated_at = Utc::now();
@@ -182,6 +216,7 @@ impl SessionController {
             SessionUpdateEvent::ApprovalRulesChanged(rules) => session.approval_rules = rules.clone(),
             SessionUpdateEvent::DescriptionChanged { summary, briefing } => session.describe(summary.as_deref(), briefing.as_deref())?,
             SessionUpdateEvent::WorkspaceChanged(workspace) => session.workspace = *workspace,
+            SessionUpdateEvent::ParticipantAdded(participant) => session.take_in(participant.clone()),
         }
         Ok(session)
     }
@@ -231,7 +266,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();
         store.entity_stores().sessions.create(&ctx, &session).await.unwrap();
-        let controller = SessionController::new(session.clone(), Arc::new(()), store.entity_stores().sessions);
+        let controller = SessionController::new(session.clone(), Arc::new(()), &store.entity_stores());
 
         controller.update_name(&ctx, "renamed").await.unwrap();
 
@@ -246,7 +281,7 @@ mod tests {
         let ctx = SecurityContext::default();
         store.entity_stores().sessions.create(&ctx, &session).await.unwrap();
         let announced = Arc::new(Announced::default());
-        let controller = SessionController::new(session.clone(), Arc::<Announced>::clone(&announced), store.entity_stores().sessions);
+        let controller = SessionController::new(session.clone(), Arc::<Announced>::clone(&announced), &store.entity_stores());
 
         controller.update_description(&ctx, Some("Release 2.0"), Some("")).await.unwrap();
         let stored = store.entity_stores().sessions.get(&ctx, session.id).await.unwrap();

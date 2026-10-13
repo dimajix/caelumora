@@ -84,7 +84,7 @@ impl ControllerManager {
     }
 
     pub fn new_session_controller(&self, session: Session) -> Arc<SessionController> {
-        Arc::new(SessionController::new(session, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.stores.sessions)))
+        Arc::new(SessionController::new(session, Arc::<EventBus>::clone(&self.event_bus), &self.stores))
     }
 
     pub fn new_channel_controller(&self, channel: Channel) -> Arc<ChannelController> {

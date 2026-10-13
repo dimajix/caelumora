@@ -13,10 +13,14 @@ use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::confidentiality::Place;
-use caelumora_model::security::{AccessQuestions, SecurityContext};
+use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext};
 use super::{channel_reading, ChannelReader, ChannelReading};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::snapshot::{DeletedSnapshot, Detail, ParticipantSnapshot, SessionSnapshot};
+use caelumora_model::snapshot::{CandidateRefusal, CandidateSnapshot, DeletedSnapshot, Detail, ParticipantSnapshot, SessionSnapshot};
+use caelumora_model::scope::ScopeField;
+use caelumora_model::store::StoreError;
+use caelumora_model::user::UserField;
+use crate::channel::ChannelError;
 use std::sync::Arc;
 use tracing::warn;
 use caelumora_model::removal::Stored;
@@ -41,6 +45,25 @@ pub struct SessionView {
     session: Arc<Session>,
     /// Its loop, if it runs: where its channels are reached through.
     running: Option<Arc<SessionLoop>>,
+}
+
+/// The least of a name one searches by (`SessionView::candidates`): fewer
+/// characters would list nearly everyone.
+pub const MIN_PREFIX: usize = 2;
+
+/// The most users, and the most agents, a search finds.
+pub const CANDIDATES: usize = 20;
+
+/// Why someone cannot be taken in, as `error` of `member_to_take_in` says it;
+/// `None` for an error that says nothing about them - a store that failed -,
+/// which a search does not show.
+fn refusal_of(error: &anyhow::Error) -> Option<CandidateRefusal> {
+    match (error.downcast_ref::<ChannelError>(), error.downcast_ref::<StoreError>()) {
+        (Some(ChannelError::NotCleared { .. }), _) => Some(CandidateRefusal::NotCleared),
+        (Some(ChannelError::OutOfScope { .. }), _) => Some(CandidateRefusal::OutOfScope),
+        (_, Some(StoreError::PermissionDenied(_))) => Some(CandidateRefusal::CannotRun),
+        _ => None,
+    }
 }
 
 /// A channel document of the session, with its loop if it runs.
@@ -103,6 +126,54 @@ impl SessionView {
     /// privacy (`UpdateSession`).
     pub async fn may_change(&self) -> bool {
         self.views.security().may_change_session(self.views.context(), &self.session.security_attributes).await
+    }
+
+    /// Whom the viewer could take into the session and, with `channel`,
+    /// into that channel of it (issue 221): the users and the agents they
+    /// may read whose names begin with `prefix` - as names are compared, at
+    /// least `MIN_PREFIX` characters of it, at most `CANDIDATES` of each -,
+    /// each with whether they take part already and why they could not be
+    /// taken in, as `SessionLoop::member_to_take_in` decides. Who may not
+    /// change the session searches nobody: the search tells who exists.
+    /// Nobody either for a session that does not run.
+    ///
+    /// # Errors
+    /// `NotPermitted` if the viewer may not change the session;
+    /// `ChannelNotFound` for a channel they may not read; `Failed` if the
+    /// stores cannot list them.
+    pub async fn candidates(&self, prefix: &str, channel: Option<ChannelId>) -> ViewResult<Vec<CandidateSnapshot>> {
+        if !self.may_change().await {
+            return Err(ViewError::NotPermitted(ActionType::update(Session::KIND, &self.session.security_attributes).refused()));
+        }
+        let channel = match channel {
+            Some(id) => Some(self.channel(id).await?),
+            None => None,
+        };
+        let Some(session_loop) = &self.running else { return Ok(Vec::new()) };
+        if prefix.trim().chars().count() < MIN_PREFIX {
+            return Ok(Vec::new());
+        }
+        let context = self.views.context();
+        let stores = self.views.stores();
+        let users = stores.users.list(context, &Query::filtered(Filter::name_prefix(UserField::Username, prefix)).limited(CANDIDATES)).await
+            .map_err(|e| ViewError::failed(e, "searching users"))?.items;
+        let agents = stores.agents.list(context, &Query::filtered(Filter::name_prefix(ScopeField::Name, prefix)).limited(CANDIDATES)).await
+            .map_err(|e| ViewError::failed(e, "searching agents"))?.items;
+        let found = users.into_iter().map(|user| (Participant::User(user.id), user.username.to_string()))
+            .chain(agents.into_iter().map(|agent| (Participant::Agent(agent.id), agent.name.name.to_string())));
+        let running = channel.as_ref().and_then(|channel| channel.running().cloned());
+        let mut candidates = Vec::new();
+        for (participant, name) in found {
+            let id = participant.actor_id();
+            let in_session = self.session.participants.iter().any(|p| p.actor_id() == id);
+            let in_channel = channel.as_ref().is_some_and(|channel| channel.lists(id));
+            let refusal = match in_channel {
+                true => None,
+                false => session_loop.member_to_take_in(context, &participant, running.as_ref()).await.err().and_then(|error| refusal_of(&error)),
+            };
+            candidates.push(CandidateSnapshot { id, name, in_session, in_channel, refusal });
+        }
+        Ok(candidates)
     }
 
     /// The channels the viewer may read as a whole, in the order of the

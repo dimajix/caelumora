@@ -18,7 +18,7 @@ use crate::view::ViewsFactory;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::store::{EntityKind, EntityStores, StoreError, StoreResult};
 use caelumora_model::scope::Scope;
-use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
 use caelumora_model::template::SessionTemplateId;
 use caelumora_model::group::GroupId;
 use crate::group::purge_participants;
@@ -26,17 +26,18 @@ use caelumora_model::security::Grant;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
 use caelumora_model::removal::Stored;
 use crate::workspace::WorkspaceManager;
-use crate::controller::SessionController;
+use crate::controller::{ControllerManager, SessionController};
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
-use caelumora_model::agent::Agent;
+use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::event::EntityChange;
 
 mod channels;
 mod manager;
+mod participants;
 mod settings;
 #[cfg(test)]
 pub(crate) mod testing;
@@ -59,6 +60,13 @@ pub enum SessionError {
     InvalidComponents(#[source] crate::component::ComponentError),
     #[error("{participant} is not a participant of session {session}")]
     NotAParticipant { session: SessionId, participant: ActorId },
+    /// Taken in already, and no channel named to take them into (issue 221).
+    #[error("{participant} is a participant of session {session} already")]
+    AlreadyParticipant { session: SessionId, participant: ActorId },
+    /// Only a user or an agent is taken into a session after it was built
+    /// (issue 221); an approver is made with it.
+    #[error("{0} cannot be taken into a session: only a user or an agent can")]
+    CannotTakeIn(ActorId),
     /// Only a user owns a session made from a template (issue 88).
     #[error("{0} cannot own a session: only a user can")]
     OwnerNotAUser(ActorId),
@@ -127,6 +135,8 @@ pub struct SessionLoop {
     security: Arc<dyn SecurityManager>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     stores: EntityStores,
+    /// The controllers of the users and agents it takes in (issue 221).
+    controllers: Arc<ControllerManager>,
     events: Arc<EventBus>,
     /// What goes with a channel deleted or restored (issue 178).
     scoped: Arc<ScopedEntities>,
@@ -215,6 +225,7 @@ impl SessionLoop {
             security: Arc::clone(runtime_manager.security_manager()),
             confidentiality: Arc::clone(runtime_manager.confidentiality()),
             stores: runtime_manager.entity_stores().clone(),
+            controllers: Arc::clone(runtime_manager.controller_manager()),
             events: Arc::clone(runtime_manager.event_bus()),
             scoped: Arc::clone(runtime_manager.scoped_entities()),
             runtime_manager,
@@ -267,14 +278,14 @@ impl SessionLoop {
         let mut join_set = JoinSet::new();
         // The session's own events, and those about its agents' lifecycle;
         // the rest about its users and agents is the `ControllerManager`'s to
-        // take in (issue 121). Its participants are fixed once it is made
-        // (issue 221).
+        // take in (issue 121). An agent taken in later is followed once that
+        // is announced (issue 221).
         let mut topics = vec![SubscriptionTopic::Session(self.id())];
         topics.extend(self.session().participants.iter().filter_map(|p| match p {
             Participant::Agent(id) => Some(SubscriptionTopic::Agent(*id)),
             _ => None,
         }));
-        let mut global_rx = self.events.subscribe(topics).into_receiver();
+        let mut subscription = self.events.subscribe(topics);
         let mut following = true;
         self.follow_agents(None).await;
 
@@ -302,9 +313,14 @@ impl SessionLoop {
                         Err(e) => return Err(e.into()),
                     }
                 }
-                received = global_rx.recv(), if following => {
+                received = subscription.receiver().recv(), if following => {
                     match received {
-                        Ok(global_event) => self.handle_global_event(&global_event).await,
+                        Ok(global_event) => {
+                            if let Some(agent) = self.agent_taken_in(&global_event) {
+                                self.events.follow(&subscription, SubscriptionTopic::Agent(agent));
+                            }
+                            self.handle_global_event(&global_event).await
+                        }
                         Err(RecvError::Lagged(lost)) => {
                             tracing::warn!("Session {} lost {} events and looks at its agents again", self.id, lost);
                             self.follow_agents(None).await;
@@ -314,6 +330,16 @@ impl SessionLoop {
                     }
                 }
             }
+        }
+    }
+
+    /// The agent taken into this session, if `global_event` announces one
+    /// (issue 221).
+    fn agent_taken_in(&self, global_event: &GlobalEvent) -> Option<AgentId> {
+        let (id, change) = global_event.about::<Session>()?;
+        match change.update::<SessionUpdateEvent>() {
+            Some(SessionUpdateEvent::ParticipantAdded(Participant::Agent(agent))) if id == self.id => Some(agent),
+            _ => None,
         }
     }
 

@@ -206,8 +206,9 @@ pub async fn join_channel(
     Ok(Sse::new(crate::sse::stream(&user, options.snapshot, watch.events, format!("channel {}", cid), snapshot, watch.ended.cancelled_owned()).await))
 }
 
-/// Adds a participant of the session to the channel (issue 46), with as
-/// much of its history as the request grants. Only who may change the
+/// Adds a user or agent to the channel (issue 46), with as much of its
+/// history as the request grants - one not in the session yet to the
+/// session, too (issue 221). Only who may change the session and the
 /// channel may do it.
 pub async fn add_participant(
     State(state): State<Arc<AppState>>,
@@ -215,9 +216,9 @@ pub async fn add_participant(
     user: AuthenticatedUser,
     Json(payload): Json<AddParticipantRequest>,
 ) -> Result<Json<ChannelResponse>, ApiError> {
-    let (_, channel) = crate::routes::open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let context = user.security_context();
-    channel.add_participant(&context, payload.participant, payload.history).await?;
+    // Through the session: one not in it yet is taken into it, too (issue 221).
+    let session = crate::routes::ensure_session(&state, &user, SessionId(id)).await?;
+    session.add_participant(&user.security_context(), payload.participant, Some((ChannelId(cid), payload.history))).await?;
     Ok(Json(crate::routes::channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 

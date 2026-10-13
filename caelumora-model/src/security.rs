@@ -299,6 +299,11 @@ pub enum Requirement {
     Owner,
 }
 
+/// Taking oneself into a session or a channel (issue 221) - what an access
+/// list grants `Join`; whoever may change it takes in anyone without it.
+/// Asked in the context of the one who joins.
+pub const JOIN: CustomVerb = CustomVerb { name: "Join", requires: Requirement::Grant(Grant::Join) };
+
 /// Changing the content of what is stored, beside reading it (issue 23) -
 /// what an access list grants `Write`. A verb any kind may use, the core's
 /// or a plugin's (issue 328), for what is written to rather than changed
@@ -392,6 +397,9 @@ pub enum Subject {
     /// participants of a session or a channel -, as the policy learns from
     /// its `Memberships`.
     Group(GroupId),
+    /// Every user (issue 221) - an agent by its owner -, as for a session
+    /// or channel anybody may join.
+    Everyone,
 }
 
 /// A subject as a query compares it, after serde's tags:
@@ -402,26 +410,34 @@ impl From<Subject> for FieldValue {
             Subject::Actor(actor) => FieldValue::tagged("actor", actor),
             Subject::Role(role) => FieldValue::tagged("role", role),
             Subject::Group(group) => FieldValue::tagged("group", group),
+            Subject::Everyone => FieldValue::Text("everyone".to_string()),
         }
     }
 }
 
-/// What an entry of an access list grants (issue 23). What is neither -
-/// changing the attributes, deleting, reclassifying - is the owner's.
+/// What an entry of an access list grants (issue 23). What is none of
+/// them - changing the attributes, deleting, reclassifying - is the
+/// owner's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Grant {
     /// Getting, listing, downloading, using.
     Read,
-    /// Changing the content, besides reading it. No action asks for it
-    /// yet; the workspace's files and an artifact's versions will.
+    /// Changing the content, besides reading it: a workspace's files, an
+    /// artifact's versions.
     Write,
+    /// Taking oneself into a session or channel (issue 221, `JOIN`) - and
+    /// nothing else: who may join reads nothing of it before they did, and
+    /// who reads it may not join by that. A personal entry is an invitation,
+    /// used up as it is taken.
+    Join,
 }
 
 impl Grant {
-    /// Whether this grant covers what `needed` asks for.
+    /// Whether this grant covers what `needed` asks for: each itself, and
+    /// writing reading.
     pub fn covers(self, needed: Grant) -> bool {
-        self == Grant::Write || needed == Grant::Read
+        self == needed || (self == Grant::Write && needed == Grant::Read)
     }
 }
 
@@ -781,6 +797,8 @@ impl SecurityManager for DummySecurityManager {
 ///   agent saw: its context holds more than the conversation - its system
 ///   prompt, internal steps, tool results.
 /// - Cancelling or waking a channel is allowed to whoever may read it.
+/// - Joining a session or channel (`JOIN`) is allowed to whom an entry
+///   grants `Join`, asked in the context of the one who joins.
 /// - What may flow where, and who is cleared for what, is not its to decide:
 ///   the `ConfidentialityPolicy` decides it beside it (issue 304, reversing
 ///   issue 138).
@@ -861,6 +879,7 @@ impl OwnershipSecurityManager {
                     actors.iter().any(|actor| members.contains(actor))
                 }
                 Subject::Role(role) => context.has_role(role),
+                Subject::Everyone => actors.iter().any(|actor| matches!(actor, ActorId::User(_))),
             };
             if matches {
                 return true;
@@ -1270,8 +1289,28 @@ mod tests {
         crate::store::query::meets_exactly_its_equals(&[
             Subject::Actor(ActorId::User(crate::user::UserId(id))), Subject::Actor(ActorId::Agent(crate::agent::AgentId(id))),
             Subject::Actor(ActorId::System), Subject::Role(RoleId(id)), Subject::Role(RoleId::new()),
-            Subject::Group(GroupId(id)), Subject::Group(GroupId::new()),
+            Subject::Group(GroupId(id)), Subject::Group(GroupId::new()), Subject::Everyone,
         ]);
+    }
+
+    #[tokio::test]
+    async fn who_may_join_reads_nothing_and_who_reads_may_not_join() {
+        let (alice, bob, carol) = (user(), user(), user());
+        let join = |attributes| ActionType::custom(Session::KIND, &JOIN, attributes);
+        let invited = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Join);
+        assert!(allows(bob, join(&invited)).await, "whom an entry lets join");
+        assert!(!allows(bob, ActionType::get(Session::KIND, &invited)).await, "reads nothing of it before they did");
+        assert!(!allows(carol, join(&invited)).await, "nobody else");
+        let read = shared(alice, &[bob]);
+        assert!(!allows(bob, join(&read)).await, "reading lets nobody join");
+        let written = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Write);
+        assert!(!allows(bob, join(&written)).await, "nor writing");
+        let open = SecurityAttributes::owned_by(alice).granting(Subject::Everyone, Grant::Join);
+        assert!(allows(carol, join(&open)).await, "an entry for everyone lets every user join");
+        let agent = ActorId::Agent(crate::agent::AgentId::new());
+        assert!(OwnershipSecurityManager::new().check(&context(carol).next(agent, carol), join(&open)).await, "an agent by its owner");
+        assert!(!allows(carol, ActionType::get(Session::KIND, &open)).await, "and reading it is another entry");
+        assert!(allows(carol, ActionType::get(Session::KIND, &SecurityAttributes::owned_by(alice).granting(Subject::Everyone, Grant::Read))).await, "which may be for everyone, too");
     }
 
 }

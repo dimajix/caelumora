@@ -104,10 +104,16 @@ pub struct EventBus {
 /// loses the oldest ones. `recv` notes that in the log and goes on, for
 /// subscribers that have no way to catch up; one that can - a stream that
 /// sends its client a fresh snapshot - takes the receiver with
-/// `into_receiver` and handles `RecvError::Lagged` itself.
+/// `into_receiver` and handles `RecvError::Lagged` itself, or borrows it
+/// with `receiver` to keep the subscription, which `EventBus::follow`
+/// extends by a topic.
 #[derive(Debug)]
 pub struct EventSubscription {
     rx: broadcast::Receiver<GlobalEvent>,
+    /// What the bus sends its events with under each of its topics; `None`
+    /// for one made by `subscribe_as`, whose events the policy filters and
+    /// which follows no topic.
+    tx: Option<broadcast::Sender<GlobalEvent>>,
 }
 
 impl EventSubscription {
@@ -138,6 +144,12 @@ impl EventSubscription {
     /// itself.
     pub fn into_receiver(self) -> broadcast::Receiver<GlobalEvent> {
         self.rx
+    }
+
+    /// The underlying receiver, lent to a subscriber that handles lost
+    /// events itself and keeps the subscription to follow more topics.
+    pub fn receiver(&mut self) -> &mut broadcast::Receiver<GlobalEvent> {
+        &mut self.rx
     }
 }
 
@@ -178,7 +190,7 @@ impl EventBus {
             parties.push(Party { context, tx });
         }
         self.dispatcher.get_or_init(|| self.start_dispatcher());
-        EventSubscription { rx }
+        EventSubscription { rx, tx: None }
     }
 
     fn start_dispatcher(&self) -> mpsc::UnboundedSender<PublishedEvent> {
@@ -223,7 +235,20 @@ impl EventBus {
         for topic in topics {
             self.subscribers.entry(topic).or_default().push(tx.clone());
         }
-        EventSubscription { rx }
+        EventSubscription { rx, tx: Some(tx) }
+    }
+
+    /// Has `subscription`, made by `subscribe`, receive the events of
+    /// `topic` from now on, besides those of its topics - a running session
+    /// those of an agent taken in (issue 221). Nothing for one it follows
+    /// already, nor for one made by `subscribe_as`, which no topic reaches
+    /// past the policy.
+    pub fn follow(&self, subscription: &EventSubscription, topic: SubscriptionTopic) {
+        let Some(tx) = &subscription.tx else { return };
+        let mut senders = self.subscribers.entry(topic).or_default();
+        if !senders.iter().any(|sender| sender.same_channel(tx)) {
+            senders.push(tx.clone());
+        }
     }
 
     pub fn subscribe_all(&self) -> EventSubscription {

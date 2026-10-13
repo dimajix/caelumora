@@ -98,6 +98,7 @@ its handler's doc comment.
 | `GET`, `PUT /profile`; `POST /profile/approval-rules`, `DELETE /profile/approval-rules/{id}` | The user's own profile - introduction, preferred language, approval rules; add or take back one of the rules |
 | `GET`, `POST /sessions`; `GET`, `PATCH`, `DELETE /sessions/{id}`; `POST /sessions/{id}/restore`, `…/purge` | Sessions: list, create from a template (with a workspace chosen instead of the template's), fetch without starting, rename, delete, restore, purge |
 | `PUT /sessions/{id}/privacy`, `…/description`, `…/approval-rules`; `PUT`, `DELETE /sessions/{id}/workspace` | Change whom the session lets read what was said, what it is for, what it restricts of tool calls; attach or take away its workspace |
+| `POST /sessions/{id}/participants`, `…/join`; `GET /sessions/{id}/candidates?prefix=&channel=` | Take a user or agent into the session - and a channel at once; join it by one's own act; search whom to take in by the beginning of their name, with whether they take part and why they cannot be taken in |
 | `GET /sessions/{id}/actors/{aid}/private_notes` | The private notes an agent wrote in the channels of the session the user may read |
 | `GET /agents`, `DELETE /agents/{id}`, `POST /agents/{id}/restore`, `…/purge` | Agents: list, delete (it rests in its channels as a former member), restore (back into them), purge |
 | `GET`, `POST /workspaces`; `GET /workspaces/storages`; `GET`, `PATCH`, `DELETE /workspaces/{id}`; `PUT /workspaces/{id}/access`, `…/description`, `…/classification`; `POST /workspaces/{id}/restore`, `…/purge` | Workspaces: list, make, the storages they can be made in, fetch, rename, delete, share, describe, reclassify, restore, purge |
@@ -114,7 +115,7 @@ its handler's doc comment.
 | `PUT`, `DELETE …/messages/{mid}`; `PUT …/messages/{mid}/classification`; `POST …/messages/{mid}/retry` | Modify or take back one's own message; reclassify a message; ask the agent that said it to answer again |
 | `POST …/approvals`, `POST …/questions/{qid}` | Approve or deny a tool call; answer or decline the questions of an agent's call |
 | `POST …/cancel` | End the current turn of every agent in the channel |
-| `POST`, `DELETE …/participants`, `…/participants/{aid}`; `GET …/participants/{aid}` | Add or remove a participant; one participant, with what its model calls used and who it is |
+| `POST`, `DELETE …/participants`, `…/participants/{aid}`; `GET …/participants/{aid}` | Add or remove a participant - one not in the session yet is taken into it, too; one participant, with what its model calls used and who it is |
 | `POST …/participants/{aid}/retry`, `…/cancel`, `…/tool-calls/{call_id}/cancel` | Ask one agent to answer again; end its turn alone; interrupt one tool call of its turn |
 | `GET …/notes` | The notes the channel's agents published |
 | `GET …/actors/{aid}/messages/{mid}/context` | What an agent's model saw when it wrote a message: `403 context_forbidden`, `404 context_not_recorded` (not produced by that actor), `404 context_unavailable` (recorded, no longer resolvable) |

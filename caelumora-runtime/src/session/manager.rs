@@ -8,7 +8,8 @@ use anyhow::Result;
 use caelumora_model::channel::{Channel, ChannelField};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::{ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager, Subject};
+use caelumora_model::actor::ActorId;
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager, Subject, JOIN};
 use crate::view::{Viewer, Views};
 use caelumora_model::store::{EntityStores, StoreError};
 use tracing::{info, warn};
@@ -155,7 +156,7 @@ impl SessionManager {
         // Its own verb before anything of others is asked or anything is
         // found or made for it (issue 312): who may not create the session
         // learns nothing of the agents, the workspace or anyone's clearance.
-        self.security.require(context, ActionType::create(Session::KIND, &Session::attributes_of(id, owner)), StoreError::PermissionDenied).await?;
+        self.security.require(context, ActionType::create(Session::KIND, &Session::attributes_of(id, owner, &template.access)), StoreError::PermissionDenied).await?;
         // One of the user's chosen is asked about before anything is made.
         let existing = match &workspace {
             Some(WorkspaceChoice::Existing { id: chosen, share }) => {
@@ -295,6 +296,30 @@ impl SessionManager {
                 self.spawn_session(session, channels).await
             }
         }
+    }
+
+    /// Takes `participant` - whom `context` acts for: themselves, or their
+    /// own agent - into session `id` by their own act, and with `into` into
+    /// that channel (issue 221, `SessionLoop::join`). The session is opened
+    /// in the runtime's name if an entry of its access list lets `context`
+    /// join it, or they may read it: who may join reads nothing of it before
+    /// they did.
+    ///
+    /// # Errors
+    /// `SessionError::NotFound` if there is no such session or `context` may
+    /// neither join nor read it; as `SessionLoop::join` otherwise.
+    pub async fn join(&self, context: &SecurityContext, id: SessionId, participant: ActorId, into: Option<ChannelId>) -> Result<Arc<SessionLoop>> {
+        let not_found = || SessionError::NotFound(id);
+        let system = SecurityContext::system();
+        let attributes = self.find(&system, id).await.map_err(|_| not_found())?.session().security_attributes;
+        let reachable = self.security.check(context, ActionType::custom(Session::KIND, &JOIN, &attributes)).await
+            || self.security.may_read_session(context, &attributes).await;
+        if !reachable {
+            return Err(not_found().into());
+        }
+        let session_loop = self.open_session(&system, id).await?;
+        session_loop.join(context, participant, into).await?;
+        Ok(session_loop)
     }
 
     /// Stops session `id` on behalf of `context` without deleting it: its
@@ -817,6 +842,7 @@ mod tests {
         let owner = UserId::new();
         runtime.entity_stores().users.create(&SecurityContext::system(), &User { id: owner, username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }).await.unwrap();
         let template = SessionTemplate {
+            access: Vec::new(),
             summary: None, briefing: None,
             approval_rules: Vec::new(),
             workspace: None,
@@ -828,6 +854,7 @@ mod tests {
                 ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::All },
             ],
             channels: vec![ChannelTemplate {
+                access: Vec::new(),
                 summary: None, briefing: None, language: None,
                 approval_rules: Vec::new(),
                 uses_workspace: true,

@@ -826,7 +826,7 @@ mod tests {
         let session = crate::session::testing::bare_session(caelumora_model::session::SessionId::new());
         let mut channel = caelumora_model::channel::Channel::build(session.id, ActorId::None, caelumora_model::value::name::Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
         channel.approval_rules = places.channel;
-        let session = Arc::new(SessionController::new(Session { approval_rules: places.session, ..session }, Arc::new(()), store.entity_stores().sessions));
+        let session = Arc::new(SessionController::new(Session { approval_rules: places.session, ..session }, Arc::new(()), &store.entity_stores()));
         let channel = Arc::new(ChannelController::new(channel, Arc::new(()), &store.entity_stores()));
         let executor = ToolExecutor::new(security, confidentiality, providers, places.system.into(), Arc::clone(&session), Arc::clone(&channel), Default::default()).unwrap();
         (executor, session, channel)

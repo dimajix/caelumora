@@ -126,6 +126,8 @@ Every list of the entity store takes a query (`caelumora_model::store::query`) a
     an object that *has* its key with a matching value - containment, as `@>` in Postgres -, a
     variant alone (`FieldValue::variant`) an object that has its key or the string of a variant that
     holds nothing - as `?` in Postgres.
+*   **A name prefix** (`Filter::NamePrefix`) compares a name as names are compared - regardless of
+    case, accents and runs of whitespace -, for a search by what one has typed so far.
 *   **Scope conditions** are made by the scope (`Scope::within`, `Scope::seen_from`), so that the
     rule lives with `Scope`.
 *   **A limit and a cursor**, in the order of the entities' ids. A page cut short hands out the

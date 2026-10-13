@@ -75,7 +75,7 @@ impl Name {
 /// web UI uses the npm package of the same name), in lower case, every run
 /// of whitespace one space, none at its ends. A name of which nothing is
 /// left so is compared by its lower case, its whitespace so, too.
-fn fold(name: &str) -> String {
+pub(crate) fn fold(name: &str) -> String {
     let tidied = |text: String| text.split_whitespace().collect::<Vec<_>>().join(" ");
     let key = tidied(any_ascii::any_ascii(name).to_lowercase());
     if key.is_empty() { tidied(name.to_lowercase()) } else { key }

@@ -322,8 +322,8 @@ export interface SessionSnapshot {
 /** Where a workspace (issue 251), a skill (issue 22) or an artifact (issue 271) lies: of one session, the owner's, or global. */
 export type ScopeKind = 'session' | 'user' | 'global';
 
-/** What an entry of an access list grants (issue 23): reading, or changing the files too. */
-export type Grant = 'read' | 'write';
+/** What an entry of an access list grants (issue 23): reading, changing the files too, or - for a session or channel - joining it (issue 221). */
+export type Grant = 'read' | 'write' | 'join';
 
 /**
  * An entry of a workspace's access list (issue 23): whom - a user, a role,
@@ -331,8 +331,9 @@ export type Grant = 'read' | 'write';
  * what, with how whom is called where the server knows it.
  */
 export interface AccessEntry {
-  kind: 'user' | 'role' | 'session' | 'channel' | 'group';
-  id: string;
+  kind: 'user' | 'role' | 'session' | 'channel' | 'group' | 'everyone';
+  /** Absent for everyone (issue 221). */
+  id?: string;
   grant: Grant;
   name?: string;
 }
@@ -817,9 +818,24 @@ export type HistoryAccess =
   | {kind: 'last_days'; count: number};
 
 export interface AddParticipantRequest {
-  /** A participant of the session. */
+  /** A user or agent; one not in the session yet is taken into it, too (issue 221). */
   participant: ActorId;
   history: HistoryAccess;
+}
+
+/** Why someone cannot be taken into a session or channel (issue 221) - coarse, never which clearance is missing. */
+export type CandidateRefusal = 'not_cleared' | 'out_of_scope' | 'cannot_run';
+
+/** Someone found by name to take into a session (issue 221). */
+export interface Candidate {
+  id: ActorId;
+  name: string;
+  kind: ParticipantKind;
+  in_session: boolean;
+  /** In the channel asked about. */
+  in_channel: boolean;
+  /** Why they cannot be taken in; absent if they can. */
+  refusal?: CandidateRefusal;
 }
 
 export type ApprovalStatus = 'Approved' | 'Denied';

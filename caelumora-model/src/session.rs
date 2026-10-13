@@ -4,7 +4,7 @@ use crate::component::ComponentConfig;
 use crate::privacy::PrivacyConfig;
 use crate::actor::ActorId;
 use crate::group::GroupId;
-use crate::security::{Grant, Secured, SecurityAttributes, Subject};
+use crate::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
 use crate::user::UserId;
 use crate::store::query::Field;
 use chrono::{DateTime, Utc};
@@ -30,6 +30,9 @@ pub enum SessionUpdateEvent {
     /// A workspace was attached, or the one attached taken away (issue
     /// 253), as it now stands.
     WorkspaceChanged(Option<WorkspaceId>),
+    /// Someone was taken in after it was built (issue 221): by whoever may
+    /// change it, or by themselves, where an entry let them join.
+    ParticipantAdded(Participant),
 }
 
 define_id!(SessionId);
@@ -108,9 +111,11 @@ impl Deletable for Session {
 impl Session {
     /// The attributes of a new session `id` of `owner`: read by its
     /// members, whoever they are at the time (issue 23) - the group of its
-    /// participants, stored with it (`Group::of_session`).
-    pub fn attributes_of(id: SessionId, owner: UserId) -> SecurityAttributes {
-        SecurityAttributes::owned_by(ActorId::User(owner)).granting(Subject::Group(GroupId::of_session(id)), Grant::Read)
+    /// participants, stored with it (`Group::of_session`) -, and granting
+    /// what `access` grants besides, such as whom it lets join (issue 221).
+    pub fn attributes_of(id: SessionId, owner: UserId, access: &[AclEntry]) -> SecurityAttributes {
+        let attributes = SecurityAttributes::owned_by(ActorId::User(owner)).granting(Subject::Group(GroupId::of_session(id)), Grant::Read);
+        SecurityAttributes { acl: attributes.acl.into_iter().chain(access.iter().copied()).collect(), ..attributes }
     }
 
     /// Says what the session is for (issue 245): `summary` and `briefing`
@@ -122,6 +127,20 @@ impl Session {
     pub fn describe(&mut self, summary: Option<&str>, briefing: Option<&str>) -> Result<(), ValueError> {
         (self.summary, self.briefing) = (Summary::optional(summary)?, Briefing::optional(briefing)?);
         Ok(())
+    }
+
+    /// Takes `participant` in (issue 221), unless it takes part already;
+    /// the group of its participants follows it where it is stored
+    /// (`Group::of_session`). An entry that let a user join them alone - an
+    /// invitation - is used up, so that one removed later cannot take
+    /// themselves back in; one for a role, a group or everyone stays.
+    /// Whether they may is asked before.
+    pub fn take_in(&mut self, participant: Participant) {
+        let actor = participant.actor_id();
+        self.security_attributes.acl.retain(|entry| !(entry.grant == Grant::Join && entry.subject == Subject::Actor(actor)));
+        if !self.participants.iter().any(|p| p.actor_id() == actor) {
+            self.participants.push(participant);
+        }
     }
 }
 
@@ -150,3 +169,33 @@ impl Secured for Session {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::AgentId;
+
+    #[test]
+    fn taking_a_user_in_uses_up_their_invitation_and_no_rule() {
+        let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
+        let id = SessionId::new();
+        let access = [
+            AclEntry { subject: Subject::Actor(ActorId::User(bob)), grant: Grant::Join },
+            AclEntry { subject: Subject::Actor(ActorId::User(carol)), grant: Grant::Join },
+            AclEntry { subject: Subject::Everyone, grant: Grant::Join },
+        ];
+        let now = Utc::now();
+        let mut session = Session {
+            id, name: Name::new("s").unwrap(), summary: None, briefing: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
+            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
+            security_attributes: Session::attributes_of(id, alice, &access), deleted: None,
+        };
+        session.take_in(Participant::User(bob));
+        session.take_in(Participant::User(bob));
+        session.take_in(Participant::Agent(AgentId::new()));
+        assert_eq!(session.participants.len(), 3, "each once");
+        let joins: Vec<Subject> = session.security_attributes.acl.iter().filter(|e| e.grant == Grant::Join).map(|e| e.subject).collect();
+        assert_eq!(joins, [Subject::Actor(ActorId::User(carol)), Subject::Everyone], "bob's invitation is used up, carol's and the rule stay");
+        assert!(session.security_attributes.acl.contains(&AclEntry { subject: Subject::Group(GroupId::of_session(id)), grant: Grant::Read }), "read by its members");
+    }
+}

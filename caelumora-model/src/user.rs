@@ -11,9 +11,24 @@ use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
 use crate::removal::{Deletable, Removal, Stored};
 use crate::store::EntityKind;
-use crate::store::query::NoField;
+use crate::store::query::{Field, NoField};
 
 define_id!(UserId);
+
+/// What a query of users may name (issue 221).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserField {
+    /// Their name.
+    Username,
+}
+
+impl Field for UserField {
+    fn path(self) -> &'static [&'static str] {
+        match self {
+            UserField::Username => &["username"],
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -42,7 +57,7 @@ static SYSTEM_OWNED: SecurityAttributes = SecurityAttributes { owner_id: ActorId
 impl Stored for User {
     const KIND: EntityKind = EntityKind::new("user");
     type Id = UserId;
-    type Field = NoField;
+    type Field = UserField;
 
     fn id(&self) -> UserId {
         self.id

@@ -229,7 +229,12 @@ allow-only: the union of the entries, no denial, no precedence. The owner needs 
 lose theirs.
 
 *   **Grants.** `Read` - getting, listing, using - and `Write`, which covers reading and the content
-    besides. Changing the attributes, deleting and reclassifying stay the owner's.
+    besides. `Join` lets one take oneself into a session or channel - whoever may change it takes
+    in anyone they may name - and nothing else: who may join reads nothing of it before they did,
+    and who reads it may not join by that; a personal `Join` entry is an invitation, used up as it
+    is taken (see
+    [CHANNELS.md](CHANNELS.md#taking-someone-into-the-session)). Changing the attributes, deleting
+    and reclassifying stay the owner's.
 *   **Subjects**, matched against the context's principal, and for what is read also against its
     caller:
     *   `Actor` - a user. Never an agent, the system or nobody: an agent acts with its owner's
@@ -240,6 +245,8 @@ lose theirs.
         the one way an agent may do less than its owner.
     *   `Group` - a team, or the participants of a session or a channel. A member counts wherever
         they act, not only in that place.
+    *   `Everyone` - every user, an agent by its owner: a session anybody may join, a workspace
+        anybody may read.
 *   **What the policy learns.** Who belongs to a group is a fact neither the attributes nor the
     context carry. The policy asks a `Memberships` source - the store of groups, read in the
     system's name (`StoreMemberships`) -, only where an entry names a group, and only about that
