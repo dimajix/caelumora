@@ -30,12 +30,14 @@ pub enum SubscriptionTopic {
 const SUBSCRIPTION_CAPACITY: usize = 128;
 
 /// An event on its way through the bus, with the attributes of the entity
-/// it is about and, for a classified one, its classifications. Only the bus
-/// sees them: subscribers receive the `GlobalEvent` alone.
+/// it is about - and of the part of it, if it is about one - and, for a
+/// classified one, its classifications. Only the bus sees them: subscribers
+/// receive the `GlobalEvent` alone.
 #[derive(Debug, Clone)]
 struct PublishedEvent {
     event: GlobalEvent,
     attributes: SecurityAttributes,
+    part: Option<SecurityAttributes>,
     classifications: Vec<Classification>,
 }
 
@@ -56,6 +58,16 @@ impl PublishedEvent {
             _ => Channel::KIND,
         };
         ActionType::get(kind, self.security_attributes())
+    }
+
+    /// Whether `context` may read the part the event is about, besides the
+    /// entity (issue 316): asked as reading the entity is, with the part's
+    /// attributes. Nothing to ask of an event about the whole.
+    async fn part_readable(&self, security_manager: &dyn SecurityManager, context: &SecurityContext) -> bool {
+        match (&self.part, &self.event) {
+            (Some(part), GlobalEvent::Entity { kind, .. }) => security_manager.check(context, ActionType::get(*kind, part)).await,
+            _ => true,
+        }
     }
 }
 
@@ -186,7 +198,8 @@ impl EventBus {
                 for (context, tx) in current {
                     // Reached as the store reaches it: read, and cleared for
                     // what it is, or was (issues 312, 322).
-                    if !may_reach(security_manager.as_ref(), confidentiality.as_ref(), &context, published.read_action(), &published.classifications).await {
+                    if !may_reach(security_manager.as_ref(), confidentiality.as_ref(), &context, published.read_action(), &published.classifications).await
+                        || !published.part_readable(security_manager.as_ref(), &context).await {
                         continue;
                     }
                     // A send fails only when the subscription is gone.
@@ -246,8 +259,23 @@ impl EventBus {
     /// as `publish` does, and to a `subscribe_as` subscription only if it
     /// is cleared for one of them.
     pub fn publish_classified(&self, event: GlobalEvent, attributes: SecurityAttributes, classifications: &[Classification]) {
+        self.dispatch(event, attributes, None, classifications);
+    }
+
+    /// Publishes `event` about a part of a classified entity with these
+    /// `attributes` - a version of an artifact (issue 316) -: as
+    /// `publish_classified` does, and to a `subscribe_as` subscription only
+    /// if it may read the part, with `part`, as well. Reading a part needs
+    /// both, as a file in HDFS needs its directory.
+    pub fn publish_classified_part(&self, event: GlobalEvent, attributes: SecurityAttributes, part: SecurityAttributes, classifications: &[Classification]) {
+        self.dispatch(event, attributes, Some(part), classifications);
+    }
+
+    /// Hands `event` to the dispatcher with whom it is about, and to the
+    /// subscribers of its topics.
+    fn dispatch(&self, event: GlobalEvent, attributes: SecurityAttributes, part: Option<SecurityAttributes>, classifications: &[Classification]) {
         if let Some(dispatcher) = self.dispatcher.get() {
-            let _ = dispatcher.send(PublishedEvent { event: event.clone(), attributes, classifications: classifications.to_vec() });
+            let _ = dispatcher.send(PublishedEvent { event: event.clone(), attributes, part, classifications: classifications.to_vec() });
         }
 
         let mut topics_to_notify = vec![SubscriptionTopic::All];
@@ -305,6 +333,7 @@ mod tests {
     use caelumora_model::security::{Grant, Subject};
     use caelumora_model::event::EntityChange;
     use caelumora_model::workspace::Workspace;
+    use caelumora_model::artifact::{Artifact, ArtifactId};
 
     fn bus() -> EventBus {
         EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()))
@@ -458,6 +487,28 @@ mod tests {
 
         assert_eq!(drain(&mut alices).await.len(), 1, "hers");
         assert!(drain(&mut bobs).await.is_empty(), "not his, although her user record is everybody's");
+    }
+
+    /// An event about a part of an entity - a version of an artifact (issue
+    /// 316) - reaches whoever may read both the entity and the part.
+    #[tokio::test]
+    async fn a_part_s_events_reach_whoever_reads_the_entity_and_the_part() {
+        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
+        let (alice, bob, carol, dave) = (UserId::new(), UserId::new(), UserId::new(), UserId::new());
+        let mut alices = bus.subscribe_as(as_user(alice));
+        let mut bobs = bus.subscribe_as(as_user(bob));
+        let mut carols = bus.subscribe_as(as_user(carol));
+        let mut daves = bus.subscribe_as(as_user(dave));
+
+        let reads = |user| Subject::Actor(ActorId::User(user));
+        let whole = SecurityAttributes::owned_by(ActorId::User(alice)).granting(reads(bob), Grant::Read).granting(reads(carol), Grant::Read);
+        let part = SecurityAttributes::owned_by(ActorId::User(alice)).granting(reads(bob), Grant::Read).granting(reads(dave), Grant::Read);
+        bus.publish_classified_part(GlobalEvent::created::<Artifact>(&ArtifactId::new()), whole, part, &[]);
+
+        assert_eq!(drain(&mut alices).await.len(), 1, "its owner");
+        assert_eq!(drain(&mut bobs).await.len(), 1, "who reads both");
+        assert!(drain(&mut carols).await.is_empty(), "not who reads the entity alone");
+        assert!(drain(&mut daves).await.is_empty(), "nor who reads the part alone");
     }
 
     #[tokio::test]

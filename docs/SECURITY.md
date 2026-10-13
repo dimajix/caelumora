@@ -98,13 +98,18 @@ list. This is the one place ownership and access are recorded; see [Access lists
     granted as reading: what the owner may read, the agent may follow. A user is shown one only if
     cleared for its classification; see [SKILLS.md](SKILLS.md#who-may-do-what).
 *   An artifact is owned by the user the agent that published it acts for, always a user; only its
-    owner keeps, describes, shares and deletes it. Its own list grants the whole of it; each version
-    has a list of its own besides, which publishing gives the group of the participants of the
-    channel it is published in. A version is read by whom either grants it, wherever they act and
-    cleared for its classification - so drafts published in a channel of few reach nobody who reads
-    only the version published to many. A version is added by whom the artifact's list grants
-    `Write`; a version's list grants reading alone. Whoever reads a version sees the artifact's name
-    and description, and of the versions only those they may read.
+    owner keeps, describes, shares and deletes it. Its own list grants reading it - its name, its
+    description, which versions it has - and adding to it; each version has a list of its own,
+    which grants reading that version. Reading a version needs both, as a file in HDFS or ADLS
+    needs its directory (issue [316](../issues/316-store-checks-artifact-without-versions.md)),
+    wherever one acts and cleared for its classification. Publishing a version gives the group of
+    the participants of the channel it is published in reading of the version and of the artifact,
+    so drafts published in a channel of few reach nobody who reads only the version published to
+    many. Sharing the artifact hands whom its list newly names to every version there is, unless
+    asked not to; a later version reaches the channel it is published in alone (a default for new
+    versions is issue [339](../issues/339-default-access-of-new-versions.md)). Whom the artifact's
+    list no longer names reads none of its versions. A version is added by whom the artifact's list
+    grants `Write`; a version's list grants reading alone.
 *   A team is owned by the user who made it; only its owner renames it, sets its members and deletes
     it, and its members read it by an entry of its own list that names it. The group of the
     participants of a session or channel is owned by the session's owner and changed only by the
@@ -187,14 +192,14 @@ Whether an agent may reach the channel it copies from at all is the policy's, as
 The stores ask the same way for every entity kind (`store::access`):
 
 *   **Reads** are checked with the attributes as stored. An entity the caller may not read is
-    reported as not found, so ids cannot be probed.
+    reported as not found, so ids cannot be probed. What lies within an entity under a list of its
+    own - an artifact's versions - is the views' to cut from what the store hands out
+    (issue [316](../issues/316-store-checks-artifact-without-versions.md)).
 *   **The clearance** is asked next of what is classified - a channel, a workspace, a skill, an
     artifact (`Stored::classification`, issue 322): who is not cleared for it does not find it
     either, for every operation below, the deleted included. What the views read in the runtime's
     name they reach themselves: a channel from the reader's place (`view::channel_reading`) - an
-    agent may read one it is not cleared for as a whole entry by entry -, an artifact by the access
-    lists of its versions, which the store does not check yet
-    (issue [316](../issues/316-store-checks-artifact-without-versions.md)).
+    agent may read one it is not cleared for as a whole entry by entry.
 *   **Lists** are filtered by what the caller reaches: what they may read and are cleared for. What
     a list returns is the store's to decide; a view does not filter it again.
 *   **Changes and deletions** are checked against the attributes *as stored*, never against those of

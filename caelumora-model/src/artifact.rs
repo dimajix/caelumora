@@ -12,7 +12,7 @@ use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::removal::{Deletable, Removal, Stored};
 use crate::scope::{Scope, Scoped, ScopedField};
-use crate::security::{AclEntry, Grant, Secured, SecurityAttributes};
+use crate::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
 use crate::session::{ChannelId, SessionId};
 use crate::store::query::Field;
 use crate::user::UserId;
@@ -101,8 +101,10 @@ pub struct Artifact {
     /// Its versions, oldest first, numbered from 1 without gaps; never
     /// empty, and none removed but with the artifact.
     pub versions: Vec<ArtifactVersion>,
-    /// Owned by the user the publishing agent acts for, with an empty access
-    /// list: it is shared through the channels it is published in.
+    /// Owned by the user the publishing agent acts for. Its list grants
+    /// reading and adding to the artifact (issue 316): the participants of
+    /// every channel a version was published in, and whom its owner shares
+    /// it with. Reading a version needs the version's list besides.
     pub security_attributes: SecurityAttributes,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -134,10 +136,11 @@ pub struct ArtifactVersion {
     /// The agent that published it.
     pub published_by: ActorId,
     pub published_at: DateTime<Utc>,
-    /// Who reads this version besides whom the artifact's own list grants
-    /// it (issue 23): the members of the channel it was published in, set
-    /// as it is published. Grants reading alone; the artifact's owner and
-    /// its list are the artifact's.
+    /// Who reads this version, of those who read the artifact (issues 23,
+    /// 316): reading it needs both lists, as a file in HDFS needs its
+    /// directory's. As it is published, the members of the channel it was
+    /// published in. Grants reading alone; the artifact's owner and its list
+    /// are the artifact's.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub acl: Vec<AclEntry>,
 }
@@ -184,22 +187,18 @@ impl Artifact {
         self.versions.last()
     }
 
-    /// Who reads version `version` (issue 23): its owner and whom the
-    /// artifact's list grants it, and whom the version's own list does - as
-    /// attributes a policy decides by.
+    /// Who reads version `version` of those who read the artifact (issue
+    /// 316): its owner, and whom the version's own list grants it - as
+    /// attributes a policy decides by. Reading the version needs the
+    /// artifact's attributes to grant it as well.
     pub fn version_attributes(&self, version: &ArtifactVersion) -> SecurityAttributes {
-        let mut attributes = self.security_attributes.clone();
-        attributes.acl.extend(version.acl.iter().copied());
-        attributes
+        SecurityAttributes { owner_id: self.security_attributes.owner_id, acl: version.acl.clone() }
     }
 
-    /// Who reads anything of it - the artifact's list and those of all its
-    /// versions -, by whom what is said of the artifact as a whole is heard:
-    /// its name, its deletion.
-    pub fn reader_attributes(&self) -> SecurityAttributes {
-        let mut attributes = self.security_attributes.clone();
-        attributes.acl.extend(self.versions.iter().flat_map(|version| version.acl.iter().copied()));
-        attributes
+    /// Lets `subject` read the artifact, unless its list grants it already
+    /// (issue 316): whoever is to read a version has to read the artifact.
+    pub fn grant_reading(&mut self, subject: Subject) {
+        grant_reading(&mut self.security_attributes.acl, subject);
     }
 
     /// Adds `version` as its next one, numbered after the latest, and
@@ -232,11 +231,12 @@ impl Stored for Artifact {
 
     /// An artifact is a user's own, as a workspace is, and has its versions
     /// numbered from 1 without gaps; a version's list names whom an
-    /// artifact's may (issue 23) and grants reading alone.
+    /// artifact's may (issue 23) and grants reading alone - reading the
+    /// version, of those who read the artifact (issue 316).
     fn validate(&self) -> Result<(), String> {
         crate::scope::validate_users_own("artifact", &self.security_attributes, &self.name.scope)?;
         for version in &self.versions {
-            SecurityAttributes { owner_id: self.security_attributes.owner_id, acl: version.acl.clone() }.validate()?;
+            self.version_attributes(version).validate()?;
             if version.acl.iter().any(|entry| entry.grant != Grant::Read) {
                 return Err("a version's list grants reading alone; changing is the artifact's to grant".to_string());
             }
@@ -258,6 +258,20 @@ impl Stored for Artifact {
 impl Deletable for Artifact {
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
+    }
+}
+
+impl ArtifactVersion {
+    /// Lets `subject` read this version, unless its list grants it already.
+    pub fn grant_reading(&mut self, subject: Subject) {
+        grant_reading(&mut self.acl, subject);
+    }
+}
+
+/// Adds reading by `subject` to `acl`, unless an entry grants it already.
+fn grant_reading(acl: &mut Vec<AclEntry>, subject: Subject) {
+    if !acl.iter().any(|entry| entry.subject == subject) {
+        acl.push(AclEntry { subject, grant: Grant::Read });
     }
 }
 
@@ -329,9 +343,8 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_version_is_read_by_whom_the_artifact_or_the_version_grants_it() {
+    fn a_version_is_read_by_whom_its_own_list_grants_it_of_the_artifacts_readers() {
         use crate::group::GroupId;
-        use crate::security::Subject;
         let (alice, bob) = (UserId::new(), UserId::new());
         let session_id = SessionId::new();
         let (drafts, team) = (GroupId::of_channel(ChannelId::new()), GroupId::of_channel(ChannelId::new()));
@@ -341,9 +354,13 @@ pub(crate) mod tests {
         shared.add_version(ArtifactVersion { acl: vec![read_by(team)], ..version(b"final", session_id) });
         shared.security_attributes = shared.security_attributes.clone().granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
         let bobs = AclEntry { subject: Subject::Actor(ActorId::User(bob)), grant: Grant::Read };
-        assert_eq!(shared.version_attributes(&shared.versions[0]).acl, [bobs, read_by(drafts)], "the draft: the artifact's list and its own");
-        assert_eq!(shared.version_attributes(&shared.versions[1]).acl, [bobs, read_by(team)], "the final one: not the drafts' readers");
-        assert_eq!(shared.reader_attributes().acl, [bobs, read_by(drafts), read_by(team)], "all of them hear of the artifact");
+        assert_eq!(shared.version_attributes(&shared.versions[0]).acl, [read_by(drafts)], "the draft: its own list");
+        assert_eq!(shared.version_attributes(&shared.versions[1]).acl, [read_by(team)], "the final one: not the drafts' readers, nor the artifact's");
+        assert_eq!(shared.version_attributes(&shared.versions[1]).owner_id, ActorId::User(alice), "its owner, the artifact's");
+        assert_eq!(shared.security_attributes.acl, [bobs], "the artifact's list is its own");
+        shared.grant_reading(Subject::Actor(ActorId::User(bob)));
+        shared.grant_reading(Subject::Group(team));
+        assert_eq!(shared.security_attributes.acl, [bobs, read_by(team)], "reading granted once, where it was not");
         assert!(shared.validate().is_ok());
         let mut written = shared.clone();
         written.versions[1].acl = vec![AclEntry { grant: Grant::Write, ..read_by(team) }];

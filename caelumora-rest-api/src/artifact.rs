@@ -99,3 +99,16 @@ impl From<snapshot::ArtifactSnapshot> for ArtifactResponse {
 pub struct KeepArtifactRequest {
     pub scope: ScopeKind,
 }
+
+/// How an artifact is shared (issue 316): by default, whom its list newly
+/// names reads every version there is as well; `?versions=false` leaves the
+/// lists of its versions as they are.
+#[derive(Debug, Deserialize)]
+pub struct ShareOptions {
+    #[serde(default = "every_version")]
+    pub versions: bool,
+}
+
+fn every_version() -> bool {
+    true
+}

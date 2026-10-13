@@ -378,3 +378,7 @@ Issues to open with it: a group of our own as a subject; a cache for `Membership
   turn (290), sharing artifacts in the web UI (291), the capabilities of a role (decision 4, with
   125 or 221). Stored data to delete over all steps: every entity store; a configuration's roles
   need an id each.
+- **2026-10-13** — The decision of step 3 that a version is read by whom the artifact's list *or*
+  the version's grants it was revised in issue
+  [316](316-store-checks-artifact-without-versions.md): reading a version needs both, as in HDFS
+  and ADLS, and publishing lets the channel's participants read the artifact as well.

@@ -1,8 +1,8 @@
-//! An artifact as a viewer reaches it (issues 271, 23): with the versions
-//! they may read - by the artifact's list or by a version's own
-//! (`Artifact::version_attributes`) -, wherever they act and cleared for its
-//! classification. Nothing of its content is reachable past it but through
-//! `content`, which hands out only a version it holds.
+//! An artifact as a viewer reaches it (issues 271, 23, 316): read by its
+//! list, wherever they act and cleared for its classification, with the
+//! versions whose own list they are read by as well
+//! (`Artifact::version_attributes`). Nothing of its content is reachable
+//! past it but through `content`, which hands out only a version it holds.
 
 use super::Views;
 use crate::artifact::{ArtifactError, ArtifactResult};

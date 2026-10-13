@@ -425,16 +425,14 @@ impl Views {
         }
     }
 
-    /// The viewer's artifacts (issues 271, 23, 293, 308): those they own and
-    /// those shared with them by name - an entry naming them, one of their
-    /// roles or a team they belong to, in the artifact's list or a
-    /// version's -, each with the versions they may read, if they are
-    /// cleared for it. What they read only as a member of a channel is found
-    /// through that channel (`ChannelView::artifacts`), so the participants
-    /// of a session or channel are not named. The store is asked for these
-    /// alone, in the runtime's name - its own check knows the artifact's
-    /// list, not those of its versions -, and each is asked of the policy
-    /// here.
+    /// The viewer's artifacts (issues 271, 23, 293, 308, 316): those they own
+    /// and those shared with them by name - an entry of the artifact's list
+    /// naming them, one of their roles or a team they belong to -, each with
+    /// the versions they may read, if they are cleared for it. What they read
+    /// only as a member of a channel is found through that channel
+    /// (`ChannelView::artifacts`), so the participants of a session or
+    /// channel are not named. The store is asked for these alone, in the
+    /// viewer's name.
     ///
     /// # Errors
     /// `Failed` if the store cannot list them.
@@ -448,54 +446,43 @@ impl Views {
         let teams = groups.iter().filter(|group| !group.is_participants()).map(|group| Subject::Group(group.id));
         let subjects: Vec<Subject> = std::iter::once(Subject::Actor(principal)).chain(roles.map(Subject::Role)).chain(teams).collect();
         let named = Filter::is_in(ArtifactField::Subject, subjects);
-        let theirs = Filter::Or(vec![
-            Filter::eq(ArtifactField::Owner, principal),
-            Filter::any(ArtifactField::Acl, named.clone()),
-            Filter::any(ArtifactField::Versions, Filter::any(ArtifactField::VersionAcl, named)),
-        ]);
-        let artifacts = self.stores.artifacts.list(&SecurityContext::system(), &Query::filtered(theirs)).await.map_err(failed)?.items;
-        let mut readable = Vec::new();
+        let theirs = Filter::Or(vec![Filter::eq(ArtifactField::Owner, principal), Filter::any(ArtifactField::Acl, named)]);
+        let artifacts = self.stores.artifacts.list(context, &Query::filtered(theirs)).await.map_err(failed)?.items;
+        let mut readable = Vec::with_capacity(artifacts.len());
         for artifact in artifacts {
-            if let Some(view) = self.readable_artifact(artifact).await {
-                readable.push(view);
-            }
+            readable.push(self.readable_artifact(artifact).await);
         }
         Ok(readable)
     }
 
     /// Artifact `id`, with the versions the viewer may read, if they may
-    /// read any and are cleared for it (issues 271, 23).
+    /// read it and are cleared for it (issues 271, 23, 316).
     ///
     /// # Errors
-    /// `ArtifactNotFound` if they may read nothing of it - one they are not
+    /// `ArtifactNotFound` if they may not read it - one they are not
     /// cleared for is the same -; `Failed` if the store cannot read it.
     pub async fn artifact(&self, id: ArtifactId) -> ViewResult<ArtifactView> {
-        let found = self.stores.artifacts.get(&SecurityContext::system(), id).await.optional()
+        let found = self.stores.artifacts.get(self.viewer.context(), id).await.optional()
             .map_err(|e| ViewError::failed(e, "reading an artifact"))?;
         match found {
-            Some(artifact) => self.readable_artifact(artifact).await.ok_or(ViewError::ArtifactNotFound(id)),
+            Some(artifact) => Ok(self.readable_artifact(artifact).await),
             None => Err(ViewError::ArtifactNotFound(id)),
         }
     }
 
-    /// `artifact` with the versions the viewer may read - all of them where
-    /// the artifact's own list grants it, otherwise those whose own list
-    /// does (issue 23) -, if any and if they are cleared for it.
-    pub(super) async fn readable_artifact(&self, mut artifact: caelumora_model::artifact::Artifact) -> Option<ArtifactView> {
+    /// `artifact`, as the store handed it to the viewer - who reads it -,
+    /// with the versions whose own list lets them read them as well (issue
+    /// 316).
+    pub(super) async fn readable_artifact(&self, mut artifact: Artifact) -> ArtifactView {
         let context = self.viewer.context();
-        if !self.security.may_read_artifact(context, &artifact.security_attributes).await {
-            let mut readable = Vec::with_capacity(artifact.versions.len());
-            for version in std::mem::take(&mut artifact.versions) {
-                if self.security.may_read_artifact(context, &artifact.version_attributes(&version)).await {
-                    readable.push(version);
-                }
+        let mut readable = Vec::with_capacity(artifact.versions.len());
+        for version in std::mem::take(&mut artifact.versions) {
+            if self.security.may_read_artifact(context, &artifact.version_attributes(&version)).await {
+                readable.push(version);
             }
-            artifact.versions = readable;
         }
-        if artifact.versions.is_empty() || !self.cleared_for(&artifact.classification) {
-            return None;
-        }
-        Some(ArtifactView::of(self.clone(), artifact))
+        artifact.versions = readable;
+        ArtifactView::of(self.clone(), artifact)
     }
 
     /// The entries `acl` with whom each names called by name (issue 23),
@@ -717,15 +704,6 @@ impl Views {
         let session = self.stores.sessions.get(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::failed(e, format!("looking up session {id}")))?;
         Ok(session.as_ref().map(SessionPrivacy::of))
-    }
-
-    /// Whether the viewer is cleared for `classification` (issue 133), by
-    /// the roles of their context - an agent's narrowed by its personality
-    /// (issue 304): what one is not cleared for is the same as what does not
-    /// exist - an artifact, whose reach the store does not decide yet
-    /// (issues 316, 322).
-    pub(super) fn cleared_for(&self, classification: &Classification) -> bool {
-        self.confidentiality.cleared_for(self.viewer.context(), classification)
     }
 }
 
