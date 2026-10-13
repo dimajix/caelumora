@@ -478,9 +478,10 @@ pub trait ConfidentialityQuestions {
     /// channel into itself always, without asking.
     fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool;
 
-    /// Whether `context` is cleared for `classification` by its roles - and,
-    /// for a caller limited to roles, by those as well (issue 179): what
-    /// decides which channels, and what else classified, a viewer is shown.
+    /// Whether `context` is cleared for `classification` by the roles of its
+    /// owner, who answers for the caller - and, for a caller limited to
+    /// roles, by those as well (issues 179, 341): what decides which
+    /// channels, and what else classified, a viewer is shown.
     /// The system is cleared for everything, as it may do everything
     /// (issue 312).
     fn cleared_for(&self, context: &SecurityContext, classification: &Classification) -> bool;
@@ -521,7 +522,7 @@ impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
     }
 
     fn cleared_for(&self, context: &SecurityContext, classification: &Classification) -> bool {
-        let participant = context.principal_id;
+        let participant = context.owner_id;
         if participant == ActorId::System {
             return true;
         }
@@ -658,6 +659,8 @@ impl Visibility {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::AgentId;
+    use crate::user::UserId;
     use crate::tool::{ToolCall, ToolCallResult};
     use Confidentiality::*;
 
@@ -874,6 +877,22 @@ mod tests {
         assert!(rules.cleared_for(&hers, &secret));
         assert!(!rules.cleared_for(&alice.with_roles(vec![hr], Some(vec![])), &secret), "limited below it");
         assert!(rules.require_cleared_for(&hers, &secret, || ()).is_ok());
+    }
+
+    /// Issue 341: a caller is cleared by its owner, who answers for it -
+    /// whoever it acts for lends no clearance, not even the system.
+    #[test]
+    fn a_caller_is_cleared_as_its_owner_whoever_it_acts_for() {
+        let hr = RoleId::new();
+        let roles = Roles::new([(hr, "hr".to_string(), vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }])]).unwrap();
+        let rules = ConfidentialityRules::new(organisation()).with_roles(roles);
+        let secret = classified(Confidential, &["hr"]);
+        let owner = ActorId::User(UserId::new());
+        let agent = ActorId::Agent(AgentId::new());
+        let for_the_system = SecurityContext::system().next(agent, owner, ActorId::System);
+        assert!(!rules.cleared_for(&for_the_system, &secret), "acting for the system, still bounded by its owner");
+        let owned_by_the_system = SecurityContext::system().next(agent, ActorId::System, owner);
+        assert!(rules.cleared_for(&owned_by_the_system, &secret), "the system's agent is cleared as the system");
     }
 
     /// A channel of the session `session_id`, a private one of nobody.

@@ -634,7 +634,7 @@ mod tests {
             let mut context = EventContext { sender_id: self.0, ..EventContext::default() };
             context.agent_hops = 1;
             let said = Message { sender_id: self.0, role: caelumora_model::message::MessageRole::Assistant, content: Some("and you?".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-            let _ = tx.send(Envelope::new(SecurityContext::default().next(self.0, ActorId::None), context, ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: vec![said] })).await;
+            let _ = tx.send(Envelope::new(SecurityContext::default().next(self.0, ActorId::None, ActorId::None), context, ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: vec![said] })).await;
             while rx.recv().await.is_some() {}
             Ok(())
         }
@@ -700,14 +700,14 @@ mod tests {
         let her = ActorId::User(alice.id);
         let said = |sender: ActorId, caller: ActorId, author: ActorId, text: &str| {
             let message = Message { sender_id: author, role: caelumora_model::message::MessageRole::Assistant, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-            Envelope::new(SecurityContext::default().next(caller, ActorId::None), EventContext { sender_id: sender, ..EventContext::default() }, ActorEvent::CompleteMessageGenerated(message))
+            Envelope::new(SecurityContext::default().next(caller, ActorId::None, ActorId::None), EventContext { sender_id: sender, ..EventContext::default() }, ActorEvent::CompleteMessageGenerated(message))
         };
         let envelopes = vec![
             said(her, talker, talker, "as alice's envelope"),
             said(talker, her, talker, "in alice's security context"),
             said(talker, talker, her, "as alice's message"),
             // On alice's behalf - she asked - but said by itself: as an agent answers.
-            Envelope { security: SecurityContext::new(her, channel.session_id, channel.id).next(talker, her), ..said(talker, talker, talker, "its own") },
+            Envelope { security: SecurityContext::new(her, channel.session_id, channel.id).next(talker, her, her), ..said(talker, talker, talker, "its own") },
         ];
         let says = Arc::new(Says(talker, std::sync::Mutex::new(envelopes)));
         channel.adopt(Arc::<Says>::clone(&says), Member::Approver(caelumora_model::approval::Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any })).await;

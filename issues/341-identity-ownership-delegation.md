@@ -1,6 +1,6 @@
 # 341 — A security context cannot tell an agent's owner from the one it acts for
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -56,6 +56,21 @@ and nothing says which.
 The initiator stays what 255 made it, the record of who asked - it is not the delegation: 255
 deliberately rejected acting in the asker's name.
 
+### The initiator
+
+`initiator_id` is set where a context begins - `SecurityContext::new`, by a user acting themselves,
+and `Agent::security_context`, by an agent acting without being asked - and `next` hands it on
+unchanged: an agent answering a message (`Answering::to`) keeps the initiator of that message. Two
+questions about it are decided (maintainer, 2026-10-13):
+
+- **It is the root of the chain.** When a customer asks agent A and A asks agent B, the initiator of
+  what B does is still the customer, not A. Who asked B directly is the sender of the message B
+  answers, in the `EventContext`; the security context does not carry it.
+- **An agent acting on its own initiates itself.** `Agent::security_context` builds its context as
+  `SecurityContext::new(owner, …).next(agent, owner)`, so the owner is the initiator when nobody
+  asked - one more reader borrowing ownership, here for the record. That is wrong: the owner caused
+  nothing; the agent did. Its own context begins with the agent as initiator.
+
 ### Which question reads which
 
 To be assigned one by one, as 255's plan did for `initiator_id`:
@@ -67,6 +82,15 @@ To be assigned one by one, as 255's plan did for `initiator_id`:
   filters, the owner of what is created, the credentials of a call (`ReadSecret`).
 - **Identity:** what is caller-bound already - `Publish`, `ModifyMessage`, `RevokeMessage` - and the
   record.
+- **Initiator:** the record only - the issuer of a command an agent carried out
+  (`HistoryEntry::CommandExecuted`), the sender of a skill given by `/skill`, the name in a
+  channel's notices - never rights. The audit log ([140](140-audit-log.md)) records all four.
+
+Today's readers of `principal_id` that mean the owner: `cleared_for` (clearance, with the `roles`
+the agent controller loads from the owner), `Member::require_joinable` (admission, 221), the
+recipient of a tool call's questions (`ToolExecutor::questions`), and the initiator of an agent
+acting on its own (above). Every other reader - the policy, the store filters and views, the owner
+of what is created, `ReadSecret` - means delegation and stays.
 
 Open: whose clearance applies when delegation and ownership differ - both, as 142 intersects an
 owner's and a personality's roles today, or only the owner's? 340 asks the same from the team's
@@ -79,6 +103,8 @@ side.
   Cheap, and the policy stays as it is.
 - Or renamed to say what they are (`acting_for`, `owned_by`), so that no reader keeps the old
   reading by accident. Touches every reader once, which is also the review the separation needs.
+  Set aside: `principal_id` already names delegation, by its documented meaning and the usual
+  term; what is missing is ownership, not a better name for what is there.
 - `roles` are the principal's today. With the two apart, the context may need the owner's roles
   for clearance and the delegate's for rights.
 
@@ -94,7 +120,10 @@ the answer.
 - `SecurityContext` carries identity, ownership and delegation apart, documented in SECURITY.md.
 - Every reader of `principal_id` is assigned to one of them; clearance and admission read the
   owner.
-- Behaviour is unchanged while delegation equals ownership, and the security suite shows it.
+- An agent acting on its own is the initiator of what it does; the initiator stays the root of a
+  chain of agents.
+- Behaviour is otherwise unchanged while delegation equals ownership, and the security suite shows
+  it.
 
 ## History
 
@@ -102,3 +131,29 @@ the answer.
   [221](221-adding-session-participants.md): an agent is to match a session's admission rule by its
   owner, which today is `principal_id` only because an agent always acts for its owner. Points
   towards [340](340-teams-as-owners.md).
+- **2026-10-13** — Discussed with the maintainer: `principal_id` already is the delegation; what is
+  missing is the owner, and four readers borrow `principal_id` for it - five with the initiator of
+  an agent acting on its own. Decided: the initiator stays the root of a chain; an agent acting on
+  its own is its own initiator, not its owner. The renaming option is set aside.
+- **2026-10-13** — Done. `SecurityContext` carries `owner_id` beside `principal_id`;
+  `SecurityContext::next` takes caller, owner and principal, and `Answering::to` continues a request
+  with the owner and principal of the agent's own context. Reading the owner now: `cleared_for`
+  (with the `roles`, which were the owner's already), `Member::require_joinable` (whose agent a user
+  may take in) and `ToolExecutor::questions`. `Agent::security_context` begins with the agent as
+  initiator. Behaviour is otherwise unchanged; the security suite asserts the owner of a turn, and
+  model tests pin that a caller is cleared as its owner whoever it acts for and that an agent acting
+  on its own initiates it. SECURITY.md explains the four identities with a user and a bank's agent.
+  Left to [340](340-teams-as-owners.md): the admission rule itself (`JOIN`) is still decided by the
+  policy in the member's own context, by its principal, as every verb is - whether it should match
+  an agent by its owner once the two differ is decided with whom an agent may act for.
+- **2026-10-13** — On the maintainer's request, the agent stores whose name it acts in:
+  `Agent::principal_id`, set to the owner by `Agent::new` and read by `Agent::security_context`.
+  So the structure for 340 is in place; `Agent::validate` keeps it equal to the owner until 340
+  decides whom else an agent may act for, since whoever may change an agent could otherwise lend
+  it another's rights. The `ApproverActor` speaks in its own name, answered for by the owner of its
+  channel.
+- **2026-10-13** — The questions a tool puts (issue [165](165-ask-the-user-tool.md)) can be put to
+  the initiator: `Addressee::Initiator` beside `Addressee::Owner`, both found by
+  `Questions::resolve` in the context of the call. `Owner` keeps meaning the agent's owner - a tool
+  asking for its owner's password never asks whoever talks to the agent -, while a bank's agent asks
+  its customer for their PIN as the initiator, chosen by the tool and not by the model.

@@ -10,16 +10,15 @@ in [CONFIGURATION.md](CONFIGURATION.md).
 
 Security is a context that travels with every operation, and explicit checks against it.
 
-*   **`SecurityContext`** carries three identities, and the session and channel an action happens
-    in: the *caller*, who acts - a user, an agent, the system; the *principal*, whose rights the
-    caller exercises - a user themselves, an agent its owner; and the *initiator*, who caused it -
-    whoever asked an agent, or its owner when nobody did (see [In whose name an agent
-    acts](#in-whose-name-an-agent-acts)). There is no delegation chain. It carries the *roles* of
-    the principal and the roles the caller is limited to - an agent's personality's. What a decision
-    needs to know of the subject is in the context, put there where the context is built - a user's
-    by their `UserController`, an agent's by its `AgentController` from its owner's, each with the
+*   **`SecurityContext`** carries four identities, and the session and channel an action happens
+    in: the *caller*, who acts; the *owner*, who answers for the caller; the *principal*, in whose
+    name - with whose rights - the caller acts; and the *initiator*, who caused it (see [Who acts,
+    for whom](#who-acts-for-whom)). There is no delegation chain. It carries the *roles* of the
+    owner and the roles the caller is limited to - an agent's personality's. What a decision needs
+    to know of the subject is in the context, put there where the context is built - a user's by
+    their `UserController`, an agent's by its `AgentController` from its owner's, each with the
     roles as they are now - and not looked up while the decision is made. A context continued for
-    another principal (`SecurityContext::next`) carries no roles until whoever continues it gives
+    another caller (`SecurityContext::next`) carries no roles until whoever continues it gives
     them: the initiator lends none.
 *   **`SecurityManager`** authorizes actions: `check(context, action)`.
 *   **`ActionType`** enumerates every securable action. An action on a stored entity carries the
@@ -37,6 +36,41 @@ Security is a context that travels with every operation, and explicit checks aga
     tells it by its kind and name. The verbs every kind has, and the actions of the core that
     concern no single stored entity, a policy decides one by one, so that a policy that forgets one
     does not compile.
+
+### Who acts, for whom
+
+Every action knows four things about who is behind it, also for the record (issues 255, 341). For
+a person they coincide: a user acts themselves, answers for themselves, in their own name. For an
+agent they fall apart - it is itself, it belongs to someone, it acts in someone's name, and someone
+asked it. A bank's agent, asked by a customer, shows all four:
+
+| | the question | a user | a bank's agent, asked by a customer | an agent acting on its own |
+|---|---|---|---|---|
+| `caller_id` | who acts? | the user | the agent | the agent |
+| `owner_id` | who answers for it? | the user | its owner at the bank | its owner |
+| `principal_id` | in whose name, with whose rights? | the user | its principal (`Agent::principal_id`): its owner for now, the bank once a team can be one (issue 340) | its principal |
+| `initiator_id` | who caused it? | the user | the customer | the agent itself |
+
+Each is read for its own questions, and only for them:
+
+*   **The caller** for what is bound to the one acting: publishing, changing and revoking one's
+    own messages, reading what an agent takes part in itself.
+*   **The owner** for what the person responsible for the caller decides or bounds: the clearance
+    (the context's roles are the owner's), the questions a tool puts to the agent's owner, and whose
+    agent a user may take into a session (issue 221).
+*   **The principal** for rights: the policy (`OwnershipSecurityManager::check`), the store filters
+    and views, the owner of what is created, the credentials a call reaches with.
+*   **The initiator** for the record, and for whom a tool's questions for the initiator are put to
+    (see [APPROVALS.md](APPROVALS.md)) - never for rights. It is the root of the chain: when a
+    customer asks agent A and A asks agent B, what B does is still initiated by the customer - who
+    asked B directly is the sender of the message B answers. An agent that acts when nobody asked
+    it initiates what it does itself; its owner caused nothing.
+
+An agent stores its principal (`Agent::principal_id`) beside its owner. It is its owner when the
+agent is made, and for now it stays so: the store refuses an agent acting in anybody else's name,
+so that whoever may change an agent cannot lend it another's rights. Owner and principal are apart
+so that every check says which of them it means; whom an agent may act for other than its owner -
+a team, say - is issue [340](../issues/340-teams-as-owners.md).
 
 ### Three decisions
 
@@ -292,17 +326,17 @@ to because they are entitled to something - they check the request, and carry it
 rights. In three parts:
 
 1.  **The agent acts with its owner's rights.** Every context an agent acts in names it as the
-    caller and its owner as the principal - the one it speaks in when nobody asked
-    (`Agent::security_context`) and the one of a turn, the request's continued as the agent. A piece
-    of work has one context: the views a turn navigates and the components it calls ask in the
-    turn's; a component's own is only for what it reads while it is built. So what the agent reads,
-    the tools it calls, the credentials they reach with and the clearance it is judged by are its
-    owner's, whoever asked - within its session too: it reaches another channel if its owner may
-    read it or it takes part in it itself, and copies from it what the flow rule lets into its own;
-    what it knows itself - its memory, its private notes - it reaches through itself, by the flow
-    rule alone. An agent must not see more than the person responsible for it, and it passes on
-    whatever it read to whoever it answers next - so what it may read is fixed by its owner, not by
-    who happens to ask.
+    caller, its owner as owner and its principal - its owner - as principal: the one it speaks in
+    when nobody asked (`Agent::security_context`) and the one of a turn, the request's continued as
+    the agent. A piece of work has one context: the views a turn navigates and the components it
+    calls ask in the turn's; a component's own is only for what it reads while it is built. So what
+    the agent reads, the tools it calls, the credentials they reach with and the clearance it is
+    judged by are its owner's, whoever asked - within its session too: it reaches another channel if
+    its owner may read it or it takes part in it itself, and copies from it what the flow rule lets
+    into its own; what it knows itself - its memory, its private notes - it reaches through itself,
+    by the flow rule alone. An agent must not see more than the person responsible for it, and it
+    passes on whatever it read to whoever it answers next - so what it may read is fixed by its
+    owner, not by who happens to ask.
 2.  **The owner checks the request**, where a call is admitted (`ToolExecutor::admit`): the policy,
     the owner's rules for the place - evaluated in their name, as their own answer - and the
     approval of the owner or whom the agent's list lets read it, for an agent of the system the
@@ -312,10 +346,11 @@ rights. In three parts:
 3.  **Whoever asks may ask** - today by taking part in the channel the owner put the agent into.
     What comes of it reaches them only as the flow rule lets it into the channel.
 
-Whoever asked stays in the context as its initiator: for the record, and for which request a turn
-answers - never for rights. The questions a tool puts to the agent's owner go to the owner, not to
-whoever asked. What the runtime asks in someone's name on its own - whether a member of a channel
-could still start a command there - has the system as its initiator.
+Whoever asked stays in the context as its initiator - the root of the chain, the agent itself when
+nobody asked: for the record, and for which request a turn answers - never for rights. The questions
+a tool puts to the agent's owner go to the owner, not to whoever asked. What the runtime asks in
+someone's name on its own - whether a member of a channel could still start a command there - has
+the system as its initiator.
 
 There is no delegation chain. An agent that mentions another does not delegate to it: the other
 answers for its own owner, bounded by the channel, with whoever began the conversation as its

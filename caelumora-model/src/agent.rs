@@ -170,6 +170,16 @@ impl removal::Stored for Agent {
     fn unique_name(&self) -> Option<ScopedName> {
         Some(self.scoped_name())
     }
+
+    /// An agent acts in its owner's name (issue 341): whoever may change it
+    /// cannot lend it another's rights by naming them as its principal.
+    fn validate(&self) -> Result<(), String> {
+        if self.principal_id == self.security_attributes.owner_id {
+            Ok(())
+        } else {
+            Err("an agent acts in its owner's name".to_string())
+        }
+    }
 }
 
 impl Deletable for Agent {
@@ -222,6 +232,10 @@ pub struct Agent {
     pub name: ScopedName,
     pub personality_id: PersonalityId,
     pub security_attributes: SecurityAttributes,
+    /// In whose name the agent acts - whose rights it exercises (issue
+    /// 341). Its owner when it is made, and its owner alone for now: whom
+    /// else an agent may act for is issue 340.
+    pub principal_id: ActorId,
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -230,20 +244,19 @@ pub struct Agent {
 
 impl Agent {
     /// The context the agent acts in when nobody asked it, in the channel
-    /// `channel` of session `session` (issue 87): its owner's, continued in
-    /// its own name with its owner's rights (issue 255) - whose authority it
-    /// acts with is not stored with it.
+    /// `channel` of session `session` (issue 87): begun by the agent itself,
+    /// answered for by its owner and acting in the name of its principal
+    /// (issues 255, 341).
     pub fn security_context(&self, session: crate::session::SessionId, channel: crate::session::ChannelId) -> SecurityContext {
-        let owner = self.security_attributes.owner_id;
-        SecurityContext::new(owner, session, channel).next(ActorId::Agent(self.id), owner)
+        let agent = ActorId::Agent(self.id);
+        SecurityContext::new(agent, session, channel).next(agent, self.security_attributes.owner_id, self.principal_id)
     }
 
-    /// A new agent of `personality`, owned by `owner` - whoever creates it.
-    /// Whose authority it acts with is not stored with it: its actor derives
-    /// that from the owner, in the channel it runs in (issue 87). Nothing of
-    /// the personality is copied into it: what the agent is - its
-    /// components, its introduction - is read through `personality_id`, so
-    /// that a change of the personality reaches it (issue 176).
+    /// A new agent of `personality`, owned by `owner` - whoever creates it -
+    /// and acting in their name (issue 341). Nothing of the personality is
+    /// copied into it: what the agent is - its components, its
+    /// introduction - is read through `personality_id`, so that a change of
+    /// the personality reaches it (issue 176).
     pub fn new(name: ScopedName, personality: &Personality, owner: ActorId) -> Self {
         let agent_id = AgentId(Uuid::new_v4());
         // Read by its owner, whose rights it acts with (issue 255): it reads
@@ -254,6 +267,7 @@ impl Agent {
             personality_id: personality.id,
             name,
             security_attributes,
+            principal_id: owner,
             deleted: None,
         }
     }
@@ -793,6 +807,8 @@ pub(crate) mod tests {
     use crate::digest;
     use crate::workspace::{Workspace, WorkspaceId};
     use crate::tool::{ToolParameters, ToolVisibility};
+    use crate::removal::Stored;
+    use crate::user::UserId;
 
     #[test]
     fn a_personality_is_internal_unless_named_external() {
@@ -803,6 +819,34 @@ pub(crate) mod tests {
         let external: Personality = serde_json::from_value(written("external")).unwrap();
         assert_eq!(external.kind, PersonalityKind::External);
         assert!(serde_json::from_value::<Personality>(written("remote")).is_err(), "no other kind");
+    }
+
+    /// Issue 341: an agent acting when nobody asked it is the caller and
+    /// the initiator - it caused what it does -, answered for by its owner
+    /// and acting in its owner's name.
+    #[test]
+    fn an_agent_acting_on_its_own_initiates_it_for_its_owner() {
+        let personality: Personality = serde_json::from_value(serde_json::json!({ "id": PersonalityId::new(), "name": "plain" })).unwrap();
+        let owner = ActorId::User(UserId::new());
+        let agent = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), &personality, owner);
+        let context = agent.security_context(Default::default(), Default::default());
+        let itself = ActorId::Agent(agent.id);
+        assert_eq!((context.caller_id, context.initiator_id), (itself, itself), "it acts, and caused it");
+        assert_eq!((context.owner_id, context.principal_id), (owner, owner), "answered for by its owner, in their name");
+    }
+
+    /// Issue 341: an agent is made acting in its owner's name, and cannot
+    /// be stored acting in anybody else's - whom else it may act for is
+    /// issue 340.
+    #[test]
+    fn an_agent_acts_in_its_owners_name() {
+        let personality: Personality = serde_json::from_value(serde_json::json!({ "id": PersonalityId::new(), "name": "plain" })).unwrap();
+        let owner = ActorId::User(UserId::new());
+        let mut agent = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), &personality, owner);
+        assert_eq!(agent.principal_id, owner, "its owner's when made");
+        assert!(agent.validate().is_ok());
+        agent.principal_id = ActorId::User(UserId::new());
+        assert!(agent.validate().is_err(), "not lent another's rights");
     }
 
     #[test]

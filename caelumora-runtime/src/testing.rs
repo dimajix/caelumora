@@ -69,7 +69,8 @@ use caelumora_model::config::AppConfig;
 /// with whose rights and for whom, what, of whose entity, and what it
 /// answered - so that a test says which permissions an action needs (issue
 /// 198). Recorded as `principal as caller, asked by initiator`, each part
-/// only where it differs from the one before (issue 255).
+/// only where it differs from those before (issue 255): an agent acting on
+/// its own initiates itself (issue 341).
 #[derive(Debug)]
 pub struct Recorder {
     policy: OwnershipSecurityManager,
@@ -110,7 +111,7 @@ impl Recorder {
             (principal, caller) => format!("{} as {}", self.name(principal), self.name(caller)),
         };
         let who = match context.initiator_id {
-            initiator if initiator == context.principal_id => acting,
+            initiator if initiator == context.principal_id || initiator == context.caller_id => acting,
             initiator => format!("{acting}, asked by {}", self.name(initiator)),
         };
         let answer = if allowed { "yes" } else { "no" };
@@ -243,7 +244,7 @@ impl World {
     /// begun in `state` - for what a component does in a turn.
     pub fn turn<'a>(session: &SessionLoop, agent: AgentId, owner: UserId, state: &'a mut AgentChannelState) -> Turn<'a> {
         let channel = &session.channels()[0];
-        let context = SecurityContext::new(ActorId::User(owner), session.id(), channel.id()).next(ActorId::Agent(agent), ActorId::User(owner)).with_roles(vec![*STAFF], None);
+        let context = SecurityContext::new(ActorId::User(owner), session.id(), channel.id()).next(ActorId::Agent(agent), ActorId::User(owner), ActorId::User(owner)).with_roles(vec![*STAFF], None);
         state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), context, channel.classification(), Vec::new(), Default::default());
         Turn::of(agent, agent.to_string(), state, AgentStateHandle::detached(), views_in(session, channel, ActorId::Agent(agent))).expect("a turn was begun")
     }

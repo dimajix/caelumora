@@ -144,12 +144,12 @@ pub(crate) struct Answering {
 
 impl Answering {
     /// The contexts of `request`, continued in the name of the actor `id`,
-    /// called `name`, with the rights its `own` context gives it - an
-    /// agent's owner's, with their roles as they are now and its limit
-    /// (issues 255, 304). Whoever sent the request stays its initiator and
-    /// lends nothing.
+    /// called `name`, answered for and with the rights its `own` context
+    /// gives it - an agent's owner, with their roles as they are now and its
+    /// limit (issues 255, 304, 341). The request's initiator stays the
+    /// initiator - the root of the chain - and lends nothing.
     pub(crate) fn to(request: &Envelope, id: ActorId, name: impl Into<String>, own: &SecurityContext) -> Self {
-        let security_context = request.security.next(id, own.principal_id).with_roles(own.roles.clone(), own.limiting_roles.clone());
+        let security_context = request.security.next(id, own.owner_id, own.principal_id).with_roles(own.roles.clone(), own.limiting_roles.clone());
         Self { event_context: request.context.next(id, name), security_context }
     }
 

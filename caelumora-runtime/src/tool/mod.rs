@@ -460,14 +460,14 @@ impl ToolExecutor {
     }
 
     /// What `call` asks before it runs, as its tool says, checked and put to
-    /// the users of the channel (issue 165) - the agent's owner being the
-    /// principal of `turn`, not whoever asked (issue 255). Every error is the
-    /// call's: it cannot be asked.
+    /// the users of the channel (issue 165) - the agent's owner and whoever
+    /// caused the call as the context of `turn` names them (issues 255,
+    /// 341). Every error is the call's: it cannot be asked.
     fn questions(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<Option<Questions>> {
         let Some(questions) = self.providers.questions(call)? else { return Ok(None) };
         questions.check().map_err(|e| ToolError::InvalidParameter(e.to_string()))?;
         let channel = self.running.get().ok_or_else(|| ToolError::ExecutionFailed("the channel does not run".to_string()))?;
-        channel.put(questions, turn.security_context().principal_id)
+        channel.put(questions, turn.security_context())
             .map(Some)
             .map_err(|e| ToolError::InvalidParameter(e.to_string()))
     }

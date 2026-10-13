@@ -320,12 +320,13 @@ impl ChannelLoop {
         found
     }
 
-    /// `questions` as put to the users of the channel (issue 165): every
-    /// addressee found among them - a handle as its participants are
-    /// mentioned, the agent's owner as `owner` (`Questions::resolve`).
-    pub(crate) fn put(&self, questions: Questions, owner: ActorId) -> Result<Questions, QuestionError> {
+    /// `questions` of a call made in `context` as put to the users of the
+    /// channel (issue 165): every addressee found among them - a handle as
+    /// its participants are mentioned, the agent's owner and whoever caused
+    /// the call as `context` names them (`Questions::resolve`).
+    pub(crate) fn put(&self, questions: Questions, context: &SecurityContext) -> Result<Questions, QuestionError> {
         let users: Vec<ActorId> = self.actor_ids().into_iter().filter(|id| matches!(id, ActorId::User(_))).collect();
-        questions.resolve(&self.mentions.load(), &users, owner)
+        questions.resolve(&self.mentions.load(), &users, context)
     }
 
     fn is_mentionable(id: ActorId) -> bool {

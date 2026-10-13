@@ -330,7 +330,7 @@ mod tests {
         store.entity_stores().channels.create(&system, &channel).await.unwrap();
         let session_loop = SessionLoop::new(session.clone(), vec![channel.clone()], Arc::clone(&runtime)).await.unwrap();
 
-        let context = SecurityContext::default().next(ActorId::Agent(jonathan.id), ActorId::None);
+        let context = SecurityContext::default().next(ActorId::Agent(jonathan.id), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
         state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Vec::new(), Default::default());
         let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached(), crate::session::testing::views_in(&session_loop, &session_loop.channels()[0], ActorId::Agent(jonathan.id))).expect("a turn was begun");

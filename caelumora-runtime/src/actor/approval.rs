@@ -63,6 +63,13 @@ impl ApproverActor {
         }
     }
 
+    /// `about`, the context of a call, continued as the approver speaks of
+    /// it: in its own name, about the call of whoever asked (issue 255), and
+    /// answered for by the owner of its channel (issue 341).
+    fn speaking(&self, about: &SecurityContext) -> SecurityContext {
+        about.next(self.id, self.channel.load().security_attributes.owner_id, self.id)
+    }
+
     /// The attributes of `agent`, as stored - never as its request says,
     /// since the agent makes that itself. `None` if it cannot be read.
     async fn attributes_of(&self, agent: AgentId) -> Option<SecurityAttributes> {
@@ -180,8 +187,7 @@ impl ApproverActor {
 
         let new_event = ActorEvent::ApprovalRequested(request);
         let new_context = context.next(self.id, self.name());
-        // It speaks for itself, about the call of whoever asked (issue 255).
-        let new_security = security.next(self.id, self.id);
+        let new_security = self.speaking(&security);
         let envelope = Envelope::new(new_security, new_context, new_event);
 
         output.send(envelope).await.context("Failed to send approval request")?;
@@ -224,7 +230,7 @@ impl ApproverActor {
         }
         let Some(p) = pending.remove(&id) else { return Ok(()) };
         let context = p.event_context.next(self.id, self.name());
-        let envelope = Envelope::new(p.security_context.next(self.id, self.id), context, ActorEvent::ApprovalRequestWithdrawn { id });
+        let envelope = Envelope::new(self.speaking(&p.security_context), context, ActorEvent::ApprovalRequestWithdrawn { id });
         output.send(envelope).await.context("Failed to announce a withdrawn approval request")?;
         Ok(())
     }
@@ -313,7 +319,7 @@ impl ApproverActor {
         };
 
         let context = p.event_context.next(self.id, self.name());
-        let envelope = Envelope::new(p.security_context.next(self.id, self.id), context, event);
+        let envelope = Envelope::new(self.speaking(&p.security_context), context, event);
 
         output.send(envelope).await.context("Failed to send decision")?;
         Ok(())
@@ -490,8 +496,9 @@ mod tests {
             deleted: None,
         };
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();
-        let mut stored = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), &personality, ActorId::System);
-        stored.security_attributes = agent(&ids);
+        let attributes = agent(&ids);
+        let mut stored = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), &personality, attributes.owner_id);
+        stored.security_attributes = attributes;
         store.entity_stores().agents.create(&system, &stored).await.unwrap();
 
         let security: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
@@ -559,6 +566,14 @@ mod tests {
             let asked = self.next().await;
             assert!(matches!(asked.event, ActorEvent::ApprovalRequested(ref r) if r.id == request.id), "put to the users: {:?}", asked.event);
             assert_eq!(asked.context.sender_id, ActorId::Approver(self.approver.approver.id));
+            assert_eq!(self.speaker(&asked), (asked.context.sender_id, ActorId::User(self.users[0])), "in its own name, answered for by whose channel it is");
+        }
+
+        /// Who `said` it, and who answers for them: the approver, the
+        /// owner of its channel (issue 341).
+        fn speaker(&self, said: &Envelope) -> (ActorId, ActorId) {
+            assert_eq!(said.security.principal_id, said.security.caller_id, "the approver speaks in its own name");
+            (said.security.caller_id, said.security.owner_id)
         }
 
         /// The `n`th user answers `request`.
@@ -590,6 +605,7 @@ mod tests {
         approving.answer(0, &request, true).await;
         let decided = approving.next().await;
         assert!(matches!(decided.event, ActorEvent::ApprovalGranted(ref r) if r.id == request.id && r.agent_id == approving.agent), "one id from the agent's request to the decision: {:?}", decided.event);
+        assert_eq!(approving.speaker(&decided).1, ActorId::User(approving.users[0]), "decided, answered for by whose channel it is");
 
         // A request withdrawn (issue 148) - only by the agent that asked -
         // is forgotten, and the users are told.
@@ -600,6 +616,7 @@ mod tests {
         approving.input.send(approving.from(ActorId::Agent(approving.agent), ActorEvent::ApprovalRequestWithdrawn { id: withdrawn.id })).await.unwrap();
         let told = approving.next().await;
         assert!(matches!(told.event, ActorEvent::ApprovalRequestWithdrawn { id } if id == withdrawn.id), "not the user's withdrawal: {:?}", told.event);
+        assert_eq!(approving.speaker(&told).1, ActorId::User(approving.users[0]), "told, answered for by whose channel it is");
         approving.answer(0, &withdrawn, true).await;
         approving.nothing().await;
     }

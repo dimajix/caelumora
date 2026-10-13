@@ -471,22 +471,27 @@ pub trait Secured {
     fn security_attributes(&self) -> &SecurityAttributes;
 }
 
-/// Who acts, with whose rights, and for whom (issue 255): what every
-/// operation is asked in.
+/// Who acts, who answers for it, with whose rights, and for whom (issues
+/// 255, 341): what every operation is asked in.
 ///
 /// - `caller_id` is who acts - a user, an agent, the system.
-/// - `principal_id` is the person whose rights the caller exercises: a user
-///   themselves, an agent its owner, the system itself. An agent is its
-///   owner's delegate in all it does.
-/// - `initiator_id` is who caused it - whoever asked the agent, or its owner
-///   when nobody did: for the record and for the questions of a call, never
-///   for rights.
+/// - `owner_id` is who answers for the caller: a user or the system
+///   themselves, an agent its owner. Its clearance bounds what the caller
+///   may see, and it is asked the questions of a call.
+/// - `principal_id` is in whose name the caller acts - whose rights it
+///   exercises: a user themselves, an agent its owner, the system itself.
+///   An agent is its owner's delegate in all it does, so today the
+///   principal is always the owner; the two are apart so that a check says
+///   which of them it means.
+/// - `initiator_id` is who caused it - the root of the chain: whoever asked
+///   the agent, or whoever asked whoever asked it, and the agent itself when
+///   nobody did. For the record, never for rights.
 ///
-/// - `roles` are the principal's roles, and `limiting_roles` those the
-///   caller is limited to - an agent's personality's (issue 179) -, set where
+/// - `roles` are the owner's roles, and `limiting_roles` those the caller is
+///   limited to - an agent's personality's (issue 179) -, set where
 ///   the context is built (issue 304): what a decision needs to know of the
 ///   subject is in the context, not looked up while it is made. A role
-///   counts if the principal holds it and the limit, if any, names it
+///   counts if the owner holds it and the limit, if any, names it
 ///   (`has_role`); a clearance holds if both clear (see CONFIDENTIALITY.md).
 ///
 /// An empty context names nobody and has no rights.
@@ -494,6 +499,7 @@ pub trait Secured {
 pub struct SecurityContext {
     pub initiator_id: ActorId,
     pub caller_id: ActorId,
+    pub owner_id: ActorId,
     pub principal_id: ActorId,
     pub session_id: SessionId,
     pub channel_id: ChannelId,
@@ -503,12 +509,13 @@ pub struct SecurityContext {
 
 impl SecurityContext {
     /// The context of `actor` acting for themselves, in the channel
-    /// `channel_id` of session `session_id`: caller, principal and initiator
-    /// at once.
+    /// `channel_id` of session `session_id`: caller, owner, principal and
+    /// initiator at once.
     pub fn new(actor: ActorId, session_id: SessionId, channel_id: ChannelId) -> Self {
         Self {
             initiator_id: actor,
             caller_id: actor,
+            owner_id: actor,
             principal_id: actor,
             session_id,
             channel_id,
@@ -517,14 +524,14 @@ impl SecurityContext {
         }
     }
 
-    /// This context with the principal's `roles`, and the `limiting_roles`
-    /// the caller is limited to, if any.
+    /// This context with the owner's `roles`, and the `limiting_roles` the
+    /// caller is limited to, if any.
     pub fn with_roles(self, roles: Vec<RoleId>, limiting_roles: Option<Vec<RoleId>>) -> Self {
         Self { roles, limiting_roles, ..self }
     }
 
-    /// Whether `role` counts for the context: the principal holds it, and
-    /// the caller's limit, if any, names it.
+    /// Whether `role` counts for the context: the owner holds it, and the
+    /// caller's limit, if any, names it.
     pub fn has_role(&self, role: RoleId) -> bool {
         self.roles.contains(&role) && self.limiting_roles.as_ref().is_none_or(|limit| limit.contains(&role))
     }
@@ -536,15 +543,16 @@ impl SecurityContext {
         Self::new(ActorId::System, SessionId::default(), ChannelId::default())
     }
 
-    /// This context continued by `caller_id`, acting with the rights of
-    /// `principal_id` - an agent taking up a request, with its owner's - for
-    /// the same initiator, in the same place. Without roles: whoever
-    /// continues it gives the new principal's (`with_roles`), so that the
-    /// initiator lends nothing.
-    pub fn next(&self, caller_id: ActorId, principal_id: ActorId) -> Self {
+    /// This context continued by `caller_id`, answered for by `owner_id`,
+    /// acting with the rights of `principal_id` - an agent taking up a
+    /// request, owned by and acting for its owner - for the same initiator,
+    /// in the same place. Without roles: whoever continues it gives the new
+    /// owner's (`with_roles`), so that the initiator lends nothing.
+    pub fn next(&self, caller_id: ActorId, owner_id: ActorId, principal_id: ActorId) -> Self {
         Self {
             initiator_id: self.initiator_id,
             caller_id,
+            owner_id,
             principal_id,
             session_id: self.session_id,
             channel_id: self.channel_id,
@@ -1015,7 +1023,7 @@ mod tests {
             assert_eq!(allows(who, ActionType::RevokeMessage { author, channel: &bobs }).await, allowed, "taken back by {who}");
         }
         let agent = ActorId::Agent(crate::agent::AgentId::new());
-        let for_alice = context(alice).next(agent, alice);
+        let for_alice = context(alice).next(agent, alice, alice);
         let policy = OwnershipSecurityManager::new();
         assert!(policy.check(&for_alice, ActionType::RevokeMessage { author: agent, channel: &bobs }).await, "an agent its own, acting for alice");
         assert!(!policy.check(&for_alice, ActionType::RevokeMessage { author: alice, channel: &bobs }).await, "but not alice's: who said it, not whom it acts for");
@@ -1027,10 +1035,10 @@ mod tests {
         let agent = ActorId::Agent(crate::agent::AgentId::new());
         let hers = SecurityAttributes::owned_by(alice);
         let policy = OwnershipSecurityManager::new();
-        let asked_by_bob = context(bob).next(agent, alice);
+        let asked_by_bob = context(bob).next(agent, alice, alice);
         assert!(policy.check(&asked_by_bob, ActionType::get(Session::KIND, &hers)).await, "with alice's rights, whoever asked");
         assert!(policy.check(&asked_by_bob, ActionType::update(Session::KIND, &hers)).await, "all of them");
-        let asked_by_alice = context(alice).next(agent, bob);
+        let asked_by_alice = context(alice).next(agent, bob, bob);
         assert!(!policy.check(&asked_by_alice, ActionType::get(Session::KIND, &hers)).await, "asking lends nothing, not even the owner's own rights to another's agent");
     }
 
@@ -1116,12 +1124,12 @@ mod tests {
         let place = GroupId::of_channel(ChannelId::new());
         let alices = SecurityAttributes::owned_by(alice).granting(Subject::Group(place), Grant::Read);
         let policy = knowing(Known { members: vec![(member, place)] });
-        assert!(policy.check(&context(bob).next(hers, alice), ActionType::get(Channel::KIND, &alices)).await, "her agent, whoever asked");
-        assert!(!policy.check(&context(bob).next(his, bob), ActionType::get(Channel::KIND, &alices)).await, "not his: he may not read it");
-        assert!(policy.check(&context(bob).next(member, bob), ActionType::get(Channel::KIND, &alices)).await, "but an agent taking part in it");
-        assert!(policy.check(&context(bob).next(member, bob), ActionType::get(Session::KIND, &alices)).await, "so for every read");
-        assert!(!policy.check(&context(bob).next(member, bob), ActionType::update(Channel::KIND, &alices)).await, "changing stays its owner's");
-        assert!(!policy.check(&context(bob).next(member, bob), ActionType::CancelChannel(&alices)).await, "and so does acting on it");
+        assert!(policy.check(&context(bob).next(hers, alice, alice), ActionType::get(Channel::KIND, &alices)).await, "her agent, whoever asked");
+        assert!(!policy.check(&context(bob).next(his, bob, bob), ActionType::get(Channel::KIND, &alices)).await, "not his: he may not read it");
+        assert!(policy.check(&context(bob).next(member, bob, bob), ActionType::get(Channel::KIND, &alices)).await, "but an agent taking part in it");
+        assert!(policy.check(&context(bob).next(member, bob, bob), ActionType::get(Session::KIND, &alices)).await, "so for every read");
+        assert!(!policy.check(&context(bob).next(member, bob, bob), ActionType::update(Channel::KIND, &alices)).await, "changing stays its owner's");
+        assert!(!policy.check(&context(bob).next(member, bob, bob), ActionType::CancelChannel(&alices)).await, "and so does acting on it");
     }
 
     #[tokio::test]
@@ -1206,10 +1214,10 @@ mod tests {
         // that counts for it - as its context says (issue 304).
         let policy = OwnershipSecurityManager::new();
         let his_context = context(bob).with_roles(vec![hr, staff], None);
-        let his_agents = context(bob).next(agent, bob).with_roles(vec![hr, staff], Some(vec![staff]));
+        let his_agents = context(bob).next(agent, bob, bob).with_roles(vec![hr, staff], Some(vec![staff]));
         assert!(policy.check(&his_context, ActionType::get(SKILL, &hers)).await, "who holds the role");
         assert!(!policy.check(&his_agents, ActionType::get(SKILL, &hers)).await, "not his agent, limited below it");
-        assert!(!policy.check(&context(bob).next(agent, bob), ActionType::get(SKILL, &hers)).await, "nor a context continued without roles: the initiator lends none");
+        assert!(!policy.check(&context(bob).next(agent, bob, bob), ActionType::get(SKILL, &hers)).await, "nor a context continued without roles: the initiator lends none");
         let his = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Read);
         assert!(policy.check(&his_agents, ActionType::get(SKILL, &his)).await, "what he is granted as a person, his agent is too");
     }
@@ -1308,7 +1316,7 @@ mod tests {
         let open = SecurityAttributes::owned_by(alice).granting(Subject::Everyone, Grant::Join);
         assert!(allows(carol, join(&open)).await, "an entry for everyone lets every user join");
         let agent = ActorId::Agent(crate::agent::AgentId::new());
-        assert!(OwnershipSecurityManager::new().check(&context(carol).next(agent, carol), join(&open)).await, "an agent by its owner");
+        assert!(OwnershipSecurityManager::new().check(&context(carol).next(agent, carol, carol), join(&open)).await, "an agent by its owner");
         assert!(!allows(carol, ActionType::get(Session::KIND, &open)).await, "and reading it is another entry");
         assert!(allows(carol, ActionType::get(Session::KIND, &SecurityAttributes::owned_by(alice).granting(Subject::Everyone, Grant::Read))).await, "which may be for everyone, too");
     }

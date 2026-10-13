@@ -222,7 +222,7 @@ mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let sender = OriginEventSender::new(agent, Box::new(InMemoryEventSender::new(tx)));
         let as_actor = |sender_id: ActorId, caller: ActorId| Envelope::new(
-            SecurityContext::default().next(caller, ActorId::None),
+            SecurityContext::default().next(caller, ActorId::None, ActorId::None),
             EventContext { sender_id, ..EventContext::default() },
             ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() },
         );

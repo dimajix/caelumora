@@ -351,7 +351,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let tools = NotesComponent { security_manager: Arc::new(caelumora_model::security::OwnershipSecurityManager::new()), confidentiality: Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()) };
         // Asked in the turn's context: the agent's, which reclassifies its own note.
-        let context = SecurityContext::default().next(ActorId::Agent(agent), ActorId::None);
+        let context = SecurityContext::default().next(ActorId::Agent(agent), ActorId::None, ActorId::None);
         state.begin_turn(Default::default(), context, Default::default(), Vec::new(), Default::default());
         let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn was begun");
         tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();

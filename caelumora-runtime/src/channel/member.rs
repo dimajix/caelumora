@@ -98,9 +98,9 @@ impl Member {
 
     /// Nothing if `context` may take the member into a session or channel
     /// of `kind` with `attributes` by joining (issue 221): the member is
-    /// whom `context` acts for - themselves, or their own agent - and an
-    /// entry lets the member join (`JOIN`), asked in the member's own
-    /// context, an agent by its owner.
+    /// whom `context` acts for, or owned by them - themselves, or their own
+    /// agent (issue 341) - and an entry lets the member join (`JOIN`), asked
+    /// in the member's own context, an agent by its owner.
     ///
     /// # Errors
     /// `refusal` of what was refused - joining, also for a member that is
@@ -109,7 +109,7 @@ impl Member {
     pub(crate) async fn require_joinable<E: Send>(&self, security: &dyn SecurityManager, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes, session: SessionId, channel: ChannelId, refusal: impl FnOnce(Refused) -> E + Send) -> Result<(), E> {
         let join = ActionType::custom(kind, &JOIN, attributes);
         match self.context(session, channel) {
-            Some(own) if own.principal_id == context.principal_id => security.require(&own, join, refusal).await,
+            Some(own) if own.owner_id == context.principal_id => security.require(&own, join, refusal).await,
             _ => Err(refusal(join.refused())),
         }
     }

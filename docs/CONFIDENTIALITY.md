@@ -186,11 +186,12 @@ a clearance is not judged by the flow rule, but by its own (`Clearances::admits`
     them - the same, or one it may read.
 
 A clearance follows from roles. The `roles` section of the configuration names the roles and the
-clearances each grants; the user provider gives users their roles. A user's clearances are all
-their roles'; an agent's are its owner's, since it must not see more than the person responsible for
-it. Both come with the `SecurityContext`: its roles, and the roles its caller is limited to, which
-have to clear as well. A user whose roles grant nothing sees only what is public. Without a `roles`
-section, clearances are not checked. The system is cleared for everything, as it may do everything
+clearances each grants; the user provider gives users their roles. A user's clearances are all their
+roles'; an agent's are its owner's, since it must not see more than the person responsible for it.
+Both come with the `SecurityContext`: its roles - those of its owner (`owner_id`), not of whoever
+the caller acts for -, and the roles its caller is limited to, which have to clear as well. A user
+whose roles grant nothing sees only what is public. Without a `roles` section, clearances are not
+checked. The system is cleared for everything, as it may do everything
 (`ConfidentialityQuestions::cleared_for`, issue 312): what the runtime does in its own name -
 cleaning up, deleting with a scope - reaches what it acts on.
 

@@ -1080,7 +1080,7 @@ mod tests {
         let texts = |messages: &[Message]| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
         assert_eq!(texts(&for_alice.history().await.unwrap().messages()), ["first", "second"]);
         assert_eq!(texts(&reach(as_user(bob.id)).await.history().await.unwrap().messages()), ["second"], "bob joined after the first");
-        let as_helper = Viewer::new(SecurityContext::new(ActorId::User(alice.id), session.id, channel.id).next(ActorId::Agent(helper.id), ActorId::User(alice.id)));
+        let as_helper = Viewer::new(SecurityContext::new(ActorId::User(alice.id), session.id, channel.id).next(ActorId::Agent(helper.id), ActorId::User(alice.id), ActorId::User(alice.id)));
         assert_eq!(texts(&reach(as_helper).await.history().await.unwrap().messages()), ["second"], "the agent reads with its own limit, not its owner's");
         let notes = for_alice.notes().await.unwrap();
         assert_eq!(notes.len(), 1);
@@ -1144,7 +1144,7 @@ mod tests {
         agent_state.private_notes.push(note("noted for itself"), NoteOrigin::default(), MessageId::default());
         store.put_agent_channel_state(helper.id, hers.id, &mut agent_state).await.unwrap();
 
-        let context = SecurityContext::new(ActorId::User(bob.id), session.id, team.id).next(ActorId::Agent(helper.id), ActorId::User(bob.id));
+        let context = SecurityContext::new(ActorId::User(bob.id), session.id, team.id).next(ActorId::Agent(helper.id), ActorId::User(bob.id), ActorId::User(bob.id));
         let from = Place { channel: team.id, classification: team.classification.clone(), session: SessionPrivacy::of(&session) };
         let from_team = manager.views(Viewer::from_place(context, from)).session(session.id).await.unwrap();
         let names: Vec<String> = from_team.channels().await.iter().map(|c| c.name().to_string()).collect();
@@ -1378,7 +1378,7 @@ use caelumora_model::turn::TurnState;
 
         // The agent, reading from one of its channels, as its components do.
         let reading_from = |channel: &Channel| {
-            let context = SecurityContext::new(ActorId::User(alice.id), session.id, channel.id).next(ActorId::Agent(helper.id), ActorId::User(alice.id));
+            let context = SecurityContext::new(ActorId::User(alice.id), session.id, channel.id).next(ActorId::Agent(helper.id), ActorId::User(alice.id), ActorId::User(alice.id));
             let from = Place { channel: channel.id, classification: channel.classification.clone(), session: SessionPrivacy::of(&session) };
             Viewer::from_place(context, from)
         };

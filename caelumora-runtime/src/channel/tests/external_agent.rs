@@ -922,8 +922,8 @@ async fn after_a_restart_an_open_task_is_followed_again_and_one_that_asked_back_
     let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
     assert_eq!(state.remote.open_tasks.iter().map(|t| t.task.clone()).collect::<Vec<_>>(), vec![task("t-asking")], "the one that asked back waits for the next request");
     assert!(remote.sent.lock().unwrap().is_empty(), "nothing was sent to it");
-    let called_as: Vec<_> = remote.called_as.lock().unwrap().iter().map(|(call, security)| (*call, security.initiator_id)).collect();
-    assert_eq!(called_as, [("resume", ActorId::User(owner))], "a task stored without its contexts is followed as the agent itself, on its owner's behalf");
+    let called_as: Vec<_> = remote.called_as.lock().unwrap().iter().map(|(call, security)| (*call, security.initiator_id, security.owner_id, security.principal_id)).collect();
+    assert_eq!(called_as, [("resume", ActorId::Agent(agent), ActorId::User(owner), ActorId::User(owner))], "a task stored without its contexts is followed as the agent itself, on its own initiative and its owner's behalf (issue 341)");
     running.abort();
 }
 
@@ -946,7 +946,7 @@ async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_tha
                 unsaid: None,
                 work: Some(caelumora_model::work::Work::new(
                     begun.next(hermes, "hermes".to_string()),
-                    SecurityContext::new(bob, SessionId::default(), ChannelId::default()).next(hermes, ActorId::None),
+                    SecurityContext::new(bob, SessionId::default(), ChannelId::default()).next(hermes, ActorId::None, ActorId::None),
                     caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
                 )),
             }],
@@ -984,7 +984,7 @@ fn begun_above(agent: caelumora_model::agent::AgentId, open: &str, standing: cae
     use caelumora_model::external_agent::{OpenTask, RemoteState};
     use caelumora_model::work::Work;
     let own = ActorId::Agent(agent);
-    let work = Work::new(EventContext::default().next(own, "hermes".to_string()), SecurityContext::default().next(own, ActorId::None), Classification::general(Confidentiality::Confidential));
+    let work = Work::new(EventContext::default().next(own, "hermes".to_string()), SecurityContext::default().next(own, ActorId::None, ActorId::None), Classification::general(Confidentiality::Confidential));
     AgentChannelState {
         remote: RemoteState {
             open_tasks: vec![OpenTask { task: task(open), since: chrono::Utc::now(), state: standing, unsaid: None, work: Some(work) }],

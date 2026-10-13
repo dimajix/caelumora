@@ -848,7 +848,7 @@ pub(crate) mod testing {
         store.entity_stores().sessions.create(&system, &session).await.unwrap();
         store.entity_stores().channels.create(&system, &channel).await.unwrap();
         let session = SessionLoop::new(session, vec![channel], Arc::clone(&runtime)).await.unwrap();
-        let context = SecurityContext::new(ActorId::User(owner), session_id, session.channels()[0].id()).next(ActorId::Agent(agent.id), ActorId::User(owner));
+        let context = SecurityContext::new(ActorId::User(owner), session_id, session.channels()[0].id()).next(ActorId::Agent(agent.id), ActorId::User(owner), ActorId::User(owner));
         WithWorkspace { files, session, agent: agent.id, context, workspace, runtime }
     }
 }

@@ -23,7 +23,8 @@ waits.
     `DenyOnFirst`), counting only those who may approve, and decides again when users join or leave.
     A request nobody decides times out after ten minutes. The approver's decision is the only way a
     decision reaches an agent, and an approval is over only once the approver says so, not when one
-    user answered.
+    user answered. The approver speaks in its own name, answered for by the owner of its channel,
+    with whoever began the call as initiator.
 5.  **Resumption.** The agent runs the granted calls and continues its turn.
 
 A denial or a timeout finishes the call at once, with `denied` or `timed_out`.
@@ -153,10 +154,13 @@ answers. Its calls are presented as `questions`: frontends show the questions an
 the record of the answers, nothing raw.
 
 1.  **Admission.** The executor asks the tool for the call's questions after `describe`, checks them
-    (`Questions::check`) and puts them to the users of the channel: by handle, or the agent's owner.
-    A handle that names no user of the channel, or an owner who does not take part, makes the call
-    invalid. A call that needs approval is approved first, then asks. Whoever approves sees the
-    arguments, never the answers.
+    (`Questions::check`) and puts them to the users of the channel: by handle, the agent's owner
+    (`Addressee::Owner`), or whoever caused the call (`Addressee::Initiator`, the initiator of the
+    turn - the customer a bank's agent serves, not the bank). A tool that asks for something
+    sensitive names the owner or the initiator itself, never a handle the model chose. A handle that
+    names no user of the channel, or an owner or initiator who does not take part as a user, makes
+    the call invalid. A call that needs approval is approved first, then asks. Whoever approves sees
+    the arguments, never the answers.
 2.  **Request.** The agent sends `QuestionRequested` under an id of the runtime's - not the model's
     call id, which some backends repeat. The moderator sends it to the users of the channel - to
     those asked alone if the questions are sensitive - never to the approver or other agents. Only
