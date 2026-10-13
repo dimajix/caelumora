@@ -23,6 +23,7 @@ use caelumora_model::message::{Message, MessageId};
 use caelumora_model::work::TurnId;
 use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
+use caelumora_model::type_map::TypeKey;
 use caelumora_model::store::{EntityStore, StateStore, StoreError};
 use caelumora_model::user::UserId;
 use tracing::{info, warn};
@@ -245,6 +246,9 @@ pub struct ChannelLoop {
 }
 
 impl ChannelLoop {
+    /// The facets it asks its components for (issue 337).
+    pub(crate) const COMPONENT_FACETS: &[TypeKey] = &[TypeKey::of::<dyn Moderator>()];
+
     /// Builds the channel and its actors, whose runtimes `runtime` creates and
     /// which reach the channel through it once it exists.
     pub async fn new(channel: Channel, runtime: ChannelRuntime) -> Result<Arc<Self>> {
@@ -258,12 +262,13 @@ impl ChannelLoop {
         let security_context = runtime.controller_manager().owner_context(channel.security_attributes.owner_id, session_id, id).await?;
         let components = ComponentContainer::from_config(
             &channel.components,
+            Self::COMPONENT_FACETS,
             runtime.component_registry(),
             &ComponentContext::new(security_context, runtime.services().clone()),
         )
         .await
-        .map_err(SessionError::InvalidModerator)?;
-        let moderator = components.one::<dyn Moderator>().await.map_err(SessionError::InvalidModerator)?;
+        .map_err(SessionError::InvalidComponents)?;
+        let moderator = components.one::<dyn Moderator>().await.map_err(SessionError::InvalidComponents)?;
         
         let state = match state_store.get_channel_state(id).await {
             Ok(s) => s,

@@ -312,7 +312,7 @@ impl From<SessionError> for ApiError {
             SessionError::NotFound(_) => Self::not_found("session_not_found", detail),
             SessionError::TemplateNotFound(_) => Self::not_found("template_not_found", detail),
             SessionError::ChannelNotFound { .. } => Self::not_found("channel_not_found", detail),
-            SessionError::InvalidModerator(_) | SessionError::NotAParticipant { .. } | SessionError::ClassificationRefused(_) => Self::bad_request("invalid_channel", detail),
+            SessionError::InvalidComponents(_) | SessionError::NotAParticipant { .. } | SessionError::ClassificationRefused(_) => Self::bad_request("invalid_channel", detail),
             SessionError::WorkspaceOutOfScope(_) => Self::bad_request("workspace_out_of_scope", detail),
             SessionError::ScopeNotEmpty { .. } => Self::conflict("scope_not_empty", detail),
             // A caller that is no user: not the client's request.

@@ -1830,9 +1830,34 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
     let withdrawn = StoredComponents { security_attributes: attributes(Some(world.bob), &[]), ..policy };
     world.store.update_components(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec("other"))).await;
-    assert!(matches!(refused.err().and_then(|e| e.downcast::<SessionError>().ok()), Some(SessionError::InvalidModerator(_))));
+    assert!(matches!(refused.err().and_then(|e| e.downcast::<SessionError>().ok()), Some(SessionError::InvalidComponents(_))));
     assert_eq!(asked, checks(&["alice: GetComponents(bob's) no"]));
     assert!(session.channel_by_name("other").is_none(), "nothing is created");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Components a channel would not take - a tool, which it never calls - are
+/// refused before creating it is asked (issue 337): only what naming them
+/// asks is asked, reading the list that brings them; nothing is built in the
+/// owner's name, so no secret of theirs is read for it.
+#[tokio::test]
+async fn a_channel_is_refused_a_tool_before_anything_is_built() {
+    let world = World::new().await;
+    let tools = StoredComponents::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("echo", "echo_tool")] }, attributes(Some(world.bob), &[world.alice]));
+    world.store.create_components(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
+    let session = world.shared_session(&[], &[]).await;
+    let spec = ChannelSpec {
+        name: "tooled".to_string(),
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "id": "bobs-tools" }), ..ComponentDescriptor::new("tools", PRECONFIGURED_REF_KIND) }] },
+        participants: vec![], classification: None, language: None, uses_workspace: None,
+    };
+
+    let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec)).await;
+    let refused = refused.err().and_then(|e| e.downcast::<SessionError>().ok());
+    assert!(matches!(&refused, Some(SessionError::InvalidComponents(_))), "{refused:?}");
+    assert!(refused.is_some_and(|e| e.to_string().contains("'tools'")), "named by the ref that brings it");
+    assert_eq!(asked, checks(&["alice: GetComponents(bob's) yes"]), "only the list read as she names it");
+    assert!(session.channel_by_name("tooled").is_none(), "nothing is created");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

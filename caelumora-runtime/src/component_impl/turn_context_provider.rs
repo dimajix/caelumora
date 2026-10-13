@@ -80,7 +80,7 @@ fn joined(parts: Vec<(String, Option<Classification>)>) -> (String, Option<Class
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(TURN_CONTEXT_PROVIDER_KIND).provides::<dyn ContextProvider>(),
+        ComponentKind::new(TURN_CONTEXT_PROVIDER_KIND).provides::<dyn ContextProvider>().needs::<dyn PromptProvider>(),
         |_descriptor, context| async move {
             // Every prompt part of the agent, in the order of its
             // configuration: the parts of one position are joined in this

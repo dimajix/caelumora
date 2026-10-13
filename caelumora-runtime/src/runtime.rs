@@ -25,7 +25,7 @@ use caelumora_model::session::Session;
 use caelumora_model::removal::Deletable;
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, StateStore, StoreBackend, StoreResult};
-use caelumora_model::type_map::TypeMap;
+use caelumora_model::type_map::{TypeKey, TypeMap};
 use crate::plugin::Plugin;
 use crate::seed::{self, SeedSection};
 use serde::de::DeserializeOwned;
@@ -652,8 +652,8 @@ impl RuntimeManager {
         // Each configuration on its own, so that component ids only need to
         // be unique within one of them.
         for config in [&self.commands, &session.commands] {
-            let container = ComponentContainer::from_config(config, &self.component_registry, &context).await?;
-            providers.extend(container.get_all::<dyn ChannelCommandProvider>(None));
+            let container = ComponentContainer::from_config(config, &[TypeKey::of::<dyn ChannelCommandProvider>()], &self.component_registry, &context).await?;
+            providers.extend(container.get_all::<dyn ChannelCommandProvider>(None)?);
         }
         Ok(CommandExecutor::new(Arc::clone(self.security_manager()), providers)?)
     }

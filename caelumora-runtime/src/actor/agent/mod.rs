@@ -8,6 +8,7 @@ use crate::actor::{Actor, Answering};
 use run_control::{interruption, Interrupt, RunControl};
 use crate::agent::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use crate::view::ViewsFactory;
+use crate::command::AgentCommandProvider;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::context::ContextProvider;
 use crate::llm::LLMClient;
@@ -33,6 +34,7 @@ use caelumora_model::turn::GivenUpReason;
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus, ToolSet};
+use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
 use tracing::{debug, info, warn, Instrument};
 use std::sync::Arc;
@@ -84,6 +86,17 @@ pub struct AgentActor {
 }
 
 impl AgentActor {
+    /// The facets it asks its components for (issue 337) - its commands
+    /// through `AgentCommands`.
+    pub const COMPONENT_FACETS: &[TypeKey] = &[
+        TypeKey::of::<dyn ContextProvider>(),
+        TypeKey::of::<dyn LLMClient>(),
+        TypeKey::of::<dyn PerceiveInProcessor>(),
+        TypeKey::of::<dyn EmitOutProcessor>(),
+        TypeKey::of::<dyn ToolProvider>(),
+        TypeKey::of::<dyn AgentCommandProvider>(),
+    ];
+
     /// The context it acts in, here: its owner's delegate, with its owner's
     /// roles as they are now and limited as it was built (issue 304).
     fn security_context(&self) -> SecurityContext {
@@ -112,6 +125,7 @@ impl AgentActor {
 
         let components = ComponentContainer::from_config(
             &personality.components,
+            Self::COMPONENT_FACETS,
             actor_runtime.component_registry(),
             // Its components get nothing of its runtime (issue 128); what they
             // read of the session they read through their turn (issue 163).
@@ -120,12 +134,12 @@ impl AgentActor {
         .await?;
         let context_provider = components.one::<dyn ContextProvider>().await?;
         let llm_client = components.one::<dyn LLMClient>().await?;
-        let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None);
-        let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None);
+        let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
+        let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
         let tool_executor = ToolExecutor::new(
             Arc::clone(actor_runtime.security_manager()),
             Arc::clone(actor_runtime.confidentiality()),
-            components.get_all::<dyn ToolProvider>(None),
+            components.get_all::<dyn ToolProvider>(None)?,
             Arc::clone(actor_runtime.approval_rules()),
             Arc::clone(actor_runtime.session_controller()),
             channel_controller,

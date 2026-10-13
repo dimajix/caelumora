@@ -52,7 +52,7 @@ impl ContextProvider for ExternalContextProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(EXTERNAL_CONTEXT_PROVIDER_KIND).provides::<dyn ContextProvider>(),
+        ComponentKind::new(EXTERNAL_CONTEXT_PROVIDER_KIND).provides::<dyn ContextProvider>().needs::<dyn PromptProvider>(),
         |_descriptor, context| async move {
             // In the order of the configuration, which is the order they are
             // given in.

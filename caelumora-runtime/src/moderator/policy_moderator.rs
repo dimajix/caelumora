@@ -396,7 +396,7 @@ impl ModeratorActors {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(POLICY_MODERATOR_KIND).provides::<dyn Moderator>(),
+        ComponentKind::new(POLICY_MODERATOR_KIND).provides::<dyn Moderator>().needs::<dyn ResponderPolicy>(),
         |descriptor, context| async move {
             let max_agent_hops = match descriptor.params.get("max_agent_hops") {
                 None => DEFAULT_MAX_AGENT_HOPS,
@@ -416,6 +416,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::moderator::Moderator;
+    use crate::channel::ChannelLoop;
     use crate::testing::test_registry;
     use crate::moderator::{broadcast_policy, mentions_only_policy, random_policy, round_robin_policy, user_driven_policy};
     use caelumora_model::actor::EventContext;
@@ -549,7 +550,7 @@ mod tests {
         let registry = Arc::new(test_registry(store));
         let context = ComponentContext::new(SecurityContext::default(), Services::empty());
         let config = ComponentConfig { component_nodes: config.iter().map(|(id, kind)| ComponentDescriptor::new(id, kind)).collect() };
-        let container = ComponentContainer::from_config(&config, &registry, &context).await.unwrap();
+        let container = ComponentContainer::from_config(&config, ChannelLoop::COMPONENT_FACETS, &registry, &context).await.unwrap();
         container.one::<dyn Moderator>().await.unwrap().facet
     }
 
@@ -715,13 +716,13 @@ mod tests {
             ..ComponentDescriptor::new("moderator", POLICY_MODERATOR_KIND)
         }] };
 
-        let container = ComponentContainer::from_config(&configured(serde_json::json!(0)), &registry, &context).await.unwrap();
+        let container = ComponentContainer::from_config(&configured(serde_json::json!(0)), ChannelLoop::COMPONENT_FACETS, &registry, &context).await.unwrap();
         let moderator = container.one::<dyn Moderator>().await.unwrap().facet;
         let agents = add_agents(moderator.as_ref());
         let decision = moderator.route(&message_from(agents[0], "@c", vec![agents[2]])).await;
         assert!(responders(&decision).is_empty(), "with no hops allowed, agents answer only users");
 
-        let invalid = ComponentContainer::from_config(&configured(serde_json::json!(-1)), &registry, &context).await;
+        let invalid = ComponentContainer::from_config(&configured(serde_json::json!(-1)), ChannelLoop::COMPONENT_FACETS, &registry, &context).await;
         assert!(invalid.is_err(), "a negative limit is refused");
     }
 

@@ -290,7 +290,7 @@ impl CompactionStrategy for SummaryCompaction {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(SUMMARY_COMPACTION_KIND).provides::<dyn CompactionStrategy>(),
+        ComponentKind::new(SUMMARY_COMPACTION_KIND).provides::<dyn CompactionStrategy>().needs::<dyn LLMClient>().needs::<dyn KnowledgeRestorer>(),
         |descriptor, context| async move {
             let SummaryCompactionConfig { keep_last } = crate::component::config_of_params(&descriptor.params)?;
             // The agent's own model writes the summary.

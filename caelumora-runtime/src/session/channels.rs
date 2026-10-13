@@ -134,10 +134,13 @@ impl SessionLoop {
             }
         }
 
-        // Whoever names preconfigured components names only what they may
-        // read themselves, though the channel builds them in its owner's
-        // name (issue 321): their own request, asked before the verb.
-        self.runtime_manager.component_registry().require_readable(&spec.components, context).await.map_err(SessionError::InvalidModerator)?;
+        // Components the channel would not take are refused before the verb
+        // (issue 337); and whoever names preconfigured components names only
+        // what they may read themselves, though the channel builds them in
+        // its owner's name (issue 321): their own request.
+        self.runtime_manager.component_registry()
+            .require_acceptable(&spec.components, ChannelLoop::COMPONENT_FACETS, context).await
+            .map_err(SessionError::InvalidComponents)?;
 
         let mut channel = Channel::build(self.id, session.security_attributes.owner_id, name, spec.components, classification, language, participants);
         if let Some(uses) = spec.uses_workspace {
@@ -324,6 +327,11 @@ impl SessionLoop {
 #[cfg(test)]
 mod tests {
     use caelumora_model::actor::ActorId;
+    use caelumora_model::channel::moderation_components;
+    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+    use crate::moderator::broadcast_policy::BROADCAST_POLICY_KIND;
+    use crate::moderator::random_policy::RANDOM_POLICY_KIND;
+    use crate::tool::echo_tool::ECHO_TOOL_KIND;
 
     use crate::channel::ChannelLoop;
 
@@ -421,13 +429,17 @@ mod tests {
         assert!(matches!(taken.downcast_ref::<StoreError>(), Some(StoreError::NameTaken { entity: "channel" })), "by the store, as names are compared: {taken}");
         let refusal = |result: Result<Arc<ChannelLoop>>| result.expect_err("refused").downcast::<SessionError>().expect("a SessionError");
         assert!(matches!(refusal(session.create_channel(&ctx, spec("x", vec![stranger])).await), SessionError::NotAParticipant { .. }));
-        let unknown = ChannelSpec { components: caelumora_model::channel::moderation_components(None, Some("nobody")), ..spec("x", vec![]) };
-        assert!(matches!(refusal(session.create_channel(&ctx, unknown).await), SessionError::InvalidModerator(_)));
-        let two = caelumora_model::component::ComponentConfig { component_nodes: vec![
-            caelumora_model::component::ComponentDescriptor::new("one", crate::moderator::broadcast_policy::BROADCAST_POLICY_KIND),
-            caelumora_model::component::ComponentDescriptor::new("two", crate::moderator::random_policy::RANDOM_POLICY_KIND),
+        let unknown = ChannelSpec { components: moderation_components(None, Some("nobody")), ..spec("x", vec![]) };
+        assert!(matches!(refusal(session.create_channel(&ctx, unknown).await), SessionError::InvalidComponents(_)));
+        let two = ComponentConfig { component_nodes: vec![
+            ComponentDescriptor::new("one", BROADCAST_POLICY_KIND),
+            ComponentDescriptor::new("two", RANDOM_POLICY_KIND),
         ] };
-        assert!(matches!(refusal(session.create_channel(&ctx, ChannelSpec { components: two, ..spec("x", vec![]) }).await), SessionError::InvalidModerator(_)), "a channel has one policy");
+        assert!(matches!(refusal(session.create_channel(&ctx, ChannelSpec { components: two, ..spec("x", vec![]) }).await), SessionError::InvalidComponents(_)), "a channel has one policy");
+        let tool = ComponentConfig { component_nodes: vec![
+            ComponentDescriptor::new("echo", ECHO_TOOL_KIND),
+        ] };
+        assert!(matches!(refusal(session.create_channel(&ctx, ChannelSpec { components: tool, ..spec("x", vec![]) }).await), SessionError::InvalidComponents(_)), "a channel calls no tool (issue 337)");
 
         assert_eq!(session.channels().len(), 1);
         assert_eq!(runtime.entity_stores().sessions.get(&ctx, session.id()).await.unwrap().channels.len(), 1);

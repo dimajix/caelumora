@@ -153,6 +153,7 @@ mod tests {
     use axum::routing::get;
     use caelumora_mcp::tool::MCP_TOOL_KIND;
     use caelumora_model::actor::ActorId;
+    use caelumora_model::agent::PersonalityKind;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::security::{DummySecurityManager, SecurityContext};
     use caelumora_model::secret::SecretManager;
@@ -160,8 +161,11 @@ mod tests {
     use caelumora_model::store::query::Query;
     use caelumora_model::store::{ComponentStore, EntityStoreFactory};
     use caelumora_model::template::ParticipantTemplate;
+    use caelumora_model::type_map::TypeKey;
     use caelumora_model::value::text::Description;
     use caelumora_runtime::backend::Backends;
+    use caelumora_runtime::actor::agent::AgentActor;
+    use caelumora_runtime::actor::external_agent::ExternalAgentActor;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};
     use caelumora_model::config::BackendConfig;
     use caelumora_runtime::runtime::{RuntimeManager, Services};
@@ -252,7 +256,12 @@ mod tests {
         // The services a runtime gives them (issue 296).
         let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
         for personality in seed.personalities.iter().map(|seeded| &seeded.personality) {
-            ComponentContainer::from_config(&personality.components, runtime.component_registry(), &context).await
+            // Asked for what its actor asks for (issue 337).
+            let asked = match personality.kind {
+                PersonalityKind::Internal => AgentActor::COMPONENT_FACETS,
+                PersonalityKind::External => ExternalAgentActor::COMPONENT_FACETS,
+            };
+            ComponentContainer::from_config(&personality.components, asked, runtime.component_registry(), &context).await
                 .unwrap_or_else(|e| panic!("personality {} cannot be built: {e}", personality.name));
         }
     }
@@ -265,8 +274,8 @@ mod tests {
         let runtime = runtime(&Arc::new(MemoryStore::new()));
         let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
         let config = ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } }), ..ComponentDescriptor::new("tracker", MCP_TOOL_KIND) }] };
-        let container = ComponentContainer::from_config(&config, runtime.component_registry(), &context).await.expect("the kind is known");
-        let tools = container.get_all::<dyn ToolProvider>(None);
+        let container = ComponentContainer::from_config(&config, &[TypeKey::of::<dyn ToolProvider>()], runtime.component_registry(), &context).await.expect("the kind is known");
+        let tools = container.get_all::<dyn ToolProvider>(None).unwrap();
         assert_eq!(tools.len(), 1);
         assert!(tools[0].unavailable().is_some());
     }

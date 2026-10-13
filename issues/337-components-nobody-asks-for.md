@@ -1,6 +1,6 @@
 # 337 — A container builds every component it is configured with, also those nobody asks for
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -111,3 +111,20 @@ can ask it, and it is a second pattern beside `uses`.
 ## History
 
 - **2026-10-13** — Opened from the discussion of issue 321; variant a) chosen.
+- **2026-10-13** — Implemented as chosen. `TypeKey::of` became a `const fn` first, as a step of
+  its own, so that an owner's facets are a constant (`AgentActor::COMPONENT_FACETS`,
+  `ExternalAgentActor::…`, `ChannelLoop::…`; the session's commands ask for
+  `ChannelCommandProvider`). `needs` was declared by five kinds, not three: besides
+  `policy_moderator` and the two context providers, `compaction` needs a `CompactionStrategy`, and
+  `summary_compaction` an `LLMClient` and `KnowledgeRestorer`s. `ComponentContainer::get_all`
+  answers a `Result` now, so that it can refuse a facet the container was not built for
+  (`ComponentError::Undeclared`, also what a factory gets for a facet its kind does not need).
+  The test of the example seed built `hermes-remote`, an external agent, as an agent; it now asks
+  for what each personality's actor asks for.
+- **2026-10-13** — Also checked before the verb: `ComponentRegistry::require_readable` became
+  `require_acceptable`, which plans the configuration as the container does - `ref`s resolved in
+  the writer's name, ids, kinds, singles - and checks the closure, building nothing; a channel is
+  refused a tool before `CreateChannel` is asked (security suite). `SessionError::InvalidModerator`
+  was renamed `InvalidComponents`, as it is what every error of a channel's components is; the
+  REST code `invalid_channel` is unchanged. Not checked before the verb: personalities and
+  templates as they are stored - their components are refused when they are built.

@@ -29,6 +29,7 @@ use super::commands::AgentCommands;
 use super::intake::{catch_up, take_in};
 use super::{failure_message, reject_retries};
 use crate::actor::{Actor, Answering};
+use crate::command::AgentCommandProvider;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::agent::state::AgentStateHandle;
 use crate::component_impl::external_context_provider::EXTERNAL_CONTEXT_PROVIDER_KIND;
@@ -46,6 +47,7 @@ use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, ProcessingStateHolder};
 use caelumora_model::agent::{AgentId, Personality};
 use caelumora_model::channel::Channel;
+use caelumora_model::type_map::TypeKey;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::command::Command;
@@ -139,6 +141,15 @@ enum Ending {
 }
 
 impl ExternalAgentActor {
+    /// The facets it asks its components for (issue 337) - its commands
+    /// through `AgentCommands`.
+    pub const COMPONENT_FACETS: &[TypeKey] = &[
+        TypeKey::of::<dyn ExternalAgent>(),
+        TypeKey::of::<dyn PerceiveInProcessor>(),
+        TypeKey::of::<dyn ContextProvider>(),
+        TypeKey::of::<dyn AgentCommandProvider>(),
+    ];
+
     /// The context it acts in, here: its owner's delegate, with its owner's
     /// roles as they are now and limited as it was built (issue 304).
     fn security_context(&self) -> SecurityContext {
@@ -171,11 +182,12 @@ impl ExternalAgentActor {
         let components = ComponentContainer::with_defaults(
             &personality.components,
             &defaults,
+            Self::COMPONENT_FACETS,
             actor_runtime.component_registry(),
             &ComponentContext::new(security_context.clone(), actor_runtime.services().clone()),
         ).await?;
         let remote = components.one::<dyn ExternalAgent>().await?;
-        let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None);
+        let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
         let context_provider = components.one::<dyn ContextProvider>().await?;
 
         // Answers that may never enter the channel would each be dropped
