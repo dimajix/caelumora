@@ -31,7 +31,7 @@ mod local;
 mod local_shell;
 
 pub use commands::{CommandKey, Commands, Kept};
-pub(crate) use local::{write_whole, WriteFailure};
+pub use local::{write_whole, WriteFailure};
 
 use crate::backend::Backends;
 use crate::component::{ComponentError, ComponentResult};

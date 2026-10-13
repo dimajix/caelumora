@@ -200,7 +200,7 @@ fn partial(target: &Path) -> PathBuf {
 
 /// Why writing a file whole failed (`write_whole`).
 #[derive(Debug)]
-pub(crate) enum WriteFailure {
+pub enum WriteFailure {
     /// More than the limit came.
     TooLarge,
     /// What was to be written broke off.
@@ -214,7 +214,7 @@ pub(crate) enum WriteFailure {
 /// it lies in must exist. Answers how many bytes were written. Shared by
 /// the files of a local workspace and the content of local artifacts
 /// (issue 271).
-pub(crate) async fn write_whole(target: &Path, mut content: ByteStream, limit: u64) -> Result<u64, WriteFailure> {
+pub async fn write_whole(target: &Path, mut content: ByteStream, limit: u64) -> Result<u64, WriteFailure> {
     let part = partial(target);
     let written = async {
         let mut file = fs::File::create(&part).await.map_err(WriteFailure::Io)?;

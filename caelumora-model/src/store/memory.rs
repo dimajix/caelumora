@@ -326,7 +326,6 @@ impl StateStore for MemoryStore {
 mod tests {
     use super::*;
     use crate::store::suite;
-    use crate::session::SessionId;
     use crate::user::UserId;
     use crate::confidentiality::ConfidentialityRules;
     use crate::security::OwnershipSecurityManager;
@@ -338,7 +337,10 @@ mod tests {
 
     #[tokio::test]
     async fn answers_queries() {
-        suite::queries_behave(&Arc::new(MemoryStore::new()).entity_stores()).await;
+        let store = Arc::new(MemoryStore::new());
+        suite::queries_behave(&store.entity_stores()).await;
+        let Ok(folders) = store.entity_store::<suite::Folder>();
+        suite::queries_reach_parts(folders.as_ref()).await;
     }
 
     /// A limit counts what the caller may read (issue 293): the policy is
@@ -346,20 +348,19 @@ mod tests {
     #[tokio::test]
     async fn a_limit_counts_what_the_caller_may_read() {
         use crate::actor::ActorId;
-        use crate::artifact::tests::version;
-        use crate::artifact::{Artifact, ArtifactId};
         use crate::confidentiality::Classification;
         use crate::scope::Scope;
         use crate::security::OwnershipSecurityManager;
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().artifacts;
+        use crate::workspace::Workspace;
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().workspaces;
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut hers = Vec::new();
         for (index, owner) in [alice, bob, bob, alice, bob, alice].into_iter().enumerate() {
-            let name = ScopedName::new(format!("a{index}.csv"), Scope::UserScope { user_id: owner }).unwrap();
-            let artifact = Artifact::new(ArtifactId::new(), name, "files", Classification::CHANNEL_DEFAULT, owner, version(b"a,b", SessionId::new()));
-            store.create(&SecurityContext::system(), &artifact).await.unwrap();
+            let name = ScopedName::new(format!("w{index}"), Scope::UserScope { user_id: owner }).unwrap();
+            let workspace = Workspace::new(name, "main", Classification::CHANNEL_DEFAULT, owner);
+            store.create(&SecurityContext::system(), &workspace).await.unwrap();
             if owner == alice {
-                hers.push(artifact.id);
+                hers.push(workspace.id);
             }
         }
         hers.sort_by_key(|id| id.to_string());
@@ -368,7 +369,7 @@ mod tests {
         let mut query = Query::all().limited(1);
         loop {
             let page = store.list(&ctx, &query).await.unwrap();
-            read.extend(page.items.iter().map(|a| a.id));
+            read.extend(page.items.iter().map(|w| w.id));
             match page.next {
                 Some(cursor) => {
                     assert_eq!(page.items.len(), 1, "every page that goes on is full, however many of bob's lie between");

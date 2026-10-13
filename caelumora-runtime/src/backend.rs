@@ -1,6 +1,7 @@
 //! Backends (issue 324): what serves a service - a storage of workspaces
-//! (`dyn TerminalProvider`) or of artifacts (`dyn ArtifactStorage`), a user
-//! provider (`dyn UserProvider`), a secret provider (`dyn SecretProvider`) -
+//! (`dyn TerminalProvider`) or of a plugin's (a storage of artifacts, issue
+//! 328), a user provider (`dyn UserProvider`), a secret provider (`dyn
+//! SecretProvider`) -
 //! named in the configuration by its type (`BackendConfig`) and made by the
 //! factory registered under that type for the service: the core's
 //! (`Backends::built_in`) or a plugin's (`Plugin::backends`).
@@ -61,12 +62,11 @@ impl Backends {
         Self::default()
     }
 
-    /// The core's backends: the storages of `terminal` and of `artifact`,
-    /// the secrets of a file and of the environment, and `accept_any`.
+    /// The core's backends: the storages of `terminal`, the secrets of a
+    /// file and of the environment, and `accept_any`.
     pub fn built_in() -> Self {
         let mut backends = Self::new();
         crate::terminal::register_backends(&mut backends);
-        crate::artifact::register_backends(&mut backends);
         backends.register::<dyn SecretProvider, _>("file", |_, params, _| {
             let config: FileSecretConfig = config_of_params(params)?;
             Ok(Arc::new(FileSecretProvider::new(config.path)))

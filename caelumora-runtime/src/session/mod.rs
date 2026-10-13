@@ -95,7 +95,7 @@ fn shown_holder(holder: &Scope) -> String {
     }
 }
 
-/// How many of each kind are left, as an error says it: "1 agent, 2 artifact".
+/// How many of each kind are left, as an error says it: "1 agent, 2 workspace".
 fn shown_left(left: &[(EntityKind, usize)]) -> String {
     left.iter().map(|(kind, count)| format!("{count} {kind}")).collect::<Vec<_>>().join(", ")
 }

@@ -20,9 +20,9 @@ use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
 use caelumora_model::channel::{moderation_components, Channel, Participant};
-use caelumora_model::config::{ArtifactsConfig, BackendConfig, WorkspacesConfig};
+use caelumora_model::config::{BackendConfig, WorkspacesConfig};
 use crate::backend::Backends;
-use serde_json::json;
+use serde_json::{json, Value};
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityPolicy, ConfidentialityRules, Confidentiality, Place};
 use caelumora_model::role::{RoleId, Roles};
 use caelumora_model::store::memberships::StoreMemberships;
@@ -50,8 +50,11 @@ use crate::view::ViewsFactory;
 use caelumora_model::actor::{ActorEvent, EventContext};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::context::ModelProfile;
-use caelumora_model::message::{Message, MessageEvent};
-use caelumora_model::tool::Tool;
+use caelumora_model::message::{Message, MessageEvent, MessageRole};
+use caelumora_model::component::ComponentDescriptor;
+use caelumora_model::tool::{Tool, ToolCall, ToolVisibility};
+use std::collections::BTreeMap;
+use std::path::Path;
 use futures::stream::BoxStream;
 use futures::StreamExt;
 use std::time::Duration;
@@ -179,7 +182,9 @@ pub struct World {
     pub alice: UserId,
     pub bob: UserId,
     pub carol: UserId,
-    /// Where the storage "main" keeps the workspaces' files.
+    /// Where the storage "main" keeps the workspaces' files, the storage
+    /// "shell" in `shell` below it - and a plugin's storage what its section
+    /// puts there (`configured`).
     pub files: TempDir,
 }
 
@@ -197,6 +202,14 @@ impl World {
     /// The world with `plugins` (issue 323), and the component kinds
     /// `register` adds besides the built-in ones.
     pub async fn with(plugins: &[&dyn Plugin], register: impl FnOnce(&mut ComponentRegistry)) -> Self {
+        Self::configured(plugins, |_| BTreeMap::new(), register).await
+    }
+
+    /// The world with `plugins`, the sections of the configuration they
+    /// claim, as `sections` writes them given `files` - where a plugin's
+    /// storage may lie beside the workspaces' (issue 328) -, and the
+    /// component kinds `register` adds besides the built-in ones.
+    pub async fn configured(plugins: &[&dyn Plugin], sections: impl FnOnce(&Path) -> BTreeMap<String, Value>, register: impl FnOnce(&mut ComponentRegistry)) -> Self {
         let roles = Roles::new([(*STAFF, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
         // The policy learns who takes part where from the store it guards
@@ -212,9 +225,8 @@ impl World {
         let files = tempfile::tempdir().unwrap();
         let shell = BackendConfig::new("local", json!({ "root": files.path().join("shell"), "shell": true, "destination": { "level": "internal" } }));
         let workspaces = WorkspacesConfig { storage: [("main".to_string(), BackendConfig::new("local", json!({ "root": files.path() }))), ("shell".to_string(), shell)].into(), ..Default::default() };
-        let artifacts = ArtifactsConfig { storage: [("kept".to_string(), BackendConfig::new("local", json!({ "root": files.path().join("artifacts") })))].into(), ..Default::default() };
-        let config = AppConfig { workspaces, artifacts, ..Default::default() };
-        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::<Recorder>::clone(&recorder), &config, registry, &Backends::with_plugins(plugins)).unwrap();
+        let config = AppConfig { workspaces, plugins: sections(files.path()), ..Default::default() };
+        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::<Recorder>::clone(&recorder), &config, registry, Backends::with_plugins(plugins)).unwrap();
         for plugin in plugins {
             builder.plugin(*plugin).unwrap();
         }
@@ -383,6 +395,48 @@ impl World {
         self.manager.open_session(&Self::as_user(self.alice), session.id).await.expect("alice opens her session")
     }
 
+    /// What is asked when the agent of `owner`, with a component of `kind`,
+    /// asked by bob, makes the call its model makes - the kind "once",
+    /// registered with the world (`register_once`, `calling`) - in the
+    /// session's workspace, where the files `present` lie already - until
+    /// `done` says the call arrived, given where the storages keep their
+    /// files (`files`) and where the workspace's lie.
+    pub async fn asked_for_a_call(&self, kind: &str, present: &[&str], done: impl Fn(&Path, &Path) -> bool, owner: UserId) -> Vec<String> {
+        let working = Personality {
+            components: ComponentConfig { component_nodes: vec![
+                ComponentDescriptor::new("model", ONCE_MODEL_KIND),
+                ComponentDescriptor {
+                    params: json!({ "requires_approval": false }),
+                    ..ComponentDescriptor::new("workspace", kind)
+                },
+            ] },
+            ..self.personality("working", None, &[]).await
+        };
+        self.runtime.entity_stores().personalities.update(&Self::system(), &working).await.unwrap();
+        let helper = self.agent("helper", owner, &working).await;
+        let alice = Self::as_user(self.alice);
+        let docs = self.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: self.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+        let session = self.shared_session(&[helper], &[]).await;
+        session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+        let main = Arc::clone(&session.channels()[0]);
+
+        let place = self.files.path().join("shell").join(docs.id.to_string());
+        for file in present {
+            std::fs::create_dir_all(place.join(file).parent().unwrap()).unwrap();
+            std::fs::write(place.join(file), "present").unwrap();
+        }
+        let (_, asked) = self.asked(async {
+            main.user_actor(self.bob).unwrap().send_message("@helper do it".to_string(), None).await.expect("sent");
+            timeout(Duration::from_secs(5), async {
+                while !done(self.files.path(), &place) {
+                    sleep(Duration::from_millis(10)).await;
+                }
+            }).await.expect("the call reached the workspace");
+        }).await;
+        self.manager.stop_session(&alice, session.id()).await.unwrap();
+        asked
+    }
+
     /// The ids of the members of `channel` as `user` sees them.
     pub async fn members(&self, user: UserId, session: SessionId, channel: ChannelId) -> Vec<ActorId> {
         let view = self.manager.views(Viewer::new(Self::as_user(user))).session(session).await.unwrap().channel(channel).await.unwrap();
@@ -474,6 +528,37 @@ impl LLMClient for Once {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }
+}
+
+/// The kind of the model `World::asked_for_a_call` gives its agent.
+pub const ONCE_MODEL_KIND: &str = "once";
+
+/// What a model answers to call `function` with `arguments`.
+pub fn calling(function: &str, arguments: Value) -> Message {
+    Message {
+        role: MessageRole::Assistant,
+        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: function.to_string(), arguments, visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
+        ..Message::new(Classification::general(Confidentiality::Internal))
+    }
+}
+
+/// That `asked` asked for an agent's call on the workspace: all of it in
+/// one context (issue 255) - the call and the workspace with alice's
+/// rights, its owner's, asked by bob - and the workspace through the
+/// channel as the agent reads every other place, with its owner's
+/// clearance (issue 142): its terminal reached through the session, its
+/// access list asked (`GetWorkspace`, issue 23), its flow both ways, before
+/// anything is sent to the storage.
+pub fn asked_as_a_call_on_the_workspace(asked: &[String]) {
+    let calling: Vec<&String> = asked.iter().filter(|line| line.contains("CallTool")).collect();
+    assert!(!calling.is_empty() && calling.iter().all(|line| *line == "alice as helper, asked by bob: CallTool yes"), "the call as its owner, asked by bob: {asked:?}");
+    let agents: Vec<&String> = asked.iter().filter(|line| line.contains("as helper")).collect();
+    assert!(agents.iter().all(|line| line.starts_with("alice as helper, asked by bob:") && line.ends_with(" yes")), "one context for all the turn does: {asked:?}");
+    assert!(agents.contains(&&"alice as helper, asked by bob: GetSession(alice's) yes".to_string()), "its terminal through the session: {asked:?}");
+    let listed: Vec<&String> = agents.iter().copied().filter(|line| line.contains("Workspace")).collect();
+    assert!(listed.iter().any(|line| line.contains("GetWorkspace")), "its list asked: {asked:?}");
+    assert!(listed.iter().all(|line| line.ends_with("Workspace(alice's) yes")), "and only of the workspace attached: {asked:?}");
+    assert!(agents.iter().filter(|line| line.contains("Publish")).count() >= 4, "the flow both ways, for the workspace and its terminal: {asked:?}");
 }
 
 /// A model component of the kind `kind` that answers its first call with

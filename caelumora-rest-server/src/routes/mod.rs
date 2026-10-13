@@ -18,7 +18,6 @@ use caelumora_runtime::view::{ChannelView, Viewer, Views};
 use std::sync::Arc;
 
 mod agents;
-mod artifacts;
 mod channels;
 mod compartments;
 mod events;
@@ -78,10 +77,10 @@ pub fn views(state: &Arc<AppState>, user: &AuthenticatedUser) -> Views {
 
 /// `content` of `size` bytes, streamed, as a download named `name`: always
 /// an attachment of `application/octet-stream`, never shown inline and
-/// never sniffed - a file of a workspace or an artifact is anybody's
-/// content, and HTML or SVG would otherwise run in the web UI's origin
-/// (issues 208, 253, 271) -, and not cached.
-pub(crate) fn attachment_response(size: u64, content: caelumora_runtime::terminal::ByteStream, name: &str) -> axum::response::Response {
+/// never sniffed - a file of a workspace or a plugin's content, such as an
+/// artifact's, is anybody's content, and HTML or SVG would otherwise run in
+/// the web UI's origin (issues 208, 253, 271) -, and not cached.
+pub fn attachment_response(size: u64, content: caelumora_runtime::terminal::ByteStream, name: &str) -> axum::response::Response {
     use axum::http::{header, HeaderValue};
     use axum::response::IntoResponse;
     let mut response = axum::body::Body::from_stream(content).into_response();
@@ -148,14 +147,6 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
             "/workspaces/{id}/files/{*path}",
             get(workspaces::download_file).put(workspaces::upload_file).delete(workspaces::delete_file),
         )
-        .route("/artifacts", get(artifacts::list_artifacts))
-        .route("/artifacts/{id}", get(artifacts::get_artifact).delete(artifacts::delete_artifact))
-        .route("/artifacts/{id}/scope", axum::routing::put(artifacts::keep_artifact))
-        .route("/artifacts/{id}/description", axum::routing::put(artifacts::describe_artifact))
-        .route("/artifacts/{id}/restore", post(artifacts::restore_artifact))
-        .route("/artifacts/{id}/purge", post(artifacts::purge_artifact))
-        .route("/artifacts/{id}/access", axum::routing::put(artifacts::set_access))
-        .route("/artifacts/{id}/versions/{n}/content", get(artifacts::download_version))
         .route("/sessions", get(sessions::list_sessions).post(sessions::create_session))
         .route(
             "/sessions/{id}",
@@ -178,7 +169,6 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
         .route("/sessions/{id}/channels/{cid}/description", axum::routing::put(channels::update_channel_description))
         .route("/sessions/{id}/channels/{cid}/restore", post(channels::restore_channel))
         .route("/sessions/{id}/channels/{cid}/uses-workspace", axum::routing::put(workspaces::set_uses_workspace))
-        .route("/sessions/{id}/channels/{cid}/artifacts", get(artifacts::channel_artifacts))
         .route("/sessions/{id}/channels/{cid}/commands/{command_id}/kill", post(workspaces::kill_command))
         .route(
             "/sessions/{id}/channels/{cid}/messages/{mid}",

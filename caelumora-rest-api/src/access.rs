@@ -40,7 +40,7 @@ pub enum AccessKind {
 impl AccessEntry {
     /// The entry as it is shown; `None` for one that names no user, role
     /// or place, which no list stores.
-    pub(crate) fn of(entry: snapshot::AccessSnapshot) -> Option<Self> {
+    pub fn of(entry: snapshot::AccessSnapshot) -> Option<Self> {
         let (kind, id) = match entry.subject {
             Subject::Actor(ActorId::User(user)) => (AccessKind::User, user.0),
             Subject::Actor(_) => return None,

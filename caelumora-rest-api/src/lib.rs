@@ -11,7 +11,6 @@
 pub mod access;
 pub mod agent;
 pub mod auth;
-pub mod artifact;
 pub mod channel;
 pub mod compartment;
 pub mod context;

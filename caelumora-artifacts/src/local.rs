@@ -2,13 +2,13 @@
 //! the configured root, a file per version, on Caelumora's host - written
 //! whole or not at all, as the files of a local workspace are.
 
-use super::{ArtifactError, ArtifactResult, ArtifactStorage};
-use crate::backend::Backends;
-use crate::component::config_of_params;
-use crate::terminal::{write_whole, ByteStream, WriteFailure};
+use crate::artifact::ArtifactId;
+use crate::manager::{ArtifactError, ArtifactResult, ArtifactStorage};
 use async_trait::async_trait;
-use caelumora_model::artifact::ArtifactId;
 use caelumora_model::confidentiality::Classification;
+use caelumora_runtime::backend::Backends;
+use caelumora_runtime::component::config_of_params;
+use caelumora_runtime::terminal::{write_whole, ByteStream, WriteFailure};
 use serde::Deserialize;
 use std::io::ErrorKind;
 use std::path::PathBuf;
@@ -30,7 +30,7 @@ struct LocalArtifactStorageConfig {
 }
 
 /// Registers the storage `local` of artifacts with `backends`.
-pub(super) fn register_backend(backends: &mut Backends) {
+pub(crate) fn register_backend(backends: &mut Backends) {
     backends.register::<dyn ArtifactStorage, _>("local", |_, params, _| {
         let config: LocalArtifactStorageConfig = config_of_params(params)?;
         Ok(Arc::new(LocalArtifactStorage::new(config.root, config.destination)))

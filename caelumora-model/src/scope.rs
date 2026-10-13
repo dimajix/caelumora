@@ -189,7 +189,7 @@ pub trait Scoped {
 /// says: it belongs to a user and lies in a session's scope, its owner's or the global
 /// one, never a channel's, since a session's channels share it. Checked
 /// when it is stored (`Stored::validate`).
-pub(crate) fn validate_users_own(kind: &str, attributes: &SecurityAttributes, scope: &Scope) -> Result<(), String> {
+pub fn validate_users_own(kind: &str, attributes: &SecurityAttributes, scope: &Scope) -> Result<(), String> {
     let ActorId::User(owner) = attributes.owner_id else { return Err(format!("a {kind} belongs to a user")) };
     match scope {
         Scope::SessionScope { .. } | Scope::GlobalScope => Ok(()),

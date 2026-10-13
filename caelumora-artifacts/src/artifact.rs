@@ -7,20 +7,23 @@
 //! the artifact names - configured, not stored -, one piece per version;
 //! the document holds what is known of them.
 
-use crate::actor::ActorId;
-use crate::confidentiality::Classification;
-use crate::digest::Digest;
-use crate::removal::{Deletable, Removal, Stored};
-use crate::scope::{Scope, Scoped, ScopedField};
-use crate::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
-use crate::session::{ChannelId, SessionId};
-use crate::store::query::Field;
-use crate::user::UserId;
-use crate::value::name::ScopedName;
-use crate::value::text::Description;
+use caelumora_model::actor::ActorId;
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::define_id;
+use caelumora_model::digest::Digest;
+use caelumora_model::removal::{Deletable, Removal, Stored};
+use caelumora_model::scope::{validate_users_own, Scope, Scoped, ScopedField};
+use caelumora_model::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
+use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::snapshot::AccessSnapshot;
+use caelumora_model::store::query::Field;
+use caelumora_model::store::EntityKind;
+use caelumora_model::user::UserId;
+use caelumora_model::value::name::ScopedName;
+use caelumora_model::value::text::Description;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::store::EntityKind;
+use std::collections::BTreeMap;
 
 define_id!(ArtifactId);
 
@@ -234,7 +237,7 @@ impl Stored for Artifact {
     /// artifact's may (issue 23) and grants reading alone - reading the
     /// version, of those who read the artifact (issue 316).
     fn validate(&self) -> Result<(), String> {
-        crate::scope::validate_users_own("artifact", &self.security_attributes, &self.name.scope)?;
+        validate_users_own("artifact", &self.security_attributes, &self.name.scope)?;
         for version in &self.versions {
             self.version_attributes(version).validate()?;
             if version.acl.iter().any(|entry| entry.grant != Grant::Read) {
@@ -287,18 +290,53 @@ impl Scoped for Artifact {
     }
 }
 
+/// An artifact as the viewer sees it (issue 271): its owner, among their
+/// artifacts - with every version -, or a reader of a channel - with the
+/// versions published there alone.
+#[derive(Debug, Clone)]
+pub struct ArtifactSnapshot {
+    /// With the versions the viewer may read alone (issue 23).
+    pub artifact: Artifact,
+    /// Whether the viewer may change it - keep it, describe it, share it,
+    /// delete it (`UpdateArtifact`): its owner.
+    pub can_change: bool,
+    /// Whether the viewer may add a version (`WriteArtifact`, issue 23).
+    pub can_write: bool,
+    /// Its own access list, for whoever may change it - empty for
+    /// everybody else.
+    pub access: Vec<AccessSnapshot>,
+    /// The lists of its versions, by number, for whoever may change it.
+    pub version_access: BTreeMap<u32, Vec<AccessSnapshot>>,
+    /// Where its versions were published, by number (issue 291) - asked
+    /// for where one artifact is read
+    /// (`ArtifactView::snapshot_with_publications`): those whose channel the
+    /// viewer may read alone.
+    pub publications: BTreeMap<u32, PublicationSnapshot>,
+}
+
+/// Where a version of an artifact was published and by whom, by name (issue
+/// 291), as a reader of its channel knows them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PublicationSnapshot {
+    pub session_name: String,
+    pub channel_name: String,
+    /// `None` for a publisher that no longer exists.
+    pub published_by: Option<String>,
+}
+
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-    use Stored;
-    use crate::scope::Scope;
+    use caelumora_model::agent::AgentId;
+    use caelumora_model::digest;
+    use caelumora_model::group::GroupId;
 
     /// A version of `content`, published in a channel of `session_id`.
-    pub(crate) fn version(content: &[u8], session_id: SessionId) -> ArtifactVersion {
+    fn version(content: &[u8], session_id: SessionId) -> ArtifactVersion {
         ArtifactVersion {
             number: 0,
             size: content.len() as u64,
-            digest: crate::digest::content(content),
+            digest: digest::content(content),
             media_type: None,
             description: None,
             session_id,
@@ -344,7 +382,6 @@ pub(crate) mod tests {
 
     #[test]
     fn a_version_is_read_by_whom_its_own_list_grants_it_of_the_artifacts_readers() {
-        use crate::group::GroupId;
         let (alice, bob) = (UserId::new(), UserId::new());
         let session_id = SessionId::new();
         let (drafts, team) = (GroupId::of_channel(ChannelId::new()), GroupId::of_channel(ChannelId::new()));
@@ -366,7 +403,7 @@ pub(crate) mod tests {
         written.versions[1].acl = vec![AclEntry { grant: Grant::Write, ..read_by(team) }];
         assert!(written.validate().is_err(), "a version's list grants reading alone");
         let mut agent = shared;
-        agent.versions[1].acl = vec![AclEntry { subject: Subject::Actor(ActorId::Agent(crate::agent::AgentId::new())), grant: Grant::Read }];
+        agent.versions[1].acl = vec![AclEntry { subject: Subject::Actor(ActorId::Agent(AgentId::new())), grant: Grant::Read }];
         assert!(agent.validate().is_err(), "and names no agent");
     }
 

@@ -1,6 +1,6 @@
 use crate::channel::ChannelLoop;
 use crate::command::{CommandExecutor, ChannelCommandProvider};
-use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry};
+use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult};
 use crate::controller::{ControllerManager, SessionController};
 use crate::event::EventBus;
 use crate::recorder::{BlackholeRecorder, Recorder};
@@ -16,7 +16,7 @@ use crate::agent::state::{AgentStateHandle, AgentStates};
 use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::view::ViewsFactory;
 use caelumora_model::component::ComponentConfig;
-use caelumora_model::config::AppConfig;
+use caelumora_model::config::{AppConfig, BackendConfig};
 use caelumora_model::secret::{SecretManager, SecretProvider};
 use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::user_provider::{UserManager, UserProvider};
@@ -36,7 +36,6 @@ use caelumora_model::confidentiality::ConfidentialityPolicy;
 use std::sync::{Arc, OnceLock, Weak};
 use crate::agent::manager::AgentManager;
 use crate::group::GroupManager;
-use crate::artifact::{ArtifactManager, ArtifactStorage};
 use crate::terminal::TerminalProvider;
 use crate::scoped::{ScopeMember, ScopedEntities, Unowned};
 use crate::workspace::WorkspaceManager;
@@ -65,8 +64,6 @@ pub struct RuntimeManager {
     agent_states: Arc<AgentStates>,
     /// The one owner of workspaces and their places (issue 253).
     workspaces: Arc<WorkspaceManager>,
-    /// The one owner of artifacts and their content (issue 271).
-    artifacts: Arc<ArtifactManager>,
     /// The one writer of teams (issue 286).
     groups: Arc<GroupManager>,
     /// The one owner of agents' lifecycle (issue 314).
@@ -330,11 +327,14 @@ pub struct RuntimeBuilder {
     controller_manager: Arc<ControllerManager>,
     agent_states: Arc<AgentStates>,
     workspaces: Arc<WorkspaceManager>,
-    artifacts: Arc<ArtifactManager>,
     groups: Arc<GroupManager>,
     agents: Arc<AgentManager>,
     scope_members: Vec<Arc<dyn ScopeMember>>,
     services: Services,
+    /// The backends of the core and of the plugins, and what a backend may
+    /// ask for - which a plugin's service is made of, too (issue 328).
+    backends: Backends,
+    backend_services: Services,
     /// The sections of the configuration that no plugin claimed yet.
     sections: BTreeMap<String, serde_json::Value>,
     /// The names of the sections of the configuration that were claimed.
@@ -361,18 +361,18 @@ impl RuntimeBuilder {
     /// the components that replace built-in defaults of facets of which an
     /// agent has one (`component_defaults`, issue 99), what the system
     /// restricts of tool calls (`approvals`, issue 13), the storages
-    /// workspaces are made in (`workspaces`, issue 253), those artifacts
-    /// are kept in (`artifacts`, issue 271), the user providers (`users`)
-    /// and the sections of the plugins. `component_registry` holds the
+    /// workspaces are made in (`workspaces`, issue 253), the user providers
+    /// (`users`) and the sections of the plugins. `component_registry` holds the
     /// component kinds agents and sessions are built from -
     /// `ComponentRegistry::built_in`, to which a test may add stand-ins,
     /// such as a model of its own (issue 130). `backends` makes the
-    /// storages and the user providers `config` names (issue 324):
+    /// storages and the user providers `config` names (issue 324), and
+    /// later the backends of a plugin's service (`make_named`):
     /// `Backends::with_plugins` of the plugins registered afterwards.
     ///
     /// # Errors
     /// If a store of the core's kinds cannot be opened, or a storage of
-    /// workspaces or artifacts or a user provider cannot be made.
+    /// workspaces or a user provider cannot be made.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         state_store: Arc<dyn StateStore>,
@@ -382,7 +382,7 @@ impl RuntimeBuilder {
         confidentiality: Arc<dyn ConfidentialityPolicy>,
         config: &AppConfig,
         component_registry: ComponentRegistry,
-        backends: &Backends,
+        backends: Backends,
     ) -> Result<Self> {
         let backend = backend.into();
         let entity_stores = backend.entity_stores()?;
@@ -398,8 +398,6 @@ impl RuntimeBuilder {
             .with(Arc::clone(&entity_stores.users));
         let storages = backends.make_named::<dyn TerminalProvider>("storage of workspaces", &config.workspaces.storage, &backend_services)?;
         let workspaces = WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), Arc::clone(&controller_manager), storages, &config.workspaces)?;
-        let storages = backends.make_named::<dyn ArtifactStorage>("storage of artifacts", &config.artifacts.storage, &backend_services)?;
-        let artifacts = Arc::new(ArtifactManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), storages, &config.artifacts)?);
         // Users are recorded and their changes announced on the event bus
         // (issue 306).
         let user_providers = backends.make_chain::<dyn UserProvider>("user provider", &config.users.providers, &backend_services)?;
@@ -411,14 +409,12 @@ impl RuntimeBuilder {
             Arc::new(Unowned(Arc::clone(&entity_stores.session_templates))),
             Arc::<AgentManager>::clone(&agents),
             Arc::<WorkspaceManager>::clone(&workspaces),
-            Arc::<ArtifactManager>::clone(&artifacts),
         ];
         let services = Services::empty()
             .with(Arc::clone(&security_manager))
             .with(Arc::clone(&confidentiality))
             .with(Arc::clone(&secret_manager))
-            .with(Arc::clone(&workspaces))
-            .with(Arc::clone(&artifacts));
+            .with(Arc::clone(&workspaces));
         Ok(Self {
             backend,
             state_store,
@@ -435,11 +431,12 @@ impl RuntimeBuilder {
             controller_manager,
             agent_states,
             workspaces,
-            artifacts,
             groups,
             agents,
             scope_members,
             services,
+            backends,
+            backend_services,
             sections: config.plugins.clone(),
             claimed: BTreeSet::new(),
             seed_sections: BTreeMap::new(),
@@ -471,7 +468,7 @@ impl RuntimeBuilder {
         let secret_providers = backends.make_chain::<dyn SecretProvider>("secret provider", &config.secrets.providers, &secret_services)?;
         let secret_manager = Arc::new(SecretManager::new(secret_providers, Arc::clone(&security_manager)));
         let registry = ComponentRegistry::built_in(backend.component_store());
-        let mut builder = Self::new(state_store, backend, secret_manager, security_manager, confidentiality, config, registry, &backends)?;
+        let mut builder = Self::new(state_store, backend, secret_manager, security_manager, confidentiality, config, registry, backends)?;
         for plugin in plugins {
             builder.plugin(*plugin)?;
         }
@@ -538,6 +535,18 @@ impl RuntimeBuilder {
         self.services.get::<T>()
     }
 
+    /// The backends of `T` - a service of the plugin's own - that `configs`
+    /// names, by their names, made as the core's are: by the factories the
+    /// core and the plugins registered (`Plugin::backends`), given what a
+    /// backend may ask for. `what` names one of them in messages - "storage
+    /// of artifacts".
+    ///
+    /// # Errors
+    /// `ComponentError::Backend` naming the first that cannot be made.
+    pub fn make_named<T: ?Sized + 'static>(&self, what: &str, configs: &BTreeMap<String, BackendConfig>) -> ComponentResult<BTreeMap<String, Arc<T>>> {
+        self.backends.make_named(what, configs, &self.backend_services)
+    }
+
     /// Makes `member` go with what holds the scope it lies in: deleted,
     /// restored and purged with it, after the core's kinds.
     pub fn scope_member(&mut self, member: Arc<dyn ScopeMember>) {
@@ -599,7 +608,6 @@ impl RuntimeBuilder {
             approval_rules: self.approval_rules,
             agent_states: self.agent_states,
             workspaces: self.workspaces,
-            artifacts: self.artifacts,
             groups: self.groups,
             agents: self.agents,
             scoped,
@@ -624,7 +632,7 @@ impl RuntimeManager {
         config: &AppConfig,
         component_registry: ComponentRegistry,
     ) -> Result<Self> {
-        RuntimeBuilder::new(state_store, backend, secret_manager, security_manager, confidentiality, config, component_registry, &Backends::built_in())?.build()
+        RuntimeBuilder::new(state_store, backend, secret_manager, security_manager, confidentiality, config, component_registry, Backends::built_in())?.build()
     }
 
     /// Puts what the seed files `paths` hold into the stores (issue 105):
@@ -703,10 +711,6 @@ impl RuntimeManager {
         &self.workspaces
     }
 
-    /// The one owner of artifacts and their content (issue 271).
-    pub fn artifact_manager(&self) -> &Arc<ArtifactManager> {
-        &self.artifacts
-    }
 
     /// The one writer of teams (issue 286).
     pub fn group_manager(&self) -> &Arc<GroupManager> {
@@ -787,7 +791,6 @@ mod tests {
         for (yaml, names) in [
             ("workspaces:\n  storage:\n    main:\n      type: nfs\n", ["the storage of workspaces 'main' (nfs)", "known are: local"]),
             ("workspaces:\n  storage:\n    dev:\n      type: local\n      root: x\n      max_run_secs: 0\n", ["'dev'", "max_run_secs"]),
-            ("artifacts:\n  storage:\n    kept:\n      type: local\n", ["the storage of artifacts 'kept' (local)", "root"]),
             ("users:\n  providers:\n    - type: accept_any\n      default_roles: [staff]\n", ["the user provider 1 (accept_any)", "staff"]),
             ("secrets:\n  providers:\n    - type: env\n    - type: vault\n", ["the secret provider 2 (vault)", "known are: env, file"]),
         ] {

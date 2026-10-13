@@ -15,6 +15,7 @@ caelumora-runtime = { path = "../caelumora-runtime" }
 caelumora-logging = { path = "../caelumora-logging" }
 caelumora-rest-server = { path = "../caelumora-rest-server" }
 caelumora-skills = { path = "../caelumora-skills" }
+caelumora-artifacts = { path = "../caelumora-artifacts" }
 caelumora-mcp = { path = "../caelumora-mcp" }
 caelumora-a2a = { path = "../caelumora-a2a" }
 caelumora-open-terminal = { path = "../caelumora-open-terminal" }

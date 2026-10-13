@@ -54,10 +54,6 @@ bitflags::bitflags! {
         /// Of a session or channel: its briefing (issue 245), which may be
         /// long - not where they are listed.
         const BRIEFING = 1 << 6;
-        /// Of an artifact: where each version was published and by whom, by
-        /// name (issue 291) - not where artifacts are listed, since every
-        /// version's channel is reached for it.
-        const PUBLICATIONS = 1 << 7;
     }
 }
 
@@ -316,38 +312,6 @@ pub struct AccessSnapshot {
     /// For a group, where it lies (issue 286): the scope of the session or
     /// channel whose participants it is, or a team's.
     pub scope: Option<Scope>,
-}
-
-/// An artifact as the viewer sees it (issue 271): its owner, among their
-/// artifacts - with every version -, or a reader of a channel - with the
-/// versions published there alone.
-#[derive(Debug, Clone)]
-pub struct ArtifactSnapshot {
-    /// With the versions the viewer may read alone (issue 23).
-    pub artifact: crate::artifact::Artifact,
-    /// Whether the viewer may change it - keep it, describe it, share it,
-    /// delete it (`UpdateArtifact`): its owner.
-    pub can_change: bool,
-    /// Whether the viewer may add a version (`WriteArtifact`, issue 23).
-    pub can_write: bool,
-    /// Its own access list, for whoever may change it - empty for
-    /// everybody else.
-    pub access: Vec<AccessSnapshot>,
-    /// The lists of its versions, by number, for whoever may change it.
-    pub version_access: std::collections::BTreeMap<u32, Vec<AccessSnapshot>>,
-    /// Where its versions were published, by number (`Detail::PUBLICATIONS`,
-    /// issue 291): those whose channel the viewer may read alone.
-    pub publications: std::collections::BTreeMap<u32, PublicationSnapshot>,
-}
-
-/// Where a version of an artifact was published and by whom, by name (issue
-/// 291), as a reader of its channel knows them.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PublicationSnapshot {
-    pub session_name: String,
-    pub channel_name: String,
-    /// `None` for a publisher that no longer exists.
-    pub published_by: Option<String>,
 }
 
 /// An agent as the viewer sees it in the list of agents (issue 164).

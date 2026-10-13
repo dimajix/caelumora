@@ -28,10 +28,11 @@ Security is a context that travels with every operation, and explicit checks aga
     entity's kind and a `Verb` - `Get`, `Create`, `Update`, `Delete`, `ReadDeleted`, `Restore`,
     `Purge` - and `ActionType::List` by the kind alone. It is named by both in the log and in this
     documentation: `GetSession`, `DeleteWorkspace`; a listing as `List(session)`.
-*   **A kind's own verb** - using a skill (`skill::USE`), writing a workspace's files or adding an
-    artifact's version (`WRITE`) - is a `CustomVerb`, named likewise (`UseSkill`,
-    `WriteWorkspace`). It says what it *requires*, in a right every policy knows: what an entry
-    grants (`Read`, `Write`), or owning the entity. A policy decides it by that, so a kind can map
+*   **A kind's own verb** - using a skill (`skill::USE`, the plugin's own), writing a workspace's
+    files or adding an artifact's version (`WRITE`, the core's, which any kind may use, issue
+    328) - is a `CustomVerb`, named likewise (`UseSkill`, `WriteWorkspace`). It says what it
+    *requires*, in a right every policy knows: what an entry grants (`Read`, `Write`), or owning
+    the entity. A policy decides it by that, so a kind can map
     a verb onto a right but never invent one; a policy that decides one verb of one kind otherwise
     tells it by its kind and name. The verbs every kind has, and the actions of the core that
     concern no single stored entity, a policy decides one by one, so that a policy that forgets one

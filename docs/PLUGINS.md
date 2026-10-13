@@ -40,6 +40,10 @@ asks the services it is given - the policies, the `SecretManager`, the store of 
     kinds use (`ComponentKind::uses`), its views read through (`Views::service`) and its routes
     take when they are built;
 *   registers its component kinds (`components()`), as `register_all` does for the built-in ones;
+*   makes the backends of a service of its own from its section of the configuration
+    (`make_named`), with the factories the core and the plugins registered and what a backend may
+    ask for, as the core makes those of its services: the storages of artifacts, say, of which
+    another crate may bring one, registered for the plugin's service (issue 328);
 *   makes its kind go with what holds the scope it lies in (`scope_member`, a `ScopeMember`);
 *   claims its section of the configuration (`config::<C>(name)`), read as `C`, and of the seed
     files (`seed_section`, a `SeedSection`). Both sections stand at the top level of their files;
@@ -47,6 +51,9 @@ asks the services it is given - the policies, the `SecretManager`, the store of 
 
 Its views are an extension trait on `Views`, built from what `Views` opens: the viewer's `context`,
 the `security` and `confidentiality` policies, its manager as a `service`, and `channel_reading`.
+What a channel's view lists of its kind - the artifacts published in it, say - is an extension trait
+on `ChannelView`, which opens its `views` and how its viewer reads it (`reading`): whether the
+viewer reads the channel stays the channel's to decide (issue 328).
 Its routes come from `caelumora_rest_server::plugin::RestPlugin`, a `Plugin` that builds a `Router`
 with the `AppState`; the API serves them behind the same login as the core's (`routes::api`). A
 plugin that brings a component kind alone, such as `caelumora-mcp` (issue 325), `caelumora-a2a`

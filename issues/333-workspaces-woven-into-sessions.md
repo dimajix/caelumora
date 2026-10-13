@@ -75,3 +75,9 @@ out through 324 and 327 either way.
 ## History
 
 - **2026-10-12** — Opened as a follow-up of issue 323 (step 11), with what moving skills showed.
+- **2026-10-13** — Artifacts moved first (issue [328](328-artifacts-in-a-crate-of-their-own.md),
+  option C). What `caelumora-artifacts` uses of workspaces: the `WorkspaceManager` as a service of
+  its component (`terminal_in`, to read the file it publishes), `WorkspacePath`, `ByteStream`, and
+  `write_whole` with `WriteFailure` for its local storage. While workspaces stay in the core, that
+  is a dependency of a plugin on the core; should they move, it becomes one of a plugin on another,
+  for which there is no rule yet.

@@ -101,7 +101,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 
 | No. | Status | Issue |
 |---|---|---|
-| [328](328-artifacts-in-a-crate-of-their-own.md) | open | Artifacts are enumerated in the core like skills, and need seams skills do not - the channel's view, an event that carries a version, a verb shared with workspaces, a dependency on workspaces. |
 | [333](333-workspaces-woven-into-sessions.md) | open | Workspaces are part of what sessions, channels and templates are - an attached workspace, its use per channel, one made by a template -, so they cannot leave the core as skills did. |
 | [335](335-channel-events-name-their-session.md) | open | The events of channels and their members are variants of their own beside `GlobalEvent::Entity`, which cannot say where an entity lies, so a plugin's kind that lies in a channel has no way to announce it. |
 | [337](337-components-nobody-asks-for.md) | open | A container builds every component it is configured with, also those its owner never asks for, so a tool in a channel reads its owner's secret and connects for nothing. |

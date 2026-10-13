@@ -332,8 +332,7 @@ mod tests {
     use caelumora_model::channel::ChannelUpdateEvent;
     use caelumora_model::security::{Grant, Subject};
     use caelumora_model::event::EntityChange;
-    use caelumora_model::workspace::Workspace;
-    use caelumora_model::artifact::{Artifact, ArtifactId};
+    use caelumora_model::workspace::{Workspace, WorkspaceId};
 
     fn bus() -> EventBus {
         EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()))
@@ -503,7 +502,7 @@ mod tests {
         let reads = |user| Subject::Actor(ActorId::User(user));
         let whole = SecurityAttributes::owned_by(ActorId::User(alice)).granting(reads(bob), Grant::Read).granting(reads(carol), Grant::Read);
         let part = SecurityAttributes::owned_by(ActorId::User(alice)).granting(reads(bob), Grant::Read).granting(reads(dave), Grant::Read);
-        bus.publish_classified_part(GlobalEvent::created::<Artifact>(&ArtifactId::new()), whole, part, &[]);
+        bus.publish_classified_part(GlobalEvent::created::<Workspace>(&WorkspaceId::new()), whole, part, &[]);
 
         assert_eq!(drain(&mut alices).await.len(), 1, "its owner");
         assert_eq!(drain(&mut bobs).await.len(), 1, "who reads both");

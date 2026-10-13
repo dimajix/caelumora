@@ -10,7 +10,7 @@
 //! is the model's to end, or a user's (issue 294): `kill_command` ends it
 //! through the same shell as `WorkspaceManager::kill_command` does for them.
 
-use super::{failed, tool, TerminalToolConfig};
+use super::{tool, TerminalToolConfig};
 use crate::terminal::{CommandState, Shell};
 use caelumora_model::workspace::CommandStatus;
 use crate::tool::{arguments, ToolError, ToolResult};
@@ -185,7 +185,7 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
             if command.trim().is_empty() {
                 return Err(ToolError::InvalidParameter("'command' must name a command".to_string()));
             }
-            let id = shell.start(&command).await.map_err(failed)?;
+            let id = shell.start(&command).await?;
             let guard = KillOnDrop { shell: Arc::clone(&shell), id: id.clone(), armed: true };
             let state = shell.output(&id, 0, wait(config, wait_secs)).await;
             guard.disarm();
@@ -199,7 +199,7 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
             let Follow { id, offset, .. } = arguments(params)?;
             shell.kill(&id, offset.unwrap_or(0)).await
         }
-    }.map_err(failed)?;
+    }?;
     Ok(result(config, state))
 }
 

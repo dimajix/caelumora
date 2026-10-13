@@ -4,7 +4,6 @@
 //! tool components, one file per component kind. A component that offers tools along with another facet - a prompt
 //! part, say - stays in `component_impl`.
 
-pub mod artifact_tool;
 pub mod ask_user_tool;
 pub mod calculator_tool;
 pub mod echo_tool;
@@ -653,7 +652,6 @@ impl ToolExecutor {
 
 /// Registers the tool kinds with `registry`.
 pub fn register_all(registry: &mut ComponentRegistry) {
-    artifact_tool::register(registry);
     ask_user_tool::register(registry);
     calculator_tool::register(registry);
     echo_tool::register(registry);

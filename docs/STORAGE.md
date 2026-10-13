@@ -23,8 +23,9 @@ The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived d
     no part of it.
 *   **Skills**: procedures written down for agents, a kind of the plugin `caelumora-skills` (see
     [SKILLS.md](SKILLS.md)).
-*   **Artifacts**: results an agent published, each a user's, with its versions. Their content lies
-    in a configured artifact storage, not in the document.
+*   **Artifacts**: results an agent published, each a user's, with its versions, a kind of the
+    plugin `caelumora-artifacts`. Their content lies in a configured artifact storage, not in the
+    document.
 *   **Groups**: lists of actors an access list names as one subject - a user's teams, and the
     participants of every session and channel (see [SECURITY.md](SECURITY.md#groups)).
 *   **The kinds of the plugins** (see [PLUGINS.md](PLUGINS.md)), kept like the
@@ -55,14 +56,15 @@ change to the stores or to `EntityKind`.
 ### Artifact content
 
 The content of artifacts lies in the storages configured under `artifacts`, each an
-`ArtifactStorage` that puts, reads and deletes a version without asking permissions - a backend,
-made by the factory registered for its `type` (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)). The
-`ArtifactManager` is the one writer of artifact documents and the only code that holds the storages:
-a version's content is kept before the document says it exists, and removed again if the document
-cannot be stored; an artifact is purged with its content, the content first. It knows no workspace:
-where the content comes from is its caller's. Artifacts are entities, not state: each has its own
-owner, permissions, a name unique in its scope and a trash, and one that is kept outlives the
-session it was published in.
+`ArtifactStorage` that puts, reads and deletes a version without asking permissions - a backend of
+the plugin `caelumora-artifacts`, made by the factory registered for its `type` while the plugin
+registers (see [ARCHITECTURE.md](ARCHITECTURE.md#backends), issue 328). The `ArtifactManager` is the
+one writer of artifact documents and the only code that holds the storages: a version's content is
+kept before the document says it exists, and removed again if the document cannot be stored; an
+artifact is purged with its content, the content first. It knows no workspace: where the content
+comes from is its caller's. Artifacts are entities, not state: each has its own owner, permissions,
+a name unique in its scope and a trash, and one that is kept outlives the session it was published
+in.
 
 ### Preconfigured components
 

@@ -350,6 +350,7 @@ dependencies = [
  "anyhow",
  "axum",
  "caelumora-a2a",
+ "caelumora-artifacts",
  "caelumora-logging",
  "caelumora-mcp",
  "caelumora-model",
@@ -366,6 +367,31 @@ dependencies = [
  "tower",
  "tower-http 0.7.1",
  "tracing",
+]
+
+[[package]]
+name = "caelumora-artifacts"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "bytes",
+ "caelumora-model",
+ "caelumora-rest-api",
+ "caelumora-rest-server",
+ "caelumora-runtime",
+ "chrono",
+ "futures",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -592,6 +618,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "caelumora-a2a",
+ "caelumora-artifacts",
  "caelumora-logging",
  "caelumora-mcp",
  "caelumora-model",

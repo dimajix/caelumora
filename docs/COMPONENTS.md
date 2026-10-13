@@ -162,8 +162,8 @@ A container is built with a `ComponentContext`, which holds:
     per piece of work;
 *   the services of the runtime its kind declares it uses - the `SecurityManager` for the questions
     a component asks (`AccessQuestions`), the `SecretManager`, the `WorkspaceManager`, the
-    `ArtifactManager`, the manager a plugin provides - by type, not as fields of the context, so
-    that a new service needs no new field and no component is given one it does not declare. They
+    manager a plugin provides (the `ArtifactManager`, say) - by type, not as fields of the context,
+    so that a new service needs no new field and no component is given one it does not declare. They
     are the runtime's `Services`, which the views and a plugin's routes reach as well;
 *   nothing of the session: what a component reads of it - other channels, their notes and
     histories, what its agent may recall - it reads through the `Turn` it is called with (see
@@ -258,7 +258,7 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `skills` | `PromptProvider`, `ToolProvider`, `AgentCommandProvider`, `KnowledgeRestorer` | `position` (`start`), `requires_approval` (`true`, for writing) | Of the plugin `caelumora-skills`, registered where it is joined. Skills: the catalogue of those the agent may load, `list_skills`, `load_skill` (`WITHOUT_RESULT`), `create_skill`, `update_skill`, and the commands `/skill` and `/skills` ([SKILLS.md](SKILLS.md)). |
 | `channel_history` | `ToolProvider` | - | The tool `read_history` for other channels of the session ([MEMORY.md](MEMORY.md)). |
 | `terminal_tool` | `ToolProvider` | `max_wait_secs` (60, at most 300), `max_output_bytes` (64 KiB, of a command's output or a file), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but `list_files`, `read_file` and `grep_files`; `command_output`, `kill_command` and `publish_file` never ask), `description` (built in) | The session's workspace, where the agent's channel may use it: its files - `list_files`, `read_file`, `grep_files`, `write_file`, `replace_in_file`, `move_file`, `delete_file`, `publish_file` - and a shell in it - `run_command`, `command_output`, `kill_command` ([TOOLS.md](TOOLS.md#the-workspace)). What it can do is what the workspace's terminal can. |
-| `artifact_tool` | `ToolProvider` | `requires_approval` (`true`; `false` - `"unless_read_only"` asks too, since publishing changes what is kept), `description` (built in) | `publish_artifact`: a file of the session's workspace published as a version of an artifact, kept beyond the workspace ([TOOLS.md](TOOLS.md#artifacts)). Without an artifact storage configured, its calls fail and say so. |
+| `artifact_tool` | `ToolProvider` | `requires_approval` (`true`; `false` - `"unless_read_only"` asks too, since publishing changes what is kept), `description` (built in) | Of the plugin `caelumora-artifacts`, registered where it is joined. `publish_artifact`: a file of the session's workspace published as a version of an artifact, kept beyond the workspace ([TOOLS.md](TOOLS.md#artifacts)). Without an artifact storage configured, its calls fail and say so. |
 | `static_system_prompt_provider` | `PromptProvider` | `prompt` (required), `title` (none), `position` (`start`), `classification` (public) | A fixed prompt part, under `[title]` if one is named. |
 | `channel_briefing_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent what its session and channel are for, as their owners wrote it ([AGENT-TURN.md](AGENT-TURN.md#what-the-session-and-channel-are-for)). |
 | `channel_language_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent the language its channel's conversation is held in ([AGENT-TURN.md](AGENT-TURN.md#the-channels-language)). |

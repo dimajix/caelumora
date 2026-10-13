@@ -19,6 +19,7 @@ use caelumora_runtime::llm::LLMClient;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
+use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_mcp::plugin::McpPlugin;
 use caelumora_a2a::plugin::A2aPlugin;
@@ -447,7 +448,7 @@ struct Args {
 
 /// The plugins the terminal builds its runtime with (issue 323).
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(SkillsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin)]
+    vec![Box::new(SkillsPlugin), Box::new(ArtifactsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin)]
 }
 
 /// Names the defaults of the facets of which an agent has one that the core

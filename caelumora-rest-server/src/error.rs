@@ -23,7 +23,6 @@ use caelumora_model::security::Refused;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::TemplateError;
 use caelumora_model::value::ValueError;
-use caelumora_runtime::artifact::ArtifactError;
 use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::command::CommandError;
 use caelumora_runtime::error::{refusal, user_message};
@@ -217,7 +216,6 @@ impl From<ViewError> for ApiError {
             ViewError::MemberNotFound { .. } => Self::not_found("actor_not_found", detail),
             ViewError::WorkspaceNotFound(_) => Self::not_found("workspace_not_found", detail),
             ViewError::GroupNotFound(_) => Self::not_found("group_not_found", detail),
-            ViewError::ArtifactNotFound(_) => Self::not_found("artifact_not_found", detail),
             ViewError::NoContext { .. } => Self::not_found("context_not_recorded", detail),
             ViewError::Forbidden { ref refused, .. } => Self::refused(refused, detail),
             ViewError::Failed(e) => e.into(),
@@ -258,28 +256,6 @@ impl From<GroupError> for ApiError {
             GroupError::Store(e) => Self::of_store(e),
             // A caller that is no user: not the client's request.
             GroupError::OwnerNotAUser => Self::internal("internal_error", "the request", &error.into()),
-        }
-    }
-}
-
-impl From<ArtifactError> for ApiError {
-    fn from(error: ArtifactError) -> Self {
-        let detail = error.to_string();
-        match error {
-            ArtifactError::NotFound(_) | ArtifactError::Store(StoreError::NotFound { .. }) => Self::not_found("artifact_not_found", detail),
-            ArtifactError::VersionNotFound { .. } => Self::not_found("version_not_found", detail),
-            ArtifactError::NotConfigured => Self::bad_request("artifacts_not_configured", detail),
-            ArtifactError::UnknownStorage(_) => Self::bad_request("unknown_storage", detail),
-            ArtifactError::StorageNotCleared(_) => Self::bad_request("storage_not_cleared", detail),
-            ArtifactError::ClassifiedOtherwise(_) => Self::conflict("classified_otherwise", detail),
-            ArtifactError::TooLarge { .. } => Self::bad_request("too_large", detail),
-            ArtifactError::Changed => Self::conflict("changed", detail),
-            ArtifactError::InvalidScope => Self::bad_request("invalid_scope", detail),
-            ArtifactError::Invalid(e) => e.into(),
-            ArtifactError::Store(e) => Self::of_store(e),
-            // A caller that is no user, the storage broke: not the client's
-            // request.
-            ArtifactError::OwnerNotAUser | ArtifactError::Unavailable(_) => Self::internal("internal_error", "the request", &error.into()),
         }
     }
 }
@@ -380,7 +356,7 @@ impl From<anyhow::Error> for ApiError {
                 };
             )*};
         }
-        answer_as!(error, AgentContextError, ViewError, WorkspaceError, GroupError, ArtifactError, TerminalError, SessionError, ChannelError, CommandError, TemplateError);
+        answer_as!(error, AgentContextError, ViewError, WorkspaceError, GroupError, TerminalError, SessionError, ChannelError, CommandError, TemplateError);
         if error.chain().any(|e| matches!(e.downcast_ref(), Some(StoreError::NameTaken { .. }))) {
             return Self::conflict("name_taken", user_message(&error).unwrap_or_else(|| error.to_string()));
         }
@@ -454,7 +430,7 @@ impl From<axum::extract::rejection::PathRejection> for ApiError {
 mod tests {
     use super::*;
     use caelumora_model::actor::ActorId;
-    use caelumora_model::artifact::{Artifact, ArtifactId};
+    use caelumora_model::agent::Agent;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::MessageId;
     use caelumora_model::question::QuestionId;
@@ -603,7 +579,7 @@ mod tests {
         assert_eq!(question(QuestionError::ResponseCount(2)), (400, "invalid_answer".to_string()));
         assert_eq!(answer(TemplateError::UnsupportedScope("group")), (400, "template_invalid".to_string()));
         assert_eq!(answer(SessionError::WorkspaceOutOfScope(WorkspaceId::new())), (400, "workspace_out_of_scope".to_string()));
-        let left = vec![(Artifact::KIND, 1)];
+        let left = vec![(Agent::KIND, 1)];
         assert_eq!(answer(SessionError::ScopeNotEmpty { holder: Scope::SessionScope { session_id: session }, left }), (409, "scope_not_empty".to_string()), "what is left is the others' to take away (issue 320)");
     }
 
@@ -616,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn workspaces_their_files_and_artifacts_answer_with_status_and_code() {
+    fn workspaces_and_their_files_answer_with_status_and_code() {
         let id = WorkspaceId::new();
         assert_eq!(answer(WorkspaceError::NotFound(id)), (404, "workspace_not_found".to_string()));
         assert_eq!(answer(WorkspaceError::UnknownStorage("nfs".to_string())), (400, "unknown_storage".to_string()));
@@ -631,12 +607,5 @@ mod tests {
         assert_eq!(answer(TerminalError::NotEmpty("a".to_string())), (409, "directory_not_empty".to_string()));
         assert_eq!(answer(TerminalError::Unavailable("permission denied".to_string())), (503, "storage_unavailable".to_string()));
         assert_eq!(answer(TerminalError::UnknownCommand("7".to_string())), (404, "command_not_found".to_string()), "nor one not started in the channel");
-        let artifact = ArtifactId::new();
-        assert_eq!(answer(ArtifactError::NotFound(artifact)), (404, "artifact_not_found".to_string()));
-        assert_eq!(answer(ArtifactError::VersionNotFound { artifact, version: 2 }), (404, "version_not_found".to_string()));
-        assert_eq!(answer(ArtifactError::ClassifiedOtherwise("r.csv".to_string())), (409, "classified_otherwise".to_string()));
-        assert_eq!(answer(ArtifactError::Store(StoreError::PermissionDenied(refused("artifact")))), (403, "artifact_forbidden".to_string()));
-        assert_eq!(answer(ArtifactError::Store(StoreError::NameTaken { entity: "artifact" })), (409, "name_taken".to_string()));
-        assert_eq!(answer(ArtifactError::Unavailable("broken".to_string())).0, 500, "the storage's failure is not the client's");
     }
 }
