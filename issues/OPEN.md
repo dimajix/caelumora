@@ -55,6 +55,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [316](316-store-checks-artifact-without-versions.md) | open | The store checks an artifact against its own access list only, not its versions', so the views list and read artifacts in the runtime's name and decide themselves who may read them.
 | [317](317-teams-listed-by-a-scan.md) | open | `Views::groups` lists the viewer's teams by reading every group and asking the policy of each, while `Views::artifacts` finds them by a query.
 | [339](339-default-access-of-new-versions.md) | open | Whom a new version of an artifact reaches is fixed to the channel it is published in, and neither a default for new versions nor a version's own list can be changed. |
+| [340](340-teams-as-owners.md) | open | Only a person owns anything: no team can own what is done in its name, as a company does, so what is a team's result is one member's and goes with them. |
 | [332](332-policy-as-a-predicate.md) | open | The policy decides entity by entity, so a store filters a list after reading it and no database could put who may read into its query. |
 
 ## Tools and approvals
