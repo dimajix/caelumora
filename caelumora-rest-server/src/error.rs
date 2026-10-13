@@ -23,6 +23,7 @@ use caelumora_model::security::Refused;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::TemplateError;
 use caelumora_model::value::ValueError;
+use caelumora_runtime::agent::manager::AgentError;
 use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::command::CommandError;
 use caelumora_runtime::error::{refusal, user_message};
@@ -244,6 +245,19 @@ impl From<WorkspaceError> for ApiError {
     }
 }
 
+impl From<AgentError> for ApiError {
+    /// A store's error as an operation passed it on, as `From<StoreError>`:
+    /// what the request named - also the personality an agent is made of.
+    fn from(error: AgentError) -> Self {
+        let detail = error.to_string();
+        match error {
+            AgentError::NotFound(_) => Self::not_found("agent_not_found", detail),
+            AgentError::PersonalityOutOfScope(_) => Self::bad_request("personality_out_of_scope", detail),
+            AgentError::Store(e) => e.into(),
+        }
+    }
+}
+
 impl From<GroupError> for ApiError {
     fn from(error: GroupError) -> Self {
         let detail = error.to_string();
@@ -358,7 +372,7 @@ impl From<anyhow::Error> for ApiError {
                 };
             )*};
         }
-        answer_as!(error, AgentContextError, ViewError, WorkspaceError, GroupError, TerminalError, SessionError, ChannelError, CommandError, TemplateError);
+        answer_as!(error, AgentContextError, ViewError, WorkspaceError, AgentError, GroupError, TerminalError, SessionError, ChannelError, CommandError, TemplateError);
         if error.chain().any(|e| matches!(e.downcast_ref(), Some(StoreError::NameTaken { .. }))) {
             return Self::conflict("name_taken", user_message(&error).unwrap_or_else(|| error.to_string()));
         }

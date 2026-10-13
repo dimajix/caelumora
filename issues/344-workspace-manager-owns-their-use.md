@@ -27,7 +27,7 @@ the artifact tool, the workspace prompt part, the channel's and the workspace's 
 
 - **One owner per concern** (AGENTS.md): who looks for who may use a workspace in a channel, or
   what ends a command, finds it among making and renaming workspaces.
-- **The rule of managers and controllers** (STORAGE.md, set with issue
+- **The rule of managers and controllers** (ARCHITECTURE.md, set with issue
   [227](227-agent-management.md)): a manager owns the lifecycle of its kind and, where the kind has
   no controller, what it is. The first half of the `WorkspaceManager` is that; the second is
   neither.

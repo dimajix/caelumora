@@ -253,7 +253,7 @@ mod tests {
             reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
             deleted: None,
         };
-        let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
+        let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
         agent
     }

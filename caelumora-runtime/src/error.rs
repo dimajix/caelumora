@@ -7,6 +7,7 @@
 //! store backend failure, may carry file paths or other internals and belong
 //! in the log only.
 
+use crate::agent::manager::AgentError;
 use crate::command::CommandError;
 use crate::component::ComponentError;
 use crate::context::ContextError;
@@ -61,6 +62,13 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
             // the workspace and what the caller wrote, never a place.
             match e {
                 WorkspaceError::Store(e) => store_message(e),
+                _ => Some(e.to_string()),
+            }
+        } else if let Some(e) = e.downcast_ref::<AgentError>() {
+            // As a workspace's: its store errors are judged as store errors
+            // are, the rest name the agent or its personality.
+            match e {
+                AgentError::Store(e) => store_message(e),
                 _ => Some(e.to_string()),
             }
         } else if let Some(e) = e.downcast_ref::<TerminalError>() {

@@ -263,7 +263,8 @@ never a side effect of the `EntityStore`.
 The live state of the entities of a running session is held by controllers
 (`caelumora_runtime::controller`): `SessionController`, `ChannelController`, `AgentController` and
 `UserController`, made by the `ControllerManager`. The model only defines the documents; keeping
-them live, writing them and announcing changes is the runtime's.
+them live, writing them and announcing changes is the runtime's. What a controller changes and what
+its entity's manager does is in [ARCHITECTURE.md](ARCHITECTURE.md#managers-and-controllers).
 
 *   **Live state.** A controller holds its entity for atomic, lock-free reads of the current value.
 *   **One writer.** A controller is the one writer of its document. It holds a write lock while it

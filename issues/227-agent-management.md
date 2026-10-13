@@ -1,6 +1,6 @@
 # 227 — Agents cannot be seen or managed on their own, only as members of channels
 
-**Status:** open
+**Status:** in progress
 **Area:** User interaction
 
 ## The problem
@@ -73,3 +73,17 @@ notes of all channels, its usage as a whole.
   /personalities`. The dialog that adds a participant to a channel gets a shortcut to it - a new
   agent from a personality, created and then taken in, in two calls - with whichever of the two
   issues is done last; 221 was done first.
+- **2026-10-13** — Decided with the maintainer: the list shows name, scope, personality and owner;
+  the channels an agent takes part in are shown on its page (`Views::agent`), only those the viewer
+  may read. A new agent is made in the user's own scope from the web UI; in a session's scope only
+  through the shortcut of `AddParticipantDialog`. Its memory and private notes across channels are
+  not shown here but left to [19](19-memory-tiers.md); changing an agent's personality is not part
+  of managing it. Renaming stays with the `AgentController`, not the `AgentManager` as the entry of
+  2026-10-11 said: managers own the lifecycle of their entities, and an entity with a controller is
+  changed through it, as sessions, channels and users are. The rule is written down in
+  ARCHITECTURE.md (*Managers and controllers*); the `WorkspaceManager`, which owns more, is issue
+  [344](344-workspace-manager-owns-their-use.md).
+  First step done: `AgentManager::create` makes an agent - `CreateAgent` asked before the
+  personality is read -, announces it and fails with `AgentError`, which the manager's other
+  operations now answer too. The template only finds an agent (`template::agent`) and has the
+  manager make one; `Agent::new` takes the personality's id.

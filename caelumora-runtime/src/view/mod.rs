@@ -838,7 +838,7 @@ mod tests {
             deleted: None,
         };
         store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
-        let agent = Agent::new(ScopedName::new("Helper", Scope::GlobalScope).unwrap(), &personality, owner);
+        let agent = Agent::new(ScopedName::new("Helper", Scope::GlobalScope).unwrap(), personality.id, owner);
         store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
         agent
     }
@@ -1729,7 +1729,7 @@ use caelumora_model::turn::TurnState;
             deleted: None,
         };
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();
-        let thinker = Agent::new(ScopedName::new("thinker", Scope::GlobalScope).unwrap(), &personality, ActorId::User(alice.id));
+        let thinker = Agent::new(ScopedName::new("thinker", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(alice.id));
         store.entity_stores().agents.create(&system, &thinker).await.unwrap();
         let agent = ActorId::Agent(thinker.id);
 

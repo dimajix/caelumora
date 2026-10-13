@@ -490,7 +490,7 @@ mod tests {
             deleted: None,
         };
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();
-        let mut stored = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), &personality, ActorId::System);
+        let mut stored = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), personality.id, ActorId::System);
         stored.security_attributes = agent(&ids);
         store.entity_stores().agents.create(&system, &stored).await.unwrap();
 

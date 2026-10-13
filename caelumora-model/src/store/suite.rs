@@ -445,7 +445,7 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
         create, get, update, delete, list);
     lifecycle!(stores.session_templates.as_ref(), session_template(), |v: &SessionTemplate| v.id, name.name, "session_template",
         create, get, update, delete, list);
-    lifecycle!(stores.agents.as_ref(), Agent::new(scoped("assistant-1"), &personality(), ActorId::None), |v: &Agent| v.id, name.name, "agent",
+    lifecycle!(stores.agents.as_ref(), Agent::new(scoped("assistant-1"), personality().id, ActorId::None), |v: &Agent| v.id, name.name, "agent",
         create, get, update, delete, list);
     lifecycle!(stores.sessions.as_ref(), session(), |v: &Session| v.id, name, "session",
         create, get, update, delete, list);
@@ -484,7 +484,7 @@ pub(crate) async fn entity_store_behaves(stores: &EntityStores) {
         create, delete, find_by_name);
     found_by_name!(stores.session_templates.as_ref(), |name| SessionTemplate { name, id: SessionTemplateId::new(), ..session_template() }, "session_template",
         create, delete, find_by_name);
-    found_by_name!(stores.agents.as_ref(), |name| Agent::new(name, &personality(), ActorId::None), "agent",
+    found_by_name!(stores.agents.as_ref(), |name| Agent::new(name, personality().id, ActorId::None), "agent",
         create, delete, find_by_name);
 
     found_by_name!(stores.workspaces.as_ref(), workspace_named, "workspace",
@@ -543,8 +543,8 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
         elsewhere: |name| SessionTemplate { name: in_scope(name, &users), id: SessionTemplateId::new(), ..session_template() },
         rename: |value: SessionTemplate, name| SessionTemplate { name: in_scope(name, &value.name.scope), ..value }, "session_template",
         create, update, delete, restore);
-    unique_by_name!(stores.agents.as_ref(), |name| Agent::new(in_scope(name, &global), &personality(), ActorId::None),
-        elsewhere: |name| Agent::new(in_scope(name, &users), &personality(), ActorId::None),
+    unique_by_name!(stores.agents.as_ref(), |name| Agent::new(in_scope(name, &global), personality().id, ActorId::None),
+        elsewhere: |name| Agent::new(in_scope(name, &users), personality().id, ActorId::None),
         rename: |value: Agent, name| Agent { name: in_scope(name, &value.name.scope), ..value }, "agent",
         create, update, delete, restore);
     let (session_id, other_session) = (SessionId::new(), SessionId::new());
@@ -566,9 +566,9 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
 
     // Moved into a scope where its name is taken.
     let ctx = SecurityContext::default();
-    let mine = Agent::new(in_scope("Moving", &users), &personality(), ActorId::None);
+    let mine = Agent::new(in_scope("Moving", &users), personality().id, ActorId::None);
     stores.agents.create(&ctx, &mine).await.expect("create");
-    stores.agents.create(&ctx, &Agent::new(in_scope("moving", &global), &personality(), ActorId::None)).await.expect("create");
+    stores.agents.create(&ctx, &Agent::new(in_scope("moving", &global), personality().id, ActorId::None)).await.expect("create");
     let moved = stores.agents.update(&ctx, &Agent { name: in_scope("Moving", &global), ..mine }).await;
     assert!(matches!(moved, Err(StoreError::NameTaken { entity: "agent" })), "nor moved where its name is taken: {moved:?}");
 
@@ -582,7 +582,7 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
 pub(crate) async fn names_are_unique_beyond_what_is_read(stores: &EntityStores) {
     let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
     let (alice, bob) = (UserId::new(), UserId::new());
-    let owned_by = |name: &str, owner: UserId| Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), &personality(), ActorId::User(owner));
+    let owned_by = |name: &str, owner: UserId| Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality().id, ActorId::User(owner));
     stores.agents.create(&as_user(alice), &owned_by("Helper", alice)).await.expect("alice makes hers");
     let hidden = stores.agents.find_by_name(&as_user(bob), &ScopedName::new("helper", Scope::GlobalScope).unwrap()).await;
     assert!(matches!(hidden, Err(StoreError::NotFound { .. })), "bob does not see hers: {hidden:?}");

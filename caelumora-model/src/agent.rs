@@ -238,20 +238,20 @@ impl Agent {
         SecurityContext::new(owner, session, channel).next(ActorId::Agent(self.id), owner)
     }
 
-    /// A new agent of `personality`, owned by `owner` - whoever creates it.
-    /// Whose authority it acts with is not stored with it: its actor derives
-    /// that from the owner, in the channel it runs in (issue 87). Nothing of
-    /// the personality is copied into it: what the agent is - its
-    /// components, its introduction - is read through `personality_id`, so
-    /// that a change of the personality reaches it (issue 176).
-    pub fn new(name: ScopedName, personality: &Personality, owner: ActorId) -> Self {
+    /// A new agent of the personality `personality_id`, owned by `owner` -
+    /// whoever creates it. Whose authority it acts with is not stored with it:
+    /// its actor derives that from the owner, in the channel it runs in (issue
+    /// 87). Nothing of the personality is copied into it: what the agent is -
+    /// its components, its introduction - is read through `personality_id`,
+    /// so that a change of the personality reaches it (issue 176).
+    pub fn new(name: ScopedName, personality_id: PersonalityId, owner: ActorId) -> Self {
         let agent_id = AgentId(Uuid::new_v4());
         // Read by its owner, whose rights it acts with (issue 255): it reads
         // its own definition as its owner.
         let security_attributes = SecurityAttributes::owned_by(owner);
         Agent {
             id: agent_id,
-            personality_id: personality.id,
+            personality_id,
             name,
             security_attributes,
             deleted: None,

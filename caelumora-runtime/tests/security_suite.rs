@@ -38,6 +38,7 @@ use caelumora_model::store::{ComponentStore, StateStore, StoreError};
 use caelumora_model::template::{ScopeTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
 use caelumora_model::user::{UserId, UserProfile};
 use caelumora_model::work::TurnId;
+use caelumora_runtime::agent::manager::AgentError;
 use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, PRECONFIGURED_REF_KIND};
 use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
@@ -1799,10 +1800,10 @@ fn checks(lines: &[&str]) -> Vec<String> {
 
 /// Making a session from a template: reading the template, then creating
 /// the session - before anything is found or made for it (issue 312) -,
-/// reading its owner, finding or making the agents - reading their
-/// personalities -, then everyone's clearance for the channels and each
-/// agent's personality in its own name, and the store creating the session
-/// again and its channels.
+/// reading its owner, finding or making the agents - creating each before
+/// its personality is read, and the store creating it again -, then
+/// everyone's clearance for the channels and each agent's personality in its
+/// own name, and the store creating the session again and its channels.
 #[tokio::test]
 async fn making_a_session_needs_the_template_the_personalities_and_creating_what_is_made() {
     let world = World::new().await;
@@ -1818,6 +1819,7 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: CreateSession(alice's) yes",
         "alice: GetUser(system's) yes",
         "alice: List(agent) yes",
+        "alice: CreateAgent(alice's) yes",
         "alice: GetPersonality(bob's) yes",
         "alice: CreateAgent(alice's) yes",
         "alice: JoinChannel(alice) yes",
@@ -1851,8 +1853,36 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: GetUser(system's) yes",
         "alice: List(agent) yes",
         "alice: GetAgent(alice's) yes",
+        "alice: CreateAgent(alice's) yes",
         "alice: GetPersonality(bob's) no",
     ]), "a personality one may not read: no agent, nothing created - the list is filtered by what she may read, her agent from before");
+}
+
+/// Making an agent of a personality (issue 227): creating it, in the
+/// maker's name and owned by them, before the personality is read in their
+/// name, and the store creating it again. One of a personality they may not
+/// read is not made, and answered as not there.
+#[tokio::test]
+async fn making_an_agent_needs_creating_it_then_its_personality() {
+    let world = World::new().await;
+    let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
+    let bobs = world.personality("bobs", Some(world.bob), &[]).await;
+    let (agents, alice) = (world.runtime.agent_manager(), World::as_user(world.alice));
+    let hers = |name: &str| ScopedName::new(name, Scope::UserScope { user_id: world.alice }).unwrap();
+
+    let (made, asked) = world.asked(agents.create(&alice, hers("helper"), shared.id)).await;
+    let made = made.expect("hers to make");
+    assert_eq!((made.personality_id, made.security_attributes.owner_id), (shared.id, ActorId::User(world.alice)));
+    assert_eq!(asked, checks(&[
+        "alice: CreateAgent(alice's) yes",
+        "alice: GetPersonality(bob's) yes",
+        "alice: CreateAgent(alice's) yes",
+    ]));
+
+    let (refused, asked) = world.asked(agents.create(&alice, hers("other"), bobs.id)).await;
+    assert!(matches!(refused, Err(AgentError::Store(StoreError::NotFound { .. }))), "answered as not there: {refused:?}");
+    assert_eq!(asked, checks(&["alice: CreateAgent(alice's) yes", "alice: GetPersonality(bob's) no"]), "nothing is made");
+    assert_eq!(world.runtime.entity_stores().agents.list(&World::system(), &Query::all()).await.map(|page| page.items).unwrap().len(), 1, "only hers");
 }
 
 /// Opening (starting) a session: reading it.
@@ -1893,7 +1923,7 @@ async fn deleting_a_session_needs_owning_it() {
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
     let personality = world.personality("plain", None, &[]).await;
-    let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), &personality, ActorId::User(world.bob));
+    let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), personality.id, ActorId::User(world.bob));
     world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
     let (_, asked) = world.asked(world.manager.delete_session(&World::as_user(world.carol), session.id())).await;
     assert_eq!(asked, checks(&["carol: GetSession(alice's) no"]));
@@ -1929,7 +1959,7 @@ async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
     let personality = world.personality("plain", None, &[]).await;
-    let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), &personality, ActorId::User(world.bob));
+    let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), personality.id, ActorId::User(world.bob));
     world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
     world.manager.delete_session(&World::system(), session.id()).await.expect("the system's to delete, all of it");
 

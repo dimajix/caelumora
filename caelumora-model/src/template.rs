@@ -43,10 +43,6 @@ pub enum TemplateError {
     /// with another personality (issue 178): neither reused nor replaced.
     #[error("the agent '{0}' already exists where the template asks for it, with another personality")]
     AgentNameTaken(Name),
-    /// The personality of an agent lies in a session's or a channel's
-    /// scope the agent would not lie in (issue 178).
-    #[error("the personality '{0}' cannot make an agent outside the session or channel it lies in")]
-    PersonalityOutOfScope(Name),
     /// The workspace the template names exists in the scope it asks for,
     /// but in another storage (issue 251): neither reused nor replaced.
     #[error("the workspace '{0}' already exists where the template asks for it, in another storage")]
