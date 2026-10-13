@@ -33,7 +33,7 @@ use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Co
 use caelumora_model::digest::ContentDigest;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityAttributes, SecurityContext, SecurityManager, Subject, WRITE};
+use caelumora_model::security::{AclEntry, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager, Subject, WRITE};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
@@ -231,21 +231,25 @@ impl ArtifactManager {
             }
         };
 
-        // Read by the members of the channel it is published in (issue 23) -
-        // the group of its participants (issue 286): a draft published where
-        // few are reaches nobody who reads a later version published where
-        // many are.
-        let acl = vec![AclEntry { subject: Subject::Group(GroupId::of_channel(channel)), grant: Grant::Read }];
-        let version = ArtifactVersion { number, size, digest, media_type: None, description, session_id: session, channel_id: channel, published_by: ctx.caller_id, published_at: Utc::now(), acl };
+        // Read by the members of the channel it is published in (issues 23,
+        // 316) - the group of its participants (issue 286) -, who read the
+        // artifact for it: a draft published where few are reaches nobody
+        // who reads a later version published where many are.
+        let members = Subject::Group(GroupId::of_channel(channel));
+        let mut version = ArtifactVersion { number, size, digest, media_type: None, description, session_id: session, channel_id: channel, published_by: ctx.caller_id, published_at: Utc::now(), acl: Vec::new() };
+        version.grant_reading(members);
         let stored = match existing {
             Some(mut artifact) => {
                 artifact.add_version(version);
+                artifact.grant_reading(members);
                 // Changed in the runtime's name: whoever may add a version
-                // need not own the artifact (`WriteArtifact`, asked above).
+                // need not own the artifact (`WriteArtifact`, asked above),
+                // and lets the channel they publish it in read it.
                 self.artifacts.update(&SecurityContext::system(), &artifact).await.map(|()| artifact)
             }
             None => {
-                let artifact = Artifact::new(id, name, storage_name, classification.clone(), owner, version);
+                let mut artifact = Artifact::new(id, name, storage_name, classification.clone(), owner, version);
+                artifact.grant_reading(members);
                 self.artifacts.create(ctx, &artifact).await.map(|()| artifact)
             }
         };
@@ -256,9 +260,11 @@ impl ArtifactManager {
                 return Err(e.into());
             }
         };
-        let readers = artifact.version(number).map_or_else(|| artifact.security_attributes.clone(), |version| artifact.version_attributes(version));
+        // Heard by whoever reads the artifact and the version.
         let event = if number == 1 { GlobalEvent::created::<Artifact>(&id) } else { GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::VersionPublished(number)) };
-        self.events.publish_classified(event, readers, std::slice::from_ref(&artifact.classification));
+        if let Some(version) = artifact.version(number) {
+            self.events.publish_classified_part(event, artifact.security_attributes.clone(), artifact.version_attributes(version), std::slice::from_ref(&artifact.classification));
+        }
         info!(artifact = %id, version = number, by = %ctx.caller_id, "Artifact published");
         Ok((artifact, number))
     }
@@ -287,25 +293,37 @@ impl ArtifactManager {
         self.storage(&artifact.storage)?.get(artifact.id, number).await
     }
 
-    /// Gives artifact `id` the access list `acl` for the whole of it (issue
-    /// 23) on behalf of `ctx`: reached by the store, each group the list
-    /// names newly read, since who names one must read it (issue 286), then
-    /// stored, which is where its owner's act is asked (`UpdateArtifact`):
-    /// whether the caller reads a group tells them nothing of others (issue
-    /// 312). The lists of its versions stay as they are.
+    /// Gives artifact `id` the access list `acl` (issues 23, 316) on behalf
+    /// of `ctx`: reached by the store, each group the list names newly
+    /// read, since who names one must read it (issue 286), then stored,
+    /// which is where its owner's act is asked (`UpdateArtifact`): whether
+    /// the caller reads a group tells them nothing of others (issue 312).
+    /// With `versions`, whom the list newly names reads every version there
+    /// is as well, as `setfacl -R` hands an entry to a directory's files;
+    /// otherwise the lists of its versions stay as they are. Whom the list
+    /// no longer names reads no version, since that needs the artifact's
+    /// list too.
     ///
     /// # Errors
     /// `NotFound` if there is none the caller may reach, or what the store
     /// reports - `PermissionDenied`, `Validation` for an entry that names
     /// an agent, the system or nobody, or a group the caller cannot read.
-    pub async fn set_access(&self, ctx: &SecurityContext, id: ArtifactId, acl: Vec<AclEntry>) -> ArtifactResult<Artifact> {
+    pub async fn set_access(&self, ctx: &SecurityContext, id: ArtifactId, acl: Vec<AclEntry>, versions: bool) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
         let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
         crate::group::require_nameable(self.groups.as_ref(), ctx, &artifact.security_attributes.acl, &acl).await?;
+        if versions {
+            let named: Vec<Subject> = acl.iter().map(|entry| entry.subject).filter(|subject| !artifact.security_attributes.acl.iter().any(|entry| entry.subject == *subject)).collect();
+            for version in &mut artifact.versions {
+                for subject in &named {
+                    version.grant_reading(*subject);
+                }
+            }
+        }
         artifact.security_attributes.acl = acl;
         artifact.updated_at = Utc::now();
         self.artifacts.update(ctx, &artifact).await?;
-        self.events.publish_classified(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::AccessChanged), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
+        self.events.publish_classified(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::AccessChanged), artifact.security_attributes.clone(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact's access changed");
         Ok(artifact)
     }
@@ -330,7 +348,7 @@ impl ArtifactManager {
         artifact.name.scope = scope;
         artifact.updated_at = Utc::now();
         self.artifacts.update(ctx, &artifact).await?;
-        self.events.publish_classified(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::ScopeChanged(artifact.name.scope.clone())), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
+        self.events.publish_classified(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::ScopeChanged(artifact.name.scope.clone())), artifact.security_attributes.clone(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact kept");
         Ok(artifact)
     }
@@ -347,7 +365,7 @@ impl ArtifactManager {
         artifact.description = Description::optional(description)?;
         artifact.updated_at = Utc::now();
         self.artifacts.update(ctx, &artifact).await?;
-        self.events.publish_classified(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::DescriptionChanged(artifact.description.as_ref().map(ToString::to_string))), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
+        self.events.publish_classified(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::DescriptionChanged(artifact.description.as_ref().map(ToString::to_string))), artifact.security_attributes.clone(), std::slice::from_ref(&artifact.classification));
         Ok(artifact)
     }
 
@@ -362,7 +380,7 @@ impl ArtifactManager {
         if !self.artifacts.delete(ctx, id).await? {
             return Ok(false);
         }
-        self.events.publish_classified(GlobalEvent::deleted::<Artifact>(&id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
+        self.events.publish_classified(GlobalEvent::deleted::<Artifact>(&id), artifact.security_attributes.clone(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact deleted");
         Ok(true)
     }
@@ -376,7 +394,7 @@ impl ArtifactManager {
     pub async fn restore(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<Artifact> {
         let _writing = self.writing.lock().await;
         let artifact = self.artifacts.restore(ctx, id).await.map_err(store_error(id))?;
-        self.events.publish_classified(GlobalEvent::restored::<Artifact>(&id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
+        self.events.publish_classified(GlobalEvent::restored::<Artifact>(&id), artifact.security_attributes.clone(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact restored");
         Ok(artifact)
     }
@@ -419,7 +437,7 @@ impl ScopeMember for ArtifactManager {
         let mut left = 0;
         for artifact in self.artifacts.list(&system, &within(holder)).await?.items {
             if deleted_unless_refused(self.artifacts.delete(ctx, artifact.id).await)? {
-                self.events.publish_classified(GlobalEvent::deleted::<Artifact>(&artifact.id), artifact.reader_attributes(), std::slice::from_ref(&artifact.classification));
+                self.events.publish_classified(GlobalEvent::deleted::<Artifact>(&artifact.id), artifact.security_attributes.clone(), std::slice::from_ref(&artifact.classification));
             } else {
                 left += 1;
             }
@@ -440,7 +458,7 @@ impl ScopeMember for ArtifactManager {
         let _writing = self.writing.lock().await;
         for artifact in deleted_since(self.artifacts.list_deleted(&system, &within(holder)).await?.items, since) {
             if let Some(restored) = restored_unless_refused(self.artifacts.restore(ctx, artifact.id).await, &artifact)? {
-                self.events.publish_classified(GlobalEvent::restored::<Artifact>(&restored.id), restored.reader_attributes(), std::slice::from_ref(&restored.classification));
+                self.events.publish_classified(GlobalEvent::restored::<Artifact>(&restored.id), restored.security_attributes.clone(), std::slice::from_ref(&restored.classification));
             }
         }
         Ok(())

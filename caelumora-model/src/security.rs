@@ -43,10 +43,11 @@ pub enum ActionType<'a> {
     /// - a skill (issue 22, the plugin `caelumora-skills`): its name,
     ///   description and body; loading it into a turn is its verb `USE`,
     ///   apart from reading it.
-    /// - an artifact (issue 271): the artifact, or a version's content with
-    ///   what reads that version - the artifact's attributes with the
-    ///   version's own list (`Artifact::version_attributes`); adding a
-    ///   version is `WRITE`.
+    /// - an artifact (issue 271): the artifact - its name, description and
+    ///   which versions it has -, or a version's content, asked with the
+    ///   version's own list (`Artifact::version_attributes`) besides the
+    ///   artifact's: reading a version needs both (issue 316), as a file in
+    ///   HDFS needs its directory. Adding a version is `WRITE`.
     /// - a group (issue 286): who belongs to it, granted to its owner and,
     ///   by its own access list, to its members. The participants of a
     ///   session or channel are changed only by the runtime.

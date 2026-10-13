@@ -32,8 +32,8 @@ is a `ScopeMember` (issue 323), and `ScopedEntities` goes through them in the or
 registered, the groups after all others: they are deleted only once nothing else is left, a rule of
 the scope as a whole, not of a member. What has a manager of its own - agents, workspaces, skills,
 artifacts, groups - is a member by it (`…_lying_in`), deleted, restored and purged by it and
-announced as it announces its own deletions: an artifact to whoever reads any of its versions, as
-when it is deleted alone (issue 319). Personalities and session templates, which have none, are
+announced as it announces its own deletions: an artifact to whoever reads it, as when it is
+deleted alone (issues 319, 316). Personalities and session templates, which have none, are
 members by their store (`Unowned`), which marks them and announces nothing.
 
 That holds because what lies in a session's or a channel's scope is used only within it

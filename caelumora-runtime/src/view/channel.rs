@@ -23,7 +23,7 @@ use caelumora_model::note::Note;
 use caelumora_model::removal::Removal;
 use caelumora_model::work::TurnId;
 use caelumora_model::confidentiality::Place;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityContext};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement};
 use super::ChannelReading;
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{ChannelSnapshot, Detail, MemberSnapshot, PublishedNotes};
@@ -70,9 +70,10 @@ impl ChannelView {
         Ok(usable.map(|workspace| WorkspaceView::of(self.views().clone(), workspace)))
     }
 
-    /// The artifacts with a version published in this channel, each with
-    /// those versions alone that the viewer may read (issues 271, 23), if
-    /// they read the channel as a whole; none otherwise. Their content is
+    /// The artifacts with a version published in this channel that the
+    /// viewer may read, each with those versions alone that they may read
+    /// as well (issues 271, 23, 316), if they read the channel as a whole;
+    /// none otherwise. Their content is
     /// reached by the artifact, never through the channel.
     ///
     /// # Errors
@@ -89,14 +90,12 @@ impl ChannelView {
             Filter::eq(ArtifactField::VersionSession, session),
             Filter::eq(ArtifactField::VersionChannel, channel),
         ]);
-        let all = self.views().stores().artifacts.list(&SecurityContext::system(), &Query::filtered(Filter::any(ArtifactField::Versions, here))).await.map_err(failed)?.items;
+        let all = self.views().stores().artifacts.list(self.views().context(), &Query::filtered(Filter::any(ArtifactField::Versions, here))).await.map_err(failed)?.items;
         let mut published = Vec::new();
         for mut artifact in all {
             artifact.versions.retain(|version| version.session_id == session && version.channel_id == channel);
-            if artifact.versions.is_empty() {
-                continue;
-            }
-            if let Some(view) = self.views().readable_artifact(artifact).await {
+            let view = self.views().readable_artifact(artifact).await;
+            if !view.artifact().versions.is_empty() {
                 published.push(view);
             }
         }

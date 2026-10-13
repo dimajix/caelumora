@@ -1,9 +1,10 @@
 // An artifact the user may read (issue 291), in the place of a channel: what
 // it is - its name, where it lies, its classification and what its owner
-// says of it - with what its owner may do to it, whom it is shared with as a
-// whole (issue 23), and the versions the user may read, newest first: where
+// says of it - with what its owner may do to it, whom it is shared with
+// (issues 23, 316), and the versions the user may read, newest first: where
 // each was published and by whom, as far as they may read that channel, its
-// download, and for the owner whom the version reaches besides.
+// download, and for the owner whom the version reaches of those who read
+// the artifact.
 
 import React, {useEffect, useState} from 'react';
 import {Download, FileText, Package, PackageCheck, Shield, Trash2} from 'lucide-react';
@@ -129,8 +130,8 @@ export const ArtifactPage: React.FC<ArtifactPageProps> = ({artifactId, onDeleted
           <AccessList
             access={artifact.access ?? []}
             onChange={(access) => void share(access)}
-            nobody="Nobody as a whole: each version is read by the members of the channel it was published in."
-            grants={{read: 'reads every version', write: 'reads and adds versions'}}
+            nobody="Nobody but you: not even the channels its versions were published in."
+            grants={{read: 'reads it and its versions so far', write: 'reads it and its versions so far, and adds versions'}}
           />
         )}
         {!artifact.can_change && artifact.can_write && (

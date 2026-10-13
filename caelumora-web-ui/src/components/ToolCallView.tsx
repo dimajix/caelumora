@@ -659,15 +659,15 @@ const DownloadCard: React.FC<{
 );
 
 /**
- * Artifact `id` as the user sees it - `null` if they may read none of its versions, or it is not
- * known yet - and keeping it, which is its owner's (`can_change`).
+ * Artifact `id` as the user sees it - `null` if they may not read it, or it is not known yet - and
+ * keeping it, which is its owner's (`can_change`).
  */
 function useArtifact(id: string | null): [ArtifactResponse | null, () => Promise<void>] {
   const [artifact, setArtifact] = useState<ArtifactResponse | null>(null);
   useEffect(() => {
     if (id === null) return;
     let current = true;
-    // Refused for whoever may read none of its versions any more: then it has no page for them.
+    // Refused for whoever may not read it any more: then it has no page for them.
     api.getArtifact(id).then(found => { if (current) setArtifact(found); }).catch(() => { if (current) setArtifact(null); });
     return () => { current = false; };
   }, [id]);

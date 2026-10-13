@@ -1,13 +1,14 @@
 //! Artifacts (issue 271): their owner keeps, describes, shares, deletes and
-//! restores theirs; whoever the artifact's list or a version's lets reads
-//! those versions (issue 23), by the artifact, never through a channel - a
-//! channel lists what was published in it. A version is downloaded as an
+//! restores theirs; whoever the artifact's list lets read it reads the
+//! versions whose own list lets them as well (issues 23, 316), by the
+//! artifact, never through a channel - a channel lists what was published
+//! in it. A version is downloaded as an
 //! attachment (`routes::attachment_response`), named as its artifact.
 
 use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json, Path};
 use caelumora_rest_api::access::AccessEntry;
-use caelumora_rest_api::artifact::{ArtifactResponse, KeepArtifactRequest};
+use caelumora_rest_api::artifact::{ArtifactResponse, KeepArtifactRequest, ShareOptions};
 use caelumora_rest_api::scope::ItemDescriptionRequest;
 use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
@@ -108,12 +109,13 @@ pub async fn channel_artifacts(State(state): State<Arc<AppState>>, Path((id, cid
     Ok(Json(listed))
 }
 
-/// Gives the artifact the access list in the body for the whole of it
-/// (issue 23), replacing the one it had: its owner's act.
-pub async fn set_access(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(entries): Json<Vec<AccessEntry>>) -> Result<Json<ArtifactResponse>, ApiError> {
+/// Gives the artifact the access list in the body (issues 23, 316),
+/// replacing the one it had: its owner's act. Whom it newly names reads
+/// every version there is as well, unless `?versions=false`.
+pub async fn set_access(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, Query(options): Query<ShareOptions>, user: AuthenticatedUser, Json(entries): Json<Vec<AccessEntry>>) -> Result<Json<ArtifactResponse>, ApiError> {
     let id = ArtifactId(id);
     let acl = entries.into_iter().map(AccessEntry::into_acl).collect();
-    state.runtime_manager.artifact_manager().set_access(&user.security_context(), id, acl).await?;
+    state.runtime_manager.artifact_manager().set_access(&user.security_context(), id, acl, options.versions).await?;
     Ok(Json(owned(&state, &user, id).await?))
 }
 

@@ -20,7 +20,7 @@ Who may do what is decided by four concepts. Since issue 304 each has its own fu
 | 1 | **Ownership and access lists**: who may read, use, change or delete a stored thing | the `SecurityManager`, from `SecurityAttributes` (`owner_id`, `acl` naming actors, roles and groups) and the context's principal; `OwnershipSecurityManager::granted` | `Get*`, `Create*`, `Update*`, `Delete*`, `Write*`, `UseSkill`, `ReadDeleted`, `Restore`, and the acts in a conversation (`CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion`) |
 | 2 | **Flow and clearance**: whether information may go where the act takes it, and who is cleared for it | the `ConfidentialityPolicy` (`ConfidentialityRules`), from the roles in the context, the classifications and the places | `may_publish`, `may_copy_information`, `cleared_for`, and their `require_*` forms; `require_classifiable` is validation |
 | 3 | **Rules of particular actions**: what is neither ownership nor flow | a rule written into the policy for the variant: authorship, who answers for an agent, the system alone; or nothing, the action being a hook | `ModifyMessage`, `RevokeMessage`, `Reclassify`, `ApproveToolCall`, `ShowAgentCommand`, `ExecuteAgentCommand`, `ShowCommand`, `ExecuteCommand`, `Purge`; `CallTool`, `ReadSecret` |
-| 4 | **Reach**: whether a thing can be reached from where one stands | reading it (1) followed by the flow (2), one question (`confidentiality::may_reach`, issue 322): the store's for what is classified - `Get*` or `ReadDeleted`, then `cleared_for` (`Stored::classification`); for a channel read from a place `view::channel_reading` over a document read in S - `GetChannel`, then for a user the clearance, for an agent the copy into its place; for an artifact the views' over documents read in S, by its versions' lists (issue 316) | no action of its own; answered "not found" |
+| 4 | **Reach**: whether a thing can be reached from where one stands | reading it (1) followed by the flow (2), one question (`confidentiality::may_reach`, issue 322): the store's for what is classified - `Get*` or `ReadDeleted`, then `cleared_for` (`Stored::classification`); for a channel read from a place `view::channel_reading` over a document read in S - `GetChannel`, then for a user the clearance, for an agent the copy into its place; for an artifact the store's, the views cutting the versions by their own lists (issue 316) | no action of its own; answered "not found" |
 
 ## Which concept decides each action
 
@@ -197,7 +197,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 
 | Operation | Questions in order | Rule | Again | Refusal |
 |---|---|---|---|---|
-| List, reach (`Views::artifacts`, `artifact`, `ChannelView::artifacts`) | listing: the teams the viewer belongs to found in S, named besides them and their roles; read in S; `may_read_artifact` with the artifact's list, else per version with the version's (V,1); `cleared_for` (V,2) | reach | - | left out; `ArtifactNotFound` |
+| List, reach (`Views::artifacts`, `artifact`, `ChannelView::artifacts`) | listing: the teams the viewer belongs to found in S, named besides them and their roles; store `GetArtifact` (V,1), `cleared_for` (V,2); the versions cut: per version `may_read_artifact` with the version's list (V,1) | R1 + reach (store) | - | left out; `ArtifactNotFound` |
 | Where a version was published (`ArtifactView::publication`) | `Views::channel_of`: the session, then `channel_reading`; gone, as a live one would be reached | reach | - | not named |
 | Publish (`ArtifactManager::publish`, the artifact tool) | the workspace's reach (*In a channel*); an existing artifact found in S: `WriteArtifact` (T,1) - one not the caller's to add to is refused as such, not taken for a name to make anew; or `CreateArtifact` (T,1); `require_publish` into the storage's destination (T,2); content kept; store `CreateArtifact` for a new one | R2 + R1 | `CreateArtifact` (pair) | `PermissionDenied`, `ClassifiedOtherwise`, `StorageNotCleared` |
 | Share (`set_access`) | store `GetArtifact` (U,1), `cleared_for` (U,2); `require_nameable`; store `GetArtifact`, `cleared_for` + `UpdateArtifact` | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Validation` |
@@ -328,6 +328,17 @@ An agent's views are built per piece of work, with the agent's place; all in **T
   request (`ComponentRegistry::require_readable`).
 - **Components nobody asks for** are still built, in C: issue
   [337](../issues/337-components-nobody-asks-for.md).
+
+### Decided in issue 316
+
+- **Reading a version needs the artifact's list and the version's**, as in HDFS and ADLS. The
+  store checks an artifact by its own list, as every kind, and the views read artifacts in V, no
+  longer in S; they cut the versions by their own lists (`Views::readable_artifact`). Publishing
+  lets the channel's participants read the artifact as well as the version, in the runtime's name
+  for whom `WriteArtifact` lets add a version. An event about a version reaches whoever reads both
+  (`EventBus::publish_classified_part`). No method merges the lists for the store: a predicate
+  over an entity's own attributes (issue [332](../issues/332-policy-as-a-predicate.md)) holds for
+  artifacts as for every kind.
 
 ### Open
 

@@ -2503,10 +2503,12 @@ async fn the_group_of_a_channels_participants_follows_who_takes_part() {
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// G4 (issue 308): an artifact shared with a team - as a whole, or by a
-/// version - is among the artifacts of its members while they are members.
-/// What was published in a channel is shared with the channel's
-/// participants and stays found through it, not among theirs.
+/// G4 (issue 308): an artifact shared with a team is among the artifacts
+/// of its members while they are members - with its versions where it was
+/// shared with them, without where it was not, since reading a version
+/// needs its own list besides the artifact's (issue 316). What was
+/// published in a channel is shared with the channel's participants and
+/// stays found through it, not among theirs.
 #[tokio::test]
 async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
     let world = World::new().await;
@@ -2519,8 +2521,8 @@ async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
     let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.expect("hers to use");
     let at = WorkspacePath::parse("report.md").unwrap();
     terminal.write(&at, file("final"), 100).await.unwrap();
-    let (whole, _) = publish(&world, &alice, session_id, main, &at, "report.md", None).await.expect("one to share as a whole");
-    let (by_version, _) = publish(&world, &alice, session_id, main, &at, "notes.md", None).await.expect("one to share by a version");
+    let (whole, _) = publish(&world, &alice, session_id, main, &at, "report.md", None).await.expect("one to share with its versions");
+    let (alone, _) = publish(&world, &alice, session_id, main, &at, "notes.md", None).await.expect("one to share without them");
     let listed = |ctx: &SecurityContext| {
         let views = world.manager.views(Viewer::new(ctx.clone()));
         async move {
@@ -2534,15 +2536,15 @@ async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
     let project = groups.create(&alice, "project", Scope::UserScope { user_id: world.alice }).await.unwrap();
     groups.set_members(&alice, project.id, vec![world.carol]).await.unwrap();
     let the_team = AclEntry { subject: Subject::Group(project.id), grant: Grant::Read };
-    world.runtime.artifact_manager().set_access(&alice, whole.id, vec![the_team]).await.expect("shared with the team");
-    // No operation shares a single version yet; its list is written as stored.
-    let mut stored = world.runtime.entity_stores().artifacts.get(&World::system(), by_version.id).await.unwrap();
-    stored.versions[0].acl.push(the_team);
-    world.runtime.entity_stores().artifacts.update(&World::system(), &stored).await.unwrap();
+    let with_the_team = |artifact: &Artifact| [artifact.security_attributes.acl.clone(), vec![the_team]].concat();
+    world.runtime.artifact_manager().set_access(&alice, whole.id, with_the_team(&whole), true).await.expect("shared with the team, with its versions");
+    world.runtime.artifact_manager().set_access(&alice, alone.id, with_the_team(&alone), false).await.expect("shared with the team alone");
 
-    let mut both = vec![whole.id, by_version.id];
+    let mut both = vec![whole.id, alone.id];
     both.sort_by_key(|id| id.to_string());
     assert_eq!(listed(&carol).await, both, "a member finds both among hers");
+    assert_eq!(read_version(&world, &carol, whole.id, 1).await, Read::Content(5, "final".to_string()), "and reads the version of the one shared with its versions");
+    assert_eq!(read_version(&world, &carol, alone.id, 1).await, Read::NoVersion, "not that of the other, whose own list does not name the team");
     assert!(listed(&bob).await.is_empty(), "who is not in the team does not");
     groups.set_members(&alice, project.id, Vec::new()).await.unwrap();
     assert!(listed(&carol).await.is_empty(), "who left it no longer does");
@@ -2636,6 +2638,10 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     assert_eq!(read_version(&world, &elsewhere, artifact.id, 2).await, Read::Content(7, "a,b\n1,2".to_string()), "a member of the channel reads what was published there, wherever he acts");
     assert_eq!(read_version(&world, &bob, artifact.id, 3).await, Read::NoVersion);
     assert_eq!(read_version(&world, &World::as_user(world.carol), artifact.id, 1).await, Read::NoArtifact, "nobody else, who learns nothing");
+    let (found, asked) = world.asked(world.runtime.entity_stores().artifacts.get(&bob, artifact.id)).await;
+    assert!(found.is_ok(), "the store finds it in his name, by its list, which publishing gave the channel's members (issue 316)");
+    assert_eq!(asked.first().map(String::as_str), Some("bob: GetArtifact(alice's) yes"), "asked in his name: {asked:?}");
+    assert!(world.runtime.entity_stores().artifacts.get(&World::as_user(world.carol), artifact.id).await.is_err(), "not in carol's");
 
     assert!(in_main(&bob).await.workspace().await.unwrap().is_some(), "bob uses it too");
     let refused = publish(&world, &bob, session_id, main, &at, "report.csv", None).await;
@@ -2648,9 +2654,10 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     assert_eq!(in_channel, [artifact.id], "a member finds what was published in the channel there");
     assert!(listed(&bob).await.is_empty(), "not among his own (issue 293): it was shared with the channel, not with him");
     assert_eq!(listed(&alice).await, [artifact.id], "among its owner's");
-    let writers = SecurityAttributes::owned_by(ActorId::User(world.alice)).granting(Subject::Actor(ActorId::User(world.bob)), Grant::Write).acl;
-    assert!(matches!(artifacts.set_access(&bob, artifact.id, writers.clone()).await, Err(ArtifactError::NotFound(_))), "nor shares it");
-    artifacts.set_access(&alice, artifact.id, writers).await.expect("its owner shares it");
+    let writers = SecurityAttributes { owner_id: ActorId::User(world.alice), acl: artifact.security_attributes.acl.clone() }.granting(Subject::Actor(ActorId::User(world.bob)), Grant::Write).acl;
+    let refused = artifacts.set_access(&bob, artifact.id, writers.clone(), true).await;
+    assert!(matches!(refused, Err(ArtifactError::Store(StoreError::PermissionDenied(_)))), "nor shares it - refused, since he reads it (issue 316): {refused:?}");
+    artifacts.set_access(&alice, artifact.id, writers, true).await.expect("its owner shares it");
     assert_eq!(listed(&bob).await, [artifact.id], "shared with him by name, it is among his");
     let (added, third) = publish(&world, &bob, session_id, main, &at, "report.csv", None).await.expect("whom it is shared with to write adds a version");
     assert_eq!((third, added.owner()), (3, Some(world.alice)), "hers still");
@@ -2711,13 +2718,14 @@ async fn a_session_goes_with_what_lies_in_it_only_as_far_as_whoever_deletes_it_m
         "alice: GetSession(alice's) yes",
         "alice: DeleteSession(alice's) yes",
     ]), "asked in her name");
-    // The artifacts in the order the store lists them, which is by id: hers
-    // read, her clearance for it (issue 322) and deleted; bob's not read
-    // outside the channel.
-    let his_checks = checks(&["alice: GetArtifact(bob's) no"]);
+    // The artifacts in the order the store lists them, which is by id: each
+    // read, her clearance for it (issue 322), and deleted - bob's read by
+    // the list of its version published in the channel, which she reads
+    // (issue 316), but not hers to delete.
+    let his_checks = checks(&["alice: GetArtifact(bob's) yes", "alice: JoinChannel(alice) yes", "alice: DeleteArtifact(bob's) no"]);
     let her_checks = checks(&["alice: GetArtifact(alice's) yes", "alice: JoinChannel(alice) yes", "alice: DeleteArtifact(alice's) yes"]);
     assert!(artifact_checks == [his_checks.clone(), her_checks.clone()].concat() || artifact_checks == [her_checks, his_checks].concat(),
-        "asked in her name, who does not read bob's outside the channel: {artifact_checks:?}");
+        "asked in her name, who reads bob's but may not delete it: {artifact_checks:?}");
     assert!(world.runtime.entity_stores().sessions.get(&alice, session_id).await.is_ok(), "the session is kept");
     assert!(world.manager.views(Viewer::new(alice.clone())).session(session_id).await.is_ok(), "and runs on");
     assert!(world.runtime.entity_stores().artifacts.get(&bob, his.id).await.is_ok(), "bob's artifact stays");
@@ -2764,9 +2772,9 @@ async fn hears<const N: usize>(events: &mut caelumora_runtime::event::EventSubsc
 }
 
 /// Issue 319: what is said of an artifact as a whole reaches whoever reads
-/// anything of it, however it went or came back - here with its session, to
-/// a member of the channel a version was published in, who reads it by
-/// that version's list alone. And the groups of the participants, deleted
+/// it, however it went or came back - here with its session, to a member of
+/// the channel a version was published in, whom publishing let read it
+/// (issue 316). And the groups of the participants, deleted
 /// and restored with the session, are announced as a team is.
 #[tokio::test]
 async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_it() {
@@ -2780,9 +2788,9 @@ async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_i
     let at = WorkspacePath::parse("out/report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
     let (artifact, _) = publish(&world, &alice, session_id, main, &at, "report.csv", None).await.unwrap();
-    assert!(artifact.security_attributes.acl.is_empty(), "bob reads it by its version's list alone");
     let id = artifact.id;
     let (of_session, of_channel) = (GroupId::of_session(session_id), GroupId::of_channel(main));
+    assert_eq!(artifact.security_attributes.acl, [AclEntry { subject: Subject::Group(of_channel), grant: Grant::Read }], "bob reads it as a member of the channel");
 
     let mut bobs = world.runtime.event_bus().subscribe_as(World::as_user(world.bob));
     world.manager.stop_session(&alice, session_id).await.unwrap();
@@ -2793,10 +2801,11 @@ async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_i
     hears(&mut bobs, [GlobalEvent::restored::<Artifact>(&id), GlobalEvent::restored::<Group>(&of_session), GlobalEvent::restored::<Group>(&of_channel)]).await;
 }
 
-/// Issue 23: a version is read by the members of the channel it was
-/// published in, besides whom the artifact is shared with - so drafts
-/// published where alice works alone reach nobody who reads the version
-/// she published to the team, nor does what she said of them.
+/// Issues 23, 316: a version is read by the members of the channel it was
+/// published in, of those who read the artifact - publishing lets them read
+/// it -, so drafts published where alice works alone reach nobody who
+/// reads the version she published to the team, nor does what she said of
+/// them.
 #[tokio::test]
 async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     let world = World::new().await;
@@ -2839,7 +2848,8 @@ async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     // Shared by name with carol, who takes part in neither channel: she
     // reads both, and learns nothing of where they were published.
     let carol = World::as_user(world.carol);
-    world.runtime.artifact_manager().set_access(&alice, artifact.id, vec![AclEntry { subject: Subject::Actor(ActorId::User(world.carol)), grant: Grant::Read }]).await.unwrap();
+    let shared = [hers.artifact.security_attributes.acl.clone(), vec![AclEntry { subject: Subject::Actor(ActorId::User(world.carol)), grant: Grant::Read }]].concat();
+    world.runtime.artifact_manager().set_access(&alice, artifact.id, shared, true).await.unwrap();
     let theirs = world.manager.views(Viewer::new(carol.clone())).artifact(artifact.id).await.expect("shared with carol").snapshot(Detail::PUBLICATIONS).await;
     assert_eq!(theirs.artifact.versions.len(), 2, "carol reads both");
     assert!(theirs.publications.is_empty(), "but not where they were published, nor by whom");
