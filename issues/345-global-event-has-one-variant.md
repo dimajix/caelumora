@@ -1,6 +1,6 @@
 # 345 — `GlobalEvent` is an enum with a single variant
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -45,3 +45,10 @@ Recommendation: B. Should an event about no entity come, it is a decision of its
 ## History
 
 - **2026-10-13** — Opened as a follow-up of issue 335, which left `GlobalEvent` with one variant.
+- **2026-10-13** — Decided: B. Done. `GlobalEvent` is a struct of public fields `kind`, `id`,
+  `within` and `change`; its constructors and `about` are unchanged. The event bus (`read_action`,
+  `part_readable`) and the workspace manager (`changes_who_may_run`) read its fields. The JSON of
+  the event streams is the struct's own, without the wrapper. In the web UI, `GlobalEvent` is the
+  type of that form, checked once as the global stream is read (`asGlobalEvent`, which replaces
+  `entityEvent`), and its readers take its fields. `docs/EVENTS.md` and `docs/REST-SERVER.md` show
+  the JSON. Events are not stored: no stored data has to be deleted.

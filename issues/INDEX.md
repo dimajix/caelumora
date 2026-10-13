@@ -419,7 +419,7 @@ published before anyone else can take it.
 | [335](335-channel-events-name-their-session.md) | done | The events of channels and their members are variants of their own beside `GlobalEvent::Entity`, which cannot say where an entity lies, so a plugin's kind that lies in a channel has no way to announce it. |
 | [337](337-components-nobody-asks-for.md) | done | A container builds every component it is configured with, also those its owner never asks for, so a tool in a channel reads its owner's secret and connects for nothing. |
 | [344](344-workspace-manager-owns-their-use.md) | open | The `WorkspaceManager` owns workspaces and also what is done in them - reaching terminals and shells for a caller, ending commands, holding the storages -, with the stores and policies that needs. |
-| [345](345-global-event-has-one-variant.md) | open | `GlobalEvent` is an enum with the single variant `Entity`, so every reader takes it apart with an irrefutable `let` and the event streams wrap every event in `{"Entity": …}`. |
+| [345](345-global-event-has-one-variant.md) | done | `GlobalEvent` is an enum with the single variant `Entity`, so every reader takes it apart with an irrefutable `let` and the event streams wrap every event in `{"Entity": …}`. |
 
 ## Integrations
 

@@ -20,7 +20,7 @@ import {
 import type {ArtifactResponse, ChannelResponse, GlobalEvent, GroupResponse, SessionSnapshot, SkillResponse, UserResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
-import {dispatchGlobalEvent, entityEvent, sessionChange} from '../globalEvents';
+import {asGlobalEvent, dispatchGlobalEvent, sessionChange} from '../globalEvents';
 import {openEventStream} from '../stream';
 import {ActionMenu} from './ActionMenu';
 import {ResizeHandle} from './ResizeHandle';
@@ -54,13 +54,12 @@ function channelName(channel: ChannelResponse): string {
 
 /** Whether `event` may change what the trash holds (issue 164): a deletion or restoring of whatever kind. */
 function trashChangedBy(event: GlobalEvent): boolean {
-  const change = entityEvent(event)?.change;
-  return change === 'Deleted' || change === 'Restored';
+  return event.change === 'Deleted' || event.change === 'Restored';
 }
 
 /** Whether `event` is about an entity of `kind` - `workspace`, `skill`, `artifact`, `group`. */
 function isAbout(event: GlobalEvent, kind: string): boolean {
-  return entityEvent(event)?.kind === kind;
+  return event.kind === kind;
 }
 
 /** `sessions` with `session` added, or replacing the one with its id. */
@@ -192,9 +191,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       onEvent: (data) => {
         let event;
         try {
-          event = JSON.parse(data);
+          event = asGlobalEvent(JSON.parse(data));
         } catch (error) {
           console.error('Failed to parse a global event', error);
+          return;
+        }
+        if (!event) {
+          console.error('Received a global event of unknown form');
           return;
         }
         dispatchGlobalEvent(event);

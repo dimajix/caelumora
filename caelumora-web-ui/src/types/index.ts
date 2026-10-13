@@ -501,13 +501,30 @@ export interface GlobalSnapshot {
 }
 
 /**
- * An event of the global stream, serialized as `{ "<Variant>": value }`: an
- * event about an entity as `{"Entity": {"kind": "session", "id": "<id>",
- * "change": {"Updated": {"NameChanged": "new name"}}}}` (`globalEvents.ts`),
- * one about a channel with the id of its session as well, e.g.
- * `{"Entity": {"kind": "channel", "id": "<channel id>", "within": "<session id>", "change": "Deleted"}}`.
+ * What happened to an entity: one of the four of its life, the same for
+ * every kind, or something particular to its kind under a name of its own -
+ * a session `started`, an agent's `state_changed`.
  */
-export type GlobalEvent = Record<string, unknown>;
+export type EntityChange =
+  | 'Created'
+  | 'Deleted'
+  | 'Restored'
+  | {Updated: unknown}
+  | {Custom: {name: string; data: unknown}};
+
+/**
+ * An event of the global stream (`globalEvents.ts`), about an entity named by
+ * its kind and its own id, and for a kind that lies in an entity by that
+ * entity's id as well (issue 335): `{"kind": "session", "id": "<id>",
+ * "change": {"Updated": {"NameChanged": "new name"}}}`, `{"kind": "channel",
+ * "id": "<channel id>", "within": "<session id>", "change": "Deleted"}`.
+ */
+export interface GlobalEvent {
+  kind: string;
+  id: string;
+  within?: string;
+  change: EntityChange;
+}
 
 export interface Message {
   id?: string;

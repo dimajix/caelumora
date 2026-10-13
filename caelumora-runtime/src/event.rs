@@ -50,17 +50,15 @@ impl PublishedEvent {
     /// happens to a channel's members and to an agent's state in it is an
     /// event of the channel, and goes by its attributes (issue 304).
     fn read_action(&self) -> ActionType<'_> {
-        let GlobalEvent::Entity { kind, .. } = self.event;
-        ActionType::get(kind, self.security_attributes())
+        ActionType::get(self.event.kind, self.security_attributes())
     }
 
     /// Whether `context` may read the part the event is about, besides the
     /// entity (issue 316): asked as reading the entity is, with the part's
     /// attributes. Nothing to ask of an event about the whole.
     async fn part_readable(&self, security_manager: &dyn SecurityManager, context: &SecurityContext) -> bool {
-        let GlobalEvent::Entity { kind, .. } = &self.event;
         match &self.part {
-            Some(part) => security_manager.check(context, ActionType::get(*kind, part)).await,
+            Some(part) => security_manager.check(context, ActionType::get(self.event.kind, part)).await,
             None => true,
         }
     }
@@ -399,10 +397,10 @@ mod tests {
     /// What `events` are about: the kind, and the change or the name of a
     /// custom one.
     fn described(events: Vec<GlobalEvent>) -> Vec<String> {
-        events.iter().map(|GlobalEvent::Entity { kind, change, .. }| match change {
-            EntityChange::Custom { name, .. } => format!("{kind} {name}"),
-            EntityChange::Updated(_) => format!("{kind} Updated"),
-            other => format!("{kind} {other:?}"),
+        events.iter().map(|event| match &event.change {
+            EntityChange::Custom { name, .. } => format!("{} {name}", event.kind),
+            EntityChange::Updated(_) => format!("{} Updated", event.kind),
+            other => format!("{} {other:?}", event.kind),
         }).collect()
     }
 

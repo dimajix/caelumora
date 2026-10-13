@@ -743,10 +743,9 @@ async fn check_commands(manager: Weak<WorkspaceManager>, mut events: broadcast::
 /// Whether `event` can change who may run a command in a channel: the
 /// session, the channel, its members, the workspace or who someone is.
 fn changes_who_may_run(event: &GlobalEvent) -> bool {
-    let GlobalEvent::Entity { kind, change, .. } = event;
-    match change {
-        EntityChange::Updated(_) | EntityChange::Deleted => [Session::KIND, Channel::KIND, Agent::KIND, User::KIND, Workspace::KIND].contains(kind),
-        EntityChange::Custom { name: channel::LEFT, .. } => *kind == Channel::KIND,
+    match event.change {
+        EntityChange::Updated(_) | EntityChange::Deleted => [Session::KIND, Channel::KIND, Agent::KIND, User::KIND, Workspace::KIND].contains(&event.kind),
+        EntityChange::Custom { name: channel::LEFT, .. } => event.kind == Channel::KIND,
         _ => false,
     }
 }

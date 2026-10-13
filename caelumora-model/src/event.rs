@@ -9,37 +9,36 @@ use tracing::warn;
 
 /// What happened, announced on the event bus - and, once there are several
 /// instances, between them (issue 122): it is read back as it is written.
+/// Every event is about an entity (issue 323), of whatever kind: a session,
+/// a channel, an agent, a user, a user's profile, a workspace, a skill, an
+/// artifact, a group, or a kind of a plugin. Published with the entity's
+/// attributes, so that whoever may read it receives it:
+///
+/// - a session's and an agent's: an agent of user or global scope belongs to
+///   no session and takes part in several (issue 121); a restored one takes
+///   part in no channel until it is added again;
+/// - a channel's, and what happens to its members, by the channel's (issue
+///   304);
+/// - a profile's: only its user, and the runtime (issue 13); it comes as it
+///   now stands;
+/// - a workspace's (issue 253), a skill's (issue 22) and a group's (issue
+///   286): its owner and whom its access list grants reading, a group's
+///   members; the participants of a session or channel are announced as they
+///   join and leave, not as a group;
+/// - an artifact's (issue 271): its owner, and for a version published the
+///   readers of that version.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum GlobalEvent {
-    /// About an entity (issue 323), of whatever kind: a session, a
-    /// channel, an agent, a user, a user's profile, a workspace, a skill,
-    /// an artifact, a group, or a kind of a plugin. Published with the
-    /// entity's attributes, so that whoever may read it receives it:
-    ///
-    /// - a session's and an agent's: an agent of user or global scope
-    ///   belongs to no session and takes part in several (issue 121); a
-    ///   restored one takes part in no channel until it is added again;
-    /// - a channel's, and what happens to its members, by the channel's
-    ///   (issue 304);
-    /// - a profile's: only its user, and the runtime (issue 13); it comes
-    ///   as it now stands;
-    /// - a workspace's (issue 253), a skill's (issue 22) and a group's
-    ///   (issue 286): its owner and whom its access list grants reading,
-    ///   a group's members; the participants of a session or channel are
-    ///   announced as they join and leave, not as a group;
-    /// - an artifact's (issue 271): its owner, and for a version published
-    ///   the readers of that version.
-    ///
-    /// `id` is the entity's id as text, `within` the id of the entity it
-    /// lies in - a channel's session - for a kind that lies in one (issue
-    /// 335); `about` reads both back.
-    Entity {
-        kind: EntityKind,
-        id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        within: Option<String>,
-        change: EntityChange,
-    },
+pub struct GlobalEvent {
+    /// The kind of the entity.
+    pub kind: EntityKind,
+    /// The entity's id as text; `about` reads it back.
+    pub id: String,
+    /// The id of the entity it lies in - a channel's session - for a kind
+    /// that lies in one (issue 335); `about` reads it back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within: Option<String>,
+    /// What happened to it.
+    pub change: EntityChange,
 }
 
 /// What happened to an entity (issue 323). The four of its life the same
@@ -90,7 +89,7 @@ impl GlobalEvent {
     /// own (issue 335).
     pub fn entity<T: Stored>(address: &Address<T>, change: EntityChange) -> Self {
         let (within, id) = T::Within::write(address);
-        Self::Entity { kind: T::KIND, id, within, change }
+        Self { kind: T::KIND, id, within, change }
     }
 
     /// The entity of kind `T` at `address` was created.
@@ -121,13 +120,13 @@ impl GlobalEvent {
 
     /// The address of the entity of kind `T` this event is about - its id,
     /// or the id of the entity it lies in and its own -, and what happened
-    /// to it; `None` for an event about anything else - or about an address
+    /// to it; `None` for an event about another kind - or about an address
     /// that is none of `T`'s.
     pub fn about<T: Stored>(&self) -> Option<(Address<T>, &EntityChange)> {
-        match self {
-            Self::Entity { kind, id, within, change } if *kind == T::KIND => T::Within::read(within.as_deref(), id).map(|address| (address, change)),
-            _ => None,
+        if self.kind != T::KIND {
+            return None;
         }
+        T::Within::read(self.within.as_deref(), &self.id).map(|address| (address, &self.change))
     }
 }
 
@@ -199,7 +198,7 @@ mod tests {
         let id = SessionId::new();
         let renamed = GlobalEvent::updated::<Session>(&id, &SessionUpdateEvent::NameChanged("Release".to_string()));
         let written = serde_json::to_value(&renamed).unwrap();
-        assert_eq!(written, json!({"Entity": {"kind": "session", "id": id.to_string(), "change": {"Updated": {"NameChanged": "Release"}}}}));
+        assert_eq!(written, json!({"kind": "session", "id": id.to_string(), "change": {"Updated": {"NameChanged": "Release"}}}));
 
         let read: GlobalEvent = serde_json::from_value(written).unwrap();
         let (read_id, change) = read.about::<Session>().expect("about a session");
@@ -220,16 +219,16 @@ mod tests {
         let user = UserId::new();
         let joined = GlobalEvent::custom::<Channel>(&(session, channel), channel::JOINED, &ActorId::User(user));
         let written = serde_json::to_value(&joined).unwrap();
-        assert_eq!(written, json!({"Entity": {"kind": "channel", "id": channel.to_string(), "within": session.to_string(), "change": {"Custom": {"name": "joined", "data": {"User": user.to_string()}}}}}));
+        assert_eq!(written, json!({"kind": "channel", "id": channel.to_string(), "within": session.to_string(), "change": {"Custom": {"name": "joined", "data": {"User": user.to_string()}}}}));
 
         let read: GlobalEvent = serde_json::from_value(written).unwrap();
         let ((read_session, read_channel), change) = read.about::<Channel>().expect("about a channel");
         assert_eq!((read_session, read_channel), (session, channel));
         assert_eq!(change.data::<ActorId>(channel::JOINED), Some(ActorId::User(user)));
 
-        let unplaced: GlobalEvent = serde_json::from_value(json!({"Entity": {"kind": "channel", "id": channel.to_string(), "change": "Created"}})).unwrap();
+        let unplaced: GlobalEvent = serde_json::from_value(json!({"kind": "channel", "id": channel.to_string(), "change": "Created"})).unwrap();
         assert!(unplaced.about::<Channel>().is_none(), "a channel lies in a session");
-        let placed: GlobalEvent = serde_json::from_value(json!({"Entity": {"kind": "session", "id": session.to_string(), "within": channel.to_string(), "change": "Created"}})).unwrap();
+        let placed: GlobalEvent = serde_json::from_value(json!({"kind": "session", "id": session.to_string(), "within": channel.to_string(), "change": "Created"})).unwrap();
         assert!(placed.about::<Session>().is_none(), "a session lies in nothing");
     }
 }

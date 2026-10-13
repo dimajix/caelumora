@@ -8,10 +8,10 @@ server-sent event streams through which clients follow these events are part of
 
 ## The form of an event
 
-An event about an entity - a session, a channel, an agent, a user, a user's profile, a workspace, a
-skill, an artifact, a group, or a kind of a plugin - is one form, `GlobalEvent::Entity { kind, id,
-within, change }` (issue 323). `kind` is the `EntityKind`, `id` the entity's id as text, `within`
-the id of the entity it lies in, and `change` an `EntityChange`:
+Every event is about an entity - a session, a channel, an agent, a user, a user's profile, a
+workspace, a skill, an artifact, a group, or a kind of a plugin - and has one form, `GlobalEvent {
+kind, id, within, change }` (issues 323, 345). `kind` is the `EntityKind`, `id` the entity's id as
+text, `within` the id of the entity it lies in, and `change` an `EntityChange`:
 
 *   `Created`, `Deleted`, `Restored` - the same for every kind;
 *   `Updated(value)` - what changed, in the form of the kind's update event (`SkillUpdateEvent`,
@@ -36,9 +36,21 @@ entity that entity's id and its own (`Address<T>`): `GlobalEvent::created::<Skil
 `updated::<Session>(&id, &update)`, `custom::<Agent>(&id, agent::STATE_CHANGED, &())`,
 `custom::<Channel>(&(session_id, channel_id), channel::JOINED, &actor)`. It is read the same way:
 `event.about::<Agent>()` answers the agent's id and the change, `event.about::<Channel>()` the
-session's id and the channel's together with the change, or `None` for an event about anything
-else; `change.update::<AgentUpdateEvent>()` answers what an update says, and
-`change.data::<ActorId>(channel::JOINED)` what a custom change says.
+session's id and the channel's together with the change, or `None` for an event about another
+kind; `change.update::<AgentUpdateEvent>()` answers what an update says, and
+`change.data::<ActorId>(channel::JOINED)` what a custom change says. Who asks about any kind - the
+event bus, which kind of entity a receiver must be allowed to read - takes the fields themselves.
+
+Written as JSON, an event is an object of these fields, `within` absent for a kind that lies in
+nothing, a change of its life written as its name alone (`"change": "Deleted"`), an update as
+`{"Updated": …}`:
+
+```json
+{"kind": "channel", "id": "<channel id>", "within": "<session id>", "change": {"Custom": {"name": "joined", "data": {"User": "<user id>"}}}}
+```
+
+An event about something other than an entity, should one ever be needed, is a decision of its own
+(issue 345).
 
 An event is read back as it is written: it is what the instances of a deployment will tell each
 other (issue 122). That is why an update is carried as a JSON value rather than as a type of the

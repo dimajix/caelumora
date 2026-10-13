@@ -1,18 +1,18 @@
 // What the views do with an event of the global stream (issue 35).
 //
-// An event about an entity - a session, a channel, an agent, a user, a
-// profile, a workspace, a skill, an artifact, a group - comes in one form
-// (issue 323): `{"Entity": {"kind", "id", "within", "change"}}`. `within` is
-// the id of the entity it lies in, for a kind that lies in one: a channel's
-// session (issue 335). What happens to a channel's members is a custom change
-// of the channel.
+// Every event is about an entity - a session, a channel, an agent, a user, a
+// profile, a workspace, a skill, an artifact, a group - and comes in one form
+// (issue 323): `{"kind", "id", "within", "change"}`. `within` is the id of
+// the entity it lies in, for a kind that lies in one: a channel's session
+// (issue 335). What happens to a channel's members is a custom change of the
+// channel.
 //
 // The session list follows a session's events by removing the session,
 // taking a new name straight from the event, or fetching the session again
 // (`GET /sessions/{id}`), which answers in the form the snapshot uses.
 // Events that do not change what the list shows are ignored.
 
-import type {ApprovalRule, GlobalEvent} from './types';
+import type {ApprovalRule, EntityChange, GlobalEvent} from './types';
 import type {Classification} from './confidentiality';
 
 export type SessionChange =
@@ -21,34 +21,12 @@ export type SessionChange =
   | {kind: 'refresh'; sessionId: string}
   | {kind: 'ignore'};
 
-/**
- * What happened to an entity: one of the four of its life, the same for
- * every kind, or something particular to its kind under a name of its own -
- * a session `started`, an agent's `state_changed`.
- */
-export type EntityChange =
-  | 'Created'
-  | 'Deleted'
-  | 'Restored'
-  | {Updated: unknown}
-  | {Custom: {name: string; data: unknown}};
-
-/**
- * An event about an entity, named by its kind and its own id, and for a kind
- * that lies in an entity by that entity's id as well.
- */
-export interface EntityEvent {
-  kind: string;
-  id: string;
-  within?: string;
-  change: EntityChange;
-}
-
-/** The entity `event` is about and what happened to it; `null` for an event that is none. */
-export function entityEvent(event: GlobalEvent): EntityEvent | null {
-  const entity = event.Entity as Partial<EntityEvent> | undefined;
-  if (!entity || typeof entity.kind !== 'string' || typeof entity.id !== 'string' || entity.change === undefined) return null;
-  return entity as EntityEvent;
+/** `value`, read from the global stream, as the event it is; `null` for anything that is no event. */
+export function asGlobalEvent(value: unknown): GlobalEvent | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const event = value as Partial<GlobalEvent>;
+  if (typeof event.kind !== 'string' || typeof event.id !== 'string' || event.change === undefined) return null;
+  return event as GlobalEvent;
 }
 
 /** What an update says, in the form of the kind's update event; `undefined` for another change. */
@@ -63,9 +41,8 @@ function dataOf(change: EntityChange, name: string): unknown {
 
 /** A channel that `event` is about, with the session it lies in; `null` for any other event. */
 function channelEvent(event: GlobalEvent): {sessionId: string; channelId: string; change: EntityChange} | null {
-  const entity = entityEvent(event);
-  if (entity?.kind !== 'channel' || typeof entity.within !== 'string') return null;
-  return {sessionId: entity.within, channelId: entity.id, change: entity.change};
+  if (event.kind !== 'channel' || typeof event.within !== 'string') return null;
+  return {sessionId: event.within, channelId: event.id, change: event.change};
 }
 
 /** Whether `change` of a channel is someone joining or leaving it (issue 46). */
@@ -85,9 +62,8 @@ export function sessionChange(event: GlobalEvent): SessionChange {
     return changesChannels ? {kind: 'refresh', sessionId} : {kind: 'ignore'};
   }
 
-  const entity = entityEvent(event);
-  if (entity?.kind !== 'session') return {kind: 'ignore'};
-  const {id: sessionId, change} = entity;
+  if (event.kind !== 'session') return {kind: 'ignore'};
+  const {id: sessionId, change} = event;
   if (change === 'Deleted') return {kind: 'remove', sessionId};
   if (change === 'Created' || change === 'Restored') return {kind: 'refresh', sessionId};
   const update = updateOf(change);
@@ -207,9 +183,8 @@ export function approvalRulesChangedChannel(event: GlobalEvent): {channelId: str
  * whose profile it is; `null` for any other event.
  */
 export function profileApprovalRules(event: GlobalEvent): ApprovalRule[] | null {
-  const entity = entityEvent(event);
-  if (entity?.kind !== 'user_profile') return null;
-  const profile = updateOf(entity.change);
+  if (event.kind !== 'user_profile') return null;
+  const profile = updateOf(event.change);
   if (typeof profile !== 'object' || profile === null) return null;
   return (profile as {approval_rules?: ApprovalRule[]}).approval_rules ?? [];
 }
