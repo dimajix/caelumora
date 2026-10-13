@@ -283,7 +283,7 @@ pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc
     store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
     let alice = user("alice");
     let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-    let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, context.initiator_id);
+    let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, context.initiator_id);
     let agent_id = agent.id;
     store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
     store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();

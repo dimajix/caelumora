@@ -282,7 +282,7 @@ mod tests {
     }
 
     async fn agent(store: &Arc<MemoryStore>, name: &str, personality: &Personality) -> Agent {
-        let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality, ActorId::None);
+        let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
         agent
     }
@@ -304,7 +304,7 @@ mod tests {
         let plain = personality(&store, None).await;
         let jonathan = agent(&store, "Jonathan", &quiz_master).await;
         let sassy = agent(&store, "Sassy", &plain).await;
-        let gone = Agent::new(ScopedName::new("Gone", Scope::GlobalScope).unwrap(), &plain, ActorId::None);
+        let gone = Agent::new(ScopedName::new("Gone", Scope::GlobalScope).unwrap(), plain.id, ActorId::None);
         let approver = Approver { id: ApproverId(uuid::Uuid::new_v4()), strategy: ApprovalStrategy::Any };
 
         let participants = vec![Participant::User(kaya.id), Participant::Agent(jonathan.id), Participant::Approver(approver), Participant::Agent(sassy.id), Participant::Agent(gone.id), Participant::User(bob.id)];

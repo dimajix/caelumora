@@ -40,6 +40,7 @@ use caelumora_model::user::{User, UserId};
 use crate::component::ComponentRegistry;
 use crate::runtime::{RuntimeBuilder, RuntimeManager};
 use crate::plugin::Plugin;
+use crate::agent::manager::AgentError;
 use crate::agent::state::AgentStateHandle;
 use crate::agent::turn::Turn;
 use crate::channel::ChannelLoop;
@@ -352,7 +353,7 @@ impl World {
 
     /// An agent of `owner` and `personality`, as made before.
     pub async fn agent(&self, name: &str, owner: UserId, personality: &Personality) -> AgentId {
-        let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality, ActorId::User(owner));
+        let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality.id, ActorId::User(owner));
         self.runtime.entity_stores().agents.create(&Self::system(), &agent).await.unwrap();
         self.policy.names.lock().unwrap().insert(ActorId::Agent(agent.id), name.to_string());
         agent.id
@@ -464,6 +465,7 @@ pub fn quiet() -> ComponentConfig {
 pub fn not_found(error: &Error) -> bool {
     matches!(error.downcast_ref::<StoreError>(), Some(StoreError::NotFound { .. }))
         || matches!(error.downcast_ref::<WorkspaceError>(), Some(WorkspaceError::NotFound(_)))
+        || matches!(error.downcast_ref::<AgentError>(), Some(AgentError::NotFound(_) | AgentError::Store(StoreError::NotFound { .. })))
         || matches!(error.downcast_ref::<SessionError>(), Some(SessionError::NotFound(_) | SessionError::TemplateNotFound(_)))
 }
 

@@ -238,7 +238,7 @@ mod tests {
             security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
         };
         runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
-        let helper = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
+        let helper = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         runtime.entity_stores().agents.create(&system, &helper).await.unwrap();
         let actor = ActorId::Agent(helper.id);
         let (session, ctx, _) = running_session_of_a_user(&manager).await;

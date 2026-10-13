@@ -21,6 +21,7 @@ use caelumora_model::template::{ScopeTemplate, SessionTemplateId, WorkspaceTempl
 use caelumora_model::workspace::WorkspaceChoice;
 use crate::scoped::ScopedEntities;
 use crate::workspace::WorkspaceManager;
+use crate::agent::manager::AgentManager;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -43,6 +44,8 @@ pub struct SessionManager {
     stores: EntityStores,
     events: Arc<EventBus>,
     workspaces: Arc<WorkspaceManager>,
+    /// What makes the agents a template names.
+    agents: Arc<AgentManager>,
     /// What goes with a session deleted, restored or purged (issue 178).
     scoped: Arc<ScopedEntities>,
 }
@@ -77,6 +80,7 @@ impl SessionManager {
             stores: runtime_manager.entity_stores().clone(),
             events: Arc::clone(runtime_manager.event_bus()),
             workspaces: Arc::clone(runtime_manager.workspace_manager()),
+            agents: Arc::clone(runtime_manager.agent_manager()),
             scoped: Arc::clone(runtime_manager.scoped_entities()),
             runtime_manager,
         }
@@ -132,9 +136,12 @@ impl SessionManager {
     /// Creates a session from the template `template_id` on behalf of
     /// `context`, whose user owns it and is the template's "user", names it
     /// `name` - the template's name if `None` - and starts it (issue 88).
-    /// The template's agents are found by name in their scope, or made. Its
-    /// workspace is `workspace` where one is chosen (issue 266) - none, one
-    /// of the user's own, or one made for it alone -, else the template's.
+    /// Its workspace is `workspace` where one is chosen (issue 266) - none,
+    /// one of the user's own, or one made for it alone -, else the
+    /// template's. Once the session is made, the template's agents are found
+    /// by name in their scope, or made, and taken into it and their
+    /// channels, as `context`; if that fails, the session is taken back,
+    /// with what was made in its scope.
     ///
     /// # Errors
     /// `SessionError::OwnerNotAUser` if `context` acts for no user; a
@@ -164,7 +171,7 @@ impl SessionManager {
             }
             _ => None,
         };
-        let participants = crate::template::resolve_participants(&self.stores, context, &template, id, owner).await?;
+        let (participants, agents) = crate::template::resolve_participants(&self.stores, context, &template, id, owner).await?;
         let name = name.unwrap_or_else(|| template.name.name.clone());
         // What is to be found or made: the template's, unless one was chosen.
         let wanted = match workspace {
@@ -180,7 +187,15 @@ impl SessionManager {
             None => existing.map(|(chosen, _)| (chosen, false)),
         };
         session.workspace = workspace.as_ref().map(|(found, _)| *found);
-        match self.establish(context, session, channels).await {
+        let established = async {
+            let session_loop = self.establish(context, session, channels).await?;
+            if let Err(e) = crate::template::take_in_agents(self.stores.agents.as_ref(), &self.agents, context, &template, &session_loop, agents).await {
+                self.take_back(id).await;
+                return Err(e);
+            }
+            Ok(session_loop)
+        }.await;
+        match established {
             Ok(session_loop) => {
                 // Shared once the session it is shared with exists (issue 23).
                 if let Some((chosen, Some(grant))) = existing {
@@ -198,6 +213,16 @@ impl SessionManager {
                 }
                 Err(e)
             }
+        }
+    }
+
+    /// Takes back the session `id`, just made and not yet complete, in the
+    /// runtime's name - making it was permitted: deleted and purged, with
+    /// what was made in its scope.
+    async fn take_back(&self, id: SessionId) {
+        let system = SecurityContext::system();
+        if let Err(undo) = async { self.delete_session(&system, id).await?; self.purge_session(&system, id).await }.await {
+            warn!(session = %id, "The session that could not be completed stays: {undo}");
         }
     }
 
@@ -513,6 +538,7 @@ mod tests {
     use crate::runtime::RuntimeManager;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Agent;
+    use crate::agent::manager::AgentError;
     use caelumora_model::channel::{self, Channel};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::value::language::Language;
@@ -724,7 +750,7 @@ mod tests {
             security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
         };
         runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
-        let helper = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
+        let helper = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         runtime.entity_stores().agents.create(&system, &helper).await.unwrap();
         let actor = ActorId::Agent(helper.id);
 
@@ -772,10 +798,10 @@ mod tests {
         assert!(main.channel().former.iter().any(|f| f.participant.actor_id() == actor), "a former participant there");
 
         // Its name taken meanwhile: not restored.
-        let again = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
+        let again = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         runtime.entity_stores().agents.create(&system, &again).await.unwrap();
         let taken = agents.restore(&ctx, helper.id).await.expect_err("its name is taken");
-        assert!(matches!(taken, StoreError::NameTaken { entity: "agent" }), "{taken}");
+        assert!(matches!(taken, AgentError::Store(StoreError::NameTaken { entity: "agent" })), "{taken}");
 
         // Purged: a former member still, not knowing when it left.
         assert!(agents.purge(&ctx, helper.id).await.expect("purged"));
@@ -802,7 +828,7 @@ mod tests {
             security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
         };
         runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
-        let helper = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
+        let helper = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         runtime.entity_stores().agents.create(&system, &helper).await.unwrap();
         let actor = ActorId::Agent(helper.id);
         let mut session = make_session("running", ActorId::None);
@@ -944,7 +970,7 @@ mod tests {
             security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
         };
         personalities.create(&system, &personality).await.unwrap();
-        let agent_in = |name: &str, scope| Agent::new(ScopedName::new(name, scope).unwrap(), &personality, ActorId::None);
+        let agent_in = |name: &str, scope| Agent::new(ScopedName::new(name, scope).unwrap(), personality.id, ActorId::None);
         let sessions = agent_in("helper", Scope::SessionScope { session_id: id });
         let sides = agent_in("aside", Scope::ChannelScope { session_id: id, channel_id: side });
         let users = agent_in("own", Scope::UserScope { user_id: UserId::new() });

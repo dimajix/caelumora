@@ -124,9 +124,10 @@ actor in each channel and one state across them.
 Sessions are made from **session templates**. A template names every participant of the session -
 users, agents with their personality and scope, approvers with their strategy - and the channels,
 which refer to the participants by name. The model builds the session and its channels from the
-participants it is given, without touching a store (`SessionTemplate::build`); the runtime finds
-the owner and the agents - an agent is the one of its name in exactly the scope the template asks
-for, made if there is none - and stores and starts the session
+users and approvers it is given, without touching a store (`SessionTemplate::build`); the runtime
+finds the owner, stores and starts the session, and then finds or makes the agents - an agent is
+the one of its name in exactly the scope the template asks for, made if there is none - and takes
+them in as anyone is taken into a running session; if that fails, the session is taken back
 (`SessionManager::create_from_template`). REST and the TUI both create sessions this way.
 
 A session may have a **workspace** attached: a tree of files that belongs to a user, with one
@@ -141,8 +142,10 @@ Sessions and channels hold their users and agents by reference - `Participant::U
 `Participant::Agent(AgentId)` - not as copies. The records live in the `EntityStore`; a channel
 leaves out a participant whose record no longer exists, and runs without it. A deleted agent rests
 in its channels so: they keep it, show it as a former member and run it again once it is restored.
-Deleting, restoring and purging an agent are the `AgentManager`'s; what lies in a session's or a
-channel's scope goes with it, deleted, restored and purged by the manager of its kind. An approver
+Making, deleting, restoring and purging an agent are the `AgentManager`'s - a template's agents
+too, which the template only finds -, renaming it its `AgentController`'s. What lies in a
+session's or a channel's scope goes with it, deleted, restored and purged by the manager of its
+kind; so an agent is made there only by whoever may read the session or the channel. An approver
 has no record of its own and is held whole.
 
 Details: [CHANNELS.md](CHANNELS.md).
@@ -271,15 +274,32 @@ Two stores, configured separately:
     agent's state in each channel, and each agent's own state.
 
 Every document and every kind of state has exactly **one writer**, which changes it under a lock,
-stores it and only then announces the change. For entities, that writer is a **controller**; for
-state, the channel loop, the agent's actor in its channel, or the agent's state handle. Agents and
-users have one controller per process, however many sessions they take part in.
+stores it and only then announces the change. For an entity, that is its manager or its controller,
+by what is changed (below); for state, the channel loop, the agent's actor in its channel, or the
+agent's state handle. Agents and users have one controller per process, however many sessions they
+take part in.
 
 The server runs in one process today, but is cut so that it can run in several: a session runs in
 exactly one instance, while agents and users may be active in several, kept in step through the
 global events.
 
 Details: [STORAGE.md](STORAGE.md).
+
+## Managers and controllers
+
+What changes an entity is split by what it changes:
+
+*   **Its lifecycle is its manager's** - making it, deleting, restoring and purging it, with what
+    lies in its scope: the `SessionManager`'s for sessions, the `AgentManager`'s, `GroupManager`'s
+    and `WorkspaceManager`'s for their kinds, and those of the plugins (`SkillManager`,
+    `ArtifactManager`). A channel's is its session's (`SessionLoop`).
+*   **What it is - its attributes - is its controller's**, where it has one: a name, a description,
+    rules, participants. Sessions, channels, agents and users have one, as running sessions hold
+    them live; the controller stores a change and announces it, so that the live copy and the store
+    do not disagree.
+*   **An entity without a controller** - a group, a workspace, a skill, an artifact - is held live
+    by nobody, and its manager changes its attributes too. A controller is made for a kind once
+    something holds it live, not for the sake of this split.
 
 ## Security and confidentiality
 

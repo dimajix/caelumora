@@ -755,7 +755,7 @@ mod tests {
         let mut writes = tokio::task::JoinSet::new();
         for _ in 0..16 {
             let (agents, system) = (Arc::clone(&agents), system.clone());
-            let agent = Agent::new(crate::value::name::ScopedName::new("Helper", Default::default()).unwrap(), &personality, ActorId::None);
+            let agent = Agent::new(crate::value::name::ScopedName::new("Helper", Default::default()).unwrap(), personality.id, ActorId::None);
             writes.spawn(async move { agents.create(&system, &agent).await });
         }
         let mut made = 0;

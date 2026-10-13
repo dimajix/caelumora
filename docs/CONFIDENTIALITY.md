@@ -219,7 +219,8 @@ participant, with the roles the channel resolves the participant to - a user's o
 owner's, as the member's controller holds them now. For an agent whose personality limits it, it is
 asked once more with those roles, and both must allow. It is asked
 
-*   when a participant is added to a channel,
+*   when a participant is added to a channel - also each agent of a session made from a template,
+    once the session is,
 *   for every participant of a channel created on request or from a template, before anything is
     stored,
 *   for every participant when a channel is reclassified - raised above someone in it, it is refused

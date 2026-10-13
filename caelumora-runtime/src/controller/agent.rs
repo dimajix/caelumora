@@ -147,7 +147,7 @@ mod tests {
             reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
             deleted: None,
         };
-        let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), &personality, caelumora_model::actor::ActorId::None);
+        let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), personality.id, caelumora_model::actor::ActorId::None);
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();
         store.entity_stores().agents.create(&ctx, &agent).await.unwrap();
@@ -173,7 +173,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let owner = Arc::new(UserController::new(alice.clone(), None, Arc::new(()), store.entity_stores().user_profiles));
         let personality = Personality { roles: Some(vec![staff]), ..plain() };
-        let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), &personality, ActorId::User(alice.id));
+        let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(alice.id));
         let controller = AgentController::new(agent, Some(Arc::clone(&owner)), Arc::new(()), &store.entity_stores());
         let (session, channel) = (Default::default(), Default::default());
 

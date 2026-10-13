@@ -25,6 +25,7 @@
 //! for a client that lists and offers: the node's data with its questions
 //! answered at one moment.
 
+mod agent;
 mod channel;
 mod context;
 mod group;
@@ -32,6 +33,7 @@ mod member;
 mod session;
 mod workspace;
 
+pub use agent::AgentView;
 pub use channel::{ChannelView, MemberView};
 pub use context::{AgentContextView, AgentContextError};
 pub use group::GroupView;
@@ -43,13 +45,13 @@ use crate::runtime::{ActorRuntime, RuntimeManager, Services};
 use crate::session::{Found, SessionLoop, SessionManager};
 use crate::tool::ToolError;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentId};
+use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions, Place};
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
 use caelumora_model::security::{AccessQuestions, AclEntry, Refused, SecurityAttributes, SecurityContext, SecurityManager, Subject};
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot::{AccessSnapshot, AgentSnapshot, DeletedSnapshot};
+use caelumora_model::session::{ChannelId, SessionField, SessionId};
+use caelumora_model::snapshot::{AccessSnapshot, DeletedSnapshot, PersonalitySnapshot};
 use caelumora_model::workspace::WorkspaceId;
 use caelumora_model::group::{Group, GroupField, GroupId};
 use caelumora_model::scope::Scope;
@@ -109,6 +111,8 @@ pub enum ViewError {
     WorkspaceNotFound(WorkspaceId),
     #[error("There is no group {0}")]
     GroupNotFound(GroupId),
+    #[error("There is no agent {0}")]
+    AgentNotFound(AgentId),
     /// Asked for by name, as an agent's tools do: no such channel, or
     /// nothing in it that can be read from where the viewer reads.
     #[error("there is no channel named \"{0}\" that can be read from here")]
@@ -265,7 +269,16 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn sessions(&self) -> ViewResult<Vec<SessionView>> {
-        let sessions = self.stores.sessions.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        self.sessions_of(&Query::all()).await
+    }
+
+    /// The sessions `query` finds that the viewer may read, in the order the
+    /// store lists them.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list them.
+    pub(super) async fn sessions_of(&self, query: &Query<SessionField>) -> ViewResult<Vec<SessionView>> {
+        let sessions = self.stores.sessions.list(self.viewer.context(), query).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the sessions"))?;
         // The store lists what the viewer may read; a running session is
         // reached through its loop.
@@ -350,20 +363,48 @@ impl Views {
         })
     }
 
-    /// The agents the viewer may read (issue 164), in the order the store
-    /// lists them, with whether they may delete them.
+    /// The agents the viewer may read (issues 164, 227), in the order the
+    /// store lists them.
     ///
     /// # Errors
     /// `Failed` if the store cannot list them.
-    pub async fn agents(&self) -> ViewResult<Vec<AgentSnapshot>> {
+    pub async fn agents(&self) -> ViewResult<Vec<AgentView>> {
         let agents = self.stores.agents.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the agents"))?;
-        let policy = &self.security;
-        let mut listed = Vec::with_capacity(agents.len());
-        for agent in agents {
-            let can_delete = policy.may_delete_agent(self.viewer.context(), &agent.security_attributes).await;
-            listed.push(AgentSnapshot { id: agent.id, name: agent.name.to_string(), can_delete });
+        Ok(agents.into_iter().map(|agent| AgentView::of(self.clone(), agent)).collect())
+    }
+
+    /// Agent `id`, if the viewer may read it (`GetAgent`).
+    ///
+    /// # Errors
+    /// `AgentNotFound` if there is none they may read.
+    pub async fn agent(&self, id: AgentId) -> ViewResult<AgentView> {
+        match self.stores.agents.get(self.viewer.context(), id).await.optional() {
+            Ok(Some(agent)) => Ok(AgentView::of(self.clone(), agent)),
+            Ok(None) => Err(ViewError::AgentNotFound(id)),
+            Err(e) => Err(ViewError::failed(e, "reading an agent")),
         }
+    }
+
+    /// The personalities the viewer may read (`GetPersonality`, issue 227) -
+    /// those they may make an agent of -, by name, so that every client
+    /// shows them in the same order.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list them.
+    pub async fn personalities(&self) -> ViewResult<Vec<PersonalitySnapshot>> {
+        let personalities: Vec<Personality> = self.stores.personalities.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+            .map_err(|e| ViewError::failed(e, "listing the personalities"))?;
+        let mut listed: Vec<PersonalitySnapshot> = personalities.into_iter()
+            .map(|personality| PersonalitySnapshot {
+                id: personality.id,
+                name: personality.name.to_string(),
+                scope: personality.name.scope,
+                kind: personality.kind,
+                description: personality.description,
+            })
+            .collect();
+        listed.sort_by(|l, r| l.name.cmp(&r.name));
         Ok(listed)
     }
 
@@ -837,7 +878,7 @@ mod tests {
             deleted: None,
         };
         store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
-        let agent = Agent::new(ScopedName::new("Helper", Scope::GlobalScope).unwrap(), &personality, owner);
+        let agent = Agent::new(ScopedName::new("Helper", Scope::GlobalScope).unwrap(), personality.id, owner);
         store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
         agent
     }
@@ -1728,7 +1769,7 @@ use caelumora_model::turn::TurnState;
             deleted: None,
         };
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();
-        let thinker = Agent::new(ScopedName::new("thinker", Scope::GlobalScope).unwrap(), &personality, ActorId::User(alice.id));
+        let thinker = Agent::new(ScopedName::new("thinker", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(alice.id));
         store.entity_stores().agents.create(&system, &thinker).await.unwrap();
         let agent = ActorId::Agent(thinker.id);
 

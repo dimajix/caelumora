@@ -421,6 +421,55 @@ export interface CreateGroupRequest {
   scope?: 'user' | 'global';
 }
 
+/** An agent the user may read (issues 164, 227), on its own rather than as a member of a channel. */
+export interface AgentResponse {
+  id: string;
+  name: string;
+  /** `user` or `global` for an agent of its own; `session` for one that takes part only in the session `session_id` - or in its channel `channel_id`. */
+  scope: ScopeKind;
+  session_id?: string;
+  channel_id?: string;
+  /** Whose it is: whose rights it acts with. */
+  owner: ActorId;
+  personality_id: string;
+  /** Its personality's name; absent if the personality is gone. */
+  personality?: string;
+  /** Whether you may rename it. */
+  can_change: boolean;
+  can_delete: boolean;
+  /** The channels it takes part in that you may read - by `getAgent` only. */
+  channels?: AgentChannelResponse[];
+}
+
+/** A channel an agent takes part in, with its session. */
+export interface AgentChannelResponse {
+  session_id: string;
+  session_name: string;
+  channel_id: string;
+  channel_name: string;
+}
+
+/** An agent to make of a personality (issue 227): yours, in your scope unless `global` - or in a session's, `session_id`, or one of its channels', `channel_id`, as far as the personality admits it. */
+export interface CreateAgentRequest {
+  name: string;
+  personality_id: string;
+  scope?: ScopeKind;
+  session_id?: string;
+  channel_id?: string;
+}
+
+/** A personality the user may read (issue 227): what they may make an agent of. */
+export interface PersonalityResponse {
+  id: string;
+  name: string;
+  /** Where it lies, as an agent's: an agent made of it lies there or within it. */
+  scope: ScopeKind;
+  session_id?: string;
+  channel_id?: string;
+  kind: PersonalityKind;
+  description?: string;
+}
+
 /** An artifact (issue 271), as whoever reads any of its versions sees it (issue 23): with those versions alone. */
 export interface ArtifactResponse {
   id: string;

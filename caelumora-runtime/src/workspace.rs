@@ -828,7 +828,7 @@ pub(crate) mod testing {
             security_attributes: Default::default(), reasoning_visibility: Visibility::Channel, deleted: None,
         };
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();
-        let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), &personality, ActorId::User(owner));
+        let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(owner));
         store.entity_stores().agents.create(&system, &agent).await.unwrap();
         let session_id = SessionId::new();
         let channel = Channel::build(session_id, ActorId::User(owner), Name::new("main").unwrap(), Default::default(), internal, None, vec![Participant::User(owner), Participant::Agent(agent.id)]);

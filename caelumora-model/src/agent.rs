@@ -254,19 +254,19 @@ impl Agent {
         SecurityContext::new(agent, session, channel).next(agent, self.security_attributes.owner_id, self.principal_id)
     }
 
-    /// A new agent of `personality`, owned by `owner` - whoever creates it -
-    /// and acting in their name (issue 341). Nothing of the personality is
-    /// copied into it: what the agent is - its components, its
-    /// introduction - is read through `personality_id`, so that a change of
-    /// the personality reaches it (issue 176).
-    pub fn new(name: ScopedName, personality: &Personality, owner: ActorId) -> Self {
+    /// A new agent of the personality `personality_id`, owned by `owner` -
+    /// whoever creates it - and acting in their name (issue 341). Nothing of
+    /// the personality is copied into it: what the agent is - its
+    /// components, its introduction - is read through `personality_id`, so
+    /// that a change of the personality reaches it (issue 176).
+    pub fn new(name: ScopedName, personality_id: PersonalityId, owner: ActorId) -> Self {
         let agent_id = AgentId(Uuid::new_v4());
         // Read by its owner, whose rights it acts with (issue 255): it reads
         // its own definition as its owner.
         let security_attributes = SecurityAttributes::owned_by(owner);
         Agent {
             id: agent_id,
-            personality_id: personality.id,
+            personality_id,
             name,
             security_attributes,
             principal_id: owner,
@@ -828,9 +828,8 @@ pub(crate) mod tests {
     /// and acting in its owner's name.
     #[test]
     fn an_agent_acting_on_its_own_initiates_it_for_its_owner() {
-        let personality: Personality = serde_json::from_value(serde_json::json!({ "id": PersonalityId::new(), "name": "plain" })).unwrap();
         let owner = ActorId::User(UserId::new());
-        let agent = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), &personality, owner);
+        let agent = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), PersonalityId::new(), owner);
         let context = agent.security_context(Default::default(), Default::default());
         let itself = ActorId::Agent(agent.id);
         assert_eq!((context.caller_id, context.initiator_id), (itself, itself), "it acts, and caused it");
@@ -842,9 +841,8 @@ pub(crate) mod tests {
     /// issue 340.
     #[test]
     fn an_agent_acts_in_its_owners_name() {
-        let personality: Personality = serde_json::from_value(serde_json::json!({ "id": PersonalityId::new(), "name": "plain" })).unwrap();
         let owner = ActorId::User(UserId::new());
-        let mut agent = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), &personality, owner);
+        let mut agent = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), PersonalityId::new(), owner);
         assert_eq!(agent.principal_id, owner, "its owner's when made");
         assert!(agent.validate().is_ok());
         agent.principal_id = ActorId::User(UserId::new());

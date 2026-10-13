@@ -9,6 +9,9 @@ import type {
   GroupResponse,
   Description,
   AgentToolsResponse,
+  AgentResponse,
+  CreateAgentRequest,
+  PersonalityResponse,
   ApprovalRule,
   ChannelMember,
   ChannelResponse,
@@ -491,6 +494,67 @@ export const api = {
   async deleteAgent(agentUuid: string): Promise<void> {
     const res = await request(`/agents/${agentUuid}`, {method: 'DELETE'});
     await ensureOk(res, 'Failed to delete the agent');
+  },
+
+  /** The agents the user may read (issue 227), on their own. */
+  async getAgents(): Promise<AgentResponse[]> {
+    const res = await request('/agents');
+    await ensureOk(res, 'Failed to fetch the agents');
+    return res.json();
+  },
+
+  /** The agents the user deleted and may read as such, the trash. */
+  async getDeletedAgents(): Promise<Deleted[]> {
+    const res = await request('/agents?deleted=true');
+    await ensureOk(res, 'Failed to fetch the deleted agents');
+    return res.json();
+  },
+
+  /** One agent, with the channels it takes part in that the user may read. */
+  async getAgent(agentUuid: string): Promise<AgentResponse> {
+    const res = await request(`/agents/${agentUuid}`);
+    await ensureOk(res, 'Failed to fetch the agent');
+    return res.json();
+  },
+
+  /** Makes an agent of a personality, the user's (issue 227). */
+  async createAgent(payload: CreateAgentRequest): Promise<AgentResponse> {
+    const res = await request('/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    await ensureOk(res, 'Failed to create the agent');
+    return res.json();
+  },
+
+  async renameAgent(agentUuid: string, name: string): Promise<AgentResponse> {
+    const res = await request(`/agents/${agentUuid}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    await ensureOk(res, 'Failed to rename the agent');
+    return res.json();
+  },
+
+  /** Restores the deleted agent: it takes part again in the channels it rested in. */
+  async restoreAgent(agentUuid: string): Promise<AgentResponse> {
+    const res = await request(`/agents/${agentUuid}/restore`, {method: 'POST'});
+    await ensureOk(res, 'Failed to restore the agent');
+    return res.json();
+  },
+
+  async purgeAgent(agentUuid: string): Promise<void> {
+    const res = await request(`/agents/${agentUuid}/purge`, {method: 'POST'});
+    await ensureOk(res, 'Failed to delete the agent for good');
+  },
+
+  /** The personalities the user may read - what they may make an agent of -, by name. */
+  async getPersonalities(): Promise<PersonalityResponse[]> {
+    const res = await request('/personalities');
+    await ensureOk(res, 'Failed to fetch the personalities');
+    return res.json();
   },
 
   /** The sessions you deleted and may read as such: the trash (issue 164). */

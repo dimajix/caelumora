@@ -18,13 +18,13 @@
 //! (`PROFILE`) from its personality, its owner and a user's profile.
 
 use crate::actor::{ActorId, ActorState};
-use crate::agent::PersonalityKind;
+use crate::agent::{AgentId, PersonalityId, PersonalityKind};
 use crate::approval::{ApprovalRequest, ApprovalRule};
 use crate::confidentiality::Classification;
 use crate::group::GroupId;
 use crate::scope::Scope;
 use crate::value::language::Language;
-use crate::value::text::{Briefing, Summary};
+use crate::value::text::{Briefing, Description, Summary};
 use crate::digest::Digest;
 use crate::message::TokenUsage;
 use crate::note::Note;
@@ -286,7 +286,7 @@ pub struct WorkspaceSnapshot {
     pub scope: Scope,
     /// The storage its files lie in, by its configured name.
     pub storage: String,
-    pub description: Option<crate::value::text::Description>,
+    pub description: Option<Description>,
     pub classification: Classification,
     /// Whether its storage gives it a shell (issue 251).
     pub has_shell: bool,
@@ -344,11 +344,34 @@ pub enum CandidateRefusal {
     CannotRun,
 }
 
-/// An agent as the viewer sees it in the list of agents (issue 164).
+/// An agent as the viewer sees it on its own, not as a member of a channel
+/// (issues 164, 227).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentSnapshot {
-    pub id: crate::agent::AgentId,
+    pub id: AgentId,
     pub name: String,
+    /// Where it lies: its owner's scope, a group's, the global one, or a
+    /// session's or channel's it takes part in alone.
+    pub scope: Scope,
+    /// Whose it is: whose rights it acts with.
+    pub owner: ActorId,
+    /// What it is made of.
+    pub personality_id: PersonalityId,
+    /// Its personality's name; `None` if the personality is gone.
+    pub personality: Option<String>,
+    /// Whether the viewer may rename it (`UpdateAgent`).
+    pub can_change: bool,
     /// Whether the viewer may delete it (`DeleteAgent`).
     pub can_delete: bool,
+}
+
+/// A personality as the viewer sees it, to make an agent of (issue 227).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PersonalitySnapshot {
+    pub id: PersonalityId,
+    pub name: String,
+    /// Where it lies: an agent made of it lies there or within it.
+    pub scope: Scope,
+    pub kind: PersonalityKind,
+    pub description: Option<Description>,
 }

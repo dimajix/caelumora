@@ -27,7 +27,7 @@ the artifact tool, the workspace prompt part, the channel's and the workspace's 
 
 - **One owner per concern** (AGENTS.md): who looks for who may use a workspace in a channel, or
   what ends a command, finds it among making and renaming workspaces.
-- **The rule of managers and controllers** (STORAGE.md, set with issue
+- **The rule of managers and controllers** (ARCHITECTURE.md, set with issue
   [227](227-agent-management.md)): a manager owns the lifecycle of its kind and, where the kind has
   no controller, what it is. The first half of the `WorkspaceManager` is that; the second is
   neither.
@@ -48,6 +48,16 @@ the artifact tool, the workspace prompt part, the channel's and the workspace's 
   (`caelumora-runtime/src/terminal/`) rather than with either type.
 - Issue [333](333-workspaces-woven-into-sessions.md) decided that workspaces stay in the core; this
   is not about moving them out.
+- **Making a workspace in a session's scope is not asked about.** For `WorkspaceManager::create`
+  the store asks `CreateWorkspace`, owned by the caller, but nothing asks whether they may read the
+  session whose scope it lies in. What lies there keeps the session from being deleted by whoever
+  may not delete it (`ScopeNotEmpty`), so a stranger who knows a session's id could keep its owner
+  from deleting it. Only the REST route refuses a session's scope today (`ScopeKind::of_user`); a
+  plugin calling the manager is not stopped. Issue [227](227-agent-management.md) closed the same
+  gap for agents: `AgentManager::create` asks `GetSession` or `GetChannel` first. For workspaces
+  the template is in the way: it makes the session's workspace before the session is stored
+  (`template::resolve_workspace`), as it made its agents before 227; it would have to attach the
+  workspace once the session is made, as it now takes in its agents.
 
 ## Done when
 
@@ -61,3 +71,6 @@ the artifact tool, the workspace prompt part, the channel's and the workspace's 
   managers of the runtime own: the `GroupManager`, `SkillManager`, `ArtifactManager` and
   `AgentManager` own the lifecycle of their kind and, without a controller, its attributes; the
   `WorkspaceManager` owns more.
+- **2026-10-13** — Noted while working on [227](227-agent-management.md): `WorkspaceManager::create`
+  does not ask whether a workspace may be put into a session's scope, which 227 now asks for
+  agents.

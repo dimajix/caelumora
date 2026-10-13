@@ -1,6 +1,6 @@
 # 227 — Agents cannot be seen or managed on their own, only as members of channels
 
-**Status:** open
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -73,3 +73,55 @@ notes of all channels, its usage as a whole.
   /personalities`. The dialog that adds a participant to a channel gets a shortcut to it - a new
   agent from a personality, created and then taken in, in two calls - with whichever of the two
   issues is done last; 221 was done first.
+- **2026-10-13** — Decided with the maintainer: the list shows name, scope, personality and owner;
+  the channels an agent takes part in are shown on its page (`Views::agent`), only those the viewer
+  may read. A new agent is made in the user's own scope from the web UI; in a session's scope only
+  through the shortcut of `AddParticipantDialog`. Its memory and private notes across channels are
+  not shown here but left to [19](19-memory-tiers.md); changing an agent's personality is not part
+  of managing it. Renaming stays with the `AgentController`, not the `AgentManager` as the entry of
+  2026-10-11 said: managers own the lifecycle of their entities, and an entity with a controller is
+  changed through it, as sessions, channels and users are. The rule is written down in
+  ARCHITECTURE.md (*Managers and controllers*); the `WorkspaceManager`, which owns more, is issue
+  [344](344-workspace-manager-owns-their-use.md).
+  First step done: `AgentManager::create` makes an agent - `CreateAgent` asked before the
+  personality is read -, announces it and fails with `AgentError`, which the manager's other
+  operations now answer too. The template only finds an agent (`template::agent`) and has the
+  manager make one; `Agent::new` takes the personality's id.
+- **2026-10-13** — Second step: the views reach an agent on its own (`Views::agent`, `AgentView`),
+  its snapshot names its scope, owner and personality and whether the viewer may rename it
+  (`may_change_agent`, `UpdateAgent`); `AgentView::channels` lists the channels it takes part in
+  that the viewer reaches through their sessions. `Views::personalities` lists those the viewer may
+  make an agent of. The REST server answers `AgentResponse` as before; its new fields and routes are
+  the next step.
+- **2026-10-13** — Third step: the REST server makes an agent of a personality (`POST /agents`), in
+  the user's scope or the global one, as groups and workspaces are made; one of a session's scope
+  is refused (`invalid_scope`) until it is decided how it is made. It reads one agent with the
+  channels it takes part in that the user may read (`GET /agents/{id}`), renames it through its
+  controller (`PATCH /agents/{id}`) and lists the personalities (`GET /personalities`);
+  `AgentResponse` names its scope, owner and personality and whether the user may rename it.
+  `AgentManager::create` takes the name as text and the scope, as the `GroupManager` and the
+  `WorkspaceManager` do, and fails with `Invalid` for a name that does not fit.
+- **2026-10-13** — Decided with the maintainer: a scope is where a name is found, not who owns
+  what lies there, so an agent may be made in any scope its personality admits, `POST /agents`
+  included. What lies in a session's or a channel's scope keeps the session from being deleted by
+  whoever may not delete it (`ScopeNotEmpty`), however, so `AgentManager::create` asks whether the
+  maker may read the session or the channel (`GetSession`, `GetChannel`) before it reads the
+  personality - a channel of another session than the scope names is none. An agent made in a
+  session's scope from the web UI is made there and then taken in; if taking it in fails, the
+  client deletes it.
+  So that the template is not an exception to this, it makes its agents once the session is, as a
+  client would: `create_from_template` stores and starts the session with its users and approvers
+  (`SessionTemplate::build` leaves the agents out), then finds or makes each agent and takes it
+  into the session and the channels that name it (`template::take_in_agents`,
+  `SessionLoop::add_participant`); if that fails, the session is deleted and purged again in the
+  runtime's name, with what was made in its scope. An agent the template cannot make or take in
+  now fails after the session was stored, and the session is taken back.
+- **2026-10-13** — Fourth step, and done: the web UI lists the agents the user may read below the
+  teams (`PageList`), with their trash, and loads the list again on every event about an agent. An
+  agent's page (`AgentPage`) shows its personality, where it lies, whose it is and the channels it
+  takes part in that the user may read, opened from there; whoever may renames and deletes it.
+  "New agent" (`NewAgentDialog`) makes one in the user's own scope, of a personality that admits
+  it. `AddParticipantDialog` makes a new agent and takes it in - the user's own or for the session
+  alone, as they choose or its personality requires - and deletes it again if taking it in fails.
+  Who owns an agent is shown as the user or "someone else": the REST API names the owner by id
+  alone.

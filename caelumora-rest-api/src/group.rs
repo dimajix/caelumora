@@ -4,7 +4,6 @@ use crate::scope::ScopeKind;
 use caelumora_model::snapshot;
 use caelumora_model::actor::ActorId;
 use caelumora_model::group::GroupId;
-use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, SessionId};
 use serde::{Deserialize, Serialize};
 
@@ -41,14 +40,7 @@ pub struct GroupMemberResponse {
 
 impl From<snapshot::GroupSnapshot> for GroupResponse {
     fn from(view: snapshot::GroupSnapshot) -> Self {
-        let channel_id = match view.scope {
-            Scope::ChannelScope { channel_id, .. } => Some(channel_id),
-            _ => None,
-        };
-        let (scope, session_id) = match view.scope {
-            Scope::ChannelScope { session_id, .. } => (ScopeKind::Session, Some(session_id)),
-            ref scope => ScopeKind::of(scope),
-        };
+        let (scope, session_id, channel_id) = ScopeKind::placed(&view.scope);
         let members = view.members.into_iter().map(|(id, name)| GroupMemberResponse { id, name }).collect();
         Self { id: view.id, name: view.name, scope, session_id, channel_id, owner: view.owner, members, can_change: view.can_change }
     }

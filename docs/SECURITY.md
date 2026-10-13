@@ -528,6 +528,11 @@ in the viewer's name:
     channel, so that a version shared beyond it names nothing of it. The viewer's own list of
     artifacts holds those they own and those shared with them, a role of theirs or a team they
     belong to; what reaches them only as a participant of a channel is listed in that channel.
+*   Agents are reached on their own by reading them (`GetAgent`), wherever they take part. An
+    agent's view reaches the channels it takes part in only as the viewer reaches them through
+    their sessions: reading an agent grants nothing of where it takes part. What it is made of is
+    named in the runtime's name; the personalities listed to make an agent of are those the viewer
+    may read.
 *   `Views::channel_of` reaches what a memory entry's origin or a recorded piece of knowledge names,
     wherever it is, and answers `None` for what is gone or not the viewer's to read.
 

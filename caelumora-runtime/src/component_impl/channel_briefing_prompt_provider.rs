@@ -180,7 +180,7 @@ mod tests {
             security_attributes: Default::default(), reasoning_visibility: Visibility::Channel, deleted: None,
         };
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();
-        let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), &personality, ActorId::None);
+        let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         store.entity_stores().agents.create(&system, &agent).await.unwrap();
         let session_id = SessionId::new();
         let confidential = Classification::general(Confidentiality::Confidential);

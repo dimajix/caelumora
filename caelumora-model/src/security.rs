@@ -630,6 +630,10 @@ pub trait AccessQuestions {
     /// (`ApproveToolCall`, issue 14).
     async fn may_approve(&self, context: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> bool;
 
+    /// Whether `context` may rename the agent with `agent` attributes
+    /// (`UpdateAgent`, issue 227).
+    async fn may_change_agent(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
+
     /// Whether `context` may delete the agent with `agent` attributes
     /// (`DeleteAgent`, issue 164).
     async fn may_delete_agent(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool;
@@ -703,6 +707,10 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 
     async fn may_approve(&self, context: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> bool {
         self.check(context, ActionType::ApproveToolCall { agent, channel }).await
+    }
+
+    async fn may_change_agent(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {
+        self.check(context, ActionType::update(Agent::KIND, agent)).await
     }
 
     async fn may_delete_agent(&self, context: &SecurityContext, agent: &SecurityAttributes) -> bool {

@@ -229,7 +229,7 @@ mod tests {
                     deleted: None,
                 };
                 store.entity_stores().personalities.create(&system, &personality).await.unwrap();
-                let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), &personality, owner);
+                let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality.id, owner);
                 store.entity_stores().agents.create(&system, &agent).await.unwrap();
                 ActorId::Agent(agent.id)
             }
@@ -300,8 +300,8 @@ mod tests {
         let mut session = make_session("scoped", ActorId::None);
         let id = session.id;
         let elsewhere = [
-            Agent::new(ScopedName::new("aside", Scope::ChannelScope { session_id: id, channel_id: ChannelId::new() }).unwrap(), &personality, ActorId::None),
-            Agent::new(ScopedName::new("visitor", Scope::SessionScope { session_id: SessionId::new() }).unwrap(), &personality, ActorId::None),
+            Agent::new(ScopedName::new("aside", Scope::ChannelScope { session_id: id, channel_id: ChannelId::new() }).unwrap(), personality.id, ActorId::None),
+            Agent::new(ScopedName::new("visitor", Scope::SessionScope { session_id: SessionId::new() }).unwrap(), personality.id, ActorId::None),
         ];
         for agent in &elsewhere {
             agents.create(&system, agent).await.unwrap();

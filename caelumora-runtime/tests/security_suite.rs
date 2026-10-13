@@ -39,13 +39,15 @@ use caelumora_model::store::{ComponentStore, StateStore, StoreError, Stored};
 use caelumora_model::template::{ScopeTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
 use caelumora_model::user::{UserId, UserProfile};
 use caelumora_model::work::TurnId;
+use caelumora_runtime::agent::manager::AgentError;
 use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, PRECONFIGURED_REF_KIND};
 use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
 use caelumora_runtime::testing::{asked_as_a_call_on_the_workspace, asked_for, attributes, calling, denied, not_found, quiet, register_once, shown, Once, World, ONCE_MODEL_KIND, STAFF};
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
 use caelumora_runtime::terminal::{ByteStream, Terminal, TerminalError, WorkspacePath};
-use caelumora_runtime::view::{ViewError, Viewer};
+use caelumora_runtime::view::{ChannelView, ViewError, Viewer};
+use caelumora_model::snapshot::PersonalitySnapshot;
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_runtime::group::GroupError;
 use caelumora_model::workspace::{CommandStatus, WorkspaceChoice, WorkspaceId};
@@ -1817,10 +1819,14 @@ fn checks(lines: &[&str]) -> Vec<String> {
 
 /// Making a session from a template: reading the template, then creating
 /// the session - before anything is found or made for it (issue 312) -,
-/// reading its owner, finding or making the agents - reading their
-/// personalities -, then everyone's clearance for the channels and each
-/// agent's personality in its own name, and the store creating the session
-/// again and its channels.
+/// reading its owner, everyone's clearance for the channels and the store
+/// creating the session again and its channels; then, once it is made,
+/// finding or making the agents - creating each, the session read where it
+/// may lie, before its personality is read, and the store creating it
+/// again - and taking each in as anyone is taken into a running session
+/// (issue 227): changing the session and the channel, the agent read, its
+/// personality in its own name and its clearance, and the store storing
+/// the session and the channel.
 #[tokio::test]
 async fn making_a_session_needs_the_template_the_personalities_and_creating_what_is_made() {
     let world = World::new().await;
@@ -1835,16 +1841,32 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: GetSessionTemplate(system's) yes",
         "alice: CreateSession(alice's) yes",
         "alice: GetUser(system's) yes",
-        "alice: List(agent) yes",
-        "alice: GetPersonality(bob's) yes",
-        "alice: CreateAgent(alice's) yes",
         "alice: JoinChannel(alice) yes",
-        "alice as helper: GetPersonality(bob's) yes",
-        "alice: JoinChannel(helper) yes",
         "alice: CreateSession(alice's) yes",
         "alice: CreateChannel(alice's) yes",
+        // Its agent, found or made once the session is.
+        "alice: List(agent) yes",
+        "alice: CreateAgent(alice's) yes",
+        "alice: GetPersonality(bob's) yes",
+        "alice: CreateAgent(alice's) yes",
+        // And taken in: into the session and its channel at once.
+        "alice: UpdateSession(alice's) yes",
+        "alice: GetChannel(alice's) yes",
+        "alice: JoinChannel(alice) yes",
+        "alice: UpdateChannel(alice's) yes",
+        "alice: GetAgent(alice's) yes",
         "alice as helper: GetPersonality(bob's) yes",
-    ]), "the agent's personality is asked for in its name twice: whether it is cleared, and as its channel starts");
+        "alice: JoinChannel(helper) yes",
+        "alice: GetSession(alice's) yes",
+        "alice: UpdateSession(alice's) yes",
+        // The channel takes it in, its actor built.
+        "alice: UpdateChannel(alice's) yes",
+        "alice as helper: GetPersonality(bob's) yes",
+        "alice: JoinChannel(helper) yes",
+        "alice: GetChannel(alice's) yes",
+        "alice: JoinChannel(alice) yes",
+        "alice: UpdateChannel(alice's) yes",
+    ]), "the agent's personality is asked for in its name twice: whether it is cleared, and as its actor is built");
     world.manager.stop_session(&alice, session.id()).await.unwrap();
 
     // Again: the agent is found, not made - its personality is not read
@@ -1861,16 +1883,161 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
     assert_eq!(asked, checks(&["carol: GetSessionTemplate(bob's) no"]), "a template one may not read: nothing more is asked");
 
     let unusable = world.template(Some(world.alice), &[], "unusable", bobs.id).await;
+    let sessions = || async { world.runtime.entity_stores().sessions.list(&World::system(), &Query::all()).await.map(|page| page.items.len()).unwrap() };
+    let before = sessions().await;
     let (refused, asked) = world.asked(world.manager.create_from_template(&alice, unusable, None, None)).await;
     assert!(not_found(&refused.unwrap_err()));
     assert_eq!(asked, checks(&[
         "alice: GetSessionTemplate(alice's) yes",
         "alice: CreateSession(alice's) yes",
         "alice: GetUser(system's) yes",
+        "alice: JoinChannel(alice) yes",
+        "alice: CreateSession(alice's) yes",
+        "alice: CreateChannel(alice's) yes",
         "alice: List(agent) yes",
         "alice: GetAgent(alice's) yes",
+        "alice: CreateAgent(alice's) yes",
         "alice: GetPersonality(bob's) no",
-    ]), "a personality one may not read: no agent, nothing created - the list is filtered by what she may read, her agent from before");
+    ]), "a personality one may not read: no agent - the list is filtered by what she may read, her agent from before");
+    assert_eq!(sessions().await, before, "and the session made for it is taken back");
+}
+
+/// Making an agent of a personality (issue 227): creating it, in the
+/// maker's name and owned by them, before the personality is read in their
+/// name, and the store creating it again. One of a personality they may not
+/// read is not made, and answered as not there.
+#[tokio::test]
+async fn making_an_agent_needs_creating_it_then_its_personality() {
+    let world = World::new().await;
+    let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
+    let bobs = world.personality("bobs", Some(world.bob), &[]).await;
+    let (agents, alice) = (world.runtime.agent_manager(), World::as_user(world.alice));
+    let hers = Scope::UserScope { user_id: world.alice };
+
+    let (made, asked) = world.asked(agents.create(&alice, "helper", hers.clone(), shared.id)).await;
+    let made = made.expect("hers to make");
+    assert_eq!((made.personality_id, made.security_attributes.owner_id), (shared.id, ActorId::User(world.alice)));
+    assert_eq!(asked, checks(&[
+        "alice: CreateAgent(alice's) yes",
+        "alice: GetPersonality(bob's) yes",
+        "alice: CreateAgent(alice's) yes",
+    ]));
+
+    let (refused, asked) = world.asked(agents.create(&alice, "other", hers, bobs.id)).await;
+    assert!(matches!(refused, Err(AgentError::Store(StoreError::NotFound { .. }))), "answered as not there: {refused:?}");
+    assert_eq!(asked, checks(&["alice: CreateAgent(alice's) yes", "alice: GetPersonality(bob's) no"]), "nothing is made");
+    assert_eq!(world.runtime.entity_stores().agents.list(&World::system(), &Query::all()).await.map(|page| page.items).unwrap().len(), 1, "only hers");
+}
+
+/// Making an agent in a session's or a channel's scope (issue 227): who may
+/// not read the session puts none there - it would keep the session from
+/// being deleted -, asked after making it and before the personality; who
+/// takes part does. A channel is asked about with the session the scope
+/// names: one of another session is none.
+#[tokio::test]
+async fn making_an_agent_in_a_session_needs_reading_it() {
+    let world = World::new().await;
+    let plain = world.personality("plain", None, &[]).await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = session.channels()[0].id();
+    let other = world.session_of(&[], &[], &[]).await;
+    let agents = world.runtime.agent_manager();
+    let in_session = Scope::SessionScope { session_id: session.id() };
+
+    let (refused, asked) = world.asked(agents.create(&World::as_user(world.carol), "spy", in_session.clone(), plain.id)).await;
+    assert!(matches!(refused, Err(AgentError::Store(StoreError::NotFound { entity: "session", .. }))), "not hers to read: {refused:?}");
+    assert_eq!(asked, checks(&["carol: CreateAgent(carol's) yes", "carol: GetSession(alice's) no"]), "nothing else is asked");
+
+    let (made, asked) = world.asked(agents.create(&World::as_user(world.bob), "helper", in_session, plain.id)).await;
+    made.expect("he takes part");
+    assert_eq!(asked, checks(&[
+        "bob: CreateAgent(bob's) yes",
+        "bob: GetSession(alice's) yes",
+        "bob: GetPersonality(system's) yes",
+        "bob: CreateAgent(bob's) yes",
+    ]));
+
+    let in_main = Scope::ChannelScope { session_id: session.id(), channel_id: main };
+    let (made, asked) = world.asked(agents.create(&World::as_user(world.bob), "minder", in_main, plain.id)).await;
+    made.expect("he is in the channel");
+    assert_eq!(asked[1], "bob: GetChannel(alice's) yes");
+    let forged = Scope::ChannelScope { session_id: other.id(), channel_id: main };
+    let (refused, _) = world.asked(agents.create(&World::as_user(world.bob), "forged", forged, plain.id)).await;
+    assert!(matches!(refused, Err(AgentError::Store(StoreError::NotFound { entity: "channel", .. }))), "a channel of another session: {refused:?}");
+    let made = world.runtime.entity_stores().agents.list(&World::system(), &Query::all()).await.map(|page| page.items).unwrap();
+    assert_eq!(made.len(), 2, "only his two");
+}
+
+/// Seeing an agent on its own (issue 227): who may read it (`GetAgent`)
+/// sees it, with whether they may rename (`UpdateAgent`) and delete it
+/// (`DeleteAgent`) - its owner, not who it is shared with -, and of the
+/// channels it takes part in only those they may read: reading the agent
+/// grants nothing of where it takes part. The personalities are those one
+/// may read (`GetPersonality`).
+#[tokio::test]
+async fn an_agent_is_seen_by_who_may_read_it_with_the_channels_they_may_read() {
+    let world = World::new().await;
+    let personality = world.personality("shared", Some(world.bob), &[world.alice]).await;
+    world.personality("bobs", Some(world.bob), &[]).await;
+    let helper = world.agent("helper", world.alice, &personality).await;
+    let together = world.session_of(&[world.bob], &[helper], &[]).await;
+    let alone = world.session_of(&[], &[helper], &[]).await;
+    let (alice, bob) = (Viewer::new(World::as_user(world.alice)), Viewer::new(World::as_user(world.bob)));
+    let channels = |found: Vec<ChannelView>| found.iter().map(|channel| channel.session().id()).collect::<Vec<_>>();
+
+    let hers = world.manager.views(alice.clone()).agent(helper).await.expect("hers");
+    let seen = hers.snapshot().await.unwrap();
+    assert_eq!((seen.owner, seen.personality.as_deref(), seen.can_change, seen.can_delete), (ActorId::User(world.alice), Some("shared"), true, true));
+    let mut taking_part = channels(hers.channels().await.unwrap());
+    taking_part.sort();
+    let mut both = vec![together.id(), alone.id()];
+    both.sort();
+    assert_eq!(taking_part, both, "the channels of both her sessions");
+
+    assert!(matches!(world.manager.views(bob.clone()).agent(helper).await, Err(ViewError::AgentNotFound(_))), "not his to read");
+    assert!(world.manager.views(bob.clone()).agents().await.unwrap().is_empty());
+
+    let mut shared = world.runtime.entity_stores().agents.get(&World::system(), helper).await.unwrap();
+    shared.security_attributes = shared.security_attributes.granting(Subject::Actor(ActorId::User(world.bob)), Grant::Read);
+    world.runtime.entity_stores().agents.update(&World::system(), &shared).await.unwrap();
+    let (seen, asked) = world.asked(async { world.manager.views(bob.clone()).agent(helper).await.expect("shared with him").snapshot().await.unwrap() }).await;
+    assert_eq!((seen.can_change, seen.can_delete), (false, false), "read, not changed");
+    assert_eq!(asked, checks(&["bob: GetAgent(alice's) yes", "bob: UpdateAgent(alice's) no", "bob: DeleteAgent(alice's) no"]));
+    let his = world.manager.views(bob.clone()).agent(helper).await.unwrap();
+    assert_eq!(channels(his.channels().await.unwrap()), [together.id()], "only where he may read");
+
+    let names = |listed: Vec<PersonalitySnapshot>| listed.into_iter().map(|p| p.name).collect::<Vec<_>>();
+    assert_eq!(names(world.manager.views(alice).personalities().await.unwrap()), ["shared"]);
+    assert_eq!(names(world.manager.views(bob).personalities().await.unwrap()), ["bobs", "shared"]);
+}
+
+/// Renaming an agent (issue 227), through the controller this instance
+/// shares: the store asks reading it and changing it - its owner's alone.
+/// Who may not read it finds none; who reads it is refused, and the agent
+/// keeps its name.
+#[tokio::test]
+async fn renaming_an_agent_needs_changing_it() {
+    let world = World::new().await;
+    let personality = world.personality("plain", None, &[]).await;
+    let helper = world.agent("helper", world.alice, &personality).await;
+    let agent = world.runtime.controller_manager().agent_controller(helper).await.unwrap();
+
+    let (renamed, asked) = world.asked(agent.update_name(&World::as_user(world.bob), "his")).await;
+    assert!(matches!(renamed, Err(StoreError::NotFound { .. })), "not his to read: {renamed:?}");
+    assert_eq!(asked, checks(&["bob: GetAgent(alice's) no"]));
+
+    let mut shared = world.runtime.entity_stores().agents.get(&World::system(), helper).await.unwrap();
+    shared.security_attributes = shared.security_attributes.granting(Subject::Actor(ActorId::User(world.bob)), Grant::Read);
+    world.runtime.entity_stores().agents.update(&World::system(), &shared).await.unwrap();
+    let (renamed, asked) = world.asked(agent.update_name(&World::as_user(world.bob), "his")).await;
+    assert!(matches!(renamed, Err(StoreError::PermissionDenied(_))), "his to read, not to change: {renamed:?}");
+    assert_eq!(asked, checks(&["bob: GetAgent(alice's) yes", "bob: UpdateAgent(alice's) no"]));
+    assert_eq!(agent.name(), "helper", "nothing changed");
+
+    let (renamed, asked) = world.asked(agent.update_name(&World::as_user(world.alice), "assistant")).await;
+    renamed.expect("hers to rename");
+    assert_eq!(asked, checks(&["alice: GetAgent(alice's) yes", "alice: UpdateAgent(alice's) yes"]));
+    assert_eq!(world.runtime.entity_stores().agents.get(&World::system(), helper).await.unwrap().name.as_str(), "assistant");
 }
 
 /// Opening (starting) a session: reading it.
@@ -1911,7 +2078,7 @@ async fn deleting_a_session_needs_owning_it() {
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
     let personality = world.personality("plain", None, &[]).await;
-    let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), &personality, ActorId::User(world.bob));
+    let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), personality.id, ActorId::User(world.bob));
     world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
     let (_, asked) = world.asked(world.manager.delete_session(&World::as_user(world.carol), session.id())).await;
     assert_eq!(asked, checks(&["carol: GetSession(alice's) no"]));
@@ -1947,7 +2114,7 @@ async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
     let personality = world.personality("plain", None, &[]).await;
-    let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), &personality, ActorId::User(world.bob));
+    let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), personality.id, ActorId::User(world.bob));
     world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
     world.manager.delete_session(&World::system(), session.id()).await.expect("the system's to delete, all of it");
 
@@ -2904,7 +3071,8 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
     let attached = attached.expect("hers");
     assert_eq!(attached.session().workspace, Some(hers.id));
     assert_eq!(asked[..5], checks(&["alice: GetSessionTemplate(system's) yes", "alice: CreateSession(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: UpdateWorkspace(alice's) yes"]), "{asked:?}");
-    assert!(!asked.iter().any(|line| line.contains("UpdateSession")), "she is making the session: {asked:?}");
+    let mut making = asked.iter().take_while(|line| !line.contains("CreateChannel"));
+    assert!(!making.any(|line| line.contains("UpdateSession")), "attached as she makes the session, not as she changes it: {asked:?}");
 
     let (refused, asked) = world.asked(world.manager.create_from_template(&alice, template, None, Some(WorkspaceChoice::Existing { id: his.id, share: None }))).await;
     assert!(not_found(&refused.unwrap_err()), "not bob's");

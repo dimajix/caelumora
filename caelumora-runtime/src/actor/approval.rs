@@ -495,7 +495,7 @@ mod tests {
         };
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let attributes = agent(&ids);
-        let mut stored = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), &personality, attributes.owner_id);
+        let mut stored = Agent::new(ScopedName::new("helper", Default::default()).unwrap(), personality.id, attributes.owner_id);
         stored.security_attributes = attributes;
         store.entity_stores().agents.create(&system, &stored).await.unwrap();
 

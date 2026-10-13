@@ -120,9 +120,9 @@ reload shows the same.
 The sidebar lists the user's sessions with their channels and follows the global stream: it takes
 its state from the snapshot and fetches a session again on any event that changes it, its channels
 or their members. Starting and stopping are ignored. An event about an entity is read by its kind
-(`entityEvent` in `globalEvents.ts`): the lists of workspaces, skills, artifacts and teams are
-loaded again on any event of their kind, and the trash on any deletion or restoring, whatever the
-kind.
+(`entityEvent` in `globalEvents.ts`): the lists of workspaces, skills, artifacts, teams and agents
+are loaded again on any event of their kind, and the trash on any deletion or restoring, whatever
+the kind.
 
 A session's privacy is shown to everyone in it; its owner changes it (`PrivacyDialog`). Choosing a
 policy that lets other sessions read says that it holds for what is said from then on. The session's
@@ -154,7 +154,8 @@ with (`AccessList`), and its files - wherever it lies.
 session the user may read, or of one of its channels, or a team the user reads. Users and roles are
 not offered: the REST API lists neither.
 
-The lists of workspaces, skills, artifacts and teams in the sidebar are one component (`PageList`).
+The lists of workspaces, skills, artifacts, teams and agents in the sidebar are one component
+(`PageList`).
 A page shown in the place of a channel is closed when the list it was listed in loses its entry; one
 the list never had - an artifact read only as a member of a channel, opened from the chat - stays.
 
@@ -196,6 +197,19 @@ whole list. Since the REST API lists no users, a member is chosen from the parti
 the user's sessions - so only someone the user shares a session with. Everyone else sees the team
 read-only, as everyone sees the group of a session's or channel's participants, which changes only
 by taking part.
+
+### Agents
+
+The agents the user may read are listed below the teams, each with where it lies where that is not
+the user's own scope - an agent of a session's scope takes part only there and goes with it. An
+agent's page shows its personality, where it lies, whose it is, and the channels it takes part in
+that the user may read, each opened from there; whoever may renames and deletes it from its menu.
+A deleted agent rests in its channels until it is restored from the trash below the list.
+
+"New agent" makes one of a personality the user may read, in their own scope: it is theirs, acts
+with their rights and keeps what it learns from session to session. A personality of a session's
+scope is not offered there, since it makes no agent outside it. An agent for one session is made
+from the dialog that adds someone to a channel (see below).
 
 ### A channel
 
@@ -333,7 +347,10 @@ What can be done with a member is in its menu, each entry only where the member 
 profile, its history, its private notes, its tools, removing it from the channel (where `can_change`
 is set, which also offers adding a participant of the session with how much of the history they
 may see - and, for whoever may change the session, someone found by the beginning of their name who
-is not in it yet, marked so and taken into it as well; whoever cannot be added is shown with why),
+is not in it yet, marked so and taken into it as well; whoever cannot be added is shown with why;
+or a new agent of a personality, made and then taken in - the user's own, or for this session
+alone, as they choose or as a personality of the session or the channel requires, and deleted again
+if it cannot be taken in),
 and deleting the agent - which asks once more, since the agent leaves every channel it
 takes part in, not only this one, until it is restored.
 
