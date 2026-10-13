@@ -4,10 +4,12 @@
 //! whoever creates the session. `SessionManager::create_from_template` is
 //! its caller. What is made is made by its owner - an agent by the
 //! `AgentManager`, a workspace by the `WorkspaceManager`; finding the one a
-//! template names is the template's.
+//! template names is the template's. Its agents are found or made once the
+//! session is, and taken into it as anyone is taken into a running session.
 
+use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, PersonalityId};
-use caelumora_model::channel::Participant;
+use caelumora_model::channel::{HistoryAccess, Participant};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
@@ -16,39 +18,60 @@ use caelumora_model::template::{ParticipantRequest, SessionTemplate, TemplateErr
 use caelumora_model::user::UserId;
 use caelumora_model::workspace::WorkspaceId;
 use crate::agent::manager::{AgentError, AgentManager};
+use crate::session::SessionLoop;
 use crate::workspace::{WorkspaceError, WorkspaceManager};
 
-/// The participants of `template` for the session `session_id` of `owner`,
-/// each with its name in the template, found in `stores` or made by
-/// `agents` as `context`.
+/// The users and approvers of `template` for the session `session_id` of
+/// `owner`, each with its name in the template, the users found in
+/// `stores` as `context`; and the agents it names, with their names in the
+/// template, which are found or made once the session is (`take_in_agents`).
 ///
 /// # Errors
-/// A `TemplateError` if the template cannot be made into a session - also
-/// if an agent it names exists with another personality; an `AgentError`
-/// if an agent cannot be made; a `StoreError` if a user it names does not
-/// exist, or the store refuses or fails - never a second agent because a
-/// lookup failed.
-pub(crate) async fn resolve_participants(stores: &EntityStores, agents: &AgentManager, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<Vec<(String, Participant)>> {
+/// A `TemplateError` if the template cannot be made into a session; a
+/// `StoreError` if a user it names does not exist, or the store refuses or
+/// fails.
+pub(crate) async fn resolve_participants(stores: &EntityStores, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<(Vec<(String, Participant)>, Vec<(String, ScopedName, PersonalityId)>)> {
     let requests = template.participants.iter()
         .map(|p| p.request(session_id, owner).map(|request| (p.name().to_string(), request)))
         .collect::<TemplateResult<Vec<_>>>()?;
-    let mut participants = Vec::with_capacity(requests.len());
+    let (mut participants, mut agents) = (Vec::with_capacity(requests.len()), Vec::new());
     for (name, request) in requests {
-        let participant = match request {
+        match request {
             ParticipantRequest::User(id) => {
                 // Only to find out that the user exists: the participant is
                 // the reference (issue 120).
                 stores.users.get(context, id).await?;
-                Participant::User(id)
+                participants.push((name, Participant::User(id)));
             }
-            ParticipantRequest::Agent { name: agent_name, personality_id } => {
-                Participant::Agent(agent(stores.agents.as_ref(), agents, context, agent_name, personality_id).await?)
-            }
-            ParticipantRequest::Approver(approver) => Participant::Approver(approver),
-        };
-        participants.push((name, participant));
+            ParticipantRequest::Agent { name: agent_name, personality_id } => agents.push((name, agent_name, personality_id)),
+            ParticipantRequest::Approver(approver) => participants.push((name, Participant::Approver(approver))),
+        }
     }
-    Ok(participants)
+    Ok((participants, agents))
+}
+
+/// Takes the agents `template` names - as `resolve_participants` gives
+/// them - into `session`, made from it, and into the channels that name
+/// them, seeing their whole history, on behalf of `context`, who made it.
+/// Each is found in `store` or made by `agents` (`agent`) once the session
+/// is, so that one of its scope is made where `context` may put it.
+///
+/// # Errors
+/// As `agent`, and as `SessionLoop::add_participant`; who took part before
+/// stays.
+pub(crate) async fn take_in_agents(store: &dyn EntityStore<Agent>, agents: &AgentManager, context: &SecurityContext, template: &SessionTemplate, session: &SessionLoop, named: Vec<(String, ScopedName, PersonalityId)>) -> anyhow::Result<()> {
+    let channels = session.session().channels.clone();
+    for (name, agent_name, personality_id) in named {
+        let participant = ActorId::Agent(agent(store, agents, context, agent_name, personality_id).await?);
+        let into = template.channels_of(&name, &channels);
+        if into.is_empty() {
+            session.add_participant(context, participant, None).await?;
+        }
+        for channel in into {
+            session.add_participant(context, participant, Some((channel, HistoryAccess::All))).await?;
+        }
+    }
+    Ok(())
 }
 
 /// The agent of `name` - in exactly its scope (issue 178) - if it is of
@@ -141,11 +164,12 @@ mod tests {
     use caelumora_model::store::query::Query;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::confidentiality::Visibility;
-    use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Personality;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{ActionType, DummySecurityManager, SecurityManager, Verb};
+    use caelumora_model::security::{ActionType, DummySecurityManager, SecurityAttributes, SecurityManager, Verb};
+    use caelumora_model::session::Session;
     use crate::event::EventBus;
+    use crate::session::testing::bare_session;
     use caelumora_model::removal::Stored;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, SessionTemplateId, TemplateError};
@@ -204,13 +228,24 @@ mod tests {
         (store, personality.id)
     }
 
-    /// The participants of `template` as `resolve_participants` finds them
-    /// in `store` or makes them there.
+    /// The participants of `template` as `create_from_template` finds them
+    /// in `store` or makes them there: its users and approvers, then - once
+    /// the session is stored, owned by `owner` - its agents (`agent`).
     async fn resolve(store: &Arc<MemoryStore>, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<Vec<(String, Participant)>> {
         let security: Arc<dyn SecurityManager> = Arc::new(DummySecurityManager::new());
         let events = Arc::new(EventBus::new(Arc::clone(&security), Arc::new(ConfidentialityRules::default())));
         let agents = AgentManager::new(&store.entity_stores(), Arc::<MemoryStore>::clone(store), events, security);
-        resolve_participants(&store.entity_stores(), &agents, context, template, session_id, owner).await
+        let (mut participants, named) = resolve_participants(&store.entity_stores(), context, template, session_id, owner).await?;
+        let (system, sessions) = (SecurityContext::system(), store.entity_stores().sessions);
+        if sessions.get(&system, session_id).await.is_err() {
+            let session = Session { security_attributes: SecurityAttributes::owned_by(ActorId::User(owner)), ..bare_session(session_id) };
+            sessions.create(&system, &session).await.unwrap();
+        }
+        for (name, agent_name, personality_id) in named {
+            let made = agent(store.entity_stores().agents.as_ref(), &agents, context, agent_name, personality_id).await?;
+            participants.push((name, Participant::Agent(made)));
+        }
+        Ok(participants)
     }
 
     fn as_user(owner: UserId) -> SecurityContext {

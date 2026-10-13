@@ -47,6 +47,19 @@ impl ScopeKind {
         }
     }
 
+    /// The scope a request names with this kind, `session_id` and
+    /// `channel_id`, as `placed` answers them, for something of `user`'s:
+    /// `None` if they do not fit - a session's without its session, a
+    /// session or channel named for another kind.
+    pub fn place(self, user: UserId, session_id: Option<SessionId>, channel_id: Option<ChannelId>) -> Option<Scope> {
+        match (self, session_id, channel_id) {
+            (Self::Session, Some(session_id), None) => Some(Scope::SessionScope { session_id }),
+            (Self::Session, Some(session_id), Some(channel_id)) => Some(Scope::ChannelScope { session_id, channel_id }),
+            (Self::User | Self::Global, None, None) => self.of_user(user),
+            _ => None,
+        }
+    }
+
     /// The scope of `user`'s own thing put here on its own: theirs or the
     /// global one; `None` for a session's, which nothing is put into so.
     pub fn of_user(self, user: UserId) -> Option<Scope> {
@@ -64,4 +77,25 @@ impl ScopeKind {
 pub struct ItemDescriptionRequest {
     #[serde(default)]
     pub description: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A request names a scope as a response does: a session's with its
+    /// session, a channel's with its channel besides; nothing else names
+    /// one.
+    #[test]
+    fn a_scope_is_placed_as_it_is_answered() {
+        let (user, session_id, channel_id) = (UserId::new(), SessionId::new(), ChannelId::new());
+        for scope in [Scope::UserScope { user_id: user }, Scope::GlobalScope, Scope::SessionScope { session_id }, Scope::ChannelScope { session_id, channel_id }] {
+            let (kind, session, channel) = ScopeKind::placed(&scope);
+            assert_eq!(kind.place(user, session, channel), Some(scope));
+        }
+        assert_eq!(ScopeKind::Session.place(user, None, None), None, "a session's without its session");
+        assert_eq!(ScopeKind::Session.place(user, None, Some(channel_id)), None);
+        assert_eq!(ScopeKind::User.place(user, Some(session_id), None), None, "a session named for another kind");
+        assert_eq!(ScopeKind::Global.place(user, None, Some(channel_id)), None);
+    }
 }

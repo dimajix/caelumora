@@ -18,10 +18,12 @@ use crate::event::EventBus;
 use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused, within};
 use async_trait::async_trait;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
+use caelumora_model::channel::Channel;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::removal::Stored;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
+use caelumora_model::session::Session;
 use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::value::ValueError;
 use caelumora_model::value::name::{Name, ScopedName};
@@ -63,6 +65,9 @@ fn store_error(id: AgentId) -> impl FnOnce(StoreError) -> AgentError {
 pub struct AgentManager {
     agents: Arc<dyn EntityStore<Agent>>,
     personalities: Arc<dyn EntityStore<Personality>>,
+    /// Read to ask whether an agent may be put into their scope.
+    sessions: Arc<dyn EntityStore<Session>>,
+    channels: Arc<dyn EntityStore<Channel>>,
     states: Arc<dyn StateStore>,
     events: Arc<EventBus>,
     security: Arc<dyn SecurityManager>,
@@ -76,26 +81,42 @@ impl fmt::Debug for AgentManager {
 
 impl AgentManager {
     pub(crate) fn new(stores: &EntityStores, states: Arc<dyn StateStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>) -> Self {
-        Self { agents: Arc::clone(&stores.agents), personalities: Arc::clone(&stores.personalities), states, events, security }
+        Self {
+            agents: Arc::clone(&stores.agents),
+            personalities: Arc::clone(&stores.personalities),
+            sessions: Arc::clone(&stores.sessions),
+            channels: Arc::clone(&stores.channels),
+            states,
+            events,
+            security,
+        }
     }
 
     /// Makes an agent of the personality `personality_id`, of `name` in
     /// `scope`, on behalf of `context`, whose principal owns it (`CreateAgent`),
-    /// and announces it. Making it is asked before the personality is read,
-    /// in `context`'s name (`GetPersonality`, issue 221): who may not make the
-    /// agent learns nothing of the personality.
+    /// and announces it. Making it is asked before anything is read, in
+    /// `context`'s name: who may not make the agent learns nothing of the
+    /// session or the personality.
+    ///
+    /// An agent of a session's or a channel's scope goes with it: what lies
+    /// there and cannot be deleted by who deletes the session keeps the
+    /// session from being deleted (`ScopeNotEmpty`). So only who may read
+    /// the session (`GetSession`) - or the channel (`GetChannel`) - puts an
+    /// agent there, as only who takes part puts anything else there. Then
+    /// the personality is read (`GetPersonality`, issue 221).
     ///
     /// # Errors
     /// `Invalid` for a name that does not fit, `PersonalityOutOfScope` if
     /// the personality lies in a session's or a channel's scope the agent
-    /// would not; a `StoreError` -
-    /// `PermissionDenied` if they may not make it or not read the
-    /// personality, `NotFound` if there is no such personality, `NameTaken`
-    /// if an agent of `name` lies in its scope already (issue 250).
+    /// would not; a `StoreError` - `PermissionDenied` if they may not make
+    /// it or not read the personality, `NotFound` if there is no such
+    /// session, channel or personality they may read, `NameTaken` if an
+    /// agent of `name` lies in its scope already (issue 250).
     pub async fn create(&self, context: &SecurityContext, name: &str, scope: Scope, personality_id: PersonalityId) -> AgentResult<Agent> {
         let agent = Agent::new(ScopedName::new(name, scope)?, personality_id, context.principal_id);
         self.security
             .require(context, ActionType::create(Agent::KIND, &agent.security_attributes), StoreError::PermissionDenied).await?;
+        self.require_holder(context, &agent.name.scope).await?;
         let personality = self.personalities.get(context, personality_id).await?;
         if !personality.name.scope.admits(&agent.name.scope) {
             return Err(AgentError::PersonalityOutOfScope(personality.name.name));
@@ -104,6 +125,30 @@ impl AgentManager {
         self.events.publish(GlobalEvent::created::<Agent>(&agent.id), agent.security_attributes.clone());
         info!("Agent {} created by {}", agent.id, context.caller_id);
         Ok(agent)
+    }
+
+    /// Whether `context` may put something into `scope`: read the session
+    /// or the channel it is; any other scope is only where its name is
+    /// found.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` for a session or channel they may not read,
+    /// or a channel of another session than the scope names.
+    async fn require_holder(&self, context: &SecurityContext, scope: &Scope) -> AgentResult<()> {
+        match scope {
+            Scope::SessionScope { session_id } => {
+                self.sessions.get(context, *session_id).await?;
+            }
+            // The scope names both: a channel of another session than it
+            // names is none.
+            Scope::ChannelScope { session_id, channel_id } => {
+                if self.channels.get(context, *channel_id).await?.session_id != *session_id {
+                    return Err(StoreError::NotFound { entity: Channel::KIND.name(), id: channel_id.to_string() }.into());
+                }
+            }
+            Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::GlobalScope => {}
+        }
+        Ok(())
     }
 
     /// Deletes agent `id` on behalf of `context` (issues 164, 314): marked

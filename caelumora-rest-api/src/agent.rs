@@ -60,13 +60,19 @@ impl From<snapshot::AgentSnapshot> for AgentResponse {
 }
 
 /// An agent to make of a personality (issue 227): the requesting user's, in
-/// their scope unless `global`.
+/// their scope unless `global` - or `session`, taking part only in the
+/// session `session_id` names, or in its channel `channel_id`, as far as
+/// the personality admits it.
 #[derive(Debug, Deserialize)]
 pub struct CreateAgentRequest {
     pub name: String,
     pub personality_id: PersonalityId,
     #[serde(default)]
     pub scope: ScopeKind,
+    #[serde(default)]
+    pub session_id: Option<SessionId>,
+    #[serde(default)]
+    pub channel_id: Option<ChannelId>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -137,9 +137,12 @@ impl SessionManager {
     /// Creates a session from the template `template_id` on behalf of
     /// `context`, whose user owns it and is the template's "user", names it
     /// `name` - the template's name if `None` - and starts it (issue 88).
-    /// The template's agents are found by name in their scope, or made. Its
-    /// workspace is `workspace` where one is chosen (issue 266) - none, one
-    /// of the user's own, or one made for it alone -, else the template's.
+    /// Its workspace is `workspace` where one is chosen (issue 266) - none,
+    /// one of the user's own, or one made for it alone -, else the
+    /// template's. Once the session is made, the template's agents are found
+    /// by name in their scope, or made, and taken into it and their
+    /// channels, as `context`; if that fails, the session is taken back,
+    /// with what was made in its scope.
     ///
     /// # Errors
     /// `SessionError::OwnerNotAUser` if `context` acts for no user; a
@@ -169,7 +172,7 @@ impl SessionManager {
             }
             _ => None,
         };
-        let participants = crate::template::resolve_participants(&self.stores, &self.agents, context, &template, id, owner).await?;
+        let (participants, agents) = crate::template::resolve_participants(&self.stores, context, &template, id, owner).await?;
         let name = name.unwrap_or_else(|| template.name.name.clone());
         // What is to be found or made: the template's, unless one was chosen.
         let wanted = match workspace {
@@ -185,7 +188,15 @@ impl SessionManager {
             None => existing.map(|(chosen, _)| (chosen, false)),
         };
         session.workspace = workspace.as_ref().map(|(found, _)| *found);
-        match self.establish(context, session, channels).await {
+        let established = async {
+            let session_loop = self.establish(context, session, channels).await?;
+            if let Err(e) = crate::template::take_in_agents(self.stores.agents.as_ref(), &self.agents, context, &template, &session_loop, agents).await {
+                self.take_back(id).await;
+                return Err(e);
+            }
+            Ok(session_loop)
+        }.await;
+        match established {
             Ok(session_loop) => {
                 // Shared once the session it is shared with exists (issue 23).
                 if let Some((chosen, Some(grant))) = existing {
@@ -203,6 +214,16 @@ impl SessionManager {
                 }
                 Err(e)
             }
+        }
+    }
+
+    /// Takes back the session `id`, just made and not yet complete, in the
+    /// runtime's name - making it was permitted: deleted and purged, with
+    /// what was made in its scope.
+    async fn take_back(&self, id: SessionId) {
+        let system = SecurityContext::system();
+        if let Err(undo) = async { self.delete_session(&system, id).await?; self.purge_session(&system, id).await }.await {
+            warn!(session = %id, "The session that could not be completed stays: {undo}");
         }
     }
 

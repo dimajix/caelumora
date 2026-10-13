@@ -6,7 +6,7 @@
 
 use crate::agent::PersonalityId;
 use crate::approval::{ApprovalRule, ApprovalStrategy, Approver, ApproverId};
-use crate::channel::{Channel, Participant};
+use crate::channel::{Channel, ChannelId, Participant};
 use crate::component::ComponentConfig;
 use crate::confidentiality::Classification;
 use crate::value::language::Language;
@@ -128,10 +128,12 @@ impl ChannelTemplate {
     /// `session_participants` pairs each participant of the session with
     /// its name in the session template, which is what `self.participants`
     /// refers to - not the user's or agent's own name: the template's "user"
-    /// is whoever the session was created for. Held in the template's
-    /// language, if it names one (issue 56).
-    pub fn instantiate(&self, session_id: SessionId, owner: UserId, session_participants: &[(String, Participant)]) -> TemplateResult<Channel> {
+    /// is whoever the session was created for. The names in `joining` take
+    /// part once the channel is made, and are left out. Held in the
+    /// template's language, if it names one (issue 56).
+    pub fn instantiate(&self, session_id: SessionId, owner: UserId, session_participants: &[(String, Participant)], joining: &[&str]) -> TemplateResult<Channel> {
         let participants = self.participants.iter()
+            .filter(|name| !joining.contains(&name.as_str()))
             .map(|name| session_participants.iter()
                 .find(|(template_name, _)| template_name == name)
                 .map(|(_, participant)| participant.clone())
@@ -280,13 +282,23 @@ impl SessionTemplate {
 
     /// Builds the session `id` of `owner`, named `name`, and its channels -
     /// documents of their own, which the session lists by id (issue 70).
-    /// `participants` are the template's participants as found or created
-    /// for it (`ParticipantTemplate::request`), each with its name in the
-    /// template. Nothing is stored: that is the caller's, so that it can
-    /// announce the session where it is created.
+    /// `participants` are the template's users and approvers as found or
+    /// made for it (`ParticipantTemplate::request`), each with its name in
+    /// the template. Its agents are not among them: they are found or made
+    /// once the session is, and taken into it and into the channels that
+    /// name them (`channels_of`). Nothing is stored: that is the caller's,
+    /// so that it can announce the session where it is created.
+    ///
+    /// # Errors
+    /// `TemplateError::ParticipantNotFound` if a channel names a participant
+    /// the template does not have.
     pub fn build(&self, id: SessionId, owner: UserId, name: Name, participants: Vec<(String, Participant)>) -> TemplateResult<(Session, Vec<Channel>)> {
+        let agents: Vec<&str> = self.participants.iter()
+            .filter(|participant| matches!(participant, ParticipantTemplate::Agent { .. }))
+            .map(ParticipantTemplate::name)
+            .collect();
         let channels = self.channels.iter()
-            .map(|channel| channel.instantiate(id, owner, &participants))
+            .map(|channel| channel.instantiate(id, owner, &participants, &agents))
             .collect::<TemplateResult<Vec<_>>>()?;
         let participants: Vec<Participant> = participants.into_iter().map(|(_, participant)| participant).collect();
         let security_attributes = Session::attributes_of(id, owner, &self.access);
@@ -308,6 +320,16 @@ impl SessionTemplate {
             deleted: None,
         };
         Ok((session, channels))
+    }
+
+    /// Of `channels` - those of a session `build` made, as it lists them, in
+    /// the template's order - the ones whose template names the participant
+    /// `name`.
+    pub fn channels_of(&self, name: &str, channels: &[ChannelId]) -> Vec<ChannelId> {
+        self.channels.iter().zip(channels)
+            .filter(|(template, _)| template.participants.iter().any(|participant| participant == name))
+            .map(|(_, channel)| *channel)
+            .collect()
     }
 }
 
@@ -381,7 +403,6 @@ impl ParticipantTemplate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::AgentId;
 
     fn template() -> SessionTemplate {
         SessionTemplate {
@@ -426,15 +447,16 @@ mod tests {
         }
     }
 
-    /// The participants as the runtime would resolve the requests.
+    /// The users and approvers as the runtime would resolve the requests;
+    /// the agents join later.
     fn resolved(template: &SessionTemplate, session: SessionId, owner: UserId) -> Vec<(String, Participant)> {
-        template.participants.iter().map(|p| {
+        template.participants.iter().filter_map(|p| {
             let participant = match p.request(session, owner).unwrap() {
                 ParticipantRequest::User(id) => Participant::User(id),
-                ParticipantRequest::Agent { .. } => Participant::Agent(AgentId::new()),
+                ParticipantRequest::Agent { .. } => return None,
                 ParticipantRequest::Approver(approver) => Participant::Approver(approver),
             };
-            (p.name().to_string(), participant)
+            Some((p.name().to_string(), participant))
         }).collect()
     }
 
@@ -493,10 +515,12 @@ mod tests {
 
         let (session, channels) = template.build(id, owner, Name::new("s").unwrap(), resolved(&template, id, owner)).unwrap();
         assert_eq!(session.channels, channels.iter().map(|c| c.id).collect::<Vec<_>>(), "the session lists its channels by id");
-        assert_eq!(session.participants.len(), 3, "every actor of the template");
+        assert_eq!(session.participants.len(), 2, "every user and approver of the template");
 
         let approvers = |c: &Channel| c.participants.iter().filter(|p| matches!(p, Participant::Approver(_))).count();
-        assert_eq!(channels[0].participants.len(), 3);
+        assert_eq!(channels[0].participants.len(), 2, "its agent joins once it is made");
+        assert_eq!(template.channels_of("helper", &session.channels), [channels[0].id], "where it joins");
+        assert_eq!(template.channels_of("user", &session.channels), [channels[0].id, channels[1].id]);
         assert_eq!(approvers(&channels[0]), 1, "the template's approver, not a second one");
         assert_eq!(approvers(&channels[1]), 1, "a channel that names none gets one");
         assert!(matches!(channels[1].participants[0], Participant::User(u) if u == owner), "the template's \"user\" is the owner");

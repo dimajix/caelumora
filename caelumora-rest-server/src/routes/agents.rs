@@ -32,11 +32,10 @@ pub async fn list_agents(State(state): State<Arc<AppState>>, Query(options): Que
 }
 
 /// Makes an agent of the personality the body names, the user's, in their
-/// scope or the global one. One of a session's scope is made with the
-/// session, by its template.
+/// scope, the global one, or a session's or channel's they may read.
 pub async fn create_agent(State(state): State<Arc<AppState>>, user: AuthenticatedUser, Json(request): Json<CreateAgentRequest>) -> Result<(StatusCode, Json<AgentResponse>), ApiError> {
-    let scope = request.scope.of_user(user.id)
-        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "An agent of a session's scope is made with the session"))?;
+    let scope = request.scope.place(user.id, request.session_id, request.channel_id)
+        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "An agent of a session's scope names its session, and only it names a session or a channel"))?;
     let made = state.runtime_manager.agent_manager()
         .create(&user.security_context(), &request.name, scope, request.personality_id).await?;
     Ok((StatusCode::CREATED, Json(readable(&state, &user, made.id).await?)))
@@ -140,7 +139,7 @@ mod tests {
 
     /// Issue 227: an agent is made of a personality the user may read, in
     /// their own scope, read with the channels it takes part in, and
-    /// renamed; one of a session's scope is not made here.
+    /// renamed; one of a session's scope names its session.
     #[tokio::test]
     async fn an_agent_is_made_of_a_personality_read_and_renamed() {
         let state = state();

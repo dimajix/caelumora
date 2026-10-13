@@ -101,3 +101,18 @@ notes of all channels, its usage as a whole.
   `AgentResponse` names its scope, owner and personality and whether the user may rename it.
   `AgentManager::create` takes the name as text and the scope, as the `GroupManager` and the
   `WorkspaceManager` do, and fails with `Invalid` for a name that does not fit.
+- **2026-10-13** — Decided with the maintainer: a scope is where a name is found, not who owns
+  what lies there, so an agent may be made in any scope its personality admits, `POST /agents`
+  included. What lies in a session's or a channel's scope keeps the session from being deleted by
+  whoever may not delete it (`ScopeNotEmpty`), however, so `AgentManager::create` asks whether the
+  maker may read the session or the channel (`GetSession`, `GetChannel`) before it reads the
+  personality - a channel of another session than the scope names is none. An agent made in a
+  session's scope from the web UI is made there and then taken in; if taking it in fails, the
+  client deletes it.
+  So that the template is not an exception to this, it makes its agents once the session is, as a
+  client would: `create_from_template` stores and starts the session with its users and approvers
+  (`SessionTemplate::build` leaves the agents out), then finds or makes each agent and takes it
+  into the session and the channels that name it (`template::take_in_agents`,
+  `SessionLoop::add_participant`); if that fails, the session is deleted and purged again in the
+  runtime's name, with what was made in its scope. An agent the template cannot make or take in
+  now fails after the session was stored, and the session is taken back.
