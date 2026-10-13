@@ -345,7 +345,7 @@ Deleting an agent (`AgentManager::delete`) marks it and changes no channel: it r
 channel it takes part in until it is restored. The channels follow its mark instead:
 
 *   a running session, told of the deletion, stops the agent's actor in each of its channels, in the
-    runtime's name, and announces it as a leave (`AgentChannelLeft`);
+    runtime's name, and announces it as a leave (`channel::LEFT`);
 *   a channel that starts leaves it out, as any participant that no longer exists - `Member::of`
     asks the store whether it exists, not the controllers, which keep an agent's controller while
     an actor of it still runs;

@@ -7,7 +7,7 @@
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
-use crate::removal::{Deletable, Removal, Stored};
+use crate::removal::{Deletable, NoEntity, Removal, Stored};
 use crate::scope::{Scope, ScopeField, Scoped};
 use crate::group::GroupId;
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
@@ -111,6 +111,7 @@ impl Workspace {
 impl Stored for Workspace {
     const KIND: EntityKind = EntityKind::new("workspace");
     type Id = WorkspaceId;
+    type Within = NoEntity;
     type Field = ScopeField;
 
     fn id(&self) -> WorkspaceId {

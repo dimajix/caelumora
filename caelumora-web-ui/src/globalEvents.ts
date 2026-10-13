@@ -1,9 +1,11 @@
 // What the views do with an event of the global stream (issue 35).
 //
-// An event about an entity named by its own id - a session, an agent, a
-// user, a profile, a workspace, a skill, an artifact, a group - comes in one
-// form (issue 323): `{"Entity": {"kind", "id", "change"}}`. The events of a
-// channel and of its members name the session too, and keep a variant each.
+// An event about an entity - a session, a channel, an agent, a user, a
+// profile, a workspace, a skill, an artifact, a group - comes in one form
+// (issue 323): `{"Entity": {"kind", "id", "within", "change"}}`. `within` is
+// the id of the entity it lies in, for a kind that lies in one: a channel's
+// session (issue 335). What happens to a channel's members is a custom change
+// of the channel.
 //
 // The session list follows a session's events by removing the session,
 // taking a new name straight from the event, or fetching the session again
@@ -31,14 +33,18 @@ export type EntityChange =
   | {Updated: unknown}
   | {Custom: {name: string; data: unknown}};
 
-/** An event about an entity, named by its kind and its own id. */
+/**
+ * An event about an entity, named by its kind and its own id, and for a kind
+ * that lies in an entity by that entity's id as well.
+ */
 export interface EntityEvent {
   kind: string;
   id: string;
+  within?: string;
   change: EntityChange;
 }
 
-/** The entity `event` is about and what happened to it; `null` for an event of a channel or its members. */
+/** The entity `event` is about and what happened to it; `null` for an event that is none. */
 export function entityEvent(event: GlobalEvent): EntityEvent | null {
   const entity = event.Entity as Partial<EntityEvent> | undefined;
   if (!entity || typeof entity.kind !== 'string' || typeof entity.id !== 'string' || entity.change === undefined) return null;
@@ -50,46 +56,44 @@ export function updateOf(change: EntityChange): unknown {
   return typeof change === 'object' && 'Updated' in change ? change.Updated : undefined;
 }
 
-// Events that change a session's channels or their members: the session is
-// fetched again. Agents and users themselves are not shown in the list.
-const REFRESHING = new Set([
-  'ChannelRestored',
-  'ChannelCreated',
-  'ChannelUpdated',
-  'ChannelDeleted',
-  'AgentChannelJoined',
-  'AgentChannelLeft',
-  'UserChannelJoined',
-  'UserChannelLeft',
-]);
+/** What the custom change `name` says; `undefined` for another change. */
+function dataOf(change: EntityChange, name: string): unknown {
+  return typeof change === 'object' && 'Custom' in change && change.Custom.name === name ? change.Custom.data : undefined;
+}
 
-/** The session an event of a channel concerns: the first of its values. */
-function sessionIdOf(value: unknown): string | null {
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
-  return null;
+/** A channel that `event` is about, with the session it lies in; `null` for any other event. */
+function channelEvent(event: GlobalEvent): {sessionId: string; channelId: string; change: EntityChange} | null {
+  const entity = entityEvent(event);
+  if (entity?.kind !== 'channel' || typeof entity.within !== 'string') return null;
+  return {sessionId: entity.within, channelId: entity.id, change: entity.change};
+}
+
+/** Whether `change` of a channel is someone joining or leaving it (issue 46). */
+function changesMembers(change: EntityChange): boolean {
+  return dataOf(change, 'joined') !== undefined || dataOf(change, 'left') !== undefined;
 }
 
 /** What the session list does with `event`. */
 export function sessionChange(event: GlobalEvent): SessionChange {
-  const entity = entityEvent(event);
-  if (entity) {
-    if (entity.kind !== 'session') return {kind: 'ignore'};
-    const {id: sessionId, change} = entity;
-    if (change === 'Deleted') return {kind: 'remove', sessionId};
-    if (change === 'Created' || change === 'Restored') return {kind: 'refresh', sessionId};
-    const update = updateOf(change);
-    if (update === undefined) return {kind: 'ignore'};
-    const name = update && typeof update === 'object' ? (update as {NameChanged?: unknown}).NameChanged : undefined;
-    return typeof name === 'string' ? {kind: 'rename', sessionId, name} : {kind: 'refresh', sessionId};
+  // A change of a session's channels or their members: the session is
+  // fetched again. Their start and stop, and an agent's state in them, do not
+  // change what the list shows.
+  const channel = channelEvent(event);
+  if (channel) {
+    const {sessionId, change} = channel;
+    const changesChannels = typeof change === 'string' || updateOf(change) !== undefined || changesMembers(change);
+    return changesChannels ? {kind: 'refresh', sessionId} : {kind: 'ignore'};
   }
 
-  const [kind, value] = Object.entries(event)[0] ?? [];
-  if (!kind) return {kind: 'ignore'};
-  const sessionId = sessionIdOf(value);
-  if (!sessionId) return {kind: 'ignore'};
-  if (REFRESHING.has(kind)) return {kind: 'refresh', sessionId};
-  return {kind: 'ignore'};
+  const entity = entityEvent(event);
+  if (entity?.kind !== 'session') return {kind: 'ignore'};
+  const {id: sessionId, change} = entity;
+  if (change === 'Deleted') return {kind: 'remove', sessionId};
+  if (change === 'Created' || change === 'Restored') return {kind: 'refresh', sessionId};
+  const update = updateOf(change);
+  if (update === undefined) return {kind: 'ignore'};
+  const name = update && typeof update === 'object' ? (update as {NameChanged?: unknown}).NameChanged : undefined;
+  return typeof name === 'string' ? {kind: 'rename', sessionId, name} : {kind: 'refresh', sessionId};
 }
 
 // The global stream is opened once, by the session list; other views hear its
@@ -110,90 +114,91 @@ export function dispatchGlobalEvent(event: GlobalEvent): void {
   listeners.forEach(listener => listener(event));
 }
 
-const MEMBERSHIP = new Set(['AgentChannelJoined', 'AgentChannelLeft', 'UserChannelJoined', 'UserChannelLeft']);
-
 /**
- * The channel someone joined or left (issue 46), for the membership events;
- * `null` for any other event. Whoever shows the members fetches them again.
+ * The channel someone joined or left (issue 46), for a channel's `joined` and
+ * `left`; `null` for any other event. Whoever shows the members fetches them
+ * again.
  */
 export function membershipChangedChannel(event: GlobalEvent): string | null {
-  const [kind, value] = Object.entries(event)[0] ?? [];
-  if (!kind || !MEMBERSHIP.has(kind)) return null;
-  return Array.isArray(value) && typeof value[1] === 'string' ? value[1] : null;
+  const channel = channelEvent(event);
+  return channel && changesMembers(channel.change) ? channel.channelId : null;
 }
 
 /**
- * The channel whose state of an agent changed, for `AgentChannelStateChanged`
- * (issue 65) - its notes, say; `null` for any other event. The event carries
- * no content: whoever shows the notes fetches them again.
+ * The channel whose state of an agent changed, for a channel's
+ * `agent_state_changed` (issue 65) - its notes, say; `null` for any other
+ * event. The event carries no content: whoever shows the notes fetches them
+ * again.
  */
 export function changedChannel(event: GlobalEvent): string | null {
   return changedAgentState(event)?.channelId ?? null;
 }
 
 /**
- * Whose state changed where, for `AgentChannelStateChanged`; `null` for any
- * other event - for what follows one agent across a session (issue 233).
+ * Whose state changed where, for a channel's `agent_state_changed`; `null`
+ * for any other event - for what follows one agent across a session (issue
+ * 233).
  */
 export function changedAgentState(event: GlobalEvent): {sessionId: string; channelId: string; agentId: string} | null {
-  const value = event.AgentChannelStateChanged;
-  if (!Array.isArray(value) || !value.every(id => typeof id === 'string')) return null;
-  const [sessionId, channelId, agentId] = value as string[];
-  return {sessionId, channelId, agentId};
+  const channel = channelEvent(event);
+  const agentId = channel && dataOf(channel.change, 'agent_state_changed');
+  if (!channel || typeof agentId !== 'string') return null;
+  return {sessionId: channel.sessionId, channelId: channel.channelId, agentId};
+}
+
+/** The channel that was changed and what its update says, for a channel's update; `null` for any other event. */
+function channelUpdate(event: GlobalEvent): {channelId: string; update: object} | null {
+  const channel = channelEvent(event);
+  const update = channel && updateOf(channel.change);
+  if (!channel || typeof update !== 'object' || update === null) return null;
+  return {channelId: channel.channelId, update};
 }
 
 /**
- * The channel that was reclassified and its classification now, for
- * `ChannelUpdated` with `ClassificationChanged` (issue 133); `null` for any
+ * The channel that was reclassified and its classification now, for a
+ * channel's update with `ClassificationChanged` (issue 133); `null` for any
  * other event. Lowering it changed its messages too: whoever shows them
  * fetches them again.
  */
 export function reclassifiedChannel(event: GlobalEvent): {channelId: string; classification: Classification} | null {
-  const value = event.ChannelUpdated;
-  if (!Array.isArray(value) || typeof value[1] !== 'string') return null;
-  const update = value[2] as {ClassificationChanged?: Classification} | undefined;
-  return update?.ClassificationChanged ? {channelId: value[1], classification: update.ClassificationChanged} : null;
+  const changed = channelUpdate(event);
+  const classification = (changed?.update as {ClassificationChanged?: Classification} | undefined)?.ClassificationChanged;
+  return changed && classification ? {channelId: changed.channelId, classification} : null;
 }
 
 /**
  * The channel whose language changed and its language now - `null` for none
- * in particular - for `ChannelUpdated` with `LanguageChanged` (issue 56);
+ * in particular - for a channel's update with `LanguageChanged` (issue 56);
  * `null` for any other event.
  */
 export function languageChangedChannel(event: GlobalEvent): {channelId: string; language: string | null} | null {
-  const value = event.ChannelUpdated;
-  if (!Array.isArray(value) || typeof value[1] !== 'string') return null;
-  const update = value[2];
-  if (typeof update !== 'object' || update === null || !('LanguageChanged' in update)) return null;
-  return {channelId: value[1], language: (update as {LanguageChanged: string | null}).LanguageChanged ?? null};
+  const changed = channelUpdate(event);
+  if (!changed || !('LanguageChanged' in changed.update)) return null;
+  return {channelId: changed.channelId, language: (changed.update as {LanguageChanged: string | null}).LanguageChanged ?? null};
 }
 
 
 /**
- * The channel whose description changed and what it says now, for
- * `ChannelUpdated` with `DescriptionChanged` (issue 245); `null` for any
+ * The channel whose description changed and what it says now, for a
+ * channel's update with `DescriptionChanged` (issue 245); `null` for any
  * other event.
  */
 export function descriptionChangedChannel(event: GlobalEvent): {channelId: string; summary?: string; briefing?: string} | null {
-  const value = event.ChannelUpdated;
-  if (!Array.isArray(value) || typeof value[1] !== 'string') return null;
-  const update = value[2];
-  if (typeof update !== 'object' || update === null || !('DescriptionChanged' in update)) return null;
-  const {summary, briefing} = (update as {DescriptionChanged: {summary: string | null; briefing: string | null}}).DescriptionChanged;
-  return {channelId: value[1], summary: summary ?? undefined, briefing: briefing ?? undefined};
+  const changed = channelUpdate(event);
+  if (!changed || !('DescriptionChanged' in changed.update)) return null;
+  const {summary, briefing} = (changed.update as {DescriptionChanged: {summary: string | null; briefing: string | null}}).DescriptionChanged;
+  return {channelId: changed.channelId, summary: summary ?? undefined, briefing: briefing ?? undefined};
 }
 
 /**
- * The channel whose approval rules changed and its rules now, for
- * `ChannelUpdated` with `ApprovalRulesChanged` (issue 13); `null` for any
+ * The channel whose approval rules changed and its rules now, for a
+ * channel's update with `ApprovalRulesChanged` (issue 13); `null` for any
  * other event.
  */
 export function approvalRulesChangedChannel(event: GlobalEvent): {channelId: string; rules: ApprovalRule[]} | null {
-  const value = event.ChannelUpdated;
-  if (!Array.isArray(value) || typeof value[1] !== 'string') return null;
-  const update = value[2];
-  if (typeof update !== 'object' || update === null || !('ApprovalRulesChanged' in update)) return null;
-  return {channelId: value[1], rules: (update as {ApprovalRulesChanged: ApprovalRule[]}).ApprovalRulesChanged ?? []};
+  const changed = channelUpdate(event);
+  if (!changed || !('ApprovalRulesChanged' in changed.update)) return null;
+  return {channelId: changed.channelId, rules: (changed.update as {ApprovalRulesChanged: ApprovalRule[]}).ApprovalRulesChanged ?? []};
 }
 
 /**

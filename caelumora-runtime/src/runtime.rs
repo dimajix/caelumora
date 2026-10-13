@@ -8,7 +8,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::approval::ApprovalRule;
-use caelumora_model::channel::ChannelId;
+use caelumora_model::channel::{self, Channel, ChannelId};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
@@ -258,7 +258,7 @@ impl ActorRuntime {
         let (Ok(agent), Some(channel)) = (self.agent_id(), self.channel_loop()) else { return };
         let attributes = channel.security_attributes();
         self.runtime.runtime_manager.event_bus()
-            .publish_classified(GlobalEvent::AgentChannelStateChanged(self.session_id, self.channel_id, agent), attributes, &[channel.classification()]);
+            .publish_classified(GlobalEvent::custom::<Channel>(&(self.session_id, self.channel_id), channel::AGENT_STATE_CHANGED, &agent), attributes, &[channel.classification()]);
     }
 
     /// What the actor's turns navigate (issue 163): its session, read from

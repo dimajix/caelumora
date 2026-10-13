@@ -45,7 +45,7 @@ mod tests {
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::define_id;
     use caelumora_model::group::Group;
-    use caelumora_model::removal::{Deletable, Removal, Stored};
+    use caelumora_model::removal::{Deletable, NoEntity, Removal, Stored};
     use caelumora_model::secret::{SecretManager, SecretProvider, SecretResult};
     use crate::component::config_of_params;
     use caelumora_model::security::{DummySecurityManager, Secured, SecurityAttributes, SecurityContext};
@@ -78,6 +78,7 @@ mod tests {
     impl Stored for Note {
         const KIND: EntityKind = EntityKind::new("note");
         type Id = NoteId;
+        type Within = NoEntity;
         type Field = NoField;
 
         fn id(&self) -> NoteId {
@@ -159,6 +160,7 @@ mod tests {
             impl Stored for Groupie {
                 const KIND: EntityKind = Group::KIND;
                 type Id = NoteId;
+                type Within = NoEntity;
                 type Field = NoField;
                 fn id(&self) -> NoteId {
                     self.0.id

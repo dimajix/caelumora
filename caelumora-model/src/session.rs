@@ -13,7 +13,7 @@ use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
 use crate::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
-use crate::removal::{Deletable, Removal, Stored};
+use crate::removal::{Deletable, NoEntity, Removal, Stored};
 use crate::store::EntityKind;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +91,7 @@ pub struct Session {
 impl Stored for Session {
     const KIND: EntityKind = EntityKind::new("session");
     type Id = SessionId;
+    type Within = NoEntity;
     type Field = SessionField;
 
     fn id(&self) -> SessionId {

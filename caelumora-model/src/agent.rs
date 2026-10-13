@@ -16,7 +16,7 @@ use crate::turn::GivenUpReason;
 use crate::turn::{CommandRequest, TurnState};
 use crate::work::{TurnId, Work};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
-use crate::removal::{self, Deletable, Removal};
+use crate::removal::{self, Deletable, NoEntity, Removal};
 use crate::role::RoleId;
 use crate::scope::{ScopeField, Scoped};
 use crate::value::name::ScopedName;
@@ -133,6 +133,7 @@ impl Personality {
 impl removal::Stored for Personality {
     const KIND: EntityKind = EntityKind::new("personality");
     type Id = PersonalityId;
+    type Within = NoEntity;
     type Field = ScopeField;
 
     fn id(&self) -> PersonalityId {
@@ -157,6 +158,7 @@ impl Deletable for Personality {
 impl removal::Stored for Agent {
     const KIND: EntityKind = EntityKind::new("agent");
     type Id = AgentId;
+    type Within = NoEntity;
     type Field = ScopeField;
 
     fn id(&self) -> AgentId {

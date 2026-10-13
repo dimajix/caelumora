@@ -13,9 +13,6 @@ use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use caelumora_model::channel::Channel;
 use caelumora_model::session::Session;
 
-
-use caelumora_model::removal::Stored;
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SubscriptionTopic {
     All,
@@ -49,14 +46,11 @@ impl Secured for PublishedEvent {
 
 impl PublishedEvent {
     /// What a party must be allowed to receive this event: to read the
-    /// entity it is about - the same question the `EntityStore` asks. The
-    /// events of a channel, of its members and of an agent's state in it go
-    /// by the channel's attributes, as reading the channel (issue 304).
+    /// entity it is about - the same question the `EntityStore` asks. What
+    /// happens to a channel's members and to an agent's state in it is an
+    /// event of the channel, and goes by its attributes (issue 304).
     fn read_action(&self) -> ActionType<'_> {
-        let kind = match self.event {
-            GlobalEvent::Entity { kind, .. } => kind,
-            _ => Channel::KIND,
-        };
+        let GlobalEvent::Entity { kind, .. } = self.event;
         ActionType::get(kind, self.security_attributes())
     }
 
@@ -64,9 +58,10 @@ impl PublishedEvent {
     /// entity (issue 316): asked as reading the entity is, with the part's
     /// attributes. Nothing to ask of an event about the whole.
     async fn part_readable(&self, security_manager: &dyn SecurityManager, context: &SecurityContext) -> bool {
-        match (&self.part, &self.event) {
-            (Some(part), GlobalEvent::Entity { kind, .. }) => security_manager.check(context, ActionType::get(*kind, part)).await,
-            _ => true,
+        let GlobalEvent::Entity { kind, .. } = &self.event;
+        match &self.part {
+            Some(part) => security_manager.check(context, ActionType::get(*kind, part)).await,
+            None => true,
         }
     }
 }
@@ -305,32 +300,21 @@ impl EventBus {
 
         let mut topics_to_notify = vec![SubscriptionTopic::All];
 
-        match &event {
-            GlobalEvent::Entity { .. } => {
-                if let Some((sid, _)) = event.about::<Session>() {
-                    topics_to_notify.push(SubscriptionTopic::Session(sid));
-                } else if let Some((aid, _)) = event.about::<Agent>() {
-                    topics_to_notify.push(SubscriptionTopic::Agent(aid));
-                } else if let Some((uid, _)) = event.about::<User>().or_else(|| event.about::<UserProfile>()) {
-                    topics_to_notify.push(SubscriptionTopic::User(uid));
-                }
-                // Other kinds have no topic of their own until something
-                // follows one of them (issues 253, 22, 271, 286): `All`, and
-                // whoever may read it.
-            }
-            GlobalEvent::ChannelCreated(sid, cid) | GlobalEvent::ChannelUpdated(sid, cid, _) | GlobalEvent::ChannelDeleted(sid, cid) | GlobalEvent::ChannelRestored(sid, cid) |
-            GlobalEvent::ChannelStarted(sid, cid) | GlobalEvent::ChannelStopped(sid, cid) |
-            GlobalEvent::AgentChannelJoined(sid, cid, _) | GlobalEvent::AgentChannelLeft(sid, cid, _) |
-            GlobalEvent::UserChannelJoined(sid, cid, _) | GlobalEvent::UserChannelLeft(sid, cid, _) => {
-                topics_to_notify.push(SubscriptionTopic::Session(*sid));
-                topics_to_notify.push(SubscriptionTopic::Channel(*cid));
-            }
-            GlobalEvent::AgentChannelStateChanged(sid, cid, aid) => {
-                topics_to_notify.push(SubscriptionTopic::Session(*sid));
-                topics_to_notify.push(SubscriptionTopic::Channel(*cid));
-                topics_to_notify.push(SubscriptionTopic::Agent(*aid));
-            }
+        if let Some((sid, _)) = event.about::<Session>() {
+            topics_to_notify.push(SubscriptionTopic::Session(sid));
+        } else if let Some(((sid, cid), _)) = event.about::<Channel>() {
+            // A channel's events, and those of its members, reach the
+            // session it lies in too (issue 335).
+            topics_to_notify.push(SubscriptionTopic::Session(sid));
+            topics_to_notify.push(SubscriptionTopic::Channel(cid));
+        } else if let Some((aid, _)) = event.about::<Agent>() {
+            topics_to_notify.push(SubscriptionTopic::Agent(aid));
+        } else if let Some((uid, _)) = event.about::<User>().or_else(|| event.about::<UserProfile>()) {
+            topics_to_notify.push(SubscriptionTopic::User(uid));
         }
+        // Other kinds have no topic of their own until something follows
+        // one of them (issues 253, 22, 271, 286): `All`, and whoever may
+        // read it.
 
         for topic in topics_to_notify {
             if let Some(mut senders) = self.subscribers.get_mut(&topic) {
@@ -354,9 +338,10 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use std::time::Duration;
-    use caelumora_model::channel::ChannelUpdateEvent;
+    use caelumora_model::channel::{self, ChannelUpdateEvent};
     use caelumora_model::security::{Grant, Subject};
     use caelumora_model::event::EntityChange;
+    use caelumora_model::removal::Stored;
     use caelumora_model::workspace::{Workspace, WorkspaceId};
 
     fn bus() -> EventBus {
@@ -411,6 +396,34 @@ mod tests {
         SecurityContext::new(ActorId::User(id), Default::default(), Default::default())
     }
 
+    /// What `events` are about: the kind, and the change or the name of a
+    /// custom one.
+    fn described(events: Vec<GlobalEvent>) -> Vec<String> {
+        events.iter().map(|GlobalEvent::Entity { kind, change, .. }| match change {
+            EntityChange::Custom { name, .. } => format!("{kind} {name}"),
+            EntityChange::Updated(_) => format!("{kind} Updated"),
+            other => format!("{kind} {other:?}"),
+        }).collect()
+    }
+
+    /// Issue 335: a channel's events, and those of its members, reach the
+    /// session it lies in and the channel, by what the event names.
+    #[tokio::test]
+    async fn a_channel_s_events_reach_its_session_and_itself() {
+        let bus = bus();
+        let (session, channel, other) = (SessionId::new(), ChannelId::new(), ChannelId::new());
+        let mut sessions = bus.subscribe_session(session);
+        let mut channels = bus.subscribe_channel(channel);
+        let mut others = bus.subscribe_channel(other);
+        let agent = AgentId::new();
+        bus.publish(GlobalEvent::custom::<Channel>(&(session, channel), channel::JOINED, &ActorId::Agent(agent)), Default::default());
+        bus.publish(GlobalEvent::custom::<Channel>(&(session, channel), channel::AGENT_STATE_CHANGED, &agent), Default::default());
+
+        assert_eq!(described(drain(&mut sessions).await), ["channel joined", "channel agent_state_changed"], "its session");
+        assert_eq!(described(drain(&mut channels).await), ["channel joined", "channel agent_state_changed"], "the channel");
+        assert!(drain(&mut others).await.is_empty(), "no other channel");
+    }
+
     /// Everything that arrives within a short while.
     async fn drain(subscription: &mut EventSubscription) -> Vec<GlobalEvent> {
         let mut events = Vec::new();
@@ -431,17 +444,13 @@ mod tests {
         let hers = SecurityAttributes::owned_by(ActorId::User(alice)).granting(caelumora_model::security::Subject::Actor(ActorId::User(bob)), caelumora_model::security::Grant::Read);
         let (session, deleted) = (SessionId::new(), SessionId::new());
         bus.publish(GlobalEvent::created::<Session>(&session), hers.clone());
-        bus.publish(GlobalEvent::ChannelCreated(session, ChannelId::new()), hers.clone());
+        bus.publish(GlobalEvent::created::<Channel>(&(session, ChannelId::new())), hers.clone());
         bus.publish(GlobalEvent::deleted::<Session>(&deleted), hers.clone());
         bus.publish(GlobalEvent::created::<User>(&carol), SecurityAttributes::owned_by(ActorId::User(carol)));
 
-        let kinds = |events: Vec<GlobalEvent>| events.iter().map(|e| match e {
-            GlobalEvent::Entity { kind, change, .. } => format!("{kind} {change:?}"),
-            other => format!("{other:?}").split('(').next().unwrap().to_string(),
-        }).collect::<Vec<_>>();
-        assert_eq!(kinds(drain(&mut alices).await), ["session Created", "ChannelCreated", "session Deleted"], "the owner gets it all, in order - a deletion too");
-        assert_eq!(kinds(drain(&mut bobs).await), ["session Created", "ChannelCreated", "session Deleted"], "so does a contributor");
-        assert_eq!(kinds(drain(&mut carols).await), ["user Created"], "a stranger only her own user event");
+        assert_eq!(described(drain(&mut alices).await), ["session Created", "channel Created", "session Deleted"], "the owner gets it all, in order - a deletion too");
+        assert_eq!(described(drain(&mut bobs).await), ["session Created", "channel Created", "session Deleted"], "so does a contributor");
+        assert_eq!(described(drain(&mut carols).await), ["user Created"], "a stranger only her own user event");
     }
 
     #[tokio::test]
@@ -465,12 +474,11 @@ mod tests {
         let (session, channel) = (SessionId::new(), ChannelId::new());
         let attributes = SecurityAttributes::owned_by(ActorId::User(alice));
         bus.publish(GlobalEvent::created::<Session>(&session), attributes.clone());
-        bus.publish(GlobalEvent::ChannelCreated(session, channel), attributes.clone());
-        bus.publish(GlobalEvent::UserChannelJoined(session, channel, alice), attributes.clone());
-        bus.publish(GlobalEvent::AgentChannelStateChanged(session, channel, caelumora_model::agent::AgentId::new()), attributes);
+        bus.publish(GlobalEvent::created::<Channel>(&(session, channel)), attributes.clone());
+        bus.publish(GlobalEvent::custom::<Channel>(&(session, channel), channel::JOINED, &ActorId::User(alice)), attributes.clone());
+        bus.publish(GlobalEvent::custom::<Channel>(&(session, channel), channel::AGENT_STATE_CHANGED, &AgentId::new()), attributes);
 
-        let kinds: Vec<String> = drain(&mut alices).await.iter().map(|e| format!("{e:?}").split('(').next().unwrap().to_string()).collect();
-        assert_eq!(kinds, ["ChannelCreated", "UserChannelJoined", "AgentChannelStateChanged"], "asked as reading the channel (issue 304), the session's as reading it");
+        assert_eq!(described(drain(&mut alices).await), ["channel Created", "channel joined", "channel agent_state_changed"], "asked as reading the channel (issue 304), the session's as reading it");
     }
 
     #[tokio::test]
@@ -488,14 +496,13 @@ mod tests {
         let (session, channel) = (SessionId::new(), ChannelId::new());
         let shared = SecurityAttributes::owned_by(ActorId::User(alice)).granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
         let (public, internal) = (Classification::general(Confidentiality::Public), Classification::general(Confidentiality::Internal));
-        bus.publish_classified(GlobalEvent::ChannelCreated(session, channel), shared.clone(), std::slice::from_ref(&internal));
-        bus.publish_classified(GlobalEvent::ChannelStarted(session, channel), shared.clone(), std::slice::from_ref(&public));
+        bus.publish_classified(GlobalEvent::created::<Channel>(&(session, channel)), shared.clone(), std::slice::from_ref(&internal));
+        bus.publish_classified(GlobalEvent::custom::<Channel>(&(session, channel), channel::STARTED, &()), shared.clone(), std::slice::from_ref(&public));
         let lowered = ChannelUpdateEvent::ClassificationChanged(public.clone());
-        bus.publish_classified(GlobalEvent::ChannelUpdated(session, channel, lowered), shared, &[internal, public]);
+        bus.publish_classified(GlobalEvent::updated::<Channel>(&(session, channel), &lowered), shared, &[internal, public]);
 
-        let kinds = |events: Vec<GlobalEvent>| events.iter().map(|e| format!("{e:?}").split('(').next().unwrap().to_string()).collect::<Vec<_>>();
-        assert_eq!(kinds(drain(&mut alices).await), ["ChannelCreated", "ChannelStarted", "ChannelUpdated"], "cleared, she gets it all");
-        assert_eq!(kinds(drain(&mut bobs).await), ["ChannelStarted", "ChannelUpdated"], "he reads it, but is cleared only for what is public (issue 312) - and learns of its reclassification");
+        assert_eq!(described(drain(&mut alices).await), ["channel Created", "channel started", "channel Updated"], "cleared, she gets it all");
+        assert_eq!(described(drain(&mut bobs).await), ["channel started", "channel Updated"], "he reads it, but is cleared only for what is public (issue 312) - and learns of its reclassification");
     }
 
     #[tokio::test]

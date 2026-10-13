@@ -134,7 +134,8 @@ fn items(history: Vec<HistoryEntry>) -> Vec<HistoryItemResponse<Message>> {
 }
 
 /// The notes every agent of the channel published (issue 17) - what a
-/// client reloads on `GlobalEvent::AgentChannelStateChanged` (issue 65).
+/// client reloads on the channel's `channel::AGENT_STATE_CHANGED` (issue
+/// 65).
 pub async fn get_notes(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,

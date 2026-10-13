@@ -44,14 +44,16 @@ the core's kinds are `EntityStores`, which the runtime is given; a plugin asks f
 kind while it registers. A manager is made with `&EntityStores` - or the store of its kind - and
 keeps the stores of the kinds it uses as fields, as every service is held.
 
-Every stored type says what it is to its store (`Stored`): its kind, `Stored::KIND`, an
-`EntityKind` named by a string (`"skill"`) that is unique among the kinds; its id and the fields a
-query names; and, if its kind is `Scoped`, the name that is unique in its scope
-(`Stored::unique_name`). The stores take all of it from the type they read and write: what is asked
-of the `SecurityManager` (`ActionType::get(T::KIND, …)`), the name in errors, logs and the JSON
-store's directory, and which names to keep unique. A stored type can be copied and serialized
-(`Stored` requires it), which is all a backend needs to keep it. A new kind is added without a
-change to the stores or to `EntityKind`.
+Every stored type says what it is to its store (`Stored`): its kind, `Stored::KIND`, an `EntityKind`
+named by a string (`"skill"`) that is unique among the kinds; its id and the fields a query names;
+the kind of entity it lies in, `Stored::Within` - a channel in a `Session`, every other kind of the
+core in `NoEntity` -, by which its events name where it lies (issue 335, see
+[EVENTS.md](EVENTS.md#the-form-of-an-event)); and, if its kind is `Scoped`, the name that is unique
+in its scope (`Stored::unique_name`). The stores take all of it from the type they read and write:
+what is asked of the `SecurityManager` (`ActionType::get(T::KIND, …)`), the name in errors, logs and
+the JSON store's directory, and which names to keep unique. A stored type can be copied and
+serialized (`Stored` requires it), which is all a backend needs to keep it. A new kind is added
+without a change to the stores or to `EntityKind`.
 
 ### Artifact content
 

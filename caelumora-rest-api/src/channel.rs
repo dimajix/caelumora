@@ -31,7 +31,8 @@ pub struct ChannelSnapshot {
     pub items: Vec<HistoryItemResponse<Message>>,
     pub has_more: bool,
     /// The notes every agent of the channel published (issue 17); a change
-    /// is announced as `AgentChannelStateChanged` on the event stream, and
+    /// is announced as the channel's `agent_state_changed` on the event
+    /// stream, and
     /// the notes reloaded from `GET …/channels/{cid}/notes` (issue 65).
     pub notes: Vec<PublishedNotesResponse>,
     /// The approvals the channel's agents wait for (issue 172), as their

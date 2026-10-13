@@ -55,8 +55,8 @@ published in the channel.
     listed without them, public and private alike.
 *   **Taken over after the answer.** Staged changes are pushed into the chain when the turn is taken
     over, after the turn's last message in the history. The agent then stores its channel state and
-    announces `AgentChannelStateChanged` - without content - before `TurnFinished` ends the turn, so
-    that whoever reacts to the end of the turn reads the state it left.
+    announces it (`channel::AGENT_STATE_CHANGED`) - without content - before `TurnFinished` ends the
+    turn, so that whoever reacts to the end of the turn reads the state it left.
 *   **Reading.** Others read published notes from the agents' stored states, so only notes of
     finished turns are ever seen.
 *   **Prompt part.** A `BeforeTurnInput` part, empty when nothing is noted: the agent's own notes

@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApprovalStatus, ApprovalStrategy, Approver};
-use caelumora_model::channel::Participant;
+use caelumora_model::channel::{self, Channel, Participant};
 use crate::controller::{ChannelController, ControllerManager};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{AccessQuestions, SecurityAttributes, SecurityContext, SecurityManager};
@@ -109,22 +109,20 @@ impl ApproverActor {
     /// join or leave may decide a pending approval, since who may approve
     /// changed.
     async fn handle_global_event(&self, event:&GlobalEvent, output: &dyn EventSender) {
-        match event {
-            GlobalEvent::AgentChannelLeft(_, cid, agent) if *cid == self.channel.id() => {
-                if let Err(e) = self.discard_pending_of(*agent, output).await {
-                    warn!("ApproverActor error discarding the approvals of agent {}: {:?}", agent, e);
-                }
-                if let Err(e) = self.recheck_all_pending(output).await {
-                    warn!("ApproverActor error rechecking approvals: {:?}", e);
-                }
+        let Some(((_, channel_id), change)) = event.about::<Channel>() else { return };
+        if channel_id != self.channel.id() {
+            return;
+        }
+        let left = change.data::<ActorId>(channel::LEFT);
+        if let Some(ActorId::Agent(agent)) = left {
+            if let Err(e) = self.discard_pending_of(agent, output).await {
+                warn!("ApproverActor error discarding the approvals of agent {}: {:?}", agent, e);
             }
-            GlobalEvent::AgentChannelJoined(_, cid, _) |
-            GlobalEvent::UserChannelJoined(_, cid, _) | GlobalEvent::UserChannelLeft(_, cid, _) if *cid == self.channel.id() => {
-                if let Err(e) = self.recheck_all_pending(output).await {
-                    warn!("ApproverActor error rechecking approvals: {:?}", e);
-                }
+        }
+        if left.is_some() || change.data::<ActorId>(channel::JOINED).is_some() {
+            if let Err(e) = self.recheck_all_pending(output).await {
+                warn!("ApproverActor error rechecking approvals: {:?}", e);
             }
-            _ => {}
         }
     }
 
@@ -694,7 +692,7 @@ mod tests {
 
         // The agent leaves before anyone decided (issue 46).
         let (session, channel) = (approving.channel.session_id(), approving.channel.id());
-        approving.runtime.event_bus().publish(GlobalEvent::AgentChannelLeft(session, channel, approving.agent), Default::default());
+        approving.runtime.event_bus().publish(GlobalEvent::custom::<Channel>(&(session, channel), channel::LEFT, &ActorId::Agent(approving.agent)), Default::default());
 
         // Nobody keeps waiting: the request is answered as denied.
         let decided = approving.next().await;

@@ -47,6 +47,11 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
     /// What it is kept and found by.
     type Id: Clone + Eq + Hash + Display + FromStr + Debug + Send + Sync + 'static;
 
+    /// The kind of entity it lies in - a channel in a `Session` -, or
+    /// `NoEntity` for a kind that lies in none (issue 335). Its events name
+    /// that entity beside its own id.
+    type Within: Enclosing;
+
     /// The fields a query of its kind names (issue 293).
     type Field: Field;
 
@@ -80,6 +85,63 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
         None
     }
 }
+
+/// What a kind can lie in (issue 335): the kind of entity that encloses
+/// it, or `NoEntity`. It says how an entity with an id `I` is named where
+/// it lies - its `Address` -, and how its events write that.
+pub trait Enclosing {
+    /// How an entity with the id `I` that lies in it is named: by the id of
+    /// the entity it lies in and its own, or by its own alone where it lies
+    /// in none.
+    type Address<I>;
+
+    /// `address` as an event writes it: the id of the entity it lies in, if
+    /// any, and its own.
+    fn write<I: Display>(address: &Self::Address<I>) -> (Option<String>, String);
+
+    /// The address an event wrote as `within` and `id`; `None` if one of
+    /// them is no id of its kind, or names an entity it cannot lie in.
+    fn read<I: FromStr>(within: Option<&str>, id: &str) -> Option<Self::Address<I>>;
+}
+
+/// Lying in an entity of a stored kind: named by its id and one's own.
+impl<T: Stored> Enclosing for T {
+    type Address<I> = (T::Id, I);
+
+    fn write<I: Display>((within, id): &(T::Id, I)) -> (Option<String>, String) {
+        (Some(within.to_string()), id.to_string())
+    }
+
+    fn read<I: FromStr>(within: Option<&str>, id: &str) -> Option<(T::Id, I)> {
+        Some((within?.parse().ok()?, id.parse().ok()?))
+    }
+}
+
+/// What a kind that lies in no entity names as its `Stored::Within`: a
+/// session, an agent, a user. There is none of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoEntity {}
+
+/// Lying in nothing: named by one's own id alone.
+impl Enclosing for NoEntity {
+    type Address<I> = I;
+
+    fn write<I: Display>(id: &I) -> (Option<String>, String) {
+        (None, id.to_string())
+    }
+
+    fn read<I: FromStr>(within: Option<&str>, id: &str) -> Option<I> {
+        match within {
+            None => id.parse().ok(),
+            Some(_) => None,
+        }
+    }
+}
+
+/// How an entity of the kind `T` is named where it lies (issue 335): its
+/// id, or the id of the entity it lies in and its own - a channel's
+/// `(SessionId, ChannelId)`.
+pub type Address<T> = <<T as Stored>::Within as Enclosing>::Address<<T as Stored>::Id>;
 
 /// A stored kind that deleting marks rather than removes (issue 164): what
 /// holds content, an identity, or a definition that is managed - sessions,

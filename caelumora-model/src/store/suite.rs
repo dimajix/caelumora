@@ -18,7 +18,7 @@ use crate::security::{AclEntry, Secured, SecurityAttributes, SecurityContext};
 use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityKind, EntityStore, EntityStores, Journaled, StateStore, StoreError};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
-use crate::removal::{Deletable, Removal, Stored};
+use crate::removal::{Deletable, NoEntity, Removal, Stored};
 use crate::user::{User, UserId, UserProfile};
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::group::{Group, GroupId};
@@ -259,6 +259,7 @@ impl Secured for Folder {
 impl Stored for Folder {
     const KIND: EntityKind = EntityKind::new("folder");
     type Id = FolderId;
+    type Within = NoEntity;
     type Field = FolderField;
 
     fn id(&self) -> FolderId {

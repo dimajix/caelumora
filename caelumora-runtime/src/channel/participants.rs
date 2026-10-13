@@ -353,6 +353,7 @@ impl ChannelLoop {
 #[cfg(test)]
 mod tests {
     use caelumora_model::actor::ActorId;
+    use caelumora_model::channel::{Channel, JOINED, LEFT};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
@@ -364,7 +365,6 @@ mod tests {
     use caelumora_model::value::name::Name;
 
     use caelumora_model::confidentiality::Classification;
-    use caelumora_model::event::GlobalEvent;
     use caelumora_model::security::SecurityContext;
     use crate::view::Viewer;
     use caelumora_model::session::ChannelId;
@@ -489,7 +489,7 @@ mod tests {
         assert!(stored.participants.iter().any(|p| p.actor_id() == other), "stored, not only in memory");
         assert_eq!(stored.history_limits.len(), 1, "with the limit");
         let events = drain(&mut rx);
-        assert!(events.iter().any(|e| matches!(e, GlobalEvent::UserChannelJoined(_, cid, uid) if *cid == channel.id() && *uid == other_user)),
+        assert!(events.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, cid), change)) if cid == channel.id() && change.data::<ActorId>(JOINED) == Some(other))),
                 "the join is announced: {events:?}");
 
         // What is written after joining is visible.
@@ -547,7 +547,7 @@ mod tests {
         let former = stored.former.iter().find(|f| f.participant.actor_id() == other).expect("kept as a former participant (issue 164)");
         assert_eq!(former.left.by, ctx.caller_id, "with who removed it");
         let events = drain(&mut rx);
-        assert!(events.iter().any(|e| matches!(e, GlobalEvent::UserChannelLeft(_, cid, _) if *cid == channel.id())),
+        assert!(events.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, cid), change)) if cid == channel.id() && change.data::<ActorId>(LEFT).is_some())),
                 "the leave is announced: {events:?}");
 
         let refusal = |error: anyhow::Error| error.downcast::<ChannelError>().expect("a ChannelError");

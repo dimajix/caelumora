@@ -8,7 +8,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::define_id;
 use caelumora_model::digest::{Digest, Encoder};
-use caelumora_model::removal::{Deletable, Removal, Stored};
+use caelumora_model::removal::{Deletable, NoEntity, Removal, Stored};
 use caelumora_model::scope::{Scope, ScopeField, Scoped};
 use caelumora_model::security::{CustomVerb, Grant, Requirement, Secured, SecurityAttributes};
 use caelumora_model::store::EntityKind;
@@ -99,6 +99,7 @@ impl Skill {
 impl Stored for Skill {
     const KIND: EntityKind = EntityKind::new("skill");
     type Id = SkillId;
+    type Within = NoEntity;
     type Field = ScopeField;
 
     fn id(&self) -> SkillId {

@@ -14,7 +14,7 @@ use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
 use crate::group::GroupId;
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
-use crate::session::SessionId;
+use crate::session::{Session, SessionId};
 use crate::store::{EntityKind, Journaled};
 use crate::store::query::Field;
 use crate::user::UserId;
@@ -40,6 +40,26 @@ pub enum ChannelUpdateEvent {
 }
 
 define_id!(ChannelId);
+
+/// A channel was started: its actors run (`EntityChange::Custom`, issue
+/// 335).
+pub const STARTED: &str = "started";
+
+/// A channel was stopped: its actors ended.
+pub const STOPPED: &str = "stopped";
+
+/// Someone joined the channel - an agent or a user, as the `ActorId` in
+/// the change's data says (issue 46).
+pub const JOINED: &str = "joined";
+
+/// Someone left the channel, as the `ActorId` in the change's data says.
+pub const LEFT: &str = "left";
+
+/// The state of an agent in the channel changed - its notes or private
+/// notes (issue 65), the `AgentId` in the change's data. Published with the
+/// channel's attributes once it is stored, before the agent announces the
+/// end of its turn; without content, since part of it is private.
+pub const AGENT_STATE_CHANGED: &str = "agent_state_changed";
 
 /// Whether a channel uses its session's workspace unless it says
 /// otherwise: it does (issue 251, decision 11).
@@ -145,6 +165,7 @@ pub struct HistoryLimit {
 impl removal::Stored for Channel {
     const KIND: EntityKind = EntityKind::new("channel");
     type Id = ChannelId;
+    type Within = Session;
     type Field = ChannelField;
 
     fn id(&self) -> ChannelId {

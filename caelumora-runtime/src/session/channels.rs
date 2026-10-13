@@ -6,7 +6,7 @@ use crate::runtime::ChannelRuntime;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
-use caelumora_model::channel::Channel;
+use caelumora_model::channel::{self, Channel};
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::{Classification, Place};
 use caelumora_model::value::language::Language;
@@ -174,7 +174,7 @@ impl SessionLoop {
                 return Err(error);
             }
         };
-        self.events.publish_classified(GlobalEvent::ChannelCreated(self.id, channel.id), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
+        self.events.publish_classified(GlobalEvent::created::<Channel>(&(self.id, channel.id)), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
         info!("Channel {}/{} created in session {}", channel.name, channel.id, self.id);
         Ok(channel_loop)
     }
@@ -241,9 +241,9 @@ impl SessionLoop {
         let event_bus = &self.events;
         if let Some(task) = task {
             task.abort();
-            event_bus.publish_classified(GlobalEvent::ChannelStopped(self.id, channel_id), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
+            event_bus.publish_classified(GlobalEvent::custom::<Channel>(&(self.id, channel_id), channel::STOPPED, &()), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
         }
-        event_bus.publish_classified(GlobalEvent::ChannelDeleted(self.id, channel_id), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
+        event_bus.publish_classified(GlobalEvent::deleted::<Channel>(&(self.id, channel_id)), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
         info!("Channel {}/{} deleted from session {} by {}", channel.name, channel_id, self.id, context.caller_id);
         Ok(())
     }
@@ -297,7 +297,7 @@ impl SessionLoop {
                 warn!("Channel {} of session {} was restored, but not what lies in its scope: {}", channel_id, self.id, e);
             }
         }
-        self.events.publish_classified(GlobalEvent::ChannelRestored(self.id, channel_id), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
+        self.events.publish_classified(GlobalEvent::restored::<Channel>(&(self.id, channel_id)), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
         info!("Channel {}/{} restored in session {} by {}", channel.name, channel_id, self.id, context.caller_id);
         Ok(channel_loop)
     }
@@ -337,10 +337,10 @@ mod tests {
 
     use anyhow::Result;
     use caelumora_model::value::language::Language;
-    use caelumora_model::event::GlobalEvent;
+    use caelumora_model::channel::{Channel, STARTED, STOPPED};
+    use caelumora_model::event::EntityChange;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::store::StoreError;
-    use caelumora_model::session::ChannelId;
     use std::sync::Arc;
 
     
@@ -372,8 +372,8 @@ mod tests {
         // `run` starts it asynchronously.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let events = drain(&mut rx);
-        let created = events.iter().position(|e| matches!(e, GlobalEvent::ChannelCreated(_, cid) if *cid == channel.id()));
-        let started = events.iter().position(|e| matches!(e, GlobalEvent::ChannelStarted(_, cid) if *cid == channel.id()));
+        let created = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Created)) if cid == channel.id()));
+        let started = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Custom { name: STARTED, .. })) if cid == channel.id()));
         assert!(created.is_some() && started.is_some() && created < started, "created, then started: {events:?}");
 
         manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
@@ -467,8 +467,8 @@ mod tests {
         assert!(runtime.entity_stores().channels.get_deleted(&ctx, id).await.is_ok(), "but kept, marked (issue 164)");
         assert!(runtime.state_store().get_channel_state(id).await.is_ok(), "with its state");
         let events = drain(&mut rx);
-        let stopped = events.iter().position(|e| matches!(e, GlobalEvent::ChannelStopped(_, cid) if *cid == id));
-        let deleted = events.iter().position(|e| matches!(e, GlobalEvent::ChannelDeleted(_, cid) if *cid == id));
+        let stopped = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Custom { name: STOPPED, .. })) if cid == id));
+        let deleted = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Deleted)) if cid == id));
         assert!(stopped.is_some() && deleted.is_some() && stopped < deleted, "stopped, then deleted: {events:?}");
 
         let missing = session.delete_channel(&ctx, id).await.expect_err("gone");
@@ -482,7 +482,7 @@ mod tests {
         session.restore_channel(&ctx, id).await.expect("restored");
         assert!(session.channel_by_id(id).is_some());
         assert!(runtime.entity_stores().sessions.get(&ctx, session.id()).await.unwrap().channels.contains(&id), "listed again");
-        assert!(drain(&mut rx).iter().any(|e| matches!(e, GlobalEvent::ChannelRestored(_, cid) if *cid == id)), "and announced");
+        assert!(drain(&mut rx).iter().any(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Restored)) if cid == id)), "and announced");
         assert!(runtime.state_store().get_channel_state(id).await.is_ok());
         let again = session.restore_channel(&ctx, id).await.expect_err("not deleted");
         assert!(matches!(again.downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })), "{again}");
@@ -512,10 +512,10 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let events = drain(&mut rx);
-        let about = |wanted: fn(&GlobalEvent) -> Option<ChannelId>| events.iter().any(|e| wanted(e) == Some(channel_id));
-        assert!(about(|e| match e { GlobalEvent::ChannelDeleted(_, id) => Some(*id), _ => None }), "{events:?}");
-        assert!(!about(|e| match e { GlobalEvent::ChannelStarted(_, id) => Some(*id), _ => None }), "never started: {events:?}");
-        assert!(!about(|e| match e { GlobalEvent::ChannelStopped(_, id) => Some(*id), _ => None }), "so never stopped: {events:?}");
+        let about = |wanted: fn(&EntityChange) -> bool| events.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, id), change)) if id == channel_id && wanted(change)));
+        assert!(about(|change| *change == EntityChange::Deleted), "{events:?}");
+        assert!(!about(|change| matches!(change, EntityChange::Custom { name: STARTED, .. })), "never started: {events:?}");
+        assert!(!about(|change| matches!(change, EntityChange::Custom { name: STOPPED, .. })), "so never stopped: {events:?}");
         running.abort();
     }
 

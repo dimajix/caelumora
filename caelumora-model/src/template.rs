@@ -13,7 +13,7 @@ use crate::value::language::Language;
 use crate::scope::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Briefing, Description, Summary};
-use crate::removal::{Deletable, Removal, Stored};
+use crate::removal::{Deletable, NoEntity, Removal, Stored};
 use crate::scope::{Scope, ScopeField, Scoped};
 use crate::privacy::PrivacyConfig;
 use crate::session::{Session, SessionId};
@@ -239,6 +239,7 @@ impl WorkspaceTemplate {
 impl Stored for SessionTemplate {
     const KIND: EntityKind = EntityKind::new("session_template");
     type Id = SessionTemplateId;
+    type Within = NoEntity;
     type Field = ScopeField;
 
     fn id(&self) -> SessionTemplateId {

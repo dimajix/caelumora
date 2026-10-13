@@ -55,9 +55,7 @@ function channelName(channel: ChannelResponse): string {
 /** Whether `event` may change what the trash holds (issue 164): a deletion or restoring of whatever kind. */
 function trashChangedBy(event: GlobalEvent): boolean {
   const change = entityEvent(event)?.change;
-  if (change === 'Deleted' || change === 'Restored') return true;
-  const kind = Object.keys(event)[0];
-  return kind === 'ChannelDeleted' || kind === 'ChannelRestored';
+  return change === 'Deleted' || change === 'Restored';
 }
 
 /** Whether `event` is about an entity of `kind` - `workspace`, `skill`, `artifact`, `group`. */

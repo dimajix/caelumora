@@ -20,7 +20,7 @@ use serde_json::json;
 use caelumora_model::actor::{ActorId, Rejection};
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityKind};
 use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
-use caelumora_model::channel::HistoryAccess;
+use caelumora_model::channel::{Channel, HistoryAccess, LEFT};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::confidentiality::{Classification, Confidentiality};
@@ -268,7 +268,7 @@ async fn a_channel_is_read_by_its_members_wherever_they_act_and_no_more_once_rem
     main.remove_participant(&World::as_user(world.alice), ActorId::User(world.carol)).await.expect("alice's to remove her");
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while let Some(event) = events.recv().await {
-            if matches!(event, caelumora_model::event::GlobalEvent::UserChannelLeft(_, channel, user) if channel == main.id() && user == world.carol) {
+            if matches!(event.about::<Channel>(), Some(((_, channel), change)) if channel == main.id() && change.data::<ActorId>(LEFT) == Some(ActorId::User(world.carol))) {
                 return;
             }
         }

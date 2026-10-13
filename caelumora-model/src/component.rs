@@ -1,7 +1,7 @@
 use crate::security::{Secured, SecurityAttributes};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::removal::Stored;
+use crate::removal::{NoEntity, Stored};
 use crate::store::EntityKind;
 use crate::store::query::NoField;
 
@@ -75,6 +75,7 @@ impl StoredComponents {
 impl Stored for StoredComponents {
     const KIND: EntityKind = EntityKind::new("components");
     type Id = String;
+    type Within = NoEntity;
     type Field = NoField;
 
     fn id(&self) -> String {

@@ -5,7 +5,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::ApprovalRule;
-use caelumora_model::channel::{Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, HistoryLimit, HistoryStart, Participant};
+use caelumora_model::channel::{self, Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, HistoryLimit, HistoryStart, Participant};
 use caelumora_model::removal::Removal;
 use caelumora_model::group::Group;
 use tracing::error;
@@ -121,7 +121,7 @@ impl ChannelController {
     /// its history from `start` on (`None`: all of it). Stored first
     /// (`UpdateChannel`), then the group of its participants follows, so
     /// that the newcomer may read it (issue 286), then taken over and
-    /// announced (`AgentChannelJoined` / `UserChannelJoined`).
+    /// announced (`channel::JOINED`).
     ///
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
@@ -150,8 +150,7 @@ impl ChannelController {
     /// Removes `participant` from the channel on behalf of `ctx` (issue 46)
     /// and returns it, like [`Self::add_participant`]. It is kept as a
     /// former participant, with who removed it and when (issue 164). The
-    /// announcement
-    /// (`AgentChannelLeft` / `UserChannelLeft`) is delivered to whoever was
+    /// announcement (`channel::LEFT`) is delivered to whoever was
     /// removed besides the members (issue 23): they are no member any more
     /// when it is delivered.
     ///
@@ -204,11 +203,9 @@ impl ChannelController {
 
     /// The event announcing that `participant` joined or left.
     fn membership_event(&self, participant: ActorId, joined: bool) -> Option<GlobalEvent> {
-        match (participant, joined) {
-            (ActorId::Agent(a), true) => Some(GlobalEvent::AgentChannelJoined(self.session_id, self.id, a)),
-            (ActorId::Agent(a), false) => Some(GlobalEvent::AgentChannelLeft(self.session_id, self.id, a)),
-            (ActorId::User(u), true) => Some(GlobalEvent::UserChannelJoined(self.session_id, self.id, u)),
-            (ActorId::User(u), false) => Some(GlobalEvent::UserChannelLeft(self.session_id, self.id, u)),
+        let name = if joined { channel::JOINED } else { channel::LEFT };
+        match participant {
+            ActorId::Agent(_) | ActorId::User(_) => Some(GlobalEvent::custom::<Channel>(&(self.session_id, self.id), name, &participant)),
             _ => None,
         }
     }
@@ -251,7 +248,7 @@ impl ChannelController {
         self.store(ctx, &channel).await?;
         let (attributes, classifications) = (channel.security_attributes.clone(), [had, channel.classification.clone()]);
         self.channel.store(Arc::new(channel));
-        self.event_publisher.publish_classified(GlobalEvent::ChannelUpdated(self.session_id, self.id, event.clone()), attributes, &classifications);
+        self.event_publisher.publish_classified(GlobalEvent::updated::<Channel>(&(self.session_id, self.id), event), attributes, &classifications);
         Ok(())
     }
 }

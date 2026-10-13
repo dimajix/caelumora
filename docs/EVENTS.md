@@ -8,23 +8,37 @@ server-sent event streams through which clients follow these events are part of
 
 ## The form of an event
 
-An event about an entity named by its own id - a session, an agent, a user, a user's profile, a
-workspace, a skill, an artifact, a group, or a kind of a plugin - is one variant,
-`GlobalEvent::Entity { kind, id, change }` (issue 323). `kind` is the `EntityKind`, `id` the
-entity's id as text, and `change` an `EntityChange`:
+An event about an entity - a session, a channel, an agent, a user, a user's profile, a workspace, a
+skill, an artifact, a group, or a kind of a plugin - is one form, `GlobalEvent::Entity { kind, id,
+within, change }` (issue 323). `kind` is the `EntityKind`, `id` the entity's id as text, `within`
+the id of the entity it lies in, and `change` an `EntityChange`:
 
 *   `Created`, `Deleted`, `Restored` - the same for every kind;
 *   `Updated(value)` - what changed, in the form of the kind's update event (`SkillUpdateEvent`,
     `ArtifactUpdateEvent`, …); a profile comes as it now stands;
 *   `Custom { name, data }` - something particular to the kind, under a name its module defines:
-    `session::STARTED` and `STOPPED`, `agent::STATE_CHANGED`.
+    `session::STARTED` and `STOPPED`, `agent::STATE_CHANGED`, a channel's `STARTED`, `STOPPED`,
+    `JOINED` and `LEFT` - with the `ActorId` of who joined or left - and `AGENT_STATE_CHANGED`,
+    with the agent's id.
 
-An event is made by the kind it is about - `GlobalEvent::created::<Skill>(&id)`,
-`updated::<Session>(&id, &update)`, `custom::<Agent>(&id, agent::STATE_CHANGED, &())` - and read the
-same way: `event.about::<Agent>()` answers the agent's id and the change, or `None` for an event
-about anything else, and `change.update::<AgentUpdateEvent>()` what an update says. The events of
-a channel and of its members keep a variant each (`ChannelUpdated`, `AgentChannelJoined`, …), since
-they name the session as well, which the web UI needs to find the channel.
+What happens to a channel's members is a change of the channel: its readers are the ones who hear
+of it, and it carries the member in its data.
+
+`within` is there for a kind that lies in an entity (issue 335): a channel lies in a session, and
+its events name the session, by which the web UI finds the channel and the event bus picks whom an
+event reaches. Each kind says which kind of entity it lies in, `Stored::Within`, or `NoEntity` for
+none (see [STORAGE.md](STORAGE.md#the-entity-store)); `within` is absent for such a kind. Like `id`
+it is text, since the core does not know the id types of a plugin's kinds; who reads it knows the
+kind, and with it what `within` is the id of.
+
+An event is made by the kind it is about, at its address - its id, or for a kind that lies in an
+entity that entity's id and its own (`Address<T>`): `GlobalEvent::created::<Skill>(&id)`,
+`updated::<Session>(&id, &update)`, `custom::<Agent>(&id, agent::STATE_CHANGED, &())`,
+`custom::<Channel>(&(session_id, channel_id), channel::JOINED, &actor)`. It is read the same way:
+`event.about::<Agent>()` answers the agent's id and the change, `event.about::<Channel>()` the
+session's id and the channel's together with the change, or `None` for an event about anything
+else; `change.update::<AgentUpdateEvent>()` answers what an update says, and
+`change.data::<ActorId>(channel::JOINED)` what a custom change says.
 
 An event is read back as it is written: it is what the instances of a deployment will tell each
 other (issue 122). That is why an update is carried as a JSON value rather than as a type of the
@@ -44,7 +58,10 @@ them.
 
 A subscriber names `SubscriptionTopic`s - everything, or a session, channel, agent or user - and
 receives the matching events through an `EventSubscription`. The runtime subscribes this way, and
-these subscriptions are served directly with everything on their topics.
+these subscriptions are served directly with everything on their topics. An event about a session,
+an agent or a user goes to its topic; one about a channel - and so about its members - to the
+channel's and to the session's it lies in, which the bus reads from the event's address. Other
+kinds have no topic of their own.
 
 Each subscription is a broadcast channel of its own, of bounded capacity. A subscriber that falls
 too far behind loses the oldest events, and it is the subscriber that learns so (`Lagged`), not only

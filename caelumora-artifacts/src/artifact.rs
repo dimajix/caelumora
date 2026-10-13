@@ -11,7 +11,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::define_id;
 use caelumora_model::digest::Digest;
-use caelumora_model::removal::{Deletable, Removal, Stored};
+use caelumora_model::removal::{Deletable, NoEntity, Removal, Stored};
 use caelumora_model::scope::{validate_users_own, Scope, Scoped, ScopedField};
 use caelumora_model::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
@@ -218,6 +218,7 @@ impl Artifact {
 impl Stored for Artifact {
     const KIND: EntityKind = EntityKind::new("artifact");
     type Id = ArtifactId;
+    type Within = NoEntity;
     type Field = ArtifactField;
 
     fn id(&self) -> ArtifactId {

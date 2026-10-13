@@ -294,8 +294,8 @@ impl AgentActor {
     /// announces its end (issue 65): whoever reacts to it - another agent
     /// whose turn it starts, a user interface reloading notes - reads the
     /// state as the turn left it. A change of the agent's state in the
-    /// channel is announced as `GlobalEvent::AgentChannelStateChanged` once
-    /// stored; a change of its own state by its `AgentStateHandle`. The end
+    /// channel is announced as the channel's `channel::AGENT_STATE_CHANGED`
+    /// once stored; a change of its own state by its `AgentStateHandle`. The end
     /// is announced even with no final messages - a plan cancelled before
     /// any step produced a visible answer still has to tell observers (e.g.
     /// the web UI) that generation stopped.

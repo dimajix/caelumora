@@ -19,7 +19,7 @@
 
 use crate::actor::ActorId;
 use crate::channel::{Channel, Participant};
-use crate::removal::{Deletable, Removal, Stored};
+use crate::removal::{Deletable, NoEntity, Removal, Stored};
 use crate::scope::{Scope, Scoped, ScopedField};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::{ChannelId, Session, SessionId};
@@ -179,6 +179,7 @@ impl Group {
 impl Stored for Group {
     const KIND: EntityKind = EntityKind::new("group");
     type Id = GroupId;
+    type Within = NoEntity;
     type Field = GroupField;
 
     fn id(&self) -> GroupId {

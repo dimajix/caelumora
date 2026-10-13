@@ -42,7 +42,7 @@ use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
 use caelumora_model::security::{AccessQuestions, AclEntry, ActionType, Enforcement, Grant, Refused, SecurityContext, SecurityManager, Subject, WRITE};
 use crate::view::{channel_reading, ChannelReader};
-use caelumora_model::channel::Participant;
+use caelumora_model::channel::{self, Participant};
 use caelumora_model::session::{Channel, ChannelId, Session, SessionId};
 use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
@@ -744,12 +744,10 @@ async fn check_commands(manager: Weak<WorkspaceManager>, mut events: broadcast::
 /// Whether `event` can change who may run a command in a channel: the
 /// session, the channel, its members, the workspace or who someone is.
 fn changes_who_may_run(event: &GlobalEvent) -> bool {
-    match event {
-        GlobalEvent::Entity { kind, change: EntityChange::Updated(_) | EntityChange::Deleted, .. } => {
-            [Session::KIND, Agent::KIND, User::KIND, Workspace::KIND].contains(kind)
-        }
-        GlobalEvent::ChannelUpdated(..) | GlobalEvent::ChannelDeleted(..)
-        | GlobalEvent::AgentChannelLeft(..) | GlobalEvent::UserChannelLeft(..) => true,
+    let GlobalEvent::Entity { kind, change, .. } = event;
+    match change {
+        EntityChange::Updated(_) | EntityChange::Deleted => [Session::KIND, Channel::KIND, Agent::KIND, User::KIND, Workspace::KIND].contains(kind),
+        EntityChange::Custom { name: channel::LEFT, .. } => *kind == Channel::KIND,
         _ => false,
     }
 }
@@ -915,7 +913,7 @@ mod tests {
         let w = session_with_workspace().await;
         let (shell, id) = running(&w).await;
         let channel = use_workspace(&w, false).await;
-        w.runtime.event_bus().publish(GlobalEvent::ChannelUpdated(channel.session_id, channel.id, ChannelUpdateEvent::UsesWorkspaceChanged(false)), channel.security_attributes.clone());
+        w.runtime.event_bus().publish(GlobalEvent::updated::<Channel>(&(channel.session_id, channel.id), &ChannelUpdateEvent::UsesWorkspaceChanged(false)), channel.security_attributes.clone());
         let ended = shell.output(&id, 0, Duration::from_secs(10)).await.unwrap();
         assert_eq!(ended.status, CommandStatus::Killed, "not only at the next round");
     }

@@ -257,7 +257,7 @@ impl SessionManager {
         let event_bus = &self.events;
         event_bus.publish(GlobalEvent::created::<Session>(&id), session.security_attributes.clone());
         for channel in &channels {
-            event_bus.publish_classified(GlobalEvent::ChannelCreated(id, channel.id), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
+            event_bus.publish_classified(GlobalEvent::created::<Channel>(&(id, channel.id)), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
         }
 
         self.spawn_session(session, channels).await
@@ -414,7 +414,7 @@ impl SessionManager {
 
         let event_bus = &self.events;
         for (channel_id, attributes, classification) in channels {
-            event_bus.publish_classified(GlobalEvent::ChannelDeleted(id, channel_id), attributes, &[classification]);
+            event_bus.publish_classified(GlobalEvent::deleted::<Channel>(&(id, channel_id)), attributes, &[classification]);
         }
         event_bus.publish(GlobalEvent::deleted::<Session>(&id), session.security_attributes.clone());
         self.starts.remove(&id);
@@ -514,10 +514,9 @@ mod tests {
     use crate::runtime::RuntimeManager;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Agent;
-    use caelumora_model::channel::Channel;
+    use caelumora_model::channel::{self, Channel};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::value::language::Language;
-    use caelumora_model::event::GlobalEvent;
     use caelumora_model::security::{SecurityAttributes, SecurityContext};
     use crate::view::Viewer;
     use caelumora_model::store::StoreError;
@@ -552,11 +551,11 @@ mod tests {
         // The manager emits these synchronously, in order, before returning.
         let events = drain(&mut rx);
         let created = events.iter().position(|e| e.about::<Session>() == Some((session_id, &EntityChange::Created)));
-        let ch_created = events.iter().position(|e| matches!(e, GlobalEvent::ChannelCreated(sid, cid) if *sid == session_id && *cid == channel_id));
+        let ch_created = events.iter().position(|e| e.about::<Channel>() == Some(((session_id, channel_id), &EntityChange::Created)));
         let started = events.iter().position(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STARTED, .. })) if id == session_id));
 
         assert!(created.is_some(), "expected SessionCreated, got {:?}", events);
-        assert!(ch_created.is_some(), "expected ChannelCreated, got {:?}", events);
+        assert!(ch_created.is_some(), "expected the channel created, got {:?}", events);
         assert!(started.is_some(), "expected SessionStarted, got {:?}", events);
         assert!(created < ch_created && ch_created < started, "wrong order: {:?}", events);
 
@@ -584,11 +583,11 @@ mod tests {
 
         let events = drain(&mut rx);
         let stopped = events.iter().position(|e| matches!(e.about::<Session>(), Some((id, EntityChange::Custom { name: session::STOPPED, .. })) if id == session_id));
-        let ch_deleted = events.iter().position(|e| matches!(e, GlobalEvent::ChannelDeleted(sid, cid) if *sid == session_id && *cid == channel_id));
+        let ch_deleted = events.iter().position(|e| e.about::<Channel>() == Some(((session_id, channel_id), &EntityChange::Deleted)));
         let deleted = events.iter().position(|e| e.about::<Session>() == Some((session_id, &EntityChange::Deleted)));
 
         assert!(stopped.is_some(), "expected SessionStopped, got {:?}", events);
-        assert!(ch_deleted.is_some(), "expected ChannelDeleted, got {:?}", events);
+        assert!(ch_deleted.is_some(), "expected the channel deleted, got {:?}", events);
         assert!(deleted.is_some(), "expected SessionDeleted, got {:?}", events);
         assert!(stopped < ch_deleted && ch_deleted < deleted, "wrong order: {:?}", events);
 
@@ -819,13 +818,13 @@ mod tests {
         session.follow_agents(None).await;
         assert!(!talk.actor_ids().contains(&actor), "looking again, it stops the actor");
         let announced = drain(&mut rx);
-        assert!(announced.iter().any(|e| matches!(e, GlobalEvent::AgentChannelLeft(s, c, a) if *s == session.id() && *c == talk.id() && *a == helper.id)), "as a leave: {announced:?}");
+        assert!(announced.iter().any(|e| matches!(e.about::<Channel>(), Some((address, change)) if address == (session.id(), talk.id()) && change.data::<ActorId>(channel::LEFT) == Some(ActorId::Agent(helper.id)))), "as a leave: {announced:?}");
 
         runtime.entity_stores().agents.restore(&system, helper.id).await.unwrap();
         session.follow_agents(None).await;
         assert!(talk.actor_ids().contains(&actor), "and starts it again");
         let announced = drain(&mut rx);
-        assert!(announced.iter().any(|e| matches!(e, GlobalEvent::AgentChannelJoined(_, c, a) if *c == talk.id() && *a == helper.id)), "as a join: {announced:?}");
+        assert!(announced.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, c), change)) if c == talk.id() && change.data::<ActorId>(channel::JOINED) == Some(ActorId::Agent(helper.id)))), "as a join: {announced:?}");
         manager.stop_session(&system, session.id()).await.unwrap();
     }
 

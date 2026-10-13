@@ -382,7 +382,7 @@ mod tests {
     use super::*;
     use crate::security::{SecurityAttributes, SecurityContext};
     use crate::confidentiality::ConfidentialityRules;
-    use crate::removal::{Removal, Stored};
+    use crate::removal::{NoEntity, Removal, Stored};
     use crate::security::{DummySecurityManager, Secured};
     use crate::store::memory::MemoryStore;
     use std::sync::Arc;
@@ -462,6 +462,7 @@ mod tests {
     impl Stored for Note {
         const KIND: EntityKind = EntityKind::new("note");
         type Id = NoteId;
+        type Within = NoEntity;
         type Field = NoField;
 
         fn id(&self) -> NoteId {
@@ -492,6 +493,7 @@ mod tests {
     impl Stored for Impostor {
         const KIND: EntityKind = Group::KIND;
         type Id = NoteId;
+        type Within = NoEntity;
         type Field = NoField;
 
         fn id(&self) -> NoteId {

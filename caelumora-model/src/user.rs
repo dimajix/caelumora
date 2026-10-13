@@ -9,7 +9,7 @@ use crate::value::name::{Name, ScopedName};
 use crate::value::text::Introduction;
 use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
-use crate::removal::{Deletable, Removal, Stored};
+use crate::removal::{Deletable, NoEntity, Removal, Stored};
 use crate::store::EntityKind;
 use crate::store::query::{Field, NoField};
 
@@ -57,6 +57,7 @@ static SYSTEM_OWNED: SecurityAttributes = SecurityAttributes { owner_id: ActorId
 impl Stored for User {
     const KIND: EntityKind = EntityKind::new("user");
     type Id = UserId;
+    type Within = NoEntity;
     type Field = UserField;
 
     fn id(&self) -> UserId {
@@ -81,6 +82,7 @@ impl Deletable for User {
 impl Stored for UserProfile {
     const KIND: EntityKind = EntityKind::new("user_profile");
     type Id = UserId;
+    type Within = NoEntity;
     type Field = NoField;
 
     fn id(&self) -> UserId {

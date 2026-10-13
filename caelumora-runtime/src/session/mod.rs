@@ -8,7 +8,7 @@ use crate::scoped::ScopedEntities;
 use crate::event::{EventBus, SubscriptionTopic};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
-use caelumora_model::channel::{Channel, Participant};
+use caelumora_model::channel::{self, Channel, Participant};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
@@ -305,7 +305,7 @@ impl SessionLoop {
                             // Gone: a deleted channel, whose actors all
                             // stopped in time; `delete_channel` announces it.
                             if let Some((attributes, classification)) = reach {
-                                self.events.publish_classified(GlobalEvent::ChannelStopped(self.id, channel_id), attributes, &[classification]);
+                                self.events.publish_classified(GlobalEvent::custom::<Channel>(&(self.id, channel_id), channel::STOPPED, &()), attributes, &[classification]);
                             }
                         }
                         // A deleted channel; `delete_channel` announces it.
@@ -356,7 +356,7 @@ impl SessionLoop {
     fn start_channel(&self, id: ChannelId, join_set: &mut JoinSet<ChannelId>) {
         let Some(mut entry) = self.channels.get_mut(&id) else { return };
         let channel = Arc::clone(&entry.channel);
-        self.events.publish_classified(GlobalEvent::ChannelStarted(self.id, id), channel.security_attributes(), &[channel.classification()]);
+        self.events.publish_classified(GlobalEvent::custom::<Channel>(&(self.id, id), channel::STARTED, &()), channel.security_attributes(), &[channel.classification()]);
         entry.task = Some(join_set.spawn(async move {
             let _ = channel.run().await;
             channel.id()
