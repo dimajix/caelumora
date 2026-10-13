@@ -1,6 +1,6 @@
 # 227 — Agents cannot be seen or managed on their own, only as members of channels
 
-**Status:** in progress
+**Status:** done
 **Area:** User interaction
 
 ## The problem
@@ -116,3 +116,12 @@ notes of all channels, its usage as a whole.
   `SessionLoop::add_participant`); if that fails, the session is deleted and purged again in the
   runtime's name, with what was made in its scope. An agent the template cannot make or take in
   now fails after the session was stored, and the session is taken back.
+- **2026-10-13** — Fourth step, and done: the web UI lists the agents the user may read below the
+  teams (`PageList`), with their trash, and loads the list again on every event about an agent. An
+  agent's page (`AgentPage`) shows its personality, where it lies, whose it is and the channels it
+  takes part in that the user may read, opened from there; whoever may renames and deletes it.
+  "New agent" (`NewAgentDialog`) makes one in the user's own scope, of a personality that admits
+  it. `AddParticipantDialog` makes a new agent and takes it in - the user's own or for the session
+  alone, as they choose or its personality requires - and deletes it again if taking it in fails.
+  Who owns an agent is shown as the user or "someone else": the REST API names the owner by id
+  alone.

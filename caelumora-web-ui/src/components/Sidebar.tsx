@@ -1,6 +1,7 @@
 import React, {useEffect, useEffectEvent, useState} from 'react';
 import {
   BookOpen,
+  Bot,
   ChevronDown,
   ChevronRight,
   Edit2,
@@ -17,7 +18,7 @@ import {
   Users,
   UsersRound
 } from 'lucide-react';
-import type {ArtifactResponse, ChannelResponse, GlobalEvent, GroupResponse, SessionSnapshot, SkillResponse, UserResponse, WorkspaceResponse} from '../types';
+import type {AgentResponse, ArtifactResponse, ChannelResponse, GlobalEvent, GroupResponse, SessionSnapshot, SkillResponse, UserResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
 import {dispatchGlobalEvent, entityEvent, sessionChange} from '../globalEvents';
@@ -34,6 +35,7 @@ import {ProfileDialog} from './ProfileDialog';
 import {NewWorkspaceDialog} from './NewWorkspaceDialog';
 import {NewSkillDialog} from './NewSkillDialog';
 import {NewGroupDialog} from './NewGroupDialog';
+import {NewAgentDialog} from './NewAgentDialog';
 import {NewSessionDialog} from './NewSessionDialog';
 import {SessionWorkspaceDialog} from './SessionWorkspaceDialog';
 import {privacyInfo} from '../privacy';
@@ -60,7 +62,7 @@ function trashChangedBy(event: GlobalEvent): boolean {
   return kind === 'ChannelDeleted' || kind === 'ChannelRestored';
 }
 
-/** Whether `event` is about an entity of `kind` - `workspace`, `skill`, `artifact`, `group`. */
+/** Whether `event` is about an entity of `kind` - `workspace`, `skill`, `artifact`, `group`, `agent`. */
 function isAbout(event: GlobalEvent, kind: string): boolean {
   return entityEvent(event)?.kind === kind;
 }
@@ -96,7 +98,7 @@ interface SidebarProps {
   onSessionDeleted: (sessionId: string) => void;
   /** The selected channel no longer exists - deleted here or elsewhere. */
   onChannelDeleted: (channelId: string) => void;
-  /** What is shown in the place of a channel - a workspace (issue 253), a skill (issue 22), an artifact (issue 291) or a team (issue 286). */
+  /** What is shown in the place of a channel - a workspace (issue 253), a skill (issue 22), an artifact (issue 291), a team (issue 286) or an agent (issue 227). */
   page: Page | null;
   onSelectPage: (page: Page) => void;
   /** What the page shows no longer exists, or may no longer be read. */
@@ -116,9 +118,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onPageGone,
 }) => {
   const [sessions, setSessions] = useState<SessionSnapshot[]>([]);
-  // The workspaces (issue 253), skills (issue 22), artifacts (issue 291) and
-  // teams (issue 286) the user may read, loaded again on every event about
-  // one of them.
+  // The workspaces (issue 253), skills (issue 22), artifacts (issue 291),
+  // teams (issue 286) and agents (issue 227) the user may read, loaded again
+  // on every event about one of them.
   const workspaces = usePageList<WorkspaceResponse>('workspace', 'workspaces', () => api.getWorkspaces(), page, onPageGone);
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
   const skills = usePageList<SkillResponse>('skill', 'skills', () => api.getSkills(), page, onPageGone);
@@ -126,6 +128,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const artifacts = usePageList<ArtifactResponse>('artifact', 'artifacts', () => api.getArtifacts(), page, onPageGone);
   const groups = usePageList<GroupResponse>('group', 'teams', () => api.getGroups(), page, onPageGone);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const agents = usePageList<AgentResponse>('agent', 'agents', () => api.getAgents(), page, onPageGone);
+  const [isCreatingAgent, setIsCreatingAgent] = useState(false);
   // The session whose workspace is shown, by id, so that the dialog follows it.
   const [workspaceOf, setWorkspaceOf] = useState<string | null>(null);
   const workspaceSession = sessions.find(s => s.id === workspaceOf) ?? null;
@@ -177,6 +181,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const skillsChangedFromStream = useEffectEvent(() => skills.reload());
   const artifactsChangedFromStream = useEffectEvent(() => artifacts.reload());
   const groupsChangedFromStream = useEffectEvent(() => groups.reload());
+  const agentsChangedFromStream = useEffectEvent(() => agents.reload());
   const refreshSessionFromStream = useEffectEvent((sessionId: string) => void refreshSession(sessionId));
 
   // The list is the global stream's: its snapshot, then its events (issue
@@ -205,6 +210,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         if (isAbout(event, 'skill')) skillsChangedFromStream();
         if (isAbout(event, 'artifact')) artifactsChangedFromStream();
         if (isAbout(event, 'group')) groupsChangedFromStream();
+        if (isAbout(event, 'agent')) agentsChangedFromStream();
         const change = sessionChange(event);
         if (change.kind === 'remove') {
           removeSessionFromStream(change.sessionId);
@@ -497,6 +503,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
           restore={(groupId) => api.restoreGroup(groupId)}
           purge={(groupId) => api.purgeGroup(groupId)}
         />
+
+        <PageList
+          list={agents}
+          title="Agents"
+          icon={Bot}
+          page={page}
+          onSelectPage={onSelectPage}
+          onNew={() => setIsCreatingAgent(true)}
+          newLabel="New agent"
+          loadDeleted={() => api.getDeletedAgents()}
+          trashVersion={trashVersion}
+          restore={(agentId) => api.restoreAgent(agentId)}
+          purge={(agentId) => api.purgeAgent(agentId)}
+        />
       </div>
 
       {privacySession && (
@@ -579,6 +599,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onSelectPage({kind: 'group', id: group.id});
           }}
           onClose={() => setIsCreatingGroup(false)}
+        />
+      )}
+
+      {isCreatingAgent && (
+        <NewAgentDialog
+          onCreated={(agent) => {
+            setIsCreatingAgent(false);
+            agents.add(agent);
+            onSelectPage({kind: 'agent', id: agent.id});
+          }}
+          onClose={() => setIsCreatingAgent(false)}
         />
       )}
 
