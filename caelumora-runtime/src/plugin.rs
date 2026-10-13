@@ -52,6 +52,7 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::NoField;
     use caelumora_model::store::{EntityKind, EntityStore, EntityStoreFactory, StoreError};
+    use caelumora_model::type_map::TypeKey;
     use serde::{Deserialize, Serialize};
     use std::sync::Arc;
 
@@ -130,9 +131,9 @@ mod tests {
             let notebook = Arc::new(Notebook { notes: runtime.entity_store::<Note>()?, greeting: config.greeting });
             runtime.provide(Arc::clone(&notebook));
             runtime.seed_section("notes", notebook)?;
-            runtime.components().register(ComponentKind::new("notebook").uses::<Notebook>(), |_, context| {
-                context.service::<Notebook>()?;
-                Ok(ComponentFacets::empty())
+            runtime.components().register(ComponentKind::new("notebook").provides::<Notebook>().uses::<Notebook>(), |_, context| {
+                let notebook = Arc::clone(context.service::<Notebook>()?);
+                Ok(ComponentFacets::empty().with(notebook))
             });
             Ok(())
         }
@@ -236,7 +237,7 @@ mod tests {
         // Its component kind, given the manager it uses.
         let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
         let config = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("notebook", "notebook")] };
-        ComponentContainer::from_config(&config, runtime.component_registry(), &context).await.expect("built with its service");
+        ComponentContainer::from_config(&config, &[TypeKey::of::<Notebook>()], runtime.component_registry(), &context).await.expect("built with its service");
 
         // Its seed section, into the store of its kind - the one the backend
         // gives whoever asks.

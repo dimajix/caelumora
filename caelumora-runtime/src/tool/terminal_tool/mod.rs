@@ -190,6 +190,7 @@ mod tests {
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::security::SecurityContext;
     use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::type_map::TypeKey;
     use serde_json::json;
 
     pub(super) fn tool(world: &WithWorkspace, params: Value) -> TerminalTool {
@@ -219,7 +220,7 @@ mod tests {
         let config = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("terminal", TERMINAL_TOOL_KIND)] };
         let world = session_with_workspace().await;
         let context = ComponentContext::new(SecurityContext::default(), world.runtime.services().clone());
-        let container = ComponentContainer::from_config(&config, &Arc::new(registry), &context).await;
+        let container = ComponentContainer::from_config(&config, &[TypeKey::of::<dyn ToolProvider>()], &Arc::new(registry), &context).await;
         assert!(container.is_ok(), "{:?}", container.err());
     }
 

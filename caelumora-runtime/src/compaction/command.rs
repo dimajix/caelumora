@@ -59,7 +59,7 @@ impl AgentCommandProvider for CompactionComponent {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(COMPACTION_KIND).provides::<dyn AgentCommandProvider>(),
+        ComponentKind::new(COMPACTION_KIND).provides::<dyn AgentCommandProvider>().needs::<dyn CompactionStrategy>(),
         |_descriptor, context| async move {
             let strategy = context.one::<dyn CompactionStrategy>().await?.facet;
             let mut facets = ComponentFacets::empty();

@@ -49,13 +49,14 @@ pub(crate) use manager::Found;
 /// messages are meant for users (see `crate::error::user_message`).
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
-    /// The channel's components do not make a moderator (issue 174): a kind
-    /// that does not exist, two moderators, two policies. Found when the
-    /// channel is built; a channel created so is taken back out. Or they
-    /// name preconfigured components whoever creates the channel may not
-    /// read, found before it is created (issue 321).
-    #[error("The channel's moderator cannot be built: {0}")]
-    InvalidModerator(#[source] crate::component::ComponentError),
+    /// The channel's components cannot be built (issue 174): a kind that
+    /// does not exist, two moderators, two policies, a component nobody asks
+    /// for (issue 337), preconfigured components whoever creates the channel
+    /// may not read (issue 321) - found before it is created; or whatever
+    /// fails as they are built, after which a channel created so is taken
+    /// back out.
+    #[error("The channel's components cannot be built: {0}")]
+    InvalidComponents(#[source] crate::component::ComponentError),
     #[error("{participant} is not a participant of session {session}")]
     NotAParticipant { session: SessionId, participant: ActorId },
     /// Only a user owns a session made from a template (issue 88).

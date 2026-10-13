@@ -2,26 +2,43 @@
 //! provides, the services of the runtime, the stores a backend opened -
 //! each an `Arc<T>` of a trait object or a type, found by `T`.
 
-use std::any::{Any, TypeId};
+use std::any::{type_name, Any, TypeId};
 use std::collections::HashMap;
+use std::fmt::{self, Debug, Formatter};
 use std::sync::Arc;
 
 /// A type, by its id and - for messages - its name: of a facet a component
-/// provides, of a service, of a store.
-#[derive(Debug, Clone, Copy)]
+/// provides, of a service, of a store. It is made in a constant expression
+/// (`of`), so that a list of types can be a constant (issue 337).
+#[derive(Clone, Copy)]
 pub struct TypeKey {
     pub id: TypeId,
-    pub name: &'static str,
+    /// The name, found only when it is asked for: `type_name` cannot be
+    /// called in a constant expression.
+    name: fn() -> &'static str,
 }
 
 impl TypeKey {
-    pub fn of<T: ?Sized + 'static>() -> Self {
-        // The trait's name without its path: `dyn crate::context::PromptProvider`
-        // is shown as `PromptProvider`.
-        let full = std::any::type_name::<T>();
-        let name = full.rfind("::").map_or(full, |at| &full[at + 2..]);
-        Self { id: TypeId::of::<T>(), name }
+    pub const fn of<T: ?Sized + 'static>() -> Self {
+        Self { id: TypeId::of::<T>(), name: short_name::<T> }
     }
+
+    /// The type's name without its path: `dyn crate::context::PromptProvider`
+    /// is `PromptProvider`.
+    pub fn name(&self) -> &'static str {
+        (self.name)()
+    }
+}
+
+impl Debug for TypeKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+fn short_name<T: ?Sized + 'static>() -> &'static str {
+    let full = type_name::<T>();
+    full.rfind("::").map_or(full, |at| &full[at + 2..])
 }
 
 /// Values by their type, each an `Arc<T>` of a trait object or a type.
@@ -37,7 +54,7 @@ impl TypeMap {
 
     pub fn insert<T: ?Sized + Send + Sync + 'static>(&mut self, value: Arc<T>) {
         let key = TypeKey::of::<T>();
-        self.map.insert(key.id, (key.name, Arc::new(value) as Arc<dyn Any + Send + Sync>));
+        self.map.insert(key.id, (key.name(), Arc::new(value) as Arc<dyn Any + Send + Sync>));
     }
 
     /// It with `value` besides.
@@ -82,7 +99,6 @@ impl TypeMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fmt::Debug;
 
     #[test]
     fn a_value_is_found_by_its_type_and_made_once() {
@@ -95,5 +111,14 @@ mod tests {
         assert!(map.get_or_try_insert::<u8, &str>(|| Err("cannot")).is_err());
         assert!(map.get::<u8>().is_none(), "nothing kept of a failure");
         assert_eq!(map.names(), ["String", "u32"]);
+    }
+
+    /// A list of types can be a constant, and each is named without its path.
+    #[test]
+    fn a_type_key_is_made_in_a_constant() {
+        trait Facet {}
+        const KEYS: &[TypeKey] = &[TypeKey::of::<dyn Facet>(), TypeKey::of::<String>()];
+        assert_eq!(KEYS[1].id, TypeId::of::<String>());
+        assert_eq!(KEYS.iter().map(TypeKey::name).collect::<Vec<_>>(), ["Facet", "String"]);
     }
 }

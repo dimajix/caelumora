@@ -15,13 +15,15 @@ turn is in [AGENT-TURN.md](AGENT-TURN.md).
 *   **`ComponentDescriptor`** configures one component: its `id`, `kind`, `params`, `tags` and
     `fail_policy` - `FailOpen`, the default, skips a failing component, `FailClosed` fails the turn.
     Params left out count as `{}`.
-*   **`ComponentRegistry`** holds a factory per kind, together with the facets that kind provides.
+*   **`ComponentRegistry`** holds a factory per kind, together with the facets that kind provides
+    and those of others it needs.
     The binaries hand the built-in registry to the `RuntimeManager`, which applies
     `component_defaults`; a test registers kinds of its own in it first
     (`caelumora_runtime::testing::test_registry`, with a model that is not to be asked as the
     default).
-*   **`ComponentContainer`** builds the components of a `ComponentConfig` and hands out their
-    facets.
+*   **`ComponentContainer`** builds the components of a `ComponentConfig` for an owner - an agent,
+    an external agent, a channel, a session's commands - and hands out the facets that owner
+    declared it asks for, and no other ([What a container accepts](#what-a-container-accepts)).
 
 A descriptor of the reserved kind `ref` builds no component of its own: its `params` name, by `id`,
 a list of preconfigured components kept in the `ComponentStore`, and it stands for all of them, in
@@ -67,7 +69,7 @@ personalities:
 *   A `ref` is read in the name the graph is built in, and also in the name of whoever names it,
     where that is someone else: a channel's components are built in its owner's name, so whoever
     creates the channel may name only lists they may read themselves
-    (`ComponentRegistry::require_readable`, issue 321).
+    (`ComponentRegistry::require_acceptable`, issue 321).
 
 ## Facets
 
@@ -105,17 +107,66 @@ Components are wired the way Spring Boot wires beans.
 *   **A kind declares the services it uses** (`ComponentKind::uses`). Its factory is given those
     services of the runtime and no other, and keeps them as fields; one it does not declare is
     refused, naming it.
+*   **A kind declares the facets of others it needs** (`ComponentKind::needs`), as the
+    `policy_moderator` needs a `ResponderPolicy`. Its factory may ask for those and no other; one
+    it does not declare is refused, naming it (`ComponentError::Undeclared`).
 *   **A component asks for what it needs, by type** (`context.all::<dyn PromptProvider>()`, or
     `one`). This builds the components that provide the facet on demand, recursively, and returns
     every *other* one in the order of the configuration.
 *   **What is asked for is kept as it comes.** Whoever holds a component keeps the `ComponentImpl`
     that `one` or `all` returned, not just its facet. It dereferences to the facet, and its id and
     fail policy are at hand when a call fails.
-*   **Nothing is wired by hand.** There are no `deps`, so no dependency can be forgotten.
+*   **Nothing is wired by hand.** There are no `deps`: `needs` names facet types, as `provides`
+    does, never components, and the container finds who provides them. A `needs` that is forgotten
+    is refused the first time the factory asks, naming the facet and the kind, as a forgotten
+    `uses` is.
 *   **Cycles are refused.** If a component still being built provides what is asked for, that is a
     real cycle, refused naming both components.
-*   **The order of the configuration counts.** The components nobody asks for are built in that
-    order, and handed out in it.
+*   **The order of the configuration counts.** The components no other one asks for are built in
+    that order, and handed out in it.
+
+`uses` and `needs` are two declarations, built alike: a service comes from the runtime, is the same
+for every graph and is always there; a facet comes from the container's own graph, is built on
+demand and may be missing. Only `needs` decides what a container accepts.
+
+### What a container accepts
+
+A component is built in its owner's name and reads what it reads with its owner's rights - a
+secret, a connection opened. What a configuration can set off follows from what its owner does with
+it (issue 337):
+
+*   **The owner declares the facets it asks for**, as a constant it keeps, and builds its container
+    with them (`ComponentContainer::from_config`). The container refuses `one` and `get_all` of any
+    other facet, so that the declaration stays true.
+*   **The container accepts their closure**: the components that provide one of those facets - and,
+    for a facet of which there is one that no component provides, its default -, then those that
+    provide a facet one of these needs, in turn, until nothing is added. It is taken over the
+    configuration, not over the registry: a channel accepts what its moderator needs, not what any
+    moderator kind might.
+*   **A component that provides no facet of the closure is refused before anything is built**,
+    named by the entry that brings it - a `ref` too -, so that no secret is read and no connection
+    opened for it: a tool in a channel, a moderator in an agent.
+*   **Whoever writes a configuration is refused before the verb.** What a container would accept is
+    known without building anything (`ComponentRegistry::require_acceptable`, which also reads the
+    `ref`s in the writer's name): a channel is refused a tool before it is created
+    (`SessionError::InvalidComponents`).
+*   **A kind is accepted if one of its facets is in the closure.** `notes` provides a tool and a
+    prompt part; an external agent asks for the second alone, and the first is built but never
+    called. What a kind does as it is built, it does for all its facets: a facet that reads secrets
+    or connects belongs to a kind of its own.
+*   **How many does not count.** The closure says which facets are accepted, not how many
+    components provide them; that a facet of which there is one has at most one stays as it is.
+
+| Owner | Asks for | Declared as |
+|---|---|---|
+| agent | `ContextProvider`, `LLMClient`, `PerceiveInProcessor`, `EmitOutProcessor`, `ToolProvider`, `AgentCommandProvider` | `AgentActor::COMPONENT_FACETS` |
+| external agent | `ExternalAgent`, `PerceiveInProcessor`, `ContextProvider`, `AgentCommandProvider` | `ExternalAgentActor::COMPONENT_FACETS` |
+| channel | `Moderator` | `ChannelLoop::COMPONENT_FACETS` |
+| a session's commands | `ChannelCommandProvider` | `RuntimeManager::new_command_executor` |
+
+An agent's closure thus holds the `PromptProvider`s its default `turn_context_provider` needs, and,
+with `compaction` configured, the `CompactionStrategy` it needs and the `LLMClient` and
+`KnowledgeRestorer`s the default `summary_compaction` needs in turn.
 
 ### Facets of which there is exactly one
 
@@ -168,7 +219,8 @@ A container is built with a `ComponentContext`, which holds:
 *   nothing of the session: what a component reads of it - other channels, their notes and
     histories, what its agent may recall - it reads through the `Turn` it is called with (see
     [MEMORY.md](MEMORY.md#reading-other-channels));
-*   and, internally, the graph being built, through which each component reaches the others.
+*   and, internally, the graph being built, through which each component reaches the others -
+    those that provide a facet its kind needs.
 
 Components are not given their actor's `ActorRuntime`: through it they could store the actor's state
 or act as the actor past the `Turn` they are called with. What a component may use is exactly what

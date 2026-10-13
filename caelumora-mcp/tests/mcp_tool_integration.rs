@@ -13,6 +13,7 @@ use caelumora_model::security::{DummySecurityManager, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::ComponentStore;
+use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
 use caelumora_runtime::agent::state::AgentStates;
 use caelumora_runtime::agent::turn::Turn;
@@ -103,7 +104,7 @@ async fn build_container(params: serde_json::Value) -> ComponentContainer {
         }],
     };
 
-    ComponentContainer::from_config(&config, registry, &context).await.unwrap()
+    ComponentContainer::from_config(&config, &[TypeKey::of::<dyn ToolProvider>()], registry, &context).await.unwrap()
 }
 
 /// What a turn outside of a running session navigates: the views of an
@@ -139,7 +140,7 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let url = format!("http://{}/mcp", addr);
 
     let container = build_container(json!({ "endpoint": { "url": url } })).await;
-    let providers = container.get_all::<dyn ToolProvider>(None);
+    let providers = container.get_all::<dyn ToolProvider>(None).unwrap();
     assert_eq!(providers.len(), 1);
     let provider = Arc::clone(&providers[0].facet);
 
@@ -176,7 +177,7 @@ async fn a_configured_approval_and_classification_reach_every_discovered_tool() 
         "requires_approval": false,
         "classification": { "level": "confidential" },
     })).await;
-    let provider = Arc::clone(&container.get_all::<dyn ToolProvider>(None)[0].facet);
+    let provider = Arc::clone(&container.get_all::<dyn ToolProvider>(None).unwrap()[0].facet);
 
     let tools = provider.tools();
     assert!(!tools.is_empty(), "the server's tools are discovered");
@@ -191,7 +192,7 @@ async fn unless_read_only_the_tools_the_server_says_only_read_need_no_approval()
     let url = format!("http://{}/mcp", addr);
 
     let container = build_container(json!({ "endpoint": { "url": url }, "requires_approval": "unless_read_only" })).await;
-    let provider = Arc::clone(&container.get_all::<dyn ToolProvider>(None)[0].facet);
+    let provider = Arc::clone(&container.get_all::<dyn ToolProvider>(None).unwrap()[0].facet);
 
     let tools = provider.tools();
     let asks = |name: &str| tools.iter().find(|t| t.name == name).map(|t| t.requires_approval);
@@ -240,11 +241,11 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
 
     // Two independent containers (simulating two personalities, each with its own
     // SecurityContext) both referencing the same shared component config by id.
-    let container_a = ComponentContainer::from_config(&ref_config, registry, &context).await.unwrap();
-    let container_b = ComponentContainer::from_config(&ref_config, registry, &context).await.unwrap();
+    let container_a = ComponentContainer::from_config(&ref_config, &[TypeKey::of::<dyn ToolProvider>()], registry, &context).await.unwrap();
+    let container_b = ComponentContainer::from_config(&ref_config, &[TypeKey::of::<dyn ToolProvider>()], registry, &context).await.unwrap();
 
-    let provider_a = container_a.get_all::<dyn ToolProvider>(None).remove(0).facet;
-    let provider_b = container_b.get_all::<dyn ToolProvider>(None).remove(0).facet;
+    let provider_a = container_a.get_all::<dyn ToolProvider>(None).unwrap().remove(0).facet;
+    let provider_b = container_b.get_all::<dyn ToolProvider>(None).unwrap().remove(0).facet;
 
     // Each container builds its own instance (using its own ComponentContext), rather than
     // sharing a single instance built once under a synthetic system context.
@@ -263,7 +264,7 @@ async fn unreachable_server_degrades_gracefully_instead_of_failing_construction(
     // connection failure without depending on OS-specific "closed port"
     // behavior.
     let container = build_container(json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } })).await;
-    let providers = container.get_all::<dyn ToolProvider>(None);
+    let providers = container.get_all::<dyn ToolProvider>(None).unwrap();
     assert_eq!(providers.len(), 1);
     assert_eq!(providers[0].tools().len(), 0);
     assert_eq!(providers[0].unavailable().as_deref(), Some("its server cannot be reached"), "its tool set says so, without the error (issue 32)");
@@ -276,6 +277,6 @@ async fn a_configured_description_replaces_what_the_server_says_of_itself() {
     let url = format!("http://{}/mcp", addr);
 
     let container = build_container(json!({ "endpoint": { "url": url }, "description": "Messages echoed by the test server." })).await;
-    let provider = Arc::clone(&container.get_all::<dyn ToolProvider>(None)[0].facet);
+    let provider = Arc::clone(&container.get_all::<dyn ToolProvider>(None).unwrap()[0].facet);
     assert_eq!(provider.description(), "Messages echoed by the test server.");
 }

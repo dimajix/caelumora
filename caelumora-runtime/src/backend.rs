@@ -104,7 +104,7 @@ impl Backends {
         F: Fn(&str, &serde_json::Value, &Services) -> ComponentResult<Arc<T>> + Send + Sync + 'static,
     {
         let (_, factories) = self.factories.entry(TypeId::of::<T>())
-            .or_insert_with(|| (TypeKey::of::<T>().name, Box::new(Factories::<T>::new())));
+            .or_insert_with(|| (TypeKey::of::<T>().name(), Box::new(Factories::<T>::new())));
         if let Some(factories) = factories.downcast_mut::<Factories<T>>() {
             factories.insert(kind.to_string(), Box::new(factory));
         }

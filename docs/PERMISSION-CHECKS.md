@@ -103,7 +103,7 @@ in the same context (issue 322), named in the rows where it is the reason of a r
 | Operation | Questions in order | Rule | Again | Refusal |
 |---|---|---|---|---|
 | Reach a channel to act in it (`SessionLoop::channel_for`, the REST server's way) | `channel_reading`: `GetChannel` (U,1), `cleared_for` (U,2) | reach | by the views if the client navigated | `ChannelNotFound` for absent, refused and not cleared alike |
-| Create (`SessionLoop::create_channel`) | `require_classifiable`; store `GetUserProfile`; members of the session (structural); the preconfigured components named: `GetComponents` (U,1, issue 321); `CreateChannel` (U,1), before the others (issue 312); `require_admitted` (A `GetPersonality`, scope, U cleared with the member's roles); store `CreateChannel` (U,1); group in S; store `GetSession` + `UpdateSession`; components built in C (`GetComponents`, `ReadSecret`) | R2 + R1 | `CreateChannel` (pair); `GetComponents` (U, then C); `GetPersonality` as built | `InvalidModerator`, `PermissionDenied`, `ClassificationRefused`, `NotCleared`, `OutOfScope`, `NameTaken` |
+| Create (`SessionLoop::create_channel`) | `require_classifiable`; store `GetUserProfile`; members of the session (structural); the preconfigured components named: `GetComponents` (U,1, issue 321), and what the channel would not take refused (issue 337); `CreateChannel` (U,1), before the others (issue 312); `require_admitted` (A `GetPersonality`, scope, U cleared with the member's roles); store `CreateChannel` (U,1); group in S; store `GetSession` + `UpdateSession`; components built in C (`GetComponents`, `ReadSecret`) | R2 + R1 | `CreateChannel` (pair); `GetComponents` (U, then C); `GetPersonality` as built | `InvalidComponents`, `PermissionDenied`, `ClassificationRefused`, `NotCleared`, `OutOfScope`, `NameTaken` |
 | Delete (`SessionLoop::delete_channel`) | `channel_for`: `GetChannel` (U,1), `cleared_for` (U,2); `DeleteChannel` (U,1); store `UpdateSession` as the session drops it; store `GetChannel` + `DeleteChannel`; the scope listed in S, each item's store `Get…` + `Delete…` (U,1) - something left: listed and unmarked again in S; actors stopped | R2 + R1 | `GetChannel`, `DeleteChannel` (pair) | `ChannelNotFound`, `PermissionDenied`, `ScopeNotEmpty` |
 | Restore (`SessionLoop::restore_channel`) | store `ReadDeleted` (U,1), as the session's trash lists it; `Restore` (U,1), before the others (issue 312); `require_admitted` as creating; store `ReadDeleted` + `Restore`; store `GetSession` + `UpdateSession`; the scope as for a session | R2 + R1 | `ReadDeleted` (store), `Restore` (pair) | `ChannelNotFound`, `PermissionDenied`, `NotCleared`, `NameTaken` |
 | Rename, language, description, workspace switch, approval rules (`ChannelLoop::update_*`) | store `GetChannel` + `UpdateChannel` (U,1) | R1 | - | `PermissionDenied` |
@@ -325,9 +325,12 @@ An agent's views are built per piece of work, with the agent's place; all in **T
   reaches the components when they are built again, as it reaches an agent's.
 - **Whoever names a `ref` may read it.** The creator of a channel is not necessarily its owner; the
   preconfigured components they name are read in their name too, before the verb, as their own
-  request (`ComponentRegistry::require_readable`).
-- **Components nobody asks for** are still built, in C: issue
-  [337](../issues/337-components-nobody-asks-for.md).
+  request (`ComponentRegistry::require_acceptable`).
+- **Components nobody asks for are refused, not built** (issue
+  [337](../issues/337-components-nobody-asks-for.md)): a container accepts only what its owner
+  asks for and what that needs, and refuses the rest before anything is built in C - a tool in a
+  channel reads no secret of its owner ([COMPONENTS.md](COMPONENTS.md#what-a-container-accepts)).
+  A new channel is refused it before `CreateChannel` is asked, as its creator's `ref`s are read.
 
 ### Decided in issue 316
 

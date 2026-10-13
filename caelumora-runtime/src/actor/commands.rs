@@ -57,7 +57,7 @@ impl AgentCommands {
         runtime: ActorRuntime,
         agent_state: Arc<AgentStateHandle>,
     ) -> ComponentResult<Self> {
-        let providers = components.get_all::<dyn AgentCommandProvider>(None);
+        let providers = components.get_all::<dyn AgentCommandProvider>(None)?;
         for provider in &providers {
             if let Some(command) = provider.commands().into_iter().find(|c| runtime.command_executor().has(&c.name)) {
                 return Err(ComponentError::InvalidConfig(format!(
