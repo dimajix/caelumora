@@ -2428,7 +2428,8 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
 
 /// G1 (issue 286): a team's members read what is shared with it, wherever
 /// they act; who leaves it no longer does, and a stranger never did. Its
-/// owner changes it; a member reads it but changes nothing.
+/// owner changes it; a member reads it but changes nothing, and finds it
+/// among his teams, which are asked for alone (issue 317).
 #[tokio::test]
 async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_members() {
     let world = World::new().await;
@@ -2446,8 +2447,11 @@ async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_member
     assert!(matches!(refused, Err(GroupError::Store(StoreError::PermissionDenied(_)))), "a member reads it but changes nothing: {refused:?}");
     assert_eq!(asked, checks(&["bob: GetGroup(alice's) yes", "bob: UpdateGroup(alice's) no"]), "refused before he learns whether carol exists");
     assert!(matches!(views(&carol).group(project.id).await, Err(ViewError::GroupNotFound(_))), "a stranger does not find it");
-    let listed: Vec<GroupId> = views(&bob).groups().await.unwrap().iter().map(|g| g.id()).collect();
+    groups.create(&carol, "hers", Scope::UserScope { user_id: world.carol }).await.expect("carol makes one of her own");
+    let (listed, asked) = world.asked(views(&bob).groups()).await;
+    let listed: Vec<GroupId> = listed.unwrap().iter().map(|g| g.id()).collect();
     assert_eq!(listed, [project.id], "listed among his");
+    assert_eq!(asked, checks(&["bob: List(group) yes", "bob: GetGroup(alice's) yes"]), "asked of the teams he owns or belongs to alone (issue 317): {asked:?}");
 
     let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     workspaces.share(&alice, docs.id, Subject::Group(project.id), Grant::Read).await.expect("shared with the team");

@@ -1,6 +1,6 @@
 # 317 — The viewer's teams are listed by reading every group
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -38,3 +38,12 @@ The teams of a viewer are now found in two ways: by a query for `Views::artifact
 
 - **2026-10-11** — Opened at the maintainer's request, found during issue
   [308](308-artifacts-shared-with-a-team-not-listed.md).
+- **2026-10-13** — Done, by a query. `GroupField` gained the owner, and `Group::teams` is the query
+  for what lies where a team lies - the global scope or a user's -, which needed a value of the
+  query for a variant whatever it holds (`FieldValue::variant`, `?` in Postgres): the scope of a
+  team names its owner, so no value of its own could name every team. `Views::teams`, private,
+  asks the store in the viewer's name for the teams they own or belong to; `Views::groups` lists
+  them, and `Views::artifacts` names the viewer by those they belong to - no longer found in the
+  runtime's name. The trash of groups asks for teams alone as well. The security suite records
+  that listing a viewer's teams asks of those alone.
+

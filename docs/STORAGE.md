@@ -121,7 +121,9 @@ Every list of the entity store takes a query (`caelumora_model::store::query`) a
 *   **A filter**, purely declarative, so that a database could push it into a `WHERE` clause. It
     names fields of the kind, each a path into the document as serialized. Values take the forms
     serde writes but are made without it, so that making a filter cannot fail; a tagged value meets
-    an object that *has* its key with a matching value - containment, as `@>` in Postgres.
+    an object that *has* its key with a matching value - containment, as `@>` in Postgres -, a
+    variant alone (`FieldValue::variant`) an object that has its key or the string of a variant that
+    holds nothing - as `?` in Postgres.
 *   **Scope conditions** are made by the scope (`Scope::within`, `Scope::seen_from`), so that the
     rule lives with `Scope`.
 *   **A limit and a cursor**, in the order of the entities' ids. A page cut short hands out the

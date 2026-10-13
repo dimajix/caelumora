@@ -57,7 +57,7 @@ use caelumora_model::workspace::WorkspaceId;
 use caelumora_model::group::{Group, GroupField, GroupId};
 use caelumora_model::scope::Scope;
 use crate::workspace::WorkspaceManager;
-use caelumora_model::store::{EntityStores, StateStore, StoreError, StoreResultExt};
+use caelumora_model::store::{EntityStores, StateStore, StoreError, StoreResult, StoreResultExt};
 use crate::component::ComponentRegistry;
 use std::sync::Arc;
 use caelumora_model::artifact::Artifact;
@@ -441,9 +441,9 @@ impl Views {
         let context = self.viewer.context();
         let principal = context.principal_id;
         let roles = context.roles.iter().copied().filter(|role| context.has_role(*role));
-        let belonging = Filter::any(GroupField::Members, Filter::eq(GroupField::Member, principal));
-        let groups = self.stores.groups.list(&SecurityContext::system(), &Query::filtered(belonging)).await.map_err(failed)?.items;
-        let teams = groups.iter().filter(|group| !group.is_participants()).map(|group| Subject::Group(group.id));
+        // The teams they belong to, by which the policy resolves an entry
+        // naming one - not those they only own.
+        let teams = self.teams().await.map_err(failed)?.into_iter().filter(|team| team.has_member(principal)).map(|team| Subject::Group(team.id));
         let subjects: Vec<Subject> = std::iter::once(Subject::Actor(principal)).chain(roles.map(Subject::Role)).chain(teams).collect();
         let named = Filter::is_in(ArtifactField::Subject, subjects);
         let theirs = Filter::Or(vec![Filter::eq(ArtifactField::Owner, principal), Filter::any(ArtifactField::Acl, named)]);
@@ -527,9 +527,21 @@ impl Views {
     /// # Errors
     /// `Failed` if the store fails.
     pub async fn groups(&self) -> ViewResult<Vec<GroupView>> {
-        let groups = self.stores.groups.list(self.viewer.context(), &Query::all()).await.map(|page| page.items)
-            .map_err(|e| ViewError::failed(e, "listing the groups"))?;
-        Ok(groups.into_iter().filter(|group| !group.is_participants()).map(|group| GroupView::of(self.clone(), group)).collect())
+        let teams = self.teams().await.map_err(|e| ViewError::failed(e, "listing the groups"))?;
+        Ok(teams.into_iter().map(|team| GroupView::of(self.clone(), team)).collect())
+    }
+
+    /// The teams the viewer owns or belongs to (issue 317), which the store
+    /// is asked for alone, in their name: the teams of `groups`, and those
+    /// `artifacts` names them by.
+    async fn teams(&self) -> StoreResult<Vec<Group>> {
+        let principal = self.viewer.context().principal_id;
+        let theirs = Filter::Or(vec![
+            Filter::eq(GroupField::Owner, principal),
+            Filter::any(GroupField::Members, Filter::eq(GroupField::Member, principal)),
+        ]);
+        let query = Query::filtered(Filter::And(vec![Group::teams(), theirs]));
+        Ok(self.stores.groups.list(self.viewer.context(), &query).await?.items)
     }
 
     /// Group `id`, if the viewer may read it (`GetGroup`) - a team, or the
@@ -552,11 +564,11 @@ impl Views {
     /// # Errors
     /// `Failed` if the store fails.
     pub async fn deleted_groups(&self) -> ViewResult<Vec<DeletedSnapshot<GroupId>>> {
-        let groups = self.stores.groups.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
+        let groups = self.stores.groups.list_deleted(self.viewer.context(), &Query::filtered(Group::teams())).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted groups"))?;
         let policy = &self.security;
         let mut deleted = Vec::with_capacity(groups.len());
-        for group in groups.into_iter().filter(|group| !group.is_participants()) {
+        for group in groups {
             let Some(removal) = group.deleted.clone() else { continue };
             let attributes = &group.security_attributes;
             deleted.push(DeletedSnapshot {

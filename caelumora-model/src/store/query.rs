@@ -45,6 +45,10 @@ pub enum FieldValue {
     /// that key - containment, as `@>` in Postgres -, so that a value names
     /// only what identifies it: a channel's scope its channel alone.
     Tagged(&'static str, Box<FieldValue>),
+    /// The variant `tag`, whatever it holds: as serde writes one that holds
+    /// nothing, `"GlobalScope"`, or one that does, an object that has the
+    /// key - as `?` in Postgres (issue 317).
+    Variant(&'static str),
 }
 
 impl FieldValue {
@@ -53,12 +57,18 @@ impl FieldValue {
         FieldValue::Tagged(tag, Box::new(value.into()))
     }
 
+    /// The variant `tag`, whatever it holds.
+    pub fn variant(tag: &'static str) -> Self {
+        FieldValue::Variant(tag)
+    }
+
     /// Whether `found`, what lies at a field of a document, meets this value.
     pub fn matches(&self, found: &Value) -> bool {
         match self {
             FieldValue::Uuid(id) => found.as_str().and_then(|text| Uuid::parse_str(text).ok()) == Some(*id),
             FieldValue::Text(text) => found.as_str() == Some(text.as_str()),
             FieldValue::Tagged(tag, value) => found.get(tag).is_some_and(|inner| value.matches(inner)),
+            FieldValue::Variant(tag) => found.as_str() == Some(tag) || found.get(tag).is_some(),
         }
     }
 }
@@ -299,6 +309,11 @@ mod tests {
         let channel = FieldValue::tagged("ChannelScope", FieldValue::tagged("channel_id", id));
         assert!(channel.matches(&json!({ "ChannelScope": { "session_id": Uuid::new_v4().to_string(), "channel_id": id.to_string() } })), "containment");
         assert!(!channel.matches(&json!({ "SessionScope": { "session_id": id.to_string() } })));
+        let users = FieldValue::variant("UserScope");
+        assert!(users.matches(&json!({ "UserScope": { "user_id": id.to_string() } })), "a variant, whatever it holds");
+        assert!(!users.matches(&json!({ "SessionScope": { "session_id": id.to_string() } })));
+        assert!(FieldValue::variant("GlobalScope").matches(&json!("GlobalScope")), "also one that holds nothing");
+        assert!(!FieldValue::variant("GlobalScope").matches(&json!("UserScope")));
     }
 
     #[test]

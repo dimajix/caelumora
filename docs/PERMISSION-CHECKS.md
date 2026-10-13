@@ -197,7 +197,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 
 | Operation | Questions in order | Rule | Again | Refusal |
 |---|---|---|---|---|
-| List, reach (`Views::artifacts`, `artifact`, `ChannelView::artifacts`) | listing: the teams the viewer belongs to found in S, named besides them and their roles; store `GetArtifact` (V,1), `cleared_for` (V,2); the versions cut: per version `may_read_artifact` with the version's list (V,1) | R1 + reach (store) | - | left out; `ArtifactNotFound` |
+| List, reach (`Views::artifacts`, `artifact`, `ChannelView::artifacts`) | listing: the teams the viewer belongs to, found as `Views::groups` finds them (V,1), named besides them and their roles; store `GetArtifact` (V,1), `cleared_for` (V,2); the versions cut: per version `may_read_artifact` with the version's list (V,1) | R1 + reach (store) | - | left out; `ArtifactNotFound` |
 | Where a version was published (`ArtifactView::publication`) | `Views::channel_of`: the session, then `channel_reading`; gone, as a live one would be reached | reach | - | not named |
 | Publish (`ArtifactManager::publish`, the artifact tool) | the workspace's reach (*In a channel*); an existing artifact found in S: `WriteArtifact` (T,1) - one not the caller's to add to is refused as such, not taken for a name to make anew; or `CreateArtifact` (T,1); `require_publish` into the storage's destination (T,2); content kept; store `CreateArtifact` for a new one | R2 + R1 | `CreateArtifact` (pair) | `PermissionDenied`, `ClassifiedOtherwise`, `StorageNotCleared` |
 | Share (`set_access`) | store `GetArtifact` (U,1), `cleared_for` (U,2); `require_nameable`; store `GetArtifact`, `cleared_for` + `UpdateArtifact` | reach (store) + R1 | `GetArtifact`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Validation` |
@@ -210,7 +210,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 
 | Operation | Questions in order | Rule | Refusal |
 |---|---|---|---|
-| List, reach (`Views::groups`, `group`) | store `GetGroup` (V,1); the participants' groups left out of the list | R1 | left out; `GroupNotFound` |
+| List, reach (`Views::groups`, `group`) | the teams the viewer owns or belongs to asked for alone (`Group::teams`, issue 317), store `GetGroup` (V,1) | R1 | left out; `GroupNotFound` |
 | Make a team (`GroupManager::create`) | store `CreateGroup` (U,1) | R1 | `PermissionDenied`, `NameTaken` |
 | Set members (`set_members`) | store `GetGroup`; a participants' group refused (structural); `UpdateGroup` (U,1), before whether the users exist is asked (issue 312); the users read in S; store `GetGroup` + `UpdateGroup` | R2 + R1 | `NotFound`, `Participants`, `PermissionDenied`, `UnknownMember` |
 | Rename (`update`) | store `GetGroup`; a participants' group refused (structural); store `UpdateGroup` | R1 | `NotFound`, `Participants`, `PermissionDenied` |
