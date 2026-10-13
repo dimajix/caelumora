@@ -61,8 +61,41 @@ a plugin. Stored data to delete: artifacts lying in a session's scope.
 - It is decided how a version is added to another's artifact, and `artifact_tool` does so.
 - `docs/` and the history of issue 271 say where an artifact lies.
 
+## Proposal
+
+As it stood when the issue was deferred (2026-10-13); not decided.
+
+- **A**, worded generally: an artifact lies in its owner's scope. Today that is always a user;
+  should a team own things one day (issue [340](340-teams-as-owners.md)), it lies in the team's,
+  with nothing changed about its lifetime or how it is found by name. The `ArtifactManager` is no
+  `ScopeMember` any longer; `Artifact::validate` accepts the owner's scope alone.
+- **Another's artifact is named by its id.** `publish_artifact` takes an optional parameter
+  `artifact`: with it, the version is added to that artifact (`WriteArtifact`); without it, the
+  artifact of that name in the publisher's scope gains one or is made. `artifact` and `name`
+  together are refused. The artifact is fetched in the caller's name (`GetArtifact`), so that one
+  who cannot reach it is told `NotFound` and learns nothing of the id. Weighed against it: finding
+  by name among the artifacts published in the channel - a name is not unique there, and who meant
+  their own would add to another's unnoticed -, and a name qualified by its owner
+  (`alice/report.csv`) - a model does not know user names reliably. The cost: an agent learns
+  another's id only from a person; a tool that lists artifacts would be an issue of its own.
+- **`keep` goes.** The global scope grants nobody anything for an artifact - its lists do -, and
+  nothing finds an artifact there by name; and an artifact moved there would be followed by a second
+  one of the same name in its owner's scope at the next publication. So an artifact always lies in
+  its owner's scope, and `ArtifactManager::keep`, `ArtifactError::InvalidScope`,
+  `ArtifactUpdateEvent::ScopeChanged`, `PUT /artifacts/{id}/scope` and the buttons to keep in the
+  web UI (`ArtifactPage.tsx`, `ToolCallView.tsx`) are removed - a change of the REST API, with the
+  web UI changed along.
+- **The tests of issue 320** take a contributor's agent as what is left in a session; the security
+  suite gains adding to another's artifact by its id, `NotFound` for one who cannot reach it
+  included.
+- **Stored data to delete:** artifacts lying in a session's scope.
+
 ## History
 
 - **2026-10-13** — Opened at the maintainer's request, during issue
   [316](316-store-checks-artifact-without-versions.md): artifacts are not to be bound to a channel
   or a session, and that they are deleted with the session is a bug.
+- **2026-10-13** — Discussed, and deferred by the maintainer; the proposal as it stood is recorded
+  above, under *Proposal*. Whether teams should own things - which would make adding to another's
+  artifact rarer and give an artifact of a team a place of its own - went into the memo
+  [340](340-teams-as-owners.md).
