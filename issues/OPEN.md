@@ -103,6 +103,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | No. | Status | Issue |
 |---|---|---|
 | [335](335-channel-events-name-their-session.md) | open | The events of channels and their members are variants of their own beside `GlobalEvent::Entity`, which cannot say where an entity lies, so a plugin's kind that lies in a channel has no way to announce it. |
+| [344](344-workspace-manager-owns-their-use.md) | open | The `WorkspaceManager` owns workspaces and also what is done in them - reaching terminals and shells for a caller, ending commands, holding the storages -, with the stores and policies that needs. |
 
 ## Open architecture questions
 
