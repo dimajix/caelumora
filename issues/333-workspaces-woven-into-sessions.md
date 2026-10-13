@@ -1,6 +1,6 @@
 # 333 — Workspaces are woven into sessions, channels and templates
 
-**Status:** open
+**Status:** rejected
 **Area:** Code structure
 
 ## The problem
@@ -81,3 +81,19 @@ out through 324 and 327 either way.
   `write_whole` with `WriteFailure` for its local storage. While workspaces stay in the core, that
   is a dependency of a plugin on the core; should they move, it becomes one of a plugin on another,
   for which there is no rule yet.
+- **2026-10-13** — Rejected by the maintainer: workspaces stay in the core (option A). A workspace
+  is not a kind a session uses, as skills and artifacts are, but the place its people and agents
+  share - part of what a session, its channels and its template are. Option B would make it an
+  attachment of whatever kind, a generic concept with a single instance, at the cost of reworking
+  sessions, channels, templates, views and errors. What a deployment may not want to carry has left
+  already: Open Terminal with `bollard` is a crate of its own (issue
+  [327](327-open-terminal-in-a-crate-of-its-own.md)), and the storages of workspaces are open to
+  other crates (issue [324](324-backends-enumerated-in-the-core.md)); the core keeps the local
+  storage and the local shell. And `caelumora-artifacts` depends on workspaces as a plugin on the
+  core, for which there are rules, instead of as a plugin on another plugin, for which there are
+  none.
+  What stays: every program that uses the runtime carries the file and shell tools
+  (`terminal_tool`) and the local shell. Whether a deployment allows running commands is a question
+  of its configuration and permissions, not of crates - an issue of its own, should it matter.
+  Worth reopening when a second thing appears that a session should hold the way it holds a
+  workspace (a repository, a knowledge base): then option B is a concept with two instances.
