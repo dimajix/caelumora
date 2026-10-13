@@ -34,7 +34,6 @@
 use crate::manager::SkillError;
 use crate::skill::{Skill, SkillId};
 use crate::view::{SkillView, SkillViews};
-use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput};
 use caelumora_model::confidentiality::Classification;
@@ -49,7 +48,7 @@ use caelumora_runtime::agent::work::AgentWork;
 use caelumora_runtime::command::{AgentCommandProvider, CommandError, CommandResult, ProvidesCommands};
 use caelumora_runtime::compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use caelumora_runtime::context::{titled, Prompt, PromptPosition, PromptProvider};
+use caelumora_runtime::context::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
 use caelumora_runtime::tool::{arguments, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_runtime::view::SessionView;
 use chrono::Utc;
@@ -165,6 +164,18 @@ impl SkillScope {
     }
 }
 
+/// Why the catalogue of skills cannot be given (issue 336): what the store
+/// reported, judged as store errors are; the rest in the words it has,
+/// which are written to be read.
+impl From<SkillError> for ContextError {
+    fn from(error: SkillError) -> Self {
+        match error {
+            SkillError::Store(e) => ContextError::Store(e),
+            error => ContextError::Failed(error.to_string()),
+        }
+    }
+}
+
 /// What the model is told when reaching or writing a skill failed: what it
 /// can correct, such as a name taken, text that does not fit or a skill not
 /// its owner's, as such; the rest as a failure.
@@ -190,7 +201,7 @@ impl PromptProvider for SkillsComponent {
         self.position
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
+    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
         let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let skills = session.views().usable_skills().await?;
         let classification = joined(&skills, &work.classification());
@@ -473,4 +484,17 @@ pub fn register(registry: &mut ComponentRegistry) {
             Ok(facets)
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_runtime::error::user_message;
+
+    #[test]
+    fn what_the_catalogue_meets_reaches_the_owner_as_the_core_judges_it() {
+        let shown = |error: SkillError| user_message(&anyhow::Error::new(ContextError::from(error)));
+        assert_eq!(shown(SkillError::NotJoined).as_deref(), Some("skills are not offered here"));
+        assert_eq!(shown(SkillError::Store(StoreError::Backend("/var/lib/skills: permission denied".to_string()))), None);
+    }
 }

@@ -27,7 +27,7 @@ The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived d
     in a configured artifact storage, not in the document.
 *   **Groups**: lists of actors an access list names as one subject - a user's teams, and the
     participants of every session and channel (see [SECURITY.md](SECURITY.md#groups)).
-*   **The kinds of the plugins** (see [COMPONENTS.md](COMPONENTS.md#plugins)), kept like the
+*   **The kinds of the plugins** (see [PLUGINS.md](PLUGINS.md)), kept like the
     core's.
 
 Each kind is kept by a store of its own, `EntityStore<T>` (issue

@@ -10,9 +10,8 @@
 //! the remote agent's user; positions mean nothing here.
 
 use crate::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
-use crate::context::{ContextProvider, PromptProvider};
+use crate::context::{ContextError, ContextProvider, PromptProvider};
 use crate::agent::work::AgentWork;
-use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::message::MessageRole;
@@ -29,11 +28,11 @@ pub struct ExternalContextProvider {
 
 #[async_trait]
 impl ContextProvider for ExternalContextProvider {
-    async fn current_context(&self, work: &AgentWork<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>)> {
+    async fn current_context(&self, work: &AgentWork<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError> {
         let mut parts = Vec::new();
         let mut knowledge = Vec::new();
         for provider in &self.prompt_providers {
-            let Some(contribution) = provider.apply_fail_policy(provider.get_prompt(work).await)? else { continue };
+            let Some(contribution) = provider.prompt_for(work).await? else { continue };
             let text = contribution.text.trim();
             if text.is_empty() {
                 continue;

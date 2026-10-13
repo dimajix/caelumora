@@ -30,7 +30,7 @@ use caelumora_runtime::error::{refusal, user_message};
 use caelumora_runtime::group::GroupError;
 use caelumora_runtime::session::SessionError;
 use caelumora_runtime::terminal::TerminalError;
-use caelumora_runtime::view::{ContextError, ViewError};
+use caelumora_runtime::view::{AgentContextError, ViewError};
 use caelumora_runtime::workspace::WorkspaceError;
 use serde::Serialize;
 use std::borrow::Cow;
@@ -198,12 +198,12 @@ impl From<TemplateError> for ApiError {
     }
 }
 
-impl From<ContextError> for ApiError {
-    fn from(error: ContextError) -> Self {
+impl From<AgentContextError> for ApiError {
+    fn from(error: AgentContextError) -> Self {
         let detail = error.to_string();
         match error {
-            ContextError::NotRecorded { .. } => Self::not_found("context_not_recorded", detail),
-            ContextError::Unavailable { .. } => Self::not_found("context_unavailable", detail),
+            AgentContextError::NotRecorded { .. } => Self::not_found("context_not_recorded", detail),
+            AgentContextError::Unavailable { .. } => Self::not_found("context_unavailable", detail),
         }
     }
 }
@@ -380,7 +380,7 @@ impl From<anyhow::Error> for ApiError {
                 };
             )*};
         }
-        answer_as!(error, ContextError, ViewError, WorkspaceError, GroupError, ArtifactError, TerminalError, SessionError, ChannelError, CommandError, TemplateError);
+        answer_as!(error, AgentContextError, ViewError, WorkspaceError, GroupError, ArtifactError, TerminalError, SessionError, ChannelError, CommandError, TemplateError);
         if error.chain().any(|e| matches!(e.downcast_ref(), Some(StoreError::NameTaken { .. }))) {
             return Self::conflict("name_taken", user_message(&error).unwrap_or_else(|| error.to_string()));
         }

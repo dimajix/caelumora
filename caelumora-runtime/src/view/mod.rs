@@ -35,7 +35,7 @@ mod workspace;
 
 pub use artifact::ArtifactView;
 pub use channel::{ChannelView, MemberView};
-pub use context::{AgentContextView, ContextError};
+pub use context::{AgentContextView, AgentContextError};
 pub use group::GroupView;
 pub use session::{PrivateNotesElsewhere, SessionView};
 pub use workspace::WorkspaceView;
@@ -1174,7 +1174,7 @@ mod tests {
         let seen = agent.context().await.expect("alice made the agent");
         assert_eq!(seen.private_notes().0[0].text, "mine");
         assert_eq!(seen.transcript().messages().len(), 1);
-        assert!(matches!(seen.context_of(first.id), Err(ContextError::NotRecorded { .. })), "the agent did not produce it");
+        assert!(matches!(seen.context_of(first.id), Err(AgentContextError::NotRecorded { .. })), "the agent did not produce it");
         let refused = reach(as_user(bob.id)).await.member(ActorId::Agent(helper.id)).await.unwrap().context().await.expect_err("not bob's to read");
         assert!(matches!(refused, ViewError::Forbidden { .. }), "{refused}");
         let none = for_alice.member(ActorId::User(bob.id)).await.unwrap().context().await.expect_err("a user saw nothing");

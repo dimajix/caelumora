@@ -4,9 +4,8 @@
 //! It has none unless it names one: the text may carry its own.
 
 use crate::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::context::{titled, Prompt, PromptPosition, PromptProvider};
+use crate::context::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
 use crate::agent::work::AgentWork;
-use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use std::sync::Arc;
@@ -28,7 +27,7 @@ impl PromptProvider for StaticSystemPromptProvider {
     fn position(&self) -> PromptPosition {
         self.position
     }
-    async fn get_prompt(&self, _work: &AgentWork<'_>) -> Result<Prompt> {
+    async fn get_prompt(&self, _work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
         Ok(Prompt::classified(self.prompt.clone(), self.classification.clone()))
     }
 }

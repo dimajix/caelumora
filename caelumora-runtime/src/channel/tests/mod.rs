@@ -4,6 +4,8 @@ use super::*;
 use caelumora_model::value::name::Name;
 use crate::actor::Actor;
 use crate::component::{ComponentImpl, ComponentKind, ComponentRegistry};
+use crate::context::ContextError;
+use crate::message::ProcessingError;
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use crate::transport::EventSender;
 use anyhow::Result;
@@ -407,7 +409,7 @@ struct NoSecrets;
 
 #[async_trait::async_trait]
 impl crate::message::MessageProcessor for NoSecrets {
-    async fn process_messages(&self, input: Vec<Message>, _security: &SecurityContext) -> Result<Vec<Message>> {
+    async fn process_messages(&self, input: Vec<Message>, _security: &SecurityContext) -> Result<Vec<Message>, ProcessingError> {
         Ok(input.into_iter().filter(|m| !m.content.as_deref().unwrap_or_default().contains("secret")).collect())
     }
 }
@@ -421,7 +423,7 @@ struct Heard;
 
 #[async_trait::async_trait]
 impl crate::context::PromptProvider for Heard {
-    async fn get_prompt(&self, work: &crate::agent::work::AgentWork<'_>) -> Result<crate::context::Prompt> {
+    async fn get_prompt(&self, work: &crate::agent::work::AgentWork<'_>) -> Result<crate::context::Prompt, ContextError> {
         Ok(crate::context::Prompt::from(format!("[Heard]\n{}", work.agent_channel_state().history.messages().len())))
     }
 }

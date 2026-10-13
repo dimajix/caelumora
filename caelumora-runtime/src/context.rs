@@ -5,12 +5,13 @@
 //! has exactly one `ContextProvider` and any number of `PromptProvider`s
 //! (issue 98).
 
-use crate::component::ComponentError;
+use crate::component::{ComponentError, ComponentImpl};
 use crate::agent::work::AgentWork;
-use anyhow::Result;
+use crate::view::ViewError;
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::store::StoreError;
 use serde::Deserialize;
 
 /// Where a prompt part goes in the context (issue 47).
@@ -145,7 +146,23 @@ pub trait PromptProvider: Send + Sync + std::fmt::Debug {
     }
     /// The part for `work` - a turn about to start, or a request to an
     /// external agent about to be sent (issue 204); empty text for none.
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt>;
+    ///
+    /// # Errors
+    /// `ContextError` if the part cannot be had.
+    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError>;
+}
+
+impl ComponentImpl<dyn PromptProvider> {
+    /// The part of this prompt provider for `work`, as its fail policy
+    /// says: `None` if it failed and fails open.
+    ///
+    /// # Errors
+    /// `ContextError::Component`, naming the component, if it failed and
+    /// fails closed.
+    pub(crate) async fn prompt_for(&self, work: &AgentWork<'_>) -> Result<Option<Prompt>, ContextError> {
+        self.apply_fail_policy(self.get_prompt(work).await)
+            .map_err(|cause| ContextError::Component { component: self.id.clone(), cause: Box::new(cause) })
+    }
 }
 
 /// Assembles what the model of an agent is given besides the conversation,
@@ -165,9 +182,29 @@ pub trait ContextProvider: Send + Sync + std::fmt::Debug {
     /// they hold.
     ///
     /// # Errors
-    /// If what the model is to be given cannot be had - a prompt provider
-    /// that fails closed.
-    async fn current_context(&self, work: &AgentWork<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>)>;
+    /// `ContextError` if what the model is to be given cannot be had - a
+    /// prompt provider that fails closed.
+    async fn current_context(&self, work: &AgentWork<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError>;
+}
+
+/// Why what an agent's model is to be given cannot be had (issue 336):
+/// what a `ContextProvider` or a `PromptProvider` answers. A plugin's
+/// provider translates its own errors into it, deciding there what may be
+/// shown; `crate::error::user_message` judges each variant.
+#[derive(Debug, thiserror::Error)]
+pub enum ContextError {
+    /// A failure in words that may be shown to users.
+    #[error("{0}")]
+    Failed(String),
+    /// What reading through the views reported, judged as view errors are.
+    #[error("{0}")]
+    View(#[from] ViewError),
+    /// What the store reported, judged as store errors are.
+    #[error("{0}")]
+    Store(#[from] StoreError),
+    /// A prompt provider that fails closed failed with `cause`.
+    #[error("component '{component}' failed")]
+    Component { component: String, #[source] cause: Box<ContextError> },
 }
 
 #[cfg(test)]

@@ -11,9 +11,8 @@
 //! available it contributes nothing.
 
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::context::{render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::context::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
 use crate::agent::work::AgentWork;
-use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::tool::ToolSet;
@@ -32,7 +31,7 @@ impl PromptProvider for ToolSetsPromptProvider {
         self.position
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
+    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
         // What the agent is configured with, nothing read from a channel.
         Ok(Prompt::classified(render(work.tool_sets()), Classification::PUBLIC))
     }

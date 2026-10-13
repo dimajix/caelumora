@@ -663,7 +663,7 @@ impl ScopeMember for WorkspaceManager {
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
@@ -685,7 +685,7 @@ impl ScopeMember for WorkspaceManager {
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for workspace in deleted_since(self.workspaces.list_deleted(&system, &within(holder)).await?.items, since) {
@@ -702,11 +702,13 @@ impl ScopeMember for WorkspaceManager {
     /// # Errors
     /// `UnknownStorage`, a `TerminalError` of removing a place, or whatever
     /// the store reports; what was purged before stays purged.
-    async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()> {
+    async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for workspace in self.workspaces.list_deleted(&system, &within(holder)).await?.items {
-            self.provider(&workspace)?.remove(workspace.id).await?;
+            // Its place is its storage too.
+            let unremoved = |e: &dyn fmt::Display| StoreError::Backend(format!("the place of workspace {} cannot be removed: {e}", workspace.id));
+            self.provider(&workspace).map_err(|e| unremoved(&e))?.remove(workspace.id).await.map_err(|e| unremoved(&e))?;
             self.workspaces.purge(&system, workspace.id).await?;
         }
         Ok(())

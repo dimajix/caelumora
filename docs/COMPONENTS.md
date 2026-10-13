@@ -202,60 +202,9 @@ which a tool passes on with `?`.
 
 ## Plugins
 
-A plugin (issue 323) is a crate linked into the program that brings a subject the core does not
-know - a kind of entity with what keeps it, its components, its views and its routes. It implements
-`caelumora_runtime::plugin::Plugin` - a name for messages and `register` - and the program lists
-it: `caelumora-app` in `rest_plugins()` if it serves routes, otherwise in `plugins()`, and builds
-its runtime with both; `caelumora-tui` in its own `plugins()`. `RuntimeBuilder::new` makes the
-core's services and managers first; then each plugin registers, and `build` makes the runtime.
-`RuntimeBuilder::from_config` makes what a program builds from the configuration - the policies,
-the stores, the secrets, the built-in component kinds -, `RuntimeManager::new` is the builder
-without plugins. While it registers, a plugin
-
-*   asks for the store of its kind (`entity_store::<T>()`). The configured backend opens a store
-    for any kind (`EntityStoreFactory`), once - whoever asks for the kind again is given the same
-    store - and refuses a kind whose name another kind has;
-*   reaches the core's services it needs for its manager - the event bus, the policies, the
-    secrets, the controllers - and offers its manager as a service (`provide`), which its component
-    kinds use (`ComponentKind::uses`), its views read through (`Views::service`) and its routes
-    take when they are built;
-*   registers its component kinds (`components()`), as `register_all` does for the built-in ones;
-*   makes its kind go with what holds the scope it lies in (`scope_member`, a `ScopeMember`);
-*   claims its section of the configuration (`config::<C>(name)`), read as `C`, and of the seed
-    files (`seed_section`, a `SeedSection`). Both sections stand at the top level of their files;
-    one that no plugin claims is an error, so that a misspelt section is found.
-
-Its views are an extension trait on `Views`, built from what `Views` opens: the viewer's `context`,
-the `security` and `confidentiality` policies, its manager as a `service`, and `channel_reading`.
-Its routes come from `caelumora_rest_server::plugin::RestPlugin`, a `Plugin` that builds a `Router`
-with the `AppState`; the API serves them behind the same login as the core's (`routes::api`). A
-plugin that brings a component kind alone, such as `caelumora-mcp` (issue 325) or `caelumora-a2a`
-(issue 326), implements `Plugin` only and registers the kind in `register`. A plugin's tests use
-the world of the security suite - the runtime with the recording ownership policy and three users -,
-`caelumora_runtime::testing`, as a dev-dependency with the feature `test-support`.
-
-### What a component kind outside the core may use
-
-A component kind in a crate of its own uses the runtime through what a component of the core uses
-too, and nothing else - there is no prelude that re-exports at large, so that it shows which types
-a plugin depends on:
-
-*   **To register it:** `ComponentRegistry::register` or `register_async`, `ComponentKind` with the
-    facets it `provides` and the services it `uses`, `ComponentFacets`, and `config_of_params` to
-    read its `params`.
-*   **While it is built:** the `ComponentContext` - `security_context`, in whose name it is built,
-    and `service::<T>()`, the services of the runtime it declared.
-*   **The facets it offers**, with what their signatures name: for a tool provider `ToolProvider`,
-    `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
-    for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,
-    `ExternalStream`, `ExternalAgentError` and `ExternalAgentResult`.
-*   **If it talks to a remote system:** `caelumora_runtime::remote`, which describes its errors
-    as the core's are described - `describe_request_error`, `describe_chain` (issue 326).
-*   **The model's types** of what it handles: `Tool`, `RemoteEndpoint`, `SecretManager`,
-    `Classification`, ...
-
-What a plugin needs beyond that is made visible when a plugin needs it, as part of the runtime's
-API, rather than reached around (issue 325).
+A component kind can come from a plugin, a crate of its own that brings a subject the core does not
+know. How a plugin registers its kinds, and what of the runtime such a kind may use, is in
+[PLUGINS.md](PLUGINS.md).
 
 ## Built-in components
 

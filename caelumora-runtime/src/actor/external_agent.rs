@@ -41,7 +41,7 @@ use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
 use crate::view::ViewsFactory;
 use crate::agent::work::AgentWork;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, ProcessingStateHolder};
 use caelumora_model::agent::{AgentId, Personality};
@@ -229,7 +229,7 @@ impl ExternalAgentActor {
     async fn prompts_to_give(&self, state: &AgentChannelState, work: &mut Work) -> Result<Vec<(String, PromptPart)>> {
         let reading = AgentWork::new(self.agent_id, work, state, &self.agent_state, &self.views);
         let (parts, knowledge) = self.context_provider.current_context(&reading).await
-            .map_err(|e| e.context(format!("component '{}' could not assemble the context", self.context_provider.id)))?;
+            .with_context(|| format!("component '{}' could not assemble the context", self.context_provider.id))?;
         work.take_in_context(&parts, knowledge);
         let mut pending = self.pending_prompts();
         for (index, part) in parts.into_iter().enumerate() {

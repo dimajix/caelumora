@@ -35,7 +35,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityAttributes, SecurityContext, SecurityManager, Subject, WRITE};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::group::{Group, GroupId};
-use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResultExt};
+use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
@@ -407,7 +407,7 @@ impl ScopeMember for ArtifactManager {
     /// # Errors
     /// Whatever else the store reports; what was deleted before stays
     /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<usize> {
+    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         let mut left = 0;
@@ -429,7 +429,7 @@ impl ScopeMember for ArtifactManager {
     /// # Errors
     /// Whatever else the store reports; what was restored before stays
     /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> anyhow::Result<()> {
+    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for artifact in deleted_since(self.artifacts.list_deleted(&system, &within(holder)).await?.items, since) {
@@ -446,11 +446,13 @@ impl ScopeMember for ArtifactManager {
     /// # Errors
     /// `UnknownStorage`, `Unavailable`, or whatever the store reports;
     /// what was purged before stays purged.
-    async fn purge_lying_in(&self, holder: &Scope) -> anyhow::Result<()> {
+    async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
         for artifact in self.artifacts.list_deleted(&system, &within(holder)).await?.items {
-            self.storage(&artifact.storage)?.remove(artifact.id).await?;
+            // Its content is its storage too.
+            let unremoved = |e: ArtifactError| StoreError::Backend(format!("the content of artifact {} cannot be removed: {e}", artifact.id));
+            self.storage(&artifact.storage).map_err(unremoved)?.remove(artifact.id).await.map_err(unremoved)?;
             self.artifacts.purge(&system, artifact.id).await?;
         }
         Ok(())

@@ -17,9 +17,8 @@
 //! actor, so for each channel - and tells all of it again after a restart.
 
 use crate::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::context::{titled, Prompt, PromptPosition, PromptProvider};
+use crate::context::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
 use crate::agent::work::AgentWork;
-use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
@@ -68,7 +67,7 @@ impl PromptProvider for ChannelMembersPromptProvider {
         self.position
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt> {
+    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
         // Work that reaches no session (`AgentWork::session`) has nobody to name.
         let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let channel = session.channel(work.channel_id()).await?;

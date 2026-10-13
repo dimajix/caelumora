@@ -686,7 +686,7 @@ pub async fn answer_questions(
 mod tests {
     use super::*;
     use caelumora_runtime::channel::ChannelError;
-    use caelumora_runtime::view::{ContextError, ViewError};
+    use caelumora_runtime::view::{AgentContextError, ViewError};
     use caelumora_runtime::command::CommandError;
     use caelumora_model::message::MessageId;
     use caelumora_model::security::Refused;
@@ -750,8 +750,8 @@ mod tests {
         let refused = Refused { subject: "context", action: "ReadAgentContext".to_string() };
         assert_eq!(ApiError::from(ViewError::Forbidden { actor, refused }).code(), "context_forbidden");
         assert_eq!(ApiError::from(ViewError::NoContext { actor }).code(), "context_not_recorded");
-        assert_eq!(ApiError::from(ContextError::NotRecorded { actor, message }).code(), "context_not_recorded");
-        assert_eq!(ApiError::from(ContextError::Unavailable { actor, message }).code(), "context_unavailable");
+        assert_eq!(ApiError::from(AgentContextError::NotRecorded { actor, message }).code(), "context_not_recorded");
+        assert_eq!(ApiError::from(AgentContextError::Unavailable { actor, message }).code(), "context_unavailable");
         assert_eq!(ApiError::from(ViewError::Failed(anyhow::anyhow!("disk"))).status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

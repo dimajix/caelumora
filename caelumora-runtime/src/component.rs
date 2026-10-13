@@ -15,12 +15,14 @@ use caelumora_model::component::{ComponentConfig, ComponentDescriptor, Component
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{ComponentStore, StoreError};
 use caelumora_model::type_map::{TypeKey, TypeMap};
+use crate::remote::describe_chain;
 use crate::runtime::Services;
 use futures::future::BoxFuture;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
+use std::error::Error;
 use std::future::Future;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
@@ -468,21 +470,22 @@ where
     T: ?Sized + Send + Sync,
 {
     /// `result` of a call of the facet, as the component's fail policy
-    /// says: a failure fails the caller if the component fails closed,
-    /// named with the component; if it fails open, it is logged and the
-    /// component's part left out - `None`.
+    /// says: a failure fails the caller if the component fails closed - the
+    /// caller names it with the component, in the error type of the facet's
+    /// caller (`ContextError::Component`); if it fails open, it is logged
+    /// and the component's part left out - `None`.
     ///
     /// # Errors
     /// The failure of a component that fails closed.
-    pub fn apply_fail_policy<R>(&self, result: anyhow::Result<R>) -> anyhow::Result<Option<R>> {
+    pub fn apply_fail_policy<R, E: Error + 'static>(&self, result: Result<R, E>) -> Result<Option<R>, E> {
         match result {
             Ok(value) => Ok(Some(value)),
             Err(e) => match self.fail_policy {
                 ComponentFailPolicy::FailOpen => {
-                    tracing::warn!("Component '{}' failed and is left out, as it fails open: {:#}", self.id, e);
+                    tracing::warn!("Component '{}' failed and is left out, as it fails open: {}", self.id, describe_chain(&e));
                     Ok(None)
                 }
-                ComponentFailPolicy::FailClosed => Err(e.context(format!("component '{}' failed", self.id))),
+                ComponentFailPolicy::FailClosed => Err(e),
             },
         }
     }

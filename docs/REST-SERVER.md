@@ -209,7 +209,9 @@ exist.
 
 Every error answers itself, by its type and its variant, not by what the handler was doing (issue
 323): each error type that reaches a handler implements `From<…> for ApiError` in `error.rs` - or,
-for a plugin's, in the plugin - and a handler passes it on with `?`.
+for a plugin's, in the plugin - and a handler passes it on with `?`. A plugin's error reaches only
+the plugin's own handlers; to the core, a plugin answers in the core's types (see
+[PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-core-in-the-cores-types)).
 
 *   **A refusal** is `403 <subject>_forbidden`, named by what was refused: the error carries the
     runtime's `Refused` as its source, and its subject is the kind of the entity (`skill_forbidden`,

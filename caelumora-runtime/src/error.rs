@@ -9,11 +9,13 @@
 
 use crate::command::CommandError;
 use crate::component::ComponentError;
+use crate::context::ContextError;
+use crate::message::ProcessingError;
 use crate::external::ExternalAgentError;
 use crate::llm::LLMError;
 use crate::session::SessionError;
 use crate::tool::ToolError;
-use crate::view::{ContextError, ViewError};
+use crate::view::{AgentContextError, ViewError};
 use crate::channel::ChannelError;
 use crate::terminal::TerminalError;
 use crate::workspace::WorkspaceError;
@@ -38,13 +40,17 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<CommandError>() {
             Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<ContextError>() {
+        } else if let Some(e) = e.downcast_ref::<AgentContextError>() {
             Some(e.to_string())
         } else if let Some(e) = e.downcast_ref::<ViewError>() {
-            // What it names is safe; why reaching it failed is for the log.
+            view_message(e)
+        } else if let Some(e) = e.downcast_ref::<ContextError>() {
+            context_message(e)
+        } else if let Some(e) = e.downcast_ref::<ProcessingError>() {
             match e {
-                ViewError::Failed(_) => None,
-                _ => Some(e.to_string()),
+                ProcessingError::Failed(_) => Some(e.to_string()),
+                ProcessingError::View(e) => view_message(e),
+                ProcessingError::Store(e) => store_message(e),
             }
         } else if let Some(e) = e.downcast_ref::<ChannelError>() {
             Some(e.to_string())
@@ -75,6 +81,27 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
             None
         }
     })
+}
+
+/// View errors: what they name is safe; why reaching it failed is for the
+/// log.
+fn view_message(error: &ViewError) -> Option<String> {
+    match error {
+        ViewError::Failed(_) => None,
+        _ => Some(error.to_string()),
+    }
+}
+
+/// What building a context failed with, each variant judged by what it
+/// holds - a plugin's provider has decided there what may be shown (issue
+/// 336); the component that failed named before its cause.
+fn context_message(error: &ContextError) -> Option<String> {
+    match error {
+        ContextError::Failed(_) => Some(error.to_string()),
+        ContextError::View(e) => view_message(e),
+        ContextError::Store(e) => store_message(e),
+        ContextError::Component { cause, .. } => context_message(cause).map(|cause| format!("{error}: {cause}")),
+    }
 }
 
 /// Store errors name entities and ids - except `Backend`, which wraps what
@@ -134,6 +161,18 @@ mod tests {
         let error = anyhow::Error::new(StoreError::Backend("/home/someone/local/entity_store: permission denied".to_string()));
         assert_eq!(user_message(&error), None);
         assert_eq!(user_message(&anyhow::anyhow!("something internal")), None);
+    }
+
+    #[test]
+    fn a_prompt_part_that_failed_names_its_component_before_what_it_says() {
+        let failed = |cause| anyhow::Error::new(ContextError::Component { component: "skills".to_string(), cause: Box::new(cause) })
+            .context("component 'context' could not assemble the context");
+
+        let error = failed(ContextError::Failed("skills are not offered here".to_string()));
+        assert_eq!(user_message(&error).as_deref(), Some("component 'skills' failed: skills are not offered here"));
+        // What the store reported is judged as store errors are.
+        let error = failed(ContextError::Store(StoreError::Backend("/home/someone/local/entity_store: permission denied".to_string())));
+        assert_eq!(user_message(&error), None);
     }
 
     #[test]
