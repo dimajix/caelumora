@@ -650,7 +650,9 @@ mod tests {
     #[tokio::test]
     async fn answers_queries() {
         let dir = tempdir().unwrap();
-        suite::queries_behave(&Arc::new(store(dir.path())).entity_stores().unwrap()).await;
+        let store = store(dir.path());
+        suite::queries_behave(&store.entity_stores().unwrap()).await;
+        suite::queries_reach_parts(store.entity_store::<suite::Folder>().unwrap().as_ref()).await;
     }
 
     #[tokio::test]

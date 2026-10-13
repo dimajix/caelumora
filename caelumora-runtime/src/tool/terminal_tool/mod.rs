@@ -93,12 +93,14 @@ fn tool(name: &str, description: String, parameters: ToolParameters, requires_ap
 /// What a terminal reports, as the model is told it: what names something
 /// that is not there, or is not what the call needs, is the model's to
 /// correct; that the storage failed is not.
-pub(crate) fn failed(error: TerminalError) -> ToolError {
-    match error {
-        TerminalError::Unavailable(_) => ToolError::ExecutionFailed(error.to_string()),
-        TerminalError::InvalidPath(_) | TerminalError::NotFound(_) | TerminalError::Exists(_) | TerminalError::IsADirectory(_)
-        | TerminalError::NotADirectory(_) | TerminalError::NotEmpty(_) | TerminalError::TooLarge { .. } | TerminalError::UnknownCommand(_) => {
-            ToolError::InvalidParameter(error.to_string())
+impl From<TerminalError> for ToolError {
+    fn from(error: TerminalError) -> Self {
+        match error {
+            TerminalError::Unavailable(_) => ToolError::ExecutionFailed(error.to_string()),
+            TerminalError::InvalidPath(_) | TerminalError::NotFound(_) | TerminalError::Exists(_) | TerminalError::IsADirectory(_)
+            | TerminalError::NotADirectory(_) | TerminalError::NotEmpty(_) | TerminalError::TooLarge { .. } | TerminalError::UnknownCommand(_) => {
+                ToolError::InvalidParameter(error.to_string())
+            }
         }
     }
 }

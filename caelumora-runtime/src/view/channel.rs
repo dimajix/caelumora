@@ -48,8 +48,16 @@ impl ChannelView {
         Self { session, channel, running, readable }
     }
 
-    fn views(&self) -> &Views {
+    /// The views the channel was reached through - what a plugin's
+    /// extension of the channel's view reads with (issue 328).
+    pub fn views(&self) -> &Views {
         self.session.views()
+    }
+
+    /// How the viewer reads the channel: as a whole, or only what was
+    /// released to where they read from (issue 133).
+    pub fn reading(&self) -> ChannelReading {
+        self.readable
     }
 
     /// The session the channel belongs to.

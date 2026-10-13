@@ -1,6 +1,6 @@
 use crate::channel::ChannelLoop;
 use crate::command::{CommandExecutor, ChannelCommandProvider};
-use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry};
+use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult};
 use crate::controller::{ControllerManager, SessionController};
 use crate::event::EventBus;
 use crate::recorder::{BlackholeRecorder, Recorder};
@@ -16,7 +16,7 @@ use crate::agent::state::{AgentStateHandle, AgentStates};
 use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::view::ViewsFactory;
 use caelumora_model::component::ComponentConfig;
-use caelumora_model::config::AppConfig;
+use caelumora_model::config::{AppConfig, BackendConfig};
 use caelumora_model::secret::{SecretManager, SecretProvider};
 use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::user_provider::{UserManager, UserProvider};
@@ -335,6 +335,10 @@ pub struct RuntimeBuilder {
     agents: Arc<AgentManager>,
     scope_members: Vec<Arc<dyn ScopeMember>>,
     services: Services,
+    /// The backends of the core and of the plugins, and what a backend may
+    /// ask for - which a plugin's service is made of, too (issue 328).
+    backends: Backends,
+    backend_services: Services,
     /// The sections of the configuration that no plugin claimed yet.
     sections: BTreeMap<String, serde_json::Value>,
     /// The names of the sections of the configuration that were claimed.
@@ -367,7 +371,8 @@ impl RuntimeBuilder {
     /// component kinds agents and sessions are built from -
     /// `ComponentRegistry::built_in`, to which a test may add stand-ins,
     /// such as a model of its own (issue 130). `backends` makes the
-    /// storages and the user providers `config` names (issue 324):
+    /// storages and the user providers `config` names (issue 324), and
+    /// later the backends of a plugin's service (`make_named`):
     /// `Backends::with_plugins` of the plugins registered afterwards.
     ///
     /// # Errors
@@ -382,7 +387,7 @@ impl RuntimeBuilder {
         confidentiality: Arc<dyn ConfidentialityPolicy>,
         config: &AppConfig,
         component_registry: ComponentRegistry,
-        backends: &Backends,
+        backends: Backends,
     ) -> Result<Self> {
         let backend = backend.into();
         let entity_stores = backend.entity_stores()?;
@@ -440,6 +445,8 @@ impl RuntimeBuilder {
             agents,
             scope_members,
             services,
+            backends,
+            backend_services,
             sections: config.plugins.clone(),
             claimed: BTreeSet::new(),
             seed_sections: BTreeMap::new(),
@@ -471,7 +478,7 @@ impl RuntimeBuilder {
         let secret_providers = backends.make_chain::<dyn SecretProvider>("secret provider", &config.secrets.providers, &secret_services)?;
         let secret_manager = Arc::new(SecretManager::new(secret_providers, Arc::clone(&security_manager)));
         let registry = ComponentRegistry::built_in(backend.component_store());
-        let mut builder = Self::new(state_store, backend, secret_manager, security_manager, confidentiality, config, registry, &backends)?;
+        let mut builder = Self::new(state_store, backend, secret_manager, security_manager, confidentiality, config, registry, backends)?;
         for plugin in plugins {
             builder.plugin(*plugin)?;
         }
@@ -536,6 +543,18 @@ impl RuntimeBuilder {
     /// it.
     pub fn service<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
         self.services.get::<T>()
+    }
+
+    /// The backends of `T` - a service of the plugin's own - that `configs`
+    /// names, by their names, made as the core's are: by the factories the
+    /// core and the plugins registered (`Plugin::backends`), given what a
+    /// backend may ask for. `what` names one of them in messages - "storage
+    /// of artifacts".
+    ///
+    /// # Errors
+    /// `ComponentError::Backend` naming the first that cannot be made.
+    pub fn make_named<T: ?Sized + 'static>(&self, what: &str, configs: &BTreeMap<String, BackendConfig>) -> ComponentResult<BTreeMap<String, Arc<T>>> {
+        self.backends.make_named(what, configs, &self.backend_services)
     }
 
     /// Makes `member` go with what holds the scope it lies in: deleted,
@@ -624,7 +643,7 @@ impl RuntimeManager {
         config: &AppConfig,
         component_registry: ComponentRegistry,
     ) -> Result<Self> {
-        RuntimeBuilder::new(state_store, backend, secret_manager, security_manager, confidentiality, config, component_registry, &Backends::built_in())?.build()
+        RuntimeBuilder::new(state_store, backend, secret_manager, security_manager, confidentiality, config, component_registry, Backends::built_in())?.build()
     }
 
     /// Puts what the seed files `paths` hold into the stores (issue 105):

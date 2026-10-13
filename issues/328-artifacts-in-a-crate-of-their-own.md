@@ -1,6 +1,6 @@
 # 328 — Artifacts are enumerated in the core and cannot leave it
 
-**Status:** open
+**Status:** in progress
 **Area:** Code structure
 
 ## The problem
@@ -83,3 +83,29 @@ Artifacts try seams that skills do not, and each of these needs a decision that 
   workspaces - now issue [333](333-workspaces-woven-into-sessions.md), which recommends moving
   artifacts first -, and how an artifact published in a channel is announced as lying there
   (issue [335](335-channel-events-name-their-session.md)).
+- **2026-10-13** — Decided with the maintainer, before the move:
+  - **The channel's view:** an extension trait of the plugin on `ChannelView`
+    (`ArtifactChannelViews`), as `SkillViews` is one on `Views`. The `ChannelView` opens its views
+    and how its viewer reads it (`ChannelView::reading`); whether a viewer reads the channel stays
+    the channel's to decide, rather than being worked out again by a listing on `Views` with the
+    channel as a filter.
+  - **The shared verb:** `WRITE` stays in the core, as a verb any kind may use - it is a name and
+    `Grant::Write`, both the core's. The questions on artifacts move into the plugin's
+    `ArtifactAccess`.
+  - **The dependency on workspaces:** while workspaces are the core's, it is a dependency of a
+    plugin on the core and needs no rule; the runtime opens what the plugin uses of the terminal
+    (`write_whole`, `WriteFailure`). Whether one plugin may depend on another is left to issue
+    [333](333-workspaces-woven-into-sessions.md).
+  - **Backends of a plugin's service** - not tried by skills: `Plugin::backends` could register a
+    backend, but only the core's services were made of them. The `RuntimeBuilder` keeps the
+    backends and the services a backend may ask for, and makes a plugin's from its section
+    (`RuntimeBuilder::make_named`); a storage such as S3 (issue [272](272-artifacts-in-s3.md))
+    registers itself for `dyn ArtifactStorage` from a crate of its own.
+  - **The store's suite:** artifacts are the one kind with parts that have lists of their own,
+    queried within an element of a collection in an element of a collection (issues 293, 316). The
+    suite takes a kind of its own with such parts, so that the core goes on testing what its stores
+    can; what is the artifacts' own is tested in the plugin.
+  - Issues 335 and 338 are not part of this one: the web UI asks for a channel's artifacts when it
+    shows them, and the `ArtifactManager` stays a member of the scope
+    (`RuntimeBuilder::scope_member`) until 338 is decided.
+

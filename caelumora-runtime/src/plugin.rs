@@ -211,7 +211,7 @@ mod tests {
     fn builder(store: &Arc<MemoryStore>, config: &AppConfig) -> anyhow::Result<RuntimeBuilder> {
         let security = Arc::new(DummySecurityManager::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
-        RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, Arc::new(ConfidentialityRules::default()), config, test_registry(Arc::<MemoryStore>::clone(store)), &Backends::built_in())
+        RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, Arc::new(ConfidentialityRules::default()), config, test_registry(Arc::<MemoryStore>::clone(store)), Backends::built_in())
     }
 
     fn built(config: &AppConfig, plugin: &dyn Plugin) -> anyhow::Result<RuntimeManager> {

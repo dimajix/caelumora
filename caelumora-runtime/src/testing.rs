@@ -214,7 +214,7 @@ impl World {
         let workspaces = WorkspacesConfig { storage: [("main".to_string(), BackendConfig::new("local", json!({ "root": files.path() }))), ("shell".to_string(), shell)].into(), ..Default::default() };
         let artifacts = ArtifactsConfig { storage: [("kept".to_string(), BackendConfig::new("local", json!({ "root": files.path().join("artifacts") })))].into(), ..Default::default() };
         let config = AppConfig { workspaces, artifacts, ..Default::default() };
-        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::<Recorder>::clone(&recorder), &config, registry, &Backends::with_plugins(plugins)).unwrap();
+        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::<Recorder>::clone(&recorder), &config, registry, Backends::with_plugins(plugins)).unwrap();
         for plugin in plugins {
             builder.plugin(*plugin).unwrap();
         }

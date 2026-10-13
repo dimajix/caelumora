@@ -300,9 +300,10 @@ pub enum Requirement {
     Owner,
 }
 
-/// Changing the content of what is stored, beside reading it (issue 23):
-/// a workspace's files, an artifact's versions - what an access list
-/// grants `Write`.
+/// Changing the content of what is stored, beside reading it (issue 23) -
+/// what an access list grants `Write`. A verb any kind may use, the core's
+/// or a plugin's (issue 328), for what is written to rather than changed
+/// as a whole: a workspace's files, say.
 pub const WRITE: CustomVerb = CustomVerb { name: "Write", requires: Requirement::Grant(Grant::Write) };
 
 /// What is reclassified (`ActionType::Reclassify`, issue 133), with who it

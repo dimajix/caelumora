@@ -121,7 +121,7 @@ impl ToolProvider for ArtifactTool {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
         let Publish { path, name, description } = arguments(params)?;
-        let at = WorkspacePath::parse(&path).map_err(super::terminal_tool::failed)?;
+        let at = WorkspacePath::parse(&path)?;
         let name = match name.as_deref().map(str::trim) {
             Some(name) if !name.is_empty() => name.to_string(),
             _ => at.file_name().unwrap_or_default().to_string(),
@@ -130,7 +130,7 @@ impl ToolProvider for ArtifactTool {
         let (ctx, session, channel) = (turn.security_context(), turn.session_id(), turn.channel_id());
         let (workspace, terminal) = self.workspaces.terminal_in(ctx, session, channel, Grant::Read).await
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-        let content = terminal.read(&at).await.map_err(super::terminal_tool::failed)?;
+        let content = terminal.read(&at).await?;
         let (artifact, number) = self.artifacts.publish(ctx, content, &workspace.classification, &name, description, session, channel).await.map_err(failed)?;
         let version = artifact.version(number).ok_or_else(|| ToolError::ExecutionFailed(format!("version {number} of the artifact is missing")))?;
         let mut result = json!({

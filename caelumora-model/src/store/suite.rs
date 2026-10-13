@@ -3,7 +3,7 @@
 //! drift apart again. What is specific to one store - files on disk,
 //! concurrent writers - stays in that store's own tests.
 
-use crate::store::query::{Filter, Query};
+use crate::store::query::{Field, Filter, Query};
 use crate::actor::ActorId;
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::turn::TurnState;
@@ -14,16 +14,17 @@ use crate::external_agent::ConversationId;
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::Introduction;
 use crate::scope::{Scoped, Scope};
-use crate::security::SecurityContext;
+use crate::security::{AclEntry, Secured, SecurityAttributes, SecurityContext};
 use crate::session::{Session, SessionId};
-use crate::store::{ComponentStore, EntityStores, Journaled, StateStore, StoreError};
+use crate::store::{ComponentStore, EntityKind, EntityStore, EntityStores, Journaled, StateStore, StoreError};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
-use crate::removal::{Deletable, Removal};
+use crate::removal::{Deletable, Removal, Stored};
 use crate::user::{User, UserId, UserProfile};
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::group::{Group, GroupId};
-use crate::artifact::{Artifact, ArtifactField, ArtifactId};
+use crate::artifact::{Artifact, ArtifactId};
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Runs one kind through its whole life: create, create again, update, get,
@@ -200,6 +201,94 @@ fn artifact_named(name: ScopedName) -> Artifact {
     Artifact::new(ArtifactId::new(), name, "files", Classification::CHANNEL_DEFAULT, owner, crate::artifact::tests::version(b"a,b", SessionId::new()))
 }
 
+define_id!(FolderId);
+
+/// A kind with parts that have access lists of their own (issue 328): a
+/// folder of documents, each published in a channel and read by whom its
+/// own list names, as an artifact of the plugin `caelumora-artifacts` has
+/// versions. None of the core's kinds has such parts, so the suite brings
+/// one, to ask for what lies within an element of a collection in an
+/// element of a collection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Folder {
+    id: FolderId,
+    documents: Vec<Document>,
+    security_attributes: SecurityAttributes,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    deleted: Option<Removal>,
+}
+
+/// A part of a `Folder`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Document {
+    session_id: SessionId,
+    channel_id: ChannelId,
+    acl: Vec<AclEntry>,
+}
+
+/// What a query of folders may name, as `ArtifactField` of the plugin
+/// does: those of a document lie within an element of `Documents`, those of
+/// an entry within an element of `Acl` or `DocumentAcl`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FolderField {
+    Owner,
+    Acl,
+    Documents,
+    DocumentSession,
+    DocumentChannel,
+    DocumentAcl,
+    Subject,
+}
+
+impl Field for FolderField {
+    fn path(self) -> &'static [&'static str] {
+        match self {
+            FolderField::Owner => &["security_attributes", "owner_id"],
+            FolderField::Acl => &["security_attributes", "acl"],
+            FolderField::Documents => &["documents"],
+            FolderField::DocumentSession => &["session_id"],
+            FolderField::DocumentChannel => &["channel_id"],
+            FolderField::DocumentAcl => &["acl"],
+            FolderField::Subject => &["subject"],
+        }
+    }
+}
+
+impl Folder {
+    /// A folder of `owner` with one document, published in a channel of a
+    /// session of its own.
+    fn of(owner: UserId) -> Self {
+        let document = Document { session_id: SessionId::new(), channel_id: ChannelId::new(), acl: Vec::new() };
+        Self { id: FolderId::new(), documents: vec![document], security_attributes: SecurityAttributes::owned_by(ActorId::User(owner)), deleted: None }
+    }
+}
+
+impl Secured for Folder {
+    fn security_attributes(&self) -> &SecurityAttributes {
+        &self.security_attributes
+    }
+}
+
+impl Stored for Folder {
+    const KIND: EntityKind = EntityKind::new("folder");
+    type Id = FolderId;
+    type Field = FolderField;
+
+    fn id(&self) -> FolderId {
+        self.id
+    }
+
+    fn deleted(&self) -> Option<&Removal> {
+        self.deleted.as_ref()
+    }
+}
+
+impl Deletable for Folder {
+    fn set_deleted(&mut self, deleted: Option<Removal>) {
+        self.deleted = deleted;
+    }
+}
+
 fn component() -> StoredComponents {
     StoredComponents::new("search", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("search", "web_search")] }, Default::default())
 }
@@ -208,60 +297,62 @@ fn component() -> StoredComponents {
 /// filter - fields of the entity, of an element of a collection in it, of
 /// an element of a collection in that -, in the order of their ids, in pages
 /// of its limit, each going on after the cursor the one before handed out.
-pub(crate) async fn queries_behave(stores: &EntityStores) {
-    use crate::security::{AclEntry, Grant, Subject};
+/// Asked of `folders`, a kind with parts (`Folder`), as a plugin's kind may
+/// have them.
+pub(crate) async fn queries_reach_parts(folders: &dyn EntityStore<Folder>) {
+    use crate::security::{Grant, Subject};
     let ctx = SecurityContext::system();
     let (alice, bob) = (UserId::new(), UserId::new());
     let (session, channel) = (SessionId::new(), ChannelId::new());
     let bobs = Subject::Actor(ActorId::User(bob));
     let mut made = Vec::new();
     for (index, owner) in [alice, alice, bob, alice, bob].into_iter().enumerate() {
-        let mut artifact = artifact_named(ScopedName::new(format!("a{index}.csv"), Scope::UserScope { user_id: owner }).unwrap());
+        let mut folder = Folder::of(owner);
         match index {
-            // Published in the channel asked about.
-            1 => (artifact.versions[0].session_id, artifact.versions[0].channel_id) = (session, channel),
+            // A document published in the channel asked about.
+            1 => (folder.documents[0].session_id, folder.documents[0].channel_id) = (session, channel),
             // Shared with bob as a whole.
-            3 => artifact.security_attributes.acl.push(AclEntry { subject: bobs, grant: Grant::Read }),
-            // A version of it shared with bob, published elsewhere in the session.
+            3 => folder.security_attributes.acl.push(AclEntry { subject: bobs, grant: Grant::Read }),
+            // A document of it shared with bob, published elsewhere in the session.
             4 => {
-                artifact.versions[0].session_id = session;
-                artifact.versions[0].acl.push(AclEntry { subject: bobs, grant: Grant::Read });
+                folder.documents[0].session_id = session;
+                folder.documents[0].acl.push(AclEntry { subject: bobs, grant: Grant::Read });
             }
             _ => {}
         }
-        stores.artifacts.create(&ctx, &artifact).await.expect("an artifact");
-        made.push(artifact.id);
+        folders.create(&ctx, &folder).await.expect("a folder");
+        made.push(folder.id);
     }
-    let ids = |page: &[Artifact]| page.iter().map(|a| a.id).collect::<Vec<_>>();
+    let ids = |page: &[Folder]| page.iter().map(|f| f.id).collect::<Vec<_>>();
     let mut sorted = made.clone();
     sorted.sort_by_key(|id| id.to_string());
-    let listed = stores.artifacts.list(&ctx, &Query::all()).await.expect("all of them");
+    let listed = folders.list(&ctx, &Query::all()).await.expect("all of them");
     assert_eq!(ids(&listed.items), sorted, "in the order of their ids");
     assert!(listed.next.is_none());
 
-    let owned = Filter::eq(ArtifactField::Owner, ActorId::User(bob));
-    let found = stores.artifacts.list(&ctx, &Query::filtered(owned)).await.unwrap();
+    let owned = Filter::eq(FolderField::Owner, ActorId::User(bob));
+    let found = folders.list(&ctx, &Query::filtered(owned)).await.unwrap();
     let mut bobs_own = vec![made[2], made[4]];
     bobs_own.sort_by_key(|id| id.to_string());
     assert_eq!(ids(&found.items), bobs_own, "a field of the entity");
 
-    let place = Filter::And(vec![Filter::eq(ArtifactField::VersionSession, session), Filter::eq(ArtifactField::VersionChannel, channel)]);
-    let published = stores.artifacts.list(&ctx, &Query::filtered(Filter::any(ArtifactField::Versions, place))).await.unwrap();
-    assert_eq!(ids(&published.items), [made[1]], "a version published in the channel, not one elsewhere in the session");
+    let place = Filter::And(vec![Filter::eq(FolderField::DocumentSession, session), Filter::eq(FolderField::DocumentChannel, channel)]);
+    let published = folders.list(&ctx, &Query::filtered(Filter::any(FolderField::Documents, place))).await.unwrap();
+    assert_eq!(ids(&published.items), [made[1]], "a document published in the channel, not one elsewhere in the session");
 
-    let named = Filter::eq(ArtifactField::Subject, bobs);
+    let named = Filter::eq(FolderField::Subject, bobs);
     let shared = Filter::Or(vec![
-        Filter::any(ArtifactField::Acl, named.clone()),
-        Filter::any(ArtifactField::Versions, Filter::any(ArtifactField::VersionAcl, named)),
+        Filter::any(FolderField::Acl, named.clone()),
+        Filter::any(FolderField::Documents, Filter::any(FolderField::DocumentAcl, named)),
     ]);
     let mut with_bob = vec![made[3], made[4]];
     with_bob.sort_by_key(|id| id.to_string());
-    assert_eq!(ids(&stores.artifacts.list(&ctx, &Query::filtered(shared)).await.unwrap().items), with_bob, "an entry of its list or of a version's");
+    assert_eq!(ids(&folders.list(&ctx, &Query::filtered(shared)).await.unwrap().items), with_bob, "an entry of its list or of a document's");
 
     let mut paged = Vec::new();
     let mut query = Query::all().limited(2);
     loop {
-        let page = stores.artifacts.list(&ctx, &query).await.unwrap();
+        let page = folders.list(&ctx, &query).await.unwrap();
         assert!(page.items.len() <= 2, "at most its limit");
         paged.extend(ids(&page.items));
         match page.next {
@@ -270,7 +361,13 @@ pub(crate) async fn queries_behave(stores: &EntityStores) {
         }
     }
     assert_eq!(paged, sorted, "the pages, one after the other, are the whole list");
+}
 
+/// A store answers a query by the fields of the core's kinds: by scope, by
+/// the session of a channel, by a participant, by a member.
+pub(crate) async fn queries_behave(stores: &EntityStores) {
+    let ctx = SecurityContext::system();
+    let (alice, bob) = (UserId::new(), UserId::new());
     // By scope, by the session of a channel, by a participant.
     use crate::channel::{ChannelField, Participant};
     use crate::scope::ScopeField;

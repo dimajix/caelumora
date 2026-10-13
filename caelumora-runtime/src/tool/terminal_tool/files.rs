@@ -19,7 +19,7 @@
 //! no UTF-8 is refused. A replacement reads, replaces and writes: what
 //! changed the file in between is overwritten.
 
-use super::{failed, tool, TerminalToolConfig};
+use super::{tool, TerminalToolConfig};
 use crate::agent::turn::Turn;
 use crate::terminal::{ByteStream, FileEntry, Terminal, TerminalError, WorkspacePath};
 use crate::tool::{arguments, ToolError, ToolResult};
@@ -175,7 +175,7 @@ fn renames(from: &WorkspacePath, to: &WorkspacePath) -> bool {
 /// `text` as a path inside the workspace; the model's to correct if it is
 /// none.
 fn path(text: &str) -> ToolResult<WorkspacePath> {
-    WorkspacePath::parse(text).map_err(failed)
+    WorkspacePath::parse(text).map_err(ToolError::from)
 }
 
 pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
@@ -328,7 +328,7 @@ pub(super) fn matcher(name: &str, params: &Value) -> Option<ToolMatcher> {
 
 /// The bytes of the file `at`, at most `READ_LIMIT`.
 async fn content(terminal: &dyn Terminal, at: &WorkspacePath) -> ToolResult<Vec<u8>> {
-    let (size, mut stream) = terminal.read(at).await.map_err(failed)?;
+    let (size, mut stream) = terminal.read(at).await?;
     if size > READ_LIMIT {
         return Err(ToolError::InvalidParameter(format!("'{at}' is {size} bytes, more than the {READ_LIMIT} a file may be read with; search it with {GREP_FILES}, or read part of it with a command")));
     }
@@ -353,12 +353,12 @@ async fn text(terminal: &dyn Terminal, at: &WorkspacePath) -> ToolResult<(String
 
 async fn write(terminal: &dyn Terminal, limit: u64, at: &WorkspacePath, content: String) -> ToolResult<u64> {
     let stream: ByteStream = Box::pin(futures::stream::iter([Ok(bytes::Bytes::from(content))]));
-    terminal.write(at, stream, limit).await.map_err(failed)
+    terminal.write(at, stream, limit).await.map_err(ToolError::from)
 }
 
 /// The digest of the file `at`, read in parts, at most `limit` bytes.
 async fn digest(terminal: &dyn Terminal, at: &WorkspacePath, limit: u64) -> ToolResult<(u64, caelumora_model::digest::Digest)> {
-    let (size, mut stream) = terminal.read(at).await.map_err(failed)?;
+    let (size, mut stream) = terminal.read(at).await?;
     if size > limit {
         return Err(ToolError::InvalidParameter(format!("'{at}' is {size} bytes, more than the {limit} a file may be offered with")));
     }
@@ -396,9 +396,9 @@ async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &regex::
     let mut pending = vec![start];
     let (mut matches, mut searched, mut skipped, mut complete) = (Vec::new(), 0usize, 0usize, true);
     'walk: while let Some(at) = pending.pop() {
-        let found = terminal.stat(&at).await.map_err(failed)?;
+        let found = terminal.stat(&at).await?;
         if found.is_dir {
-            let mut entries = terminal.list(&at).await.map_err(failed)?;
+            let mut entries = terminal.list(&at).await?;
             entries.reverse();
             for listed in entries {
                 let below = if at.is_root() { path(&listed.name)? } else { path(&format!("{at}/{}", listed.name))? };
@@ -445,7 +445,7 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
     match name {
         LIST_FILES => {
             let at = path(&arguments::<At>(params)?.path.unwrap_or_default())?;
-            let entries = terminal.list(&at).await.map_err(failed)?;
+            let entries = terminal.list(&at).await?;
             read(turn, None);
             let listed: Vec<Value> = entries.iter().take(MAX_ENTRIES).map(entry).collect();
             Ok(json!({ "path": at.to_string(), "entries": listed, "complete": entries.len() <= MAX_ENTRIES }))
@@ -516,14 +516,14 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
             let (from, to) = (path(&from)?, path(&to)?);
             terminal.move_entry(&from, &to).await.map_err(|e| match e {
                 TerminalError::InvalidPath(_) if from.is_root() || to.is_root() => ToolError::InvalidParameter("the workspace itself cannot be moved, nor moved over".to_string()),
-                e => failed(e),
+                e => ToolError::from(e),
             })?;
             Ok(json!({ "from": from.to_string(), "to": to.to_string(), "renamed": renames(&from, &to) }))
         }
         PUBLISH_FILE => {
             let Publish { path: at, name, description } = arguments(params)?;
             let at = path(&at)?;
-            let found = terminal.stat(&at).await.map_err(failed)?;
+            let found = terminal.stat(&at).await?;
             if found.is_dir {
                 return Err(ToolError::InvalidParameter(format!("'{at}' is a directory; only a file can be offered")));
             }
@@ -546,7 +546,7 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
             let at = path(&arguments::<Delete>(params)?.path)?;
             terminal.delete(&at).await.map_err(|e| match e {
                 TerminalError::InvalidPath(_) if at.is_root() => ToolError::InvalidParameter("the workspace itself cannot be deleted".to_string()),
-                e => failed(e),
+                e => ToolError::from(e),
             })?;
             Ok(json!({ "path": at.to_string(), "deleted": true }))
         }

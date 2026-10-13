@@ -86,6 +86,8 @@ storage or provider is a crate linked into the program, and no edit of the core,
 Terminal storages of `caelumora-open-terminal` are (issue 327). The backends are
 made once, when the runtime is built (`RuntimeBuilder::from_config`): the secret providers first,
 then the storages and the user providers with the secrets and the records of the users at hand.
+A plugin's service may be served by backends too: the plugin makes them from its section while it
+registers (`RuntimeBuilder::make_named`), and another crate may register one for it (issue 328).
 Unlike a component, a backend serves the whole process and lives in no container, which is why it
 is no component.
 

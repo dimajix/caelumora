@@ -82,7 +82,7 @@ fn runtime(store: &Arc<MemoryStore>) -> RuntimeManager {
     let security = Arc::new(DummySecurityManager::new());
     let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
     let backends = Backends::with_plugins(&[&McpPlugin]);
-    let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)), &backends).unwrap();
+    let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)), backends).unwrap();
     builder.plugin(&McpPlugin).unwrap();
     builder.build().unwrap()
 }
