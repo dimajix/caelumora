@@ -131,6 +131,7 @@ published before anyone else can take it.
 | [259](259-answer-again-after-a-turn-given-up.md) | done | An agent cannot be asked to answer again after a turn it gave up: the turn's end makes its last message not the last, and a turn that ended is no turn under way. |
 | [261](261-turn-finished-repeats-the-answer.md) | rejected | `TurnFinished` carries the answer the channel already has from the messages said, only for the moderator to decide whom to ask. |
 | [262](262-stopped-turn-not-recorded-while-reflecting.md) | done | An agent removed while its turn ends leaves the turn's messages in the channel's history without an end. |
+| [342](342-invitations.md) | open | Nobody can be invited to a session or channel: who is added is taken in without being asked, told nothing beforehand and unable to decline. |
 
 ## Identity and access management
 
