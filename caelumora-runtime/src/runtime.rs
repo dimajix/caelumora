@@ -598,7 +598,7 @@ impl RuntimeBuilder {
             bail!("The configuration has a section '{name}' that no plugin claims");
         }
         self.component_registry.set_defaults(&self.component_defaults)?;
-        let scoped = Arc::new(ScopedEntities::new(self.scope_members, Arc::clone(&self.groups)));
+        let scoped = Arc::new(ScopedEntities::new(self.scope_members));
         Ok(RuntimeManager {
             security_manager: self.security_manager,
             confidentiality: self.confidentiality,
@@ -724,7 +724,9 @@ impl RuntimeManager {
     }
 
 
-    /// The one writer of teams (issue 286).
+    /// The one writer of teams (issue 286), and what deletes and restores
+    /// the groups of the participants with their session or channel (issue
+    /// 348).
     pub fn group_manager(&self) -> &Arc<GroupManager> {
         &self.groups
     }

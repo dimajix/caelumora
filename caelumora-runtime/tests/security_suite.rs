@@ -2227,9 +2227,9 @@ async fn a_channel_is_refused_a_tool_before_anything_is_built() {
 /// the views do - reading it and being cleared for it (issue 312) -,
 /// deleting it - its owner's alone -, then, as the store takes it out of
 /// its session and marks it, changing the session and deleting it again
-/// (rule 2: the operation asks before it acts, the store as it stores) -
-/// and, in her name, what lies in its scope (issue 320): the group of its
-/// participants.
+/// (rule 2: the operation asks before it acts, the store as it stores).
+/// The group of its participants goes with it in the runtime's name (issue
+/// 348): nothing is asked of her for it.
 #[tokio::test]
 async fn deleting_a_channel_needs_owning_its_session() {
     let world = World::new().await;
@@ -2250,8 +2250,6 @@ async fn deleting_a_channel_needs_owning_its_session() {
         "alice: GetChannel(alice's) yes",
         "alice: JoinChannel(alice) yes",
         "alice: DeleteChannel(alice's) yes",
-        "alice: GetGroup(alice's) yes",
-        "alice: DeleteGroup(alice's) yes",
     ]));
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -2261,8 +2259,9 @@ async fn deleting_a_channel_needs_owning_its_session() {
 /// trash, there is nothing to restore (issue 164). The manager reads it
 /// first, as whoever restores it (issue 304), and the store asks again as
 /// it restores it (rule 2) - and returns it, so that it is not read back
-/// (issue 318). What went with it comes back in her name (issue 320): the
-/// groups of its participants and of its channel's.
+/// (issue 318). The groups of its participants and of its channel's come
+/// back with it in the runtime's name (issue 348): nothing is asked of her
+/// for them.
 #[tokio::test]
 async fn restoring_a_session_needs_owning_it() {
     let world = World::new().await;
@@ -2278,10 +2277,6 @@ async fn restoring_a_session_needs_owning_it() {
         "alice: ReadDeletedSession(alice's) yes",
         "alice: ReadDeletedSession(alice's) yes",
         "alice: RestoreSession(alice's) yes",
-        "alice: ReadDeletedGroup(alice's) yes",
-        "alice: RestoreGroup(alice's) yes",
-        "alice: ReadDeletedGroup(alice's) yes",
-        "alice: RestoreGroup(alice's) yes",
     ]), "and does not read it back");
 }
 
@@ -2308,8 +2303,8 @@ async fn purging_a_session_is_not_its_owners() {
 /// reading it as deleted, as the session's trash lists it, restoring it -
 /// its owner's alone - before everyone's clearance is asked (issue 312),
 /// and the store restoring the channel again and listing it in its
-/// session - and, in her name, what went with it (issue 320): the group of
-/// its participants.
+/// session. The group of its participants comes back with it in the
+/// runtime's name (issue 348): nothing is asked of her for it.
 #[tokio::test]
 async fn restoring_a_channel_needs_owning_its_session() {
     let world = World::new().await;
@@ -2335,9 +2330,7 @@ async fn restoring_a_channel_needs_owning_its_session() {
         "alice: RestoreChannel(alice's) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
-        "alice: ReadDeletedGroup(alice's) yes",
-        "alice: RestoreGroup(alice's) yes",
-    ]), "everyone's clearance again, as when it was created, listing it in the session, and its participants' group");
+    ]), "everyone's clearance again, as when it was created, and listing it in the session");
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -2932,8 +2925,8 @@ async fn hears<const N: usize>(events: &mut caelumora_runtime::event::EventSubsc
 }
 
 /// Issue 319: the groups of the participants of a session, deleted and
-/// restored with it, are announced as a team is - to bob, who belongs to
-/// them.
+/// restored with it - in the runtime's name, issue 348 -, are announced as
+/// a team is - to bob, who belongs to them.
 #[tokio::test]
 async fn the_groups_of_a_session_go_and_come_back_with_it_announced() {
     let world = World::new().await;
@@ -2949,6 +2942,36 @@ async fn the_groups_of_a_session_go_and_come_back_with_it_announced() {
 
     world.manager.restore_session(&alice, session_id).await.unwrap();
     hears(&mut bobs, [GlobalEvent::restored::<Group>(&of_session), GlobalEvent::restored::<Group>(&of_channel)]).await;
+}
+
+/// Issue 348: the groups of the participants of a session go and come
+/// back with it in the runtime's name, whatever whoever deletes and
+/// restores it may do with groups: one that is not alice's to delete or
+/// restore - bob's here, as another policy might have it - neither keeps
+/// her session nor stays in the trash when it is back, and bob reaches the
+/// session by it again.
+#[tokio::test]
+async fn the_group_of_a_sessions_participants_follows_it_whoever_may_delete_groups() {
+    let world = World::new().await;
+    let alice = World::as_user(world.alice);
+    let system = World::system();
+    let session_id = world.shared_session(&[], &[]).await.id();
+    let groups = &world.runtime.entity_stores().groups;
+    let mut of_session = groups.get(&system, GroupId::of_session(session_id)).await.unwrap();
+    of_session.security_attributes.owner_id = ActorId::User(world.bob);
+    groups.update(&system, &of_session).await.unwrap();
+    world.manager.stop_session(&alice, session_id).await.unwrap();
+
+    let (deleted, asked) = world.asked(world.manager.delete_session(&alice, session_id)).await;
+    assert!(deleted.expect("hers to delete"), "deleted");
+    assert!(!asked.iter().any(|line| line.contains("Group")), "nothing asked of her about the groups: {asked:?}");
+    assert!(groups.get_deleted(&system, of_session.id).await.is_ok(), "the group went with it");
+
+    let (restored, asked) = world.asked(world.manager.restore_session(&alice, session_id)).await;
+    restored.expect("hers to restore");
+    assert!(!asked.iter().any(|line| line.contains("Group")), "nothing asked of her about the groups: {asked:?}");
+    assert!(groups.get(&system, of_session.id).await.is_ok(), "and came back with it");
+    assert!(world.runtime.entity_stores().sessions.get(&World::as_user(world.bob), session_id).await.is_ok(), "bob reaches it by the group again");
 }
 
 /// G4 (issue 347): an entry naming a group that is gone - a team purged,

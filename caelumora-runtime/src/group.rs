@@ -9,16 +9,19 @@
 //! leaves. The group is written in the runtime's name after the change of
 //! the participants it follows, which is the act that was permitted; it is
 //! derived anew from the participants each time, so that a write that
-//! failed is corrected by the next. What lies in a session's or channel's
-//! scope goes with it (`scoped`), the group of its participants among it:
-//! the `GroupManager` deletes, restores and purges it with the session or
-//! channel (`…_lying_in`).
+//! failed is corrected by the next. The group goes and comes back with its
+//! session or channel, not with what lies in its scope (issue 348): what
+//! deletes, restores and purges the session or channel deletes, restores
+//! and purges the group with it, in the runtime's name as well - the
+//! `GroupManager` deletes and restores it, announcing it as a team
+//! (`…_participants`) -, so that a session or channel that is there has
+//! its group there, too.
 //!
 //! A team is made and changed by the `GroupManager`, its one writer, which
 //! leaves the permissions to the store - who reads, changes and deletes a
 //! group is the policy's (`GetGroup`, `UpdateGroup`, `DeleteGroup`); the
-//! participants of a session or channel it does not change at all. Reading
-//! groups is the views' (`view::GroupView`).
+//! participants of a session or channel it does not change by hand at all.
+//! Reading groups is the views' (`view::GroupView`).
 //!
 //! Whoever names a group in an access list must be able to read it
 //! (`require_nameable`): naming one grants its members something, and nobody
@@ -27,14 +30,13 @@
 //! (`prune_gone_groups`, issue 347).
 
 use crate::event::EventBus;
-use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused, within};
-use async_trait::async_trait;
+use crate::scoped::{deleted_since, within};
 use caelumora_model::actor::ActorId;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AclEntry, ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject};
-use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::ValueError;
@@ -75,7 +77,9 @@ fn store_error(id: GroupId) -> impl FnOnce(StoreError) -> GroupError {
     }
 }
 
-/// The one writer of teams (issue 286).
+/// The one writer of teams (issue 286), and what deletes and restores
+/// the groups of the participants of a session or channel with it (issue
+/// 348).
 pub struct GroupManager {
     users: Arc<dyn EntityStore<User>>,
     groups: Arc<dyn EntityStore<Group>>,
@@ -241,63 +245,71 @@ impl GroupManager {
     }
 }
 
-#[async_trait]
-impl ScopeMember for GroupManager {
-    fn kind(&self) -> EntityKind {
-        Group::KIND
-    }
-
-    /// Deletes the groups that lie in `holder` or within it - the
-    /// participants of a session or channel among them - on behalf of `ctx`
-    /// (`scoped`), as far as they may, and announces them as `delete` does
-    /// a team; answers how many are left.
+/// The groups of the participants of a session or a channel, which go and
+/// come back with it (issue 348): written in the runtime's name by what
+/// deletes and restores the session or channel - the act that was
+/// permitted -, as what changes its participants writes them, and announced
+/// as a team is (issue 319). Never in the caller's: a session or channel
+/// that is there has the group of its participants there as well, whatever
+/// the caller may do with groups.
+impl GroupManager {
+    /// Deletes the groups of the participants that lie in `holder` or
+    /// within it - of a session and its channels, or of a channel -, as
+    /// `holder` is deleted: all of them or, if one fails, none - those
+    /// deleted before are restored again, so that `holder`, which is then
+    /// kept, keeps its members. Announced once all are deleted.
     ///
     /// # Errors
-    /// Whatever else the store reports; what was deleted before stays
-    /// deleted.
-    async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> StoreResult<usize> {
+    /// Whatever the store reports.
+    pub(crate) async fn delete_participants(&self, holder: &Scope) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        let mut left = 0;
+        let mut deleted: Vec<Group> = Vec::new();
         for group in self.groups.list(&system, &within(holder)).await?.items {
-            if deleted_unless_refused(self.groups.delete(ctx, group.id).await)? {
-                self.events.publish(GlobalEvent::deleted::<Group>(&group.id), group.security_attributes);
-            } else {
-                left += 1;
+            if let Err(e) = self.groups.delete(&system, group.id).await {
+                for group in &deleted {
+                    if let Err(undo) = self.groups.restore(&system, group.id).await {
+                        warn!(group = %group.id, "The group of participants could not be deleted and not be restored again: {undo}");
+                    }
+                }
+                return Err(e);
             }
+            deleted.push(group);
         }
-        Ok(left)
-    }
-
-    /// Restores the groups that lie in `holder` or within it and were
-    /// deleted at `since` or later on behalf of `ctx` (`scoped`), and
-    /// announces them as `restore` does a team. One whose name was taken
-    /// meanwhile stays deleted, as does one `ctx` may not restore.
-    ///
-    /// # Errors
-    /// Whatever else the store reports; what was restored before stays
-    /// restored.
-    async fn restore_lying_in(&self, ctx: &SecurityContext, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
-        let system = SecurityContext::system();
-        let _writing = self.writing.lock().await;
-        for group in deleted_since(self.groups.list_deleted(&system, &within(holder)).await?.items, since) {
-            if let Some(restored) = restored_unless_refused(self.groups.restore(ctx, group.id).await, &group)? {
-                self.events.publish(GlobalEvent::restored::<Group>(&restored.id), restored.security_attributes);
-            }
+        for group in deleted {
+            self.events.publish(GlobalEvent::deleted::<Group>(&group.id), group.security_attributes);
         }
         Ok(())
     }
 
-    /// Purges the deleted groups that lie in `holder` or within it, in the
-    /// runtime's name (`scoped`).
+    /// Restores the groups of the participants that lie in `holder` or
+    /// within it and were deleted at `since` or later - with `holder`, not
+    /// with a channel deleted before it -, as `holder` is restored: all of
+    /// them or, if one fails, none - those restored before are deleted
+    /// again, so that `holder`, which is then deleted again, takes them
+    /// along. Announced once all are restored.
     ///
     /// # Errors
-    /// Whatever the store reports; what was purged before stays purged.
-    async fn purge_lying_in(&self, holder: &Scope) -> StoreResult<()> {
+    /// Whatever the store reports.
+    pub(crate) async fn restore_participants(&self, holder: &Scope, since: DateTime<Utc>) -> StoreResult<()> {
         let system = SecurityContext::system();
         let _writing = self.writing.lock().await;
-        for group in self.groups.list_deleted(&system, &within(holder)).await?.items {
-            self.groups.purge(&system, group.id).await?;
+        let mut restored = Vec::new();
+        for group in deleted_since(self.groups.list_deleted(&system, &within(holder)).await?.items, since) {
+            match self.groups.restore(&system, group.id).await {
+                Ok(group) => restored.push(group),
+                Err(e) => {
+                    for group in &restored {
+                        if let Err(undo) = self.groups.delete(&system, group.id).await {
+                            warn!(group = %group.id, "The group of participants could not be restored and not be deleted again: {undo}");
+                        }
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        for group in restored {
+            self.events.publish(GlobalEvent::restored::<Group>(&group.id), group.security_attributes);
         }
         Ok(())
     }
@@ -374,8 +386,8 @@ async fn is_gone(store: &dyn EntityStore<Group>, id: GroupId) -> bool {
 /// channel, in the runtime's name: its members replace those stored, and
 /// the group is made if there is none yet. Called only while the session
 /// or channel is there, so a group found in the trash is restored first
-/// (issue 347): a deletion of the session that failed half-way, or a
-/// restoring that did not reach its groups, left it there.
+/// (issue 347): it goes and comes back with the session or channel (issue
+/// 348), but taking back a deletion that failed may have failed, too.
 ///
 /// # Errors
 /// Whatever the store reports.
@@ -398,14 +410,16 @@ pub(crate) async fn keep_participants(store: &dyn EntityStore<Group>, participan
 
 /// Removes the group `id` for good, in the runtime's name: marked deleted
 /// first if it is not, since only what was deleted is purged (issue 164).
-/// For the participants of a channel whose creation failed or that is
-/// purged with its session.
+/// For the participants of a session or a channel purged, and of one whose
+/// creation failed. `false` if there is no such group.
 ///
 /// # Errors
-/// Whatever the store reports.
+/// Whatever else the store reports.
 pub(crate) async fn purge_participants(store: &dyn EntityStore<Group>, id: GroupId) -> StoreResult<bool> {
     let system = SecurityContext::system();
-    store.delete(&system, id).await?;
+    if store.delete(&system, id).await.optional()?.is_none() {
+        return Ok(false);
+    }
     store.purge(&system, id).await
 }
 
@@ -417,7 +431,67 @@ mod tests {
     use caelumora_model::session::SessionId;
     use caelumora_model::store::json::JsonFileStore;
     use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::store::query::{Page, Query};
+    use caelumora_model::channel::ChannelId;
+    use caelumora_model::group::GroupField;
+    use async_trait::async_trait;
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A store of groups whose deleting and restoring fail once, after as
+    /// many as `passing` let through - counted down past zero, never again;
+    /// otherwise as `inner`.
+    #[derive(Debug)]
+    struct Failing {
+        inner: Arc<dyn EntityStore<Group>>,
+        passing: AtomicUsize,
+    }
+
+    impl Failing {
+        /// Whether the deleting or restoring now is the one to fail.
+        fn fails(&self) -> StoreResult<()> {
+            match self.passing.fetch_sub(1, Ordering::SeqCst) {
+                0 => Err(StoreError::Backend("failing".to_string())),
+                _ => Ok(()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl EntityStore<Group> for Failing {
+        async fn create(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
+            self.inner.create(ctx, value).await
+        }
+        async fn get(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
+            self.inner.get(ctx, id).await
+        }
+        async fn update(&self, ctx: &SecurityContext, value: &Group) -> StoreResult<()> {
+            self.inner.update(ctx, value).await
+        }
+        async fn delete(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
+            self.fails()?;
+            self.inner.delete(ctx, id).await
+        }
+        async fn list(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
+            self.inner.list(ctx, query).await
+        }
+        async fn restore(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
+            self.fails()?;
+            self.inner.restore(ctx, id).await
+        }
+        async fn purge(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<bool> {
+            self.inner.purge(ctx, id).await
+        }
+        async fn get_deleted(&self, ctx: &SecurityContext, id: GroupId) -> StoreResult<Group> {
+            self.inner.get_deleted(ctx, id).await
+        }
+        async fn list_deleted(&self, ctx: &SecurityContext, query: &Query<GroupField>) -> StoreResult<Page<Group>> {
+            self.inner.list_deleted(ctx, query).await
+        }
+        async fn find_by_name(&self, ctx: &SecurityContext, name: &ScopedName) -> StoreResult<Group> {
+            self.inner.find_by_name(ctx, name).await
+        }
+    }
 
     /// The file named `name` somewhere below `dir`.
     fn find(dir: &Path, name: &str) -> Option<PathBuf> {
@@ -440,6 +514,47 @@ mod tests {
 
         keep_participants(groups.as_ref(), Group { members: vec![bob], ..participants.clone() }).await.expect("restored, not made again");
         assert_eq!(groups.get(&system, participants.id).await.unwrap().members, [bob], "there again, following who takes part");
+    }
+
+    /// Issue 348: the groups of the participants of a session and its
+    /// channel go and come back with it all or none - one that fails takes
+    /// back those done before it -, so that a session kept, or left in the
+    /// trash, has them as it has itself.
+    #[tokio::test]
+    async fn the_participants_go_and_come_back_all_or_none() {
+        let stores = MemoryStore::new().entity_stores();
+        let failing = Arc::new(Failing { inner: Arc::clone(&stores.groups), passing: AtomicUsize::new(usize::MAX) });
+        let events = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())));
+        let manager = GroupManager::new(&EntityStores { groups: Arc::<Failing>::clone(&failing), ..stores.clone() }, events, Arc::new(DummySecurityManager::new()));
+        let system = SecurityContext::system();
+        let owner = UserId::new();
+        let session_id = SessionId::new();
+        let channel_id = ChannelId::new();
+        let participants = |id: GroupId, scope: Scope| Group { id, ..Group::team(ScopedName::new("participants", scope).unwrap(), owner) };
+        let of_session = participants(GroupId::of_session(session_id), Scope::SessionScope { session_id });
+        let of_channel = participants(GroupId::of_channel(channel_id), Scope::ChannelScope { session_id, channel_id });
+        for group in [&of_session, &of_channel] {
+            keep_participants(stores.groups.as_ref(), group.clone()).await.unwrap();
+        }
+        let holder = Scope::SessionScope { session_id };
+        let there = async |id: GroupId| stores.groups.get(&system, id).await.is_ok();
+
+        failing.passing.store(1, Ordering::SeqCst);
+        manager.delete_participants(&holder).await.expect_err("the second fails");
+        assert!(there(of_session.id).await && there(of_channel.id).await, "neither is deleted: the first is restored again");
+
+        failing.passing.store(usize::MAX, Ordering::SeqCst);
+        let since = Utc::now();
+        manager.delete_participants(&holder).await.expect("both deleted");
+        assert!(!there(of_session.id).await && !there(of_channel.id).await);
+
+        failing.passing.store(1, Ordering::SeqCst);
+        manager.restore_participants(&holder, since).await.expect_err("the second fails");
+        assert!(!there(of_session.id).await && !there(of_channel.id).await, "neither is restored: the first is deleted again");
+
+        failing.passing.store(usize::MAX, Ordering::SeqCst);
+        manager.restore_participants(&holder, since).await.expect("both restored");
+        assert!(there(of_session.id).await && there(of_channel.id).await);
     }
 
     #[tokio::test]

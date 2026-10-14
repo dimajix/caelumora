@@ -187,7 +187,7 @@ published before anyone else can take it.
 | [322](322-clearance-decided-outside-the-store.md) | done | Whether one is cleared for a classified entity is asked by the views, three managers and the event bus each, besides the store, so that what a reader forgets to ask is found, and the deleted are reached by other rules than the live. |
 | [332](332-policy-as-a-predicate.md) | open | The policy decides entity by entity, so a store filters a list after reading it and no database could put who may read into its query. |
 | [347](347-entries-naming-purged-groups.md) | done | An access list keeps its entries for a group once the group is purged - a session long over, a team removed -, so lists grow by entries that name nobody and are cleaned up by hand. |
-| [348](348-participants-groups-out-of-step-with-their-holder.md) | open | A session's or channel's deletion that fails half-way, or a restoring that does not reach its groups, leaves the group of its participants in the trash while it is there, and its members lose it. |
+| [348](348-participants-groups-out-of-step-with-their-holder.md) | done | A session's or channel's deletion that fails half-way, or a restoring that does not reach its groups, leaves the group of its participants in the trash while it is there, and its members lose it. |
 
 ## Tools and approvals
 

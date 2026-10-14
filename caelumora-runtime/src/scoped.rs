@@ -1,16 +1,18 @@
 //! What lies in a scope goes with what holds it (issue 178): the
-//! personalities, session templates, agents, workspaces, skills, artifacts
-//! and groups - the participants of the session and its channels, issue
-//! 286 - of a session's scope - and of the scopes of its channels - are
+//! personalities, session templates, agents, workspaces, skills and
+//! artifacts of a session's scope - and of the scopes of its channels - are
 //! deleted with the session, restored with it and purged with it, a
 //! workspace with its place (issue 251), an artifact with its content
 //! (issue 271); those of a channel's scope are deleted and restored with the
 //! channel. `SessionManager` and `SessionLoop` are the callers, through
-//! `ScopedEntities`.
+//! `ScopedEntities`. The group of the participants of a session or channel
+//! lies in its scope too, but is not among it: it belongs to the session or
+//! channel itself, which deletes and restores it with its own mark (issue
+//! 348, `GroupManager::delete_participants`).
 //!
 //! Each kind that may lie in a scope is a `ScopeMember` (issue 323), kept
 //! by `ScopedEntities` in the order it was registered. What has an owner of
-//! its own - agents, workspaces, skills, artifacts and groups - is a member
+//! its own - agents, workspaces, skills and artifacts - is a member
 //! by its owner (`…_lying_in`, issue 319): it announces what it deletes and
 //! restores as it announces its own deletions, and holds its lock of
 //! writing as it does. Personalities and session templates, which have
@@ -30,7 +32,6 @@
 //! back all the same. Purging, the system's or an administrator's, is done
 //! in the runtime's name.
 
-use crate::group::GroupManager;
 use crate::session::SessionError;
 use async_trait::async_trait;
 use caelumora_model::removal::Deletable;
@@ -83,10 +84,9 @@ pub trait ScopeMember: Send + Sync {
 
 /// Deletes, restores and purges what lies in a scope with what holds it
 /// (issue 178), each kind by its `ScopeMember`, in the order they were
-/// registered, and the groups last.
+/// registered.
 pub(crate) struct ScopedEntities {
     members: Vec<Arc<dyn ScopeMember>>,
-    groups: Arc<GroupManager>,
 }
 
 impl fmt::Debug for ScopedEntities {
@@ -96,18 +96,14 @@ impl fmt::Debug for ScopedEntities {
 }
 
 impl ScopedEntities {
-    /// Goes through `members` in their order, and through `groups` after
-    /// them: the groups of the participants are a rule of the scope as a
-    /// whole, not a member like the others.
-    pub(crate) fn new(members: Vec<Arc<dyn ScopeMember>>, groups: Arc<GroupManager>) -> Self {
-        Self { members, groups }
+    /// Goes through `members` in their order.
+    pub(crate) fn new(members: Vec<Arc<dyn ScopeMember>>) -> Self {
+        Self { members }
     }
 
     /// Deletes what lies in `holder` or within it on behalf of `ctx`, as
     /// far as they may delete it, and announces it as its owner announces a
-    /// deletion. The groups of the participants, which the holder's access
-    /// depends on while it is there, are deleted last, and only once nothing
-    /// else is left.
+    /// deletion.
     ///
     /// Called once the holder is marked deleted, so that what goes is
     /// deleted with it, not before it, and comes back with it
@@ -124,12 +120,6 @@ impl ScopedEntities {
             let count = member.delete_lying_in(ctx, holder).await?;
             if count > 0 {
                 left.push((member.kind(), count));
-            }
-        }
-        if left.is_empty() {
-            let groups = self.groups.delete_lying_in(ctx, holder).await?;
-            if groups > 0 {
-                left.push((self.groups.kind(), groups));
             }
         }
         if !left.is_empty() {
@@ -153,7 +143,7 @@ impl ScopedEntities {
         for member in &self.members {
             member.restore_lying_in(ctx, holder, since).await?;
         }
-        self.groups.restore_lying_in(ctx, holder, since).await
+        Ok(())
     }
 
     /// Purges what lies in `holder` or within it and is deleted, with what
@@ -168,7 +158,7 @@ impl ScopedEntities {
         for member in &self.members {
             member.purge_lying_in(holder).await?;
         }
-        self.groups.purge_lying_in(holder).await
+        Ok(())
     }
 }
 

@@ -208,7 +208,9 @@ impl SessionLoop {
     /// - `SessionError::ScopeNotEmpty` if something of its scope is left
     ///   that `context` may not delete (issue 320): what they may is
     ///   deleted, the channel is kept and runs on.
-    /// - Whatever else the store reports; the channel is kept then too.
+    /// - Whatever else the store reports, the group of its participants
+    ///   failing to go among it (issue 348); the channel is kept then too,
+    ///   with its group.
     pub async fn delete_channel(&self, context: &SecurityContext, channel_id: ChannelId) -> Result<()> {
         let running = self.channel_for(context, channel_id).await?;
         // Not the guard itself: it would be held across the awaits below.
@@ -220,13 +222,17 @@ impl SessionLoop {
         // deleted with it, not before it: it comes back with it
         // (`restore_channel`, issue 178). Then what lies in its scope goes as
         // far as `context` may delete it (issue 320); an agent of it takes
-        // part in no other channel (`Scope::admits`). If either fails, the
-        // channel is put back - in the runtime's name: its deletion was
-        // permitted - and runs on, without what was deleted.
-        let deleted = match self.stores.channels.delete(context, channel_id).await {
-            Ok(_) => self.scoped.delete_lying_in(context, &scope).await,
-            Err(error) => Err(error.into()),
-        };
+        // part in no other channel (`Scope::admits`). Then the group of its
+        // participants, in the runtime's name (issue 348). If any of it
+        // fails, the channel is put back - in the runtime's name: its
+        // deletion was permitted - and runs on, without what was deleted but
+        // with its group.
+        let deleted = async {
+            self.stores.channels.delete(context, channel_id).await?;
+            self.scoped.delete_lying_in(context, &scope).await?;
+            self.groups.delete_participants(&scope).await?;
+            Ok::<_, anyhow::Error>(())
+        }.await;
         if let Err(error) = deleted {
             self.keep_channel(channel_id).await;
             return Err(error);
@@ -248,13 +254,14 @@ impl SessionLoop {
     }
 
     /// Restores the deleted channel `channel_id` of this session on behalf
-    /// of `context` (issue 164): its mark taken away, listed in the session
-    /// again and started from its stored state. In the order of issue 304:
-    /// the deleted channel is read as such (`ReadDeleted`, as the session's
-    /// trash lists it), then restoring it is asked (`Restore`), then its
-    /// participants' clearance, as creating one does; the store asks again
-    /// as it restores it, and to change the session that lists it again
-    /// (`UpdateSession`).
+    /// of `context` (issue 164): its mark taken away, the group of its
+    /// participants restored with it in the runtime's name (issue 348),
+    /// listed in the session again and started from its stored state. In
+    /// the order of issue 304: the deleted channel is read as such
+    /// (`ReadDeleted`, as the session's trash lists it), then restoring it
+    /// is asked (`Restore`), then its participants' clearance, as creating
+    /// one does; the store asks again as it restores it, and to change the
+    /// session that lists it again (`UpdateSession`).
     ///
     /// # Errors
     /// - `SessionError::ChannelNotFound` if the session has no such deleted
@@ -262,6 +269,9 @@ impl SessionLoop {
     /// - `StoreError::NameTaken` if its name was taken since (issue 250).
     /// - `StoreError::PermissionDenied` if `context` may not restore the
     ///   channel or change the session; nothing is changed then.
+    /// - Whatever else the store reports, the group of its participants
+    ///   failing to come back among it (issue 348); the channel stays
+    ///   deleted then.
     pub async fn restore_channel(self: &Arc<Self>, context: &SecurityContext, channel_id: ChannelId) -> Result<Arc<ChannelLoop>> {
         let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
         let channel = match self.stores.channels.get_deleted(context, channel_id).await.optional()? {
@@ -274,16 +284,26 @@ impl SessionLoop {
         // changed while it was deleted.
         crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
         let deleted_at = channel.deleted.as_ref().map(|removal| removal.at);
+        let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         let channel = self.stores.channels.restore(context, channel_id).await?;
-        let listed = match self.session_controller.add_channel(context, channel_id).await {
-            Ok(()) => self.add_channel_loop(&channel).await,
-            Err(error) => Err(error.into()),
-        };
+        // The group of its participants first, with it, in the runtime's
+        // name (issue 348): whatever fails later, its members reach it.
+        let listed = async {
+            if let Some(since) = deleted_at {
+                self.groups.restore_participants(&scope, since).await?;
+            }
+            self.session_controller.add_channel(context, channel_id).await?;
+            self.add_channel_loop(&channel).await
+        }.await;
         let channel_loop = match listed {
             Ok(channel_loop) => channel_loop,
             Err(error) => {
-                // Deleted again, so that it is neither half back nor lost.
+                // Deleted again, with its group, so that it is neither half
+                // back nor lost.
                 let _ = self.session_controller.remove_channel(context, channel_id).await;
+                if let Err(undo) = self.groups.delete_participants(&scope).await {
+                    warn!("Channel {} of session {} could not be restored and its group not be deleted again: {}", channel_id, self.id, undo);
+                }
                 if let Err(undo) = self.stores.channels.delete(&SecurityContext::system(), channel_id).await {
                     warn!("Channel {} of session {} could not be restored and not be marked deleted again: {}", channel_id, self.id, undo);
                 }
@@ -292,7 +312,7 @@ impl SessionLoop {
         };
         if let Some(since) = deleted_at {
             // What was deleted with it comes back with it (issue 178).
-            if let Err(e) = self.scoped.restore_lying_in(context, &Scope::ChannelScope { session_id: self.id, channel_id }, since).await {
+            if let Err(e) = self.scoped.restore_lying_in(context, &scope, since).await {
                 warn!("Channel {} of session {} was restored, but not what lies in its scope: {}", channel_id, self.id, e);
             }
         }

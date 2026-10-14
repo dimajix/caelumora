@@ -18,7 +18,7 @@ use tracing::{info, warn};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::group::{Group, GroupId};
-use crate::group::{keep_participants, purge_participants};
+use crate::group::{GroupManager, keep_participants, purge_participants};
 use caelumora_model::template::{ScopeTemplate, SessionTemplate, SessionTemplateId, WorkspaceTemplate};
 use caelumora_model::workspace::WorkspaceChoice;
 use crate::scoped::ScopedEntities;
@@ -51,6 +51,9 @@ pub struct SessionManager {
     agents: Arc<AgentManager>,
     /// What goes with a session deleted, restored or purged (issue 178).
     scoped: Arc<ScopedEntities>,
+    /// What deletes and restores the groups of its participants with it
+    /// (issue 348).
+    groups: Arc<GroupManager>,
 }
 
 /// A session as [`SessionManager::find`] found it for a context that may
@@ -85,6 +88,7 @@ impl SessionManager {
             command_reaper: Arc::clone(runtime_manager.command_reaper()),
             agents: Arc::clone(runtime_manager.agent_manager()),
             scoped: Arc::clone(runtime_manager.scoped_entities()),
+            groups: Arc::clone(runtime_manager.group_manager()),
             runtime_manager,
         }
     }
@@ -404,7 +408,9 @@ impl SessionManager {
     /// Stops and deletes a session. Deleting marks (issue 164): the session
     /// is kept, with its channels and their state, hidden until it is
     /// restored (`restore_session`) or purged (`purge_session`). What lies
-    /// in its scope is deleted with it, in `context`'s name (issue 320).
+    /// in its scope is deleted with it, in `context`'s name (issue 320), and
+    /// then the groups of its participants and its channels', in the
+    /// runtime's (issue 348).
     ///
     /// Asked about before anything happens - a refused deletion must not
     /// stop the session on the way (issue 11).
@@ -414,8 +420,9 @@ impl SessionManager {
     /// not read it, `StoreError::PermissionDenied` if they may read but not
     /// delete it, `SessionError::ScopeNotEmpty` if something of its scope
     /// is left that they may not delete - what they may is deleted, the
-    /// session is kept; whatever else the store reports, which keeps the
-    /// session too.
+    /// session is kept; whatever else the store reports, the groups of its
+    /// participants failing to go among it, which keeps the session too,
+    /// with its groups.
     pub async fn delete_session(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
         // Held until the session is gone from the store, so that no request
         // starts it again from there in the meantime (issue 62).
@@ -440,16 +447,25 @@ impl SessionManager {
             return Ok(false);
         }
         // What lies in its scope and in its channels' goes as far as
-        // `context` may delete it (issue 320). If something is left, the
-        // mark is taken away again - in the runtime's name: the deletion was
-        // permitted - and the session runs on if it ran, without what was
-        // deleted, and `context` is told what is left. Its agents take part
-        // in no other session (`Scope::admits`): they leave nothing.
-        if let Err(left) = self.scoped.delete_lying_in(context, &Scope::SessionScope { session_id: id }).await {
+        // `context` may delete it (issue 320). Its agents take part in no
+        // other session (`Scope::admits`): they leave nothing. Then the
+        // groups of its participants and its channels' go, in the runtime's
+        // name (issue 348) - last, since its members reach it by them while
+        // it is kept: all of them or none. If something is left, or the
+        // groups cannot go, the mark is taken away again - in the runtime's
+        // name: the deletion was permitted - and the session runs on if it
+        // ran, without what was deleted, and `context` is told why.
+        let scope = Scope::SessionScope { session_id: id };
+        let deleted = async {
+            self.scoped.delete_lying_in(context, &scope).await?;
+            self.groups.delete_participants(&scope).await?;
+            Ok::<_, anyhow::Error>(())
+        }.await;
+        if let Err(error) = deleted {
             if let Err(undo) = self.stores.sessions.restore(&SecurityContext::system(), id).await {
                 warn!("Session {} could not be deleted and not be unmarked again: {}", id, undo);
             }
-            return Err(left);
+            return Err(error);
         }
 
         self.stop_running(id).await;
@@ -465,13 +481,16 @@ impl SessionManager {
 
     /// Restores the deleted session `id` on behalf of `context` (issue 164):
     /// its mark taken away, with the channels it listed when it was
-    /// deleted. It is not started; opening it starts it, as any stored
-    /// session.
+    /// deleted, and the groups of its participants and theirs, in the
+    /// runtime's name (issue 348). It is not started; opening it starts it,
+    /// as any stored session.
     ///
     /// # Errors
     /// `SessionError::NotFound` if there is no such deleted session or
     /// `context` may not see it (`ReadDeleted`, asked first, issue 304),
-    /// `StoreError::PermissionDenied` if they may but not restore it.
+    /// `StoreError::PermissionDenied` if they may but not restore it, or
+    /// whatever the store reports as the groups of its participants are
+    /// restored - the session stays deleted then.
     pub async fn restore_session(&self, context: &SecurityContext, id: SessionId) -> Result<Session> {
         // The lock of deleting and purging it: a purge never meets it half
         // restored.
@@ -483,7 +502,18 @@ impl SessionManager {
         let deleted_at = self.stores.sessions.get_deleted(context, id).await.map_err(store_error(id))?.deleted.map(|removal| removal.at);
         let session = self.stores.sessions.restore(context, id).await.map_err(store_error(id))?;
         if let Some(since) = deleted_at {
-            if let Err(e) = self.scoped.restore_lying_in(context, &Scope::SessionScope { session_id: id }, since).await {
+            // The groups of its participants first, with it: whatever fails
+            // later, its members reach it (issue 348). If they cannot come
+            // back, the session is deleted again, in the runtime's name: its
+            // restoring was permitted.
+            let scope = Scope::SessionScope { session_id: id };
+            if let Err(error) = self.groups.restore_participants(&scope, since).await {
+                if let Err(undo) = self.stores.sessions.delete(&SecurityContext::system(), id).await {
+                    warn!("Session {} could not be restored and not be marked deleted again: {}", id, undo);
+                }
+                return Err(error.into());
+            }
+            if let Err(e) = self.scoped.restore_lying_in(context, &scope, since).await {
                 warn!("Session {} was restored, but not what lies in its scope: {}", id, e);
             }
         }
@@ -521,8 +551,10 @@ impl SessionManager {
             purge_channel_document(&self.stores, channel_id).await?;
             state_store.delete_channel_state(channel_id).await?;
         }
-        // And what lay in its scope and in its channels' (issue 178).
+        // And what lay in its scope and in its channels' (issue 178), and the
+        // group of its participants, as a channel's (issue 348).
         self.scoped.purge_lying_in(&Scope::SessionScope { session_id: id }).await?;
+        purge_participants(self.stores.groups.as_ref(), GroupId::of_session(id)).await?;
         self.starts.remove(&id);
         info!("Session {} purged by {}", id, context.caller_id);
         Ok(())

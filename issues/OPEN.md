@@ -55,7 +55,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [340](340-teams-as-owners.md) | open | Only a person owns anything: no team can own what is done in its name, as a company does, so what is a team's result is one member's and goes with them. |
 | [343](343-users-bring-their-own-secrets.md) | open | A user cannot bring a secret of their own: every secret is the operator's, put into the configured providers, so an agent of one's own cannot reach a remote system with its owner's credential. |
 | [332](332-policy-as-a-predicate.md) | open | The policy decides entity by entity, so a store filters a list after reading it and no database could put who may read into its query. |
-| [348](348-participants-groups-out-of-step-with-their-holder.md) | open | A session's or channel's deletion that fails half-way, or a restoring that does not reach its groups, leaves the group of its participants in the trash while it is there, and its members lose it. |
 
 ## Tools and approvals
 
