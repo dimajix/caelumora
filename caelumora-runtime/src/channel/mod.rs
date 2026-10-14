@@ -334,7 +334,7 @@ impl ChannelLoop {
                 }
                 Err(e) => return Err(e),
             };
-            let actor = match Self::create_actor(Arc::clone(&channel_loop.channel), &member, &channel_loop.runtime).await {
+            let actor = match channel_loop.create_actor(&member).await {
                 Ok(actor) => actor,
                 Err(e) if cannot_run(&e) => {
                     warn!("{} of channel {} cannot be run and is left out: {:#}", participant.actor_id(), channel_loop.id, e);
@@ -506,13 +506,13 @@ impl ChannelLoop {
         Arc::downcast::<UserActor>(any_actor).ok()
     }
 
-    /// The actor of `member`.
-    async fn create_actor(channel: Arc<ChannelController>, member: &Member, runtime: &ChannelRuntime) -> Result<Box<dyn Actor>> {
-        let (session_id, channel_id) = { let c = channel.load(); (c.session_id, c.id) };
-        let actor_runtime = runtime.new_actor_runtime(member.actor_id(), session_id, channel_id);
+    /// The actor of `member`, built but not yet taken in (`adopt`).
+    async fn create_actor(&self, member: &Member) -> Result<Box<dyn Actor>> {
+        let channel = Arc::clone(&self.channel);
+        let actor_runtime = self.runtime.new_actor_runtime(member.actor_id(), self.session_id, self.id);
         Ok(match member.kind().clone() {
-            MemberKind::User(user) => Box::new(UserActor::new(Arc::clone(&channel), user, actor_runtime).await?),
-            MemberKind::Agent(agent, personality) => Box::new(AgentActor::new(Arc::clone(&channel), agent, personality, actor_runtime).await?),
+            MemberKind::User(user) => Box::new(UserActor::new(channel, user, actor_runtime).await?),
+            MemberKind::Agent(agent, personality) => Box::new(AgentActor::new(channel, agent, personality, actor_runtime).await?),
             MemberKind::ExternalAgent(agent, personality) => Box::new(ExternalAgentActor::new(&channel.load(), agent, personality, actor_runtime).await?),
             MemberKind::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
         })

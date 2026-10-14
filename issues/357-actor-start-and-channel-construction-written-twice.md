@@ -1,6 +1,6 @@
 # 357 — Starting an actor and building a channel's loop are sequences written twice
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -54,3 +54,13 @@ next step in it (a check, a log line) goes into one of them first.
   `SessionLoop::new` builds its channels through `add_channel_loop`, and
   `SessionLoop::channel_runtime` is the one place a `ChannelRuntime` is made for a session. Starting
   a member's actor is what is left.
+- **2026-10-14** — Done. `ChannelLoop::start_member(&self, member)` waits for `left`, builds the
+  actor, catches it up, adopts it and hands it to `run`; `rejoin` is gone, `follow_agents` calls
+  it, and `take_in` calls it after storing, undoing the store if it fails as before. `take_in`
+  still waits for `left` before storing, so that nothing is stored for a participant whose old
+  actor hangs; the wait in `start_member` then finds nothing left. `ChannelLoop::new` does not go
+  through it, unlike the consideration above: an actor of a channel being built is not caught up
+  and not handed to `run` - `run` starts every actor it finds when it begins, and a queued
+  `ActorChange::Start` could start an actor again whose task had already ended. It builds and
+  adopts alone. `create_actor` is a method taking only the member, no longer the controller and
+  the runtime it can find on `self`.
