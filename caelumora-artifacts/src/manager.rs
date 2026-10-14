@@ -35,7 +35,7 @@ use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
 use caelumora_runtime::component::{ComponentError, ComponentResult};
 use caelumora_runtime::event::EventBus;
-use caelumora_runtime::group::require_nameable;
+use caelumora_runtime::group::{prune_gone_groups, require_nameable};
 use caelumora_runtime::scoped::{deleted_since, deleted_unless_refused, restored_unless_refused, within, ScopeMember};
 use caelumora_runtime::terminal::ByteStream;
 use chrono::{DateTime, Utc};
@@ -296,7 +296,7 @@ impl ArtifactManager {
                 // Changed in the runtime's name: whoever may add a version
                 // need not own the artifact (`WriteArtifact`, asked above),
                 // and lets the channel they publish it in read it.
-                self.artifacts.update(&SecurityContext::system(), &artifact).await.map(|()| artifact)
+                self.update(&SecurityContext::system(), &mut artifact).await.map(|()| artifact)
             }
             None => {
                 let mut artifact = Artifact::new(id, name, storage_name, classification.clone(), owner, version);
@@ -318,6 +318,17 @@ impl ArtifactManager {
         }
         info!(artifact = %id, version = number, by = %ctx.caller_id, "Artifact published");
         Ok((artifact, number))
+    }
+
+    /// Stores the changed `artifact` on behalf of `ctx`, which is where the
+    /// permission is asked - its access list and its versions' without the
+    /// entries naming a group that is gone (issue 347).
+    ///
+    /// # Errors
+    /// Whatever the store reports.
+    async fn update(&self, ctx: &SecurityContext, artifact: &mut Artifact) -> StoreResult<()> {
+        prune_gone_groups(self.groups.as_ref(), artifact.access_lists_mut()).await;
+        self.artifacts.update(ctx, artifact).await
     }
 
     /// Removes what was kept of version `number` of artifact `id` for a
@@ -373,7 +384,7 @@ impl ArtifactManager {
         }
         artifact.security_attributes.acl = acl;
         artifact.updated_at = Utc::now();
-        self.artifacts.update(ctx, &artifact).await?;
+        self.update(ctx, &mut artifact).await?;
         self.events.publish_classified(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::AccessChanged), artifact.security_attributes.clone(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact's access changed");
         Ok(artifact)
@@ -398,7 +409,7 @@ impl ArtifactManager {
         }
         artifact.name.scope = scope;
         artifact.updated_at = Utc::now();
-        self.artifacts.update(ctx, &artifact).await?;
+        self.update(ctx, &mut artifact).await?;
         self.events.publish_classified(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::ScopeChanged(artifact.name.scope.clone())), artifact.security_attributes.clone(), std::slice::from_ref(&artifact.classification));
         info!(artifact = %id, by = %ctx.caller_id, "Artifact kept");
         Ok(artifact)
@@ -415,7 +426,7 @@ impl ArtifactManager {
         let mut artifact = self.artifacts.get(ctx, id).await.map_err(store_error(id))?;
         artifact.description = Description::optional(description)?;
         artifact.updated_at = Utc::now();
-        self.artifacts.update(ctx, &artifact).await?;
+        self.update(ctx, &mut artifact).await?;
         self.events.publish_classified(GlobalEvent::updated::<Artifact>(&id, &ArtifactUpdateEvent::DescriptionChanged(artifact.description.as_ref().map(ToString::to_string))), artifact.security_attributes.clone(), std::slice::from_ref(&artifact.classification));
         Ok(artifact)
     }

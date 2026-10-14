@@ -220,6 +220,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | Rename (`update`) | store `GetGroup`; a participants' group refused (structural); store `UpdateGroup` | R1 | `NotFound`, `Participants`, `PermissionDenied` |
 | Delete, restore, purge | store; a participants' group refused | R1 | `NotFound`, `Participants`, `PermissionDenied` |
 | Name a group in an access list (`require_nameable`) | store `GetGroup` (U,1) per newly named group | R1 | `Validation` |
+| Drop entries for groups that are gone (`prune_gone_groups`, issue 347) | per group the lists name, read in S, also in the trash, as a workspace or an artifact is stored | - | - |
 | The participants' groups (`keep_participants`, `purge_participants`) | in S, after the change of the participants was permitted | - | - |
 
 ### Views, snapshots and events

@@ -609,6 +609,34 @@ async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     world.manager.stop_session(&alice, session_id).await.unwrap();
 }
 
+/// An artifact kept beyond its session (issue 347) names the channel it was
+/// published in, in its list and in its version's, until the session is
+/// purged: then the entries go as the artifact is next stored, since they
+/// name nobody.
+#[tokio::test]
+async fn an_artifact_kept_beyond_its_session_drops_its_channel_once_that_is_purged() {
+    let world = world().await;
+    let alice = World::as_user(world.alice);
+    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let session = world.shared_session(&[], &[]).await;
+    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    let session_id = session.id();
+    let main = session.channels()[0].id();
+    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.expect("hers to use");
+    let at = WorkspacePath::parse("report.md").unwrap();
+    terminal.write(&at, file("final"), 100).await.unwrap();
+    let (artifact, _) = publish(&world, &alice, session_id, main, &at, "report.md", None).await.unwrap();
+    let kept = manager(&world).keep(&alice, artifact.id, Scope::UserScope { user_id: world.alice }).await.expect("kept as hers");
+    let members = AclEntry { subject: Subject::Group(GroupId::of_channel(main)), grant: Grant::Read };
+    assert_eq!((kept.security_attributes.acl.as_slice(), kept.versions[0].acl.as_slice()), ([members].as_slice(), [members].as_slice()), "read by the channel's members");
+
+    world.manager.stop_session(&alice, session_id).await.unwrap();
+    world.manager.delete_session(&alice, session_id).await.unwrap();
+    world.manager.purge_session(&World::system(), session_id).await.unwrap();
+    let described = manager(&world).describe(&alice, artifact.id, Some("The report")).await.expect("still hers");
+    assert!(described.security_attributes.acl.is_empty() && described.versions[0].acl.is_empty(), "the entries go as it is stored: {described:?}");
+}
+
 /// An agent's publication of an artifact (issue 271) asks what a call on
 /// the workspace asks, and makes the artifact its owner's - asked in the
 /// same context, `CreateArtifact` for alice.

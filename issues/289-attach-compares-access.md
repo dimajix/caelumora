@@ -1,6 +1,6 @@
 # 289 — Attaching a workspace shares it with one session at a time, however its list already reaches
 
-**Status:** open
+**Status:** rejected
 **Area:** Identity and access management
 
 ## The problem
@@ -55,3 +55,11 @@ in. If the workspace is granted to a role, and the session admits only holders o
   That does not resolve this issue, as the plan of issue 304 assumed: every attachment still adds
   an entry of its own. Comparing the rules stays to be done; a team that holds the session's
   members is now one more subject that may already cover them.
+- **2026-10-14** — Rejected. Its premise went with issue
+  [221](221-adding-session-participants.md): whom a session takes in is no longer bounded by an
+  admission rule - whoever may change it takes in anyone they may name -, so no entry covers its
+  future members but `Everyone` or the session's own group. Comparing with its members as they are
+  would spare the entry only by trading one that follows who takes part (issue
+  [286](286-groups-as-subjects.md)) for a coincidence of today. What makes the lists grow - entries
+  for sessions long purged - is solved by issue [347](347-entries-naming-purged-groups.md), which
+  drops them as a list is next stored.

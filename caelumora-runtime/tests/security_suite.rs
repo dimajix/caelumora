@@ -50,7 +50,7 @@ use caelumora_runtime::view::{ChannelView, ViewError, Viewer};
 use caelumora_model::snapshot::PersonalitySnapshot;
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_runtime::group::GroupError;
-use caelumora_model::workspace::{CommandStatus, WorkspaceChoice, WorkspaceId};
+use caelumora_model::workspace::{CommandStatus, Workspace, WorkspaceChoice, WorkspaceId};
 
 // --- Personalities and agents ---------------------------------------------
 
@@ -2934,6 +2934,43 @@ async fn the_groups_of_a_session_go_and_come_back_with_it_announced() {
 
     world.manager.restore_session(&alice, session_id).await.unwrap();
     hears(&mut bobs, [GlobalEvent::restored::<Group>(&of_session), GlobalEvent::restored::<Group>(&of_channel)]).await;
+}
+
+/// G4 (issue 347): an entry naming a group that is gone - a team purged,
+/// the participants of a session purged with it - is dropped as the list is
+/// next stored, by any change of the workspace; one naming a group in the
+/// trash stays, since it may come back. Until then its owner sees it
+/// without a name.
+#[tokio::test]
+async fn an_entry_naming_a_group_that_is_gone_is_dropped_as_the_list_is_stored() {
+    let world = World::new().await;
+    let alice = World::as_user(world.alice);
+    let system = World::system();
+    let groups = world.runtime.group_manager();
+    let workspaces = world.runtime.workspace_manager();
+    let session_id = world.shared_session(&[], &[]).await.id();
+    let project = groups.create(&alice, "project", Scope::UserScope { user_id: world.alice }).await.unwrap();
+    let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    workspaces.share(&alice, docs.id, Subject::Group(project.id), Grant::Read).await.unwrap();
+    workspaces.share(&alice, docs.id, Subject::Group(GroupId::of_session(session_id)), Grant::Write).await.unwrap();
+    let named = |workspace: &Workspace| workspace.security_attributes.acl.iter().map(|entry| entry.subject).collect::<Vec<_>>();
+    let both = [Subject::Group(project.id), Subject::Group(GroupId::of_session(session_id))];
+
+    groups.delete(&alice, project.id).await.unwrap();
+    let renamed = workspaces.rename(&alice, docs.id, "papers").await.unwrap();
+    assert_eq!(named(&renamed), both, "a team in the trash keeps its entry");
+    let shown = world.manager.views(Viewer::new(alice.clone())).workspace(docs.id).await.unwrap().snapshot().await;
+    assert_eq!(shown.access.iter().map(|e| e.name.as_deref()).collect::<Vec<_>>(), [None, Some("shared")], "shown without a name meanwhile");
+
+    groups.purge(&system, project.id).await.unwrap();
+    let renamed = workspaces.rename(&alice, docs.id, "docs").await.unwrap();
+    assert_eq!(named(&renamed), both[1..], "a team purged loses it as the workspace is stored again");
+
+    world.manager.stop_session(&alice, session_id).await.unwrap();
+    world.manager.delete_session(&alice, session_id).await.unwrap();
+    world.manager.purge_session(&system, session_id).await.unwrap();
+    let kept = workspaces.set_access(&alice, docs.id, renamed.security_attributes.acl.clone()).await.unwrap();
+    assert!(named(&kept).is_empty(), "the participants of a session purged too, also as the list is written: {:?}", named(&kept));
 }
 
 /// What is asked when the agent of `owner`, asked by bob, makes `call` in the

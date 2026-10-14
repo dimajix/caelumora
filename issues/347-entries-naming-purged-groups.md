@@ -1,6 +1,6 @@
 # 347 — An access list keeps its entries for groups that were purged
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -62,3 +62,12 @@ carries an entry for each of them, long after most were purged.
   and comparing them when attaching cannot spare the entry. What makes the lists grow is entries
   for sessions long purged; the maintainer decided to remove them lazily, as a list is written,
   not as the group is purged.
+- **2026-10-14** — Done. `group::prune_gone_groups` drops from the lists given the entries naming
+  a group that is neither there nor in the trash, looked for in the system's name; one that cannot
+  be looked up stays. It runs on every storing of a workspace (`WorkspaceManager::store_access`
+  and `update`) and of an artifact, its versions' lists included (`ArtifactManager::update`,
+  through `Artifact::access_lists_mut`) - every time, not every n-th: a list naming no group costs
+  nothing, and one naming a few costs a lookup each. Sessions and channels were left out on
+  purpose: their lists come from their templates, change only by invitations used up, and do not
+  grow. The view needed nothing: an entry whose group is not found was already shown to its owner
+  without a name, which the web UI shows as "gone". Stored data need not be deleted.

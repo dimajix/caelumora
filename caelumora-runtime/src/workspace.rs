@@ -30,6 +30,7 @@
 use crate::component::{ComponentError, ComponentResult};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
+use crate::group::{prune_gone_groups, require_nameable};
 use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused, within};
 use crate::terminal::{CommandKey, CommandState, Shell, Terminal, TerminalError, TerminalProvider};
 use async_trait::async_trait;
@@ -278,11 +279,13 @@ impl WorkspaceManager {
     }
 
     /// Gives the reached `workspace` the access list `acl`, as `set_access`
-    /// says, under the lock of writing.
+    /// says, under the lock of writing - without the entries naming a group
+    /// that is gone (issue 347).
     async fn store_access(&self, ctx: &SecurityContext, mut workspace: Workspace, acl: Vec<AclEntry>) -> WorkspaceResult<Workspace> {
         let id = workspace.id;
-        crate::group::require_nameable(self.groups.as_ref(), ctx, &workspace.security_attributes.acl, &acl).await?;
+        require_nameable(self.groups.as_ref(), ctx, &workspace.security_attributes.acl, &acl).await?;
         workspace.security_attributes.acl = acl;
+        prune_gone_groups(self.groups.as_ref(), [&mut workspace.security_attributes.acl]).await;
         workspace.updated_at = chrono::Utc::now();
         self.workspaces.update(ctx, &workspace).await.map_err(store_error(id))?;
         self.events.publish_classified(GlobalEvent::updated::<Workspace>(&id, &WorkspaceUpdateEvent::AccessChanged), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
@@ -310,7 +313,8 @@ impl WorkspaceManager {
 
     /// Applies `event` to workspace `id` on behalf of `ctx`: reached as the
     /// views reach it, stored, which is where the permission is checked
-    /// (`UpdateWorkspace`), then announced. A new classification is
+    /// (`UpdateWorkspace`) - its access list without the entries naming a
+    /// group that is gone (issue 347) -, then announced. A new classification is
     /// validated and its flow asked before: it tells the caller nothing of
     /// others (issue 312).
     ///
@@ -337,6 +341,7 @@ impl WorkspaceManager {
             // Changed by `set_access`, which announces it without the list.
             WorkspaceUpdateEvent::AccessChanged => {}
         }
+        prune_gone_groups(self.groups.as_ref(), [&mut workspace.security_attributes.acl]).await;
         workspace.updated_at = chrono::Utc::now();
         self.workspaces.update(ctx, &workspace).await.map_err(store_error(id))?;
         self.events.publish_classified(GlobalEvent::updated::<Workspace>(&id, &event), workspace.security_attributes.clone(), &[had, workspace.classification.clone()]);
