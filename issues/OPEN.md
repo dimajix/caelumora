@@ -106,6 +106,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 |---|---|---|
 | [346](346-subscription-topics-for-every-kind.md) | open | The event bus has subscription topics only for sessions, channels, agents and users, so a plugin cannot follow a single entity - an artifact, say - without reading every event. |
 | [350](350-lookups-written-out-again.md) | open | The same lookup - the actor's channel, an agent's attributes as stored, a permission with the channel's attributes - is written out again at several places around channels and actors. |
+| [351](351-channel-events-announced-by-hand.md) | open | The lifecycle events of a channel are announced at ten places, each assembling the key, the attributes and the classification by hand. |
 
 ## Open architecture questions
 
