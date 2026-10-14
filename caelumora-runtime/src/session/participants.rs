@@ -97,19 +97,18 @@ impl SessionLoop {
             }
             other => return Err(SessionError::CannotTakeIn(other).into()),
         };
-        let channel_id = channel.map_or_else(ChannelId::default, |channel| channel.id());
         let member = self.member_to_take_in(context, &participant, channel).await?;
         // Joining was permitted; storing is the runtime's.
         let storing = match (in_session, joining) {
             (true, _) => None,
             (false, true) => {
-                member.require_joinable(self.security.as_ref(), context, Session::KIND, &session.security_attributes, self.id, channel_id, StoreError::PermissionDenied).await?;
+                member.require_joinable(self.security.as_ref(), context, Session::KIND, &session.security_attributes, StoreError::PermissionDenied).await?;
                 Some(SecurityContext::system())
             }
             (false, false) => Some(context.clone()),
         };
         if let (Some(channel), true) = (channel, joining) {
-            member.require_joinable(self.security.as_ref(), context, Channel::KIND, &channel.security_attributes(), self.id, channel_id, StoreError::PermissionDenied).await?;
+            member.require_joinable(self.security.as_ref(), context, Channel::KIND, &channel.security_attributes(), StoreError::PermissionDenied).await?;
         }
         if let Some(storing) = storing {
             self.session_controller.add_participant(&storing, participant).await?;
@@ -128,12 +127,11 @@ impl SessionLoop {
     /// `ChannelError::OutOfScope` or `NotCleared`; `StoreError::PermissionDenied` for an agent
     /// that may not read its personality, and cannot run; whatever reading it reports.
     pub(crate) async fn member_to_take_in(&self, context: &SecurityContext, participant: &Participant, channel: Option<&Arc<ChannelLoop>>) -> Result<Member> {
-        let channel_id = channel.map_or_else(ChannelId::default, |channel| channel.id());
-        let member = Member::of(participant, self.id, channel_id, self.stores.agents.as_ref(), &self.controllers, self.security.as_ref()).await?
+        let member = Member::of(participant, self.id, channel.map(|channel| channel.id()), self.stores.agents.as_ref(), &self.controllers, self.security.as_ref()).await?
             .ok_or(SessionError::CannotTakeIn(participant.actor_id()))?;
         if let Some(channel) = channel {
-            member.require_in_scope(self.id, channel_id)?;
-            member.require_cleared(self.confidentiality.as_ref(), context, &channel.classification(), self.id, channel_id)?;
+            member.require_in_scope()?;
+            member.require_cleared(self.confidentiality.as_ref(), context, &channel.classification())?;
         }
         Ok(member)
     }

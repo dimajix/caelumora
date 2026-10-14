@@ -17,12 +17,24 @@ use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, S
 use std::sync::Arc;
 use super::ChannelError;
 
-/// A participant with what its actor is built from: the instance's
-/// controller of its user or agent (issue 121), or the approver itself. An
-/// agent is run here or elsewhere, as its personality's kind says (issue
-/// 179). What it is cleared for follows from it as well (`clearances`).
+/// A participant with what its actor is built from (`MemberKind`), and the
+/// place it takes part in: a channel of a session, or the session alone,
+/// as it is taken in without a channel (issue 356). The questions of
+/// whether it may take part are asked there.
 #[derive(Debug, Clone)]
-pub(crate) enum Member {
+pub(crate) struct Member {
+    kind: MemberKind,
+    session_id: SessionId,
+    /// `None` for a member of the session alone.
+    channel_id: Option<ChannelId>,
+}
+
+/// What a member's actor is built from: the instance's controller of its
+/// user or agent (issue 121), or the approver itself. An agent is run here
+/// or elsewhere, as its personality's kind says (issue 179). What it is
+/// cleared for follows from it as well (`Member::clearances`).
+#[derive(Debug, Clone)]
+pub(crate) enum MemberKind {
     User(Arc<UserController>),
     Agent(Arc<AgentController>, Personality),
     ExternalAgent(Arc<AgentController>, Personality),
@@ -30,22 +42,22 @@ pub(crate) enum Member {
 }
 
 impl Member {
-    /// `participant` of channel `channel` of session `session` - of the
-    /// session alone with the default channel - with its controller, an
+    /// `participant` of channel `channel_id` of session `session_id` - of
+    /// the session alone without one - with its controller, an
     /// agent also with its personality, read once, for its actor to be built
     /// from; `None` if its user or agent no longer exists - an agent as
     /// `agent_exists` says. An agent runs only with a personality it may
-    /// read, in the channel, as `security` decides (`GetPersonality`): one
-    /// whose owner lost it - a share withdrawn - is not run (issue 191).
+    /// read there (`require_runnable`).
     ///
     /// # Errors
     /// Whatever else the store reports when loading it - also that an
     /// agent's personality is gone - and `StoreError::PermissionDenied` if
     /// it is not the agent's to read: the agent exists, but cannot be run.
-    pub(crate) async fn of(participant: &Participant, session: SessionId, channel: ChannelId, agents: &dyn EntityStore<Agent>, controllers: &ControllerManager, security: &dyn SecurityManager) -> Result<Option<Self>> {
+    pub(crate) async fn of(participant: &Participant, session_id: SessionId, channel_id: Option<ChannelId>, agents: &dyn EntityStore<Agent>, controllers: &ControllerManager, security: &dyn SecurityManager) -> Result<Option<Self>> {
+        let at = |kind| Self { kind, session_id, channel_id };
         let agent = match participant {
-            Participant::User(id) => return Ok(controllers.user_controller(*id).await.optional()?.map(Member::User)),
-            Participant::Approver(approver) => return Ok(Some(Member::Approver(approver.clone()))),
+            Participant::User(id) => return Ok(controllers.user_controller(*id).await.optional()?.map(|user| at(MemberKind::User(user)))),
+            Participant::Approver(approver) => return Ok(Some(at(MemberKind::Approver(approver.clone())))),
             Participant::Agent(id) => {
                 if !agent_exists(agents, *id).await? {
                     return Ok(None);
@@ -57,31 +69,64 @@ impl Member {
             }
         };
         let personality = agent.personality().await?;
-        let context = agent.security_context(session, channel, personality.limiting_roles());
-        security.require(&context, ActionType::get(Personality::KIND, &personality.security_attributes), StoreError::PermissionDenied).await?;
-        Ok(Some(match personality.kind {
-            PersonalityKind::Internal => Member::Agent(agent, personality),
-            PersonalityKind::External => Member::ExternalAgent(agent, personality),
-        }))
+        let member = at(match personality.kind {
+            PersonalityKind::Internal => MemberKind::Agent(agent, personality),
+            PersonalityKind::External => MemberKind::ExternalAgent(agent, personality),
+        });
+        member.require_runnable(security).await?;
+        Ok(Some(member))
+    }
+
+    /// An approver taking part in channel `channel_id` of session
+    /// `session_id` - in tests, as the member of an actor of whatever kind
+    /// the channel only looks up.
+    #[cfg(test)]
+    pub(crate) fn approver(session_id: SessionId, channel_id: ChannelId) -> Self {
+        use caelumora_model::approval::{ApprovalStrategy, ApproverId};
+        let approver = Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any };
+        Self { kind: MemberKind::Approver(approver), session_id, channel_id: Some(channel_id) }
+    }
+
+    /// What its actor is built from.
+    pub(crate) fn kind(&self) -> &MemberKind {
+        &self.kind
     }
 
     pub(crate) fn actor_id(&self) -> ActorId {
-        match self {
-            Member::User(user) => ActorId::User(user.id()),
-            Member::Agent(agent, _) | Member::ExternalAgent(agent, _) => ActorId::Agent(agent.id()),
-            Member::Approver(approver) => ActorId::Approver(approver.id),
+        match &self.kind {
+            MemberKind::User(user) => ActorId::User(user.id()),
+            MemberKind::Agent(agent, _) | MemberKind::ExternalAgent(agent, _) => ActorId::Agent(agent.id()),
+            MemberKind::Approver(approver) => ActorId::Approver(approver.id),
         }
     }
 
-    /// The context the member acts in, in `channel` of `session`: a user's
-    /// own, an agent's with its owner's rights and roles, limited by its
+    /// Nothing if the member can be run: an agent only with a personality
+    /// it may read, in its place, as `security` decides (`GetPersonality`):
+    /// one whose owner lost it - a share withdrawn - is not run (issue 191).
+    /// A user and an approver have none to read.
+    ///
+    /// # Errors
+    /// `StoreError::PermissionDenied` if the personality is not the agent's
+    /// to read.
+    async fn require_runnable(&self, security: &dyn SecurityManager) -> StoreResult<()> {
+        match (&self.kind, self.context()) {
+            (MemberKind::Agent(_, personality) | MemberKind::ExternalAgent(_, personality), Some(context)) =>
+                security.require(&context, ActionType::get(Personality::KIND, &personality.security_attributes), StoreError::PermissionDenied).await,
+            _ => Ok(()),
+        }
+    }
+
+    /// The context the member acts in, in its place: a user's own, an
+    /// agent's with its owner's rights and roles, limited by its
     /// personality's (issue 179) - as the controllers hold them now (issues
-    /// 304, 306). None for an approver.
-    fn context(&self, session: SessionId, channel: ChannelId) -> Option<SecurityContext> {
-        match self {
-            Member::User(user) => Some(user.security_context(session, channel)),
-            Member::Agent(agent, personality) | Member::ExternalAgent(agent, personality) => Some(agent.security_context(session, channel, personality.limiting_roles())),
-            Member::Approver(_) => None,
+    /// 304, 306). None for an approver. A member of the session alone acts
+    /// in no channel, which a `SecurityContext` names as the default id.
+    fn context(&self) -> Option<SecurityContext> {
+        let (session, channel) = (self.session_id, self.channel_id.unwrap_or_default());
+        match &self.kind {
+            MemberKind::User(user) => Some(user.security_context(session, channel)),
+            MemberKind::Agent(agent, personality) | MemberKind::ExternalAgent(agent, personality) => Some(agent.security_context(session, channel, personality.limiting_roles())),
+            MemberKind::Approver(_) => None,
         }
     }
 
@@ -90,8 +135,8 @@ impl Member {
     /// see more than the person responsible for it - and, if its
     /// personality limits it, those roles too, which narrow the owner's and
     /// never widen them. None for an approver.
-    fn clearances(&self, session: SessionId, channel: ChannelId) -> Vec<Vec<RoleId>> {
-        let Some(context) = self.context(session, channel) else { return Vec::new() };
+    fn clearances(&self) -> Vec<Vec<RoleId>> {
+        let Some(context) = self.context() else { return Vec::new() };
         std::iter::once(context.roles).chain(context.limiting_roles).collect()
     }
 
@@ -104,41 +149,45 @@ impl Member {
     /// # Errors
     /// `refusal` of what was refused - joining, also for a member that is
     /// not the caller's to take in.
-    #[expect(clippy::too_many_arguments, reason = "what is joined, where, and how a refusal is answered are the question's own; a type bundling them would serve this one method")]
-    pub(crate) async fn require_joinable<E: Send>(&self, security: &dyn SecurityManager, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes, session: SessionId, channel: ChannelId, refusal: impl FnOnce(Refused) -> E + Send) -> Result<(), E> {
+    pub(crate) async fn require_joinable<E: Send>(&self, security: &dyn SecurityManager, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes, refusal: impl FnOnce(Refused) -> E + Send) -> Result<(), E> {
         let join = ActionType::custom(kind, &JOIN, attributes);
-        match self.context(session, channel) {
+        match self.context() {
             Some(own) if own.owner_id == context.principal_id => security.require(&own, join, refusal).await,
             _ => Err(refusal(join.refused())),
         }
     }
 
-    /// Nothing if the member may take part in channel `channel_id` of
-    /// session `session_id` by where it lies: an agent of a session's or a
-    /// channel's scope only within it (`Scope::admits`, issue 178).
+    /// Nothing if the member may take part in its channel by where it lies:
+    /// an agent of a session's or a channel's scope only within it
+    /// (`Scope::admits`, issue 178). A question of a channel: a member of
+    /// the session alone is not asked it, and answers nothing.
     ///
     /// # Errors
     /// `ChannelError::OutOfScope` if it may not.
-    pub(crate) fn require_in_scope(&self, session_id: SessionId, channel_id: ChannelId) -> Result<(), ChannelError> {
-        let (Member::Agent(agent, _) | Member::ExternalAgent(agent, _)) = self else { return Ok(()) };
-        if agent.load().name.scope.admits(&Scope::ChannelScope { session_id, channel_id }) {
+    pub(crate) fn require_in_scope(&self) -> Result<(), ChannelError> {
+        let Some(channel_id) = self.channel_id else { return Ok(()) };
+        let (MemberKind::Agent(agent, _) | MemberKind::ExternalAgent(agent, _)) = &self.kind else { return Ok(()) };
+        if agent.load().name.scope.admits(&Scope::ChannelScope { session_id: self.session_id, channel_id }) {
             Ok(())
         } else {
             Err(ChannelError::OutOfScope { participant: self.actor_id(), channel: channel_id })
         }
     }
 
-    /// Nothing if the member is cleared for channel `channel`, classified
+    /// Nothing if the member is cleared for its channel, classified
     /// `classification`, by every set of roles that binds it - to join it,
     /// to take part in it when it is created, or for what it would be
     /// reclassified to - as `confidentiality` decides, asked in `context`,
-    /// the context of whoever admits it (issue 304).
+    /// the context of whoever admits it (issue 304). A question of a
+    /// channel: a member of the session alone is not asked it, and answers
+    /// nothing.
     ///
     /// # Errors
     /// `ChannelError::NotCleared` if it is not.
-    pub(crate) fn require_cleared(&self, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, classification: &Classification, session: SessionId, channel: ChannelId) -> Result<()> {
+    pub(crate) fn require_cleared(&self, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, classification: &Classification) -> Result<()> {
+        let Some(channel) = self.channel_id else { return Ok(()) };
         let participant = self.actor_id();
-        for roles in self.clearances(session, channel) {
+        for roles in self.clearances() {
             confidentiality.require_cleared(context, participant, &roles, classification, || ChannelError::NotCleared { participant, channel })?;
         }
         Ok(())
@@ -166,9 +215,9 @@ pub(super) async fn agent_exists(agents: &dyn EntityStore<Agent>, id: AgentId) -
 /// whatever reading a participant reports.
 pub(crate) async fn require_admitted(runtime: &RuntimeManager, context: &SecurityContext, channel: &Channel) -> Result<()> {
     for participant in &channel.participants {
-        if let Some(member) = Member::of(participant, channel.session_id, channel.id, runtime.entity_stores().agents.as_ref(), runtime.controller_manager(), runtime.security_manager().as_ref()).await? {
-            member.require_in_scope(channel.session_id, channel.id)?;
-            member.require_cleared(runtime.confidentiality().as_ref(), context, &channel.classification, channel.session_id, channel.id)?;
+        if let Some(member) = Member::of(participant, channel.session_id, Some(channel.id), runtime.entity_stores().agents.as_ref(), runtime.controller_manager(), runtime.security_manager().as_ref()).await? {
+            member.require_in_scope()?;
+            member.require_cleared(runtime.confidentiality().as_ref(), context, &channel.classification)?;
         }
     }
     Ok(())

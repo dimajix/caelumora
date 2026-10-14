@@ -75,14 +75,14 @@ impl ChannelLoop {
         // Joining was permitted; storing is the runtime's.
         let storing = if joining {
             let channel = self.id;
-            member.require_joinable(self.security.as_ref(), context, Channel::KIND, &self.security_attributes(), self.session_id, channel,
+            member.require_joinable(self.security.as_ref(), context, Channel::KIND, &self.security_attributes(),
                 |refused| ChannelError::Forbidden { action: "joining", channel, refused }).await?;
             SecurityContext::system()
         } else {
             context.clone()
         };
-        member.require_in_scope(self.session_id, self.id)?;
-        member.require_cleared(self.confidentiality.as_ref(), context, &self.classification(), self.session_id, self.id)?;
+        member.require_in_scope()?;
+        member.require_cleared(self.confidentiality.as_ref(), context, &self.classification())?;
 
         let messages = self.history().await;
         let start = history_start(history, &messages, chrono::Utc::now());

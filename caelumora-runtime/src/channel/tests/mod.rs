@@ -12,7 +12,6 @@ use crate::transport::EventSender;
 use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
 use caelumora_model::channel::{Channel, ChannelId, Participant};
-use caelumora_model::approval::Approver;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::message_history::HistoryEntry;
@@ -194,12 +193,11 @@ fn sleeper_named(name: &'static str) -> Arc<Sleeper> {
 /// A channel of alice's with the sleeping agents `names`, as approvers -
 /// who they are does not matter to finding them.
 pub(super) async fn channel_with_sleepers(names: &[&'static str]) -> (Arc<ChannelLoop>, UserId, Vec<Arc<Sleeper>>) {
-    use caelumora_model::approval::{ApprovalStrategy, ApproverId};
     let alice = user("alice");
     let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
     let sleepers: Vec<_> = names.iter().map(|name| sleeper_named(name)).collect();
     for sleeper in &sleepers {
-        channel.adopt(Arc::<Sleeper>::clone(sleeper), Member::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any })).await;
+        channel.adopt(Arc::<Sleeper>::clone(sleeper), Member::approver(channel.session_id, channel.id)).await;
     }
     (channel, alice.id, sleepers)
 }

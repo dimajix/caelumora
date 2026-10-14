@@ -569,7 +569,6 @@ mod tests {
     use crate::transport::InMemoryEventSender;
     use anyhow::Result;
     use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RetryTarget};
-    use caelumora_model::approval::Approver;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::agent::AgentId;
     use caelumora_model::message::{Message, MessageId, MessageRole};
@@ -667,13 +666,12 @@ mod tests {
     #[tokio::test]
     async fn a_user_following_the_channel_is_told_when_a_chain_is_cut_off() {
         use crate::moderator::policy_moderator::PolicyModerator;
-        use caelumora_model::approval::{ApprovalStrategy, ApproverId};
         let alice = user("alice");
         let responders = ComponentImpl { id: "responders".to_string(), fail_policy: Default::default(), facet: Arc::new(crate::moderator::broadcast_policy::BroadcastPolicy) as Arc<dyn crate::moderator::ResponderPolicy> };
         let moderator = Arc::new(PolicyModerator::new(responders, 1));
         let channel = channel_moderated_by(&[&alice], Arc::<PolicyModerator>::clone(&moderator)).await;
         let talker = Arc::new(SaysOnce(ActorId::Agent(caelumora_model::agent::AgentId::new())));
-        channel.adopt(Arc::<SaysOnce>::clone(&talker), Member::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any })).await;
+        channel.adopt(Arc::<SaysOnce>::clone(&talker), Member::approver(channel.session_id, channel.id)).await;
         let mut following = channel.user_actor(alice.id).unwrap().watch().events;
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
@@ -714,7 +712,6 @@ mod tests {
 
     #[tokio::test]
     async fn an_actor_cannot_speak_in_the_name_of_another() {
-        use caelumora_model::approval::{ApprovalStrategy, ApproverId};
         let alice = user("alice");
         let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
         let talker = ActorId::Agent(caelumora_model::agent::AgentId::new());
@@ -731,7 +728,7 @@ mod tests {
             Envelope { security: SecurityContext::new(her, channel.session_id, channel.id).next(talker, her, her), ..said(talker, talker, talker, "its own") },
         ];
         let says = Arc::new(Says(talker, std::sync::Mutex::new(envelopes)));
-        channel.adopt(Arc::<Says>::clone(&says), Member::Approver(caelumora_model::approval::Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any })).await;
+        channel.adopt(Arc::<Says>::clone(&says), Member::approver(channel.session_id, channel.id)).await;
         let mut events = channel.observe();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
@@ -782,14 +779,13 @@ mod tests {
     #[tokio::test]
     async fn the_channel_wakes_only_whom_the_moderator_asks_to_respond() {
         use caelumora_model::actor::EventContext;
-        use caelumora_model::approval::{ApprovalStrategy, ApproverId};
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let (asked, other) = (sleeper(), sleeper());
         let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(asked.id))).await;
         for actor in [&asked, &other] {
             // Who it is does not matter to routing: the channel only looks it up.
-            channel.adopt(Arc::<Sleeper>::clone(actor), Member::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any })).await;
+            channel.adopt(Arc::<Sleeper>::clone(actor), Member::approver(channel.session_id, channel.id)).await;
         }
         let said = || Envelope::new(
             context.clone(),
@@ -1104,13 +1100,12 @@ mod tests {
     #[tokio::test]
     async fn cancelling_one_actor_ends_its_turn_alone_and_keeps_the_channel_answering() {
         use caelumora_model::actor::EventContext;
-        use caelumora_model::approval::{ApprovalStrategy, ApproverId};
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let (cancelled, other) = (sleeper(), sleeper());
         let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(other.id))).await;
         for actor in [&cancelled, &other] {
-            channel.adopt(Arc::<Sleeper>::clone(actor), Member::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any })).await;
+            channel.adopt(Arc::<Sleeper>::clone(actor), Member::approver(channel.session_id, channel.id)).await;
         }
 
         channel.cancel_actor(&context, cancelled.id).await.expect("permitted");

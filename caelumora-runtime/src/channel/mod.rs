@@ -55,7 +55,7 @@ mod tests;
 
 pub use history::VisibleHistory;
 pub(crate) use history::visible_part;
-pub(crate) use member::{require_admitted, Member};
+pub(crate) use member::{require_admitted, Member, MemberKind};
 
 /// A participant of a channel, with the handle it is `@`-mentioned by.
 #[derive(Debug, Clone, PartialEq)]
@@ -353,7 +353,7 @@ impl ChannelLoop {
 
     /// `participant` with what its actor is built from (`Member::of`).
     async fn member_of(&self, participant: &Participant) -> Result<Option<Member>> {
-        Member::of(participant, self.session_id, self.id, self.agents.as_ref(), &self.controllers, self.security.as_ref()).await
+        Member::of(participant, self.session_id, Some(self.id), self.agents.as_ref(), &self.controllers, self.security.as_ref()).await
     }
 
     /// Makes `session` the session of this channel. Called once by the
@@ -519,11 +519,11 @@ impl ChannelLoop {
     async fn create_actor(channel: Arc<ChannelController>, member: &Member, runtime: &ChannelRuntime) -> Result<Box<dyn Actor>> {
         let (session_id, channel_id) = { let c = channel.load(); (c.session_id, c.id) };
         let actor_runtime = runtime.new_actor_runtime(member.actor_id(), session_id, channel_id);
-        Ok(match member.clone() {
-            Member::User(user) => Box::new(UserActor::new(Arc::clone(&channel), user, actor_runtime).await?),
-            Member::Agent(agent, personality) => Box::new(AgentActor::new(Arc::clone(&channel), agent, personality, actor_runtime).await?),
-            Member::ExternalAgent(agent, personality) => Box::new(ExternalAgentActor::new(&channel.load(), agent, personality, actor_runtime).await?),
-            Member::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
+        Ok(match member.kind().clone() {
+            MemberKind::User(user) => Box::new(UserActor::new(Arc::clone(&channel), user, actor_runtime).await?),
+            MemberKind::Agent(agent, personality) => Box::new(AgentActor::new(Arc::clone(&channel), agent, personality, actor_runtime).await?),
+            MemberKind::ExternalAgent(agent, personality) => Box::new(ExternalAgentActor::new(&channel.load(), agent, personality, actor_runtime).await?),
+            MemberKind::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
         })
     }
 }

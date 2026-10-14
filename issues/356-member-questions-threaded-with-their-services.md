@@ -1,6 +1,6 @@
 # 356 — The questions on a channel's member are asked with their place and their services threaded in each time
 
-**Status:** open
+**Status:** in progress
 **Area:** Code structure
 
 ## The problem
@@ -73,3 +73,13 @@ Two steps, the first cheap and independent:
 
 - **2026-10-14** — From the review of agents, sessions and channels, epic
   [349](349-core-review-epic.md).
+- **2026-10-14** — Step 1 done, in the form decided with the maintainer: `Member` is a struct of
+  what its actor is built from, the former enum now `MemberKind`, and its place - `session_id` and
+  `channel_id: Option<ChannelId>`. `context`, `clearances`, `require_in_scope`, `require_cleared`
+  and `require_joinable` take no ids any more, and the `clippy` exception is gone. The default id
+  for "no channel" is made in one place, `Member::context`, since a `SecurityContext` names no
+  channel as that. `require_in_scope` and `require_cleared` are questions of a channel; a member of
+  the session alone answers them with nothing, as they are not asked of it today. Weighed and not
+  taken: the place as a `Scope`, which also has kinds that are no place of a member and would have
+  to be answered at every reading. The personality check of `Member::of` became
+  `require_runnable`. Step 2 (`Membership`) is open.
