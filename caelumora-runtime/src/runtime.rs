@@ -1,4 +1,4 @@
-use crate::channel::ChannelLoop;
+use crate::channel::{ChannelLoop, Participation};
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry, ComponentResult};
 use crate::controller::{ControllerManager, SessionController};
@@ -58,6 +58,8 @@ pub struct RuntimeManager {
     component_registry: Arc<ComponentRegistry>,
     event_bus: Arc<EventBus>,
     controller_manager: Arc<ControllerManager>,
+    /// Who takes part in a channel and whether they may (issue 356).
+    participation: Arc<Participation>,
     commands: ComponentConfig,
     /// What the system restricts of tool calls everywhere
     /// (`AppConfig::approvals`, issue 13).
@@ -164,9 +166,7 @@ impl ChannelRuntime {
 
     pub(crate) fn controller_manager(&self) -> &Arc<ControllerManager> { self.runtime_manager.controller_manager() }
 
-    /// The stores of the entities - for what a channel checks of its
-    /// participants (issue 191).
-    pub(crate) fn entity_stores(&self) -> &EntityStores { self.runtime_manager.entity_stores() }
+    pub(crate) fn participation(&self) -> &Arc<Participation> { self.runtime_manager.participation() }
 
     pub(crate) fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
 }
@@ -623,6 +623,7 @@ impl RuntimeBuilder {
         }
         self.component_registry.set_defaults(&self.component_defaults)?;
         let scoped = Arc::new(ScopedEntities::new(self.scope_members));
+        let participation = Arc::new(Participation::new(Arc::clone(&self.entity_stores.agents), Arc::clone(&self.controller_manager), Arc::clone(&self.security_manager), Arc::clone(&self.confidentiality)));
         Ok(RuntimeManager {
             security_manager: self.security_manager,
             confidentiality: self.confidentiality,
@@ -634,6 +635,7 @@ impl RuntimeBuilder {
             component_registry: Arc::new(self.component_registry),
             event_bus: self.event_bus,
             controller_manager: self.controller_manager,
+            participation,
             commands: self.commands,
             approval_rules: self.approval_rules,
             agent_states: self.agent_states,
@@ -725,6 +727,11 @@ impl RuntimeManager {
 
     pub fn controller_manager(&self) -> &Arc<ControllerManager> {
         &self.controller_manager
+    }
+
+    /// Who takes part in a channel and whether they may (issue 356).
+    pub(crate) fn participation(&self) -> &Arc<Participation> {
+        &self.participation
     }
 
     /// What the system restricts of tool calls everywhere (issue 13).

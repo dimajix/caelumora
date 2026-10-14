@@ -15,7 +15,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelMember, LEAVE_GRACE, Member};
 use super::history::history_start;
-use super::member::agent_exists;
 use caelumora_model::channel::Channel;
 use caelumora_model::store::Stored;
 
@@ -74,14 +73,13 @@ impl ChannelLoop {
         // Joining was permitted; storing is the runtime's.
         let storing = if joining {
             let channel = self.id;
-            member.require_joinable(self.security.as_ref(), context, Channel::KIND, &self.security_attributes(),
+            self.participation.require_joinable(&member, context, Channel::KIND, &self.security_attributes(),
                 |refused| ChannelError::Forbidden { action: "joining", channel, refused }).await?;
             SecurityContext::system()
         } else {
             context.clone()
         };
-        member.require_in_scope()?;
-        member.require_cleared(self.confidentiality.as_ref(), context, &self.classification())?;
+        self.participation.require_admissible(&member, context, &self.classification())?;
 
         let messages = self.history().await;
         let start = history_start(history, &messages, chrono::Utc::now());
@@ -152,7 +150,7 @@ impl ChannelLoop {
             let actor = participant.actor_id();
             match self.actors.load().get(&actor).cloned() {
                 // Running: only whether it still exists matters.
-                Some(running) => match agent_exists(self.agents.as_ref(), id).await {
+                Some(running) => match self.participation.agent_exists(id).await {
                     Ok(true) => {}
                     Ok(false) => {
                         self.stop_actor(actor, running, &SecurityContext::system());

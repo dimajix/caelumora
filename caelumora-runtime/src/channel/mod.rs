@@ -27,7 +27,7 @@ use caelumora_model::workspace::Workspace;
 use crate::terminal::{Shell, Terminal};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::type_map::TypeKey;
-use caelumora_model::store::{EntityStore, StateStore, StoreError};
+use caelumora_model::store::{StateStore, StoreError};
 use caelumora_model::user::UserId;
 use tracing::{info, warn};
 use std::any::Any;
@@ -36,7 +36,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use crate::session::SessionLoop;
 use std::time::Duration;
-use caelumora_model::agent::Agent;
 #[cfg(test)]
 use caelumora_model::actor::Envelope;
 #[cfg(test)]
@@ -46,7 +45,7 @@ use tokio_util::task::TaskTracker;
 
 mod control;
 mod history;
-mod member;
+mod participation;
 mod participants;
 mod run;
 mod settings;
@@ -55,7 +54,7 @@ mod tests;
 
 pub use history::VisibleHistory;
 pub(crate) use history::visible_part;
-pub(crate) use member::{require_admitted, Member, MemberKind};
+pub(crate) use participation::{Member, MemberKind, Participation};
 
 /// A participant of a channel, with the handle it is `@`-mentioned by.
 #[derive(Debug, Clone, PartialEq)]
@@ -208,8 +207,8 @@ pub struct ChannelLoop {
     /// The services it works with, taken from `runtime` once (issue 229).
     security: Arc<dyn SecurityManager>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
-    agents: Arc<dyn EntityStore<Agent>>,
     controllers: Arc<ControllerManager>,
+    participation: Arc<Participation>,
     /// The actors of the participants, each with what it was built from -
     /// what a reclassification asks its clearances of; replaced as a whole
     /// when someone joins or leaves (issue 46), so that every reader sees
@@ -291,8 +290,8 @@ impl ChannelLoop {
             channel: channel_controller,
             security: Arc::clone(runtime.security_manager()),
             confidentiality: Arc::clone(runtime.confidentiality()),
-            agents: Arc::clone(&runtime.entity_stores().agents),
             controllers: Arc::clone(runtime.controller_manager()),
+            participation: Arc::clone(runtime.participation()),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
             leaving: std::sync::Mutex::new(HashMap::new()),
@@ -347,9 +346,10 @@ impl ChannelLoop {
         Ok(channel_loop)
     }
 
-    /// `participant` with what its actor is built from (`Member::of`).
+    /// `participant` with what its actor is built from
+    /// (`Participation::member_of`).
     async fn member_of(&self, participant: &Participant) -> Result<Option<Member>> {
-        Member::of(participant, self.session_id, Some(self.id), self.agents.as_ref(), &self.controllers, self.security.as_ref()).await
+        self.participation.member_of(participant, self.session_id, Some(self.id)).await
     }
 
     /// The session the channel belongs to (issues 123, 361), given it with

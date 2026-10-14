@@ -113,7 +113,7 @@ impl ChannelLoop {
         // Raised above a participant, the channel would show them what they
         // may not see: refused rather than anyone removed.
         for ChannelActor { member, .. } in self.actors.load().values() {
-            member.require_cleared(self.confidentiality.as_ref(), context, &classification)?;
+            self.participation.require_cleared(member, context, &classification)?;
         }
         self.channel.update_classification(context, classification.clone()).await?;
         let lowered = !self.confidentiality.may_publish(context, &channel, &classification);

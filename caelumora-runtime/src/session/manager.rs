@@ -3,6 +3,7 @@
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::value::name::{Name, ScopedName};
 use crate::runtime::RuntimeManager;
+use crate::channel::Participation;
 use crate::event::EventBus;
 use anyhow::Result;
 use caelumora_model::channel::{Channel, ChannelField};
@@ -44,6 +45,9 @@ pub struct SessionManager {
     security: Arc<dyn SecurityManager>,
     stores: EntityStores,
     events: Arc<EventBus>,
+    /// Who may take part in the channels of a session it creates or
+    /// restores (issue 356).
+    participation: Arc<Participation>,
     /// What ends the commands of a stopped session's channels (issue 254).
     command_reaper: Arc<CommandReaper>,
     /// What makes the agents a template names.
@@ -92,6 +96,7 @@ impl SessionManager {
             security: Arc::clone(runtime_manager.security_manager()),
             stores: runtime_manager.entity_stores().clone(),
             events: Arc::clone(runtime_manager.event_bus()),
+            participation: Arc::clone(runtime_manager.participation()),
             command_reaper: Arc::clone(runtime_manager.command_reaper()),
             agents: Arc::clone(runtime_manager.agent_manager()),
             scoped: Arc::clone(runtime_manager.scoped_entities()),
@@ -279,7 +284,7 @@ impl SessionManager {
             require_classification(&self.runtime_manager, &channel.classification)?;
         }
         for channel in &channels {
-            crate::channel::require_admitted(&self.runtime_manager, context, channel).await?;
+            self.participation.require_admitted(context, channel).await?;
         }
         self.stores.sessions.create(context, &session).await?;
         // Each with the group of its participants (issue 286), which it is

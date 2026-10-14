@@ -1,6 +1,6 @@
 # 356 — The questions on a channel's member are asked with their place and their services threaded in each time
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -83,3 +83,22 @@ Two steps, the first cheap and independent:
   taken: the place as a `Scope`, which also has kinds that are no place of a member and would have
   to be answered at every reading. The personality check of `Member::of` became
   `require_runnable`. Step 2 (`Membership`) is open.
+- **2026-10-14** — Step 2 done, as Option 1 decided with the maintainer, under the name
+  `Participation` rather than `Membership`: "membership" stays the groups' word (`Memberships`,
+  `StoreMemberships`), and a channel's is "participant", as everywhere else; the module is
+  `channel::participation`. `Participation` holds the agents' store, the `ControllerManager`, the
+  `SecurityManager` and the `ConfidentialityPolicy`, and owns the questions that need them -
+  `member_of` (the former `Member::of`), `agent_exists`, `require_joinable`, `require_cleared`,
+  `require_admitted` and `require_admissible`, scope and clearance together as three callers asked
+  them. `Member` keeps what needs no service: `kind`, `actor_id`, its context and clearances, and
+  the scope check behind `require_admissible`. The `RuntimeManager` holds one `Participation`;
+  `ChannelRuntime` offers it in place of the entity stores, which the channel read only for the
+  agents' store. `ChannelLoop` holds it in place of its `agents` field, `SessionLoop` and
+  `SessionManager` hold it in addition, and `require_admitted` no longer takes the `RuntimeManager`.
+  Unlike "Done when" says, the loops keep their `security`, `confidentiality` and `controllers`:
+  they use them for their own checks as well (messages, reclassifying, reading a channel,
+  workspaces), so only `ChannelLoop::agents` goes. Weighed and not taken: the questions on the
+  `ControllerManager`, which holds all four services already but whose sentence would gain an "and
+  also" and which would depend on `channel`; and a `Member` carrying its services, which makes a
+  value kept per actor heavy and still needs a second place to find members. Renaming `Member`
+  itself is left to [354](354-names-follow-several-schemes.md).

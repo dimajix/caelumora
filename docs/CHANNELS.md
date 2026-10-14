@@ -316,6 +316,14 @@ Adding is asked first as `UpdateChannel`, before anything of the newcomer is loo
 `cleared` with the channel's classification, where a policy can hold the channel's level against the
 newcomer (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
+Who takes part in a channel and whether they may is one question, owned by `Participation` (issue
+356), which the `RuntimeManager` holds once for the instance with the services it is asked with: the
+agents' store, the controllers, the `SecurityManager` and the `ConfidentialityPolicy`. It finds a
+participant's `Member` - what its actor is built from, and the place it takes part in - and answers
+whether it may run, join, lie where it may and is cleared for the channel. The session and channel
+loops and the `SessionManager` ask it alike: when a channel is created, restored or built, when
+someone is taken in or an agent comes back, and when a channel is reclassified.
+
 ### Taking someone into the session
 
 Who is not in the session yet is taken into it first, and with a channel named into that channel at
@@ -356,9 +364,9 @@ channel it takes part in until it is restored. The channels follow its mark inst
 
 *   a running session, told of the deletion, stops the agent's actor in each of its channels, in the
     runtime's name, and announces it as a leave (`channel::LEFT`);
-*   a channel that starts leaves it out, as any participant that no longer exists - `Member::of`
-    asks the store whether it exists, not the controllers, which keep an agent's controller while
-    an actor of it still runs;
+*   a channel that starts leaves it out, as any participant that no longer exists -
+    `Participation::member_of` asks the store whether it exists, not the controllers, which keep an
+    agent's controller while an actor of it still runs;
 *   the views show it as a former member, removed as its mark says, and keep its name, so that what
     it said keeps its sender.
 

@@ -65,3 +65,14 @@ cheapest part of the API to keep consistent and the most visible.
 
 - **2026-10-14** — From the review of agents, sessions and channels, epic
   [349](349-core-review-epic.md).
+- **2026-10-14** — With [356](356-member-questions-threaded-with-their-services.md) the question
+  who takes part in a channel got an owner of its own, named `Participation`
+  (`channel/participation.rs`, formerly `channel/member.rs`), so that "membership" is left to the
+  groups (`Memberships`, `StoreMemberships`). The rest of the internal "member" was agreed with the
+  maintainer and left here, so that the scheme is decided once, with `members()`, `actor_ids()` and
+  `ChannelMember`: `Member` → `ActorSource` (what an actor is built from, with the place it takes
+  part in), `MemberKind` → `SourceKind`, `Participation::member_of` and `ChannelLoop::member_of` →
+  `source_of`, `ChannelActor::member` → `source`. `ChannelMember`, `MemberView` and `members()`
+  are what REST and the web UI see and are decided here as the consideration above says.
+  `SourceKind` has the four kinds of the `ActorKind` proposed above, one variant each; the latter
+  could be read off the former.

@@ -54,8 +54,7 @@ Agent`) - also when adding the import means touching the import block for a sing
 written out only where an import cannot serve: inside a `macro_rules!`, which expands in other
 modules and writes `$crate::…`; where two items of one name meet (`crate::chain::Stored` and
 `crate::store::Stored`), unless one of them is renamed on import; and where the module around it
-calls something by its module on purpose, as `crate::channel::require_admitted` says where the check
-lives.
+calls something by its module on purpose, so that the call says where the function lives.
 
 ## Crates and interfaces
 

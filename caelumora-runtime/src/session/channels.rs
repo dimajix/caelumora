@@ -149,7 +149,7 @@ impl SessionLoop {
         // clearance. The store asks again as it stores.
         self.security
             .require(context, ActionType::create(Channel::KIND, &channel.security_attributes), StoreError::PermissionDenied).await?;
-        crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
+        self.participation.require_admitted(context, &channel).await?;
         self.stores.channels.create(context, &channel).await?;
         let added = match keep_participants(self.stores.groups.as_ref(), Group::of_channel(&channel)).await {
             Ok(()) => self.session_controller.add_channel(context, channel.id).await,
@@ -279,7 +279,7 @@ impl SessionLoop {
             .require(context, ActionType::restore(Channel::KIND, &channel.security_attributes), StoreError::PermissionDenied).await?;
         // As when it was created: its participants' clearance may have
         // changed while it was deleted.
-        crate::channel::require_admitted(&self.runtime_manager, context, &channel).await?;
+        self.participation.require_admitted(context, &channel).await?;
         let deleted_at = channel.deleted.as_ref().map(|removal| removal.at);
         let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         let channel = self.stores.channels.restore(context, channel_id).await?;

@@ -1,7 +1,7 @@
 //! A running session: `SessionLoop`, how it is built and runs its channels.
 
 use caelumora_model::value::name::Name;
-use crate::channel::ChannelLoop;
+use crate::channel::{ChannelLoop, Participation};
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use crate::scoped::ScopedEntities;
@@ -137,8 +137,10 @@ pub struct SessionLoop {
     security: Arc<dyn SecurityManager>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     stores: EntityStores,
-    /// The controllers of the users and agents it takes in (issue 221).
     controllers: Arc<ControllerManager>,
+    /// Who it may take in, and who may take part in its channels (issue
+    /// 356).
+    participation: Arc<Participation>,
     events: Arc<EventBus>,
     /// What goes with a channel deleted or restored (issue 178).
     scoped: Arc<ScopedEntities>,
@@ -241,6 +243,7 @@ impl SessionLoop {
             confidentiality: Arc::clone(runtime_manager.confidentiality()),
             stores: runtime_manager.entity_stores().clone(),
             controllers: Arc::clone(runtime_manager.controller_manager()),
+            participation: Arc::clone(runtime_manager.participation()),
             events: Arc::clone(runtime_manager.event_bus()),
             scoped: Arc::clone(runtime_manager.scoped_entities()),
             groups: Arc::clone(runtime_manager.group_manager()),
