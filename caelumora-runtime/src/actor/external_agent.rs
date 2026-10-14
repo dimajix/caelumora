@@ -25,33 +25,28 @@
 //! when it began, its answer classified as what it has seen - and given up
 //! when the channel was lowered since.
 
-use super::commands::AgentCommands;
-use super::intake::{catch_up, take_in};
+use super::body::AgentBody;
 use super::{failure_message, reject_retries};
 use crate::actor::{Actor, Answering};
 use crate::command::AgentCommandProvider;
-use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
-use crate::agent::state::AgentStateHandle;
+use crate::component::ComponentImpl;
 use crate::component_impl::external_context_provider::EXTERNAL_CONTEXT_PROVIDER_KIND;
 use crate::context::ContextProvider;
-use crate::controller::AgentController;
+use crate::controller::{AgentController, ChannelController};
 use crate::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, OutboundMessage, Said};
 use crate::logging::envelope_span;
 use crate::message::PerceiveInProcessor;
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
-use crate::view::ViewsFactory;
-use crate::agent::work::AgentWork;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, ProcessingStateHolder};
-use caelumora_model::agent::{AgentId, Personality};
-use caelumora_model::channel::Channel;
+use caelumora_model::agent::Personality;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::command::Command;
-use caelumora_model::context::{ModelProfile, PromptPart};
+use caelumora_model::context::PromptPart;
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::external_agent::{OpenTaskState, TaskId};
 use caelumora_model::turn::GivenUpReason;
@@ -65,50 +60,28 @@ use futures::stream::{BoxStream, SelectAll};
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn, Instrument};
 use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct ExternalAgentActor {
-    agent_id: AgentId,
-    agent_controller: Arc<AgentController>,
-    actor_runtime: ActorRuntime,
-    /// Where it is, and in whose name it acts (issue 87): what it says on
-    /// its own is sent in it.
-    /// Where it acts and what it is limited to, as it was built; its roles
-    /// are taken anew by `security_context` (issue 304).
-    context: SecurityContext,
+    /// What it is in the channel, as every agent is (issue 355): who it is,
+    /// in whose name it acts, its state there, how it hears, its commands -
+    /// what they stage is in its transcript, given to the remote agent with
+    /// its next call. Its context provider gives the remote agent what it
+    /// is given besides what was said - the frame of it, such as who is in
+    /// the channel (issues 204, 214) -, by default
+    /// `external_context_provider`.
+    body: AgentBody,
     /// The remote agent: exactly one (issue 179).
     remote: ComponentImpl<dyn ExternalAgent>,
-    /// What filters what reaches it, as an agent's do (issue 196).
-    perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
-    /// What the remote agent is given besides what was said - the frame of
-    /// it, such as who is in the channel (issues 204, 214): exactly one, by
-    /// default `external_context_provider`.
-    context_provider: ComponentImpl<dyn ContextProvider>,
     /// The prompt parts the remote agent has not been given yet, by what
     /// tells them apart (`part_key`), in the order they came: a part that
     /// changed, until a send that reaches the remote agent gave it - also
     /// when its provider, telling only changes, has nothing new by then. A
     /// plain lock, never held across an await.
     pending_prompts: std::sync::Mutex<Vec<(String, PromptPart)>>,
-    /// The agent's own state (issue 62), which its prompt providers read,
-    /// as an agent's run here do.
-    agent_state: Arc<AgentStateHandle>,
-    /// What its prompt providers navigate, as a turn does (issue 163).
-    views: ViewsFactory,
-    /// The commands it carries out itself (issue 269), as an agent run here
-    /// does: what they stage is in its transcript, given to the remote
-    /// agent with its next call.
-    commands: AgentCommands,
-    /// What it was built from, its preconfigured components resolved
-    /// (issue 270).
-    built_from: ComponentConfig,
-    /// Its state in this channel, held by the run loop for as long as it
-    /// runs.
-    state: Mutex<AgentChannelState>,
     /// `Planning` while the remote agent works on an answer, else `Idle`,
     /// as `go_to` moved it.
     processing: ProcessingStateHolder,
@@ -142,7 +115,7 @@ enum Ending {
 
 impl ExternalAgentActor {
     /// The facets it asks its components for (issue 337) - its commands
-    /// through `AgentCommands`.
+    /// through its body.
     pub const COMPONENT_FACETS: &[TypeKey] = &[
         TypeKey::of::<dyn ExternalAgent>(),
         TypeKey::of::<dyn PerceiveInProcessor>(),
@@ -150,45 +123,24 @@ impl ExternalAgentActor {
         TypeKey::of::<dyn AgentCommandProvider>(),
     ];
 
-    /// The context it acts in, here: its owner's delegate, with its owner's
-    /// roles as they are now and limited as it was built (issue 304).
-    fn security_context(&self) -> SecurityContext {
-        self.agent_controller.security_context(self.context.session_id, self.context.channel_id, self.context.limiting_roles.as_deref())
-    }
-
     /// The actor of the external agent `agent_controller` holds - the
     /// session's controller of it, shared with its actors in the session's
     /// other channels (issue 120) - built from its `personality`, as the
-    /// channel read it for the agent.
+    /// channel read it for the agent, in the channel `channel_controller`
+    /// holds.
     ///
     /// # Errors
     /// If its personality provides no `ExternalAgent` - or more than one -
     /// or its answers, as the component classifies them, may not be
-    /// published in `channel`; whatever its state store reports.
-    pub async fn new(channel: &Channel, agent_controller: Arc<AgentController>, personality: Personality, actor_runtime: ActorRuntime) -> Result<Self> {
-        let agent = agent_controller.load();
-        let agent_id = agent.id;
-        let attributes = agent.security_attributes.clone();
-        drop(agent);
-        // It acts on behalf of its owner, in this channel (issue 87), with
-        // its owner's roles as they are when it is built, limited by its
-        // personality (issue 304); `security_context` takes them anew.
-        let security_context = agent_controller.security_context(channel.session_id, channel.id, personality.limiting_roles());
-
+    /// published in the channel; whatever its state store reports.
+    pub async fn new(channel_controller: Arc<ChannelController>, agent_controller: Arc<AgentController>, personality: Personality, actor_runtime: ActorRuntime) -> Result<Self> {
+        let channel = Arc::clone(&channel_controller.load());
         // Its context provider is, unless it configures one, not a turn's.
         let defaults = ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new(EXTERNAL_CONTEXT_PROVIDER_KIND, EXTERNAL_CONTEXT_PROVIDER_KIND)],
         };
-        let components = ComponentContainer::with_defaults(
-            &personality.components,
-            &defaults,
-            Self::COMPONENT_FACETS,
-            actor_runtime.component_registry(),
-            &ComponentContext::new(security_context.clone(), actor_runtime.services().clone()),
-        ).await?;
+        let (body, components) = AgentBody::build(&channel, agent_controller, &personality, Self::COMPONENT_FACETS, &defaults, actor_runtime).await?;
         let remote = components.one::<dyn ExternalAgent>().await?;
-        let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
-        let context_provider = components.one::<dyn ContextProvider>().await?;
 
         // Answers that may never enter the channel would each be dropped
         // there in silence: refused here instead, once - and once more with
@@ -198,31 +150,18 @@ impl ExternalAgentActor {
         // else as the channel - has to enter the channel: asked here, and
         // before every exchange, as the channel may have been lowered since
         // (issue 212).
-        if !actor_runtime.confidentiality().may_publish(&security_context, &classification, &channel.classification) {
+        if !body.runtime.confidentiality().may_publish(&body.security_context(), &classification, &channel.classification) {
             return Err(anyhow!(
                 "the answers of external agent {} are classified {}, which may not be published in channel {} ({})",
-                agent_id, classification, channel.id, channel.classification
+                body.agent_id(), classification, channel.id, channel.classification
             ));
         }
 
-        let state = actor_runtime.load_channel_state().await?;
-        let agent_state = actor_runtime.agent_state(attributes).await?;
-        let views = actor_runtime.views();
-        let commands = AgentCommands::new(&components, Arc::clone(&agent_controller), security_context.limiting_roles.clone(), ModelProfile::default(), actor_runtime.clone(), Arc::clone(&agent_state))?;
         Ok(Self {
-            agent_id,
-            agent_controller,
-            actor_runtime,
-            context: security_context,
+            // A change of a message it was given is told by a notice (issue 236).
+            body: body.handing_over(tell),
             remote,
-            perceive_in_processors,
-            context_provider,
             pending_prompts: std::sync::Mutex::new(Vec::new()),
-            agent_state,
-            views,
-            commands,
-            built_from: components.components(),
-            state: Mutex::new(state),
             processing: ProcessingStateHolder::new(ActorState::Idle),
             current: std::sync::Mutex::new(CancellationToken::new()),
             ended: CancellationToken::new(),
@@ -239,9 +178,7 @@ impl ExternalAgentActor {
     /// # Errors
     /// If its context provider cannot assemble them.
     async fn prompts_to_give(&self, state: &AgentChannelState, work: &mut Work) -> Result<Vec<(String, PromptPart)>> {
-        let reading = AgentWork::new(self.agent_id, work, state, &self.agent_state, &self.views);
-        let (parts, knowledge) = self.context_provider.current_context(&reading).await
-            .with_context(|| format!("component '{}' could not assemble the context", self.context_provider.id))?;
+        let (parts, knowledge) = self.body.current_context(&self.body.work(work, state)).await?;
         work.take_in_context(&parts, knowledge);
         let mut pending = self.pending_prompts();
         for (index, part) in parts.into_iter().enumerate() {
@@ -265,16 +202,7 @@ impl ExternalAgentActor {
     /// 243).
     async fn go_to(&self, state: ActorState, output: &dyn EventSender) {
         if self.processing.swap(state) != state {
-            self.announce(state, output).await;
-        }
-    }
-
-    /// Tells the users that it stands at `state` (issue 243), in its own
-    /// contexts, as an agent run here does. Not sent is only logged.
-    async fn announce(&self, state: ActorState, output: &dyn EventSender) {
-        let own = Answering::own(self.id(), self.name(), &self.security_context());
-        if let Err(e) = own.send(ActorEvent::StateChanged(state), output).await {
-            warn!("{:#}", e);
+            self.body.announce(state, output).await;
         }
     }
 
@@ -296,21 +224,19 @@ impl ExternalAgentActor {
     /// or taken back since is told to it by a notice (`tell`, issue 236). A
     /// command is carried out where it came (issue 269).
     async fn hear(&self, state: &mut AgentChannelState, received: Envelope, rx: &mut Box<dyn EventReceiver>, output: &dyn EventSender) -> Option<Envelope> {
-        let mut taken = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context(), tell).await;
+        let mut taken = self.body.take_in(state, received, rx).await;
         while let Some(command) = taken.command.take() {
             // Shown carrying it out meanwhile, as an agent run here is
             // (issue 299).
             self.go_to(ActorState::CarryingOutCommand, output).await;
-            self.commands.carry_out(state, &command, output).await;
+            self.body.carry_out(state, &command, output).await;
             self.go_to(ActorState::Idle, output).await;
             let Some(next) = rx.try_recv() else { break };
-            taken = taken.then(take_in(state, next, rx, &self.perceive_in_processors, &self.security_context(), tell).await);
+            taken = taken.then(self.body.take_in(state, next, rx).await);
         }
         let (request, retries) = (taken.request, taken.retries);
-        if let Err(e) = self.actor_runtime.store_channel_state(state).await {
-            warn!("External agent {} cannot store what it heard: {:#}", self.id(), e);
-        }
-        reject_retries(retries, caelumora_model::agent::RetryRefused::Elsewhere, self.id(), self.name().as_str(), &self.security_context(), output).await;
+        self.body.store(state).await;
+        reject_retries(retries, caelumora_model::agent::RetryRefused::Elsewhere, self.id(), self.name().as_str(), &self.body.security_context(), output).await;
         request
     }
 
@@ -320,8 +246,8 @@ impl ExternalAgentActor {
     /// answer, never the actor. Without a channel there is nobody to
     /// answer.
     async fn respond(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
-        let answering = Answering::to(request, self.id(), self.name(), &self.security_context());
-        let Some(channel) = self.actor_runtime.channel_loop() else {
+        let answering = Answering::to(request, self.id(), self.name(), &self.body.security_context());
+        let Some(channel) = self.body.runtime.channel_loop() else {
             warn!("External agent {} has no channel to answer in", self.id());
             return;
         };
@@ -331,9 +257,7 @@ impl ExternalAgentActor {
         let token = self.begin();
         self.go_to(ActorState::Planning, output).await;
         let ending = self.exchange(state, &answering, &mut work, &token, output).await;
-        if let Err(e) = self.actor_runtime.store_channel_state(state).await {
-            warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
-        }
+        self.body.store(state).await;
         let events = match ending {
             // A request is always answered, with nothing if need be.
             Ok(Ending::Answered(message)) => answered(Some(work.turn_id), message.map(|message| *message)),
@@ -376,7 +300,7 @@ impl ExternalAgentActor {
         // (issue 135).
         work.context.profile = self.remote.profile();
         let brought = self.remote.classification().unwrap_or_else(|| work.classification.clone());
-        if !self.actor_runtime.confidentiality().may_publish(&work.security_context, &brought, &work.classification) {
+        if !self.body.runtime.confidentiality().may_publish(&work.security_context, &brought, &work.classification) {
             return Ok(Ending::Failed(format!("its answers are classified {brought}, which may not be published in this channel ({})", work.classification)));
         }
         work.see(&brought);
@@ -499,9 +423,7 @@ impl ExternalAgentActor {
     /// while the remote agent goes on with it.
     async fn begin_task(&self, state: &mut AgentChannelState, task: &TaskId, work: &Work) {
         state.remote.begin(task, work);
-        if let Err(e) = self.actor_runtime.store_channel_state(state).await {
-            warn!("External agent {} cannot store the task it began: {:#}", self.id(), e);
-        }
+        self.body.store(state).await;
     }
 
     /// Re-attaches to every task left working that is not followed yet
@@ -597,14 +519,14 @@ impl ExternalAgentActor {
     /// speaks afresh, as the agent itself, classified as its remote agent
     /// declares, else as the channel is now.
     async fn speak(&self, state: &mut AgentChannelState, work: Option<Work>, outcome: Result<Answer, String>, output: &dyn EventSender) {
-        let Some(channel) = self.actor_runtime.channel_loop() else {
+        let Some(channel) = self.body.runtime.channel_loop() else {
             warn!("External agent {} has no channel to speak in", self.id());
             return;
         };
         let (speaking, label) = match &work {
             Some(work) => (self.speaking_for(work), work.label()),
             None => (
-                Answering::own(self.id(), self.name(), &self.security_context()),
+                Answering::own(self.id(), self.name(), &self.body.security_context()),
                 self.remote.classification().unwrap_or_else(|| channel.classification()),
             ),
         };
@@ -617,9 +539,7 @@ impl ExternalAgentActor {
                 None => Vec::new(),
             },
         };
-        if let Err(e) = self.actor_runtime.store_channel_state(state).await {
-            warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
-        }
+        self.body.store(state).await;
         speaking.send_all(events, output).await;
     }
 
@@ -634,8 +554,8 @@ impl ExternalAgentActor {
     /// in the work's name, as `AgentActor::turn_flow`): then it is given up
     /// (issue 212). `None` while it flows, or without a channel.
     async fn lowered(&self, work: &Work) -> Option<Classification> {
-        let channel = self.actor_runtime.channel_loop()?.classification();
-        let flows = self.actor_runtime.confidentiality().may_publish(&work.security_context, &work.classification, &channel);
+        let channel = self.body.runtime.channel_loop()?.classification();
+        let flows = self.body.runtime.confidentiality().may_publish(&work.security_context, &work.classification, &channel);
         (!flows).then_some(channel)
     }
 
@@ -649,9 +569,7 @@ impl ExternalAgentActor {
         if state.remote.work_of(task).is_some() {
             self.cancel_remote(state, &work.security_context, task).await;
         }
-        if let Err(e) = self.actor_runtime.store_channel_state(state).await {
-            warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
-        }
+        self.body.store(state).await;
         self.speaking_for(work).send_all(vec![ActorEvent::TurnGivenUp { turn_id: work.turn_id, reason: GivenUpReason::Lowered { channel } }], output).await;
     }
 
@@ -659,7 +577,7 @@ impl ExternalAgentActor {
     /// began it, as a turn acts with its request's (issue 211) - else, for a
     /// task stored before it was kept, the agent's own.
     fn acting_for(&self, state: &AgentChannelState, task: &TaskId) -> SecurityContext {
-        state.remote.work_of(task).map(|work| work.security_context).unwrap_or_else(|| self.security_context())
+        state.remote.work_of(task).map(|work| work.security_context).unwrap_or_else(|| self.body.security_context())
     }
 
     /// Asks the remote agent to cancel `task`, and forgets it: a cancel that
@@ -887,7 +805,7 @@ fn answered(turn_id: Option<TurnId>, message: Option<Message>) -> Vec<ActorEvent
 #[async_trait]
 impl Actor for ExternalAgentActor {
     fn id(&self) -> ActorId {
-        ActorId::Agent(self.agent_id)
+        self.body.id()
     }
 
     fn kind(&self) -> String {
@@ -895,7 +813,7 @@ impl Actor for ExternalAgentActor {
     }
 
     fn name(&self) -> Name {
-        self.agent_controller.load().name.name.clone()
+        self.body.name()
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {
@@ -903,26 +821,25 @@ impl Actor for ExternalAgentActor {
     }
 
     fn components(&self) -> ComponentConfig {
-        self.built_from.clone()
+        self.body.components()
     }
 
     async fn commands(&self, issuer: &SecurityContext) -> Vec<Command> {
-        self.commands.visible(issuer).await
+        self.body.visible_commands(issuer).await
     }
 
     /// Takes in what it missed as what it hears (issues 190, 196, 206); the
     /// remote agent is given it when it is next asked.
     async fn catch_up(&self, visible: Vec<Message>) -> Result<()> {
-        let mut state = self.state.lock().await;
-        catch_up(&mut state, visible, self.id(), &self.perceive_in_processors, &self.security_context(), &self.actor_runtime).await
+        self.body.catch_up(visible).await
     }
 
     async fn run(&self, mut rx: Box<dyn EventReceiver>, output: Box<dyn EventSender>) -> Result<()> {
-        let mut state = self.state.try_lock()
+        let mut state = self.body.state.try_lock()
             .map_err(|_| anyhow!("ExternalAgentActor {} already running", self.id()))?;
         info!("ExternalAgentActor {} is starting", self.id());
         // Whoever watches already learns where it starts.
-        self.announce(self.processing.load(), &*output).await;
+        self.body.announce(self.processing.load(), &*output).await;
         // The open tasks it follows between requests, and what came of them
         // so far. While it answers a request, what they send waits.
         let mut followed = Followed::new();
@@ -956,9 +873,7 @@ impl Actor for ExternalAgentActor {
                 let acting = self.acting_for(&state, &task);
                 self.cancel_remote(&mut state, &acting, &task).await;
             }
-            if let Err(e) = self.actor_runtime.store_channel_state(&mut state).await {
-                warn!("External agent {} cannot store its state in its channel: {:#}", self.id(), e);
-            }
+            self.body.store(&mut state).await;
         }
         info!("ExternalAgentActor {} has finished", self.id());
         Ok(())
@@ -983,7 +898,6 @@ impl Actor for ExternalAgentActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actor::intake::perceive;
     use caelumora_model::confidentiality::Classification;
 
     fn said(sender: ActorId, name: &str, text: &str) -> Message {
@@ -995,27 +909,6 @@ mod tests {
             sender_name: name.to_string(),
             ..Message::new(Classification::CHANNEL_DEFAULT)
         }
-    }
-
-    #[tokio::test]
-    async fn all_it_hears_is_kept_and_what_others_said_with_text_is_given_once() {
-        let alice = ActorId::User(caelumora_model::user::UserId::new());
-        let first = said(alice, "alice", "hello");
-        let second = said(alice, "alice", "how are you?");
-        let empty = Message { content: None, ..said(alice, "alice", "") };
-        let step = Message { internal: true, ..said(alice, "alice", "thinking") };
-        let ids = |messages: Vec<Message>| messages.into_iter().map(|m| m.id).collect::<Vec<_>>();
-        let security = SecurityContext::default();
-
-        let mut state = AgentChannelState::default();
-        perceive(&mut state, vec![first.clone()], &[], &security).await;
-        assert_eq!(ids(state.transcript.messages()), vec![first.id], "never sent anything: what others said");
-        state.transcript.start_anew();
-        perceive(&mut state, vec![empty.clone(), step.clone(), second.clone()], &[], &security).await;
-        assert_eq!(ids(state.history.messages()), vec![first.id, empty.id, step.id, second.id], "all it heard is kept");
-        assert_eq!(ids(state.transcript.messages()), vec![second.id], "after what was sent, with text");
-        state.transcript.start_anew();
-        assert!(state.transcript.messages().is_empty(), "nothing new");
     }
 
     #[test]

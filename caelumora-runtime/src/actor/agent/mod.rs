@@ -1,16 +1,14 @@
 mod run_control;
 
-use super::commands::AgentCommands;
-use super::intake::{catch_up, take_in};
+use super::body::AgentBody;
 use super::{failure_message, reject_retries, retry_target};
 use crate::message::apply_stage_processors;
 use crate::actor::{Actor, Answering};
 use run_control::{interruption, Interrupt, RunControl};
 use crate::agent::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
-use crate::view::ViewsFactory;
 use crate::command::AgentCommandProvider;
 use crate::compaction::{CompactionPolicy, CompactionStrategy};
-use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
+use crate::component::ComponentImpl;
 use crate::context::ContextProvider;
 use crate::llm::LLMClient;
 use crate::logging::{agent_span, envelope_span};
@@ -21,8 +19,7 @@ use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
-use crate::agent::state::AgentStateHandle;
-use caelumora_model::agent::{AgentChannelState, AgentId, Personality, RetryRefused};
+use caelumora_model::agent::{AgentChannelState, Personality, RetryRefused};
 use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::turn::TurnState;
@@ -39,29 +36,20 @@ use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
 use tracing::{debug, info, warn, Instrument};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[derive(Debug)]
 pub struct AgentActor {
-    agent_id: AgentId,
-    agent_controller: Arc<AgentController>,
-    actor_runtime: ActorRuntime,
-    /// Where it is, and in whose name it acts (issue 87): what its
-    /// processors are given (issue 196).
-    /// Where it acts and what it is limited to, as it was built; its roles
-    /// are taken anew by `security_context` (issue 304).
-    context: SecurityContext,
+    /// What it is in the channel, as every agent is (issue 355): who it is,
+    /// in whose name it acts, its state there, how it hears, its commands.
+    body: AgentBody,
 
     // Components
-    /// Assembles the model's context: exactly one (issue 98).
-    context_provider: ComponentImpl<dyn ContextProvider>,
     /// The model it talks to: exactly one (issue 130).
     llm_client: ComponentImpl<dyn LLMClient>,
     /// When it compacts its context on its own: exactly one (issue 284).
     compaction_policy: ComponentImpl<dyn CompactionPolicy>,
     /// How its context is compacted: exactly one (issues 16, 284).
     compaction: ComponentImpl<dyn CompactionStrategy>,
-    perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
     emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
     /// Runs the agent's tool calls with the tools of its components, behind
     /// the runtime's permission checks (issues 127, 280).
@@ -69,22 +57,8 @@ pub struct AgentActor {
     /// Who sees its reasoning at least (issues 61, 133), from the
     /// personality.
     reasoning_visibility: Visibility,
-    /// What its turns navigate (issue 163), as the agent.
-    views: ViewsFactory,
-    /// The commands it carries out itself (issue 269), from its
-    /// personality's components.
-    commands: AgentCommands,
-    /// What it was built from, its preconfigured components resolved
-    /// (issue 270).
-    built_from: ComponentConfig,
 
     // State
-    /// The agent's own state, shared with its actors in other channels and
-    /// sessions (issue 62).
-    agent_state: Arc<AgentStateHandle>,
-    /// Its state in this channel, held by the run loop for as long as it
-    /// runs.
-    state: Mutex<AgentChannelState>,
     /// Where the run loop stands, and what `cancel`, `stop` and `wakeup`
     /// asked of it.
     control: RunControl,
@@ -92,7 +66,7 @@ pub struct AgentActor {
 
 impl AgentActor {
     /// The facets it asks its components for (issue 337) - its commands
-    /// through `AgentCommands`.
+    /// through its body.
     pub const COMPONENT_FACETS: &[TypeKey] = &[
         TypeKey::of::<dyn ContextProvider>(),
         TypeKey::of::<dyn LLMClient>(),
@@ -103,12 +77,6 @@ impl AgentActor {
         TypeKey::of::<dyn ToolProvider>(),
         TypeKey::of::<dyn AgentCommandProvider>(),
     ];
-
-    /// The context it acts in, here: its owner's delegate, with its owner's
-    /// roles as they are now and limited as it was built (issue 304).
-    fn security_context(&self) -> SecurityContext {
-        self.agent_controller.security_context(self.context.session_id, self.context.channel_id, self.context.limiting_roles.as_deref())
-    }
 
     /// The actor of the agent `agent_controller` holds - the session's
     /// controller of it, shared with its actors in the session's other
@@ -121,68 +89,39 @@ impl AgentActor {
         actor_runtime: ActorRuntime,
     ) -> Result<Self> {
         let channel = Arc::clone(&channel_controller.load());
-        let agent = agent_controller.load();
-        let agent_id = agent.id;
-        let attributes = agent.security_attributes.clone();
-        drop(agent);
-        // It acts on behalf of its owner, in this channel (issue 87), with
-        // its owner's roles as they are when it is built, limited by its
-        // personality (issue 304); `security_context` takes them anew.
-        let security_context = agent_controller.security_context(channel.session_id, channel.id, personality.limiting_roles());
-
-        let components = ComponentContainer::from_config(
-            &personality.components,
-            Self::COMPONENT_FACETS,
-            actor_runtime.component_registry(),
-            // Its components get nothing of its runtime (issue 128); what they
-            // read of the session they read through their turn (issue 163).
-            &ComponentContext::new(security_context.clone(), actor_runtime.services().clone()),
-        )
-        .await?;
-        let context_provider = components.one::<dyn ContextProvider>().await?;
+        let (body, components) = AgentBody::build(&channel, agent_controller, &personality, Self::COMPONENT_FACETS, &ComponentConfig::default(), actor_runtime).await?;
         let llm_client = components.one::<dyn LLMClient>().await?;
         let compaction_policy = components.one::<dyn CompactionPolicy>().await?;
         let compaction = components.one::<dyn CompactionStrategy>().await?;
-        let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
+        let runtime = &body.runtime;
         let tool_executor = ToolExecutor::new(
-            Arc::clone(actor_runtime.security_manager()),
-            Arc::clone(actor_runtime.confidentiality()),
+            Arc::clone(runtime.security_manager()),
+            Arc::clone(runtime.confidentiality()),
             components.get_all::<dyn ToolProvider>(None)?,
-            Arc::clone(actor_runtime.approval_rules()),
-            Arc::clone(actor_runtime.session_controller()),
+            Arc::clone(runtime.approval_rules()),
+            Arc::clone(runtime.session_controller()),
             channel_controller,
-            actor_runtime.channel_handle(),
+            runtime.channel_handle(),
         )?;
 
-        let mut agent_channel_state = actor_runtime.load_channel_state().await?;
-        let not_executed = prepare_resume(&mut agent_channel_state);
+        let mut body = body.with_profile(llm_client.profile());
+        let agent_id = body.agent_id();
+        let agent_channel_state = body.state.get_mut();
+        let not_executed = prepare_resume(agent_channel_state);
         if not_executed > 0 {
             warn!("Agent {} in channel {}: {} approved tool calls were not executed before the restart; the model is told", agent_id, channel.id, not_executed);
         }
-        let agent_state = actor_runtime.agent_state(attributes).await?;
         let control = RunControl::new(agent_channel_state.processing_state, agent_channel_state.turn.as_ref().map(|t| t.work.turn_id));
-        let views = actor_runtime.views();
-        let commands = AgentCommands::new(&components, Arc::clone(&agent_controller), security_context.limiting_roles.clone(), llm_client.profile(), actor_runtime.clone(), Arc::clone(&agent_state))?;
 
         Ok(AgentActor {
-            agent_id,
-            agent_controller,
-            actor_runtime,
-            context: security_context,
-            context_provider,
+            body,
             llm_client,
             compaction_policy,
             compaction,
-            perceive_in_processors,
             emit_out_processors,
             tool_executor,
             reasoning_visibility: personality.reasoning_visibility,
-            views,
-            commands,
-            built_from: components.components(),
-            agent_state,
-            state: Mutex::new(agent_channel_state),
             control,
         })
     }
@@ -208,7 +147,7 @@ impl AgentActor {
     /// The turn under way in `state`, as its steps work with it; `None`
     /// between turns.
     fn turn<'s>(&self, state: &'s mut AgentChannelState) -> Option<Turn<'s>> {
-        Turn::of(self.agent_id, self.agent_controller.name(), state, Arc::clone(&self.agent_state), self.views.clone())
+        self.body.turn(state)
     }
 
     /// The turn under way in `state`, for a step of a turn. Without one -
@@ -229,9 +168,9 @@ impl AgentActor {
         request: &Envelope,
         output: &dyn EventSender,
     ) -> Result<()> {
-        let classification = self.actor_runtime.channel_loop().map(|c| c.classification())
+        let classification = self.body.runtime.channel_loop().map(|c| c.classification())
             .ok_or_else(|| anyhow!("Agent {} has no channel to take a turn in", self.id()))?;
-        let Answering { event_context, security_context } = Answering::to(request, self.id(), self.agent_controller.name(), &self.security_context());
+        let Answering { event_context, security_context } = Answering::to(request, self.id(), self.body.agent.name(), &self.body.security_context());
         // Judged for whoever asked, in the channel as the turn begins.
         let tool_sets = self.tool_executor.tool_sets(&security_context, &classification).await;
         let turn_id = state.begin_turn(
@@ -246,12 +185,7 @@ impl AgentActor {
 
         debug!("Starting generating messages for agent {} {} in turn {}", self.id(), turn.agent_name(), turn_id);
         turn.send_event(ActorEvent::ResponseStarted { turn_id }, output).await?;
-        // The agent's `ContextProvider` assembles what the model is given,
-        // whatever its fail policy: without a context there is nothing to
-        // give the model. Parts that may be left out are the prompt
-        // providers', each by its own policy.
-        let (parts, knowledge) = self.context_provider.current_context(&turn.work()).await
-            .with_context(|| format!("component '{}' could not assemble the context", self.context_provider.id))?;
+        let (parts, knowledge) = self.body.current_context(&turn.work()).await?;
         turn.set_context(parts, knowledge);
         Ok(())
     }
@@ -261,26 +195,14 @@ impl AgentActor {
     /// memory.
     async fn store_channel_state(&self, state: &mut AgentChannelState) {
         state.processing_state = self.control.state();
-        if let Err(e) = self.actor_runtime.store_channel_state(state).await {
-            warn!("Cannot store agent channel state of agent {}: {:#}", self.agent_id, e);
-        }
+        self.body.store(state).await;
     }
 
     /// Tells the users where the actor stands, if it moved since it last
     /// told them (issue 243).
     async fn announce_state(&self, output: &dyn EventSender) {
         if let Some(now) = self.control.unannounced() {
-            self.announce(now, output).await;
-        }
-    }
-
-    /// Tells the users that the actor stands at `state` (issue 243) - in
-    /// its own contexts: the state is the agent's, not a turn's. Not sent is
-    /// only logged.
-    async fn announce(&self, state: ActorState, output: &dyn EventSender) {
-        let own = Answering::own(self.id(), self.name(), &self.security_context());
-        if let Err(e) = own.send(ActorEvent::StateChanged(state), output).await {
-            warn!("{:#}", e);
+            self.body.announce(now, output).await;
         }
     }
 
@@ -318,11 +240,11 @@ impl AgentActor {
         let CommittedTurn { final_messages, channel_state_changed, answering, abandoned_calls } = turn.commit(cancelled, output).await;
         self.store_channel_state(state).await;
         if channel_state_changed {
-            self.actor_runtime.announce_channel_state_changed();
+            self.body.runtime.announce_channel_state_changed();
         }
         withdraw_requests(&answering, &abandoned_calls, output).await?;
         answering.send(ActorEvent::TurnFinished { turn_id, messages: final_messages }, output).await?;
-        debug!("Agent {} {} ended its turn{}", self.id(), self.agent_controller.name(), if cancelled { ", cancelled" } else { "" });
+        debug!("Agent {} {} ended its turn{}", self.id(), self.body.agent.name(), if cancelled { ", cancelled" } else { "" });
         Ok(next)
     }
 
@@ -357,12 +279,12 @@ impl AgentActor {
         let Some(received) = received else { return Ok(None) };
         // It gives its transcript nowhere else: of a change it does not hold on
         // its path there is nobody to tell.
-        let mut taken = take_in(state, received, rx, &self.perceive_in_processors, &self.security_context(), |_, _| {}).await;
+        let mut taken = self.body.take_in(state, received, rx).await;
         // A command where it came (issue 269), then the rest of the batch.
         while let Some(command) = taken.command.take() {
             self.carry_out(state, &command, output).await;
             let Some(next) = rx.try_recv() else { break };
-            taken = taken.then(take_in(state, next, rx, &self.perceive_in_processors, &self.security_context(), |_, _| {}).await);
+            taken = taken.then(self.body.take_in(state, next, rx).await);
         }
         let (request, mut retries) = (taken.request, taken.retries);
         // Read once taken in, not before waiting: the channel wakes an agent
@@ -374,7 +296,7 @@ impl AgentActor {
         let of_given_up = given_up_for.map(RetryTarget::Turn);
         let judged = retries.iter().rposition(|retry| retry_target(retry) == of_given_up).or(retries.len().checked_sub(1));
         let judged = judged.map(|at| retries.remove(at));
-        reject_retries(retries, RetryRefused::AskedAgain, self.id(), &self.agent_controller.name(), &self.security_context(), output).await;
+        reject_retries(retries, RetryRefused::AskedAgain, self.id(), &self.body.agent.name(), &self.body.security_context(), output).await;
         let mut accepted = None;
         if let Some(retry) = judged {
             let span = envelope_span(&retry.context, retry.event.kind());
@@ -405,7 +327,7 @@ impl AgentActor {
             self.control.go_to(ActorState::CarryingOutCommand);
             self.announce_state(output).await;
         }
-        self.commands.carry_out(state, request, output).await;
+        self.body.carry_out(state, request, output).await;
         if awake {
             self.control.go_to(ActorState::Idle);
         }
@@ -437,7 +359,7 @@ impl AgentActor {
     /// Otherwise it says why with `RetryRejected`.
     async fn retry(&self, state: &mut AgentChannelState, request: &Envelope, given_up_for: Option<TurnId>, output: &dyn EventSender) -> Result<bool> {
         let Some(target) = retry_target(request) else { return Ok(false) };
-        let answering = Answering::to(request, self.id(), self.agent_controller.name(), &self.security_context());
+        let answering = Answering::to(request, self.id(), self.body.agent.name(), &self.body.security_context());
         let can = match target {
             RetryTarget::Turn(turn) if Some(turn) == given_up_for => Ok(Vec::new()),
             // Its last turn given up: answered anew after it, nothing taken
@@ -472,7 +394,7 @@ impl AgentActor {
     /// before a turn began is logged only: there is no turn to end, nor a
     /// request to answer in.
     async fn fail_turn(&self, state: &mut AgentChannelState, error: &anyhow::Error, output: &dyn EventSender) {
-        let agent_name = self.agent_controller.name();
+        let agent_name = self.body.agent.name();
         tracing::error!("Turn of agent {} {} failed: {:#}", self.id(), agent_name, error);
 
         self.give_up(state, GivenUpReason::Failed { message: failure_message(error) }, output).await;
@@ -500,7 +422,7 @@ impl AgentActor {
             TurnFlow::Flows | TurnFlow::NoChannel => reason.clone(),
         };
         let turn_id = under_way.work.turn_id;
-        let agent_name = self.agent_controller.name();
+        let agent_name = self.body.agent.name();
         let Some(turn) = self.turn(state) else { return };
         let (answering, abandoned_calls) = turn.give_up(recorded.clone(), output).await;
         if let Err(e) = withdraw_requests(&answering, &abandoned_calls, output).await {
@@ -516,11 +438,11 @@ impl AgentActor {
     /// its tools' results are admitted) - which it may not once the channel
     /// was lowered below the classification the turn began with (issue 141).
     async fn turn_flow(&self, under_way: &TurnState) -> TurnFlow {
-        let Some(channel) = self.actor_runtime.channel_loop().map(|c| c.classification()) else {
+        let Some(channel) = self.body.runtime.channel_loop().map(|c| c.classification()) else {
             return TurnFlow::NoChannel;
         };
         let context = &under_way.work.security_context;
-        if self.actor_runtime.confidentiality().may_publish(context, &under_way.work.classification, &channel) {
+        if self.body.runtime.confidentiality().may_publish(context, &under_way.work.classification, &channel) {
             TurnFlow::Flows
         } else {
             TurnFlow::Lowered(channel)
@@ -647,7 +569,7 @@ impl AgentActor {
         turn: &mut Turn<'_>,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
-        let agent_name = self.agent_controller.name();
+        let agent_name = self.body.agent.name();
 
         if self.compaction_due(turn) {
             return Ok(ActorState::Busy);
@@ -956,13 +878,13 @@ fn prepare_resume(state: &mut AgentChannelState) -> usize {
 #[async_trait]
 impl Actor for AgentActor {
     fn id(&self) -> ActorId {
-        ActorId::Agent(self.agent_id)
+        self.body.id()
     }
     fn kind(&self) -> String {
         "agent".to_string()
     }
     fn name(&self) -> Name {
-        self.agent_controller.load().name.name.clone()
+        self.body.name()
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {
@@ -986,19 +908,18 @@ impl Actor for AgentActor {
     }
 
     fn components(&self) -> ComponentConfig {
-        self.built_from.clone()
+        self.body.components()
     }
 
     async fn commands(&self, issuer: &SecurityContext) -> Vec<Command> {
-        self.commands.visible(issuer).await
+        self.body.visible_commands(issuer).await
     }
 
     /// Takes in what it missed as what it hears (issues 190, 196): all of
     /// it into its history, what passes its perceive processors into its
     /// transcript.
     async fn catch_up(&self, visible: Vec<Message>) -> Result<()> {
-        let mut state = self.state.lock().await;
-        catch_up(&mut state, visible, self.id(), &self.perceive_in_processors, &self.security_context(), &self.actor_runtime).await
+        self.body.catch_up(visible).await
     }
 
     async fn run(
@@ -1007,13 +928,14 @@ impl Actor for AgentActor {
         output: Box<dyn EventSender>,
     ) -> Result<()> {
         let mut state = self
+            .body
             .state
             .try_lock()
             .map_err(|_| anyhow!("AgentActor {} already running", self.id()))?;
 
         info!("AgentActor {} is starting", self.id());
         // Whoever watches already learns where it starts.
-        self.announce(self.control.state(), &*output).await;
+        self.body.announce(self.control.state(), &*output).await;
         if self.control.state().in_turn() {
             info!("AgentActor {} resumes a turn in state {:?}", self.id(), self.control.state());
         }
@@ -1039,14 +961,14 @@ impl Actor for AgentActor {
             // Idle/WaitingForUser/Sleep may consume no event before the actor's
             // input channel closes (Ok(None)) - that's the only way this loop ends.
             // Every other state always produces a next state.
-            let span = agent_span(self.agent_id, &self.agent_controller.name(), current_state, state.turn.as_ref().map(|t| &t.work.event_context));
+            let span = agent_span(self.body.agent_id(), &self.body.agent.name(), current_state, state.turn.as_ref().map(|t| &t.work.event_context));
 
             // Before every step of a turn: a turn that no longer flows into
             // its channel - lowered meanwhile - is given up, whatever it was
             // about to do; nothing of it is run or taken over (issue 141).
             if let Some(under_way) = state.turn.as_ref().filter(|_| current_state.in_turn()) {
                 if let TurnFlow::Lowered(channel) = self.turn_flow(under_way).await {
-                    info!("Agent {} {} gives up its turn: the channel was lowered to {}", self.id(), self.agent_controller.name(), channel);
+                    info!("Agent {} {} gives up its turn: the channel was lowered to {}", self.id(), self.body.agent.name(), channel);
                     self.give_up(&mut state, GivenUpReason::Lowered { channel }, &*output).instrument(span).await;
                     self.settle(&mut state, ActorState::Idle).await;
                     continue;
@@ -1136,8 +1058,8 @@ impl Actor for AgentActor {
     async fn tool_sets(&self) -> Vec<ToolSet> {
         // As a turn would be offered them now, in the agent's own name:
         // who will ask is not known yet.
-        let Some(channel) = self.actor_runtime.channel_loop().map(|c| c.classification()) else { return Vec::new() };
-        self.tool_executor.tool_sets(&self.security_context(), &channel).await
+        let Some(channel) = self.body.runtime.channel_loop().map(|c| c.classification()) else { return Vec::new() };
+        self.tool_executor.tool_sets(&self.body.security_context(), &channel).await
     }
 
     fn wakeup(&self) {
@@ -1145,7 +1067,7 @@ impl Actor for AgentActor {
         debug!(
             "Waking up agent {} {}",
             self.id(),
-            self.agent_controller.name()
+            self.body.agent.name()
         );
         self.control.wakeup();
     }
@@ -1157,8 +1079,8 @@ impl Actor for AgentActor {
     fn retry_turn(&self, turn: TurnId) -> bool {
         let hit = self.control.retry(turn);
         match hit {
-            true => info!("Agent {} {} gives its turn {} up: its answer is asked for again", self.id(), self.agent_controller.name(), turn),
-            false => debug!("Agent {} {}: turn {} is not under way, nothing to answer again", self.id(), self.agent_controller.name(), turn),
+            true => info!("Agent {} {} gives its turn {} up: its answer is asked for again", self.id(), self.body.agent.name(), turn),
+            false => debug!("Agent {} {}: turn {} is not under way, nothing to answer again", self.id(), self.body.agent.name(), turn),
         }
         hit
     }
@@ -1166,22 +1088,22 @@ impl Actor for AgentActor {
     fn interrupt_tool_call(&self, turn: TurnId, call: &str, by: String) -> bool {
         let hit = self.control.interrupt_call(turn, call, by);
         match hit {
-            true => info!("Agent {} {}: tool call {} of turn {} is interrupted on its own", self.id(), self.agent_controller.name(), call, turn),
-            false => debug!("Agent {} {}: tool call {} of turn {} does not run, nothing to interrupt", self.id(), self.agent_controller.name(), call, turn),
+            true => info!("Agent {} {}: tool call {} of turn {} is interrupted on its own", self.id(), self.body.agent.name(), call, turn),
+            false => debug!("Agent {} {}: tool call {} of turn {} does not run, nothing to interrupt", self.id(), self.body.agent.name(), call, turn),
         }
         hit
     }
 
     fn cancel(&self) {
         match self.control.turn_under_way() {
-            Some(turn) => info!("Cancelling agent {} {} in turn {}", self.id(), self.agent_controller.name(), turn),
-            None => info!("Cancelling agent {} {}: no turn is under way", self.id(), self.agent_controller.name()),
+            Some(turn) => info!("Cancelling agent {} {} in turn {}", self.id(), self.body.agent.name(), turn),
+            None => info!("Cancelling agent {} {}: no turn is under way", self.id(), self.body.agent.name()),
         }
         self.control.cancel();
     }
 
     fn stop(&self) {
-        info!("Stopping agent {} {}: it left the channel", self.id(), self.agent_controller.name());
+        info!("Stopping agent {} {}: it left the channel", self.id(), self.body.agent.name());
         self.control.stop();
     }
 }
@@ -1189,6 +1111,9 @@ impl Actor for AgentActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::state::AgentStateHandle;
+    use crate::view::ViewsFactory;
+    use caelumora_model::agent::AgentId;
 
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
@@ -1229,7 +1154,7 @@ mod tests {
         let channel = Classification::general(Confidentiality::Confidential);
         let mut agent_channel_state = AgentChannelState::default();
         agent_channel_state.begin_turn(Default::default(), Default::default(), channel.clone(), vec![ToolSet::new("tools", "some tools", vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)])], Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), ViewsFactory::detached()).expect("a turn was begun");
 
         let mut partial = answer(&[]);
         stamp(&mut partial, &turn, Visibility::Channel, false);
@@ -1259,7 +1184,7 @@ mod tests {
         let reasoning = |tools: Vec<Tool>, personality: Visibility, private_knowledge: bool, calls: &[&str], complete: bool| {
             let mut agent_channel_state = AgentChannelState::default();
             agent_channel_state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, vec![ToolSet::new("tools", "some tools", tools)], Default::default());
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn was begun");
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), ViewsFactory::detached()).expect("a turn was begun");
             if private_knowledge {
                 turn.record_knowledge(KnowledgeRef { channel: turn.channel_id(), session: turn.session_id(), source: KnowledgeSource::PrivateNotes { agent, digest: None }, classification: None });
             }

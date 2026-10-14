@@ -1,62 +1,31 @@
 //! The commands an agent carries out itself (issue 269), the same for both
 //! kinds of agent - the `AgentActor` and the `ExternalAgentActor`: which it
-//! has, who may ask for them, and carrying one out in a turn of its own.
+//! has, who may ask for them, and carrying one out in a turn of its own. Its
+//! body's (`AgentBody`).
 
+use super::body::AgentBody;
 use super::Answering;
-use crate::agent::state::AgentStateHandle;
-use crate::agent::turn::Turn;
 use crate::command::{AgentCommandProvider, CommandError, CommandExecutor};
 use crate::component::{ComponentContainer, ComponentError, ComponentResult};
-use crate::controller::AgentController;
 use crate::runtime::ActorRuntime;
 use crate::transport::EventSender;
-use crate::view::ViewsFactory;
-use caelumora_model::role::RoleId;
-use caelumora_model::actor::{ActorEvent, ActorId, Envelope};
+use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::command::{Command, CommandVisibility};
-use caelumora_model::context::ModelProfile;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::turn::CommandRequest;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-/// The commands of one agent in one channel (issue 269): the
-/// `AgentCommandProvider`s of its personality behind the executor that
-/// checks who may see and ask for them, and what carrying one out needs of
-/// the agent's actor - its state, its views, where it stores.
-#[derive(Debug)]
-pub(super) struct AgentCommands {
-    executor: CommandExecutor<dyn AgentCommandProvider>,
-    agent: Arc<AgentController>,
-    /// The roles its personality limits it to (issues 179, 304); whose
-    /// rights it acts with - its owner's, issue 255 - the agent's controller
-    /// says.
-    limiting_roles: Option<Vec<RoleId>>,
-    /// How its model is given its context, kept with every turn of it; the
-    /// default for an agent that runs elsewhere.
-    profile: ModelProfile,
-    runtime: ActorRuntime,
-    agent_state: Arc<AgentStateHandle>,
-    views: ViewsFactory,
-}
-
-impl AgentCommands {
-    /// The commands the components of `components` provide, for the agent
-    /// `agent`, limited to `limiting_roles`, with `profile` for its turns.
+impl AgentBody {
+    /// The commands the components of `components` provide (issue 269),
+    /// behind the executor that checks who may see and ask for them.
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` if two components provide the same
     /// name, or one provides a name the session's commands have: the
     /// session's would hide it (issue 37).
-    pub(super) fn new(
-        components: &ComponentContainer,
-        agent: Arc<AgentController>,
-        limiting_roles: Option<Vec<RoleId>>,
-        profile: ModelProfile,
-        runtime: ActorRuntime,
-        agent_state: Arc<AgentStateHandle>,
-    ) -> ComponentResult<Self> {
+    pub(super) fn command_executor(components: &ComponentContainer, runtime: &ActorRuntime) -> ComponentResult<CommandExecutor<dyn AgentCommandProvider>> {
         let providers = components.get_all::<dyn AgentCommandProvider>(None)?;
         for provider in &providers {
             if let Some(command) = provider.commands().into_iter().find(|c| runtime.command_executor().has(&c.name)) {
@@ -66,17 +35,15 @@ impl AgentCommands {
                 )));
             }
         }
-        let executor = CommandExecutor::new(Arc::clone(runtime.security_manager()), providers)?;
-        let views = runtime.views();
-        Ok(Self { executor, agent, limiting_roles, profile, runtime, agent_state, views })
+        CommandExecutor::new(Arc::clone(runtime.security_manager()), providers)
     }
 
     /// The commands `issuer` may see of the agent in its channel, sorted by
     /// name; none without a channel.
-    pub(super) async fn visible(&self, issuer: &SecurityContext) -> Vec<Command> {
+    pub(super) async fn visible_commands(&self, issuer: &SecurityContext) -> Vec<Command> {
         let Some(channel) = self.runtime.channel_loop() else { return Vec::new() };
         let agent = self.agent.load().security_attributes.clone();
-        self.executor.visible(issuer, &agent, &channel.security_attributes()).await
+        self.commands.visible(issuer, &agent, &channel.security_attributes()).await
     }
 
     /// Carries out the `CommandRequested` in `request` in a turn of its own,
@@ -99,9 +66,8 @@ impl AgentCommands {
     pub(super) async fn carry_out(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
         let ActorEvent::CommandRequested { command, args, .. } = &request.event else { return };
         let issuer = request.context.sender_id;
-        let (agent_id, name) = (self.agent.id(), self.agent.name());
-        let own = self.agent.security_context(request.security.session_id, request.security.channel_id, self.limiting_roles.as_deref());
-        let answering = Answering::to(request, ActorId::Agent(agent_id), name.clone(), &own);
+        let (agent_id, name) = (self.agent_id(), self.agent.name());
+        let answering = Answering::to(request, self.id(), name.clone(), &self.security_context());
         let Some(channel) = self.runtime.channel_loop() else {
             warn!("Agent {} has no channel to carry out /{} in", agent_id, command);
             return;
@@ -115,12 +81,12 @@ impl AgentCommands {
             self.profile,
             kept,
         );
-        let Some(mut turn) = Turn::of(agent_id, name.clone(), state, Arc::clone(&self.agent_state), self.views.clone()) else {
+        let Some(mut turn) = self.turn(state) else {
             warn!("Agent {} lost the turn it began for /{}", agent_id, command);
             return;
         };
         let mut started = false;
-        let carried_out = match self.executor.admitted(command, &request.security, &attributes, &channel_attributes).await {
+        let carried_out = match self.commands.admitted(command, &request.security, &attributes, &channel_attributes).await {
             Ok(admitted) => {
                 let start = ActorEvent::CommandStarted { command: command.clone(), args: args.clone(), to: issuer, turn_id };
                 if let Err(e) = answering.send(start, output).await {
@@ -134,9 +100,7 @@ impl AgentCommands {
         let event = match carried_out {
             Ok(answer) => {
                 let committed = turn.commit(false, output).await;
-                if let Err(e) = self.runtime.store_channel_state(state).await {
-                    warn!("Agent {} cannot store its state after /{}: {:#}", agent_id, command, e);
-                }
+                self.store(state).await;
                 if committed.channel_state_changed {
                     self.runtime.announce_channel_state_changed();
                 }

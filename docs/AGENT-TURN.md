@@ -15,7 +15,7 @@ turn](#a-command-turn)).
 ### Between turns
 
 `Idle` and `Sleeping` wait for the next event, and take it in together with everything queued
-behind it, in order, then commit once (`actor::intake::take_in`):
+behind it, in order, then commit once (`AgentBody::take_in`):
 
 *   **Perceive.** A complete message of another participant is appended to the agent's history as
     it was said - all that was offered to it, live or caught up with on joining. What the agent

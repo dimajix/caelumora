@@ -513,7 +513,7 @@ impl ChannelLoop {
         Ok(match member.kind().clone() {
             MemberKind::User(user) => Box::new(UserActor::new(channel, user, actor_runtime).await?),
             MemberKind::Agent(agent, personality) => Box::new(AgentActor::new(channel, agent, personality, actor_runtime).await?),
-            MemberKind::ExternalAgent(agent, personality) => Box::new(ExternalAgentActor::new(&channel.load(), agent, personality, actor_runtime).await?),
+            MemberKind::ExternalAgent(agent, personality) => Box::new(ExternalAgentActor::new(channel, agent, personality, actor_runtime).await?),
             MemberKind::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
         })
     }

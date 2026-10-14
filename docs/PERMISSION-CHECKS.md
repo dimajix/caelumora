@@ -155,7 +155,7 @@ actor can send (issue 228).
 | A command of the session (`CommandExecutor::execute`) | `ShowCommand`, `ExecuteCommand` with the channel (U,3) | R4 | `/wakeup` asks `WakeChannel` itself | `Unknown`, `Forbidden` |
 | Commands shown (`visible_by`, `/help`, completion) | per command `ShowCommand` (U,3) | R5 | - | left out |
 | A command of an agent asked for (`UserActor::request_command`) | whom it names: the agents' commands as the issuer sees them (`ShowAgentCommand`, U,3) | R5 | by the agent | `Unknown`, `InvalidArguments` |
-| An agent carries a command out (`AgentCommands::carry_out`) | `ShowAgentCommand`, `ExecuteAgentCommand` (E,3) | R4 | - | `CommandFailed` |
+| An agent carries a command out (`AgentBody::carry_out`) | `ShowAgentCommand`, `ExecuteAgentCommand` (E,3) | R4 | - | `CommandFailed` |
 | A secret (`SecretManager::resolve`) | `ReadSecret` (3) - T at a call, A or C as a component is built, S for a storage | R4 | - | `SecretError::PermissionDenied` |
 
 ### What an agent reads beyond its channel

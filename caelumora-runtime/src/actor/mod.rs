@@ -1,10 +1,12 @@
 //! Actors, the participants of a channel (see CHANNELS.md): the `Actor`
 //! trait, the contexts an actor answers in (`Answering`), and the actors -
-//! an agent's, an external agent's, a user's and an approver's. How an
-//! agent's actor takes in what it is told is `intake`.
+//! an agent's, an external agent's, a user's and an approver's. What both
+//! kinds of agent are in a channel is their `body`; how it takes in what it
+//! is told is `intake`, the commands it carries out `commands`.
 
 pub mod agent;
 pub mod approval;
+mod body;
 mod commands;
 pub mod external_agent;
 mod intake;

@@ -1,6 +1,6 @@
 # 355 — The two agent actors and `AgentCommands` carry the same half of an agent three times
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -73,3 +73,30 @@ hears, stores or announces is made twice, and a third holder of the same fields
 
 - **2026-10-14** — From the review of agents, sessions and channels, epic
   [349](349-core-review-epic.md).
+- **2026-10-14** — Done. The type is called `AgentBody` (`actor/body.rs`), the maintainer's choice
+  over `AgentCore`, which names the structure rather than the responsibility, and over
+  `AgentPresence`, which reads as a status: both actors share the body that hears, holds its state
+  and carries out commands, and differ in their mind - a model run here, or the remote agent. It
+  holds the fields of the table - the agent's controller, the runtime, the context as built, the
+  perceive processors, the context provider, the agent's state, the views, what it was built from
+  and the `AgentChannelState` - and `security_context`, `id`, `name`, `components`, `turn`, `work`,
+  `current_context`, `store` (with the warning) and `announce`. `AgentCommands` is gone: its
+  executor and the profile are fields of the body, `commands.rs` an `impl AgentBody` with
+  `command_executor`, `visible_commands` and `carry_out`, which builds its turn through
+  `AgentBody::turn` - so `Turn::of` is written once, as is the context provider's call and its
+  error. The functions of `intake.rs` are methods of the body, none with more than three
+  parameters; what a change the transcript did not take is handed to is a field (`hand_over`,
+  `tell` for the external agent). `AgentBody::build` does what both constructors did; the
+  `AgentActor` sets the profile of its command turns from its model (`with_profile`), the external
+  agent its `hand_over` (`handing_over`). Both constructors now take the channel's controller,
+  so `create_actor` calls them alike. The tests of `intake` build a body without a session
+  (`AgentBody::detached`); the test of `perceive` moved there from the external agent.
+
+  Not done as considered: the loop "carry out the command where it came, take in the rest" stays
+  in each actor (five lines each). What differs in it is how each shows where it stands - the
+  `AgentActor` through its `RunControl`, only when awake, announcing `Idle` with its next step;
+  the external agent through its own `processing`, always and at once. Sharing the loop would have
+  needed a callback or a trait for that one step; the cause is that where an actor stands, and what
+  `cancel` and `stop` asked of it, is built twice (`RunControl`, and `processing`, `current` and
+  `ended`), which is a refactoring of its own. No behaviour changes; the warnings of a failed store
+  read alike now.
