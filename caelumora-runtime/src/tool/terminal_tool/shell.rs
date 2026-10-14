@@ -1,6 +1,6 @@
 //! The shell tools of `terminal_tool`: commands in the workspace, through
-//! the `Shell` the `WorkspaceManager` hands out for the turn's channel
-//! (`shell_in`), which sees the commands started in that channel alone.
+//! the `Shell` the turn's channel hands out (`Turn::workspace_shell`),
+//! which sees the commands started in that channel alone.
 //!
 //! A call dropped while it waits for its command - the turn cancelled or
 //! stopped (issue 161) - kills the command: the one thing a tool does after
@@ -8,7 +8,8 @@
 //! the drop does not await. A command left running would go on writing into
 //! the workspace after the turn that started it. One handed back as running
 //! is the model's to end, or a user's (issue 294): `kill_command` ends it
-//! through the same shell as `WorkspaceManager::kill_command` does for them.
+//! through the same shell of the channel (`ChannelLoop::workspace_shell`)
+//! as the REST server does for them.
 
 use super::{tool, TerminalToolConfig};
 use crate::terminal::{CommandState, Shell};

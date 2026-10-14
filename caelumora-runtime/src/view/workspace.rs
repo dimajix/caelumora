@@ -3,7 +3,8 @@
 //! channel in which the session's workspace may be used (issue 251,
 //! decision 10). It is read alone: what is done with its files - reading
 //! them through its terminal, changing them, running commands, publishing
-//! one - the `WorkspaceManager` does, asking afresh (issue 296).
+//! one - its controller does, asking afresh (`WorkspaceController`, issues
+//! 296, 344).
 
 use super::Views;
 use caelumora_model::confidentiality::Classification;
@@ -45,9 +46,10 @@ impl WorkspaceView {
         &self.workspace.classification
     }
 
-    /// Whether its storage gives it a shell: what agents can do with it.
+    /// Whether its storage gives it a shell: what agents can do with it;
+    /// `false` for a storage no longer configured.
     pub fn has_shell(&self) -> bool {
-        self.views.workspace_manager().has_shell(&self.workspace)
+        self.views.workspace_manager().storages().any(|(name, has_shell)| name == self.workspace.storage && has_shell)
     }
 
     /// The largest file that may be put into it.

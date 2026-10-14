@@ -9,14 +9,17 @@
 //! `AgentWork` rather than a `Turn`, so that they serve both kinds of agent.
 
 use crate::agent::state::AgentStateHandle;
+use crate::terminal::Terminal;
 use crate::view::{SessionView, ViewsFactory};
+use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::ModelProfile;
-use caelumora_model::security::{SecurityAttributes, SecurityContext};
+use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::ToolSet;
 use caelumora_model::work::Work;
+use caelumora_model::workspace::Workspace;
 use std::sync::Arc;
 
 /// The work under way of an agent in its channel, to read.
@@ -90,6 +93,20 @@ impl<'a> AgentWork<'a> {
     /// if the agent may not read it.
     pub async fn session(&self) -> Option<SessionView> {
         self.views.session(&self.work.security_context, self.channel_id(), self.work.classification.clone()).await
+    }
+
+    /// The workspace of the agent's session and its terminal, to read its
+    /// files, if the work may use it in its channel
+    /// (`ChannelLoop::workspace_terminal`, issue 344) - what a component
+    /// that only reads looks at. Changing the files, and running commands,
+    /// is a turn's (`Turn::workspace_terminal`, `Turn::workspace_shell`).
+    ///
+    /// # Errors
+    /// `NotUsableInChannel` while its channel is not attached to its
+    /// session, or what `ChannelLoop::workspace_terminal` reports.
+    pub async fn workspace_for_reading(&self) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+        let channel = self.views.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
+        channel.workspace_terminal(&self.work.security_context, Grant::Read).await
     }
 
     /// The agent's state in this channel as it stands: what components read

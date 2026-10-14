@@ -263,10 +263,11 @@ never a side effect of the `EntityStore`.
 ## Controllers
 
 The live state of the entities of a running session is held by controllers
-(`caelumora_runtime::controller`): `SessionController`, `ChannelController`, `AgentController` and
-`UserController`, made by the `ControllerManager`. The model only defines the documents; keeping
-them live, writing them and announcing changes is the runtime's. What a controller changes and what
-its entity's manager does is in [ARCHITECTURE.md](ARCHITECTURE.md#managers-and-controllers).
+(`caelumora_runtime::controller`): `SessionController`, `ChannelController`, `AgentController`,
+`UserController` and `WorkspaceController`, made by the `ControllerManager`. The model only defines
+the documents; keeping them live, writing them and announcing changes is the runtime's. What a
+controller changes and what its entity's manager does is in
+[ARCHITECTURE.md](ARCHITECTURE.md#managers-and-controllers).
 
 *   **Live state.** A controller holds its entity for atomic, lock-free reads of the current value.
 *   **One writer.** A controller is the one writer of its document. It holds a write lock while it
@@ -277,16 +278,18 @@ its entity's manager does is in [ARCHITECTURE.md](ARCHITECTURE.md#managers-and-c
 *   **One shape.** Every controller is built from the document, the event publisher and the store.
     The `UserController` holds the user's record, which belongs to the system and is only kept
     current, and their profile, which is written through it and announced to its user and the
-    runtime alone.
+    runtime alone. The `WorkspaceController` also holds the storage its workspace lies in and the
+    confidentiality policy, which a new classification is asked of.
 
 ### Session-owned and per-instance controllers
 
 A `SessionController` and its `ChannelController`s are made with the running session and live as
-long as it does. An agent or a user takes part in any number of sessions, so the `ControllerManager`
-keeps **one controller per agent and per user in the instance**: loaded when the first actor needs
-it, shared by all its actors in all sessions, and held only as long as one of them holds it. An
-agent thus has one writer per instance. The manager also answers what an actor is called - an
-entity's current name, or the fixed name of an actor that is none.
+long as it does: a session runs once, so there is never a second. An agent or a user takes part in
+any number of sessions, and a workspace may be attached to several and is used directly too, so the
+`ControllerManager` keeps **one controller per agent, per user and per workspace in the
+instance**: loaded when the first one needs it, shared by all that use it, and held only as long as
+one of them holds it. An agent thus has one writer per instance. The manager also answers what an
+actor is called - an entity's current name, or the fixed name of an actor that is none.
 
 A missing record is `StoreError::NotFound`, which a lookup that expects it may be gone turns into
 `None`; a channel then leaves that participant out (see [CHANNELS.md](CHANNELS.md)).
@@ -295,12 +298,12 @@ A missing record is `StoreError::NotFound`, which a lookup that expects it may b
 
 Neither the actors nor the sessions subscribe to changes of themselves - a running session follows
 only whether its agents are deleted or restored, which decides which actors run in its channels (see
-[CHANNELS.md](CHANNELS.md)). The `ControllerManager`
-takes every announced change to an agent or user into its live controller, once per instance - the
-place where changes made in other instances will arrive (see [Several
-instances](#several-instances)). An event carries the resulting value, so taking over an instance's
-own change again changes nothing. A text in it that does not fit the model's value is left out and
-logged.
+[CHANNELS.md](CHANNELS.md)). The `ControllerManager` takes every announced change to an agent, a
+user or a workspace into its live controller, once per instance - the place where changes made in
+other instances will arrive (see [Several instances](#several-instances)). An event carries the
+resulting value, so taking over an instance's own change again changes nothing; a workspace is read
+again as stored instead, since the announcement of a new access list does not carry it. A text in it
+that does not fit the model's value is left out and logged.
 
 ## Several instances
 

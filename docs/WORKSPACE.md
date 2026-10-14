@@ -21,17 +21,23 @@ channels share one. Its scope decides its life: one in a session's scope is made
 used within it alone, and deleted, restored and purged with it, its files too; one in its owner's
 scope or the global one outlives every session that uses it.
 
-The `WorkspaceManager` is the one writer of workspace documents and the only code that holds the
-storages. A workspace is made with its place in the storage and purged with it, the place first, so
-that a place that cannot be removed leaves the document for the next purge.
+The `WorkspaceManager` makes, deletes, restores and purges workspaces, and is the only code that
+makes and removes their places in the storages; what a workspace is - its name, description,
+classification and access list - its `WorkspaceController` changes (see
+[STORAGE.md](STORAGE.md#controllers)). A workspace is made with its place in the storage and purged
+with it, the place first, so that a place that cannot be removed leaves the document for the next
+purge.
 
 ## In a session
 
-A session has at most one workspace attached, shared by its channels. A template may name it -
-found by its name in the scope the template asks for, or made there by the session's owner, as an
-agent of a template is. Whoever makes a session may choose instead: none, one of their own, or one
-made for the session alone. Otherwise only the workspace's owner attaches it, to a session they may
-change - not one of another session's scope; whoever may change the session takes it away.
+A session has at most one workspace attached, shared by its channels. A template may name it - found
+by its name in the scope the template asks for, or made there by the session's owner, as an agent of
+a template is, once the session is made. Whoever makes a session may choose instead: none, one of
+their own, attached as the session is made, or one made for the session alone. A workspace is made
+in a session's scope only by whoever may read the session: what lies there keeps the session from
+being deleted by whoever may not delete it. Otherwise only the workspace's owner attaches it, to a
+session they may change - not one of another session's scope; whoever may change the session takes
+it away.
 
 **Attaching shares nothing by itself**: who may use a workspace is its access list's to say (see
 [SECURITY.md](SECURITY.md#access-lists)). One made for a session lets the session's members read and
@@ -54,9 +60,10 @@ it (see [CHANNELS.md](CHANNELS.md#its-workspace)). A channel uses it where
 So a session for a request can have a channel with the person who asked, classified below the
 workspace or with the switch off, and channels with helpers that work on its files. A view of a
 channel offers the workspace only where it may be used there, and says nothing of it otherwise.
-Using it in a channel is the `WorkspaceManager`'s: it reads the session and the channel as they are
-stored then and asks as the views ask - whether the caller may read the channel, whether the
-workspace is usable there, and for changing files `WriteWorkspace`.
+Using it in a channel is asked by its `WorkspaceController`, which the running session holds, of
+the session and the channel as they are then (`ChannelLoop::workspace_terminal`): as the views ask -
+whether the caller may read the session and the channel, whether the workspace is usable there - and
+for changing files `WriteWorkspace`.
 
 ## Storages
 
@@ -122,7 +129,7 @@ anything.
 running outlives the call that started it. A command is its channel's, not its starter's: it runs on
 as long as some current member of the channel could start it there, and an agent removed from the
 channel leaves its command to the members who remain. Whoever ends a command reaches the shell bound
-to the channel (`WorkspaceManager::shell_in`), so that who may end a command is who could have
+to the channel (`ChannelLoop::workspace_shell`), so that who may end a command is who could have
 started it there.
 
 A command nobody ends is ended by the runtime:
@@ -130,10 +137,12 @@ A command nobody ends is ended by the runtime:
 *   once it ran for its storage's `max_run_secs`;
 *   once its session is stopped, or its workspace purged - removing a place ends the commands in it
     first;
-*   once nobody may run it any longer where it was started. The `WorkspaceManager`, woken by the
-    events that can change who may use a workspace in a channel and besides every minute, asks for
-    each command whether some current member of its channel could start it there, in that member's
-    name with the runtime as initiator. A command whose question cannot be answered for now is kept.
+*   once nobody may run it any longer where it was started. The `CommandReaper`, woken by the events
+    that can change who may use a workspace in a channel and besides every minute, asks for each
+    command whether some current member of its channel could start it there, in that member's name
+    with the runtime as initiator, of the session and the channel as they are stored. A command
+    whose question cannot be answered for now is kept. It also ends the commands of a stopped
+    session.
 
 The list of commands lives in memory, so what a restart leaves running is named, not closed:
 `open_terminal_docker` stops at start what an earlier run left; a command of an earlier run in an

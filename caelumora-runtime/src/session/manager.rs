@@ -1,7 +1,7 @@
 //! `SessionManager`: starting, stopping, deleting, restoring and purging sessions.
 
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::value::name::Name;
+use caelumora_model::value::name::{Name, ScopedName};
 use crate::runtime::RuntimeManager;
 use crate::event::EventBus;
 use anyhow::Result;
@@ -9,6 +9,8 @@ use caelumora_model::channel::{Channel, ChannelField};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::actor::ActorId;
+use caelumora_model::agent::PersonalityId;
+use caelumora_model::user::UserId;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager, Subject, JOIN};
 use crate::view::{Viewer, Views};
 use caelumora_model::store::{EntityStores, StoreError, Stored};
@@ -17,10 +19,10 @@ use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::group::{Group, GroupId};
 use crate::group::{keep_participants, purge_participants};
-use caelumora_model::template::{ScopeTemplate, SessionTemplateId, WorkspaceTemplate};
+use caelumora_model::template::{ScopeTemplate, SessionTemplate, SessionTemplateId, WorkspaceTemplate};
 use caelumora_model::workspace::WorkspaceChoice;
 use crate::scoped::ScopedEntities;
-use crate::workspace::WorkspaceManager;
+use crate::workspace::reaper::CommandReaper;
 use crate::agent::manager::AgentManager;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -43,7 +45,8 @@ pub struct SessionManager {
     security: Arc<dyn SecurityManager>,
     stores: EntityStores,
     events: Arc<EventBus>,
-    workspaces: Arc<WorkspaceManager>,
+    /// What ends the commands of a stopped session's channels (issue 254).
+    command_reaper: Arc<CommandReaper>,
     /// What makes the agents a template names.
     agents: Arc<AgentManager>,
     /// What goes with a session deleted, restored or purged (issue 178).
@@ -79,7 +82,7 @@ impl SessionManager {
             security: Arc::clone(runtime_manager.security_manager()),
             stores: runtime_manager.entity_stores().clone(),
             events: Arc::clone(runtime_manager.event_bus()),
-            workspaces: Arc::clone(runtime_manager.workspace_manager()),
+            command_reaper: Arc::clone(runtime_manager.command_reaper()),
             agents: Arc::clone(runtime_manager.agent_manager()),
             scoped: Arc::clone(runtime_manager.scoped_entities()),
             runtime_manager,
@@ -138,10 +141,12 @@ impl SessionManager {
     /// `name` - the template's name if `None` - and starts it (issue 88).
     /// Its workspace is `workspace` where one is chosen (issue 266) - none,
     /// one of the user's own, or one made for it alone -, else the
-    /// template's. Once the session is made, the template's agents are found
-    /// by name in their scope, or made, and taken into it and their
-    /// channels, as `context`; if that fails, the session is taken back,
-    /// with what was made in its scope.
+    /// template's. One of the user's own is attached as the session is
+    /// made. Once the session is made, one made for it alone or the
+    /// template's is found by name in its scope, or made, and attached
+    /// (issue 344), and the template's agents are found or made alike and
+    /// taken into it and their channels, as `context`; if that fails, the
+    /// session is taken back, with what was made in its scope or for it.
     ///
     /// # Errors
     /// `SessionError::OwnerNotAUser` if `context` acts for no user; a
@@ -181,39 +186,52 @@ impl SessionManager {
             Some(WorkspaceChoice::None | WorkspaceChoice::Existing { .. }) => None,
         };
         let (mut session, channels) = template.build(id, owner, name, participants)?;
+        // One chosen is attached as the session is made; one to be found or
+        // made once the session is, so that one of its scope is made where
+        // `context` may put it (issue 344).
+        session.workspace = existing.map(|(chosen, _)| chosen);
+        let session_loop = self.establish(context, session, channels).await?;
+        if let Err(e) = self.complete(context, owner, &template, &session_loop, wanted.as_ref(), agents).await {
+            self.take_back(id).await;
+            return Err(e);
+        }
+        // Shared once the session it is shared with exists (issue 23).
+        if let Some((chosen, Some(grant))) = existing {
+            let controller = self.runtime_manager.controller_manager().workspace_controller(chosen).await?;
+            controller.share(context, Subject::Group(GroupId::of_session(id)), grant).await?;
+        }
+        Ok(session_loop)
+    }
+
+    /// Completes `session` of `owner`, just made from `template` on behalf
+    /// of `context`: the workspace `wanted` found or made and attached, then
+    /// the template's `agents` found or made and taken in (issues 227, 344).
+    /// A workspace made for it that is not in its scope - which goes with
+    /// the session as it is taken back - is taken back here if that fails.
+    ///
+    /// # Errors
+    /// What finding or making the workspace or the agents reports, or
+    /// taking them in.
+    async fn complete(&self, context: &SecurityContext, owner: UserId, template: &SessionTemplate, session: &SessionLoop, wanted: Option<&WorkspaceTemplate>, agents: Vec<(String, ScopedName, PersonalityId)>) -> Result<()> {
         let workspaces = self.runtime_manager.workspace_manager();
-        let workspace = match &wanted {
-            Some(wanted) => Some(crate::template::resolve_workspace(workspaces, context, wanted, id, owner).await?),
-            None => existing.map(|(chosen, _)| (chosen, false)),
+        let resolved = match wanted {
+            Some(wanted) => Some(crate::template::resolve_workspace(workspaces, context, wanted, session.id(), owner).await?),
+            None => None,
         };
-        session.workspace = workspace.as_ref().map(|(found, _)| *found);
-        let established = async {
-            let session_loop = self.establish(context, session, channels).await?;
-            if let Err(e) = crate::template::take_in_agents(self.stores.agents.as_ref(), &self.agents, context, &template, &session_loop, agents).await {
-                self.take_back(id).await;
-                return Err(e);
+        let made = resolved.and_then(|(workspace, made)| made.then_some(workspace));
+        let completed = async {
+            if let Some((workspace, _)) = resolved {
+                session.attach_workspace(context, Some(workspace)).await?;
             }
-            Ok(session_loop)
+            crate::template::take_in_agents(self.stores.agents.as_ref(), &self.agents, context, template, session, agents).await
         }.await;
-        match established {
-            Ok(session_loop) => {
-                // Shared once the session it is shared with exists (issue 23).
-                if let Some((chosen, Some(grant))) = existing {
-                    workspaces.share(context, chosen, Subject::Group(GroupId::of_session(id)), grant).await?;
-                }
-                Ok(session_loop)
-            }
-            Err(e) => {
-                // One made for this session goes with what failed.
-                if let Some((made, true)) = workspace {
-                    let system = SecurityContext::system();
-                    if let Err(cleanup) = async { workspaces.delete(&system, made).await?; workspaces.purge(&system, made).await }.await {
-                        warn!(workspace = %made, "The workspace made for a session that could not be created stays: {cleanup}");
-                    }
-                }
-                Err(e)
+        if let (Err(_), Some(made)) = (&completed, made) {
+            let system = SecurityContext::system();
+            if let Err(cleanup) = async { workspaces.delete(&system, made).await?; workspaces.purge(&system, made).await }.await {
+                warn!(workspace = %made, "The workspace made for a session that could not be created stays: {cleanup}");
             }
         }
+        completed
     }
 
     /// Takes back the session `id`, just made and not yet complete, in the
@@ -377,7 +395,7 @@ impl SessionManager {
         let removed = self.sessions.remove(&id).map(|(_, s)| s);
         if let Some(session_loop) = &removed {
             let session = Arc::clone(&session_loop.session());
-            self.workspaces.end_commands_in(&session.channels).await;
+            self.command_reaper.end_commands_in(&session.channels).await;
             self.events.publish(GlobalEvent::custom::<Session>(&id, session::STOPPED, &()), session.security_attributes.clone());
         }
         removed

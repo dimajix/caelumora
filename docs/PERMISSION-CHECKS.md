@@ -187,13 +187,13 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | Operation | Questions in order | Rule | Again | Refusal |
 |---|---|---|---|---|
 | A user lists or reaches one (`Views::workspaces`, `workspace`) | store `GetWorkspace` (V,1), `cleared_for` (V,2) | R1 + reach (store) | by `reached` for a file route | left out; `WorkspaceNotFound` |
-| A user works in it directly (`WorkspaceManager::reached`, the file routes) | store `GetWorkspace` (U,1), `cleared_for` (U,2), else `NotFound`; for a change `WriteWorkspace` (U,1) | reach (store), then R4 | - | `NotFound`, `ReadOnly` |
-| In a channel (`usable_in_channel`, behind `terminal_in`, the terminal and artifact tools, the workspace prompt) | session and channel read in S; `may_read_session` (1); `channel_reading`; `usable_in`: the channel uses it, the caller takes part, scope, `may_read_workspace` (1), `may_publish` both ways (2); for a change `WriteWorkspace` (1) | reach, then R4 | - | `NotUsableInChannel`, `ReadOnly` |
+| A user works in it directly (`WorkspaceController::terminal`, the file routes) | store `GetWorkspace` (U,1), `cleared_for` (U,2), else `NotFound`; for a change `WriteWorkspace` (U,1) | reach (store), then R4 | - | `NotFound`, `ReadOnly` |
+| In a channel (`WorkspaceController::usable_in_channel`, behind `ChannelLoop::workspace_terminal`, the terminal and artifact tools, the workspace prompt) | session and channel as the running session holds them, as stored for the `CommandReaper`; `may_read_session` (1); `channel_reading`; `usable_in`: the channel uses it, the caller takes part, scope, `may_read_workspace` (1), `may_publish` both ways (2); for a change `WriteWorkspace` (1) | reach, then R4 | - | `NotUsableInChannel`, `ReadOnly` |
 | A running command goes on (`may_run`, as the channel's members or the workspace change) | the chain of *In a channel* per current member | an act that lasts, asked again as what permitted it changes | per member and event | the command ended |
 | The channel's workspace offered (`ChannelView::workspace`) | `usable_in` (V) | R5 | - | none |
-| Create (`WorkspaceManager::create`) | `require_classifiable`; `require_publish` into the storage's destination (U,2); `require_cleared_for` (U,2); store `CreateWorkspace` (U,1) | R4 (flow) + R1 | - | `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied`, `NameTaken` |
-| Change, reclassify (`update`) | reached (store `GetWorkspace` U,1, `cleared_for` U,2); a classification as creating; store `GetWorkspace`, `cleared_for` + `UpdateWorkspace` | reach (store) + R1 (+ flow) | `GetWorkspace`, `cleared_for` (store) | `NotFound`, `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied` |
-| Share (`set_access`, `share`) | reached; `require_nameable`: store `GetGroup` per newly named group - the caller's own question (issue 312); store `GetWorkspace`, `cleared_for` + `UpdateWorkspace` | reach (store) + R1 | `GetWorkspace`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Validation` |
+| Create (`WorkspaceManager::create`, behind a template) | `require_classifiable`; `require_publish` into the storage's destination (U,2); `require_cleared_for` (U,2); in a session's scope `CreateWorkspace` (U,1) and store `GetSession` (U,1) - what lies there keeps the session from being deleted; store `CreateWorkspace` (U,1) | R4 (flow) + R1 | `CreateWorkspace` (pair, in a session's scope) | `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied`, `NotFound`, `NameTaken` |
+| Change, reclassify (`WorkspaceController::update_*`) | reached (store `GetWorkspace` U,1, `cleared_for` U,2); a classification as creating; store `GetWorkspace`, `cleared_for` + `UpdateWorkspace` | reach (store) + R1 (+ flow) | `GetWorkspace`, `cleared_for` (store) | `NotFound`, `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied` |
+| Share (`update_access`, `share`) | reached; `require_nameable`: store `GetGroup` per newly named group - the caller's own question (issue 312); store `GetWorkspace`, `cleared_for` + `UpdateWorkspace` | reach (store) + R1 | `GetWorkspace`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Validation` |
 | Delete, restore (`WorkspaceManager`) | delete: reached, else `false`; restore: the store alone - `ReadDeleted`, `cleared_for`, then the verb | R1 + reach (store) | `GetWorkspace`, `cleared_for` (store) for a deletion | `PermissionDenied`, `NotFound` |
 | Purge (`purge`) | store `ReadDeleted`; `Purge` (U,3); files removed; store `ReadDeleted` + `Purge` | R2 + R1 | `Purge` (pair) | `PermissionDenied` |
 
@@ -264,7 +264,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
   are named in the core, each with its own enforcement; a generic one for every component's state
   was rejected (issue [65](../issues/65-generic-component-state.md)).
 - **The reach is one function for offering and acting.** `channel_reading` and
-  `WorkspaceManager::usable_in` are built from `may_*` and answer with an option: the views turn
+  `WorkspaceController::usable_in` are built from `may_*` and answer with an option: the views turn
   `None` into "not there", an operation into "not found". It is neither enforcing nor offering, but
   the one way to reach a thing, so that both see the same.
 - **A refusal that is no error.** The `ToolExecutor` asks `require` with a refusal of `()` and

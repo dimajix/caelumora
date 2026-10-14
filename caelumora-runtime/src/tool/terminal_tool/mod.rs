@@ -14,9 +14,9 @@
 //!   What was read is recorded as the turn's knowledge
 //!   (`KnowledgeSource::Workspace`).
 //!
-//! The workspace is reached through the `WorkspaceManager` on every call,
-//! before anything is sent, in the turn's channel and its context (issue
-//! 296): as a member of the channel, where the channel uses it, its access
+//! The workspace is reached through the turn's channel on every call
+//! (`Turn::workspace_terminal`, issue 344), before anything is sent,
+//! in its context (issue 296): as a member of the channel, where the channel uses it, its access
 //! list lets the agent read it - change it, for the shell and the tools that
 //! write (issue 23) - and it and the channel flow both ways. A result is
 //! classified as the workspace. Which calls need approval is configured as for `mcp_tool`
@@ -82,6 +82,7 @@ struct TerminalToolConfig {
 #[derive(Debug)]
 pub struct TerminalTool {
     config: TerminalToolConfig,
+    /// Where the largest file it may write is said.
     workspaces: Arc<WorkspaceManager>,
 }
 
@@ -149,17 +150,16 @@ impl ToolProvider for TerminalTool {
         if !is_shell && !files::TOOLS.contains(&name) {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
-        let (ctx, session, channel) = (turn.security_context().clone(), turn.session_id(), turn.channel_id());
         let (workspace, value) = match is_shell {
             true => {
-                let (workspace, shell) = self.workspaces.shell_in(&ctx, session, channel).await.map_err(unusable)?;
+                let (workspace, shell) = turn.workspace_shell().await.map_err(unusable)?;
                 let shell = shell.ok_or_else(|| ToolError::ExecutionFailed("the workspace's storage gives it no shell".to_string()))?;
                 (workspace, shell::execute(&self.config, name, params, shell).await?)
             }
             false => {
                 // What only reads needs only reading (issue 23).
                 let need = if files::read_only(name) { Grant::Read } else { Grant::Write };
-                let (workspace, terminal) = self.workspaces.terminal_in(&ctx, session, channel, need).await.map_err(unusable)?;
+                let (workspace, terminal) = turn.workspace_terminal(need).await.map_err(unusable)?;
                 let value = files::execute(&self.config, name, params, terminal.as_ref(), &workspace, self.workspaces.max_file_bytes(), turn).await?;
                 (workspace, value)
             }

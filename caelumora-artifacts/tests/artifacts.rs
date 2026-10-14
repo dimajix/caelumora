@@ -104,7 +104,7 @@ async fn with_the_tool(world: &World, params: Value) -> (Arc<SessionLoop>, Agent
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[helper], &[]).await;
     session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    let tool = ArtifactTool::new(&params, Arc::clone(world.runtime.workspace_manager()), manager(world)).expect("parameters it takes");
+    let tool = ArtifactTool::new(&params, manager(world)).expect("parameters it takes");
     (session, helper, docs, tool)
 }
 
@@ -147,14 +147,14 @@ async fn a_file_is_published_as_versions_of_an_artifact_kept_apart_from_the_work
 #[tokio::test]
 async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
     let world = world().await;
-    let tool = |params: Value| ArtifactTool::new(&params, Arc::clone(world.runtime.workspace_manager()), manager(&world)).unwrap();
+    let tool = |params: Value| ArtifactTool::new(&params, manager(&world)).unwrap();
     let asks = |mode: Value| tool(json!({ "requires_approval": mode })).tools()[0].requires_approval;
     assert!(asks(json!(true)) && asks(json!("unless_read_only")), "it changes what is kept");
     assert!(!asks(json!(false)));
     assert!(tool(json!({})).tools()[0].requires_approval, "unless configured");
     assert_eq!(tool(json!({})).tools()[0].presentation, ARTIFACT_PUBLISH_PRESENTATION);
     assert_eq!(tool(json!({})).describe(PUBLISH_ARTIFACT, &json!({ "path": "out/r.csv", "name": "Report.csv" })).unwrap(), "Publish 'out/r.csv' in the workspace as the artifact 'Report.csv'");
-    assert!(ArtifactTool::new(&json!({ "requires": true }), Arc::clone(world.runtime.workspace_manager()), manager(&world)).is_err(), "nor parameters it does not take");
+    assert!(ArtifactTool::new(&json!({ "requires": true }), manager(&world)).is_err(), "nor parameters it does not take");
 }
 
 // --- The plugin -----------------------------------------------------------
@@ -251,7 +251,7 @@ async fn the_routes_serve_artifacts_as_the_web_ui_knows_them() {
     let session = world.shared_session(&[], &[]).await;
     session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.unwrap();
+    let (_, terminal) = session.channel_by_id(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.unwrap();
     let at = WorkspacePath::parse("report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
     let (artifact, _) = publish(&world, &alice, session_id, main, &at, "report.csv", Some("The figures")).await.unwrap();
@@ -284,7 +284,8 @@ async fn the_routes_serve_artifacts_as_the_web_ui_knows_them() {
 /// (issue 296): the workspace reached there for reading, the file read, and
 /// what was read handed to the `ArtifactManager`.
 async fn publish(world: &World, ctx: &SecurityContext, session: SessionId, channel: ChannelId, at: &WorkspacePath, name: &str, description: Option<&str>) -> Result<(Artifact, u32), ArtifactError> {
-    let (workspace, terminal) = world.runtime.workspace_manager().terminal_in(ctx, session, channel, Grant::Read).await.expect("the workspace, to read");
+    let running = world.manager.open_session(&World::system(), session).await.expect("the session");
+    let (workspace, terminal) = running.channel_by_id(channel).expect("the channel").workspace_terminal(ctx, Grant::Read).await.expect("the workspace, to read");
     let content = terminal.read(at).await.expect("the file");
     manager(world).publish(ctx, content, &workspace.classification, name, description, session, channel).await
 }
@@ -304,7 +305,7 @@ async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
     let session = world.shared_session(&[], &[]).await;
     session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.expect("hers to use");
+    let (_, terminal) = session.channel_by_id(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.expect("hers to use");
     let at = WorkspacePath::parse("report.md").unwrap();
     terminal.write(&at, file("final"), 100).await.unwrap();
     let (whole, _) = publish(&world, &alice, session_id, main, &at, "report.md", None).await.expect("one to share with its versions");
@@ -387,7 +388,7 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
         let views = world.manager.views(Viewer::new(ctx.clone()));
         async move { views.session(session_id).await.unwrap().channel(main).await.unwrap() }
     };
-    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.expect("hers to use");
+    let (_, terminal) = session.channel_by_id(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.expect("hers to use");
     let at = WorkspacePath::parse("out/report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
 
@@ -453,7 +454,7 @@ async fn session_with_artifacts(world: &World) -> (Arc<SessionLoop>, Artifact, A
     let session = world.shared_session(&[], &[]).await;
     session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.unwrap();
+    let (_, terminal) = session.channel_by_id(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.unwrap();
     let at = WorkspacePath::parse("out/report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
     let (hers, _) = publish(world, &alice, session_id, main, &at, "hers.csv", None).await.unwrap();
@@ -537,7 +538,7 @@ async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_i
     let session = world.shared_session(&[], &[]).await;
     session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.unwrap();
+    let (_, terminal) = session.channel_by_id(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.unwrap();
     let at = WorkspacePath::parse("out/report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
     let (artifact, _) = publish(&world, &alice, session_id, main, &at, "report.csv", None).await.unwrap();
@@ -568,11 +569,10 @@ async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let drafts = session.create_channel(&alice, ChannelSpec { name: "drafts".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.expect("hers alone").id();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let workspaces = world.runtime.workspace_manager();
     let write_in = |channel, text| {
-        let alice = &alice;
+        let (alice, session) = (&alice, &session);
         async move {
-            let (_, terminal) = workspaces.terminal_in(alice, session_id, channel, Grant::Write).await.expect("hers to use");
+            let (_, terminal) = session.channel_by_id(channel).expect("the channel").workspace_terminal(alice, Grant::Write).await.expect("hers to use");
             terminal.write(&WorkspacePath::parse("report.md").unwrap(), file(text), 100).await.unwrap();
         }
     };
@@ -622,7 +622,7 @@ async fn an_artifact_kept_beyond_its_session_drops_its_channel_once_that_is_purg
     session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let session_id = session.id();
     let main = session.channels()[0].id();
-    let (_, terminal) = world.runtime.workspace_manager().terminal_in(&alice, session_id, main, Grant::Write).await.expect("hers to use");
+    let (_, terminal) = session.channel_by_id(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.expect("hers to use");
     let at = WorkspacePath::parse("report.md").unwrap();
     terminal.write(&at, file("final"), 100).await.unwrap();
     let (artifact, _) = publish(&world, &alice, session_id, main, &at, "report.md", None).await.unwrap();

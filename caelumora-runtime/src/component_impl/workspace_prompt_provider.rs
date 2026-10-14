@@ -22,14 +22,12 @@ use crate::component::{config_of_params, ComponentError, ComponentFacets, Compon
 use crate::context::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
 use crate::terminal::{TerminalError, WorkspacePath};
 use crate::view::WorkspaceView;
-use crate::workspace::WorkspaceManager;
 use crate::agent::work::AgentWork;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use serde::Deserialize;
 use std::sync::Arc;
 use tracing::warn;
-use caelumora_model::security::Grant;
 
 pub const WORKSPACE_PROMPT_PROVIDER_KIND: &str = "workspace_prompt_provider";
 
@@ -41,8 +39,6 @@ pub struct WorkspacePromptProvider {
     /// The names of the files that say how to work on a workspace, each a
     /// file at its root, in the order they are named.
     instruction_files: Vec<WorkspacePath>,
-    /// What looks for them (issue 296).
-    workspaces: Arc<WorkspaceManager>,
 }
 
 /// What the component is configured with besides its position.
@@ -63,14 +59,14 @@ impl WorkspacePromptProvider {
     /// # Errors
     /// `ComponentError::InvalidConfig` for a name that is not one of a file
     /// at the root.
-    fn new(position: PromptPosition, instruction_files: &[String], workspaces: Arc<WorkspaceManager>) -> ComponentResult<Self> {
+    fn new(position: PromptPosition, instruction_files: &[String]) -> ComponentResult<Self> {
         let instruction_files = instruction_files.iter()
             .map(|name| match WorkspacePath::parse(name) {
                 Ok(path) if !path.is_root() && path.parent().is_root() => Ok(path),
                 _ => Err(ComponentError::InvalidConfig(format!("instruction file '{name}' is not the name of a file at the workspace's root"))),
             })
             .collect::<ComponentResult<_>>()?;
-        Ok(Self { position, instruction_files, workspaces })
+        Ok(Self { position, instruction_files })
     }
 
     /// Those of the instruction files that lie at the root of `workspace`,
@@ -80,7 +76,7 @@ impl WorkspacePromptProvider {
         if self.instruction_files.is_empty() {
             return Vec::new();
         }
-        let terminal = match self.workspaces.terminal_in(work.security_context(), work.session_id(), work.channel_id(), Grant::Read).await {
+        let terminal = match work.workspace_for_reading().await {
             Ok((_, terminal)) => terminal,
             Err(error) => {
                 warn!(workspace = %workspace.id(), "Looking for the instruction files of a workspace failed: {error}");
@@ -178,13 +174,12 @@ impl PromptProvider for WorkspacePromptProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(WORKSPACE_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<WorkspaceManager>(),
-        |descriptor, context| {
+        ComponentKind::new(WORKSPACE_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
+        |descriptor, _| {
             let position = PromptPosition::of_params(&descriptor.params)?;
             let WorkspacePromptConfig { instruction_files } = config_of_params(&descriptor.params)?;
-            let workspaces = Arc::clone(context.service::<WorkspaceManager>()?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(WorkspacePromptProvider::new(position, &instruction_files, workspaces)?));
+            facets.insert::<dyn PromptProvider>(Arc::new(WorkspacePromptProvider::new(position, &instruction_files)?));
             Ok(facets)
         },
     );
@@ -193,22 +188,22 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::testing::{session_with_workspace, WithWorkspace};
+    use crate::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::security::SecurityContext;
 
-    fn provider(world: &WithWorkspace) -> WorkspacePromptProvider {
-        provider_of(world, &default_instruction_files())
+    fn provider() -> WorkspacePromptProvider {
+        provider_of(&default_instruction_files())
     }
 
-    fn provider_of(world: &WithWorkspace, instruction_files: &[String]) -> WorkspacePromptProvider {
-        WorkspacePromptProvider::new(PromptPosition::Start, instruction_files, Arc::clone(world.runtime.workspace_manager())).unwrap()
+    fn provider_of(instruction_files: &[String]) -> WorkspacePromptProvider {
+        WorkspacePromptProvider::new(PromptPosition::Start, instruction_files).unwrap()
     }
 
     #[tokio::test]
     async fn the_agent_is_told_of_the_workspace_it_may_use_here_or_that_it_has_none() {
         let world = session_with_workspace().await;
-        let provider = provider(&world);
+        let provider = provider();
         let mut state = AgentChannelState::default();
         let prompt = provider.get_prompt(&world.turn(&mut state).work()).await.unwrap();
         assert!(prompt.text.starts_with("[Your workspace]") && prompt.text.contains("\"docs\"") && prompt.text.contains("Drafts") && prompt.text.contains("You can run shell commands"), "{}", prompt.text);
@@ -224,7 +219,7 @@ mod tests {
     #[tokio::test]
     async fn the_agent_is_asked_to_read_the_instruction_files_at_the_root_and_only_those_there() {
         let world = session_with_workspace().await;
-        let provider = provider(&world);
+        let provider = provider();
         let mut state = AgentChannelState::default();
         let prompt = provider.get_prompt(&world.turn(&mut state).work()).await.unwrap();
         assert!(!prompt.text.contains("At its top"), "none is there, none is named: {}", prompt.text);
@@ -249,18 +244,18 @@ mod tests {
         let world = session_with_workspace().await;
         std::fs::write(world.dir().join("AGENTS.md"), "").unwrap();
         std::fs::write(world.dir().join("GUIDE.md"), "").unwrap();
-        let provider = provider_of(&world, &["GUIDE.md".to_string()]);
+        let provider = provider_of(&["GUIDE.md".to_string()]);
         let mut state = AgentChannelState::default();
         let prompt = provider.get_prompt(&world.turn(&mut state).work()).await.unwrap();
         assert!(prompt.text.contains("At its top lies `GUIDE.md`,") && !prompt.text.contains("AGENTS.md"), "{}", prompt.text);
 
-        let none = provider_of(&world, &[]);
+        let none = provider_of(&[]);
         let mut state = AgentChannelState::default();
         let prompt = none.get_prompt(&world.turn(&mut state).work()).await.unwrap();
         assert!(!prompt.text.contains("At its top") && !prompt.text.contains("of its own"), "{}", prompt.text);
 
         for invalid in ["", "docs/AGENTS.md", "../AGENTS.md", "/AGENTS.md"] {
-            assert!(matches!(WorkspacePromptProvider::new(PromptPosition::Start, &[invalid.to_string()], Arc::clone(world.runtime.workspace_manager())), Err(ComponentError::InvalidConfig(_))), "{invalid:?}");
+            assert!(matches!(WorkspacePromptProvider::new(PromptPosition::Start, &[invalid.to_string()]), Err(ComponentError::InvalidConfig(_))), "{invalid:?}");
         }
     }
 
@@ -270,7 +265,7 @@ mod tests {
         std::fs::write(world.dir().join("AGENTS.md"), "").unwrap();
         std::fs::remove_dir_all(world.dir()).unwrap();
         let mut state = AgentChannelState::default();
-        let prompt = provider(&world).get_prompt(&world.turn(&mut state).work()).await.unwrap();
+        let prompt = provider().get_prompt(&world.turn(&mut state).work()).await.unwrap();
         assert!(prompt.text.contains("\"docs\"") && !prompt.text.contains("At its top"), "{}", prompt.text);
     }
 }
