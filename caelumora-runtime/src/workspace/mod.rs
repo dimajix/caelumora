@@ -34,7 +34,7 @@ use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::config::WorkspacesConfig;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
-use caelumora_model::event::GlobalEvent;
+use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityContext, SecurityManager, WRITE};
 use caelumora_model::session::Session;
@@ -215,7 +215,7 @@ impl WorkspaceManager {
             }
             return Err(e.into());
         }
-        self.events.publish_classified(GlobalEvent::created::<Workspace>(&workspace.id), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
+        self.events.announce(GlobalEvent::created::<Workspace>(&workspace.id), &workspace);
         info!(workspace = %workspace.id, storage, by = %ctx.caller_id, "Workspace created");
         Ok(workspace)
     }
@@ -236,7 +236,7 @@ impl WorkspaceManager {
         if !self.workspaces.delete(ctx, id).await? {
             return Ok(false);
         }
-        self.events.publish_classified(GlobalEvent::deleted::<Workspace>(&id), workspace.security_attributes, std::slice::from_ref(&workspace.classification));
+        self.events.announce(GlobalEvent::deleted::<Workspace>(&id), &workspace);
         info!(workspace = %id, by = %ctx.caller_id, "Workspace deleted");
         Ok(true)
     }
@@ -250,7 +250,7 @@ impl WorkspaceManager {
     pub async fn restore(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<Workspace> {
         let _writing = self.writing.lock().await;
         let workspace = self.workspaces.restore(ctx, id).await.map_err(store_error(id))?;
-        self.events.publish_classified(GlobalEvent::restored::<Workspace>(&id), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
+        self.events.announce(GlobalEvent::restored::<Workspace>(&id), &workspace);
         info!(workspace = %id, by = %ctx.caller_id, "Workspace restored");
         Ok(workspace)
     }
@@ -317,7 +317,7 @@ impl ScopeMember for WorkspaceManager {
         let mut left = 0;
         for workspace in self.workspaces.list(&system, &within(holder)).await?.items {
             if deleted_unless_refused(self.workspaces.delete(ctx, workspace.id).await)? {
-                self.events.publish_classified(GlobalEvent::deleted::<Workspace>(&workspace.id), workspace.security_attributes, std::slice::from_ref(&workspace.classification));
+                self.events.announce(GlobalEvent::deleted::<Workspace>(&workspace.id), &workspace);
             } else {
                 left += 1;
             }
@@ -338,7 +338,7 @@ impl ScopeMember for WorkspaceManager {
         let _writing = self.writing.lock().await;
         for workspace in deleted_since(self.workspaces.list_deleted(&system, &within(holder)).await?.items, since) {
             if let Some(restored) = restored_unless_refused(self.workspaces.restore(ctx, workspace.id).await, &workspace)? {
-                self.events.publish_classified(GlobalEvent::restored::<Workspace>(&restored.id), restored.security_attributes, std::slice::from_ref(&restored.classification));
+                self.events.announce(GlobalEvent::restored::<Workspace>(&restored.id), &restored);
             }
         }
         Ok(())

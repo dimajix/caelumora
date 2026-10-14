@@ -15,7 +15,7 @@ use crate::skill::{Skill, SkillBody, SkillId, SkillUpdateEvent};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
-use caelumora_model::event::GlobalEvent;
+use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
@@ -124,7 +124,7 @@ impl SkillManager {
 
         let _writing = self.writing.lock().await;
         self.skills.create(ctx, &skill).await?;
-        self.events.publish_classified(GlobalEvent::created::<Skill>(&skill.id), skill.security_attributes.clone(), std::slice::from_ref(&skill.classification));
+        self.events.announce(GlobalEvent::created::<Skill>(&skill.id), &skill);
         info!(skill = %skill.id, by = %ctx.caller_id, "Skill created");
         Ok(skill)
     }
@@ -206,7 +206,7 @@ impl SkillManager {
         if !self.skills.delete(ctx, id).await? {
             return Ok(false);
         }
-        self.events.publish_classified(GlobalEvent::deleted::<Skill>(&id), skill.security_attributes, std::slice::from_ref(&skill.classification));
+        self.events.announce(GlobalEvent::deleted::<Skill>(&id), &skill);
         info!(skill = %id, by = %ctx.caller_id, "Skill deleted");
         Ok(true)
     }
@@ -220,7 +220,7 @@ impl SkillManager {
     pub async fn restore(&self, ctx: &SecurityContext, id: SkillId) -> SkillResult<Skill> {
         let _writing = self.writing.lock().await;
         let skill = self.skills.restore(ctx, id).await.map_err(store_error(id))?;
-        self.events.publish_classified(GlobalEvent::restored::<Skill>(&id), skill.security_attributes.clone(), std::slice::from_ref(&skill.classification));
+        self.events.announce(GlobalEvent::restored::<Skill>(&id), &skill);
         info!(skill = %id, by = %ctx.caller_id, "Skill restored");
         Ok(skill)
     }
@@ -258,7 +258,7 @@ impl ScopeMember for SkillManager {
         let mut left = 0;
         for skill in self.skills.list(&system, &within(holder)).await?.items {
             if deleted_unless_refused(self.skills.delete(ctx, skill.id).await)? {
-                self.events.publish_classified(GlobalEvent::deleted::<Skill>(&skill.id), skill.security_attributes, std::slice::from_ref(&skill.classification));
+                self.events.announce(GlobalEvent::deleted::<Skill>(&skill.id), &skill);
             } else {
                 left += 1;
             }
@@ -279,7 +279,7 @@ impl ScopeMember for SkillManager {
         let _writing = self.writing.lock().await;
         for skill in deleted_since(self.skills.list_deleted(&system, &within(holder)).await?.items, since) {
             if let Some(restored) = restored_unless_refused(self.skills.restore(ctx, skill.id).await, &skill)? {
-                self.events.publish_classified(GlobalEvent::restored::<Skill>(&restored.id), restored.security_attributes, std::slice::from_ref(&restored.classification));
+                self.events.announce(GlobalEvent::restored::<Skill>(&restored.id), &restored);
             }
         }
         Ok(())

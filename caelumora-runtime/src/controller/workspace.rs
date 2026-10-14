@@ -1,7 +1,7 @@
 use arc_swap::ArcSwap;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Place};
-use caelumora_model::event::{EventPublisher, GlobalEvent};
+use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::group::Group;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::scope::Scope;
@@ -332,7 +332,7 @@ impl WorkspaceController {
         require_nameable(self.groups.as_ref(), ctx, &workspace.security_attributes.acl, &acl).await?;
         workspace.security_attributes.acl = acl;
         let workspace = self.store(ctx, workspace).await?;
-        self.event_publisher.publish_classified(GlobalEvent::updated::<Workspace>(&self.id, &WorkspaceUpdateEvent::AccessChanged), workspace.security_attributes.clone(), std::slice::from_ref(&workspace.classification));
+        self.event_publisher.announce(GlobalEvent::updated::<Workspace>(&self.id, &WorkspaceUpdateEvent::AccessChanged), &*workspace);
         info!(workspace = %self.id, by = %ctx.caller_id, "Workspace's access changed");
         Ok(())
     }
