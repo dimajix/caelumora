@@ -3,13 +3,12 @@
 //! here, and the `ExternalAgentActor`, whose mind runs elsewhere. Who the
 //! agent is in the channel and in whose name it acts, what it holds of the
 //! channel (its `AgentChannelState`), how it takes in what it hears there
-//! (`intake`) and the commands it carries out itself (`commands`). What
-//! the two minds do with it is their actors': also how each shows where it
-//! stands while it carries out a command where it came in what it took in -
-//! an `AgentActor` through its `RunControl`, only when awake, an
-//! `ExternalAgentActor` through its own state -, so that loop is each
-//! actor's.
+//! (`intake`), the commands it carries out itself (`commands`), and where
+//! its actor stands and what `cancel` and `stop` asked of it (`RunControl`,
+//! issue 363). What the two minds do with it is their actors'.
 
+use super::intake::TakenIn;
+use super::run_control::RunControl;
 use super::Answering;
 use crate::agent::state::AgentStateHandle;
 use crate::agent::turn::Turn;
@@ -20,10 +19,10 @@ use crate::context::ContextProvider;
 use crate::controller::AgentController;
 use crate::message::PerceiveInProcessor;
 use crate::runtime::ActorRuntime;
-use crate::transport::EventSender;
+use crate::transport::{EventReceiver, EventSender};
 use crate::view::ViewsFactory;
 use anyhow::{Context, Result};
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentConfig;
@@ -81,6 +80,9 @@ pub(super) struct AgentBody {
     /// Its state in this channel, held by its actor's run loop for as long
     /// as it runs.
     pub(super) state: Mutex<AgentChannelState>,
+    /// Where its actor's run loop stands, and what `cancel`, `stop` and
+    /// `wakeup` asked of it (issue 363).
+    pub(super) control: RunControl,
 }
 
 impl AgentBody {
@@ -88,6 +90,8 @@ impl AgentBody {
     /// makes it, and the components it was built with - those `facets` asks
     /// for (issue 337), with the components of `defaults` as the defaults of
     /// the singles they provide - for its actor to take its own from. Its
+    /// state in the channel is made fit to run from by `resume`, as its
+    /// actor resumes, and its run control stands where that state says. Its
     /// commands' turns have the default profile, and it hands nothing over
     /// (`with_profile`, `handing_over`).
     ///
@@ -101,6 +105,7 @@ impl AgentBody {
         facets: &[TypeKey],
         defaults: &ComponentConfig,
         runtime: ActorRuntime,
+        resume: impl FnOnce(&mut AgentChannelState),
     ) -> Result<(Self, ComponentContainer)> {
         let attributes = agent.load().security_attributes.clone();
         // It acts on behalf of its owner, in this channel (issue 87), with
@@ -120,7 +125,9 @@ impl AgentBody {
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
         let context_provider = components.one::<dyn ContextProvider>().await?;
         let commands = Self::command_executor(&components, &runtime)?;
-        let state = runtime.load_channel_state().await?;
+        let mut state = runtime.load_channel_state().await?;
+        resume(&mut state);
+        let control = RunControl::new(state.processing_state, state.turn.as_ref().map(|t| t.work.turn_id));
         let agent_state = runtime.agent_state(attributes).await?;
         let views = runtime.views();
         let body = Self {
@@ -136,6 +143,7 @@ impl AgentBody {
             views,
             built_from: components.components(),
             state: Mutex::new(state),
+            control,
         };
         Ok((body, components))
     }
@@ -204,12 +212,46 @@ impl AgentBody {
             .with_context(|| format!("component '{}' could not assemble the context", self.context_provider.id))
     }
 
-    /// Stores its `state` in the channel. A failure is logged: the actor
-    /// carries on with the state in memory.
+    /// Stores its `state` in the channel, with where its actor stands now.
+    /// A failure is logged: the actor carries on with the state in memory.
     pub(super) async fn store(&self, state: &mut AgentChannelState) {
+        state.processing_state = self.control.state();
         if let Err(e) = self.runtime.store_channel_state(state).await {
             warn!("Agent {} cannot store its state in channel {}: {:#}", self.agent_id(), self.context.channel_id, e);
         }
+    }
+
+    /// Tells the users where its actor stands, if it moved since it last
+    /// told them (issue 243).
+    pub(super) async fn announce_state(&self, output: &dyn EventSender) {
+        if let Some(now) = self.control.unannounced() {
+            self.announce(now, output).await;
+        }
+    }
+
+    /// Takes in `received` and everything queued behind it (`take_in`),
+    /// and carries out every command where it came in it (issue 269), then
+    /// takes in the rest. An awake agent is shown carrying it out meanwhile,
+    /// and is idle again after - told with its actor's next step; a sleeping
+    /// one carries it out asleep (issue 299): moved, it would be neither
+    /// woken by `/wakeup` nor left out by the moderator. Returns what was
+    /// taken in, without the commands.
+    pub(super) async fn hear(&self, state: &mut AgentChannelState, received: Envelope, rx: &mut Box<dyn EventReceiver>, output: &dyn EventSender) -> TakenIn {
+        let mut taken = self.take_in(state, received, rx).await;
+        while let Some(command) = taken.command.take() {
+            let awake = self.control.state() == ActorState::Idle;
+            if awake {
+                self.control.go_to(ActorState::CarryingOutCommand);
+                self.announce_state(output).await;
+            }
+            self.carry_out(state, &command, output).await;
+            if awake {
+                self.control.go_to(ActorState::Idle);
+            }
+            let Some(next) = rx.try_recv() else { break };
+            taken = taken.then(self.take_in(state, next, rx).await);
+        }
+        taken
     }
 
     /// Tells the users that its actor stands at `state` (issue 243) - in
@@ -259,6 +301,7 @@ mod testing {
                 agent_state: AgentStateHandle::detached(),
                 built_from: ComponentConfig::default(),
                 state: Mutex::new(AgentChannelState::default()),
+                control: RunControl::new(ActorState::Idle, None),
             }
         }
     }

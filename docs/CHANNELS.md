@@ -533,9 +533,11 @@ An **actor** is anything that sends and receives events in a channel.
     tells the two apart.
 *   **What both kinds of agent are in a channel** is their `AgentBody` (issue 355): the agent and
     in whose name it acts there, its `AgentChannelState`, how it takes in what it hears, its
-    context provider and the commands it carries out itself. The two actors differ in their mind -
-    a model run here with its tools, or the remote agent - and in how they show where they stand:
-    an `AgentActor` through its `RunControl`, an `ExternalAgentActor` through a state of its own.
+    context provider, the commands it carries out itself, and its `RunControl` - where its actor
+    stands and what `cancel` and `stop` asked of it (issue 363). The two actors differ in their
+    mind: a model run here with its tools, or the remote agent, whose every answer is a turn of the
+    run control, ended by `cancel` and `stop` as an agent's turn is. Both tell where they stand the
+    same way; an external agent tells the begin and end of an answer at once.
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`, or `System` - the
     runtime itself, set only deliberately.
 *   **`Envelope`** is the unit of communication: a timestamp, a `SecurityContext`, an `EventContext`

@@ -437,7 +437,7 @@ published before anyone else can take it.
 | [359](359-actor-runtime-hands-out-the-runtime-manager.md) | done | `ActorRuntime` hands out the `RuntimeManager`, which two actors use to reach past the facade for the `ControllerManager`. |
 | [360](360-channel-runtime-forwarders-again.md) | done | `ChannelRuntime` forwards ten services of the `RuntimeManager` it never uses itself, each read once by `ChannelLoop::new`; what 89 rejected, on code that has changed since. |
 | [361](361-session-before-its-channels.md) | done | A channel is attached to its session in a second step after it is built, though the session's controller already travels through its runtime; the option 123 rejected, on code that has changed since. |
-| [363](363-run-control-built-twice.md) | open | Where an agent's actor stands and what `cancel` and `stop` asked of it is built twice - `RunControl` for the `AgentActor`, three fields of its own for the `ExternalAgentActor` - so the two show and end their work differently, and the loop that carries out commands cannot be shared. |
+| [363](363-run-control-built-twice.md) | done | Where an agent's actor stands and what `cancel` and `stop` asked of it is built twice - `RunControl` for the `AgentActor`, three fields of its own for the `ExternalAgentActor` - so the two show and end their work differently, and the loop that carries out commands cannot be shared. |
 
 ## Integrations
 

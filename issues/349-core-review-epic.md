@@ -52,7 +52,8 @@ constructors. Doing them in the wrong order means moving code twice.
 5. [356](356-member-questions-threaded-with-their-services.md), its second step (`Membership`) - an
    architecture decision first.
 6. [355](355-two-agent-actors-share-half-their-fields.md) - an architecture decision first; the
-   channel tests of both kinds of agent are the net.
+   channel tests of both kinds of agent are the net. Then
+   [363](363-run-control-built-twice.md), what 355 left with each actor.
 7. [353](353-rules-of-the-model-computed-in-the-runtime.md).
 8. [358](358-controllers-apply-their-events-each-on-its-own.md) - after 353, whose `apply` is one of
    its parts.
@@ -80,3 +81,5 @@ order along the way.
 - **2026-10-14** — [360](360-channel-runtime-forwarders-again.md) and
   [361](361-session-before-its-channels.md) added at the maintainer's request: what 89 and 123
   decided is to be discussed again on the code as it is now, before 357.
+- **2026-10-14** — [363](363-run-control-built-twice.md) added to step 6: where an agent's actor
+  stands was built twice, which kept the command loop in both actors after 355.

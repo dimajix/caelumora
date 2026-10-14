@@ -1,6 +1,7 @@
-//! The run control of an `AgentActor`: what its run loop shares with
+//! The run control of an agent's actor - an `AgentActor` or an
+//! `ExternalAgentActor` (issue 363): what its run loop shares with
 //! `cancel`, `retry`, `stop`, `wakeup` and `interrupt_call` (see
-//! `RunControl`).
+//! `RunControl`). Held by its body (`AgentBody`).
 
 use crate::tool::Interruption;
 use caelumora_model::actor::{ActorState, ProcessingStateHolder};
@@ -34,7 +35,9 @@ const NO_INTERRUPT: u8 = 0;
 /// `wakeup` asked of it. These come from other tasks and are synchronous:
 /// they only leave word here and interrupt the step under way; the run loop
 /// takes the word after every step and alone decides what follows (issue
-/// 152).
+/// 152). The same for both kinds of agent (issue 363): an external agent's
+/// answer is a turn here, with a token of its own, and it never sleeps nor
+/// has calls to interrupt on their own.
 #[derive(Debug)]
 pub(crate) struct RunControl {
     state: ProcessingStateHolder,
@@ -49,8 +52,13 @@ pub(crate) struct RunControl {
     /// on it next to the model's stream, so that a cancel drops the request
     /// instead of waiting for its next chunk, and so does waiting for an
     /// approval. `None` before the first turn. A `std` mutex, because
-    /// `cancel` is synchronous.
+    /// `cancel` is synchronous. Every token is a child of `stopped`.
     turn: std::sync::Mutex<(Option<TurnId>, CancellationToken)>,
+    /// Cancelled by `stop`: the actor left the channel. A turn begun after
+    /// it finds its token cancelled already; a run loop that waits for more
+    /// than its input - an external agent following its open tasks - waits
+    /// for it too (`stopped`).
+    stopped: CancellationToken,
     /// What `cancel` or `stop` asked of the run loop (an `Interrupt`, or
     /// `NO_INTERRUPT`), taken after every step.
     interrupt: AtomicU8,
@@ -66,11 +74,13 @@ impl RunControl {
     /// The run control of an agent that stands at `state`, in the turn
     /// `turn` if it resumes one.
     pub(crate) fn new(state: ActorState, turn: Option<TurnId>) -> Self {
+        let stopped = CancellationToken::new();
         Self {
             state: ProcessingStateHolder::new(state),
             announced: ProcessingStateHolder::new(state),
             woken: Notify::new(),
-            turn: std::sync::Mutex::new((turn, CancellationToken::new())),
+            turn: std::sync::Mutex::new((turn, stopped.child_token())),
+            stopped,
             interrupt: AtomicU8::new(NO_INTERRUPT),
             calls: std::sync::Mutex::new(HashMap::new()),
         }
@@ -112,7 +122,7 @@ impl RunControl {
     /// a retry that came as the turn before ended has nothing to end here;
     /// a stop still has.
     pub(crate) fn begin_turn(&self, turn: TurnId) {
-        *self.lock_turn() = (Some(turn), CancellationToken::new());
+        *self.lock_turn() = (Some(turn), self.stopped.child_token());
         let _ = self.interrupt.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |asked| (asked != Interrupt::Stop as u8).then_some(NO_INTERRUPT));
     }
 
@@ -167,6 +177,17 @@ impl RunControl {
     /// the turn under way is given up instead of taken over.
     pub(crate) fn stop(&self) {
         self.interrupt(Interrupt::Stop);
+        self.stopped.cancel();
+    }
+
+    /// Returns once `stop` asked the run loop to end - at once if it did.
+    pub(crate) async fn stopped(&self) {
+        self.stopped.cancelled().await;
+    }
+
+    /// Whether `stop` asked the run loop to end.
+    pub(crate) fn is_stopped(&self) -> bool {
+        self.stopped.is_cancelled()
     }
 
     /// Leaves `interrupt` for the run loop - a stop is not turned back into
@@ -291,6 +312,17 @@ mod tests {
         control.stop();
         control.begin_turn(TurnId::new());
         assert_eq!(control.take_interrupt(), Some(Interrupt::Stop));
+        assert!(control.token().is_cancelled(), "a turn begun after a stop has nothing to run for");
+        assert!(control.is_stopped());
+    }
+
+    #[tokio::test]
+    async fn a_stop_is_waited_for_also_once_it_came() {
+        let control = RunControl::new(ActorState::Idle, None);
+        assert!(!control.is_stopped());
+        control.stop();
+        control.stopped().await;
+        assert!(control.is_stopped());
     }
 
     #[test]

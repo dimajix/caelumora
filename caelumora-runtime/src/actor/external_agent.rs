@@ -40,7 +40,7 @@ use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, ProcessingStateHolder};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::Personality;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::confidentiality::Classification;
@@ -72,7 +72,9 @@ pub struct ExternalAgentActor {
     /// its next call. Its context provider gives the remote agent what it
     /// is given besides what was said - the frame of it, such as who is in
     /// the channel (issues 204, 214) -, by default
-    /// `external_context_provider`.
+    /// `external_context_provider`. Where it stands is its run control's
+    /// (issue 363): `Planning` while the remote agent works on an answer -
+    /// a turn of its own, which `cancel` and `stop` end -, else `Idle`.
     body: AgentBody,
     /// The remote agent: exactly one (issue 179).
     remote: ComponentImpl<dyn ExternalAgent>,
@@ -82,14 +84,6 @@ pub struct ExternalAgentActor {
     /// when its provider, telling only changes, has nothing new by then. A
     /// plain lock, never held across an await.
     pending_prompts: std::sync::Mutex<Vec<(String, PromptPart)>>,
-    /// `Planning` while the remote agent works on an answer, else `Idle`,
-    /// as `go_to` moved it.
-    processing: ProcessingStateHolder,
-    /// Cancelled to end the answer under way (`cancel`, `stop`); replaced
-    /// for every answer.
-    current: std::sync::Mutex<CancellationToken>,
-    /// Cancelled when the actor ends: it left the channel.
-    ended: CancellationToken,
 }
 
 /// What tells `part`, the `index`th the context provider gave, apart from
@@ -139,7 +133,10 @@ impl ExternalAgentActor {
         let defaults = ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new(EXTERNAL_CONTEXT_PROVIDER_KIND, EXTERNAL_CONTEXT_PROVIDER_KIND)],
         };
-        let (body, components) = AgentBody::build(&channel, agent_controller, &personality, Self::COMPONENT_FACETS, &defaults, actor_runtime).await?;
+        // It resumes no answer: the remote agent's tasks are followed again
+        // (`follow_open_tasks`), and it starts idle.
+        let resume = |state: &mut AgentChannelState| state.processing_state = ActorState::Idle;
+        let (body, components) = AgentBody::build(&channel, agent_controller, &personality, Self::COMPONENT_FACETS, &defaults, actor_runtime, resume).await?;
         let remote = components.one::<dyn ExternalAgent>().await?;
 
         // Answers that may never enter the channel would each be dropped
@@ -162,9 +159,6 @@ impl ExternalAgentActor {
             body: body.handing_over(tell),
             remote,
             pending_prompts: std::sync::Mutex::new(Vec::new()),
-            processing: ProcessingStateHolder::new(ActorState::Idle),
-            current: std::sync::Mutex::new(CancellationToken::new()),
-            ended: CancellationToken::new(),
         })
     }
 
@@ -198,19 +192,11 @@ impl ExternalAgentActor {
         self.pending_prompts.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Moves it to `state` and tells the users, if that is a move (issue
-    /// 243).
+    /// Moves it to `state` and tells the users at once, if that is a move
+    /// (issue 243): an answer begins and ends as it happens.
     async fn go_to(&self, state: ActorState, output: &dyn EventSender) {
-        if self.processing.swap(state) != state {
-            self.body.announce(state, output).await;
-        }
-    }
-
-    /// A fresh token for the answer that begins, which `cancel` reaches.
-    fn begin(&self) -> CancellationToken {
-        let token = self.ended.child_token();
-        *self.current.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = token.clone();
-        token
+        self.body.control.go_to(state);
+        self.body.announce_state(output).await;
     }
 
     /// Takes in `received` and everything queued behind it as an agent run
@@ -222,18 +208,9 @@ impl ExternalAgentActor {
     /// the remote agent keeps what it was given, and nothing here can take
     /// its answer back from it. A message it was given that was modified
     /// or taken back since is told to it by a notice (`tell`, issue 236). A
-    /// command is carried out where it came (issue 269).
+    /// command is carried out where it came (`AgentBody::hear`, issue 269).
     async fn hear(&self, state: &mut AgentChannelState, received: Envelope, rx: &mut Box<dyn EventReceiver>, output: &dyn EventSender) -> Option<Envelope> {
-        let mut taken = self.body.take_in(state, received, rx).await;
-        while let Some(command) = taken.command.take() {
-            // Shown carrying it out meanwhile, as an agent run here is
-            // (issue 299).
-            self.go_to(ActorState::CarryingOutCommand, output).await;
-            self.body.carry_out(state, &command, output).await;
-            self.go_to(ActorState::Idle, output).await;
-            let Some(next) = rx.try_recv() else { break };
-            taken = taken.then(self.body.take_in(state, next, rx).await);
-        }
+        let taken = self.body.hear(state, received, rx, output).await;
         let (request, retries) = (taken.request, taken.retries);
         self.body.store(state).await;
         reject_retries(retries, caelumora_model::agent::RetryRefused::Elsewhere, self.id(), self.name().as_str(), &self.body.security_context(), output).await;
@@ -254,7 +231,9 @@ impl ExternalAgentActor {
         // The work of this exchange, as a turn: bound by the channel as it
         // is now (issue 212), and how it ends is told as its turn's end.
         let mut work = Work::new(answering.event_context.clone(), answering.security_context.clone(), channel.classification());
-        let token = self.begin();
+        // A turn of its own, whose token `cancel` and `stop` reach.
+        self.body.control.begin_turn(work.turn_id);
+        let token = self.body.control.token();
         self.go_to(ActorState::Planning, output).await;
         let ending = self.exchange(state, &answering, &mut work, &token, output).await;
         self.body.store(state).await;
@@ -361,7 +340,7 @@ impl ExternalAgentActor {
                     if let Some(task) = &task {
                         self.cancel_remote(state, &work.security_context, task).await;
                     }
-                    if self.ended.is_cancelled() {
+                    if self.body.control.is_stopped() {
                         return Ok(Ending::Stopped);
                     }
                     // A lowering cancels the channel's actors: what came so
@@ -839,7 +818,7 @@ impl Actor for ExternalAgentActor {
             .map_err(|_| anyhow!("ExternalAgentActor {} already running", self.id()))?;
         info!("ExternalAgentActor {} is starting", self.id());
         // Whoever watches already learns where it starts.
-        self.body.announce(self.processing.load(), &*output).await;
+        self.body.announce(self.body.control.state(), &*output).await;
         // The open tasks it follows between requests, and what came of them
         // so far. While it answers a request, what they send waits.
         let mut followed = Followed::new();
@@ -849,7 +828,7 @@ impl Actor for ExternalAgentActor {
         loop {
             // What others said, a request to respond, or an open task's news.
             tokio::select! {
-                _ = self.ended.cancelled() => break,
+                () = self.body.control.stopped() => break,
                 received = rx.recv() => {
                     let Some(received) = received else { break };
                     // One answer to all that was queued, to the last request.
@@ -864,10 +843,13 @@ impl Actor for ExternalAgentActor {
                     self.on_followed(&mut state, task, event, &mut pending, &*output).await;
                 }
             }
+            // Where it stands now, if it moved without telling: after a
+            // command, as an agent run here tells it.
+            self.body.announce_state(&*output).await;
         }
         // Left the channel: nobody waits for its open tasks any more. A
         // channel that merely stops keeps them, to be followed again.
-        if self.ended.is_cancelled() {
+        if self.body.control.is_stopped() {
             let working: Vec<TaskId> = state.remote.open_tasks.iter().map(|t| t.task.clone()).collect();
             for task in working {
                 let acting = self.acting_for(&state, &task);
@@ -880,18 +862,19 @@ impl Actor for ExternalAgentActor {
     }
 
     fn state(&self) -> ActorState {
-        self.processing.load()
+        self.body.control.state()
     }
 
     fn cancel(&self) {
         info!("Cancelling external agent {} {}", self.id(), self.name());
-        self.current.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).cancel();
+        // Only an answer under way: between answers there is nothing to end.
+        self.body.control.cancel();
     }
 
     fn stop(&self) {
         info!("Stopping external agent {} {}: it left the channel", self.id(), self.name());
-        // The answer under way is a child of it, and ends too.
-        self.ended.cancel();
+        // The answer under way ends too, and so does `run`.
+        self.body.control.stop();
     }
 }
 

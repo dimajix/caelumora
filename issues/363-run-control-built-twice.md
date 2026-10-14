@@ -1,6 +1,6 @@
 # 363 — Where an agent's actor stands, and what `cancel` and `stop` asked of it, is built twice
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -67,3 +67,24 @@ issues 75 and 262. A third kind of agent would bring a third.
 
 - **2026-10-14** — Left over from [355](355-two-agent-actors-share-half-their-fields.md), opened at
   the maintainer's request under epic [349](349-core-review-epic.md).
+- **2026-10-14** — Done. `RunControl` moved to `actor/run_control.rs` and is part of the
+  `AgentBody`: where an agent stands in the channel is part of what it is there. The body builds it
+  from the stored state, after its actor made that fit to run from - `AgentBody::build` takes how
+  the actor resumes: the `AgentActor` its `prepare_resume`, the external agent `Idle`, since it
+  resumes no answer. `RunControl` got a `stopped` token, cancelled by `stop` and the parent of every
+  turn's token, so that an answer begun after a stop finds its token cancelled, as it did with
+  `ended`; `run` of the external agent waits for it (`stopped`, `is_stopped`). For the `AgentActor`
+  that changes nothing: a turn begins within a step, after which its run loop takes the stop. The
+  external agent's `processing`, `current`, `ended` and `begin` are gone; every answer is a turn of
+  the run control (`begin_turn` with the work's turn id), which `cancel` and `stop` end. `cancel`
+  now asks whether the state can be interrupted first - between answers it ended nothing before
+  either, the token it reached being the last answer's.
+
+  The command loop is `AgentBody::hear`, once; `AgentBody::announce_state` and `AgentBody::store`,
+  which stores where the actor stands, serve both. As decided, the external agent tells `Idle` after
+  a command as an agent run here does: with its run loop's next step, so that a command followed by
+  a request shows `CarryingOutCommand`, then `Planning`, no longer an `Idle` in between. The begin
+  and end of an answer it still tells at once (`go_to`). Not a subject, as considered:
+  `turn_under_way`, `retry_turn` and `interrupt_tool_call` of the external agent. Stored data: an
+  external agent's `AgentChannelState` records where it stood when it was stored, which it does
+  not read back; nothing has to be deleted.
