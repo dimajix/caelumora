@@ -15,7 +15,7 @@
 //!   (`KnowledgeSource::Workspace`).
 //!
 //! The workspace is reached through the turn's channel on every call
-//! (`AgentWork::workspace_terminal`, issue 344), before anything is sent,
+//! (`Turn::workspace_terminal`, issue 344), before anything is sent,
 //! in its context (issue 296): as a member of the channel, where the channel uses it, its access
 //! list lets the agent read it - change it, for the shell and the tools that
 //! write (issue 23) - and it and the channel flow both ways. A result is
@@ -152,14 +152,14 @@ impl ToolProvider for TerminalTool {
         }
         let (workspace, value) = match is_shell {
             true => {
-                let (workspace, shell) = turn.work().workspace_shell().await.map_err(unusable)?;
+                let (workspace, shell) = turn.workspace_shell().await.map_err(unusable)?;
                 let shell = shell.ok_or_else(|| ToolError::ExecutionFailed("the workspace's storage gives it no shell".to_string()))?;
                 (workspace, shell::execute(&self.config, name, params, shell).await?)
             }
             false => {
                 // What only reads needs only reading (issue 23).
                 let need = if files::read_only(name) { Grant::Read } else { Grant::Write };
-                let (workspace, terminal) = turn.work().workspace_terminal(need).await.map_err(unusable)?;
+                let (workspace, terminal) = turn.workspace_terminal(need).await.map_err(unusable)?;
                 let value = files::execute(&self.config, name, params, terminal.as_ref(), &workspace, self.workspaces.max_file_bytes(), turn).await?;
                 (workspace, value)
             }

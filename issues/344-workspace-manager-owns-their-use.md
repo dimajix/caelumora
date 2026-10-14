@@ -134,3 +134,10 @@ the artifact tool, the workspace prompt part, the channel's and the workspace's 
   lists and the largest file. What a caller is asked is unchanged, but for the REST route ending a
   command, which now asks whether the user may read the channel first, as every channel route does,
   and answers a channel that is not the session's as `channel_not_found`.
+- **2026-10-14** — Decided with the maintainer: a turn, not the work it is part of, hands out the
+  workspace's terminal and shell to act on (`Turn::workspace_terminal`, `Turn::workspace_shell`),
+  which the terminal and the artifact tool use; `AgentWork` is the work to read, and gives the
+  terminal for reading alone (`AgentWork::workspace_for_reading`), which the workspace prompt part
+  uses. Reaching them through the views was not followed - a view reads and decides nothing -, nor a
+  service looking the channel up by its id. A terminal reached for reading can still write: what is
+  asked is which permission, not what the handle can do.

@@ -6,7 +6,7 @@
 //! as a link to it as it is now (issue 273).
 //!
 //! The workspace is reached as `terminal_tool` reaches it, through the
-//! turn's channel (`AgentWork::workspace_terminal`, issue 344), for
+//! turn's channel (`Turn::workspace_terminal`, issue 344), for
 //! reading; the file read is handed to the `ArtifactManager` (issue 296),
 //! the service its kind uses. Without an artifact storage configured, a call fails and says so. The result is
 //! classified as the artifact, which is classified as the workspace.
@@ -139,7 +139,7 @@ impl ToolProvider for ArtifactTool {
         };
         let description = description.as_deref().map(str::trim).filter(|d| !d.is_empty());
         let (ctx, session, channel) = (turn.security_context(), turn.session_id(), turn.channel_id());
-        let (workspace, terminal) = turn.work().workspace_terminal(Grant::Read).await
+        let (workspace, terminal) = turn.workspace_terminal(Grant::Read).await
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         let content = terminal.read(&at).await?;
         let (artifact, number) = self.artifacts.publish(ctx, content, &workspace.classification, &name, description, session, channel).await?;

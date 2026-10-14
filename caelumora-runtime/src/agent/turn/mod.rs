@@ -42,7 +42,9 @@ use crate::agent::notes::NoteKind;
 use crate::agent::state::AgentStateHandle;
 use tool_calls::ToolCalls;
 use crate::transport::EventSender;
+use crate::terminal::{Shell, Terminal};
 use crate::view::{SessionView, ViewsFactory};
+use crate::workspace::{WorkspaceError, WorkspaceResult};
 use crate::agent::work::AgentWork;
 use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState};
@@ -55,9 +57,10 @@ use caelumora_model::digest::Digest;
 use caelumora_model::memory::{MemoryChange, MemoryOrigin};
 use caelumora_model::message::Message;
 use caelumora_model::note::NoteChange;
-use caelumora_model::security::SecurityContext;
+use caelumora_model::security::{Grant, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::Tool;
+use caelumora_model::workspace::Workspace;
 use std::sync::{Arc, LazyLock};
 
 /// What a turn reads as when none runs.
@@ -109,6 +112,30 @@ impl<'a> Turn<'a> {
     /// (`AgentWork::session`).
     pub async fn session(&self) -> Option<SessionView> {
         self.work().session().await
+    }
+
+    /// The workspace of the agent's session and its terminal, for what
+    /// `need` asks - reading its files, or changing them too -, if the turn
+    /// may use it in its channel (`ChannelLoop::workspace_terminal`, issue
+    /// 344): what a tool acts on.
+    ///
+    /// # Errors
+    /// `NotUsableInChannel` while its channel is not attached to its
+    /// session, or what `ChannelLoop::workspace_terminal` reports.
+    pub async fn workspace_terminal(&self, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+        let channel = self.views.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
+        channel.workspace_terminal(self.security_context(), need).await
+    }
+
+    /// The workspace of the agent's session and its shell as its channel
+    /// sees it (`ChannelLoop::workspace_shell`, issue 344): where a tool
+    /// runs commands.
+    ///
+    /// # Errors
+    /// As [`Self::workspace_terminal`].
+    pub async fn workspace_shell(&self) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
+        let channel = self.views.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
+        channel.workspace_shell(self.security_context()).await
     }
 
     /// Which turn this is (issue 235).

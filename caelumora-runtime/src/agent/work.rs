@@ -9,7 +9,7 @@
 //! `AgentWork` rather than a `Turn`, so that they serve both kinds of agent.
 
 use crate::agent::state::AgentStateHandle;
-use crate::terminal::{Shell, Terminal};
+use crate::terminal::Terminal;
 use crate::view::{SessionView, ViewsFactory};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -95,26 +95,18 @@ impl<'a> AgentWork<'a> {
         self.views.session(&self.work.security_context, self.channel_id(), self.work.classification.clone()).await
     }
 
-    /// The workspace of the agent's session and its terminal, for what
-    /// `need` asks, if the work may use it in its channel
-    /// (`ChannelLoop::workspace_terminal`, issue 344).
+    /// The workspace of the agent's session and its terminal, to read its
+    /// files, if the work may use it in its channel
+    /// (`ChannelLoop::workspace_terminal`, issue 344) - what a component
+    /// that only reads looks at. Changing the files, and running commands,
+    /// is a turn's (`Turn::workspace_terminal`, `Turn::workspace_shell`).
     ///
     /// # Errors
     /// `NotUsableInChannel` while its channel is not attached to its
     /// session, or what `ChannelLoop::workspace_terminal` reports.
-    pub async fn workspace_terminal(&self, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+    pub async fn workspace_for_reading(&self) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
         let channel = self.views.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
-        channel.workspace_terminal(&self.work.security_context, need).await
-    }
-
-    /// The workspace of the agent's session and its shell as its channel
-    /// sees it (`ChannelLoop::workspace_shell`, issue 344).
-    ///
-    /// # Errors
-    /// As [`Self::workspace_terminal`].
-    pub async fn workspace_shell(&self) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
-        let channel = self.views.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
-        channel.workspace_shell(&self.work.security_context).await
+        channel.workspace_terminal(&self.work.security_context, Grant::Read).await
     }
 
     /// The agent's state in this channel as it stands: what components read

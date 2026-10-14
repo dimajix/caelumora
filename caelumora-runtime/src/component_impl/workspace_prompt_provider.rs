@@ -28,7 +28,6 @@ use caelumora_model::confidentiality::Classification;
 use serde::Deserialize;
 use std::sync::Arc;
 use tracing::warn;
-use caelumora_model::security::Grant;
 
 pub const WORKSPACE_PROMPT_PROVIDER_KIND: &str = "workspace_prompt_provider";
 
@@ -77,7 +76,7 @@ impl WorkspacePromptProvider {
         if self.instruction_files.is_empty() {
             return Vec::new();
         }
-        let terminal = match work.workspace_terminal(Grant::Read).await {
+        let terminal = match work.workspace_for_reading().await {
             Ok((_, terminal)) => terminal,
             Err(error) => {
                 warn!(workspace = %workspace.id(), "Looking for the instruction files of a workspace failed: {error}");
