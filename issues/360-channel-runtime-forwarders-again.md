@@ -1,6 +1,6 @@
 # 360 — `ChannelRuntime` forwards ten services it never uses itself, each read once by `ChannelLoop::new`
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -58,3 +58,16 @@ settles what builds a channel's loop.
 - **2026-10-14** — Raised again by the maintainer after the review of agents, sessions and
   channels (epic [349](349-core-review-epic.md)): [89](89-channel-runtime-delegators.md) was
   decided on code that has changed since.
+- **2026-10-14** — Decided with the maintainer: they stay, trimmed. All of them were read in
+  `ChannelLoop::new` alone, and two not at all. `ChannelLoop::new` taking the `RuntimeManager`
+  beside the runtime would pass a service next to the object that already holds it, which
+  [CODING-GUIDELINES.md](../docs/CODING-GUIDELINES.md) rules out; `ChannelRuntime` handing out the
+  manager to the channel would undo [191](191-channel-runtime-hands-out-runtime-manager.md) and
+  [359](359-actor-runtime-hands-out-the-runtime-manager.md), since `pub(crate)` cannot keep it to
+  the channel module. What stays is constructor injection as the guidelines write it: `new` takes
+  the services once from the runtime it is given.
+- **2026-10-14** — Done. `secret_manager` and `event_bus`, which nothing called, are gone; the eight
+  that `ChannelLoop::new` reads are `pub(crate)`, in an `impl` block of their own that says what
+  they are for. Four of them serve only the questions on a member; step 2 of
+  [356](356-member-questions-threaded-with-their-services.md) may bring the session's `Membership`
+  through `SessionLoop::channel_runtime` instead.

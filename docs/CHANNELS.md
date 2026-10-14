@@ -580,8 +580,9 @@ what ties it to the remote side (see [STORAGE.md](STORAGE.md)).
 A `ChannelLoop` is built with a `ChannelRuntime`, not with the `RuntimeManager` itself. Its session
 makes it (`SessionLoop::channel_runtime`), and it carries what everything in the channel shares:
 
-*   the process-wide services, each by an accessor of its own, and never the `RuntimeManager`
-    itself, so that what a channel can reach is what its runtime offers;
+*   the process-wide services the channel is built with, each by an accessor of its own and read
+    once by `ChannelLoop::new`, and never the `RuntimeManager` itself, so that what a channel can
+    reach is what its runtime offers (issue 360);
 *   the user commands of the session, built once per session;
 *   the session: its controller, which guards the agents' tool calls with the session's rules, and
     its loop, by which the channel reaches its session and the other channels in it (issue 361) -

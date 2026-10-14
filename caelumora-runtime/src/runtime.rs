@@ -139,34 +139,36 @@ impl ChannelRuntime {
         let _ = self.channel.0.set(Arc::downgrade(channel));
     }
 
-    pub fn security_manager(&self) -> &Arc<dyn SecurityManager> { self.runtime_manager.security_manager() }
-
-    pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> { self.runtime_manager.confidentiality() }
-
-    pub fn secret_manager(&self) -> &Arc<SecretManager> { self.runtime_manager.secret_manager() }
-
-    pub fn services(&self) -> &Services { self.runtime_manager.services() }
-
-    pub fn component_registry(&self) -> &Arc<ComponentRegistry> { self.runtime_manager.component_registry() }
-
-    pub fn state_store(&self) -> &Arc<dyn StateStore> { self.runtime_manager.state_store() }
-
-    pub fn event_bus(&self) -> &Arc<EventBus> { self.runtime_manager.event_bus() }
-
-    pub fn controller_manager(&self) -> &Arc<ControllerManager> { self.runtime_manager.controller_manager() }
-
-    /// The stores of the entities - for what a channel checks of its
-    /// participants (issue 191).
-    pub fn entity_stores(&self) -> &EntityStores { self.runtime_manager.entity_stores() }
-
-    pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
-
     /// The controller of the channel's session.
     pub(crate) fn session_controller(&self) -> &Arc<SessionController> { &self.session }
 
     /// The loop of the channel's session, for the channel (`ChannelLoop::session_loop`); `None`
     /// once the session is gone, or for a channel of none, in tests.
     pub(crate) fn session_loop(&self) -> Option<Arc<SessionLoop>> { self.session_loop.upgrade() }
+}
+
+/// What a channel is built with (`ChannelLoop::new`), each read once there into what the channel
+/// holds or builds (issue 360): the runtime it is given offers the services by name rather than
+/// handing out the `RuntimeManager` behind it (issue 191), and `ChannelLoop::new` takes no service
+/// beside it.
+impl ChannelRuntime {
+    pub(crate) fn security_manager(&self) -> &Arc<dyn SecurityManager> { self.runtime_manager.security_manager() }
+
+    pub(crate) fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> { self.runtime_manager.confidentiality() }
+
+    pub(crate) fn services(&self) -> &Services { self.runtime_manager.services() }
+
+    pub(crate) fn component_registry(&self) -> &Arc<ComponentRegistry> { self.runtime_manager.component_registry() }
+
+    pub(crate) fn state_store(&self) -> &Arc<dyn StateStore> { self.runtime_manager.state_store() }
+
+    pub(crate) fn controller_manager(&self) -> &Arc<ControllerManager> { self.runtime_manager.controller_manager() }
+
+    /// The stores of the entities - for what a channel checks of its
+    /// participants (issue 191).
+    pub(crate) fn entity_stores(&self) -> &EntityStores { self.runtime_manager.entity_stores() }
+
+    pub(crate) fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
 }
 
 /// What an actor runs with (issue 69): the services every actor needs, and
