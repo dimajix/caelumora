@@ -1,11 +1,11 @@
-use crate::actor::Actor;
+use crate::actor::{Actor, Answering};
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::AgentId;
-use caelumora_model::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApprovalStatus, ApprovalStrategy, Approver};
+use caelumora_model::approval::{ApprovalId, ApprovalResponse, ApprovalStatus, ApprovalStrategy, Approver};
 use caelumora_model::channel::{self, Channel, Participant};
 use crate::controller::{ChannelController, ControllerManager};
 use caelumora_model::event::GlobalEvent;
@@ -30,8 +30,9 @@ struct PendingApproval {
     strategy: ApprovalStrategy,
     responses: HashMap<ActorId, ApprovalStatus>,
     timeout: DateTime<Utc>,
-    security_context: SecurityContext,
-    event_context: EventContext,
+    /// The agent's request, whose contexts every answer to it continues
+    /// (`ApproverActor::answering`).
+    request: Envelope,
 }
 
 #[derive(Debug)]
@@ -63,11 +64,21 @@ impl ApproverActor {
         }
     }
 
-    /// `about`, the context of a call, continued as the approver speaks of
-    /// it: in its own name, about the call of whoever asked (issue 255), and
-    /// answered for by the owner of its channel (issue 341).
-    fn speaking(&self, about: &SecurityContext) -> SecurityContext {
-        about.next(self.id, self.channel.load().security_attributes.owner_id, self.id)
+    /// The context it acts in, here: its own, answered for by the owner of
+    /// its channel (issue 341).
+    fn security_context(&self) -> SecurityContext {
+        let channel = self.channel.load();
+        SecurityContext { owner_id: channel.security_attributes.owner_id, ..SecurityContext::new(self.id, channel.session_id, channel.id) }
+    }
+
+    /// The contexts it answers `request`, an agent's request for approval,
+    /// in (`Answering::to`): in its own name, about the call of whoever asked
+    /// (issue 255), answered for by the owner of its channel as it is when
+    /// it answers. What it sends passes `Answering::send` unchanged: an
+    /// approval carries no message, and the approvers see the arguments of
+    /// the call they decide.
+    fn answering(&self, request: &Envelope) -> Answering {
+        Answering::to(request, self.id, self.name(), &self.security_context())
     }
 
     /// The attributes of `agent`, as stored (`agent_attributes`). `None` if
@@ -140,9 +151,7 @@ impl ApproverActor {
 
     async fn handle_envelope(&self, env: Envelope, output: &dyn EventSender) -> Result<()> {
         match env.event {
-            ActorEvent::ApprovalRequested(req) => {
-                self.handle_request(req, env.context, env.security, output).await
-            }
+            ActorEvent::ApprovalRequested(_) => self.handle_request(env, output).await,
             ActorEvent::ApprovalGranted(res) => {
                 self.handle_response(env.context.sender_id, res, ApprovalStatus::Approved, output).await
             }
@@ -161,7 +170,8 @@ impl ApproverActor {
     /// announced again: the answers given so far and the timeout stay. One
     /// that nobody taking part may approve is denied at once, not put to
     /// anyone (issue 14).
-    async fn handle_request(&self, request: ApprovalRequest, context:EventContext, security:SecurityContext, output: &dyn EventSender) -> Result<()> {
+    async fn handle_request(&self, envelope: Envelope, output: &dyn EventSender) -> Result<()> {
+        let ActorEvent::ApprovalRequested(request) = &envelope.event else { return Ok(()) };
         {
             let mut pending = self.pending.lock().await;
             let approval = pending.entry(request.id).or_insert_with(|| PendingApproval {
@@ -170,8 +180,7 @@ impl ApproverActor {
                 strategy: self.approver.strategy,
                 responses: HashMap::new(),
                 timeout: Utc::now() + Duration::minutes(10), // Default timeout 10 mins
-                security_context: security.clone(),
-                event_context: context.clone(),
+                request: envelope.clone(),
             });
             let approvers = self.approvers_of(approval.agent_id).await;
             if approvers.is_empty() {
@@ -183,14 +192,7 @@ impl ApproverActor {
             }
         }
 
-        let new_event = ActorEvent::ApprovalRequested(request);
-        let new_context = context.next(self.id, self.name());
-        let new_security = self.speaking(&security);
-        let envelope = Envelope::new(new_security, new_context, new_event);
-
-        output.send(envelope).await.context("Failed to send approval request")?;
-
-        Ok(())
+        self.answering(&envelope).send(ActorEvent::ApprovalRequested(request.clone()), output).await
     }
 
     /// Counts the answer of `user_id` to the request it names. Whether they
@@ -227,10 +229,7 @@ impl ApproverActor {
             return Ok(());
         }
         let Some(p) = pending.remove(&id) else { return Ok(()) };
-        let context = p.event_context.next(self.id, self.name());
-        let envelope = Envelope::new(self.speaking(&p.security_context), context, ActorEvent::ApprovalRequestWithdrawn { id });
-        output.send(envelope).await.context("Failed to announce a withdrawn approval request")?;
-        Ok(())
+        self.answering(&p.request).send(ActorEvent::ApprovalRequestWithdrawn { id }, output).await
     }
 
     async fn recheck_all_pending(&self, output: &dyn EventSender) -> Result<()> {
@@ -316,11 +315,7 @@ impl ApproverActor {
             ApprovalStatus::Timeout => ActorEvent::ApprovalTimedOut(response),
         };
 
-        let context = p.event_context.next(self.id, self.name());
-        let envelope = Envelope::new(self.speaking(&p.security_context), context, event);
-
-        output.send(envelope).await.context("Failed to send decision")?;
-        Ok(())
+        self.answering(&p.request).send(event, output).await
     }
 
     async fn handle_timeouts(&self, output: &dyn EventSender) -> Result<()> {
@@ -436,6 +431,8 @@ impl Actor for ApproverActor {
 mod tests {
     use super::*;
     use crate::channel::ChannelLoop;
+    use caelumora_model::actor::EventContext;
+    use caelumora_model::approval::ApprovalRequest;
     use crate::command::CommandExecutor;
     use crate::runtime::{ChannelRuntime, RuntimeManager};
     use crate::transport::{InMemoryEventReceiver, InMemoryEventSender};

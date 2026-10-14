@@ -560,10 +560,12 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
 
     let mut started = None;
     let mut shown = Vec::new();
+    let mut said = Vec::new();
     let final_messages = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
             if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+            said.push(envelope.context.event_id);
             match envelope.event {
                 ActorEvent::ResponseStarted { turn_id } => started = Some(turn_id),
                 ActorEvent::TurnFinished { messages, .. } => break messages,
@@ -575,6 +577,8 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
     settled(&helper, ActorState::Idle).await;
 
     let started = started.expect("the turn announced itself");
+    let ids: std::collections::HashSet<_> = said.iter().collect();
+    assert_eq!(ids.len(), said.len(), "every event of the turn is one of its own (issue 352)");
     assert_eq!(shown.len(), 4, "the call, its result, the step's answer and the final answer: {shown:?}");
     assert!(shown.iter().all(|turn| *turn == Some(started)), "each shown as the turn's: {shown:?}");
     assert!(final_messages.iter().all(|m| m.turn_id == Some(started)), "and published so");

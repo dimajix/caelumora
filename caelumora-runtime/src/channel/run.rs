@@ -1,11 +1,12 @@
 //! The run loop of a channel: starting and stopping its actors, admitting, routing, recording and
 //! appending to the history what they send.
 
+use crate::actor::Answering;
 use crate::logging::envelope_span;
 use crate::transport::{EventSender, TransportError};
 use crate::transport::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
 use anyhow::{anyhow, Result};
-use caelumora_model::actor::{ActorEvent, ActorId, Envelope, EventContext, Rejection, RetryTarget};
+use caelumora_model::actor::{ActorEvent, ActorId, Envelope, Rejection, RetryTarget};
 use caelumora_model::confidentiality::ConfidentialityQuestions;
 use caelumora_model::message::Message;
 use caelumora_model::message_history::HistoryEntry;
@@ -150,8 +151,7 @@ impl ChannelLoop {
             warn!("Cannot name {} for channel {}: {}", remover.caller_id, self.id, e);
             remover.caller_id.to_string()
         });
-        let sender = EventContext::new(self.session_id, self.id, remover.caller_id, name);
-        let removed = Envelope::new(remover, sender, ActorEvent::ParticipantRemoved { participant });
+        let removed = Answering::in_channel(self.session_id, self.id, name, remover).envelope(ActorEvent::ParticipantRemoved { participant });
         self.process_envelope(removed, running).await;
     }
 
@@ -353,11 +353,8 @@ impl ChannelLoop {
         warn!("Dropped {}: {}", event.describe(), reason);
         let sender = event.context.sender_id;
         let Some(inbox) = running.get(&sender).and_then(|actor| actor.sender.as_ref()) else { return };
-        let mut context = EventContext::new(self.session_id, self.id, ActorId::System, ActorId::System.to_string());
-        context.span_id = event.context.span_id;
-        context.correlation_id = event.context.event_id;
         let rejected = ActorEvent::MessageRejected { rejected: event.event.kind().to_string(), message: event.event.subject_message(), reason };
-        let envelope = Envelope::new(SecurityContext::system(), context, rejected);
+        let envelope = Answering::in_channel(self.session_id, self.id, ActorId::System.to_string(), SecurityContext::system()).replying_to(&event.context).envelope(rejected);
         if let Err(e) = inbox.try_send(envelope) {
             warn!("Could not tell {} that channel {} did not let in what it sent: {:?}", sender, self.id, e);
         }

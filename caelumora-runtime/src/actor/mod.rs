@@ -19,13 +19,16 @@ use tracing::warn;
 use crate::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
 use caelumora_model::agent::RetryRefused;
+use caelumora_model::channel::ChannelId;
 use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
+use caelumora_model::session::SessionId;
 use caelumora_model::tool::ToolSet;
 use caelumora_model::value::name::Name;
 use caelumora_model::work::TurnId;
+use uuid::Uuid;
 
 #[async_trait]
 pub(crate) trait Actor: Any + Debug + Send + Sync {
@@ -135,7 +138,10 @@ pub(crate) trait Actor: Any + Debug + Send + Sync {
 /// The contexts an actor publishes in when it answers: those of the
 /// request, continued in its name - for an agent's turn those it began with
 /// (`TurnState`), for an external agent's answer those of the request it
-/// answers or of the task it speaks of.
+/// answers or of the task it speaks of, for the approver those of the call
+/// it decides. Every envelope the runtime sends is built here (issue 352):
+/// whose name it carries and what it continues is what the channel checks
+/// at the door (`OriginEventSender`, the admission).
 #[derive(Debug, Clone)]
 pub(crate) struct Answering {
     pub(crate) event_context: EventContext,
@@ -160,12 +166,48 @@ impl Answering {
         Self { event_context: EventContext::new(security.session_id, security.channel_id, id, name), security_context: security.clone() }
     }
 
+    /// The contexts in which the caller of `security`, called `name`, speaks
+    /// in the channel `channel_id` of session `session_id`, whatever place
+    /// `security` names - what the channel says in someone's name: that a
+    /// participant was removed, in the name of who removed them, and why it
+    /// did not let something in, in its own (`SecurityContext::system`).
+    pub(crate) fn in_channel(session_id: SessionId, channel_id: ChannelId, name: impl Into<String>, security: SecurityContext) -> Self {
+        Self { event_context: EventContext::new(session_id, channel_id, security.caller_id, name), security_context: security }
+    }
+
+    /// These contexts in the span `span_id`: a user's action, whose events
+    /// share the span the frontend learns.
+    pub(crate) fn with_span(mut self, span_id: Uuid) -> Self {
+        self.event_context.span_id = span_id;
+        self
+    }
+
+    /// These contexts in the span of `answered`, answering its event - what
+    /// is said of an event that is no request, as the channel's refusal of
+    /// it (`Answering::to` continues a request so).
+    pub(crate) fn replying_to(self, answered: &EventContext) -> Self {
+        let mut answering = self.with_span(answered.span_id);
+        answering.event_context.correlation_id = answered.event_id;
+        answering
+    }
+
+    /// `event` in these contexts, as it is: for a sender whose events carry
+    /// nothing only an owner sees - a user, the channel - or that hands them
+    /// on otherwise than through an `EventSender`. Every envelope is an event
+    /// of its own, with an `event_id` of its own, however many are sent in
+    /// the same contexts - the events of a turn, which share its span and
+    /// what it answers (issue 352).
+    pub(crate) fn envelope(&self, event: ActorEvent) -> Envelope {
+        let context = EventContext { event_id: Uuid::new_v4(), ..self.event_context.clone() };
+        Envelope::new(self.security_context.clone(), context, event)
+    }
+
     /// Sends `event` as the actor publishes it: without what only its
     /// owner sees (issues 54, 133); an event with nothing left to show is
     /// not sent.
     pub(crate) async fn send(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
         let Some(event) = event.published() else { return Ok(()) };
-        output.send(Envelope::new(self.security_context.clone(), self.event_context.clone(), event)).await
+        output.send(self.envelope(event)).await
             .context(format!("actor {} failed to send an event", self.event_context.sender_id))
     }
 
@@ -211,3 +253,40 @@ fn failure_message(error: &anyhow::Error) -> String {
     crate::error::user_message(error).unwrap_or_else(|| "internal error - the details are in the server log".to_string())
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What the channel says of an event in its own name: in its place,
+    /// whatever its context names, in the span of the event and answering
+    /// it (issue 352).
+    #[test]
+    fn what_is_said_of_an_event_is_said_in_the_channel_and_answers_it() {
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+        let answered = EventContext::new(session, channel, ActorId::System, "sender");
+
+        let said = Answering::in_channel(session, channel, "system", SecurityContext::system()).replying_to(&answered).envelope(ActorEvent::WakeupRequested);
+
+        assert_eq!((said.context.session_id, said.context.channel_id), (session, channel), "in the channel, not where the system context is");
+        assert_eq!(said.context.sender_id, SecurityContext::system().caller_id, "in the name of who speaks");
+        assert_eq!(said.context.span_id, answered.span_id, "in the span of what it answers");
+        assert_eq!(said.context.correlation_id, answered.event_id, "answering it");
+        assert_ne!(said.context.event_id, answered.event_id, "an event of its own");
+    }
+
+    /// Every envelope sent in the same contexts - the events of a turn - is
+    /// an event of its own (issue 352).
+    #[test]
+    fn every_envelope_is_an_event_of_its_own() {
+        let request = Answering::own(ActorId::System, "user", &SecurityContext::system()).envelope(ActorEvent::WakeupRequested);
+        let turn = Answering::to(&request, ActorId::System, "agent", &SecurityContext::system());
+
+        let (first, second) = (turn.envelope(ActorEvent::WakeupRequested), turn.envelope(ActorEvent::WakeupRequested));
+
+        assert_ne!(first.context.event_id, second.context.event_id, "two events, two event ids");
+        assert_eq!(first.context.span_id, second.context.span_id, "in the span of the request");
+        assert_eq!(first.context.correlation_id, request.context.event_id, "answering it");
+        assert_eq!(second.context.correlation_id, request.context.event_id, "both of them");
+    }
+}

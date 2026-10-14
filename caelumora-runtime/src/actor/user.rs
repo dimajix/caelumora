@@ -1,11 +1,11 @@
-use crate::actor::Actor;
+use crate::actor::{Actor, Answering};
 use crate::channel::{ChannelError, ChannelLoop};
 use crate::command::{CommandContext, CommandError, CommandReply};
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender, TransportError};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
 use caelumora_model::work::TurnId;
 use caelumora_model::approval::{ApprovalRequest, ApprovalResponse, ApprovalRule, RuleDecision};
 use caelumora_model::channel::ChannelId;
@@ -103,13 +103,13 @@ impl UserActor {
         self.user.security_context(self.session_id, self.channel_id)
     }
 
-    /// An envelope from this user. Envelopes are only ever built here, so the
-    /// sender, session, channel and security context are always this actor's
-    /// own, whatever the caller of `send_message` is.
+    /// An envelope from this user, in the span `span_id`. Envelopes are only
+    /// ever built here, so the sender, session, channel and security context
+    /// are always this actor's own (`Answering::own`), whatever the caller of
+    /// `send_message` is. Nothing of what a user says is for its owner
+    /// alone: it is sent as it is (`Answering::envelope`).
     fn envelope(&self, event: ActorEvent, span_id: Uuid) -> Envelope {
-        let mut context = EventContext::new(self.session_id, self.channel_id, self.id(), self.name());
-        context.span_id = span_id;
-        Envelope::new(self.security_context(), context, event)
+        Answering::own(self.id(), self.name(), &self.security_context()).with_span(span_id).envelope(event)
     }
 
     /// The questions put to this user that are open, forgotten: a message
@@ -671,6 +671,7 @@ impl Actor for UserActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::actor::EventContext;
     use caelumora_model::value::name::Name;
     use crate::command::CommandExecutor;
     use crate::runtime::{ChannelRuntime, RuntimeManager};

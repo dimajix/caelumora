@@ -427,7 +427,7 @@ published before anyone else can take it.
 | [346](346-subscription-topics-for-every-kind.md) | open | The event bus has subscription topics only for sessions, channels, agents and users, so a plugin cannot follow a single entity - an artifact, say - without reading every event. |
 | [350](350-lookups-written-out-again.md) | done | The same lookup - the actor's channel, an agent's attributes as stored, a permission with the channel's attributes - is written out again at several places around channels and actors. |
 | [351](351-channel-events-announced-by-hand.md) | done | The lifecycle events of a channel are announced at ten places, each assembling the key, the attributes and the classification by hand. |
-| [352](352-envelopes-built-by-hand.md) | open | The approver and the channel build their envelopes by hand beside `Answering`, the one way an actor publishes. |
+| [352](352-envelopes-built-by-hand.md) | done | The approver and the channel build their envelopes by hand beside `Answering`, the one way an actor publishes. |
 | [353](353-rules-of-the-model-computed-in-the-runtime.md) | open | Rules of the model - what an approval strategy decides, what a history limit shows, how a stored agent state is made fit to resume, how an update event applies - are computed in the runtime. |
 | [354](354-names-follow-several-schemes.md) | open | Names around sessions, channels and actors follow several schemes: manager verbs with and without the noun, three ways to find by id, and `Member` meaning three things. |
 | [355](355-two-agent-actors-share-half-their-fields.md) | open | The two agent actors and `AgentCommands` hold the same half of an agent three times, and what both kinds of agent do alike is written twice. |

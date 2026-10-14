@@ -526,7 +526,14 @@ An **actor** is anything that sends and receives events in a channel.
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`, or `System` - the
     runtime itself, set only deliberately.
 *   **`Envelope`** is the unit of communication: a timestamp, a `SecurityContext`, an `EventContext`
-    and the `ActorEvent` itself.
+    and the `ActorEvent` itself. Every envelope the runtime sends is built through `Answering`
+    (issue 352): the contexts of a request continued in the actor's name (`to`) - an agent's, an
+    external agent's, the approver's -, an actor's own (`own`) - a user's -, or, for what the
+    channel says itself, its place in someone's name (`in_channel`): a removal in the name of who
+    removed, a refusal in its own. Whose name an envelope carries is what the `OriginEventSender`
+    and the admission check, so it is decided in one place. Every envelope is an event of its own,
+    with an `event_id` of its own, even where many are sent in the same contexts - the events of a
+    turn share its span and what it answers (`correlation_id`), not their id.
 
 ### External agents
 

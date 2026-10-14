@@ -1,6 +1,6 @@
 # 352 — The approver and the channel build their envelopes by hand beside `Answering`
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -47,3 +47,23 @@ the roles taken anew ([304](304-review-of-the-permission-concept.md), the owner 
 
 - **2026-10-14** — From the review of agents, sessions and channels, epic
   [349](349-core-review-epic.md).
+- **2026-10-14** — Done, along the considerations, with two differences:
+  - The channel speaks through one constructor, `Answering::in_channel(session, channel, name,
+    security)`, rather than an `Answering::system`: the removal is said in the name of who removed,
+    whose context may name another place or none (a REST call), so the channel's place is given and
+    the sender is the context's caller - `SecurityContext::system()` for a refusal. `replying_to`
+    continues the span of the refused event and answers it, `with_span` serves the user.
+    `Answering::envelope` builds an envelope without `published()`, for the user and the channel,
+    whose events carry nothing for an owner alone and which hand them on otherwise than through an
+    `EventSender`; `send` uses it.
+  - The approver keeps the request's envelope per pending approval, not an `Answering`, and
+    continues it with `Answering::to` as it answers, in its own `security_context()`, answered for
+    by the channel's owner. A kept `Answering` would read the owner once instead of at each answer.
+    Its answers now go through `published()`, which leaves an approval as it is.
+
+  One behaviour change, asked for by the maintainer: every event of an agent's turn carried the same
+  `event_id`, since the turn's `Answering` held the contexts the turn began with. Now
+  `Answering::envelope` gives every envelope an `event_id` of its own, keeping the span and what it
+  answers (`correlation_id`); `every_message_of_a_turn_carries_the_turn_its_start_announced` shows
+  it for a turn. Otherwise no envelope carries anything other than before; the approval and
+  rejection tests pass unchanged, and tests of `in_channel`, `replying_to` and `envelope` are new.
