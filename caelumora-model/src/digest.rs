@@ -309,6 +309,15 @@ pub fn history_chain(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest 
             e.str(args);
             e.finish()
         }
+        HistoryEntry::ActivityFinished { turn_id, actor, activity, output, .. } => {
+            let mut e = Encoder::new("caelumora.history-activity-finished.v1");
+            e.opt_digest(previous);
+            e.bytes(turn_id.0.as_bytes());
+            e.json(&to_json(actor));
+            e.str(activity);
+            e.str(output);
+            e.finish()
+        }
         HistoryEntry::Compacted { turn_id, actor, from, to, .. } => {
             let mut e = Encoder::new("caelumora.history-compacted.v1");
             e.opt_digest(previous);

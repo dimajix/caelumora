@@ -205,13 +205,6 @@ impl Chain<TranscriptEntry> {
         as_they_stand(self.entries()).find_map(|(_, m)| m.filter(|m| m.id == id))
     }
 
-    /// The messages of the active path as they stand that the turn
-    /// `turn_id` said (`Message::turn_id`): what it said so far, as it said
-    /// it (issue 260).
-    pub fn of_turn(&self, turn_id: TurnId) -> Vec<Message> {
-        self.messages().into_iter().filter(|m| m.turn_id == Some(turn_id)).collect()
-    }
-
     /// Records how a turn ended (issue 258): `TurnFinished` or
     /// `TurnGivenUp`, after its messages.
     pub fn end_turn(&mut self, end: TranscriptEntry) {

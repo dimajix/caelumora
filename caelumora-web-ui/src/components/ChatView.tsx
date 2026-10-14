@@ -5,6 +5,7 @@ import {
   BellRing,
   ChevronDown,
   ChevronRight,
+  Cog,
   Gauge,
   HardDrive,
   History,
@@ -75,7 +76,7 @@ import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {chatMessages, chatRows, commandNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults, planStepMark} from '../messages';
+import {activityNotice, activityUnderWay, chatMessages, chatRows, commandNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults, planStepMark} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -152,18 +153,21 @@ const WORKING: Partial<Record<ActorState, string>> = {
   Reflecting: 'Working: finishing its answer',
   Cancelling: 'Working: stopping',
   CarryingOutCommand: 'Working: carrying out a command',
+  Busy: 'Working: on something of its own',
 };
 
 /** The states in which a cancel still ends an agent's answer (`ActorState::interruptible`). */
-const INTERRUPTIBLE: ActorState[] = ['Planning', 'ExecutingTools', 'WaitingForUser'];
+const INTERRUPTIBLE: ActorState[] = ['Planning', 'ExecutingTools', 'WaitingForUser', 'Busy'];
 
 /**
  * The dot that shows where a member stands (issue 243): an agent's state as
- * a colour, the state itself as its title. A user or an approver has none.
+ * a colour, the state itself as its title - `Busy` with what it does of its
+ * own accord, `activity`, as it said it last (issue 284). A user or an
+ * approver has none.
  */
-function stateDot(member: ChannelMember): {className: string; title: string} | null {
+function stateDot(member: ChannelMember, activity?: string): {className: string; title: string} | null {
   if (member.kind !== 'agent') return null;
-  const working = member.state && WORKING[member.state];
+  const working = member.state === 'Busy' && activity ? `Working: ${activity}` : member.state && WORKING[member.state];
   // A command pulses in orange (issue 299), an answer in green.
   if (working) return {className: member.state === 'CarryingOutCommand' ? 'bg-orange-500 animate-command' : 'bg-green-500 animate-working', title: working};
   switch (member.state) {
@@ -218,8 +222,8 @@ function withCall(usage: TokenUsage | undefined, message: Message): TokenUsage |
     calls: (usage?.calls ?? 0) + 1,
     prompt_tokens: (usage?.prompt_tokens ?? 0) + prompt,
     completion_tokens: (usage?.completion_tokens ?? 0) + completion,
-    last_call_tokens: prompt + completion,
     context_size: message.context_size,
+    context_tokens: prompt + completion,
   };
 }
 
@@ -296,6 +300,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // fetched again for an agent whose turn ended or was given up. Kept apart
   // from the channel, which is fetched again without it.
   const [usage, setUsage] = useState<Record<string, TokenUsage>>({});
+  // What each agent does of its own accord (issue 284), by `actorKey`, as
+  // it said it last: the title of its dot while it is `Busy`.
+  const [activities, setActivities] = useState<Record<string, string>>({});
   // The messages whose calls `usage` holds already: those of the snapshot,
   // and those added as they arrived - a message can arrive twice.
   const countedCalls = useRef<Set<string>>(new Set());
@@ -851,6 +858,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           setAnsweredQuestions(prev => prev.filter(id => id !== closed));
         } else if (actorEvent.TurnFinished) {
           // Its messages were shown as they were said.
+          const underWay = activityUnderWay(actorEvent.TurnFinished.turn_id);
+          setMessages(prev => prev.filter(m => m.id !== underWay));
           answerEnded();
           readUsage();
         } else if (actorEvent.TurnGivenUp) {
@@ -858,7 +867,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           // the history: gone on reload.
           const {turn_id, reason} = actorEvent.TurnGivenUp;
           const notice = givenUpNotice(turn_id, reason, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp, envelope.context.span_id);
-          setMessages(prev => prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
+          // What it did of its own accord ended with it (issue 284).
+          const underWay = activityUnderWay(turn_id);
+          setMessages(prev => prev.some(m => m.id === notice.id) ? prev.filter(m => m.id !== underWay) : [...prev.filter(m => m.id !== underWay), notice]);
           answerEnded();
           readUsage();
         } else if (actorEvent.CommandExecuted) {
@@ -880,6 +891,24 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             };
             setMessages(prev => [...prev, notice]);
           }
+        } else if (actorEvent.ActivityStarted) {
+          // An agent does something of its own accord (issue 284): its
+          // notice shows it under way until it ends, and its dot says what.
+          const {turn_id, activity} = actorEvent.ActivityStarted;
+          const notice = activityNotice(turn_id, activity, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp);
+          setMessages(prev => prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
+          setActivities(prev => ({...prev, [answerer]: activity}));
+        } else if (actorEvent.ActivityFinished) {
+          // In the place of its start, with what came of it: part of the
+          // history, kept once by when it ended. The context may have
+          // shrunk: what the agent uses is read again.
+          const {turn_id, activity, output} = actorEvent.ActivityFinished;
+          const notice = activityNotice(turn_id, activity, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp, output);
+          const underWay = activityUnderWay(turn_id);
+          setMessages(prev => prev.some(m => m.id === notice.id)
+            ? prev.filter(m => m.id !== underWay)
+            : prev.some(m => m.id === underWay) ? prev.map(m => m.id === underWay ? notice : m) : [...prev, notice]);
+          readUsage();
         } else if (actorEvent.CommandStarted) {
           // An agent began a command of yours (issue 299): its notice shows
           // it under way until the answer, kept by the same turn, replaces it.
@@ -1280,7 +1309,22 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   // One message of the chat, as its kind shows it; `key` for the list it
   // is rendered in.
-  const renderMessage = (msg: Message, key: React.Key) => msg.commandOutput ? (
+  const renderMessage = (msg: Message, key: React.Key) => msg.activity ? (
+    <div
+      key={key}
+      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
+    >
+      <div className={cn("flex items-center gap-2 text-xs font-semibold uppercase tracking-wider opacity-70", msg.content && "mb-1")}>
+        <Cog size={14} />
+        <span className="inline-flex items-center gap-1.5">
+          {msg.activity.agent} {msg.activity.underWay ? 'is' : 'was'} {msg.activity.activity}
+          {msg.activity.underWay && <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-working" />}
+        </span>
+      </div>
+      {msg.content && <MarkdownMessage content={msg.content} />}
+      <MessageFooter message={msg} />
+    </div>
+  ) : msg.commandOutput ? (
     <div
       key={key}
       className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
@@ -2024,7 +2068,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           )}
           <div className="space-y-2">
             {members.map(member => {
-              const dot = stateDot(member);
+              const dot = stateDot(member, activities[actorKey(member.id)]);
               const stoppable = member.can_cancel && member.state !== undefined && INTERRUPTIBLE.includes(member.state);
               return (
                 <div key={actorKey(member.id)} className="group flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">

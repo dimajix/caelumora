@@ -2,18 +2,20 @@
 //! transcript summarised by its own model and replaced by the summary. The
 //! default compaction strategy of an agent.
 //!
-//! The newest messages - at least `keep_last`, and with a tool's result the
-//! call it answers - are kept as they stand; what the agent was given in the
+//! The newest part of the context - `keep`, a share of the model's context
+//! size - is kept as it stands; the cut lies before a message, never between
+//! a tool's call and its result (issue 284). What the agent was given in the
 //! part summarised - a skill loaded - is given again, as it is now, by the
 //! component that gave it (`KnowledgeRestorer`, issue 323).
 
 use crate::agent::turn::Turn;
 use crate::compaction::{Compaction, CompactionError, CompactionStrategy, GivenAgain, KnowledgeRestorer};
-use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::context::titled;
 use crate::llm::LLMClient;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::digest::Digest;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
@@ -30,8 +32,9 @@ use uuid::Uuid;
 
 pub const SUMMARY_COMPACTION_KIND: &str = "summary_compaction";
 
-/// How many messages a compaction keeps as they stand, unless configured.
-const DEFAULT_KEEP_LAST: usize = 10;
+/// How much of the context a compaction keeps as it stands, as a share of
+/// its model's context size, unless configured.
+const DEFAULT_KEEP: f64 = 0.25;
 
 const SUMMARY_TITLE: &str = "Summary of the conversation so far";
 
@@ -45,8 +48,10 @@ const SUMMARY_INSTRUCTION: &str = "Summarise the conversation above for yourself
 pub struct SummaryCompaction {
     /// The agent's own model, which writes the summary.
     llm_client: Arc<dyn LLMClient>,
-    /// How many of the newest messages are kept as they stand.
-    keep_last: usize,
+    /// How much of the newest context is kept as it stands, as a share of
+    /// the context size - of the context as it stands where no size is
+    /// known.
+    keep: f64,
     /// The components of the agent that give again what they gave it, each
     /// for its kind.
     restorers: Vec<Arc<dyn KnowledgeRestorer>>,
@@ -54,13 +59,14 @@ pub struct SummaryCompaction {
 
 /// What the component is configured with.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SummaryCompactionConfig {
-    #[serde(default = "default_keep_last")]
-    keep_last: usize,
+    #[serde(default = "default_keep")]
+    keep: f64,
 }
 
-fn default_keep_last() -> usize {
-    DEFAULT_KEEP_LAST
+fn default_keep() -> f64 {
+    DEFAULT_KEEP
 }
 
 /// What the agent was given: an entity of a kind (`KnowledgeSource::Entity`).
@@ -79,45 +85,47 @@ fn given(source: &KnowledgeSource) -> Option<Given> {
     }
 }
 
-/// Where the entries `path` are cut so that at least the last `keep_last`
-/// messages are kept: the index of the first entry kept - `path.len()` to
-/// keep none. A finished turn may be cut apart (issue 300) - a plan is one
-/// turn, and mostly the bulk of a context -, but a tool's result is never
-/// kept without the call it answers: the cut moves back over the results to
-/// the message that called the tools. A turn of `whole` is kept whole: the
-/// cut moves back to its first message. `None` if nothing would be left to
-/// summarise.
-fn cut_at(path: &[Entry], keep_last: usize, whole: &HashSet<TurnId>) -> Option<usize> {
-    let standing: Vec<usize> = path.iter().enumerate().filter(|(_, (_, _, message))| message.is_some()).map(|(at, _)| at).collect();
-    let message = |at: usize| path[standing[at]].2.as_ref();
-    let cut = match keep_last {
-        0 => path.len(),
-        keep => {
-            let mut oldest = standing.len().checked_sub(keep)?;
-            while oldest > 0 && message(oldest).is_some_and(|m| m.role == MessageRole::Tool) {
-                oldest -= 1;
-            }
-            match message(oldest).and_then(|m| m.turn_id).filter(|turn| whole.contains(turn)) {
-                Some(turn) => path.iter().position(|(_, _, m)| m.as_ref().is_some_and(|m| m.turn_id == Some(turn))).unwrap_or(standing[oldest]),
-                None => standing[oldest],
-            }
-        }
-    };
-    standing.iter().any(|&at| at < cut).then_some(cut)
+/// Where the entries `path` are cut, standing in the context at
+/// `positions` (`AgentChannelState::token_positions`): the index of the
+/// first entry kept. Before a message only, so that a tool's result stays
+/// with its call: within the turn under way `under_way` before one of its
+/// model's messages but the first - before that, its input would be
+/// summarised and the turn kept -, before it before any message that is no
+/// tool's result, up to the turn's input, and none in a turn of `whole`.
+/// The oldest of them behind which at most `keep` tokens stand; the newest
+/// if none is. `None` if there is none, or nothing before it to summarise.
+fn cut_at(path: &[Entry], positions: &[u64], keep: u64, under_way: TurnId, whole: &HashSet<TurnId>) -> Option<usize> {
+    let end = positions.last().copied().unwrap_or(0);
+    let of_turn = |m: &Message| m.turn_id == Some(under_way);
+    let turn_start = path.iter().position(|(_, _, m)| m.as_ref().is_some_and(of_turn));
+    let first_call = path.iter().position(|(_, _, m)| m.as_ref().is_some_and(|m| of_turn(m) && m.role == MessageRole::Assistant));
+    let candidates: Vec<usize> = path.iter()
+        .enumerate()
+        .filter(|(at, (_, _, message))| match message {
+            None => false,
+            Some(m) if of_turn(m) => m.role == MessageRole::Assistant && Some(*at) != first_call,
+            Some(m) => m.role != MessageRole::Tool
+                && turn_start.is_none_or(|start| *at < start)
+                && m.turn_id.is_none_or(|turn| !whole.contains(&turn)),
+        })
+        .map(|(at, _)| at)
+        .collect();
+    let cut = candidates.iter().copied()
+        .find(|&at| end.saturating_sub(positions.get(at).copied().unwrap_or(end)) <= keep)
+        .or(candidates.last().copied())?;
+    path[..cut].iter().any(|(_, _, message)| message.is_some()).then_some(cut)
 }
 
-/// The turns of `entries` a compaction must not cut apart: the turn under
-/// way `under_way`, whose messages are collected by its id as it is taken
-/// over, and every turn given up because the channel was lowered below it -
-/// its model is given only the tools it called, which the summary of a part
-/// of it without its end would not know (issues 141, 258).
-fn kept_whole<'a>(entries: impl Iterator<Item = &'a TranscriptEntry>, under_way: TurnId) -> HashSet<TurnId> {
+/// The turns of `entries` a compaction must not cut apart: those given up
+/// because the channel was lowered below them - its model is given only
+/// the tools they called, which the summary of a part of one without its
+/// end would not know (issues 141, 258).
+fn kept_whole<'a>(entries: impl Iterator<Item = &'a TranscriptEntry>) -> HashSet<TurnId> {
     entries
         .filter_map(|entry| match entry {
             TranscriptEntry::TurnGivenUp { turn_id, reason: GivenUpReason::Lowered { .. }, .. } => Some(*turn_id),
             _ => None,
         })
-        .chain([under_way])
         .collect()
 }
 
@@ -151,6 +159,12 @@ fn given_read(history: &MessageHistory) -> HashMap<MessageId, Vec<Given>> {
 }
 
 impl SummaryCompaction {
+    /// How many tokens of a context of `size` are kept as they stand.
+    fn keep_of(&self, size: u64) -> u64 {
+        // A share of a token count: rounded down, what is lost is a token.
+        (self.keep * size as f64) as u64
+    }
+
     /// What the model is asked to summarise for: `SUMMARY_INSTRUCTION`, and
     /// to leave out what is given again.
     fn instruction(&self) -> String {
@@ -196,9 +210,6 @@ impl SummaryCompaction {
             sender_name: turn.agent_name().to_string(),
             ..Message::new(turn.classification())
         });
-        if !turn.count_model_call() {
-            return Err(CompactionError::CallLimitReached);
-        }
         let mut stream = self.llm_client.chat_completion(&input, &[]).await;
         let mut answered: Vec<Message> = Vec::new();
         while let Some(event) = stream.next().await {
@@ -223,7 +234,10 @@ impl SummaryCompaction {
 impl CompactionStrategy for SummaryCompaction {
     async fn compact(&self, turn: &mut Turn<'_>) -> Result<Option<Compaction>, CompactionError> {
         let agent = ActorId::Agent(turn.agent_id());
-        let whole = kept_whole(turn.agent_channel_state().transcript.entries().map(|node| &node.entry), turn.turn_id());
+        let whole = kept_whole(turn.agent_channel_state().transcript.entries().map(|node| &node.entry));
+        let (positions, _) = turn.work().token_positions().ok_or(CompactionError::TranscriptUnreadable)?;
+        let size = turn.agent_channel_state().usage(agent).and_then(|usage| usage.context_size).or(positions.last().copied()).unwrap_or(0);
+        let keep = self.keep_of(size);
         let path: Vec<Entry> = as_they_stand(turn.agent_channel_state().transcript.entries())
             .map(|(node, message)| {
                 let gives = match &node.entry {
@@ -233,7 +247,7 @@ impl CompactionStrategy for SummaryCompaction {
                 (node.digest, gives, message)
             })
             .collect();
-        let Some(cut) = cut_at(&path, self.keep_last, &whole) else {
+        let Some(cut) = cut_at(&path, &positions, keep, turn.turn_id(), &whole) else {
             return Ok(None);
         };
         let (summarised, kept) = path.split_at(cut);
@@ -250,6 +264,19 @@ impl CompactionStrategy for SummaryCompaction {
         let (restored, lost) = self.give_again(turn, &wanted).await?;
 
         let (text, answer) = self.summarise(turn, *last_summarised).await?;
+        // A summary of messages of the turn under way holds what the turn
+        // read: it is the turn's, and goes with the turn if it is given up
+        // as `Lowered`. One of what precedes the turn alone is no turn's,
+        // classified by what it summarises - the call writing it was given
+        // the transcript alone (issue 284).
+        let of_turn = summarised.iter().any(|(_, _, message)| message.as_ref().is_some_and(|m| m.turn_id == Some(turn.turn_id())));
+        let (owner, classification) = match of_turn {
+            true => (Some(turn.turn_id()), turn.label()),
+            false => {
+                let summarised_as: Vec<&Classification> = summarised.iter().filter_map(|(_, _, message)| message.as_ref().map(|m| &m.classification)).collect();
+                (None, Classification::join_all(summarised_as).unwrap_or_else(|| turn.label()))
+            }
+        };
         let summary = Message {
             id: MessageId::new(),
             sender_id: agent,
@@ -260,8 +287,8 @@ impl CompactionStrategy for SummaryCompaction {
             prompt_tokens: answer.prompt_tokens,
             completion_tokens: answer.completion_tokens,
             context_size: answer.context_size,
-            // Written from all the turn had seen, which bounds it.
-            ..Message::new(turn.label())
+            turn_id: owner,
+            ..Message::new(classification)
         };
         let mut replacement: Vec<(Message, Option<KnowledgeRef>)> = vec![(summary, None)];
         for (_, given) in &restored {
@@ -272,6 +299,8 @@ impl CompactionStrategy for SummaryCompaction {
                 role: MessageRole::User,
                 content: Some(given.text.clone()),
                 timestamp: chrono::Utc::now(),
+                // Given in the turn, as `Turn::give` gives.
+                turn_id: Some(turn.turn_id()),
                 ..Message::new(given.knowledge.classification.clone().unwrap_or_else(|| turn.label()))
             };
             replacement.push((message, Some(given.knowledge.clone())));
@@ -292,13 +321,16 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         ComponentKind::new(SUMMARY_COMPACTION_KIND).provides::<dyn CompactionStrategy>().needs::<dyn LLMClient>().needs::<dyn KnowledgeRestorer>(),
         |descriptor, context| async move {
-            let SummaryCompactionConfig { keep_last } = crate::component::config_of_params(&descriptor.params)?;
+            let SummaryCompactionConfig { keep } = crate::component::config_of_params(&descriptor.params)?;
+            if !(0.0..1.0).contains(&keep) {
+                return Err(ComponentError::InvalidConfig(format!("'keep' is a share of the context size, at least 0 and less than 1, not {keep}")));
+            }
             // The agent's own model writes the summary.
             let llm_client = context.one::<dyn LLMClient>().await?.facet;
             // What the agent's components give again, each of its kind.
             let restorers = context.all::<dyn KnowledgeRestorer>().await?.into_iter().map(|restorer| restorer.facet).collect();
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn CompactionStrategy>(Arc::new(SummaryCompaction { llm_client, keep_last, restorers }));
+            facets.insert::<dyn CompactionStrategy>(Arc::new(SummaryCompaction { llm_client, keep, restorers }));
             Ok(facets)
         },
     );
@@ -307,6 +339,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component::config_of_params;
     use crate::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
@@ -385,56 +418,55 @@ mod tests {
     }
 
     #[test]
-    fn the_cut_keeps_the_last_messages_and_a_result_with_its_call() {
-        let turn = TurnId::new();
+    fn the_cut_lies_before_a_message_and_keeps_a_result_with_its_call() {
+        let (earlier, under_way) = (TurnId::new(), TurnId::new());
         let path = vec![
             entry("u1", MessageRole::User, None),
-            entry("call", MessageRole::Assistant, Some(turn)),
-            entry("result", MessageRole::Tool, Some(turn)),
+            entry("call", MessageRole::Assistant, Some(earlier)),
+            entry("result", MessageRole::Tool, Some(earlier)),
             end("end"),
             entry("u2", MessageRole::User, None),
         ];
+        let positions = [0, 10, 20, 50, 50, 60];
         let none = HashSet::new();
-        assert_eq!(cut_at(&path, 1, &none), Some(4), "the last message alone");
-        assert_eq!(cut_at(&path, 2, &none), Some(1), "the result is kept, so is the call it answers");
-        assert_eq!(cut_at(&path, 3, &none), Some(1), "the call is the oldest kept: the first message alone is summarised");
-        assert_eq!(cut_at(&path, 0, &none), Some(5), "none kept");
-        assert_eq!(cut_at(&path, 4, &none), None, "everything kept: nothing to summarise");
+        assert_eq!(cut_at(&path, &positions, 10, under_way, &none), Some(4), "the newest part that fits");
+        assert_eq!(cut_at(&path, &positions, 45, under_way, &none), Some(4), "never before a result, which would part it from its call");
+        assert_eq!(cut_at(&path, &positions, 50, under_way, &none), Some(1), "a finished turn may be cut apart");
+        assert_eq!(cut_at(&path, &positions, 5, under_way, &none), Some(4), "the newest if nothing fits");
+        assert_eq!(cut_at(&path, &positions, 60, under_way, &none), None, "nothing to summarise if everything fits");
+        assert_eq!(cut_at(&path, &positions, 50, under_way, &HashSet::from([earlier])), Some(4), "not into a turn kept whole");
     }
 
-    /// A plan is one turn, and mostly the bulk of a context (issue 300).
     #[test]
-    fn a_long_finished_turn_is_cut_apart_unless_it_is_kept_whole() {
-        let turn = TurnId::new();
+    fn within_the_turn_under_way_the_cut_lies_before_a_call_of_its_model_but_the_first() {
+        let under_way = TurnId::new();
         let path = vec![
             entry("u1", MessageRole::User, None),
-            entry("call 1", MessageRole::Assistant, Some(turn)),
-            entry("result 1", MessageRole::Tool, Some(turn)),
-            entry("step 1 done", MessageRole::Assistant, Some(turn)),
-            entry("call 2", MessageRole::Assistant, Some(turn)),
-            entry("result 2a", MessageRole::Tool, Some(turn)),
-            entry("result 2b", MessageRole::Tool, Some(turn)),
-            entry("step 2 done", MessageRole::Assistant, Some(turn)),
-            end("end"),
+            entry("a1", MessageRole::Assistant, Some(under_way)),
+            entry("r1", MessageRole::Tool, Some(under_way)),
+            entry("a2", MessageRole::Assistant, Some(under_way)),
+            entry("r2", MessageRole::Tool, Some(under_way)),
+            entry("a3", MessageRole::Assistant, Some(under_way)),
+            entry("r3", MessageRole::Tool, Some(under_way)),
         ];
+        let positions = [0, 10, 20, 40, 50, 70, 80, 100];
         let none = HashSet::new();
-        assert_eq!(cut_at(&path, 1, &none), Some(7), "the turn's last message alone");
-        assert_eq!(cut_at(&path, 2, &none), Some(4), "both results kept, with the call that made them");
-        assert_eq!(cut_at(&path, 4, &none), Some(4), "the call is the oldest kept");
-        assert_eq!(cut_at(&path, 5, &none), Some(3));
-        assert_eq!(cut_at(&path, 2, &HashSet::from([turn])), Some(1), "a turn kept whole from its first message");
+        assert_eq!(cut_at(&path, &positions, 60, under_way, &none), Some(3), "before its second call");
+        assert_eq!(cut_at(&path, &positions, 85, under_way, &none), Some(3), "not before its first: its input would go and the turn stay");
+        assert_eq!(cut_at(&path, &positions, 10, under_way, &none), Some(5), "its newest call and results stay");
+        assert_eq!(cut_at(&path, &positions, 100, under_way, &none), None);
     }
 
     #[test]
-    fn the_turn_under_way_and_one_given_up_for_a_lowered_channel_are_kept_whole() {
-        let (under_way, lowered, failed) = (TurnId::new(), TurnId::new(), TurnId::new());
+    fn a_turn_given_up_for_a_lowered_channel_is_kept_whole() {
+        let (lowered, failed) = (TurnId::new(), TurnId::new());
         let given_up = |turn_id, reason| TranscriptEntry::TurnGivenUp { turn_id, reason, at: chrono::Utc::now() };
         let entries = [
             given_up(lowered, GivenUpReason::Lowered { channel: Classification::PUBLIC }),
             given_up(failed, GivenUpReason::Stopped),
             TranscriptEntry::TurnFinished { turn_id: TurnId::new(), at: chrono::Utc::now() },
         ];
-        assert_eq!(kept_whole(entries.iter(), under_way), HashSet::from([under_way, lowered]));
+        assert_eq!(kept_whole(entries.iter()), HashSet::from([lowered]));
     }
 
     /// The world's agent heard `u1`, was given `release-notes` - as a
@@ -466,7 +498,7 @@ mod tests {
         let skill = an_agent_with_a_skill_given(&world, &mut state).await;
         let before = state.transcript.digest().unwrap();
         let model = Arc::new(Summariser::default());
-        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep_last: 1, restorers: vec![Arc::new(Restorer(Some(skill)))] };
+        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: 0.1, restorers: vec![Arc::new(Restorer(Some(skill)))] };
 
         let mut turn = world.turn(&mut state);
         let compaction = strategy.compact(&mut turn).await.expect("compacted");
@@ -483,10 +515,16 @@ mod tests {
         assert_eq!(now, ["[Summary of the conversation so far]\nThey want release notes.\n", "[Skill: release-notes]\n1. Collect.\n", "u2"]);
         assert!(matches!(state.transcript.entries().nth(1).map(|n| &n.entry), Some(TranscriptEntry::Given { source, .. }) if source.about::<Workspace>().is_some_and(|(s, _)| s == skill)), "the skill as given");
         assert!(state.transcript.prefix(&before).is_some(), "what it saw before stays");
+        let replacement = state.transcript.messages();
+        let under_way = state.turn.as_ref().map(|t| t.work.turn_id);
+        assert_eq!(replacement[0].turn_id, None, "a summary of what precedes the turn alone is no turn's (issue 284)");
+        let summarised = Classification::join_all([&Classification::PUBLIC, &Classification::general(Confidentiality::Internal)]);
+        assert_eq!(Some(replacement[0].classification.clone()), summarised, "classified by what it summarises");
+        assert_eq!(replacement[1].turn_id, under_way, "what is given again is given in the turn");
         let knowledge = &state.turn.as_ref().unwrap().work.context.knowledge;
         assert!(knowledge.iter().any(|k| k.source.about::<Workspace>().is_some_and(|(s, _)| s == skill)), "the turn has read it");
         let usage = state.usage(ActorId::Agent(world.agent)).expect("the summary's call");
-        assert_eq!(usage.last_call_tokens, 48);
+        assert_eq!((usage.prompt_tokens, usage.completion_tokens), (40, 8), "the summary's call counts");
     }
 
     /// Issue 323: what can no longer be given where the agent is - a skill
@@ -498,7 +536,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         an_agent_with_a_skill_given(&world, &mut state).await;
         // Deleted meanwhile: its restorer gives it no more.
-        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep_last: 1, restorers: vec![Arc::new(Restorer(None))] };
+        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep: 0.1, restorers: vec![Arc::new(Restorer(None))] };
 
         let mut turn = world.turn(&mut state);
         let compaction = strategy.compact(&mut turn).await.expect("compacted");
@@ -513,10 +551,11 @@ mod tests {
     async fn what_cannot_be_shortened_is_left_as_it_is() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        an_agent_with_a_skill_given(&world, &mut state).await;
+        let u1 = Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
+        state.perceive(vec![u1.clone()], vec![u1]);
         let before = state.transcript.digest();
         let model = Arc::new(Summariser::default());
-        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep_last: 10, restorers: Vec::new() };
+        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: DEFAULT_KEEP, restorers: Vec::new() };
 
         let mut turn = world.turn(&mut state);
         let compaction = strategy.compact(&mut turn).await.expect("nothing to do is no failure");
@@ -525,5 +564,39 @@ mod tests {
         assert_eq!(compaction, None);
         assert!(model.0.lock().unwrap().is_empty(), "its model was not asked");
         assert_eq!(state.transcript.digest(), before);
+    }
+
+    #[tokio::test]
+    async fn a_summary_of_a_part_of_the_turn_under_way_is_the_turns() {
+        let world = session_with_workspace().await;
+        let mut state = AgentChannelState::default();
+        let u1 = Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
+        state.perceive(vec![u1.clone()], vec![u1]);
+        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep: 0.1, restorers: Vec::new() };
+        let mut turn = world.turn(&mut state);
+        let said = |content: &str, role| Message { sender_id: ActorId::Agent(world.agent), role, content: Some(content.repeat(40)), ..Message::new(Classification::PUBLIC) };
+        for (content, role) in [("a", MessageRole::Assistant), ("r", MessageRole::Tool), ("b", MessageRole::Assistant), ("s", MessageRole::Tool)] {
+            turn.push_message(said(content, role));
+        }
+        let under_way = turn.turn_id();
+        let label = turn.label();
+        let compaction = strategy.compact(&mut turn).await.expect("compacted");
+        drop(turn);
+
+        assert_eq!(compaction.map(|c| (c.replaced, c.kept)), Some((3, 2)), "the turn's input and first call summarised, its newest call kept with its result");
+        let summary = &state.transcript.messages()[0];
+        assert_eq!(summary.turn_id, Some(under_way), "it holds what the turn read: the turn's (issue 284)");
+        assert_eq!(summary.classification, label, "as the turn writes");
+    }
+
+    #[test]
+    fn what_it_keeps_is_a_share_of_the_context_size() {
+        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep: 0.25, restorers: Vec::new() };
+        assert_eq!(strategy.keep_of(1000), 250);
+
+        let config = |params| config_of_params::<SummaryCompactionConfig>(&params).map(|c| c.keep);
+        assert_eq!(config(serde_json::Value::Null).ok(), Some(DEFAULT_KEEP));
+        assert!(config(serde_json::json!({ "keep_last": 10 })).is_err(), "what it no longer takes is refused");
+        assert!(config(serde_json::json!({ "threshold": 0.8 })).is_err(), "when is its policy's");
     }
 }

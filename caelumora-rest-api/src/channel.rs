@@ -471,11 +471,11 @@ mod tests {
 
     #[test]
     fn what_a_participant_used_is_answered_only_where_it_was_read() {
-        let usage = TokenUsage { calls: 2, prompt_tokens: 300, completion_tokens: 20, last_call_tokens: 170, context_size: Some(8192) };
+        let usage = TokenUsage { calls: 2, prompt_tokens: 300, completion_tokens: 20, context_size: Some(8192), context_tokens: 120 };
         let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
 
         let json = serde_json::to_value(ChannelMemberResponse::of(member(Some(usage))).unwrap()).unwrap();
-        assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "last_call_tokens": 170, "context_size": 8192 }));
+        assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "context_size": 8192, "context_tokens": 120 }));
         let json = serde_json::to_value(ChannelMemberResponse::of(member(None)).unwrap()).unwrap();
         assert!(json.get("usage").is_none());
         assert!(json.get("turn_under_way").is_none(), "no answer under way, nothing said of one");

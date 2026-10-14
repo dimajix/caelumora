@@ -1,13 +1,14 @@
 //! Compaction (issue 16): an agent's context replaced by a shorter one when
 //! it grows too long for its model.
 //!
-//! When a context is compacted and how are kept apart. The [`command`]
-//! component carries out `/compact @agent` for the agent's owners; how the
-//! context is compacted is left to the agent's [`CompactionStrategy`], a
-//! component of its own of which an agent has exactly one - by default the
+//! When a context is compacted and how are kept apart. The agent compacts
+//! on its own when its [`CompactionPolicy`] says so (issue 284) - by default
+//! the [`threshold_compaction_policy`], once the context fills a share of
+//! its model's size -, and the [`command`] component carries out `/compact
+//! @agent` for the agent's owners. How the context is compacted is left to
+//! the agent's [`CompactionStrategy`] in either case - by default the
 //! [`summary_compaction`], which has the agent's model summarise the older
-//! part of its transcript. Compacting on the agent's own (issue 284) asks
-//! the same strategy.
+//! part of its transcript. Of either the agent has exactly one.
 //!
 //! Whatever the strategy, the context is replaced, not rewritten: the
 //! transcript begins anew on a branch of its own, and what the agent saw
@@ -20,8 +21,10 @@
 
 pub mod command;
 pub mod summary_compaction;
+pub mod threshold_compaction_policy;
 
 use crate::agent::turn::Turn;
+use crate::agent::work::AgentWork;
 use crate::component::ComponentRegistry;
 use async_trait::async_trait;
 use caelumora_model::context::KnowledgeRef;
@@ -29,8 +32,18 @@ use caelumora_model::store::EntityKind;
 use std::fmt::Debug;
 use uuid::Uuid;
 
+/// When an agent compacts its context on its own (issue 284): before which
+/// call of its model. An agent has exactly one; how it is compacted is its
+/// `CompactionStrategy`'s.
+pub trait CompactionPolicy: Send + Sync + Debug {
+    /// Whether the context of `work` is to be compacted before its next
+    /// model call. Asked at most once before each call.
+    fn is_due(&self, work: &AgentWork<'_>) -> bool;
+}
+
 /// How an agent's context is compacted: where it is cut and what replaces
-/// the part before the cut. An agent has exactly one.
+/// the part before the cut. An agent has exactly one; when it compacts on
+/// its own is its `CompactionPolicy`'s.
 #[async_trait]
 pub trait CompactionStrategy: Send + Sync + Debug {
     /// Compacts the context of `turn`'s agent, moving the turn's context to
@@ -86,13 +99,27 @@ pub struct Compaction {
     pub lost: usize,
 }
 
+impl Compaction {
+    /// What it did, in words for the users of the agent `agent_name`'s
+    /// channel: as `/compact` answers, and as the activity of compacting
+    /// ends (issue 284).
+    pub fn describe(&self, agent_name: &str) -> String {
+        let mut text = format!("{} compacted its context: {} messages replaced, {} kept as they were.", agent_name, self.replaced, self.kept);
+        if !self.given_again.is_empty() {
+            text.push_str(&format!(" Given again: {}.", self.given_again.join(", ")));
+        }
+        if self.lost > 0 {
+            text.push_str(&format!(" {} of what it had been given can no longer be given here and was not given again.", self.lost));
+        }
+        text
+    }
+}
+
 /// Why a compaction failed. Its text says so to the agent's owners.
 #[derive(Debug, thiserror::Error)]
 pub enum CompactionError {
     #[error("the transcript could not be read")]
     TranscriptUnreadable,
-    #[error("the agent made all the calls of its model it may in one turn")]
-    CallLimitReached,
     #[error("its model could not be asked")]
     ModelUnreachable,
     #[error("its model wrote no summary")]
@@ -105,11 +132,14 @@ pub enum CompactionError {
     NotReplaced,
 }
 
-/// Registers the compaction kinds with `registry`, and the strategy as a
-/// facet of which an agent has exactly one, with its default kind.
+/// Registers the compaction kinds with `registry`, and the policy and the
+/// strategy as facets of which an agent has exactly one, each with its
+/// default kind.
 pub fn register_all(registry: &mut ComponentRegistry) {
+    registry.single::<dyn CompactionPolicy>(Some(threshold_compaction_policy::THRESHOLD_COMPACTION_POLICY_KIND));
     registry.single::<dyn CompactionStrategy>(Some(summary_compaction::SUMMARY_COMPACTION_KIND));
 
     command::register(registry);
     summary_compaction::register(registry);
+    threshold_compaction_policy::register(registry);
 }

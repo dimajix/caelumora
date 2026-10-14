@@ -141,10 +141,36 @@ export function commandNotice(turnId: string, command: string, args: string, age
 }
 
 /**
+ * The notice of something an agent does of its own accord (issue 284), as
+ * the chat shows it: under way, kept by its turn until it ends - one turn
+ * may do it more than once -, then ended with what came of it, `output`,
+ * named for when it ended so that it is shown once, live and from the
+ * history alike.
+ */
+export function activityNotice(turnId: string, activity: string, agent: ActorId, agentName: string | undefined, at: string, output?: string): Message {
+  return {
+    id: output === undefined ? activityUnderWay(turnId) : `activity:${turnId}:${at}`,
+    role: 'System',
+    content: output ?? null,
+    sender_id: agent,
+    sender_name: agentName,
+    turn_id: turnId,
+    activity: {activity, agent: agentName ?? 'An agent', underWay: output === undefined},
+    timestamp: at,
+  };
+}
+
+/** The id of the notice of the activity of turn `turnId` under way. */
+export function activityUnderWay(turnId: string): string {
+  return `activity:${turnId}:under-way`;
+}
+
+/**
  * The chat's messages for `items` of a channel's history (issue 258): each
  * message said, the mark of each step of a plan begun (issue 263), the
- * notice of a turn given up, and that of a command an agent carried out
- * (issue 269) - whose, as `nameOf` names them. A turn that finished shows
+ * notice of a turn given up, that of a command an agent carried out
+ * (issue 269) and that of what it did of its own accord (issue 284) -
+ * whose, as `nameOf` names them. A turn that finished shows
  * nothing of its own.
  */
 export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: ActorId) => string | undefined): Message[] {
@@ -161,6 +187,10 @@ export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: Acto
     if ('command_executed' in item) {
       const {turn_id, actor, issuer, command, args, at} = item.command_executed;
       return [commandNotice(turn_id, command, args, actor, nameOf(actor), nameOf(issuer), at)];
+    }
+    if ('activity_finished' in item) {
+      const {turn_id, actor, activity, output, at} = item.activity_finished;
+      return [activityNotice(turn_id, activity, actor, nameOf(actor), at, output)];
     }
     return [];
   });
@@ -272,21 +302,21 @@ function percent(level: number): string {
 }
 
 /**
- * What an agent's calls used (issue 209), in two groups: its context - the
- * last call only, against the context's size - and its usage, summed over
- * all calls, which grows much faster since every call is given the whole
- * context again.
+ * What an agent's calls used (issue 209), in two groups: its context - what
+ * it holds now, against the context's size (issue 284) - and its usage,
+ * summed over all calls, which grows much faster since every call is given
+ * the whole context again.
  */
 export function tokenUsageGroups(usage: TokenUsage): StatGroup[] {
-  const level = fillLevel(usage.last_call_tokens, usage.context_size);
-  const context: Array<[string, string]> = [['Tokens', formatTokens(usage.last_call_tokens)]];
+  const level = fillLevel(usage.context_tokens, usage.context_size);
+  const context: Array<[string, string]> = [['Tokens', formatTokens(usage.context_tokens)]];
   if (level === null) {
     context.push(['Size', 'unknown']);
   } else {
     context.push(['Size', formatTokens(usage.context_size!)], ['Filled', percent(level)]);
   }
   return [
-    {title: 'Context of the last call', rows: context},
+    {title: 'Context', rows: context},
     {title: `Usage of all ${formatTokens(usage.calls)} ${usage.calls === 1 ? 'call' : 'calls'}`, rows: [
       ['Total input tokens', formatTokens(usage.prompt_tokens)],
       ['Total output tokens', formatTokens(usage.completion_tokens)],

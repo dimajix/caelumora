@@ -4,8 +4,11 @@
 
 use super::Turn;
 use caelumora_model::actor::ActorEvent;
+use caelumora_model::digest::{prompt, Digest};
 use caelumora_model::message::MessageRole;
 use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
+use std::cmp::Ordering;
+use std::collections::HashSet;
 
 impl Turn<'_> {
     pub fn set_plan(&mut self, plan: PlanState) {
@@ -71,6 +74,36 @@ impl Turn<'_> {
         }
     }
 
+    /// Names the plan in play again after a compaction (issue 284), whose
+    /// replacement ends at `replaced` - where the parts placed after what it
+    /// replaced were carried. If an instruction of the plan was among them,
+    /// its `create_plan` call was replaced as well, and the model no longer
+    /// knows its plan: the instructions carried there are dropped, and the
+    /// current one is replaced, where it stands, by the plan's overview -
+    /// which steps are done, which is under way - followed by it. Nothing
+    /// without a plan, or with every instruction of it kept where it was.
+    ///
+    /// The plan's parts are told by their text, which is the plan's state's
+    /// (`plan_texts`); a part placed for a plan before it was extended is
+    /// not, and stays where it was carried.
+    pub(super) fn name_plan_again(&mut self, replaced: Option<Digest>) {
+        let Some(PlanState { plan, progress }) = self.plan().cloned() else { return };
+        let texts: HashSet<Digest> = plan_texts(&plan).iter().map(|text| prompt(text)).collect();
+        let prompts = &self.current().work.context.prompts;
+        let of_plan: Vec<usize> = prompts.iter().enumerate().filter(|(_, part)| texts.contains(&part.text)).map(|(at, _)| at).collect();
+        let Some(&current) = of_plan.last() else { return };
+        if !of_plan.iter().any(|&at| prompts[at].after == replaced) {
+            return;
+        }
+        let after = prompts[current].after;
+        let dropped: HashSet<usize> = of_plan.into_iter().filter(|&at| at == current || prompts[at].after == replaced).collect();
+        let kept = prompts.iter().enumerate().filter(|(at, _)| !dropped.contains(at)).map(|(_, part)| part.clone()).collect();
+        self.current_mut().work.context.prompts = kept;
+        let label = self.label();
+        let overview = self.keep_prompt(MessageRole::System, plan_overview_instruction(&plan, progress), after, Some(label));
+        self.current_mut().work.context.prompts.push(overview);
+    }
+
     /// Moves the plan on after the model answered without calling a tool:
     /// the step under way is finished - announced as `PlanStepFinished` -
     /// and the next one begins, or the final answer is asked for
@@ -120,11 +153,47 @@ fn plan_finalize_instruction(plan: &Plan) -> String {
     )
 }
 
+/// The plan named again after a compaction (issue 284): its steps, each
+/// marked done, under way or to do, then the instruction for the step under
+/// way - or, finalizing, the instruction to write the final answer, which
+/// recaps the steps itself.
+fn plan_overview_instruction(plan: &Plan, progress: PlanProgress) -> String {
+    let PlanProgress::Step(current) = progress else { return plan_finalize_instruction(plan) };
+    let Some(step) = plan.steps.get(current) else { return plan_finalize_instruction(plan) };
+    let steps = plan.steps.iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let mark = match i.cmp(&current) {
+                Ordering::Less => "done",
+                Ordering::Equal => "under way",
+                Ordering::Greater => "to do",
+            };
+            format!("{}. [{}] {}", i + 1, mark, s.description)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "You are carrying out a plan: {}\n{}\n\n{}",
+        plan.summary, steps, plan_step_instruction(current + 1, plan.steps.len(), step)
+    )
+}
+
+/// Every text `plan` is given to the model as: each step's instruction,
+/// the one to finalize, and its overview at each step.
+fn plan_texts(plan: &Plan) -> Vec<String> {
+    let total = plan.steps.len();
+    plan.steps.iter()
+        .enumerate()
+        .flat_map(|(i, step)| [plan_step_instruction(i + 1, total, step), plan_overview_instruction(plan, PlanProgress::Step(i))])
+        .chain([plan_finalize_instruction(plan)])
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::transport::Discard;
-    use crate::agent::turn::tests::seen;
+    use crate::agent::turn::tests::{message, seen};
     use caelumora_model::actor::ActorId;
     use caelumora_model::actor::EventContext;
     use caelumora_model::confidentiality::Classification;
@@ -295,5 +364,29 @@ mod tests {
 
         let ctx = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached());
         assert!(ctx.plan().is_none());
+    }
+
+    #[test]
+    fn a_plan_whose_instructions_were_replaced_is_named_again_where_its_step_stood() {
+        let mut state = AgentChannelState::default();
+        state.transcript.push(Message { role: MessageRole::User, content: Some("do it".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) });
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached());
+        turn.set_context(Vec::new(), Vec::new());
+        turn.set_plan(plan_of(&["first", "second"]));
+        turn.advance_plan(0);
+        turn.push_message(message("did the first"));
+        turn.advance_plan(1);
+        turn.push_message(message("working on the second"));
+        let at_first = turn.agent_channel_state().transcript.entries().next().map(|node| node.digest);
+        turn.compact(vec![(message("summary"), None)], at_first).expect("compacted");
+        assert_eq!(given(&turn).len(), 6, "nothing of the plan was replaced, so it is not named again: {:?}", given(&turn));
+
+        let kept_from = turn.agent_channel_state().transcript.digest();
+        turn.compact(vec![(message("summary again"), None)], kept_from).expect("compacted");
+        let texts: Vec<String> = given(&turn).into_iter().map(|(_, text)| text).collect();
+        assert_eq!(texts.len(), 3, "the summary, the plan named again, what was kept: {texts:?}");
+        assert_eq!(texts[0], "summary again");
+        assert!(texts[1].starts_with("You are carrying out a plan: do the thing\n1. [done] first\n2. [under way] second\n\nStep 2 of 2: second"), "{}", texts[1]);
+        assert_eq!(texts[2], "working on the second");
     }
 }

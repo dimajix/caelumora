@@ -46,14 +46,7 @@ impl AgentCommandProvider for CompactionComponent {
             .map_err(|e| CommandError::Failed { command: name.to_string(), reason: e.to_string() })?
             .ok_or_else(|| invalid(&format!("there is nothing to compact: {} keeps the newest part of its context as it is", turn.agent_name())))?;
 
-        let mut answer = format!("{} compacted its context: {} messages replaced, {} kept as they were.", turn.agent_name(), compaction.replaced, compaction.kept);
-        if !compaction.given_again.is_empty() {
-            answer.push_str(&format!(" Given again: {}.", compaction.given_again.join(", ")));
-        }
-        if compaction.lost > 0 {
-            answer.push_str(&format!(" {} of what it had been given can no longer be given here and was not given again.", compaction.lost));
-        }
-        Ok(CommandOutput::channel(answer))
+        Ok(CommandOutput::channel(compaction.describe(turn.agent_name())))
     }
 }
 
@@ -124,7 +117,7 @@ mod tests {
 
     #[tokio::test]
     async fn compact_fails_with_the_reason_its_strategy_failed() {
-        let (failed, _) = compact(|| Err(CompactionError::CallLimitReached), "").await;
-        assert!(matches!(failed, Err(CommandError::Failed { ref reason, .. }) if reason == "the agent made all the calls of its model it may in one turn"), "{failed:?}");
+        let (failed, _) = compact(|| Err(CompactionError::ModelUnreachable), "").await;
+        assert!(matches!(failed, Err(CommandError::Failed { ref reason, .. }) if reason == "its model could not be asked"), "{failed:?}");
     }
 }

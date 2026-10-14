@@ -235,11 +235,14 @@ else who may read it - the session's owner, say - is shown its history and no in
     arrives only with the complete message (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reasoning)).
 *   **What ends without an answer.** A turn given up is shown with why: a failure as an alert naming
     what failed, any other reason as a notice. A command an agent carries out is shown to the issuer
-    as the agent's notice from when it begins, replaced by its answer or failure. What an agent
-    aborted without a word left - its partial answer, the stop button, calls without a result -
-    goes or is shown as abandoned once the channel says it was removed. A chain between agents cut
-    off at its limit says so, naming the agents that were not asked, and that a message of a user
-    starts a new chain. A user someone nudges is shown that they are asked to respond.
+    as the agent's notice from when it begins, replaced by its answer or failure. What an agent does
+    of its own accord - compacting its context - is shown to everybody as its notice from when it
+    begins (`ActivityStarted`), replaced by what came of it (`ActivityFinished`), which the history
+    keeps; one whose turn ended without it is gone. While it does, its dot says what. What an agent
+    aborted without a word left - its partial answer, the stop button, calls without a result - goes
+    or is shown as abandoned once the channel says it was removed. A chain between agents cut off at
+    its limit says so, naming the agents that were not asked, and that a message of a user starts a
+    new chain. A user someone nudges is shown that they are asked to respond.
 *   **A plan** is shown by its call, its steps numbered. While an agent works through it, each step
     is a block of its own, headed with the step, that holds what the step said; the step a turn is
     in is open while the turn is under way, every other one folded unless the user opened or closed
@@ -326,17 +329,18 @@ user ended a command, and when the channel's switch to use the workspace changes
 
 ### Members, moderator and notes
 
-Under each agent, a gauge shows how full its context is: the tokens of its last call against the
-size of its context, coloured as it fills; without a known size, the tokens alone. Its hover card
-keeps two things apart: the context of the last call, and the usage of all of the agent's calls in
-the channel as totals - which grow much faster than the context, since every call is given the whole
+Under each agent, a gauge shows how full its context is: the tokens it holds now (`context_tokens`)
+against the size of its context, coloured as it fills; without a known size, the tokens alone. Its
+hover card keeps two things apart: the context, and the usage of all of the agent's calls in the
+channel as totals - which grow much faster than the context, since every call is given the whole
 context again. Above the list, "Total tokens" adds up the usage of the agents shown. An agent's
-numbers are updated by each of its calls and fetched again when its turn ends, which also counts
-calls whose messages were not published. An external agent reports none.
+numbers are updated by each of its calls and fetched again when its turn ends or it compacted its
+context, which also counts calls whose messages were not published. An external agent reports none.
 
 Each agent has a dot for where it stands, starting from the snapshot and following its state
-changes: idle, working, carrying out a command, waiting for an approval, sleeping, or nothing
-running. Users and approvers have none.
+changes: idle, working, carrying out a command, busy with something of its own - what, as its
+activity says -, waiting for an approval, sleeping, or nothing running. Users and approvers have
+none.
 
 The member list is sorted by name and uses the members' handles for `@` completion and for
 highlighting mentions; participants that cannot be mentioned, such as approvers, have none. Who

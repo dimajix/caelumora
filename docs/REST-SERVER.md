@@ -249,11 +249,14 @@ An `Envelope`'s event is an `ActorEvent` as serde writes it. An agent's answer b
 `turn_id` - also in a channel's history - so that a client tells which messages are one answer, and
 which answer is under way after a reload, by the id rather than by who sent what when. A user's
 message carries none: it is said outside of any turn. A turn ends with `TurnFinished` or
-`TurnGivenUp` and its reason; a stopped agent sends neither.
+`TurnGivenUp` and its reason; a stopped agent sends neither. What an agent does of its own accord
+within a turn - compacting its context - begins with `ActivityStarted` and ends with
+`ActivityFinished`, which says what came of it, or with the turn's being given up.
 
 A history - the channel's and an agent's - is a list of items in the order they happened: messages
-said, where a step of a plan began, how turns ended, commands an agent carried out, and - in an
-agent's history only - compactions of its context. Read from another channel, a history holds only
+said, where a step of a plan began, how turns ended, commands an agent carried out, what an agent
+did of its own accord and what came of it (`activity_finished`), and - in an agent's history only -
+compactions of its context. Read from another channel, a history holds only
 the messages released, and neither a turn's end nor the start of a step.
 
 ### Who follows a channel

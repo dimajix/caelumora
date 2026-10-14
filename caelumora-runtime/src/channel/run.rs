@@ -260,7 +260,11 @@ impl ChannelLoop {
     /// - a command for an agent (issue 269) comes from a user and names an
     ///   agent taking part - whether the issuer may ask for it, its actor
     ///   asked of the agent's commands, and the agent asks again; a nudge
-    ///   (issue 278) comes from a user and names someone else taking part.
+    ///   (issue 278) comes from a user and names someone else taking part;
+    /// - what the channel records of a turn besides its messages - where a
+    ///   step of its plan began, a command or an activity it carried out,
+    ///   how it ended - and the start of an activity come from an agent in
+    ///   its own name (issue 284): nobody else has turns.
     async fn admission(&self, event: &Envelope) -> Result<(), Rejection> {
         let context = &event.security;
         let messages = event.event.messages();
@@ -323,6 +327,15 @@ impl ChannelLoop {
             ActorEvent::NudgeRequested { participant } => {
                 (event.context.sender_id.as_user_id().is_some() && *participant != event.context.sender_id && self.actor_by_id(*participant).is_some())
                     .then_some(()).ok_or(Rejection::Invalid)
+            }
+            ActorEvent::PlanStepStarted { .. }
+            | ActorEvent::CommandExecuted { turn_id: Some(_), .. }
+            | ActorEvent::ActivityStarted { .. }
+            | ActorEvent::ActivityFinished { .. }
+            | ActorEvent::TurnFinished { .. }
+            | ActorEvent::TurnGivenUp { .. } => {
+                let sender = event.context.sender_id;
+                (sender.as_agent_id().is_some() && context.caller_id == sender).then_some(()).ok_or(Rejection::Invalid)
             }
             _ => Ok(()),
         }?;
@@ -499,6 +512,18 @@ impl ChannelLoop {
                     issuer: envelope.security.initiator_id,
                     command: command.clone(),
                     args: args.clone(),
+                    at: envelope.timestamp,
+                });
+                true
+            }
+            // What an agent did of its own accord is part of the record
+            // (issue 284), with what came of it, before its turn's end.
+            ActorEvent::ActivityFinished { turn_id, activity, output } => {
+                state.history.record_activity(HistoryEntry::ActivityFinished {
+                    turn_id: *turn_id,
+                    actor: envelope.context.sender_id,
+                    activity: activity.clone(),
+                    output: output.clone(),
                     at: envelope.timestamp,
                 });
                 true
@@ -725,6 +750,37 @@ mod tests {
         let history: Vec<_> = channel.history().await.iter().filter_map(|m| m.content.clone()).collect();
         assert_eq!(history, ["its own"], "nor the history");
         running.abort();
+    }
+
+    #[tokio::test]
+    async fn what_is_recorded_of_a_turn_comes_from_an_agent_in_its_own_name() {
+        let alice = user("alice");
+        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+        let agent = ActorId::Agent(caelumora_model::agent::AgentId::new());
+        let her = ActorId::User(alice.id);
+        let sent = |sender: ActorId, caller: ActorId, event: ActorEvent| Envelope::new(
+            SecurityContext::default().next(caller, ActorId::None, ActorId::None),
+            EventContext { sender_id: sender, ..EventContext::default() },
+            event,
+        );
+        let turn_id = TurnId::new();
+        let activity = "compacting its context".to_string();
+        let of_a_turn = [
+            ActorEvent::PlanStepStarted { turn_id, step_index: 0, total_steps: 1, description: "first".to_string() },
+            ActorEvent::CommandExecuted { command: "compact".to_string(), args: String::new(), output: "done".to_string(), to: None, turn_id: Some(turn_id) },
+            ActorEvent::ActivityStarted { turn_id, activity: activity.clone() },
+            ActorEvent::ActivityFinished { turn_id, activity, output: "done".to_string() },
+            ActorEvent::TurnFinished { turn_id, messages: Vec::new() },
+            ActorEvent::TurnGivenUp { turn_id, reason: caelumora_model::turn::GivenUpReason::Stopped },
+        ];
+        for event in of_a_turn {
+            let kind = event.kind();
+            assert_eq!(channel.admission(&sent(agent, agent, event.clone())).await, Ok(()), "{kind} of an agent's turn, in its own name");
+            assert_eq!(channel.admission(&sent(her, her, event.clone())).await, Err(Rejection::Invalid), "{kind}: a user has no turns");
+            assert_eq!(channel.admission(&sent(agent, her, event)).await, Err(Rejection::Invalid), "{kind} in another's name");
+        }
+        let of_the_session = ActorEvent::CommandExecuted { command: "wakeup".to_string(), args: String::new(), output: "Woke.".to_string(), to: None, turn_id: None };
+        assert_eq!(channel.admission(&sent(her, her, of_the_session)).await, Ok(()), "a command of the session is run by a user, in no turn");
     }
 
     #[tokio::test]
@@ -970,7 +1026,7 @@ mod tests {
         let mut events = channel.observe();
         let going = ActorId::Agent(caelumora_model::agent::AgentId::new());
         let turn_id = caelumora_model::work::TurnId::new();
-        let farewell = Envelope::new(SecurityContext::default(), EventContext::new(channel.session_id, channel.id, going, "helper".to_string()), ActorEvent::TurnGivenUp { turn_id, reason: caelumora_model::turn::GivenUpReason::Stopped });
+        let farewell = Envelope::new(SecurityContext::default().next(going, ActorId::None, ActorId::None), EventContext::new(channel.session_id, channel.id, going, "helper".to_string()), ActorEvent::TurnGivenUp { turn_id, reason: caelumora_model::turn::GivenUpReason::Stopped });
 
         // Told to stop, its task still runs: what it says is its own (issue 262).
         let running = HashMap::from([(going, leaving_actor(going, SecurityContext::default()))]);

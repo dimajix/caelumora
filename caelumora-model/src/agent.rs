@@ -4,7 +4,7 @@ use crate::digest::Digest;
 use crate::external_agent::RemoteState;
 use crate::confidentiality::Classification;
 use crate::approval::ApprovalRequest;
-use crate::context::{ContextRef, KnowledgeRef, ModelProfile, PromptRef};
+use crate::context::{ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptRef};
 use crate::chain::Stored;
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
@@ -25,6 +25,7 @@ use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::store::{self, EntityKind, Journaled, NoEntity};
 use crate::tool::{RecordedToolSets, Tool, ToolSet};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -397,9 +398,12 @@ impl AgentChannelState {
     /// message is copied as it stands - a change of it is in it, one taken
     /// back is left out - and a turn's end as it is; every copy gets a
     /// digest of its own, since what comes before it is another. The
-    /// replacement is the turn's (`Message::turn_id`) and seen by it. Prompt
-    /// parts the turn placed after an entry name the old branch and are
-    /// dropped; who placed them places them again.
+    /// replacement is seen by the turn; whose it is (`Message::turn_id`)
+    /// is the caller's to say (issue 284). The
+    /// prompt parts the turn placed after an entry are carried over (issue
+    /// 284): one after an entry kept follows its copy - after a change of a
+    /// message, which is in the copy, the copy before it -, one after an
+    /// entry replaced follows the replacement.
     ///
     /// `None`, and nothing changes, without a turn under way, if the
     /// transcript is empty, if `keep_from` is not on its active path, or if
@@ -407,26 +411,29 @@ impl AgentChannelState {
     pub fn compact(&mut self, actor: ActorId, replacement: Vec<(Message, Option<KnowledgeRef>)>, keep_from: Option<Digest>) -> Option<(Digest, Digest)> {
         let turn_id = self.turn.as_ref()?.work.turn_id;
         let from = self.transcript.digest()?;
-        let kept: Vec<TranscriptEntry> = match keep_from {
-            None => Vec::new(),
-            Some(first) => {
-                let path: Vec<_> = self.transcript.entries().collect();
-                let start = path.iter().position(|node| node.digest == first)?;
-                as_they_stand(path.into_iter().skip(start)).filter_map(|(node, standing)| match (&node.entry, standing) {
-                    (TranscriptEntry::Message(_), Some(message)) => Some(TranscriptEntry::Message(message)),
-                    (TranscriptEntry::Given { source, .. }, Some(message)) => Some(TranscriptEntry::Given { message, source: *source }),
-                    (end @ (TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }), _) => Some(end.clone()),
-                    _ => None,
-                }).collect()
-            }
+        let path: Vec<_> = self.transcript.entries().collect();
+        let start = match keep_from {
+            None => path.len(),
+            Some(first) => path.iter().position(|node| node.digest == first)?,
         };
-        if replacement.is_empty() && kept.is_empty() {
+        let replaced: Vec<Digest> = path[..start].iter().map(|node| node.digest).collect();
+        // Each entry kept with its copy, `None` for a change of a message,
+        // which is in the copy, or a message taken back.
+        let kept: Vec<(Digest, Option<TranscriptEntry>)> = as_they_stand(path[start..].iter().copied()).map(|(node, standing)| {
+            let copy = match (&node.entry, standing) {
+                (TranscriptEntry::Message(_), Some(message)) => Some(TranscriptEntry::Message(message)),
+                (TranscriptEntry::Given { source, .. }, Some(message)) => Some(TranscriptEntry::Given { message, source: *source }),
+                (end @ (TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }), _) => Some(end.clone()),
+                _ => None,
+            };
+            (node.digest, copy)
+        }).collect();
+        if replacement.is_empty() && kept.iter().all(|(_, copy)| copy.is_none()) {
             return None;
         }
         self.transcript.start_anew();
         let mut given = Vec::new();
-        for (mut message, knowledge) in replacement {
-            message.turn_id = Some(turn_id);
+        for (message, knowledge) in replacement {
             if let Some(turn) = self.turn.as_mut() {
                 turn.work.see_message(&message);
             }
@@ -443,8 +450,14 @@ impl AgentChannelState {
             }
             given.push(message);
         }
-        for entry in kept {
-            self.transcript.push_entry(entry);
+        // Where each entry of the old branch stands on the new one.
+        let replacement_end = self.transcript.digest();
+        let mut moved: HashMap<Digest, Option<Digest>> = replaced.into_iter().map(|old| (old, replacement_end)).collect();
+        for (old, copy) in kept {
+            if let Some(copy) = copy {
+                self.transcript.push_entry(copy);
+            }
+            moved.insert(old, self.transcript.digest());
         }
         let to = self.transcript.digest()?;
         self.history.record_compaction(HistoryEntry::Compacted { turn_id, actor, from, to, at: chrono::Utc::now() });
@@ -453,7 +466,10 @@ impl AgentChannelState {
         }
         if let Some(turn) = self.turn.as_mut() {
             turn.work.context.transcript = Some(to);
-            turn.work.context.prompts.retain(|prompt| prompt.after.is_none());
+            turn.work.context.prompts.retain_mut(|prompt| match prompt.after {
+                None => true,
+                Some(after) => moved.get(&after).map(|now| prompt.after = *now).is_some(),
+            });
         }
         Some((from, to))
     }
@@ -647,10 +663,36 @@ impl AgentChannelState {
     /// their calls were made, the turn under way's included.
     /// A message kept through a compaction (issue 16) is in the transcript
     /// twice, once on each branch, but its call was made once: it counts
-    /// where it was first recorded.
+    /// where it was first recorded. How full the context is now,
+    /// `context_tokens`, is read from what the model is given next
+    /// (`next_context_tokens`, issue 284).
     pub fn usage(&self, agent: ActorId) -> Option<TokenUsage> {
         let mut counted = std::collections::HashSet::new();
-        TokenUsage::of(self.transcript.all_entries().filter_map(|node| node.entry.message()).filter(|m| m.sender_id == agent && counted.insert(m.id)))
+        let usage = TokenUsage::of(self.transcript.all_entries().filter_map(|node| node.entry.message()).filter(|m| m.sender_id == agent && counted.insert(m.id)))?;
+        let context_tokens = self.next_context_tokens(agent).unwrap_or(usage.context_tokens);
+        Some(TokenUsage { context_tokens, ..usage })
+    }
+
+    /// How many tokens what the model of `agent` - whose state this is - is
+    /// given next holds (issue 284): the context of the turn under way, or
+    /// between turns the transcript as it stands, given as the agent's last
+    /// message was (`ContextResolver::token_positions`). `None` if that
+    /// cannot be resolved.
+    fn next_context_tokens(&self, agent: ActorId) -> Option<u64> {
+        let (reference, turn) = match &self.turn {
+            Some(turn) => (turn.work.context.clone(), turn.work.turn_id),
+            None => {
+                let profile = self.history.entries().rev()
+                    .find_map(|node| match &node.entry {
+                        HistoryEntry::Said { message, context: Some(context) } if message.sender_id == agent => Some(context.profile),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                (ContextRef { transcript: self.transcript.digest(), profile, ..ContextRef::default() }, TurnId::new())
+            }
+        };
+        let (positions, _) = ContextResolver::of(self).token_positions(&reference, turn, agent)?;
+        positions.last().copied()
     }
 }
 
@@ -882,7 +924,7 @@ pub(crate) mod tests {
         let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.processing_state, ActorState::WaitingForUser);
         let turn_id = decoded.turn.as_ref().map(|t| t.work.turn_id).expect("the turn is resumed from what was stored");
-        assert_eq!(decoded.transcript.of_turn(turn_id).len(), 1, "with what it said, in the transcript (issue 260)");
+        assert_eq!(decoded.transcript.messages().len(), 1, "with what it said, in the transcript (issue 260)");
         assert_eq!(decoded.turn.as_ref().map(|t| t.work.context.transcript), Some(decoded.transcript.digest()), "its context names the transcript's head");
         let context = decoded.turn.as_ref().map(|t| t.work.context.clone()).unwrap_or_default();
         assert!(crate::context::ContextResolver::of(&decoded).resolve(&context, turn_id, ActorId::default()).is_some(), "so a resumed turn's next call resolves");
@@ -1022,7 +1064,7 @@ pub(crate) mod tests {
         let turn_under_way = &state.turn.as_ref().unwrap().work;
         assert_eq!(turn_under_way.context.transcript, Some(to), "what the turn says next is produced from the new branch");
         assert_eq!(turn_under_way.context.knowledge, [knowledge], "the skill given again is knowledge of the turn");
-        assert!(state.transcript.messages().iter().take(2).all(|m| m.turn_id == Some(turn_under_way.turn_id)), "the replacement is the turn's");
+        assert!(state.transcript.messages().iter().take(2).all(|m| m.turn_id.is_none()), "the replacement is whose its caller says (issue 284)");
 
         assert_eq!(resolve(&state), before, "what was recorded before resolves to what it did");
         assert!(state.transcript.prefix(&head.unwrap()).is_some(), "the old branch stays");
@@ -1031,7 +1073,55 @@ pub(crate) mod tests {
         let followed: Vec<_> = items[compacted + 1..].iter().filter_map(|item| match item { HistoryEntry::Said { message, context: None } => Some(message.id), _ => None }).collect();
         assert_eq!(followed, [summary.id, skill.id], "then what replaced the older messages, as given");
         let usage = state.usage(agent).expect("calls were made");
-        assert_eq!((usage.calls, usage.last_call_tokens), (2, 50), "the answer kept counts once, the summary's call last");
+        assert_eq!((usage.calls, usage.prompt_tokens), (2, 150), "the answer kept counts once");
+    }
+
+    #[test]
+    fn the_gauge_reads_the_context_as_it_stands_not_the_last_call() {
+        let agent = ActorId::Agent(AgentId::new());
+        let mut state = a_state_that_heard("hello", Classification::PUBLIC);
+        begin(&mut state, Vec::new());
+        let first = Message { sender_id: agent, role: MessageRole::Assistant, prompt_tokens: Some(100), completion_tokens: Some(10), ..said("call", Classification::PUBLIC) };
+        state.said(first.clone());
+        let kept_from = state.transcript.entries().find(|n| n.entry.message().is_some_and(|m| m.id == first.id)).map(|n| n.digest);
+        let summary = Message { sender_id: agent, prompt_tokens: Some(500), completion_tokens: Some(8), ..said("summary", Classification::PUBLIC) };
+        state.compact(agent, vec![(summary, None)], kept_from).expect("compacted");
+        assert_eq!(state.usage(agent).map(|u| (u.calls, u.context_tokens)), Some((2, 2 + 1)), "the new branch as estimated, not the summary's call over the old one");
+
+        let turn = state.turn.take().unwrap().work.turn_id;
+        state.finish_turn(turn, agent, Vec::new(), Vec::new(), None);
+        assert_eq!(state.usage(agent).map(|u| u.context_tokens), Some(3), "between turns as well");
+    }
+
+    #[test]
+    fn a_compaction_carries_the_prompt_parts_of_the_turn_over() {
+        let agent = ActorId::Agent(AgentId::new());
+        let mut state = a_state_that_heard("older", Classification::PUBLIC);
+        let older = state.transcript.digest();
+        let kept = said("kept", Classification::PUBLIC);
+        let changed = said("changed", Classification::PUBLIC);
+        state.perceive(vec![kept.clone(), changed.clone()], vec![kept.clone(), changed.clone()]);
+        let kept_at = state.transcript.entries().find(|n| n.entry.message().is_some_and(|m| m.id == kept.id)).map(|n| n.digest);
+        state.transcript.modify(Message { content: Some("changed!".to_string()), ..changed.clone() });
+        let change_at = state.transcript.digest();
+        begin(&mut state, Vec::new());
+        let parts = [("first", None), ("on the replaced", older), ("on the kept", kept_at), ("on a change", change_at)]
+            .map(|(text, after)| state.keep_prompt(MessageRole::System, text.to_string(), after, None));
+        state.turn.as_mut().unwrap().work.context.prompts = parts.to_vec();
+
+        state.compact(agent, vec![(said("summary", Classification::PUBLIC), None)], kept_at).expect("compacted");
+
+        let on_new: Vec<Option<String>> = state.transcript.entries().map(|n| n.entry.message().and_then(|m| m.content.clone())).collect();
+        let anchor = |prompt: &PromptRef| prompt.after.map(|after| state.transcript.entries().position(|n| n.digest == after).map(|at| on_new[at].clone()));
+        let anchors: Vec<_> = state.turn.as_ref().unwrap().work.context.prompts.iter().map(anchor).collect();
+        assert_eq!(anchors, [
+            None,
+            Some(Some(Some("summary".to_string()))),
+            Some(Some(Some("kept".to_string()))),
+            Some(Some(Some("changed!".to_string()))),
+        ], "before everything as it was, after the replacement for what it replaced, after the copy for what was kept - a change's after its message");
+        let context = state.turn.as_ref().unwrap().work.context.clone();
+        assert!(ContextResolver::of(&state).resolve(&context, TurnId::new(), agent).is_some(), "every part is placed on the new branch");
     }
 
     #[test]

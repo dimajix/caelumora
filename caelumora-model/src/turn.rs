@@ -99,6 +99,11 @@ pub struct TurnState {
     /// (issue 157).
     #[serde(default)]
     pub model_calls: u32,
+    /// How many calls the turn had made when it last tried to compact its
+    /// context (issue 284): it tries once before each call, not again when
+    /// there was nothing to compact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_tried_at: Option<u32>,
     /// The command the turn carries out (issue 269), `None` for a turn
     /// that answers. A command turn has no tools and no context of its
     /// own; one resumed after a restart runs its command again.

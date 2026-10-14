@@ -180,9 +180,12 @@ impl Moderator for PolicyModerator {
             }
             // How an answer comes about - streamed, step by step - is for
             // the users watching (issue 220); the agents hear what is said.
-            // So is where an agent stands (issue 243).
+            // So is where an agent stands (issue 243), and what it does of
+            // its own accord (issue 284).
             ActorEvent::ResponseStarted { .. } |
             ActorEvent::StateChanged(_) |
+            ActorEvent::ActivityStarted { .. } |
+            ActorEvent::ActivityFinished { .. } |
             ActorEvent::PartialMessageGenerated(_) |
             ActorEvent::IntermediatePartialGenerated(_) |
             ActorEvent::IntermediateMessageGenerated(_) |
@@ -789,6 +792,21 @@ mod tests {
             let decision = moderator.route(&event).await;
 
             assert_eq!(decision.iter().map(|(to, _)| *to).collect::<Vec<_>>(), vec![user], "{:?} must route a failed turn to the users only", moderator);
+        }
+    }
+
+    #[tokio::test]
+    async fn every_moderator_tells_the_users_alone_what_an_agent_does_of_its_own_accord() {
+        for moderator in moderators() {
+            let agents = add_agents(&moderator);
+            let user = ActorId::User(UserId::new());
+            moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
+            let turn_id = caelumora_model::work::TurnId::new();
+            let activity = "compacting its context".to_string();
+            for event in [ActorEvent::ActivityStarted { turn_id, activity: activity.clone() }, ActorEvent::ActivityFinished { turn_id, activity: activity.clone(), output: "done".to_string() }] {
+                let decision = moderator.route(&envelope(agents[0], event)).await;
+                assert_eq!(decision.iter().map(|(to, _)| *to).collect::<Vec<_>>(), [user], "{:?} must tell the users alone (issue 284)", moderator);
+            }
         }
     }
 

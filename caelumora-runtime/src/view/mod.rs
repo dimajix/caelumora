@@ -1366,7 +1366,9 @@ use caelumora_model::turn::TurnState;
 
         let views = manager.views(as_user(alice.id));
         let main = views.session(session.id).await.unwrap().channel(channel.id).await.unwrap();
-        let expected = TokenUsage { calls: 1, prompt_tokens: 1000, completion_tokens: 50, last_call_tokens: 1050, context_size: Some(8192) };
+        // Recorded without the context it was made from, the call measures
+        // nothing of the context now, and it holds no text to estimate.
+        let expected = TokenUsage { calls: 1, prompt_tokens: 1000, completion_tokens: 50, context_size: Some(8192), context_tokens: 0 };
         let details = |member: &MemberSnapshot| (member.usage, member.notes.len(), member.pending_approvals.len());
 
         let all = main.snapshot(Detail::MEMBERS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS).await;

@@ -37,8 +37,10 @@ impl Turn<'_> {
     /// Takes the completed turn over and ends it (issues 06, 17, 47, 62, 65):
     ///
     /// - its answer is what it said that is not internal, read from the
-    ///   transcript, where each message went as it was said, and into the
-    ///   history with what it was produced from (`push_message`, issue 260);
+    ///   history, where each message went as it was said with what it was
+    ///   produced from (`push_message`, issue 260) - not from the
+    ///   transcript, of which a compaction may have summarised a part
+    ///   (`MessageHistory::said_in_turn`, issue 284);
     /// - records its end, `TurnFinished`;
     /// - applies the changes staged to its state in this channel, anchored at
     ///   the turn's last message in the history;
@@ -57,8 +59,9 @@ impl Turn<'_> {
         let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let turn_id = turn.work.turn_id;
-        // What it said is in the transcript already (issue 260).
-        let final_messages = self.agent_channel_state.transcript.of_turn(turn_id).into_iter().filter(|m| !m.internal).collect();
+        // What it said is in the history already (issue 260), whatever a
+        // compaction left of it in the transcript (issue 284).
+        let final_messages = self.agent_channel_state.history.said_in_turn(turn_id).into_iter().filter(|m| !m.internal).collect();
         // Every part is used up exactly once.
         let TurnState { memory, notes, private_notes, command, .. } = turn;
         let channel_state_changed = self.agent_channel_state.finish_turn(turn_id, ActorId::Agent(self.agent_id), notes, private_notes, command);
@@ -277,5 +280,23 @@ mod tests {
         assert_eq!(committed.final_messages[0].id, final_answer.id);
         assert_eq!(agent_channel_state.transcript.messages().len(), 2, "but of the transcript");
         assert!(agent_channel_state.turn.is_none(), "nothing of the turn's work is stored with the state");
+    }
+
+    #[tokio::test]
+    async fn a_turn_compacted_while_under_way_answers_with_all_it_said_and_nothing_else() {
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, AgentStateHandle::detached());
+        let first = message("first");
+        let second = message("second");
+        turn.push_message(first.clone());
+        turn.push_message(second.clone());
+        let kept_from = turn.agent_channel_state().transcript.digest();
+        turn.compact(vec![(message("summary of first"), None)], kept_from).expect("compacted");
+        let third = message("third");
+        turn.push_message(third.clone());
+
+        let committed = turn.commit(false, &Discard).await;
+        let answer: Vec<MessageId> = committed.final_messages.iter().map(|m| m.id).collect();
+        assert_eq!(answer, [first.id, second.id, third.id], "what it said, the part summarised included, and not the summary (issue 284)");
     }
 }

@@ -60,7 +60,7 @@ export type ParticipantKind = 'user' | 'agent' | 'approver';
 export type PersonalityKind = 'internal' | 'external';
 
 /** Where an agent stands (issue 243), as `StateChanged` and a member's `state` name it. */
-export type ActorState = 'Idle' | 'Sleeping' | 'Planning' | 'ExecutingTools' | 'WaitingForUser' | 'Reflecting' | 'Cancelling' | 'CarryingOutCommand';
+export type ActorState = 'Idle' | 'Sleeping' | 'Planning' | 'ExecutingTools' | 'WaitingForUser' | 'Reflecting' | 'Cancelling' | 'CarryingOutCommand' | 'Busy';
 
 /** A participant of a channel. */
 /**
@@ -73,9 +73,10 @@ export interface TokenUsage {
   calls: number;
   prompt_tokens: number;
   completion_tokens: number;
-  last_call_tokens: number;
   /** Absent if not known. */
   context_size?: number;
+  /** How many tokens the context holds now (issue 284) - after a compaction no longer the last call's. */
+  context_tokens: number;
 }
 
 export interface ChannelMember {
@@ -624,6 +625,10 @@ export interface Message {
   // it carries it out (issue 299). A command of the channel is never part of
   // the history, one an agent carried out is - without what it answered.
   commandOutput?: {command: string; private: boolean; args?: string; agent?: string; issuer?: string; failed?: boolean; underWay?: boolean};
+  // UI only: something an agent did of its own accord (issue 284) - its
+  // words, as "compacting its context" -, `underWay` until it ended. One
+  // ended is part of the history, with what came of it as the content.
+  activity?: {activity: string; agent: string; underWay?: boolean};
   // UI only: its sender was removed from the channel before its tool calls
   // were answered (issue 162) - those without a result never will be.
   abandoned?: boolean;
@@ -727,6 +732,8 @@ export interface ActorEvent {
    * alone. `turn_id` is the turn it had begun in, if it said so.
    */
   CommandFailed?: { command: string; reason: string; to: ActorId; turn_id: string | null };
+  ActivityStarted?: { turn_id: string; activity: string };
+  ActivityFinished?: { turn_id: string; activity: string; output: string };
   /**
    * `participant` was removed from the channel by the envelope's sender
    * (issue 162); nothing of it follows, so whatever of it was under way has
@@ -1052,6 +1059,8 @@ export type HistoryItem<M> =
   | {turn_finished: {turn_id: string; actor: ActorId; at: string}}
   | {turn_given_up: {turn_id: string; actor: ActorId; reason: GivenUpReason; at: string}}
   | {command_executed: {turn_id: string; actor: ActorId; issuer: ActorId; command: string; args: string; at: string}}
+  /** An agent ended something it did of its own accord, and what came of it (issue 284). */
+  | {activity_finished: {turn_id: string; actor: ActorId; activity: string; output: string; at: string}}
   /** An agent replaced its context `from` by `to` (issue 16); in an agent's history only. */
   | {compacted: {turn_id: string; actor: ActorId; from: string; to: string; at: string}};
 

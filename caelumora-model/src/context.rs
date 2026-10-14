@@ -23,7 +23,8 @@ use crate::agent::AgentChannelState;
 use crate::chain::Node;
 use crate::digest::Digest;
 use crate::kept::Kept;
-use crate::message::{Message, MessageId, MessageRole};
+use crate::message::{estimated_tokens, Message, MessageId, MessageRole};
+use crate::message_history::{HistoryEntry, MessageHistory};
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use crate::turn::GivenUpReason;
 use crate::tool::ToolSet;
@@ -398,18 +399,27 @@ pub struct ResolvedContext {
 /// Resolves references against an agent's data in a channel - its
 /// transcript, the texts of its prompt parts and the sets of tools it was
 /// offered - into what its model is given. One implementation for the model
-/// call and for telling afterwards what the model saw.
+/// call, for telling afterwards what the model saw, and for measuring how
+/// much of its context it fills (issue 284).
 #[derive(Debug, Clone, Copy)]
 pub struct ContextResolver<'a> {
     transcript: &'a Transcript,
     prompts: &'a Kept<String>,
     offered_tools: &'a Kept<Vec<ToolSet>>,
+    /// What the agent said, each with the context it was produced from:
+    /// which of its messages a call measured (`token_positions`).
+    history: &'a MessageHistory,
 }
+
+/// The items the model is given before the first entry of a transcript, and
+/// for each entry what it is given of it - its message, where a turn given
+/// up ended, the prompt parts placed after it.
+type GivenPath<'a> = (Vec<ContextItem>, Vec<(&'a Node<TranscriptEntry>, Vec<ContextItem>)>);
 
 impl<'a> ContextResolver<'a> {
     /// The resolver over the data of `state`.
     pub fn of(state: &'a AgentChannelState) -> Self {
-        Self { transcript: &state.transcript, prompts: &state.prompts, offered_tools: &state.offered_tools }
+        Self { transcript: &state.transcript, prompts: &state.prompts, offered_tools: &state.offered_tools, history: &state.history }
     }
 
     /// What the model of `agent` is given, or was given, for the message
@@ -422,6 +432,70 @@ impl<'a> ContextResolver<'a> {
     /// one, a prompt or a set of tools that was never recorded, or a prompt
     /// whose entry is not in the prefix.
     pub fn resolve(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Option<ResolvedContext> {
+        let (mut items, entries) = self.given_path(reference, turn, agent)?;
+        items.extend(entries.into_iter().flat_map(|(_, given)| given));
+        reference.profile.place_system_messages(&mut items);
+        let tool_sets = match &reference.tools {
+            Some(digest) => self.offered_tools.get(digest)?.clone(),
+            None => Vec::new(),
+        };
+        Some(ResolvedContext { reference: reference.clone(), items, tool_sets })
+    }
+
+    /// Where each entry of the transcript `reference` names stands in what
+    /// the model of `agent` is given for it, in turn `turn`, in tokens (issue
+    /// 284): how many it is given before the entry, and as a last element how
+    /// many in all; and whether a call of its model measured any of it.
+    /// `None` as for `resolve`.
+    ///
+    /// Measured before a message of the model of `agent` made on that path,
+    /// as its recorded context shows by naming the entry before it - which a
+    /// copy kept through a compaction does not, nor what replaced older
+    /// messages: its call's `prompt_tokens`, which count everything the call
+    /// was given before it, the system prompt as well. Elsewhere estimated
+    /// (`ContextItem::estimated_tokens`) from what the model is given of
+    /// each entry, as `resolve` gives it, a message's reasoning only where
+    /// its rule gives it back: on from each measured position, back from
+    /// the first; from nothing if none is.
+    pub fn token_positions(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Option<(Vec<u64>, bool)> {
+        let produced_after: HashMap<MessageId, Option<Digest>> = self.history.all_entries()
+            .filter_map(|node| match &node.entry {
+                HistoryEntry::Said { message, context: Some(context) } if message.sender_id == agent => Some((message.id, context.transcript)),
+                _ => None,
+            })
+            .collect();
+        let (leading, entries) = self.given_path(reference, turn, agent)?;
+        let size = |items: &[ContextItem]| items.iter().map(ContextItem::estimated_tokens).sum::<u64>();
+        let mut previous = None;
+        let measured: Vec<Option<u64>> = entries.iter()
+            .map(|(node, _)| {
+                let made_here = node.entry.message().filter(|m| produced_after.get(&m.id) == Some(&previous)).and_then(|m| m.prompt_tokens);
+                previous = Some(node.digest);
+                made_here
+            })
+            .collect();
+        let mut positions = vec![size(&leading); entries.len() + 1];
+        let first = measured.iter().position(Option::is_some);
+        if let Some(first) = first {
+            positions[first] = measured[first].unwrap_or_default();
+            for at in (0..first).rev() {
+                positions[at] = positions[at + 1].saturating_sub(size(&entries[at].1));
+            }
+        }
+        for at in first.unwrap_or(0)..entries.len() {
+            if let Some(before) = measured[at] {
+                positions[at] = before;
+            }
+            positions[at + 1] = positions[at] + size(&entries[at].1);
+        }
+        Some((positions, first.is_some()))
+    }
+
+    /// What the model of `agent` is given of the transcript `reference`
+    /// names, in turn `turn`, entry by entry, with the prompt parts where
+    /// they were placed - before `ModelProfile::place_system_messages`.
+    /// `None` as for `resolve`, and if a part's entry is not on the path.
+    fn given_path(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Option<GivenPath<'a>> {
         let prefix = match reference.transcript.as_ref() {
             Some(digest) => self.transcript.prefix(digest)?,
             None => Vec::new(),
@@ -437,59 +511,51 @@ impl<'a> ContextResolver<'a> {
                 _ => None,
             })
             .collect();
-        let entries = path.into_iter().map(|(node, message)| {
-            let own = message.as_ref().is_some_and(|m| m.turn_id == Some(turn));
-            let message = message.and_then(|m| match m.turn_id.and_then(|t| lowered.get(&t)) {
-                Some(channel) => m.names_only(channel),
-                None => Some(m),
-            });
-            (node, message, own)
-        });
-        let items = self.assemble(&reference.prompts, &reference.profile, agent, entries)?;
-        let tool_sets = match &reference.tools {
-            Some(digest) => self.offered_tools.get(digest)?.clone(),
-            None => Vec::new(),
-        };
-        Some(ResolvedContext { reference: reference.clone(), items, tool_sets })
-    }
-
-    /// The items the model of `agent` is given: the `entries` of the
-    /// transcript, each with its message as it stands and whether it is the
-    /// turn's own, as `profile` gives them, with every part of `prompts`
-    /// after the entry it follows. `None` if a part's text is not kept or
-    /// its entry is not there.
-    fn assemble(
-        &self,
-        prompts: &[PromptRef],
-        profile: &ModelProfile,
-        agent: ActorId,
-        entries: impl Iterator<Item = (&'a Node<TranscriptEntry>, Option<Message>, bool)>,
-    ) -> Option<Vec<ContextItem>> {
+        let profile = &reference.profile;
         // The parts after the transcript entry `after` - `None`: before
         // everything.
         let after_entry = |after: Option<Digest>| -> Option<Vec<ContextItem>> {
-            prompts.iter()
+            reference.prompts.iter()
                 .filter(|p| p.after == after)
                 .map(|p| Some(ContextItem::Prompt { digest: p.text, role: p.role, text: self.prompts.get(&p.text)?.clone(), classification: p.classification.clone() }))
                 .collect()
         };
-
-        let mut items = after_entry(None)?;
-        for (node, message, in_turn) in entries {
+        let leading = after_entry(None)?;
+        let mut placed = leading.len();
+        let mut entries = Vec::with_capacity(path.len());
+        for (node, message) in path {
+            let in_turn = message.as_ref().is_some_and(|m| m.turn_id == Some(turn));
+            let message = message.and_then(|m| match m.turn_id.and_then(|t| lowered.get(&t)) {
+                Some(channel) => m.names_only(channel),
+                None => Some(m),
+            });
+            let mut given = Vec::new();
             // The end of a turn is no message; one given up is told where it
             // stands. A part may have been placed after either.
             if let Some(message) = message {
-                items.push(ContextItem::Conversation { message: profile.given(message, agent, in_turn) });
+                given.push(ContextItem::Conversation { message: profile.given(message, agent, in_turn) });
             }
             if let TranscriptEntry::TurnGivenUp { turn_id, reason, at } = &node.entry {
-                items.push(ContextItem::Conversation { message: profile.given(given_up_notice(*turn_id, reason, *at), agent, false) });
+                given.push(ContextItem::Conversation { message: profile.given(given_up_notice(*turn_id, reason, *at), agent, false) });
             }
-            items.extend(after_entry(Some(node.digest))?);
+            let parts = after_entry(Some(node.digest))?;
+            placed += parts.len();
+            given.extend(parts);
+            entries.push((node, given));
         }
-        profile.place_system_messages(&mut items);
         // Every part was placed, none after what is not there.
-        let placed = items.iter().filter(|item| matches!(item, ContextItem::Prompt { .. })).count();
-        (placed == prompts.len()).then_some(items)
+        (placed == reference.prompts.len()).then_some((leading, entries))
+    }
+}
+
+impl ContextItem {
+    /// About how many tokens the model is given of the item (issue 284), as
+    /// `Message::estimated_tokens` estimates.
+    pub fn estimated_tokens(&self) -> u64 {
+        match self {
+            ContextItem::Conversation { message } => message.estimated_tokens(),
+            ContextItem::Prompt { text, .. } => estimated_tokens(text.len()),
+        }
     }
 }
 
@@ -640,6 +706,39 @@ mod tests {
         assert!(resolver.resolve(&forgotten, turn, ActorId::None).is_none(), "a part whose text was not kept");
     }
 
+    #[test]
+    fn the_context_is_measured_by_the_calls_made_on_it_and_estimated_as_the_model_is_given_it() {
+        let agent = ActorId::Agent(AgentId::new());
+        let measure = |state: &AgentChannelState| {
+            let turn = state.turn.as_ref().unwrap();
+            ContextResolver::of(state).token_positions(&turn.work.context, turn.work.turn_id, agent).unwrap()
+        };
+        // Its reasoning: 100 tokens, as many as it produced in all.
+        let call = |prompt: u64, content: &str| Message { sender_id: agent, role: MessageRole::Assistant, prompt_tokens: Some(prompt), completion_tokens: Some(101), reasoning: Some("r".repeat(400)), ..text(content) };
+        let mut state = AgentChannelState::default();
+        state.transcript.push(text("hello"));
+        begin(&mut state, ModelProfile { reasoning_history: ReasoningHistory::Never, ..ModelProfile::default() });
+        assert_eq!(measure(&state), (vec![0, 2], false), "nothing measured: \"hello\" estimated");
+
+        let first = call(100, "call");
+        state.said(first.clone());
+        state.said(Message { sender_id: agent, role: MessageRole::Tool, ..text(&"x".repeat(40)) });
+        assert_eq!(measure(&state), (vec![98, 100, 101, 111], true),
+            "before the call as it measured, back from it and on from it estimated - the call as the model is given it, without its reasoning");
+        state.turn.as_mut().unwrap().work.context.profile.reasoning_history = ReasoningHistory::CurrentTurn;
+        assert_eq!(measure(&state).0[2], 201, "with it where it is given back");
+
+        let kept_from = state.transcript.entries().find(|n| n.entry.message().is_some_and(|m| m.id == first.id)).map(|n| n.digest);
+        let summary = Message { sender_id: agent, prompt_tokens: Some(500), completion_tokens: Some(8), ..text("summary") };
+        state.compact(agent, vec![(summary, None)], kept_from).expect("compacted");
+        assert_eq!(measure(&state), (vec![0, 2, 103, 113], false), "neither the summary's call nor the copy measure the new branch");
+
+        state.said(call(60, "done"));
+        let (positions, measured) = measure(&state);
+        assert!(measured, "a call on the new branch measures it");
+        assert_eq!(positions[3..], [60, 161], "before it as it measured, then it as the model is given it");
+    }
+
     /// A turn of `state` begun on its transcript as it stands.
     fn begin(state: &mut AgentChannelState, profile: ModelProfile) {
         let context = ContextRef { transcript: state.transcript.digest(), profile, ..ContextRef::default() };
@@ -722,9 +821,9 @@ mod tests {
             calls: 3,
             prompt_tokens: 600,
             completion_tokens: 60,
-            last_call_tokens: 330,
             context_size: None,
-        }), "not the other agent's call; the turn given up and the one under way count");
+            context_tokens: 302,
+        }), "not the other agent's call; the turn given up and the one under way count, the context as the call under way measured it and its answer estimated");
     }
 
     #[test]

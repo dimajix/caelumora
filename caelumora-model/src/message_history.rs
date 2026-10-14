@@ -69,6 +69,11 @@ pub enum HistoryEntry {
     /// alone: the transcript's digests do not record where a branch came
     /// from.
     Compacted { turn_id: TurnId, actor: ActorId, from: Digest, to: Digest, at: DateTime<Utc> },
+    /// `actor`, an agent, ended `activity` - something of its own accord,
+    /// besides answering - in its turn `turn_id` at `at` (issue 284), and
+    /// `output` says what came of it: recorded where it happened, with what
+    /// it said, which is everybody's.
+    ActivityFinished { turn_id: TurnId, actor: ActorId, activity: String, output: String, at: DateTime<Utc> },
 }
 
 /// The conversation as it happened - a chain like a `Transcript`. What it
@@ -90,8 +95,10 @@ impl Chain<HistoryEntry> {
     /// happened (issue 258): the messages said - `Said`, each as it stands,
     /// with every change since folded into it -, where the steps of a plan
     /// began - `PlanStepStarted` (issue 263) -, the commands carried out -
-    /// `CommandExecuted` (issue 269) - and how turns ended - `TurnFinished`
-    /// and `TurnGivenUp`. No other entry occurs: what changes
+    /// `CommandExecuted` (issue 269) -, the activities of agents ended -
+    /// `ActivityFinished` (issue 284) - and how turns ended - `TurnFinished`
+    /// and `TurnGivenUp`; in an agent's history its compactions, `Compacted`.
+    /// No other entry occurs: what changes
     /// a message is in the message, a fitting in every message.
     pub fn items(&self) -> Vec<HistoryEntry> {
         let mut folded: HashMap<Digest, Message> = self.fold_nodes().into_iter().collect();
@@ -99,9 +106,25 @@ impl Chain<HistoryEntry> {
             .filter_map(|node| match &node.entry {
                 HistoryEntry::Said { context, .. } => folded.remove(&node.digest)
                     .map(|message| HistoryEntry::Said { message, context: context.clone() }),
-                turn @ (HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. }) => Some(turn.clone()),
+                turn @ (HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }) => Some(turn.clone()),
                 HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
             })
+            .collect()
+    }
+
+    /// What the turn `turn_id` said, as it stands, in the order it was said
+    /// (issue 284): its messages recorded with the context they were
+    /// produced from - not what it was given, nor what replaced older
+    /// messages in a compaction -, on every branch, none taken back. Its
+    /// answer, whatever a compaction left of it in the transcript.
+    pub fn said_in_turn(&self, turn_id: TurnId) -> Vec<Message> {
+        let produced: HashSet<Digest> = self.all_entries()
+            .filter(|node| matches!(&node.entry, HistoryEntry::Said { message, context: Some(_) } if message.turn_id == Some(turn_id)))
+            .map(|node| node.digest)
+            .collect();
+        self.fold_nodes().into_iter()
+            .filter(|(digest, message)| produced.contains(digest) && message.revoked.is_none())
+            .map(|(_, message)| message)
             .collect()
     }
 
@@ -158,7 +181,7 @@ impl Chain<HistoryEntry> {
                         message.classification = message.classification.fitted_into(channel);
                     }
                 }
-                HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } => {}
+                HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => {}
             }
         }
         messages
@@ -270,6 +293,13 @@ impl Chain<HistoryEntry> {
         self.record(executed);
     }
 
+    /// Records that an agent ended an activity of its own (issue 284):
+    /// `ActivityFinished`, before the turn's end.
+    pub fn record_activity(&mut self, finished: HistoryEntry) {
+        debug_assert!(matches!(finished, HistoryEntry::ActivityFinished { .. }), "only an activity ended");
+        self.record(finished);
+    }
+
     /// Records that the agent replaced its context (issue 16):
     /// `Compacted`, before what replaced its older messages.
     pub fn record_compaction(&mut self, compacted: HistoryEntry) {
@@ -289,7 +319,7 @@ impl HistoryEntry {
             HistoryEntry::Said { message, .. } => Some(message),
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
-            | HistoryEntry::Compacted { .. } => None,
+            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => None,
         }
     }
 
@@ -350,6 +380,25 @@ mod tests {
         assert_eq!(kinds, ["said changed".to_string(), "step first true".to_string(), text(2), "finished true".to_string(), text(3), "given up true".to_string()],
             "in the order they happened, the change folded into its message, the fitting in every one");
         assert_eq!(history.messages().len(), 3, "the messages alone, as before");
+    }
+
+    #[test]
+    fn what_a_turn_said_is_what_it_produced_as_it_stands() {
+        let turn = TurnId::new();
+        let of_turn = |n: u128| Message { turn_id: Some(turn), ..make_message(id(n)) };
+        let mut history = MessageHistory::default();
+        history.push(make_message(id(1)), None);
+        history.push(of_turn(2), Some(ContextRef::default()));
+        // Given to it, or replacing older messages in a compaction: no context.
+        history.push(of_turn(3), None);
+        history.push(of_turn(4), Some(ContextRef::default()));
+        history.push(Message { turn_id: Some(TurnId::new()), ..make_message(id(5)) }, Some(ContextRef::default()));
+        history.push(of_turn(6), Some(ContextRef::default()));
+        history.modify(Message { content: Some("changed".to_string()), ..of_turn(2) });
+        assert!(history.revoke(id(4), Utc::now()));
+
+        let said: Vec<(MessageId, Option<String>)> = history.said_in_turn(turn).into_iter().map(|m| (m.id, m.content)).collect();
+        assert_eq!(said, [(id(2), Some("changed".to_string())), (id(6), make_message(id(6)).content)], "its own, as they stand, none taken back");
     }
 
     #[test]

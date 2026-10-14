@@ -89,6 +89,7 @@ facet trait lives next to the code that uses it, not among the implementations.
 | `EmitOutProcessor` | filtering of the messages an agent emits | `crate::message` |
 | `Moderator` | how a channel routes its events and who is asked to respond | `crate::moderator` |
 | `ResponderPolicy` | whom the `policy_moderator` asks when nobody was mentioned | `crate::moderator` |
+| `CompactionPolicy` | when an agent compacts its context on its own | `crate::compaction` |
 | `CompactionStrategy` | how an agent's context is compacted | `crate::compaction` |
 | `KnowledgeRestorer` | what a component gave the agent - a skill loaded -, given again after a compaction | `crate::compaction` |
 
@@ -159,25 +160,25 @@ it (issue 337):
 
 | Owner | Asks for | Declared as |
 |---|---|---|
-| agent | `ContextProvider`, `LLMClient`, `PerceiveInProcessor`, `EmitOutProcessor`, `ToolProvider`, `AgentCommandProvider` | `AgentActor::COMPONENT_FACETS` |
+| agent | `ContextProvider`, `LLMClient`, `CompactionPolicy`, `CompactionStrategy`, `PerceiveInProcessor`, `EmitOutProcessor`, `ToolProvider`, `AgentCommandProvider` | `AgentActor::COMPONENT_FACETS` |
 | external agent | `ExternalAgent`, `PerceiveInProcessor`, `ContextProvider`, `AgentCommandProvider` | `ExternalAgentActor::COMPONENT_FACETS` |
 | channel | `Moderator` | `ChannelLoop::COMPONENT_FACETS` |
 | a session's commands | `ChannelCommandProvider` | `RuntimeManager::new_command_executor` |
 
-An agent's closure thus holds the `PromptProvider`s its default `turn_context_provider` needs, and,
-with `compaction` configured, the `CompactionStrategy` it needs and the `LLMClient` and
-`KnowledgeRestorer`s the default `summary_compaction` needs in turn.
+An agent's closure thus holds the `PromptProvider`s its default `turn_context_provider` needs, and
+the `LLMClient` and `KnowledgeRestorer`s its default `summary_compaction` needs - which the agent
+asks itself, to compact on its own (issue 284), and `compaction` asks for `/compact`.
 
 ### Facets of which there is exactly one
 
-Of some facets an agent has exactly one: the `ContextProvider`, the `LLMClient` and the
-`CompactionStrategy`; an external agent exactly one `ExternalAgent`; a channel exactly one
-`Moderator` and one `ResponderPolicy`. They are registered with `ComponentRegistry::single` by the
-module that holds the default kind - or, where the core holds no kind, by the module of the facet,
-without one: the `LLMClient`, whose kinds are plugins (issue 329). The program names their default
-among the kinds its plugins brought (`ComponentRegistry::set_default_kind`, refused for a kind that
-is not registered as providing the facet): `caelumora-app` and `caelumora-tui` name `ollama_client`
-of `caelumora-ollama`.
+Of some facets an agent has exactly one: the `ContextProvider`, the `LLMClient`, the
+`CompactionPolicy` and the `CompactionStrategy`; an external agent exactly one `ExternalAgent`; a
+channel exactly one `Moderator` and one `ResponderPolicy`. They are registered with
+`ComponentRegistry::single` by the module that holds the default kind - or, where the core holds no
+kind, by the module of the facet, without one: the `LLMClient`, whose kinds are plugins (issue 329).
+The program names their default among the kinds its plugins brought
+(`ComponentRegistry::set_default_kind`, refused for a kind that is not registered as providing the
+facet): `caelumora-app` and `caelumora-tui` name `ollama_client` of `caelumora-ollama`.
 
 *   Two components of one container that provide such a facet are refused before anything is built.
 *   If none does, a default is built the first time the facet is asked for. A container that never
@@ -241,7 +242,7 @@ purpose. That module's `mod.rs` holds the facet trait - with what consumes it, s
 | `command/` | command providers (`help_command`, `wakeup_command`, `nudge_command`) |
 | `llm/` | the facet through which an agent asks its model, the defusing of control tokens any kind may use, and no kind: each model provider is a plugin (`ollama_client` in `caelumora-ollama`) |
 | `moderator/` | the moderator and its responder policies |
-| `compaction/` | `/compact` (`compaction`, in `command.rs`, since a module cannot hold a file of its own name) and the compaction strategies (`summary_compaction`) |
+| `compaction/` | `/compact` (`compaction`, in `command.rs`, since a module cannot hold a file of its own name) and the compaction policies (`threshold_compaction_policy`) and strategies (`summary_compaction`) |
 | `external/` | the facet through which an external agent is reached, and no kind: each protocol is a plugin (`a2a_agent` in `caelumora-a2a`) |
 | `component_impl/` | everything else, and every component that offers several facets |
 
@@ -327,7 +328,8 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `random_policy` | `ResponderPolicy` | - | Asks one agent, chosen at random. |
 | `mentions_only_policy` | `ResponderPolicy` | - | Asks nobody: agents answer only when mentioned. |
 | `compaction` | `AgentCommandProvider` | - | The command `/compact`, for the agent's owners: asks the agent's `CompactionStrategy` to compact its context and tells the channel what it did ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |
-| `summary_compaction` | `CompactionStrategy` | `keep_last` (10, the messages kept as they stand) | The default strategy: the agent's own model summarises the older part of its transcript, and the agent's `KnowledgeRestorer`s give again what it had been given there ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LLMClient`. |
+| `threshold_compaction_policy` | `CompactionPolicy` | `threshold` (0.8, how full the context may be, as a share of the model's context size) | The default policy: the agent compacts its context on its own before a call once it is that full, as measured ([AGENT-TURN.md](AGENT-TURN.md#compaction)). Its strategy's `keep` belongs below it, or every compaction frees too little. |
+| `summary_compaction` | `CompactionStrategy` | `keep` (0.25, how much of the context is kept as it stands, as a share of the model's context size) | The default strategy: the agent's own model summarises the older part of its transcript, and the agent's `KnowledgeRestorer`s give again what it had been given there ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LLMClient`. |
 | `help_command` | `ChannelCommandProvider` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
 | `wakeup_command` | `ChannelCommandProvider` | - | The user command `/wakeup`. |
 | `nudge_command` | `ChannelCommandProvider` | - | The user command `/nudge`. |

@@ -251,6 +251,26 @@ pub enum ActorEvent {
         to: ActorId,
         turn_id: Option<TurnId>,
     },
+    /// The agent began `activity` of its own accord in its turn `turn_id`
+    /// (issue 284) - something besides answering, which nobody asked for,
+    /// as against a command: "compacting its context". Worded for users, as
+    /// a command answers; its end is `ActivityFinished` with the same
+    /// `turn_id`, or the turn's being given up (`TurnGivenUp`). Shown to
+    /// users, never heard by agents, never written to a history.
+    ActivityStarted {
+        turn_id: TurnId,
+        activity: String,
+    },
+    /// The agent's `activity` in its turn `turn_id` ended (issue 284), and
+    /// `output` says what came of it, worded for users. Shown to users,
+    /// never heard by agents; the channel records it in its history
+    /// (`HistoryEntry::ActivityFinished`), so that it is shown where it
+    /// happened.
+    ActivityFinished {
+        turn_id: TurnId,
+        activity: String,
+        output: String,
+    },
     /// `participant` was removed from the channel (issue 162). The envelope's
     /// sender is who removed it - the runtime itself, `ActorId::System`, if
     /// nobody did. Sent by the channel once the participant's actor no longer
@@ -442,6 +462,8 @@ impl ActorEvent {
             ActorEvent::CommandStarted { .. } => "CommandStarted",
             ActorEvent::CommandExecuted { .. } => "CommandExecuted",
             ActorEvent::CommandFailed { .. } => "CommandFailed",
+            ActorEvent::ActivityStarted { .. } => "ActivityStarted",
+            ActorEvent::ActivityFinished { .. } => "ActivityFinished",
             ActorEvent::ParticipantRemoved { .. } => "ParticipantRemoved",
             ActorEvent::ChainCutOff { .. } => "ChainCutOff",
             ActorEvent::MessageModified(_) => "MessageModified",
@@ -604,6 +626,12 @@ impl Envelope {
             ActorEvent::CommandStarted { command, to, .. } => {
                 format!("CommandStarted(sender_id={}, sender_name={}, command={}, to={})", ctx.sender_id, ctx.sender_name, command, to)
             }
+            ActorEvent::ActivityStarted { activity, .. } => {
+                format!("ActivityStarted(sender_id={}, sender_name={}, activity={})", ctx.sender_id, ctx.sender_name, activity)
+            }
+            ActorEvent::ActivityFinished { activity, .. } => {
+                format!("ActivityFinished(sender_id={}, sender_name={}, activity={})", ctx.sender_id, ctx.sender_name, activity)
+            }
             ActorEvent::CommandFailed { command, to, .. } => {
                 format!("CommandFailed(sender_id={}, sender_name={}, command={}, to={})", ctx.sender_id, ctx.sender_name, command, to)
             }
@@ -667,12 +695,17 @@ pub enum ActorState {
     /// a request to respond waits until it is done; nor can a cancel end it.
     /// A sleeping agent carries a command out asleep, and stays `Sleeping`.
     CarryingOutCommand,
+    /// Doing something of its own accord within its turn, besides answering
+    /// (issue 284) - compacting its context: the counterpart of
+    /// `CarryingOutCommand`, which it does when asked. What it does is told
+    /// by `ActorEvent::ActivityStarted`.
+    Busy,
 }
 
 impl ActorState {
     /// Every state, in the order of its declaration - its byte
     /// (`#[repr(u8)]`) is its place here.
-    const ALL: [ActorState; 8] = [
+    const ALL: [ActorState; 9] = [
         ActorState::Idle,
         ActorState::Planning,
         ActorState::ExecutingTools,
@@ -681,6 +714,7 @@ impl ActorState {
         ActorState::Sleeping,
         ActorState::WaitingForUser,
         ActorState::CarryingOutCommand,
+        ActorState::Busy,
     ];
 
     /// Whether the state belongs to a turn - an error in it ends the turn,
@@ -693,7 +727,7 @@ impl ActorState {
     /// Whether a cancel can still end the turn in this state (issues 235,
     /// 243): not one ending already, nor none.
     pub fn interruptible(self) -> bool {
-        matches!(self, ActorState::Planning | ActorState::ExecutingTools | ActorState::WaitingForUser)
+        matches!(self, ActorState::Planning | ActorState::ExecutingTools | ActorState::WaitingForUser | ActorState::Busy)
     }
 
     fn from_raw(v: u8) -> Self {

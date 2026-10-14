@@ -27,6 +27,9 @@ pub enum HistoryItemResponse<M> {
     /// An agent replaced its context `from` by `to` in its turn (issue 16);
     /// in an agent's history only.
     Compacted { turn_id: TurnId, actor: ActorId, from: Digest, to: Digest, at: DateTime<Utc> },
+    /// An agent ended an activity of its own accord in its turn, and what
+    /// came of it (issue 284).
+    ActivityFinished { turn_id: TurnId, actor: ActorId, activity: String, output: String, at: DateTime<Utc> },
 }
 
 impl<M> HistoryItemResponse<M> {
@@ -41,6 +44,7 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::PlanStepStarted { turn_id, actor, step_index, total_steps, description, at } => Some(Self::PlanStepStarted { turn_id, actor, step_index, total_steps, description, at }),
             HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, at } => Some(Self::CommandExecuted { turn_id, actor, issuer, command, args, at }),
             HistoryEntry::Compacted { turn_id, actor, from, to, at } => Some(Self::Compacted { turn_id, actor, from, to, at }),
+            HistoryEntry::ActivityFinished { turn_id, actor, activity, output, at } => Some(Self::ActivityFinished { turn_id, actor, activity, output, at }),
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
         }
     }
@@ -89,6 +93,9 @@ mod tests {
         let compacted = HistoryItemResponse::<Message>::of(HistoryEntry::Compacted { turn_id: turn, actor, from, to, at: chrono::Utc::now() }, |m| m).unwrap();
         let json = serde_json::to_value(compacted).unwrap();
         assert_eq!((json["compacted"]["from"].clone(), json["compacted"]["to"].clone()), (serde_json::to_value(from).unwrap(), serde_json::to_value(to).unwrap()));
+        let finished = HistoryItemResponse::<Message>::of(HistoryEntry::ActivityFinished { turn_id: turn, actor, activity: "compacting its context".to_string(), output: "done".to_string(), at: chrono::Utc::now() }, |m| m).unwrap();
+        let json = serde_json::to_value(finished).unwrap();
+        assert_eq!((json["activity_finished"]["activity"].clone(), json["activity_finished"]["output"].clone()), (serde_json::json!("compacting its context"), serde_json::json!("done")));
         assert!(HistoryItemResponse::<Message>::of(HistoryEntry::Fitted { channel: Classification::PUBLIC }, |m| m).is_none(), "a change is in the message it changed");
     }
 

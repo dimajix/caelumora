@@ -235,6 +235,13 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                     Some(ActorEvent::CommandFailed { command, reason, .. }) => {
                         println!("\r{} did not carry out /{}: {}", sender, command, reason);
                     }
+                    Some(ActorEvent::ActivityStarted { activity, .. }) => {
+                        // Of its own accord (issue 284).
+                        println!("\r{} is {}...", sender, activity);
+                    }
+                    Some(ActorEvent::ActivityFinished { output, .. }) => {
+                        println!("\r{}", output);
+                    }
                     Some(ActorEvent::ParticipantRemoved { participant }) => {
                         let removed = handles.get(&participant).map(|handle| format!("@{handle}")).unwrap_or_else(|| participant.to_string());
                         println!("\r{} removed {} from the channel", sender, removed);
