@@ -420,6 +420,7 @@ published before anyone else can take it.
 | [337](337-components-nobody-asks-for.md) | done | A container builds every component it is configured with, also those its owner never asks for, so a tool in a channel reads its owner's secret and connects for nothing. |
 | [344](344-workspace-manager-owns-their-use.md) | open | The `WorkspaceManager` owns workspaces and also what is done in them - reaching terminals and shells for a caller, ending commands, holding the storages -, with the stores and policies that needs. |
 | [345](345-global-event-has-one-variant.md) | done | `GlobalEvent` is an enum with the single variant `Entity`, so every reader takes it apart with an irrefutable `let` and the event streams wrap every event in `{"Entity": …}`. |
+| [346](346-subscription-topics-for-every-kind.md) | open | The event bus has subscription topics only for sessions, channels, agents and users, so a plugin cannot follow a single entity - an artifact, say - without reading every event. |
 
 ## Integrations
 
