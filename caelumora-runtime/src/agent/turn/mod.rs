@@ -219,10 +219,11 @@ impl<'a> Turn<'a> {
         &self.current().tools
     }
 
-    /// The messages the turn said so far, as the transcript holds them
-    /// (issue 260).
+    /// The messages the turn said so far, as they stand (issue 260): as the
+    /// history holds them, whatever a compaction left of them in the
+    /// transcript (issue 284).
     pub fn messages(&self) -> Vec<Message> {
-        self.agent_channel_state.transcript.of_turn(self.turn_id())
+        self.agent_channel_state.history.said_in_turn(self.turn_id())
     }
 
     /// Gives the agent `message` to read in this turn (issue 22) - a skill a
@@ -238,12 +239,18 @@ impl<'a> Turn<'a> {
     /// Replaces the agent's context in this turn (issue 16): its transcript
     /// begins anew with `replacement` - a summary, the skills given again,
     /// each with the knowledge it is, if it is one - and the entries from
-    /// `keep_from` on as they stand; the old branch stays
-    /// (`AgentChannelState::compact`). Written at once, so a component
-    /// compacts only once nothing can fail any more. Returns the heads of
-    /// the transcript before and after, `None` if nothing was compacted.
+    /// `keep_from` on as they stand; the old branch stays, the turn's prompt
+    /// parts are carried over (`AgentChannelState::compact`), and a plan
+    /// whose instructions were replaced is named again (`name_plan_again`,
+    /// issue 284). Written at once, so a component compacts only once
+    /// nothing can fail any more. Returns the heads of the transcript before
+    /// and after, `None` if nothing was compacted.
     pub fn compact(&mut self, replacement: Vec<(Message, Option<KnowledgeRef>)>, keep_from: Option<Digest>) -> Option<(Digest, Digest)> {
-        self.agent_channel_state.compact(ActorId::Agent(self.agent_id), replacement, keep_from)
+        let replaced = replacement.len();
+        let heads = self.agent_channel_state.compact(ActorId::Agent(self.agent_id), replacement, keep_from)?;
+        let replacement_end = replaced.checked_sub(1).and_then(|last| self.agent_channel_state.transcript.entries().nth(last)).map(|node| node.digest);
+        self.name_plan_again(replacement_end);
+        Some(heads)
     }
 
     /// Records `message` as said by the turn: into the agent's transcript
@@ -262,6 +269,20 @@ impl<'a> Turn<'a> {
         }
         turn.model_calls += 1;
         true
+    }
+
+    /// Whether the turn may still try to compact its context before its next
+    /// model call: it has not since its last (issue 284).
+    pub(crate) fn may_compact(&self) -> bool {
+        let turn = self.current();
+        turn.compaction_tried_at != Some(turn.model_calls)
+    }
+
+    /// Records that the turn tries to compact its context before its next
+    /// model call (`may_compact`).
+    pub(crate) fn try_compaction(&mut self) {
+        let turn = self.current_mut();
+        turn.compaction_tried_at = Some(turn.model_calls);
     }
 
     /// The tool calls of the current step (issue 83): a view that keeps

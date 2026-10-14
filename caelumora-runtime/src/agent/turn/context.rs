@@ -83,7 +83,7 @@ impl Turn<'_> {
     /// reference to it, given in `role` after the entry `after`, its text
     /// classified `classification`. The model is given it: the turn has
     /// seen it (issue 168).
-    fn keep_prompt(&mut self, role: MessageRole, text: String, after: Option<caelumora_model::digest::Digest>, classification: Option<Classification>) -> PromptRef {
+    pub(super) fn keep_prompt(&mut self, role: MessageRole, text: String, after: Option<caelumora_model::digest::Digest>, classification: Option<Classification>) -> PromptRef {
         self.current_mut().work.see_classified(classification.as_ref());
         self.agent_channel_state.keep_prompt(role, text, after, classification)
     }

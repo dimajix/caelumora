@@ -1,6 +1,6 @@
 # 284 — Automatic context compaction
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -364,3 +364,30 @@ named.
   a state is announced at every change and recorded nowhere, so it could not be shown in its place
   after a reload; announcing from the code both triggers share, which would have needed the
   `Turn` to send events - each trigger announces in its own way.
+- **2026-10-14** — Implemented as planned, in the steps of the plan: the answer of a turn from the
+  history (`MessageHistory::said_in_turn`, `Transcript::of_turn` gone); prompt parts carried over
+  and the plan named again (`Turn::compact`, `name_plan_again`); the summary's owner and
+  classification by the cut; the context measured (`AgentChannelState::token_positions`,
+  `context_fill`, `TokenUsage::context_tokens`, `Message::estimated_tokens`); `summary_compaction`
+  cutting by positions with `threshold` and `keep`; the trigger in `AgentActor::handle_llm_turn`,
+  the state `Busy` and `handle_busy`, `ActorEvent::ActivityStarted`/`ActivityFinished`,
+  `HistoryEntry::ActivityFinished`; web UI and TUI. Beyond the plan: a turn tries to compact once
+  before each call, kept with it (`TurnState::compaction_tried_at`), so that a strategy finding
+  nothing to compact does not ask again before the same call; a call's position is told by its
+  message's id, which a backend gives each message anew. Noticed beside it: the channel admits
+  `ActivityFinished`, as it admits `PlanStepStarted` and `CommandExecuted`, from any sender without
+  asking whether it is an agent of a turn - what it records in the history rests on that.
+- **2026-10-14** — Reviewed with the maintainer, and changed in three points:
+  - *When* is no longer the strategy's. `CompactionStrategy` answers how a context is compacted;
+    whether it is due before a call is a facet of its own, `CompactionPolicy`, of which an agent has
+    exactly one - by default `threshold_compaction_policy`, with `threshold`. `summary_compaction`
+    keeps `keep` alone. So the *Done when* "configured on its `CompactionStrategy`" holds for how,
+    and when is configured on its policy.
+  - The measuring moved into the `ContextResolver` (`ContextResolver::token_positions`, offered as
+    `AgentWork::token_positions`), and out of `AgentChannelState`. It estimates what the model is
+    given as the resolver gives it - a message's reasoning only where its rule gives it back, the
+    sender's marker, a `Lowered` turn reduced, the prompt parts where they are placed - instead of
+    the stored messages; and a measured position is only the one before a message, its call's
+    `prompt_tokens`, since `completion_tokens` count reasoning the next call may not be given.
+  - `TokenUsage::last_call_tokens` is gone: nothing read it any longer, `context_tokens` says how
+    full the context is, and what a single call used stands at its message.

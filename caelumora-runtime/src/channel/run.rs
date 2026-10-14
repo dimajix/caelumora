@@ -503,6 +503,18 @@ impl ChannelLoop {
                 });
                 true
             }
+            // What an agent did of its own accord is part of the record
+            // (issue 284), with what came of it, before its turn's end.
+            ActorEvent::ActivityFinished { turn_id, activity, output } => {
+                state.history.record_activity(HistoryEntry::ActivityFinished {
+                    turn_id: *turn_id,
+                    actor: envelope.context.sender_id,
+                    activity: activity.clone(),
+                    output: output.clone(),
+                    at: envelope.timestamp,
+                });
+                true
+            }
             ActorEvent::PlanStepStarted { turn_id, step_index, total_steps, description } => {
                 state.history.start_plan_step(HistoryEntry::PlanStepStarted {
                     turn_id: *turn_id,

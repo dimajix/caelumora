@@ -142,6 +142,19 @@ impl Message {
 }
 
 impl Message {
+    /// About how many tokens the message takes in a model's context (issue
+    /// 284): its text, its reasoning, its calls and their results, as
+    /// `estimated_tokens` estimates. For where no call measured it - on the
+    /// message as the model is given it, whose reasoning is there only if
+    /// it is given back (`ContextResolver::token_positions`).
+    pub fn estimated_tokens(&self) -> u64 {
+        let bytes = self.content.as_deref().map_or(0, str::len)
+            + self.reasoning.as_deref().map_or(0, str::len)
+            + self.tool_calls.iter().map(|call| call.function_name.len() + call.arguments.to_string().len()).sum::<usize>()
+            + self.tool_results.iter().map(|result| result.content.len()).sum::<usize>();
+        estimated_tokens(bytes)
+    }
+
     /// The message as its sender publishes it to a channel (issues 54,
     /// 133): every part only its owner sees (`Visibility::Owner`) is
     /// withheld - a tool call or result whose call is the owner's is left
@@ -265,6 +278,12 @@ impl Message {
     }
 }
 
+/// About how many tokens `bytes` of text take in a model's context (issue
+/// 284): four bytes a token, rounded up - for where no call measured it.
+pub fn estimated_tokens(bytes: usize) -> u64 {
+    u64::try_from(bytes).unwrap_or(u64::MAX).div_ceil(4)
+}
+
 /// What an agent's model calls used (issue 209), summed from the messages
 /// they produced, each of which carries the tokens of its call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -276,13 +295,15 @@ pub struct TokenUsage {
     pub prompt_tokens: u64,
     /// The answer tokens of all calls.
     pub completion_tokens: u64,
-    /// The prompt and answer tokens of the last call: how full its context
-    /// was.
-    pub last_call_tokens: u64,
     /// How many tokens the context of the last call held; `None` if not
     /// known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_size: Option<u64>,
+    /// How many tokens the context holds now (issue 284): what the calls on
+    /// it measured and what was added since, estimated - after a compaction
+    /// no longer the last call's (`AgentChannelState::usage`). Of
+    /// `TokenUsage::of` alone, the last call's prompt and answer.
+    pub context_tokens: u64,
 }
 
 impl TokenUsage {
@@ -293,13 +314,13 @@ impl TokenUsage {
             .filter(|m| m.prompt_tokens.is_some() || m.completion_tokens.is_some())
             .fold(None, |usage: Option<Self>, m| {
                 let (prompt, completion) = (m.prompt_tokens.unwrap_or(0), m.completion_tokens.unwrap_or(0));
-                let usage = usage.unwrap_or(Self { calls: 0, prompt_tokens: 0, completion_tokens: 0, last_call_tokens: 0, context_size: None });
+                let usage = usage.unwrap_or(Self { calls: 0, prompt_tokens: 0, completion_tokens: 0, context_size: None, context_tokens: 0 });
                 Some(Self {
                     calls: usage.calls + 1,
                     prompt_tokens: usage.prompt_tokens + prompt,
                     completion_tokens: usage.completion_tokens + completion,
-                    last_call_tokens: prompt + completion,
                     context_size: m.context_size,
+                    context_tokens: prompt + completion,
                 })
             })
     }

@@ -195,12 +195,13 @@ may be someone else: an agent acts with its owner's rights and answers whoever a
 moderator's notice, a removal - does not come through an actor's sender.
 
 **Nothing said is unsaid.** The channel keeps every message it admits in its history as it arrives,
-the steps of a plan included, records where each step of a plan begins, and after a turn's messages
-how it ended. A turn given up keeps what it said; only a message still streaming when it ended is
-lost, never having been complete. How a turn ended is told by whoever had it, also by an agent
-removed while it answers: the channel takes what a removed actor sends until its task has ended, and
-records no end in anyone's name. A turn whose agent was aborted after the grace, saying nothing,
-stays without an end: nobody ended it.
+the steps of a plan included, records where each step of a plan begins, what an agent did of its own
+accord and what came of it (`ActivityFinished`, issue 284), and after a turn's messages how it
+ended. A turn given up keeps what it said; only a message still streaming when it ended is lost,
+never having been complete. How a turn ended is told by whoever had it, also by an agent removed
+while it answers: the channel takes what a removed actor sends until its task has ended, and records
+no end in anyone's name. A turn whose agent was aborted after the grace, saying nothing, stays
+without an end: nobody ended it.
 
 **The channel decides what enters it.** Every event an actor sends is admitted or refused by the
 channel's loop, one after another, as it takes it in (`ChannelLoop::admission`) - against the

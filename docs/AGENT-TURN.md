@@ -8,7 +8,7 @@ in a turn in [COMPONENTS.md](COMPONENTS.md); tools in
 
 ## The cognitive cycle
 
-`AgentActor::run` is a state machine over `ActorState`. Two states wait between turns, five belong
+`AgentActor::run` is a state machine over `ActorState`. Two states wait between turns, six belong
 to a turn; `CarryingOutCommand` is entered and left while the agent waits (see [A command
 turn](#a-command-turn)).
 
@@ -44,7 +44,12 @@ behind it, in order, then commit once (`actor::intake::take_in`):
 *   **`Planning`** calls the model with the context and the agent's tools and streams the answer.
     With tool calls it registers them for approval where their tool requires it and goes to
     `ExecutingTools`; otherwise to `Reflecting`. A turn makes at most `MAX_MODEL_CALLS` model calls,
-    counted across a restart, then it goes to `Reflecting`.
+    counted across a restart, then it goes to `Reflecting`. Before a call whose context is too full
+    by its `CompactionPolicy`, it goes to `Busy` instead (see [Compaction](#compaction)).
+*   **`Busy`** does something of the agent's own accord, besides answering - the counterpart of
+    `CarryingOutCommand`, which it does when asked. So far that is compacting its context; it
+    tells the users what it does (`ActivityStarted`) and what came of it (`ActivityFinished`), and
+    returns to `Planning`. A cancel ends it as it ends a call; a failure ends the turn.
 *   **`ExecutingTools`** runs the calls that are ready. Once every call of the step has finished,
     the tool message goes into the turn and the agent returns to `Planning` - or to `Reflecting` if
     a tool asked for the turn to end. Calls that wait for a person take it to `WaitingForUser`. A
@@ -310,7 +315,15 @@ had. What an agent used in a channel is summed from its transcript when it is re
 (`AgentChannelState::usage`), not kept as a counter: its own messages, on every branch, the turn
 under way included. Two groups mean different things:
 
-*   **context** - the tokens of the last call against its context size: how full the context was;
+*   **context** - the tokens the model is given next against its context size
+    (`TokenUsage::context_tokens`): how full it is. The `ContextResolver` measures it, as it
+    resolves the context (`ContextResolver::token_positions`): before a message of the agent's
+    model made on the active branch - which its recorded context shows - at its call's
+    `prompt_tokens`, and elsewhere estimated from what the model is given, as it is given it
+    (`ContextItem::estimated_tokens`) - a message's reasoning only where its rule gives it back,
+    the prompt parts where they are placed: what was added since the last call, or a branch no
+    call measured yet. After a compaction that is no longer the last call's, which was the
+    summary's over the old context;
 *   **usage** - the total of all calls: what was processed. Every call is given the whole context
     again, so the totals grow much faster than the context and are no measure of how full it is.
 
@@ -326,18 +339,42 @@ old one but does not continue it:
     messages - a summary, what is given again - and then copies of the entries kept, as they
     stand. Every copy gets a digest of its own, since what precedes it is another.
 *   **The old branch stays.** Every reference recorded before resolves to what it did; the resolver
-    does not know there was a compaction. Prompt parts placed after an entry of the old branch are
-    dropped, and placed again by who placed them.
+    does not know there was a compaction.
+*   **Prompt parts are carried over.** A part the turn placed after an entry kept follows its
+    copy, one placed after an entry replaced follows the replacement - the notes before the
+    turn's input as well as the step of a plan. A plan whose instructions were replaced is named
+    again where its current step stood: its steps, which are done and which is under way, then the
+    instruction (`Turn::compact`).
+*   **The turn's answer is what it said**, read from the history (`MessageHistory::said_in_turn`),
+    not from the transcript, of which a part may have been summarised.
 *   **Where it came from** is recorded in the history (`HistoryEntry::Compacted`), in no digest of
     the transcript: two identical contexts get the same digest however they came about.
 *   **Counted once.** The tokens used count a message kept where it was first recorded.
 
-The mechanism takes the replacement and the first entry kept; components decide the rest. When is
-the `compaction` component's, which carries out `/compact`; how is the agent's one
-`CompactionStrategy`'s. The default, `summary_compaction`, keeps at least the newest `keep_last`
-messages, and with a tool's result the call it answers; it may cut a finished turn apart, never the
-turn under way nor one given up as `Lowered`. The agent's own model summarises the rest, and the
-summary is classified as the turn's label.
+The mechanism takes the replacement and the first entry kept, and whose the replacement is;
+components decide the rest. When the agent compacts on its own is its one `CompactionPolicy`'s
+(issue 284), how its one `CompactionStrategy`'s - asked by two triggers with the same code: the
+agent itself before a model call, and `/compact`, which the `compaction` component carries out.
+Before every call of a turn - the first of the next turn as well, with what was heard since - the
+actor asks the policy whether the context is to be compacted (`CompactionPolicy::is_due`), at most
+once before each call. The default, `threshold_compaction_policy`, says so once the context fills
+`threshold` of the model's context size, as soon as a call made on the active branch measured it;
+a model that reports no context size gives nothing to measure against, which it says once. The
+agent then compacts in the state `Busy`, telling the users as an activity
+(`ActivityStarted`, `ActivityFinished`); the summary's call does not count against
+`MAX_MODEL_CALLS`. A compaction that fails gives the turn up: the call it was to make room for
+would not fit. `/compact` tells of itself as a command does.
+
+The default strategy, `summary_compaction`, keeps `keep` of the model's context size as it stands.
+It cuts only before a message, by the positions the resolver measured (`token_positions`): within
+the turn under way before a call of its model but the first - before that the turn's input would
+go and the turn stay -, before the turn before any message but a tool's result, up to the turn's
+input; never into a turn given up as `Lowered`. So a tool's result stays with its call, and the
+newest call with its results is never summarised. The agent's own model summarises the rest. A
+summary that holds messages of the turn under way is the turn's (`Message::turn_id`) and classified
+as the turn's label - it holds what the turn read, and goes with it if the turn is given up as
+`Lowered`; one of what precedes the turn alone is no turn's and classified by what it summarises,
+since its call was given the transcript alone.
 
 What the agent had been given in the part summarised and is not still there in the part kept is
 given again after the summary, as it is now, by the component that gave it: a `KnowledgeRestorer`

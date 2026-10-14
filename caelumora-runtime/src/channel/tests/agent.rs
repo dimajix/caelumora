@@ -617,7 +617,7 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
     let stored = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
-            let has_result = state.turn.as_ref().is_some_and(|t| state.transcript.of_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty()));
+            let has_result = state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty()));
             if has_result && state.processing_state == ActorState::Planning { break state }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -802,7 +802,7 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
-            if state.turn.as_ref().is_some_and(|t| state.transcript.of_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty())) { break }
+            if state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty())) { break }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the tool ran");
@@ -866,7 +866,7 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
-            if state.turn.as_ref().is_some_and(|t| state.transcript.of_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty())) { break }
+            if state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty())) { break }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the tool ran");
@@ -1446,5 +1446,101 @@ async fn an_agent_keeps_all_it_was_offered_in_its_history_and_what_passes_its_pr
     assert!(contents(state.history.messages()).contains(&"the secret is 42".to_string()), "its history keeps all it was offered");
     assert!(!contents(state.transcript.messages()).contains(&"the secret is 42".to_string()), "its transcript only what passed");
     assert!(contents(state.transcript.messages()).contains(&"hello".to_string()));
+    running.abort();
+}
+
+/// A channel whose agent answered alice's "hello" with "Hi." and then
+/// heard "take a nap", which it answers by calling the sleep tool, its
+/// context full once that call is in - 910 of 1000 -, and then by
+/// `afterwards`, one answer a call.
+async fn with_a_full_context(afterwards: Vec<Message>) -> Stuck {
+    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+    let nap = ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({ "seconds": 0 }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
+    let mut script = vec![measured(100, model_says("Hi.")), measured(900, Message { tool_calls: vec![nap], ..model_says("") })];
+    script.extend(afterwards);
+    let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
+        id: "sleep".to_string(),
+        kind: crate::tool::sleep_tool::SLEEP_TOOL_KIND.to_string(),
+        params: serde_json::json!({ "requires_approval": false }),
+        tags: vec![],
+        fail_policy: ComponentFailPolicy::FailClosed,
+    }] };
+    let mut stuck = with_an_agent(Arc::new(Scripted(std::sync::Mutex::new(script.into()))), components).await;
+    answered(&mut stuck.events, stuck.agent).await;
+    settled(&stuck.helper, ActorState::Idle).await;
+    stuck.channel.user_actor(alice_of(&stuck.context)).unwrap().send_message("take a nap".to_string(), None).await.unwrap();
+    stuck
+}
+
+/// `message` as a call of a model whose context holds 1000 tokens
+/// answered it, given `prompt` tokens.
+fn measured(prompt: u64, message: Message) -> Message {
+    Message { prompt_tokens: Some(prompt), completion_tokens: Some(10), context_size: Some(1000), ..message }
+}
+
+/// An answer of the model, `text`.
+fn model_says(text: &str) -> Message {
+    use caelumora_model::message::MessageRole;
+    Message { id: MessageId::new(), role: MessageRole::Assistant, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
+}
+
+/// What the agent `agent` told of its activities - its state `Busy`, an
+/// activity begun, one ended with what it said - until its turn ended,
+/// and how it ended: its answer, or why it was given up.
+async fn activities_until_the_turn_ends(events: &mut broadcast::Receiver<Envelope>, agent: AgentId) -> (Vec<String>, Result<Vec<Message>, String>) {
+    let mut told = Vec::new();
+    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("the channel is running");
+            if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+            match envelope.event {
+                ActorEvent::StateChanged(ActorState::Busy) => told.push("busy".to_string()),
+                ActorEvent::ActivityStarted { activity, .. } => told.push(format!("started {activity}")),
+                ActorEvent::ActivityFinished { output, .. } => told.push(format!("finished: {output}")),
+                ActorEvent::TurnFinished { messages, .. } => break Ok(messages),
+                ActorEvent::TurnGivenUp { reason, .. } => break Err(reason.cause().to_string()),
+                _ => {}
+            }
+        }
+    }).await.expect("the turn ends");
+    (told, ended)
+}
+
+#[tokio::test]
+async fn an_agent_whose_context_fills_up_compacts_it_on_its_own_before_its_next_call() {
+    use caelumora_model::message_history::HistoryEntry;
+
+    let Stuck { channel, agent, mut events, running, .. } =
+        with_a_full_context(vec![measured(800, model_says("They greeted each other.")), measured(300, model_says("Done."))]).await;
+    let (told, answer) = activities_until_the_turn_ends(&mut events, agent).await;
+
+    assert_eq!(told, [
+        "busy".to_string(),
+        "started compacting its context".to_string(),
+        "finished: helper compacted its context: 2 messages replaced, 3 kept as they were.".to_string(),
+    ], "the users see it compact, and what came of it");
+    let said: Vec<_> = answer.expect("answered").iter().filter_map(|m| m.content.clone()).filter(|c| !c.is_empty()).collect();
+    assert_eq!(said, ["Done."], "the turn goes on, the summary no part of its answer");
+    let recorded = channel.state.lock().await.history.items().into_iter().any(|item| matches!(item, HistoryEntry::ActivityFinished { activity, .. } if activity == "compacting its context"));
+    assert!(recorded, "the channel records it where it happened");
+    let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let now: Vec<_> = stored.transcript.messages().into_iter().filter_map(|m| m.content).filter(|c| !c.is_empty()).collect();
+    assert!(now[0].contains("They greeted each other.") && !now.iter().any(|c| c == "hello" || c == "Hi."), "the older messages replaced: {now:?}");
+    assert_eq!(stored.usage(ActorId::Agent(agent)).map(|u| u.calls), Some(4), "the summary's call counts as used");
+    running.abort();
+}
+
+#[tokio::test]
+async fn a_compaction_that_fails_ends_the_turn() {
+    // The model writes no summary.
+    let Stuck { channel, agent, mut events, running, .. } = with_a_full_context(vec![model_says("")]).await;
+    let (told, ended) = activities_until_the_turn_ends(&mut events, agent).await;
+
+    assert_eq!(told, ["busy".to_string(), "started compacting its context".to_string()]);
+    assert!(ended.is_err(), "given up: the call it was to make room for would not fit");
+    let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    assert!(stored.transcript.messages().iter().any(|m| m.content.as_deref() == Some("Hi.")), "the transcript as it was");
     running.abort();
 }

@@ -132,4 +132,4 @@ external agent alike.
 | `/nudge` | the channel | `nudge_command` | `<participant>` | private | Asks the participant named to respond to the conversation as it stands, without a message ([CHANNELS.md](CHANNELS.md#nudging-someone)). |
 | `/skill` | the agent | `skills` | `@agent <name>` | private | Gives the agent a skill: its text goes into the agent's transcript in the issuer's name ([SKILLS.md](SKILLS.md)). |
 | `/skills` | the agent | `skills` | `@agent` | private | Lists the skills the agent may load here. |
-| `/compact` | the agent | `compaction` | `@agent` | channel-wide | For the agent's owners: compacts its context as its `CompactionStrategy` does ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |
+| `/compact` | the agent | `compaction` | `@agent` | channel-wide | For the agent's owners: compacts its context as its `CompactionStrategy` does, now rather than when it is too full - as the agent does on its own ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |

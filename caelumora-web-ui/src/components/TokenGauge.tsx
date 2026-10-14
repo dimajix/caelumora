@@ -12,17 +12,17 @@ const WARN_AT = 0.75;
 const ALARM_AT = 0.9;
 
 /**
- * A bar of the last call's tokens against the context size - its numbers
+ * A bar of the tokens the context holds against its size - its numbers
  * and what all calls used in a hover card (issue 219). Without a known
  * size, the tokens alone.
  */
 export const TokenGauge: React.FC<{usage: TokenUsage}> = ({usage}) => {
-  const level = fillLevel(usage.last_call_tokens, usage.context_size);
+  const level = fillLevel(usage.context_tokens, usage.context_size);
   const card = <UsageStats groups={tokenUsageGroups(usage)} />;
   if (level === null) {
     return (
       <HoverCard content={card} className="block text-[11px] text-gray-400 dark:text-gray-500">
-        {formatTokensShort(usage.last_call_tokens)} tokens
+        {formatTokensShort(usage.context_tokens)} tokens
       </HoverCard>
     );
   }
@@ -35,7 +35,7 @@ export const TokenGauge: React.FC<{usage: TokenUsage}> = ({usage}) => {
         aria-label="How full the context is"
         aria-valuemin={0}
         aria-valuemax={usage.context_size}
-        aria-valuenow={usage.last_call_tokens}
+        aria-valuenow={usage.context_tokens}
       >
         <div className={`h-full ${color}`} style={{width: `${Math.round(level * 100)}%`}} />
       </div>
