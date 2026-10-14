@@ -71,3 +71,10 @@ carries an entry for each of them, long after most were purged.
   purpose: their lists come from their templates, change only by invitations used up, and do not
   grow. The view needed nothing: an entry whose group is not found was already shown to its owner
   without a name, which the web UI shows as "gone". Stored data need not be deleted.
+- **2026-10-14** — At the maintainer's request, done with it: telling a group in the trash from
+  one that is gone showed that the group of a session's or channel's participants can be left in
+  the trash while the session or channel is there - by a deletion that failed half-way and took
+  its mark away again, or by a restoring that did not reach its groups. `keep_participants` then
+  found no group, tried to make one under the id taken, and failed at every change of the
+  participants. It now restores a group it finds in the trash, in the runtime's name, before its
+  members follow: it is called only while the session or channel is there.
