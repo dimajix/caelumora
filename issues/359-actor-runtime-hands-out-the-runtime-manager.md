@@ -1,6 +1,6 @@
 # 359 — `ActorRuntime` hands out the `RuntimeManager` to two actors that want the controllers
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -42,3 +42,10 @@ actor is allowed to reach should be readable from `ActorRuntime` alone.
 
 - **2026-10-14** — From the review of agents, sessions and channels, epic
   [349](349-core-review-epic.md).
+- **2026-10-14** — Done. Both actors asked the `ControllerManager` one question,
+  `agent_attributes`, so `ActorRuntime` offers that by name instead of the manager; the actors no
+  longer hold a `controllers` field. `ActorRuntime::runtime_manager()` is gone altogether: the views
+  stopped reading through it with [229](229-services-fetched-through-the-runtime.md), so its last
+  user was a test, which restarts a channel with `ChannelRuntime::restarted()` (test-only) instead.
+  The `SecurityManager` the actors hold beside their runtime stays, as constructor injection
+  ([CODING-GUIDELINES.md](../docs/CODING-GUIDELINES.md)) asks.

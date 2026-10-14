@@ -16,7 +16,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
 use caelumora_model::value::name::Name;
-use crate::controller::{ChannelController, ControllerManager, UserController};
+use crate::controller::{ChannelController, UserController};
 use chrono::Utc;
 use tracing::{debug, info, warn};
 use std::collections::HashMap;
@@ -41,8 +41,6 @@ pub struct UserActor {
     /// What the user's rules answer with (issue 13): whether they may
     /// approve the calls of an agent in this channel is asked first.
     security: Arc<dyn SecurityManager>,
-    /// Where the attributes of the agents that ask are read.
-    controllers: Arc<ControllerManager>,
     channel: Arc<ChannelController>,
     // Envelopes built by `send_message` / `send_approval`, forwarded into the
     // channel by `run`.
@@ -85,7 +83,6 @@ impl UserActor {
             channel_id: channel.id,
             user,
             security: Arc::clone(actor_runtime.security_manager()),
-            controllers: Arc::clone(actor_runtime.runtime_manager().controller_manager()),
             actor_runtime,
             channel: channel_controller,
             user_rx: Mutex::new(urx),
@@ -432,7 +429,7 @@ impl UserActor {
             let profile = self.user.profile();
             ApprovalRule::decide(profile.approval_rules(), &request.tool_call, request.session_id, request.channel_id, Utc::now())?.clone()
         };
-        let agent = match self.controllers.agent_attributes(request.agent_id).await {
+        let agent = match self.actor_runtime.agent_attributes(request.agent_id).await {
             Ok(attributes) => attributes,
             Err(e) => {
                 warn!("UserActor {} cannot read agent {}: {}", self.id(), request.agent_id, e);

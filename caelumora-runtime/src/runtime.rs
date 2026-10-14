@@ -211,6 +211,16 @@ impl ActorRuntime {
         &self.runtime.command_executor
     }
 
+    /// The attributes of the agent `id`, as stored - what is asked of an
+    /// agent named in an event (`ControllerManager::agent_attributes`).
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if the agent no longer exists, or whatever
+    /// else the store reports.
+    pub(crate) async fn agent_attributes(&self, id: AgentId) -> StoreResult<SecurityAttributes> {
+        self.runtime.runtime_manager.controller_manager().agent_attributes(id).await
+    }
+
     /// The session `id` as stored, as `security` may read it.
     pub async fn load_session(&self, security: &SecurityContext, id: SessionId) -> StoreResult<Session> {
         self.runtime.runtime_manager.entity_stores().sessions.get(security, id).await
@@ -269,10 +279,6 @@ impl ActorRuntime {
         ViewsFactory::of_actor(self.clone())
     }
 
-    pub(crate) fn runtime_manager(&self) -> &Arc<RuntimeManager> {
-        &self.runtime.runtime_manager
-    }
-
     /// The channel the actor is in, or `None` while the channel is still
     /// being built or once it is gone.
     pub(crate) fn channel_loop(&self) -> Option<Arc<ChannelLoop>> {
@@ -298,6 +304,13 @@ impl ChannelRuntime {
     pub(crate) fn outside_a_session(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session_id: SessionId) -> Self {
         let session = runtime_manager.controller_manager().new_session_controller(crate::session::testing::bare_session(session_id));
         Self::new(runtime_manager, command_executor, session)
+    }
+
+    /// The runtime of the same channel built again, as after a restart -
+    /// in tests: the same services, commands and session, and no channel
+    /// attached yet.
+    pub(crate) fn restarted(&self) -> Self {
+        Self::new(Arc::clone(&self.runtime_manager), Arc::clone(&self.command_executor), Arc::clone(&self.session))
     }
 }
 

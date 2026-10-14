@@ -590,9 +590,11 @@ The `ChannelRuntime` is the only source of `ActorRuntime`s, so every actor belon
 channel. An `ActorRuntime` is made for one actor and hands out only what concerns that actor: the
 services every actor needs - the model is not among them, an agent has it as a component - and
 those its components may use; its own agent state and its state in the channel; its own event
-subscription, for its channel and nothing else; the loop of its channel; and the views of its turns,
-which read the session's other channels as the confidentiality rules allow (see
-[MEMORY.md](MEMORY.md#reading-other-channels)).
+subscription, for its channel and nothing else; the attributes of an agent that asks something of
+it, as stored; the loop of its channel; and the views of its turns, which read the session's other
+channels as the confidentiality rules allow (see [MEMORY.md](MEMORY.md#reading-other-channels)).
+It does not hand out the `RuntimeManager` it is made from: what an actor may reach is read from
+`ActorRuntime` alone (issue 359).
 
 The full `ChannelLoop` and `SessionLoop` are `pub(crate)`, so components from other crates cannot
 reach them. Components are not given their actor's `ActorRuntime` either, only what their

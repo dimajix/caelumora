@@ -7,7 +7,7 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse, ApprovalStatus, ApprovalStrategy, Approver};
 use caelumora_model::channel::{self, Channel, Participant};
-use crate::controller::{ChannelController, ControllerManager};
+use crate::controller::ChannelController;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{AccessQuestions, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::value::name::Name;
@@ -43,8 +43,6 @@ pub struct ApproverActor {
     channel: Arc<ChannelController>,
     /// Who may approve (issue 14).
     security: Arc<dyn SecurityManager>,
-    /// Where the attributes of the agents that ask are read.
-    controllers: Arc<ControllerManager>,
     pending: Mutex<HashMap<ApprovalId, PendingApproval>>,
     /// Cancelled by `stop`: the channel is deleted, and the run ends.
     ended: CancellationToken,
@@ -56,7 +54,6 @@ impl ApproverActor {
             id: ActorId::Approver(approver.id),
             approver,
             security: Arc::clone(actor_runtime.security_manager()),
-            controllers: Arc::clone(actor_runtime.runtime_manager().controller_manager()),
             actor_runtime,
             channel,
             pending: Mutex::new(HashMap::new()),
@@ -84,7 +81,7 @@ impl ApproverActor {
     /// The attributes of `agent`, as stored (`agent_attributes`). `None` if
     /// they cannot be read.
     async fn attributes_of(&self, agent: AgentId) -> Option<SecurityAttributes> {
-        match self.controllers.agent_attributes(agent).await {
+        match self.actor_runtime.agent_attributes(agent).await {
             Ok(attributes) => Some(attributes),
             Err(e) => {
                 warn!("ApproverActor cannot read agent {}: {}", agent, e);

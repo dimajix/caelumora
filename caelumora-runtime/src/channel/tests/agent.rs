@@ -1045,9 +1045,7 @@ async fn a_turn_waiting_for_approval_can_be_decided_after_a_restart() {
     running.abort();
     let _ = running.await;
     let document = Channel::clone(&channel.channel());
-    let manager = Arc::clone(channel.runtime.new_actor_runtime(ActorId::System, document.session_id, document.id).runtime_manager());
-    let executor = CommandExecutor::empty(Arc::clone(manager.security_manager()));
-    let restarted = ChannelLoop::new(document.clone(), ChannelRuntime::outside_a_session(manager, Arc::new(executor), document.session_id)).await.unwrap();
+    let restarted = ChannelLoop::new(document.clone(), channel.runtime.restarted()).await.unwrap();
     let mut events = restarted.observe();
     let running = tokio::spawn({ let restarted = Arc::clone(&restarted); async move { restarted.run().await } });
     let helper = restarted.actor_by_id(ActorId::Agent(agent)).unwrap();

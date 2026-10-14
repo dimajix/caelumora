@@ -108,8 +108,8 @@ A type takes the services it works with - the `SecurityManager`, the stores, the
 *   **What it holds says what it needs.** A type holds the services it uses, not the runtime that
     reaches all of them. Several services that go together travel as a small context holding
     exactly those - `ComponentContext`, `Views` - never as one that holds everything again. A
-    scoped runtime such as `ActorRuntime` is such a context; its users do not reach past it
-    (`runtime_manager()`).
+    scoped runtime such as `ActorRuntime` is such a context; it does not hand out the
+    `RuntimeManager` behind it, so that its users cannot reach past it (issue 359).
 *   **No threading next to the owner.** A service is not passed into a function beside the object
     that already holds it; the function becomes a method of that object, or takes the object.
 *   **Accessors lend.** An accessor returns `&Arc<dyn …>` or `&dyn …`; whoever keeps the service
