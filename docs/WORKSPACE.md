@@ -36,7 +36,9 @@ change - not one of another session's scope; whoever may change the session take
 **Attaching shares nothing by itself**: who may use a workspace is its access list's to say (see
 [SECURITY.md](SECURITY.md#access-lists)). One made for a session lets the session's members read and
 write it; one of its owner's grants nobody anything until they share it - when attaching it, or by
-its list afterwards. Taking it away leaves the list as it is: it is the workspace's.
+its list afterwards. Taking it away leaves the list as it is: it is the workspace's. An entry for a
+session that was purged is dropped as the workspace is next stored (issue
+[347](../issues/347-entries-naming-purged-groups.md)).
 
 A person reaches the files by the workspace, wherever they act - never through a channel: as its
 list lets them, and cleared for its classification. An agent uses it through a channel, acting with

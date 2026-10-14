@@ -22,7 +22,9 @@
 //!
 //! Whoever names a group in an access list must be able to read it
 //! (`require_nameable`): naming one grants its members something, and nobody
-//! grants what they cannot tell to whom.
+//! grants what they cannot tell to whom. An entry naming a group that is
+//! gone stays until the list is stored again, which drops it
+//! (`prune_gone_groups`, issue 347).
 
 use crate::event::EventBus;
 use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused, within};
@@ -40,7 +42,7 @@ use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{debug, info, warn};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GroupError {
@@ -322,6 +324,52 @@ pub async fn require_nameable(store: &dyn EntityStore<Group>, ctx: &SecurityCont
     Ok(())
 }
 
+/// Drops from `lists` - the access lists of one entity - the entries that
+/// name a group which is gone (issue 347): purged, neither there nor in the
+/// trash, as the runtime finds it. Called wherever such an entity is
+/// stored, so that an entry for a session long purged goes as the list is
+/// next written, not as the group is purged: that would have to find every
+/// list naming it, of every kind. A group in the trash comes back with
+/// what it belongs to and keeps its entries, and so does one that cannot be
+/// looked up: an entry is dropped only for certain.
+pub async fn prune_gone_groups<'a>(store: &dyn EntityStore<Group>, lists: impl IntoIterator<Item = &'a mut Vec<AclEntry>>) {
+    let mut lists: Vec<&mut Vec<AclEntry>> = lists.into_iter().collect();
+    let mut named = Vec::new();
+    for entry in lists.iter().flat_map(|list| list.iter()) {
+        match entry.subject {
+            Subject::Group(group) if !named.contains(&group) => named.push(group),
+            _ => {}
+        }
+    }
+    let mut gone = Vec::new();
+    for group in named {
+        if is_gone(store, group).await {
+            gone.push(group);
+        }
+    }
+    if gone.is_empty() {
+        return;
+    }
+    for list in &mut lists {
+        list.retain(|entry| !matches!(entry.subject, Subject::Group(group) if gone.contains(&group)));
+    }
+    debug!(groups = ?gone, "Entries naming groups that are gone dropped from an access list");
+}
+
+/// Whether group `id` is neither there nor in the trash, looked for in the
+/// runtime's name; `false` if that cannot be told.
+async fn is_gone(store: &dyn EntityStore<Group>, id: GroupId) -> bool {
+    let system = SecurityContext::system();
+    let found = match store.get(&system, id).await.optional() {
+        Ok(None) => store.get_deleted(&system, id).await.optional().map(|deleted| deleted.is_some()),
+        there => there.map(|live| live.is_some()),
+    };
+    found.map(|found| !found).unwrap_or_else(|e| {
+        warn!(group = %id, "Cannot tell whether group is gone; the entries naming it stay: {e}");
+        false
+    })
+}
+
 /// Stores `participants` as the group of the participants of a session or
 /// channel, in the runtime's name: its members replace those stored, and
 /// the group is made if there is none yet.
@@ -355,4 +403,49 @@ pub(crate) async fn purge_participants(store: &dyn EntityStore<Group>, id: Group
     let system = SecurityContext::system();
     store.delete(&system, id).await?;
     store.purge(&system, id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::store::json::JsonFileStore;
+    use std::path::{Path, PathBuf};
+
+    /// The file named `name` somewhere below `dir`.
+    fn find(dir: &Path, name: &str) -> Option<PathBuf> {
+        std::fs::read_dir(dir).ok()?.flatten().map(|entry| entry.path()).find_map(|path| {
+            if path.is_dir() { find(&path, name) } else { (path.file_name()? == name).then_some(path) }
+        })
+    }
+
+    #[tokio::test]
+    async fn only_the_entries_naming_a_group_known_to_be_gone_are_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let groups = JsonFileStore::new(dir.path(), Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())).unwrap().entity_stores().unwrap().groups;
+        let system = SecurityContext::system();
+        let owner = UserId::new();
+        let team = |name: &str| Group::team(ScopedName::new(name, Scope::UserScope { user_id: owner }).unwrap(), owner);
+        let there = team("there");
+        let trashed = team("trashed");
+        let purged = team("purged");
+        let unreadable = team("unreadable");
+        for group in [&there, &trashed, &purged, &unreadable] {
+            groups.create(&system, group).await.unwrap();
+        }
+        groups.delete(&system, trashed.id).await.unwrap();
+        groups.delete(&system, purged.id).await.unwrap();
+        groups.purge(&system, purged.id).await.unwrap();
+        let stored = find(dir.path(), &format!("{}.json", unreadable.id)).expect("stored as a file");
+        std::fs::write(stored, "not a group").unwrap();
+
+        let entry = |group: &Group| AclEntry { subject: Subject::Group(group.id), grant: Grant::Read };
+        let everyone = AclEntry { subject: Subject::Everyone, grant: Grant::Read };
+        let mut acl = vec![entry(&there), entry(&trashed), entry(&purged), entry(&unreadable), everyone];
+        let mut of_version = vec![entry(&purged)];
+        prune_gone_groups(groups.as_ref(), [&mut acl, &mut of_version]).await;
+        assert_eq!(acl, [entry(&there), entry(&trashed), entry(&unreadable), everyone], "the one purged alone: in the trash it may come back, and one that cannot be read may be there");
+        assert!(of_version.is_empty(), "from every list given");
+    }
 }

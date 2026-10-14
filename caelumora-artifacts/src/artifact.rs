@@ -198,6 +198,12 @@ impl Artifact {
         SecurityAttributes { owner_id: self.security_attributes.owner_id, acl: version.acl.clone() }
     }
 
+    /// Its access list and those of its versions, to be changed alike - as
+    /// entries naming a group that is gone are dropped (issue 347).
+    pub fn access_lists_mut(&mut self) -> impl Iterator<Item = &mut Vec<AclEntry>> {
+        std::iter::once(&mut self.security_attributes.acl).chain(self.versions.iter_mut().map(|version| &mut version.acl))
+    }
+
     /// Lets `subject` read the artifact, unless its list grants it already
     /// (issue 316): whoever is to read a version has to read the artifact.
     pub fn grant_reading(&mut self, subject: Subject) {
