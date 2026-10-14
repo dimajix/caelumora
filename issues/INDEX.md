@@ -428,6 +428,7 @@ published before anyone else can take it.
 | [351](351-channel-events-announced-by-hand.md) | open | The lifecycle events of a channel are announced at ten places, each assembling the key, the attributes and the classification by hand. |
 | [352](352-envelopes-built-by-hand.md) | open | The approver and the channel build their envelopes by hand beside `Answering`, the one way an actor publishes. |
 | [353](353-rules-of-the-model-computed-in-the-runtime.md) | open | Rules of the model - what an approval strategy decides, what a history limit shows, how a stored agent state is made fit to resume, how an update event applies - are computed in the runtime. |
+| [354](354-names-follow-several-schemes.md) | open | Names around sessions, channels and actors follow several schemes: manager verbs with and without the noun, three ways to find by id, and `Member` meaning three things. |
 
 ## Integrations
 
