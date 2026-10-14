@@ -458,11 +458,12 @@ impl ChannelLoop {
         Ok((Arc::clone(&session_loop.session()), workspace))
     }
 
-    /// `action`, refused as a `ChannelError::Forbidden` that names what was
-    /// refused, not why.
-    async fn require(&self, context: &SecurityContext, action: ActionType<'_>, what: &'static str) -> Result<()> {
+    /// `action` on the channel, as its attributes are now, refused as a
+    /// `ChannelError::Forbidden` that names what was refused, not why.
+    async fn require(&self, context: &SecurityContext, action: impl FnOnce(&SecurityAttributes) -> ActionType<'_>, what: &'static str) -> Result<()> {
+        let attributes = self.security_attributes();
         let channel = self.id;
-        Ok(self.security.require(context, action, |refused| ChannelError::Forbidden { action: what, channel, refused }).await?)
+        Ok(self.security.require(context, action(&attributes), |refused| ChannelError::Forbidden { action: what, channel, refused }).await?)
     }
 
     /// The classification of the channel's contents (issue 133).
@@ -472,6 +473,12 @@ impl ChannelLoop {
 
     pub(crate) fn actor_by_id(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
         self.actors.load().get(&actor_id).map(|a| Arc::clone(&a.actor))
+    }
+
+    /// The actor of `actor_id` if it is an agent of this channel - whom a
+    /// request to answer again or to carry out a command may name.
+    pub(crate) fn agent_actor(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
+        actor_id.as_agent_id().and_then(|_| self.actor_by_id(actor_id))
     }
 
     /// The turn under way of the participant `actor` (issue 235), if it is

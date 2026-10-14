@@ -304,22 +304,20 @@ impl ChannelLoop {
             // is delivered, where the turn is ended (`route_event_impl`).
             ActorEvent::RetryRequested { target: RetryTarget::Turn(_), author } => {
                 self.security.require(context, ActionType::RetryMessage(&channel), forbidden).await?;
-                (author.as_agent_id().is_some() && self.actor_by_id(*author).is_some()).then_some(()).ok_or(Rejection::Invalid)
+                self.agent_actor(*author).is_some().then_some(()).ok_or(Rejection::Invalid)
             }
             ActorEvent::QuestionAnswered { .. } | ActorEvent::QuestionDeclined { .. } => {
                 self.security.require(context, ActionType::AnswerQuestion(&channel), forbidden).await
             }
             ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) if event.context.sender_id.as_user_id().is_some() => {
-                // As stored - never as the answer says.
-                let agent = self.controllers.agent_controller(response.agent_id).await.map_err(|_| Rejection::Invalid)?;
-                let agent = agent.load().security_attributes.clone();
+                let agent = self.controllers.agent_attributes(response.agent_id).await.map_err(|_| Rejection::Invalid)?;
                 self.security.require(context, ActionType::ApproveToolCall { agent: &agent, channel: &channel }, forbidden).await
             }
             ActorEvent::ApprovalGranted(_) | ActorEvent::ApprovalDenied(_) | ActorEvent::ApprovalTimedOut(_) => {
                 matches!(event.context.sender_id, ActorId::Approver(_)).then_some(()).ok_or(Rejection::Invalid)
             }
             ActorEvent::CommandRequested { agent, .. } => {
-                (event.context.sender_id.as_user_id().is_some() && agent.as_agent_id().is_some() && self.actor_by_id(*agent).is_some())
+                (event.context.sender_id.as_user_id().is_some() && self.agent_actor(*agent).is_some())
                     .then_some(()).ok_or(Rejection::Invalid)
             }
             // It asks nothing of the policy beyond what a message does - an

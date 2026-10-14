@@ -20,8 +20,7 @@ impl ChannelLoop {
     /// decision for the whole channel: a per-actor one could leave half of it
     /// cancelled (issue 30).
     pub async fn cancel(&self, context: &SecurityContext) -> Result<()> {
-        let channel = self.channel.load();
-        self.require(context, ActionType::CancelChannel(&channel.security_attributes), "cancelling").await?;
+        self.require(context, |attributes| ActionType::CancelChannel(attributes), "cancelling").await?;
         self.cancel_actors();
         Ok(())
     }
@@ -44,8 +43,7 @@ impl ChannelLoop {
     /// `ChannelError::Forbidden` if the `SecurityManager` refuses
     /// `WakeChannel`.
     pub async fn wakeup(&self, context: &SecurityContext) -> Result<Vec<String>> {
-        let channel = self.channel.load();
-        self.require(context, ActionType::WakeChannel(&channel.security_attributes), "waking the agents of").await?;
+        self.require(context, |attributes| ActionType::WakeChannel(attributes), "waking the agents of").await?;
         let asleep = self.actors.load().values()
             .map(|a| &a.actor)
             .filter(|a| a.state() == ActorState::Sleeping)
@@ -67,8 +65,7 @@ impl ChannelLoop {
     /// `CancelChannel`, before anything of the actor is looked at;
     /// `NotAParticipant` if `actor` is not in this channel.
     pub async fn cancel_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<()> {
-        let channel = self.channel.load();
-        self.require(context, ActionType::CancelChannel(&channel.security_attributes), "cancelling").await?;
+        self.require(context, |attributes| ActionType::CancelChannel(attributes), "cancelling").await?;
         self.actor_by_id(actor)
             .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?
             .cancel();
@@ -88,8 +85,7 @@ impl ChannelLoop {
     /// `ToolCallNotRunning` if the call neither runs nor waits to run in
     /// that turn, or the turn is not under way.
     pub async fn interrupt_tool_call(&self, context: &SecurityContext, actor: ActorId, turn: TurnId, call: &str) -> Result<()> {
-        let channel = self.channel.load();
-        self.require(context, ActionType::CancelChannel(&channel.security_attributes), "cancelling").await?;
+        self.require(context, |attributes| ActionType::CancelChannel(attributes), "cancelling").await?;
         let actor = self.actor_by_id(actor)
             .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?;
         // Named to the model as the channel knows them.
@@ -107,8 +103,7 @@ impl ChannelLoop {
     /// `ChannelError::Forbidden` if the `SecurityManager` refuses
     /// `WakeChannel`; `NotAParticipant` if `actor` is not in this channel.
     pub async fn wakeup_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<bool> {
-        let channel = self.channel.load();
-        self.require(context, ActionType::WakeChannel(&channel.security_attributes), "waking the agents of").await?;
+        self.require(context, |attributes| ActionType::WakeChannel(attributes), "waking the agents of").await?;
         let actor = self.actor_by_id(actor)
             .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?;
         let was_asleep = actor.state() == ActorState::Sleeping;

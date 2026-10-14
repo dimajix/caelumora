@@ -40,7 +40,7 @@ use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::event::EntityChange;
-use caelumora_model::security::{SecurityContext, SecurityManager};
+use caelumora_model::security::{SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::{EntityStores, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::user::{User, UserId, UserProfile};
@@ -212,6 +212,17 @@ impl ControllerManager {
             ActorId::Agent(id) => Ok(self.agent_controller(id).await?.name()),
             other => Ok(other.fixed_name().unwrap_or_default().to_string()),
         }
+    }
+
+    /// The attributes of agent `id` as stored, from the controller this
+    /// instance shares - what is asked of an agent named in an event, never
+    /// as the event says, since the sender makes that itself.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if the agent no longer exists, or whatever
+    /// else the store reports.
+    pub async fn agent_attributes(&self, id: AgentId) -> StoreResult<SecurityAttributes> {
+        Ok(self.agent_controller(id).await?.load().security_attributes.clone())
     }
 
     /// Starts the task that takes the changes announced about agents,

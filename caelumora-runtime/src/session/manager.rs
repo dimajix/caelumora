@@ -74,6 +74,14 @@ impl Found {
             Found::Stored(session) => session.clone(),
         }
     }
+
+    /// The session's attributes as they are now, without the rest of it.
+    fn attributes(&self) -> SecurityAttributes {
+        match self {
+            Found::Running(session_loop) => session_loop.session().security_attributes.clone(),
+            Found::Stored(session) => session.security_attributes.clone(),
+        }
+    }
 }
 
 impl SessionManager {
@@ -357,7 +365,7 @@ impl SessionManager {
     pub async fn join(&self, context: &SecurityContext, id: SessionId, participant: ActorId, into: Option<ChannelId>) -> Result<Arc<SessionLoop>> {
         let not_found = || SessionError::NotFound(id);
         let system = SecurityContext::system();
-        let attributes = self.find(&system, id).await.map_err(|_| not_found())?.session().security_attributes;
+        let attributes = self.find(&system, id).await.map_err(|_| not_found())?.attributes();
         let reachable = self.security.check(context, ActionType::custom(Session::KIND, &JOIN, &attributes)).await
             || self.security.may_read_session(context, &attributes).await;
         if !reachable {
@@ -384,7 +392,7 @@ impl SessionManager {
         let start = self.start_lock(id);
         let _starting = start.lock().await;
         let found = self.find(context, id).await?;
-        let attributes = found.session().security_attributes;
+        let attributes = found.attributes();
         self.security
             .require(context, ActionType::StopSession(&attributes), StoreError::PermissionDenied).await?;
         Ok(matches!(found, Found::Running(_)) && self.stop_running(id).await.is_some())

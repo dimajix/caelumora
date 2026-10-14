@@ -1,6 +1,6 @@
 # 350 — The same lookup is written out again at several places around channels and actors
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -59,3 +59,18 @@ reader of `UserActor` sees the same three lines before every operation instead o
 
 - **2026-10-14** — From the review of agents, sessions and channels, epic
   [349](349-core-review-epic.md).
+- **2026-10-14** — Done, along the considerations, with three differences:
+  - `UserActor::channel_loop` answers the one error, "Channel … is gone"; `execute_command` said "no
+    longer exists" before. The text alone changed, not the type.
+  - `ChannelLoop::agent_actor` answers an `Option`, as `actor_by_id` beside it: of its four users,
+    `request_retry` and `request_retry_of_turn` name different errors and the admission refuses as
+    `Invalid`, so no error fits them all. The admission uses it for a retry of a turn and for a
+    command requested of an agent; a retry of a message keeps its own check - the agent is the
+    message's author -, which does not ask whether the agent is still in the channel. Asking it
+    would change what is admitted, which this issue does not.
+  - `Found::attributes` serves `join` and `stop_session`; `delete_session` keeps `session()`, since
+    it loads the session's channels as well.
+
+  `ControllerManager::agent_attributes` carries the "as stored" once; `Member::of` keeps its
+  controller. `ChannelLoop::require` takes the action as a function of the channel's attributes and
+  reads them itself; all seven of its callers named the channel's.

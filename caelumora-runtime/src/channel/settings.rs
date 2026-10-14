@@ -108,8 +108,7 @@ impl ChannelLoop {
     /// above a participant; whatever storing it reports.
     pub async fn reclassify(&self, context: &SecurityContext, classification: Classification) -> Result<()> {
         let channel = self.classification();
-        let attributes = self.security_attributes();
-        self.require(context, ActionType::Reclassify(Reclassified::Channel { attributes: &attributes }), "reclassifying").await?;
+        self.require(context, |attributes| ActionType::Reclassify(Reclassified::Channel { attributes }), "reclassifying").await?;
         self.confidentiality.require_classifiable(&classification, || ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.id })?;
         // Raised above a participant, the channel would show them what they
         // may not see: refused rather than anyone removed.

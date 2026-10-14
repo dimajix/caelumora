@@ -32,8 +32,7 @@ impl ChannelLoop {
     /// `ChannelError::Forbidden` if `context` may not change the channel; as
     /// [`Self::take_in`].
     pub async fn add_participant(&self, context: &SecurityContext, participant: ActorId, history: HistoryAccess) -> Result<()> {
-        let attributes = self.security_attributes();
-        self.require(context, ActionType::update(Channel::KIND, &attributes), "adding a participant to").await?;
+        self.require(context, |attributes| ActionType::update(Channel::KIND, attributes), "adding a participant to").await?;
         self.take_in(context, participant, history, false).await
     }
 

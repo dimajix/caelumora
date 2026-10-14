@@ -70,11 +70,11 @@ impl ApproverActor {
         about.next(self.id, self.channel.load().security_attributes.owner_id, self.id)
     }
 
-    /// The attributes of `agent`, as stored - never as its request says,
-    /// since the agent makes that itself. `None` if it cannot be read.
+    /// The attributes of `agent`, as stored (`agent_attributes`). `None` if
+    /// they cannot be read.
     async fn attributes_of(&self, agent: AgentId) -> Option<SecurityAttributes> {
-        match self.controllers.agent_controller(agent).await {
-            Ok(controller) => Some(controller.load().security_attributes.clone()),
+        match self.controllers.agent_attributes(agent).await {
+            Ok(attributes) => Some(attributes),
             Err(e) => {
                 warn!("ApproverActor cannot read agent {}: {}", agent, e);
                 None

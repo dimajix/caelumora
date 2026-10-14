@@ -1,5 +1,5 @@
 use crate::actor::Actor;
-use crate::channel::ChannelError;
+use crate::channel::{ChannelError, ChannelLoop};
 use crate::command::{CommandContext, CommandError, CommandReply};
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender, TransportError};
@@ -134,10 +134,7 @@ impl UserActor {
     /// `ChannelError::Question` with why the answer cannot be given; an
     /// error if the channel is gone.
     pub async fn answer_questions(&self, id: QuestionId, responses: Option<Vec<Response>>) -> anyhow::Result<Uuid> {
-        use crate::channel::ChannelError;
-        if self.actor_runtime.channel_loop().is_none() {
-            return Err(anyhow!("Channel {} is gone", self.channel_id));
-        }
+        self.channel_loop()?;
         let refused = |reason| ChannelError::Question { question: id, channel: self.channel_id, reason };
         let agent_id = {
             let open = self.open_questions.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -173,8 +170,7 @@ impl UserActor {
     /// # Errors
     /// An error if the channel is gone.
     pub async fn send_message(&self, message: String, classification: Option<Classification>) -> anyhow::Result<Uuid> {
-        let channel_loop = self.actor_runtime.channel_loop()
-            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        let channel_loop = self.channel_loop()?;
         let classification = classification.unwrap_or_else(|| channel_loop.classification());
         let msg = Message {
             role: MessageRole::User,
@@ -218,8 +214,7 @@ impl UserActor {
     /// `Forbidden` if it is not this user's, `MessageRevoked` if it was
     /// taken back; an error if the channel is gone.
     pub async fn modify_message(&self, message: MessageId, content: String, classification: Option<Classification>) -> anyhow::Result<Uuid> {
-        let channel_loop = self.actor_runtime.channel_loop()
-            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        let channel_loop = self.channel_loop()?;
         let original = self.message_to_change(&channel_loop, message).await?;
         if original.sender_id != self.id {
             let refused = ActionType::ModifyMessage { author: original.sender_id, channel: &channel_loop.security_attributes() }.refused();
@@ -247,8 +242,7 @@ impl UserActor {
     /// # Errors
     /// As `modify_message`, but for the classification.
     pub async fn revoke_message(&self, message: MessageId) -> anyhow::Result<Uuid> {
-        let channel_loop = self.actor_runtime.channel_loop()
-            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        let channel_loop = self.channel_loop()?;
         self.message_to_change(&channel_loop, message).await?;
         let span_id = Uuid::new_v4();
         self.send(self.envelope(ActorEvent::MessageRevoked { message, at: Utc::now() }, span_id)).await?;
@@ -269,8 +263,7 @@ impl UserActor {
     /// `MessageRevoked` if it was taken back; an error if the channel is
     /// gone.
     pub async fn reclassify_message(&self, message: MessageId, classification: Classification) -> anyhow::Result<Uuid> {
-        let channel_loop = self.actor_runtime.channel_loop()
-            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        let channel_loop = self.channel_loop()?;
         self.message_to_change(&channel_loop, message).await?;
         let span_id = Uuid::new_v4();
         self.send(self.envelope(ActorEvent::MessageReclassified { message, classification }, span_id)).await?;
@@ -293,11 +286,9 @@ impl UserActor {
     /// `MessageRevoked` if it was taken back, `NotAnAgentsMessage` if no agent of the channel said it;
     /// an error if the channel is gone.
     pub async fn request_retry(&self, message: MessageId) -> anyhow::Result<Uuid> {
-        use crate::channel::ChannelError;
-        let channel_loop = self.actor_runtime.channel_loop()
-            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        let channel_loop = self.channel_loop()?;
         let author = self.message_to_change(&channel_loop, message).await?.sender_id;
-        if author.as_agent_id().is_none() || !channel_loop.actor_ids().contains(&author) {
+        if channel_loop.agent_actor(author).is_none() {
             return Err(ChannelError::NotAnAgentsMessage { message, channel: self.channel_id }.into());
         }
         self.send_retry(RetryTarget::Message(message), author).await
@@ -320,10 +311,8 @@ impl UserActor {
     /// neither so;
     /// an error if the channel is gone.
     pub async fn request_retry_of_turn(&self, author: ActorId, turn: TurnId) -> anyhow::Result<Uuid> {
-        use crate::channel::ChannelError;
-        let channel_loop = self.actor_runtime.channel_loop()
-            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
-        if author.as_agent_id().is_none() || !channel_loop.actor_ids().contains(&author) {
+        let channel_loop = self.channel_loop()?;
+        if channel_loop.agent_actor(author).is_none() {
             return Err(ChannelError::NotAParticipant { participant: author, channel: self.channel_id }.into());
         }
         if !channel_loop.retryable_turn(author, turn).await {
@@ -349,9 +338,7 @@ impl UserActor {
     /// is in a turn, which it would otherwise follow with a second one; an
     /// error if the channel is gone.
     pub async fn request_response(&self, participant: ActorId) -> anyhow::Result<Uuid> {
-        use crate::channel::ChannelError;
-        let channel_loop = self.actor_runtime.channel_loop()
-            .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))?;
+        let channel_loop = self.channel_loop()?;
         let actor = channel_loop.actor_by_id(participant)
             .ok_or(ChannelError::NotAParticipant { participant, channel: self.channel_id })?;
         if participant == self.id {
@@ -375,11 +362,18 @@ impl UserActor {
         Ok(span_id)
     }
 
+    /// The channel this user is in, which every operation of theirs needs.
+    ///
+    /// # Errors
+    /// An error if the channel is gone.
+    fn channel_loop(&self) -> anyhow::Result<Arc<ChannelLoop>> {
+        self.actor_runtime.channel_loop().ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))
+    }
+
     /// The message `id` of `channel` as it stands, if it can still be
     /// changed: not taken back. Whether this user may change it is the
     /// channel's to decide as it admits the change (issue 304).
-    async fn message_to_change(&self, channel: &crate::channel::ChannelLoop, id: MessageId) -> anyhow::Result<Message> {
-        use crate::channel::ChannelError;
+    async fn message_to_change(&self, channel: &ChannelLoop, id: MessageId) -> anyhow::Result<Message> {
         let message = channel.message(id).await
             .ok_or(ChannelError::MessageNotFound { message: id, channel: self.channel_id })?;
         if message.revoked.is_some() {
@@ -438,8 +432,8 @@ impl UserActor {
             let profile = self.user.profile();
             ApprovalRule::decide(profile.approval_rules(), &request.tool_call, request.session_id, request.channel_id, Utc::now())?.clone()
         };
-        let agent = match self.controllers.agent_controller(request.agent_id).await {
-            Ok(controller) => controller.load().security_attributes.clone(),
+        let agent = match self.controllers.agent_attributes(request.agent_id).await {
+            Ok(attributes) => attributes,
             Err(e) => {
                 warn!("UserActor {} cannot read agent {}: {}", self.id(), request.agent_id, e);
                 return None;
@@ -469,10 +463,9 @@ impl UserActor {
     ///
     /// # Errors
     /// A `CommandError` if the command is unknown, refused or fails; an error
-    /// if the channel no longer exists.
+    /// if the channel is gone.
     pub async fn execute_command(&self, name: &str, args: &str) -> anyhow::Result<CommandReply> {
-        let channel = self.actor_runtime.channel_loop()
-            .ok_or_else(|| anyhow!("channel {} no longer exists", self.channel_id))?;
+        let channel = self.channel_loop()?;
         let executor = self.actor_runtime.command_executor();
         let context = CommandContext { issuer: self, channel: &channel, executor };
         debug!("UserActor {} runs /{}", self.id, name);
@@ -503,7 +496,7 @@ impl UserActor {
     /// `CommandError::Unknown` if no agent here carries it out as this user
     /// sees it; `InvalidArguments` if `args` names no agent that does; an
     /// error if a request cannot be sent.
-    async fn request_command(&self, channel: &crate::channel::ChannelLoop, name: &str, args: &str) -> anyhow::Result<CommandReply> {
+    async fn request_command(&self, channel: &ChannelLoop, name: &str, args: &str) -> anyhow::Result<CommandReply> {
         let understanding: Vec<_> = channel.agent_commands(&self.security_context()).await.into_iter()
             .filter(|(_, commands)| commands.iter().any(|c| c.name == name))
             .map(|(member, _)| member)
@@ -690,7 +683,7 @@ mod tests {
 
     /// A user's actor, with the channel it is in - to be kept while the
     /// actor is used: the actor's runtime holds it weakly.
-    async fn user_actor() -> (UserActor, Arc<crate::channel::ChannelLoop>) {
+    async fn user_actor() -> (UserActor, Arc<ChannelLoop>) {
         let store = Arc::new(MemoryStore::new());
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
@@ -719,7 +712,7 @@ mod tests {
             roles: Vec::new(),
             deleted: None,
         };
-        let channel_loop = crate::channel::ChannelLoop::new(channel.clone(), channel_runtime.clone()).await.unwrap();
+        let channel_loop = ChannelLoop::new(channel.clone(), channel_runtime.clone()).await.unwrap();
         let actor_runtime = channel_runtime.new_actor_runtime(ActorId::User(user.id), channel.session_id, channel.id);
         runtime.entity_stores().users.create(&SecurityContext::system(), &user).await.unwrap();
         let actor = UserActor::new(runtime.controller_manager().new_channel_controller(channel.clone()), runtime.controller_manager().user_controller(user.id).await.unwrap(), actor_runtime).await.unwrap();
