@@ -186,6 +186,7 @@ published before anyone else can take it.
 | [321](321-channel-components-in-the-owners-name.md) | done | A channel's components act in its owner's name with the roles of when the channel was built, a context nobody decided on, so what they may read or use depends on when the channel was last built. |
 | [322](322-clearance-decided-outside-the-store.md) | done | Whether one is cleared for a classified entity is asked by the views, three managers and the event bus each, besides the store, so that what a reader forgets to ask is found, and the deleted are reached by other rules than the live. |
 | [332](332-policy-as-a-predicate.md) | open | The policy decides entity by entity, so a store filters a list after reading it and no database could put who may read into its query. |
+| [347](347-entries-naming-purged-groups.md) | open | An access list keeps its entries for a group once the group is purged - a session long over, a team removed -, so lists grow by entries that name nobody and are cleaned up by hand. |
 
 ## Tools and approvals
 
