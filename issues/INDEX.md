@@ -360,7 +360,7 @@ published before anyone else can take it.
 | [132](132-rest-and-web-ui-docs.md) | done | The REST server and the web UI have no document of their own; what they do is scattered across the documents of other subjects. |
 | [192](192-issue-179-small-duplicates.md) | done | Small duplicates were left from issue 179 in the member views, the reader's place, "not found means none" and `unheard`. |
 | [313](313-docs-too-detailed.md) | done | The documents in `docs/` have about 130,000 tokens, mostly code retold - variants, fields, call orders - and inline issue history, so the concepts and rules are hard to find and every change has a second place to update. |
-| [349](349-core-review-epic.md) | open | Epic for the review of agents, sessions and channels of 2026-10-14: the bracket around issues 350–359 and their recommended order. |
+| [349](349-core-review-epic.md) | open | Epic for the review of agents, sessions and channels of 2026-10-14: the bracket around issues 350–361 and their recommended order. |
 
 ## Code structure
 
@@ -434,6 +434,7 @@ published before anyone else can take it.
 | [357](357-actor-start-and-channel-construction-written-twice.md) | open | Starting a member's actor is written three times in `ChannelLoop`, and building a channel's loop twice in `SessionLoop`. |
 | [358](358-controllers-apply-their-events-each-on-its-own.md) | open | The controllers apply, store and announce their update events each on their own, `updated_at` moves on one path only, and the loops forward the updates with uneven logging. |
 | [359](359-actor-runtime-hands-out-the-runtime-manager.md) | open | `ActorRuntime` hands out the `RuntimeManager`, which two actors use to reach past the facade for the `ControllerManager`. |
+| [360](360-channel-runtime-forwarders-again.md) | open | `ChannelRuntime` forwards ten services of the `RuntimeManager` it never uses itself, each read once by `ChannelLoop::new`; what 89 rejected, on code that has changed since. |
 
 ## Integrations
 

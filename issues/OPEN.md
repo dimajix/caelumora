@@ -98,7 +98,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 
 | No. | Status | Issue |
 |---|---|---|
-| [349](349-core-review-epic.md) | open | Epic for the review of agents, sessions and channels of 2026-10-14: the bracket around issues 350–359 and their recommended order. |
+| [349](349-core-review-epic.md) | open | Epic for the review of agents, sessions and channels of 2026-10-14: the bracket around issues 350–361 and their recommended order. |
 
 ## Code structure
 
@@ -115,6 +115,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [357](357-actor-start-and-channel-construction-written-twice.md) | open | Starting a member's actor is written three times in `ChannelLoop`, and building a channel's loop twice in `SessionLoop`. |
 | [358](358-controllers-apply-their-events-each-on-its-own.md) | open | The controllers apply, store and announce their update events each on their own, `updated_at` moves on one path only, and the loops forward the updates with uneven logging. |
 | [359](359-actor-runtime-hands-out-the-runtime-manager.md) | open | `ActorRuntime` hands out the `RuntimeManager`, which two actors use to reach past the facade for the `ControllerManager`. |
+| [360](360-channel-runtime-forwarders-again.md) | open | `ChannelRuntime` forwards ten services of the `RuntimeManager` it never uses itself, each read once by `ChannelLoop::new`; what 89 rejected, on code that has changed since. |
 
 ## Open architecture questions
 
