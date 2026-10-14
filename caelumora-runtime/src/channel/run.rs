@@ -249,8 +249,8 @@ impl ChannelLoop {
     ///   can be changed so as it stands (`Message::modify`,
     ///   `Message::revoke`); a reclassification (issue 239) by its author or
     ///   the channel's owner (`Reclassify`), never above the channel;
-    /// - a request to answer again (`RetryMessage`): of a message an agent
-    ///   said, not taken back, or of an agent taking part;
+    /// - a request to answer again (`RetryMessage`): of a message, not
+    ///   taken back, or of a turn, of an agent taking part (issue 362);
     /// - an answer to an agent's questions (`AnswerQuestion`, issue 165) -
     ///   whether its sender was asked is the agent's to check;
     /// - a user's answer to an approval request, by whoever may approve the
@@ -298,7 +298,7 @@ impl ChannelLoop {
                 if message.revoked.is_some() {
                     return Err(Rejection::MessageUnchangeable);
                 }
-                (message.sender_id == *author && author.as_agent_id().is_some()).then_some(()).ok_or(Rejection::Invalid)
+                (message.sender_id == *author && self.agent_actor(*author).is_some()).then_some(()).ok_or(Rejection::Invalid)
             }
             // Whether the turn is still under way is decided as the request
             // is delivered, where the turn is ended (`route_event_impl`).
@@ -574,7 +574,8 @@ mod tests {
     use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RetryTarget};
     use caelumora_model::approval::Approver;
     use caelumora_model::confidentiality::Classification;
-    use caelumora_model::message::{Message, MessageId};
+    use caelumora_model::agent::AgentId;
+    use caelumora_model::message::{Message, MessageId, MessageRole};
     use caelumora_model::work::TurnId;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::user::UserId;
@@ -952,6 +953,19 @@ mod tests {
         channel.process_envelope(from(alice_id, revoked(said.id)), &actors).await;
         channel.process_envelope(from(alice_id, modified("hello", &Classification::CHANNEL_DEFAULT)), &actors).await;
         assert_eq!(rejected(&mut alices), [kind("MessageModified", Rejection::MessageUnchangeable)], "taken back, it stays so");
+
+        // A request to answer again names an agent taking part, of a
+        // message as of a turn (issue 362): of one that left, its sender is
+        // told, rather than it being dropped unseen.
+        let gone = ActorId::Agent(AgentId::new());
+        let its = Message { id: MessageId::new(), sender_id: gone, role: MessageRole::Assistant, content: Some("said before it left".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        channel.process_envelope(from(gone, ActorEvent::CompleteMessageGenerated(its.clone())), &actors).await;
+        channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Message(its.id), author: gone }), &actors).await;
+        channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Turn(TurnId::new()), author: gone }), &actors).await;
+        assert_eq!(rejected(&mut alices), [
+            ("RetryRequested".to_string(), Some(its.id), Rejection::Invalid),
+            ("RetryRequested".to_string(), None, Rejection::Invalid),
+        ], "an agent that left answers nothing again");
 
         // Her actor looks at what it can see at once, and asks nothing of the
         // policy: that is the channel's.

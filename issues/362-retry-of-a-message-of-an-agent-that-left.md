@@ -1,6 +1,6 @@
 # 362 — The channel admits a request to answer a message again for an agent that left, and drops it unseen
 
-**Status:** open
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -57,3 +57,9 @@ A behaviour change, if a small one: a request that was dropped unseen is refused
 
 - **2026-10-14** — Noticed while resolving [350](350-lookups-written-out-again.md), which left it
   as it was since it asked for no behaviour change.
+- **2026-10-14** — Done as the first consideration says: the admission asks
+  `self.agent_actor(*author)` of a message as of a turn, and refuses one of an agent that left as
+  `Invalid`. The test went into `a_user_changes_only_their_own_message_and_learns_why_not` rather
+  than the one named above, which watches only what is routed - and a request dropped by the
+  moderator was routed nowhere before as well; that test shows the sender told, for a message and
+  for a turn alike. The admission tables of CHANNELS.md and PERMISSION-CHECKS.md say so.

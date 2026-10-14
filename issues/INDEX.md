@@ -132,7 +132,7 @@ published before anyone else can take it.
 | [261](261-turn-finished-repeats-the-answer.md) | rejected | `TurnFinished` carries the answer the channel already has from the messages said, only for the moderator to decide whom to ask. |
 | [262](262-stopped-turn-not-recorded-while-reflecting.md) | done | An agent removed while its turn ends leaves the turn's messages in the channel's history without an end. |
 | [342](342-invitations.md) | open | Nobody can be invited to a session or channel: who is added is taken in without being asked, told nothing beforehand and unable to decline. |
-| [362](362-retry-of-a-message-of-an-agent-that-left.md) | open | The channel admits a request to answer a message again for an agent that left, and drops it unseen, while the same request for a turn is refused. |
+| [362](362-retry-of-a-message-of-an-agent-that-left.md) | done | The channel admits a request to answer a message again for an agent that left, and drops it unseen, while the same request for a turn is refused. |
 
 ## Identity and access management
 

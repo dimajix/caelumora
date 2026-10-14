@@ -131,7 +131,7 @@ permission first, then the flow of what it carries.
 | `MessageModified` | the message is there; `ModifyMessage` (E,3); it can be changed so; the flow per part | `MessageNotFound`, `Forbidden`, `MessageUnchangeable`, `ClassificationRefused` |
 | `MessageRevoked` | there; `RevokeMessage` (E,3); changeable | as above |
 | `MessageReclassified` | there; `Reclassify` of the message (E,1 or 3); `require_publish` of the new classification (E,2); changeable | as above |
-| `RetryRequested` | `RetryMessage` (E,1); a message an agent said, not taken back, or an agent taking part | `MessageNotFound`, `Forbidden`, `MessageUnchangeable`, `Invalid` |
+| `RetryRequested` | `RetryMessage` (E,1); a message, not taken back, or a turn, of an agent taking part | `MessageNotFound`, `Forbidden`, `MessageUnchangeable`, `Invalid` |
 | `QuestionAnswered`, `QuestionDeclined` | `AnswerQuestion` (E,1); whether its sender was asked is the agent's | `Forbidden` |
 | `CommandRequested`, `NudgeRequested` | form only: from a user, naming someone taking part; a command is the agent's to admit | `Invalid` |
 | `ApprovalGranted`, `ApprovalDenied` from a user | the agent it names read in S; `ApproveToolCall` (E,3); whether that agent asked is the approver's (issue 312) | `Invalid`, `Forbidden` |

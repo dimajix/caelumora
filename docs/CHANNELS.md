@@ -215,7 +215,7 @@ flow in:
 | a message | it speaks as the actor that acts; each part, the message and its tool results, may flow in as classified (`may_publish`) |
 | `MessageModified`, `MessageRevoked` | the message is in the history; `ModifyMessage`, `RevokeMessage` of its author; it can be changed so; a modification may flow in |
 | `MessageReclassified` | the message is in the history; `Reclassify` of its author; never above the channel; it can be reclassified |
-| `RetryRequested` | `RetryMessage` of the channel; a message an agent said, not taken back, or an agent taking part |
+| `RetryRequested` | `RetryMessage` of the channel; a message, not taken back, or a turn, of an agent taking part |
 | `QuestionAnswered`, `QuestionDeclined` | `AnswerQuestion` of the channel - whether the sender was asked is the agent's to check |
 | `CommandRequested`, `NudgeRequested` | sent by a user, naming an agent (or, for a nudge, anyone else) taking part |
 | `ApprovalGranted`, `ApprovalDenied` from a user | `ApproveToolCall` of the agent it names - whether that agent asked is the approver's to check (issue 312) |
