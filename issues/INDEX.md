@@ -433,6 +433,7 @@ published before anyone else can take it.
 | [356](356-member-questions-threaded-with-their-services.md) | open | The questions on a channel's member take its session and channel and four services as parameters each time, so both loops hold the services and one method needs a clippy exception. |
 | [357](357-actor-start-and-channel-construction-written-twice.md) | open | Starting a member's actor is written three times in `ChannelLoop`, and building a channel's loop twice in `SessionLoop`. |
 | [358](358-controllers-apply-their-events-each-on-its-own.md) | open | The controllers apply, store and announce their update events each on their own, `updated_at` moves on one path only, and the loops forward the updates with uneven logging. |
+| [359](359-actor-runtime-hands-out-the-runtime-manager.md) | open | `ActorRuntime` hands out the `RuntimeManager`, which two actors use to reach past the facade for the `ControllerManager`. |
 
 ## Integrations
 
