@@ -1,6 +1,6 @@
 # 351 — The lifecycle events of a channel are announced by hand at ten places
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -52,3 +52,20 @@ as `ChannelController::update` does with two classifications), has to be made te
 
 - **2026-10-14** — From the review of agents, sessions and channels, epic
   [349](349-core-review-epic.md).
+- **2026-10-14** — Done more generally than considered, as decided with the maintainer: the same
+  call stood for every classified kind - workspaces seven times, skills six, artifacts eight -, and
+  the model knows both halves of it already (`Secured::security_attributes`,
+  `Stored::classification`). So it is not a function of the channel but `Announcing::announce(event,
+  &entity)` in `caelumora-model`'s `event`, a blanket extension of every `EventPublisher` as
+  `Enforcement` is of every `SecurityManager`, so that the controllers' `dyn EventPublisher` has it
+  too. The caller builds the event and its address; a `Stored::address()` would have cost every kind
+  an implementation, for the one kind that lies in another.
+
+  Eleven announcements of channels use it, among them `add_participant` and `announce_resting` of
+  the `ChannelController`, which the list above missed, and those of workspaces, skills and
+  artifacts in a commit of their own. `delete_session` keeps the channels it loaded. Assembled by
+  hand stay those that reach differently, as their comments say: a reclassification, with the
+  classification it had and the one it has (issue 312), a leave, to whoever left besides (issue 23),
+  and a version of an artifact (`publish_classified_part`). The unclassified kinds - sessions,
+  agents, users - still publish with `publish(event, attributes)`, some forty times; `announce`
+  serves them as well, and moving them is left for when they are touched.

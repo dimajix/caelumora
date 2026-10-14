@@ -9,7 +9,7 @@ use caelumora_model::channel::{self, Channel, ChannelId, ChannelUpdateEvent, For
 use caelumora_model::removal::Removal;
 use caelumora_model::group::Group;
 use tracing::error;
-use caelumora_model::event::{EventPublisher, GlobalEvent};
+use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::security::{Grant, SecurityContext, Subject};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
@@ -139,10 +139,10 @@ impl ChannelController {
         }
         self.store(ctx, &channel).await?;
         self.keep_participants(&channel).await;
-        let (attributes, classification) = (channel.security_attributes.clone(), channel.classification.clone());
-        self.channel.store(Arc::new(channel));
+        let channel = Arc::new(channel);
+        self.channel.store(Arc::clone(&channel));
         if let Some(event) = self.membership_event(id, true) {
-            self.event_publisher.publish_classified(event, attributes, &[classification]);
+            self.event_publisher.announce(event, &*channel);
         }
         Ok(())
     }
@@ -197,7 +197,7 @@ impl ChannelController {
     pub(crate) fn announce_resting(&self, agent: AgentId, resting: bool) {
         let channel = self.channel.load();
         if let Some(event) = self.membership_event(ActorId::Agent(agent), !resting) {
-            self.event_publisher.publish_classified(event, channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
+            self.event_publisher.announce(event, &**channel);
         }
     }
 

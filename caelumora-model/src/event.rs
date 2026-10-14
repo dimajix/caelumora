@@ -182,14 +182,70 @@ impl EventPublisher for () {
     fn publish_classified(&self, _event: GlobalEvent, _attributes: SecurityAttributes, _classifications: &[Classification]) {}
 }
 
+/// The one way an event about an entity is published as the entity stands
+/// (issue 351): to whoever may read it, and of a classified kind is cleared
+/// for it - what an event is announced with is the entity's to say, not its
+/// caller's. What is announced otherwise says why: a reclassification to
+/// who reached the entity as it was, too (issue 312), a leave to whoever
+/// left besides (issue 23). By blanket implementation on every
+/// `EventPublisher`, like `Enforcement` on every `SecurityManager`.
+pub trait Announcing {
+    /// Publishes `event` about `entity` with its attributes and, if its kind
+    /// is classified, its classification.
+    fn announce<T: Stored>(&self, event: GlobalEvent, entity: &T);
+}
+
+impl<P: EventPublisher + ?Sized> Announcing for P {
+    fn announce<T: Stored>(&self, event: GlobalEvent, entity: &T) {
+        let classifications = entity.classification().map(std::slice::from_ref).unwrap_or_default();
+        self.publish_classified(event, entity.security_attributes().clone(), classifications);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{EntityChange, GlobalEvent};
+    use super::{Announcing, EntityChange, EventPublisher, GlobalEvent};
     use crate::actor::ActorId;
     use crate::channel::{self, Channel, ChannelId};
+    use crate::confidentiality::Classification;
+    use crate::scope::Scope;
+    use crate::security::{SecurityAttributes, Secured};
     use crate::session::{self, Session, SessionId, SessionUpdateEvent};
-    use crate::user::UserId;
+    use crate::user::{UserId, UserProfile};
+    use crate::value::name::{Name, ScopedName};
+    use crate::workspace::Workspace;
     use serde_json::json;
+    use std::sync::Mutex;
+
+    /// What was published, with whom it reaches.
+    #[derive(Debug, Default)]
+    struct Published(Mutex<Vec<(SecurityAttributes, Vec<Classification>)>>);
+
+    impl EventPublisher for Published {
+        fn publish(&self, event: GlobalEvent, attributes: SecurityAttributes) {
+            self.publish_classified(event, attributes, &[]);
+        }
+
+        fn publish_classified(&self, _event: GlobalEvent, attributes: SecurityAttributes, classifications: &[Classification]) {
+            self.0.lock().unwrap().push((attributes, classifications.to_vec()));
+        }
+    }
+
+    /// Issue 351: an entity is announced with its own attributes, and with
+    /// its classification if its kind has one.
+    #[test]
+    fn an_entity_is_announced_as_it_stands() {
+        let owner = UserId::new();
+        let workspace = Workspace::new(ScopedName { name: Name::new("notes").unwrap(), scope: Scope::default() }, "local", Classification::PUBLIC, owner);
+        let profile = UserProfile::new(owner, None);
+        let published = Published::default();
+        published.announce(GlobalEvent::created::<Workspace>(&workspace.id), &workspace);
+        published.announce(GlobalEvent::created::<UserProfile>(&owner), &profile);
+        assert_eq!(*published.0.lock().unwrap(), [
+            (workspace.security_attributes.clone(), vec![Classification::PUBLIC]),
+            (profile.security_attributes().clone(), vec![]),
+        ], "a classified kind to who is cleared for it, another to whoever may read it");
+    }
 
     /// Issue 122: an event is read back as it was written - by another
     /// instance, which knows the kind and the custom change by name alone.

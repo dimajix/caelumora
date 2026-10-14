@@ -6,8 +6,7 @@ use crate::runtime::RuntimeManager;
 use crate::event::EventBus;
 use anyhow::Result;
 use caelumora_model::channel::{Channel, ChannelField};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::event::GlobalEvent;
+use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::PersonalityId;
 use caelumora_model::user::UserId;
@@ -311,7 +310,7 @@ impl SessionManager {
         let event_bus = &self.events;
         event_bus.publish(GlobalEvent::created::<Session>(&id), session.security_attributes.clone());
         for channel in &channels {
-            event_bus.publish_classified(GlobalEvent::created::<Channel>(&(id, channel.id)), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
+            event_bus.announce(GlobalEvent::created::<Channel>(&(id, channel.id)), channel);
         }
 
         self.spawn_session(session, channels).await
@@ -442,9 +441,7 @@ impl SessionManager {
         // Captured before the runtime loop is torn down.
         // The events carry the attributes as they were: once deleted, the
         // session is nowhere to look them up (issue 39).
-        let channels: Vec<(ChannelId, SecurityAttributes, Classification)> = self.load_channels(&session).await?.into_iter()
-            .map(|c| (c.id, c.security_attributes, c.classification))
-            .collect();
+        let channels = self.load_channels(&session).await?;
 
         // Marked, not removed (issue 164): its channels and their state stay
         // as they are, hidden with it - a channel is reached only through
@@ -479,8 +476,8 @@ impl SessionManager {
         self.stop_running(id).await;
 
         let event_bus = &self.events;
-        for (channel_id, attributes, classification) in channels {
-            event_bus.publish_classified(GlobalEvent::deleted::<Channel>(&(id, channel_id)), attributes, &[classification]);
+        for channel in &channels {
+            event_bus.announce(GlobalEvent::deleted::<Channel>(&(id, channel.id)), channel);
         }
         event_bus.publish(GlobalEvent::deleted::<Session>(&id), session.security_attributes.clone());
         self.starts.remove(&id);

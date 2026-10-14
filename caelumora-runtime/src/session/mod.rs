@@ -10,7 +10,7 @@ use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{self, Channel, Participant};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
-use caelumora_model::event::GlobalEvent;
+use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use crate::view::{Viewer, Views};
 #[cfg(any(test, feature = "test-support"))]
@@ -322,15 +322,15 @@ impl SessionLoop {
                 Some(res) = join_set.join_next(), if !join_set.is_empty() => {
                     match res {
                         Ok(channel_id) => {
-                            let reach = self.channels.get_mut(&channel_id)
+                            let stopped = self.channels.get_mut(&channel_id)
                                 .map(|mut entry| {
                                     entry.task = None;
-                                    (entry.channel.security_attributes(), entry.channel.classification())
+                                    Arc::clone(&entry.channel.channel())
                                 });
                             // Gone: a deleted channel, whose actors all
                             // stopped in time; `delete_channel` announces it.
-                            if let Some((attributes, classification)) = reach {
-                                self.events.publish_classified(GlobalEvent::custom::<Channel>(&(self.id, channel_id), channel::STOPPED, &()), attributes, &[classification]);
+                            if let Some(stopped) = stopped {
+                                self.events.announce(GlobalEvent::custom::<Channel>(&(self.id, channel_id), channel::STOPPED, &()), &*stopped);
                             }
                         }
                         // A deleted channel; `delete_channel` announces it.
@@ -381,7 +381,7 @@ impl SessionLoop {
     fn start_channel(&self, id: ChannelId, join_set: &mut JoinSet<ChannelId>) {
         let Some(mut entry) = self.channels.get_mut(&id) else { return };
         let channel = Arc::clone(&entry.channel);
-        self.events.publish_classified(GlobalEvent::custom::<Channel>(&(self.id, id), channel::STARTED, &()), channel.security_attributes(), &[channel.classification()]);
+        self.events.announce(GlobalEvent::custom::<Channel>(&(self.id, id), channel::STARTED, &()), &**channel.channel());
         entry.task = Some(join_set.spawn(async move {
             let _ = channel.run().await;
             channel.id()

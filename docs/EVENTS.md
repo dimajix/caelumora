@@ -92,6 +92,13 @@ What is classified - a channel and what happens in it, a workspace, a skill, an 
 published with `publish_classified(event, attributes, classifications)`: its classification as
 well, or, as it is reclassified, the one it had and the one it has (issue 312).
 
+An event about an entity as it stands is published with `announce(event, &entity)` (`Announcing`,
+on every `EventPublisher`, issue 351): it reads the attributes and, of a classified kind, the
+classification from the entity, so that what an event reaches is the entity's to say, not its
+caller's. Assembled by hand are only the events that reach differently, and say why: a
+reclassification, with both classifications, and a leave, which reaches whoever left besides (issue
+23).
+
 ### Subscribing as someone
 
 `subscribe_as(context)` receives the events about the entities `context` may read. It asks the

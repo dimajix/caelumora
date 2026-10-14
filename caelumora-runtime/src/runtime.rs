@@ -9,7 +9,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::{self, Channel, ChannelId};
-use caelumora_model::event::GlobalEvent;
+use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
 use crate::agent::state::{AgentStateHandle, AgentStates};
@@ -259,9 +259,8 @@ impl ActorRuntime {
     /// Nothing once the channel is gone.
     pub fn announce_channel_state_changed(&self) {
         let (Ok(agent), Some(channel)) = (self.agent_id(), self.channel_loop()) else { return };
-        let attributes = channel.security_attributes();
         self.runtime.runtime_manager.event_bus()
-            .publish_classified(GlobalEvent::custom::<Channel>(&(self.session_id, self.channel_id), channel::AGENT_STATE_CHANGED, &agent), attributes, &[channel.classification()]);
+            .announce(GlobalEvent::custom::<Channel>(&(self.session_id, self.channel_id), channel::AGENT_STATE_CHANGED, &agent), &**channel.channel());
     }
 
     /// What the actor's turns navigate (issue 163): its session, read from

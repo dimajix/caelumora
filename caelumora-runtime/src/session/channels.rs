@@ -10,7 +10,7 @@ use caelumora_model::channel::{self, Channel};
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::{Classification, Place};
 use caelumora_model::value::language::Language;
-use caelumora_model::event::GlobalEvent;
+use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext};
 use crate::view::{channel_reading, ChannelReader};
 use caelumora_model::store::{StoreError, StoreResultExt, Stored};
@@ -173,7 +173,7 @@ impl SessionLoop {
                 return Err(error);
             }
         };
-        self.events.publish_classified(GlobalEvent::created::<Channel>(&(self.id, channel.id)), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
+        self.events.announce(GlobalEvent::created::<Channel>(&(self.id, channel.id)), &channel);
         info!("Channel {}/{} created in session {}", channel.name, channel.id, self.id);
         Ok(channel_loop)
     }
@@ -246,9 +246,9 @@ impl SessionLoop {
         let event_bus = &self.events;
         if let Some(task) = task {
             task.abort();
-            event_bus.publish_classified(GlobalEvent::custom::<Channel>(&(self.id, channel_id), channel::STOPPED, &()), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
+            event_bus.announce(GlobalEvent::custom::<Channel>(&(self.id, channel_id), channel::STOPPED, &()), &*channel);
         }
-        event_bus.publish_classified(GlobalEvent::deleted::<Channel>(&(self.id, channel_id)), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
+        event_bus.announce(GlobalEvent::deleted::<Channel>(&(self.id, channel_id)), &*channel);
         info!("Channel {}/{} deleted from session {} by {}", channel.name, channel_id, self.id, context.caller_id);
         Ok(())
     }
@@ -316,7 +316,7 @@ impl SessionLoop {
                 warn!("Channel {} of session {} was restored, but not what lies in its scope: {}", channel_id, self.id, e);
             }
         }
-        self.events.publish_classified(GlobalEvent::restored::<Channel>(&(self.id, channel_id)), channel.security_attributes.clone(), std::slice::from_ref(&channel.classification));
+        self.events.announce(GlobalEvent::restored::<Channel>(&(self.id, channel_id)), &channel);
         info!("Channel {}/{} restored in session {} by {}", channel.name, channel_id, self.id, context.caller_id);
         Ok(channel_loop)
     }
