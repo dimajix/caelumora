@@ -360,6 +360,7 @@ published before anyone else can take it.
 | [132](132-rest-and-web-ui-docs.md) | done | The REST server and the web UI have no document of their own; what they do is scattered across the documents of other subjects. |
 | [192](192-issue-179-small-duplicates.md) | done | Small duplicates were left from issue 179 in the member views, the reader's place, "not found means none" and `unheard`. |
 | [313](313-docs-too-detailed.md) | done | The documents in `docs/` have about 130,000 tokens, mostly code retold - variants, fields, call orders - and inline issue history, so the concepts and rules are hard to find and every change has a second place to update. |
+| [349](349-core-review-epic.md) | open | Epic for the review of agents, sessions and channels of 2026-10-14: the bracket around issues 350–359 and their recommended order. |
 
 ## Code structure
 

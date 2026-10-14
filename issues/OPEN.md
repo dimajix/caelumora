@@ -94,6 +94,12 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 | [305](305-skill-versions.md) | open | A skill keeps only its current text: every change overwrites what it said, nobody sees what changed, and an earlier version cannot be made current again. |
 
+## Maintenance
+
+| No. | Status | Issue |
+|---|---|---|
+| [349](349-core-review-epic.md) | open | Epic for the review of agents, sessions and channels of 2026-10-14: the bracket around issues 350–359 and their recommended order. |
+
 ## Code structure
 
 | No. | Status | Issue |
