@@ -21,7 +21,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
 use caelumora_model::template::SessionTemplateId;
 use caelumora_model::group::GroupId;
-use crate::group::purge_participants;
+use crate::group::{GroupManager, purge_participants};
 use caelumora_model::workspace::{Workspace, WorkspaceId};
 use crate::workspace::WorkspaceManager;
 use crate::controller::{ControllerManager, SessionController, WorkspaceController};
@@ -142,6 +142,9 @@ pub struct SessionLoop {
     events: Arc<EventBus>,
     /// What goes with a channel deleted or restored (issue 178).
     scoped: Arc<ScopedEntities>,
+    /// What deletes and restores the group of a channel's participants with
+    /// it (issue 348).
+    groups: Arc<GroupManager>,
     /// The user commands of every channel of the session.
     commands: Arc<CommandExecutor<dyn ChannelCommandProvider>>,
     /// The session's channels, and which of them run (issue 116). A channel
@@ -163,11 +166,7 @@ pub struct SessionLoop {
 /// purged (issue 164).
 async fn purge_channel_document(stores: &EntityStores, channel_id: ChannelId) -> StoreResult<bool> {
     let system = SecurityContext::system();
-    if let Err(e) = purge_participants(stores.groups.as_ref(), GroupId::of_channel(channel_id)).await {
-        if !matches!(e, StoreError::NotFound { .. }) {
-            return Err(e);
-        }
-    }
+    purge_participants(stores.groups.as_ref(), GroupId::of_channel(channel_id)).await?;
     stores.channels.delete(&system, channel_id).await?;
     stores.channels.purge(&system, channel_id).await
 }
@@ -247,6 +246,7 @@ impl SessionLoop {
             controllers: Arc::clone(runtime_manager.controller_manager()),
             events: Arc::clone(runtime_manager.event_bus()),
             scoped: Arc::clone(runtime_manager.scoped_entities()),
+            groups: Arc::clone(runtime_manager.group_manager()),
             runtime_manager,
             commands,
             channels,

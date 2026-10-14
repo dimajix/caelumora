@@ -1,6 +1,6 @@
 # 348 — The group of a session's participants can be in the trash while the session is not
 
-**Status:** open
+**Status:** done
 **Area:** Identity and access management
 
 ## The problem
@@ -63,3 +63,26 @@ published in the channel) reaches nobody either.
 - **2026-10-14** — Opened while issue [347](347-entries-naming-purged-groups.md) was worked on:
   `keep_participants` failed for a group left in the trash, which it now restores; that corrects
   the group at the next change of the participants, not where it was left behind.
+- **2026-10-14** — Decided with the maintainer: the groups follow their holder, not the caller.
+  Every group in a session's or channel's scope is the participants of one (a team lies only in
+  the global scope or a user's), and every other write of it - making it, following the
+  participants, purging it - was the runtime's already; only deleting and restoring went through
+  `ScopedEntities` in the caller's name. Issue 320's reasons do not hold for it: it is nobody's to
+  keep or leave behind, and the record of who deleted stays on the session or channel. Kept from
+  issue [319](319-scoped-artifact-events-miss-version-readers.md): the groups are announced as
+  they go and come back.
+- **2026-10-14** — Done. The `GroupManager` is no `ScopeMember` any more; `ScopedEntities` deals
+  with what lies in a scope alone. `GroupManager::delete_participants` and
+  `restore_participants` delete and restore the groups within a session's or channel's scope in
+  the runtime's name, all or none - one that fails takes back those done before - and announce
+  them once all are done. `delete_session` and `delete_channel` delete them last, once nothing
+  else of the scope is left, and take the mark away again if they cannot go; `restore_session`
+  and `restore_channel` restore them first, with the mark, and delete the session or channel
+  again if they cannot come back. `purge_session` purges the session's group by
+  `purge_participants`, as the channels' were already, which now takes a group that is not there
+  as nothing to purge. Since no policy can refuse the groups any more, the test of the security
+  suite asked for in *Done when* became
+  `the_group_of_a_sessions_participants_follows_it_whoever_may_delete_groups`: a group alice may
+  neither delete nor restore goes and comes back with her session, nothing is asked of her about
+  it, and bob reaches the session by it again; the store failing half-way is
+  `group::tests::the_participants_go_and_come_back_all_or_none`. Stored data need not be deleted.

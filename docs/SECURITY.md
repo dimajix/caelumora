@@ -203,15 +203,17 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     them, and that its actors stop there - and start again once it is restored - is done in the
     runtime's name, a consequence of the deletion, not a change of channels owned by others.
 *   What lies in a session's or a channel's scope - personalities, session templates, agents,
-    workspaces, skills, artifacts, groups - is deleted and restored with it in the name of whoever
-    deletes or restores it (issue 320); only finding it is done in the runtime's name. Whoever
-    deletes a session deletes what of its scope they may; if something is left - an artifact
-    another participant published there, a contributor's agent -, the session is kept, and they
-    are told what is left, by kind and count (`SessionError::ScopeNotEmpty`). What they may is
-    deleted all the same, so that what is left to do is plain: its owners keep it elsewhere or
-    delete it. Whoever restores a session restores it and what of its scope they may; the rest
-    stays deleted for its owner to restore. Purging is the system's anyway and done in the
-    runtime's name.
+    workspaces, skills, artifacts - is deleted and restored with it in the name of whoever deletes
+    or restores it (issue 320); only finding it is done in the runtime's name. Whoever deletes a
+    session deletes what of its scope they may; if something is left - an artifact another
+    participant published there, a contributor's agent -, the session is kept, and they are told
+    what is left, by kind and count (`SessionError::ScopeNotEmpty`). What they may is deleted all
+    the same, so that what is left to do is plain: its owners keep it elsewhere or delete it.
+    Whoever restores a session restores it and what of its scope they may; the rest stays deleted
+    for its owner to restore. Purging is the system's anyway and done in the runtime's name.
+*   The groups of the participants of a session and its channels are not among it: they go and come
+    back with the session or channel in the runtime's name, as they are made and changed (issue 348,
+    see [Groups](#groups)), whatever whoever deletes or restores it may do with groups.
 *   The runtime acting on its own uses `SecurityContext::system()`, which may do everything. This is
     deliberate and never a default: an empty context has no rights.
 
@@ -315,8 +317,17 @@ without a copy of the members in every list. There are two kinds, told apart by 
     names them needs nothing but the session's or channel's id. They hold users and agents, not
     approvers. Their one writer is what changes the participants, writing in the runtime's name
     after the change it follows, which is the act that was permitted. The group is derived anew from
-    the participants each time, so that a write that failed is corrected by the next. It goes with
-    its session or channel, and the `GroupManager` refuses to change it.
+    the participants each time, so that a write that failed is corrected by the next. The
+    `GroupManager` refuses to change it.
+
+The group of the participants of a session or channel goes and comes back with it (issue 348): the
+session's or channel's own list names it, and its members reach it only while the group is there, so
+a session or channel that is there has its group there, too. It is deleted and restored with its
+mark, in the runtime's name like every other write of it - not in the name of whoever deletes or
+restores the session, as what lies in its scope is (issue 320): it is derived from the participants,
+nobody's to keep or leave behind. All of the groups go or none, and if they cannot go, the session
+or channel is kept; if they cannot come back, it stays deleted. The record of the deletion
+(`Removal::by`) names the system; the session's or channel's names whoever deleted it.
 
 The REST API names the participants of a session or channel by the session's or channel's id
 (`kind: session`, `kind: channel`), a team by its own (`kind: group`).
