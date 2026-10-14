@@ -3113,6 +3113,30 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
     }
 }
 
+/// Issue 344: a workspace lies in a session's scope only where its maker
+/// may read the session - what lies there keeps the session from being
+/// deleted by whoever may not delete it -, asked once making it was, so
+/// that who may not make one learns nothing of the session, and before
+/// anything is made. As an agent is put there (issue 227).
+#[tokio::test]
+async fn a_workspace_is_made_in_a_session_s_scope_only_by_who_may_read_the_session() {
+    let world = World::new().await;
+    let workspaces = world.runtime.workspace_manager();
+    let (bob, carol) = (World::as_user(world.bob), World::as_user(world.carol));
+    let session = world.shared_session(&[], &[]).await;
+    let scope = Scope::SessionScope { session_id: session.id() };
+
+    let (refused, asked) = world.asked(workspaces.create(&carol, "files", scope.clone(), "main", None, Classification::PUBLIC)).await;
+    assert!(matches!(refused, Err(WorkspaceError::Store(StoreError::NotFound { .. }))), "not by a stranger to it: {refused:?}");
+    assert!(asked.ends_with(&checks(&["carol: CreateWorkspace(carol's) yes", "carol: GetSession(alice's) no"])), "making it, then the session: {asked:?}");
+    assert!(world.runtime.entity_stores().workspaces.list(&World::system(), &Query::all()).await.unwrap().items.is_empty(), "nothing made");
+
+    let (made, asked) = world.asked(workspaces.create(&bob, "files", scope.clone(), "main", None, Classification::PUBLIC)).await;
+    assert_eq!(made.expect("by a member, who reads it").name.scope, scope);
+    assert!(asked.ends_with(&checks(&["bob: CreateWorkspace(bob's) yes", "bob: GetSession(alice's) yes", "bob: CreateWorkspace(bob's) yes"])), "{asked:?}");
+    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 // --- Commands an agent carries out itself (issue 269) ------------------------
 
 /// A component whose agent carries out `/mark`, for whoever may write in the

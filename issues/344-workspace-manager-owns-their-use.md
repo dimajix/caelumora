@@ -1,6 +1,6 @@
 # 344 — The `WorkspaceManager` owns workspaces and also what is done in them
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -141,3 +141,13 @@ the artifact tool, the workspace prompt part, the channel's and the workspace's 
   uses. Reaching them through the views was not followed - a view reads and decides nothing -, nor a
   service looking the channel up by its id. A terminal reached for reading can still write: what is
   asked is which permission, not what the handle can do.
+- **2026-10-14** — Done, with the gap of the session's scope closed here at the maintainer's request
+  rather than in an issue of its own: `WorkspaceManager::create` asks, for a session's scope,
+  whether its maker may make it (`CreateWorkspace`) and then may read the session (`GetSession`), as
+  `AgentManager::create` does since [227](227-agent-management.md). So that a template is no
+  exception to it, `SessionManager::create_from_template` finds or makes the template's workspace,
+  or one chosen to be made for the session alone, once the session is made, and attaches it
+  (`SessionLoop::attach_workspace`, which `set_workspace` uses too) before it takes in the agents;
+  if that fails, the session is taken back, and a workspace made for it outside its scope with it.
+  One of the user's own chosen as the session is made is still attached as it is made. The REST
+  server still makes no workspace in a session's scope (`invalid_scope`).

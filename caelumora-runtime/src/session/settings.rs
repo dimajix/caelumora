@@ -10,6 +10,8 @@ use caelumora_model::group::GroupId;
 use caelumora_model::workspace::WorkspaceId;
 use super::{held_workspace, SessionLoop, require_attachable};
 use caelumora_model::session::Session;
+use crate::controller::WorkspaceController;
+use std::sync::Arc;
 
 impl SessionLoop {
     /// Renames the session on behalf of `context`.
@@ -90,14 +92,28 @@ impl SessionLoop {
         if let Some(id) = workspace {
             require_attachable(self.runtime_manager.workspace_manager(), self.security.as_ref(), context, id, self.id).await?;
         }
-        self.session_controller.update_workspace(context, workspace).await?;
-        let held = held_workspace(&self.controllers, self.id, workspace).await?;
-        self.workspace.store(held.clone());
+        let held = self.attach_workspace(context, workspace).await?;
         if let (Some(controller), Some(grant)) = (held, share) {
             controller.share(context, Subject::Group(GroupId::of_session(self.id)), grant).await?;
         }
         info!(session = %self.id, workspace = ?workspace, by = %context.caller_id, "Session's workspace changed");
         Ok(())
+    }
+
+    /// Attaches `workspace` to the session on behalf of `context`, or with
+    /// `None` takes the one attached away, and holds it live (issue 344):
+    /// stored as changing the session, without asking whether it may be
+    /// attached - its caller asked that (`set_workspace`), or found or made
+    /// it for the session as it made the session (`SessionManager`).
+    /// Returns the workspace as it is held.
+    ///
+    /// # Errors
+    /// Whatever storing the session or reading the workspace reports.
+    pub(crate) async fn attach_workspace(&self, context: &SecurityContext, workspace: Option<WorkspaceId>) -> Result<Option<Arc<WorkspaceController>>> {
+        self.session_controller.update_workspace(context, workspace).await?;
+        let held = held_workspace(&self.controllers, self.id, workspace).await?;
+        self.workspace.store(held.clone());
+        Ok(held)
     }
 }
 

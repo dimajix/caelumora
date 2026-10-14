@@ -30,11 +30,14 @@ purge.
 
 ## In a session
 
-A session has at most one workspace attached, shared by its channels. A template may name it -
-found by its name in the scope the template asks for, or made there by the session's owner, as an
-agent of a template is. Whoever makes a session may choose instead: none, one of their own, or one
-made for the session alone. Otherwise only the workspace's owner attaches it, to a session they may
-change - not one of another session's scope; whoever may change the session takes it away.
+A session has at most one workspace attached, shared by its channels. A template may name it - found
+by its name in the scope the template asks for, or made there by the session's owner, as an agent of
+a template is, once the session is made. Whoever makes a session may choose instead: none, one of
+their own, attached as the session is made, or one made for the session alone. A workspace is made
+in a session's scope only by whoever may read the session: what lies there keeps the session from
+being deleted by whoever may not delete it. Otherwise only the workspace's owner attaches it, to a
+session they may change - not one of another session's scope; whoever may change the session takes
+it away.
 
 **Attaching shares nothing by itself**: who may use a workspace is its access list's to say (see
 [SECURITY.md](SECURITY.md#access-lists)). One made for a session lets the session's members read and

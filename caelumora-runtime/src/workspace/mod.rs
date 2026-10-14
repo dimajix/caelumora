@@ -37,6 +37,7 @@ use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Co
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityContext, SecurityManager, WRITE};
+use caelumora_model::session::Session;
 use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
@@ -124,6 +125,8 @@ pub(crate) async fn require_write(security: &dyn SecurityManager, ctx: &Security
 
 pub struct WorkspaceManager {
     workspaces: Arc<dyn EntityStore<Workspace>>,
+    /// The sessions a workspace may be made in the scope of.
+    sessions: Arc<dyn EntityStore<Session>>,
     events: Arc<EventBus>,
     security: Arc<dyn SecurityManager>,
     /// What may flow where, and who is cleared for what (issue 304).
@@ -149,7 +152,7 @@ impl WorkspaceManager {
     /// made as backends (issue 324) -, and of which a person may put files
     /// as large as `config` says.
     pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>, config: &WorkspacesConfig) -> Self {
-        Self { workspaces: Arc::clone(&stores.workspaces), events, security, confidentiality, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()) }
+        Self { workspaces: Arc::clone(&stores.workspaces), sessions: Arc::clone(&stores.sessions), events, security, confidentiality, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()) }
     }
 
     /// The largest file a person may put into a workspace.
@@ -174,18 +177,30 @@ impl WorkspaceManager {
     /// to ask, since nothing is changed and nothing of others asked before
     /// (issue 312).
     ///
+    /// A workspace of a session's scope goes with the session: what lies
+    /// there and cannot be deleted by who deletes the session keeps the
+    /// session from being deleted (`ScopeNotEmpty`). So only who may read
+    /// the session (`GetSession`) puts a workspace there, as an agent is put
+    /// there (issue 344) - asked after making it was, which is then asked
+    /// before anything of others.
+    ///
     /// # Errors
     /// `OwnerNotAUser`, `UnknownStorage`, `Invalid` for a name or
     /// description that does not fit, `ClassificationRefused`, `NotCleared`,
-    /// a `StoreError` - `NameTaken` among them, and `Validation` for a
-    /// scope a workspace does not lie in - or a `TerminalError` of making
-    /// the place.
+    /// a `StoreError` - `PermissionDenied` if they may not make it,
+    /// `NotFound` if there is no such session they may read, `NameTaken`,
+    /// and `Validation` for a scope a workspace does not lie in - or a
+    /// `TerminalError` of making the place.
     pub async fn create(&self, ctx: &SecurityContext, name: &str, scope: Scope, storage: &str, description: Option<&str>, classification: Classification) -> WorkspaceResult<Workspace> {
         let ActorId::User(owner) = ctx.principal_id else { return Err(WorkspaceError::OwnerNotAUser) };
         let provider = self.storages.get(storage).ok_or_else(|| WorkspaceError::UnknownStorage(storage.to_string()))?;
         let mut workspace = Workspace::new(ScopedName::new(name, scope)?, storage, classification, owner);
         workspace.description = Description::optional(description)?;
         require_classification(self.confidentiality.as_ref(), ctx, storage, provider.as_ref(), &workspace.classification)?;
+        if let Scope::SessionScope { session_id } = workspace.name.scope {
+            self.security.require(ctx, ActionType::create(Workspace::KIND, &workspace.security_attributes), StoreError::PermissionDenied).await?;
+            self.sessions.get(ctx, session_id).await?;
+        }
 
         let _writing = self.writing.lock().await;
         self.workspaces.create(ctx, &workspace).await?;
