@@ -372,24 +372,28 @@ async fn is_gone(store: &dyn EntityStore<Group>, id: GroupId) -> bool {
 
 /// Stores `participants` as the group of the participants of a session or
 /// channel, in the runtime's name: its members replace those stored, and
-/// the group is made if there is none yet.
+/// the group is made if there is none yet. Called only while the session
+/// or channel is there, so a group found in the trash is restored first
+/// (issue 347): a deletion of the session that failed half-way, or a
+/// restoring that did not reach its groups, left it there.
 ///
 /// # Errors
 /// Whatever the store reports.
 pub(crate) async fn keep_participants(store: &dyn EntityStore<Group>, participants: Group) -> StoreResult<()> {
     let system = SecurityContext::system();
-    match store.get(&system, participants.id).await {
-        Ok(mut stored) => {
-            if stored.members == participants.members {
-                return Ok(());
-            }
-            stored.members = participants.members;
-            stored.updated_at = Utc::now();
-            store.update(&system, &stored).await
-        }
-        Err(StoreError::NotFound { .. }) => store.create(&system, &participants).await,
-        Err(e) => Err(e),
+    let mut stored = match store.get(&system, participants.id).await.optional()? {
+        Some(stored) => stored,
+        None => match store.get_deleted(&system, participants.id).await.optional()? {
+            Some(_) => store.restore(&system, participants.id).await?,
+            None => return store.create(&system, &participants).await,
+        },
+    };
+    if stored.members == participants.members {
+        return Ok(());
     }
+    stored.members = participants.members;
+    stored.updated_at = Utc::now();
+    store.update(&system, &stored).await
 }
 
 /// Removes the group `id` for good, in the runtime's name: marked deleted
@@ -410,7 +414,9 @@ mod tests {
     use super::*;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::session::SessionId;
     use caelumora_model::store::json::JsonFileStore;
+    use caelumora_model::store::memory::MemoryStore;
     use std::path::{Path, PathBuf};
 
     /// The file named `name` somewhere below `dir`.
@@ -418,6 +424,22 @@ mod tests {
         std::fs::read_dir(dir).ok()?.flatten().map(|entry| entry.path()).find_map(|path| {
             if path.is_dir() { find(&path, name) } else { (path.file_name()? == name).then_some(path) }
         })
+    }
+
+    #[tokio::test]
+    async fn the_participants_follow_again_once_their_group_was_left_in_the_trash() {
+        let groups = MemoryStore::new().entity_stores().groups;
+        let system = SecurityContext::system();
+        let owner = UserId::new();
+        let bob = ActorId::User(UserId::new());
+        let session = SessionId::new();
+        let name = ScopedName::new("participants", Scope::SessionScope { session_id: session }).unwrap();
+        let participants = Group { id: GroupId::of_session(session), ..Group::team(name, owner) };
+        keep_participants(groups.as_ref(), participants.clone()).await.expect("made");
+        groups.delete(&system, participants.id).await.unwrap();
+
+        keep_participants(groups.as_ref(), Group { members: vec![bob], ..participants.clone() }).await.expect("restored, not made again");
+        assert_eq!(groups.get(&system, participants.id).await.unwrap().members, [bob], "there again, following who takes part");
     }
 
     #[tokio::test]
