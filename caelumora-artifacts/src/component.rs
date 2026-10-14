@@ -6,9 +6,9 @@
 //! as a link to it as it is now (issue 273).
 //!
 //! The workspace is reached as `terminal_tool` reaches it, through the
-//! `WorkspaceManager` in the turn's channel, for reading; the file read is
-//! handed to the `ArtifactManager` (issue 296) - both services its kind
-//! uses. Without an artifact storage configured, a call fails and says so. The result is
+//! turn's channel (`AgentWork::workspace_terminal`, issue 344), for
+//! reading; the file read is handed to the `ArtifactManager` (issue 296),
+//! the service its kind uses. Without an artifact storage configured, a call fails and says so. The result is
 //! classified as the artifact, which is classified as the workspace.
 
 use crate::manager::{ArtifactError, ArtifactManager};
@@ -21,7 +21,6 @@ use caelumora_runtime::agent::turn::Turn;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
 use caelumora_runtime::terminal::WorkspacePath;
 use caelumora_runtime::tool::{arguments, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
-use caelumora_runtime::workspace::WorkspaceManager;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -51,7 +50,6 @@ struct ArtifactToolConfig {
 #[derive(Debug)]
 pub struct ArtifactTool {
     config: ArtifactToolConfig,
-    workspaces: Arc<WorkspaceManager>,
     artifacts: Arc<ArtifactManager>,
 }
 
@@ -67,12 +65,12 @@ struct Publish {
 
 impl ArtifactTool {
     /// The tool of a component configured with `params`, publishing a file
-    /// of the workspace `workspaces` reach through `artifacts`.
+    /// of the turn's workspace through `artifacts`.
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` for parameters it does not take.
-    pub fn new(params: &Value, workspaces: Arc<WorkspaceManager>, artifacts: Arc<ArtifactManager>) -> ComponentResult<Self> {
-        Ok(Self { config: config_of_params(params)?, workspaces, artifacts })
+    pub fn new(params: &Value, artifacts: Arc<ArtifactManager>) -> ComponentResult<Self> {
+        Ok(Self { config: config_of_params(params)?, artifacts })
     }
 }
 
@@ -141,7 +139,7 @@ impl ToolProvider for ArtifactTool {
         };
         let description = description.as_deref().map(str::trim).filter(|d| !d.is_empty());
         let (ctx, session, channel) = (turn.security_context(), turn.session_id(), turn.channel_id());
-        let (workspace, terminal) = self.workspaces.terminal_in(ctx, session, channel, Grant::Read).await
+        let (workspace, terminal) = turn.work().workspace_terminal(Grant::Read).await
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         let content = terminal.read(&at).await?;
         let (artifact, number) = self.artifacts.publish(ctx, content, &workspace.classification, &name, description, session, channel).await?;
@@ -164,11 +162,11 @@ impl ToolProvider for ArtifactTool {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(ARTIFACT_TOOL_KIND).provides::<dyn ToolProvider>().uses::<WorkspaceManager>().uses::<ArtifactManager>(),
+        ComponentKind::new(ARTIFACT_TOOL_KIND).provides::<dyn ToolProvider>().uses::<ArtifactManager>(),
         |descriptor, context| {
-            let (workspaces, artifacts) = (Arc::clone(context.service::<WorkspaceManager>()?), Arc::clone(context.service::<ArtifactManager>()?));
+            let artifacts = Arc::clone(context.service::<ArtifactManager>()?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactTool::new(&descriptor.params, workspaces, artifacts)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactTool::new(&descriptor.params, artifacts)?));
             Ok(facets)
         },
     );

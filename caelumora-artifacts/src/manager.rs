@@ -225,7 +225,7 @@ impl ArtifactManager {
     /// permission is asked, it gives nothing away to one who could read it.
     /// The caller vouches for `classification`: it is that of the workspace
     /// the content was read from (`artifact_tool` reads it through
-    /// `WorkspaceManager::terminal_in`), never one a client names.
+    /// `AgentWork::workspace_terminal`), never one a client names.
     /// The content is kept first, its digest taken as it is; a document that
     /// cannot be stored leaves no content. Answers the artifact as it is
     /// now, and the number of the new version.

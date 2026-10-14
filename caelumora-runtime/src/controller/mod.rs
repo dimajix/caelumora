@@ -1,6 +1,6 @@
 //! The live documents of a running session and their one writer each
-//! (issue 86): a controller holds the current `Session`, `Channel`, `Agent`
-//! or `User`, stores a change first - which is where the permission is
+//! (issue 86): a controller holds the current `Session`, `Channel`, `Agent`,
+//! `User` or `Workspace`, stores a change first - which is where the permission is
 //! checked - and only then takes it over and announces it on the event bus.
 //! The documents themselves are the model's; keeping them live, writing
 //! them and announcing is the runtime's.
@@ -13,35 +13,43 @@
 //!
 //! A session and its channels run in one instance, and so do their
 //! controllers. Agents and users do not belong to a session: one of them
-//! takes part in several, perhaps in several instances. The
-//! `ControllerManager` keeps one controller per agent and per user of its
-//! instance, shared by all their actors, and takes the changes announced
-//! about them into those controllers (issue 121).
+//! takes part in several, perhaps in several instances. Nor do workspaces:
+//! one may be attached to several sessions, and is used directly too
+//! (issue 344). The `ControllerManager` keeps one controller per agent, per
+//! user and per workspace of its instance, shared by all that use it, and
+//! takes the changes announced about them into those controllers (issue
+//! 121).
 
 mod agent;
 mod channel;
 mod session;
 mod user;
+mod workspace;
 
 pub use agent::AgentController;
 pub use channel::ChannelController;
 pub use session::SessionController;
 pub use user::UserController;
+pub use workspace::WorkspaceController;
 
 use crate::event::EventBus;
+use crate::terminal::TerminalProvider;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::{Channel, ChannelId};
+use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::event::EntityChange;
-use caelumora_model::security::SecurityContext;
+use caelumora_model::security::{SecurityContext, SecurityManager};
 use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::{EntityStores, StoreError, StoreResult, StoreResultExt};
 use caelumora_model::user::{User, UserId, UserProfile};
-use std::collections::HashMap;
+use caelumora_model::workspace::{Workspace, WorkspaceId};
+use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
 use std::sync::{Arc, OnceLock, Weak};
 use tokio::sync::Mutex;
+use tracing::warn;
 
 /// The controllers of one kind that are alive in this instance, by id.
 /// Weak: whoever uses a controller - the actors - keeps it alive, and one
@@ -56,8 +64,9 @@ type Registry<K, C> = Arc<Mutex<HashMap<K, Weak<C>>>>;
 ///   caller has loaded the document, with its own permissions, and the
 ///   session that runs it owns the controller; that there is only one per
 ///   document follows from a session running only once (`SessionManager`).
-/// - `…_controller(id)` gives the controller of an agent or user that this
-///   instance shares among all its actors (issue 121): the one that lives,
+/// - `…_controller(id)` gives the controller of an agent, a user or a
+///   workspace that this instance shares among all that use it (issues 121,
+///   344): the one that lives,
 ///   or loaded from the store if none does. Hence an id rather than a
 ///   document - whether to load is the manager's to decide - and `async`
 ///   and fallible.
@@ -65,20 +74,34 @@ type Registry<K, C> = Arc<Mutex<HashMap<K, Weak<C>>>>;
 pub struct ControllerManager {
     stores: EntityStores,
     event_bus: Arc<EventBus>,
+    /// Who may do what, and what may flow where: a workspace's controller
+    /// asks who may change its files, and of a new classification (issue
+    /// 304).
+    security: Arc<dyn SecurityManager>,
+    confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// The storages of workspaces, by name, shared with the
+    /// `WorkspaceManager` and the `CommandReaper`: a workspace's controller
+    /// holds its own.
+    storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>,
     agents: Registry<AgentId, AgentController>,
     users: Registry<UserId, UserController>,
-    /// The task that takes announced changes into the live agent and user
-    /// controllers, started with the first of them.
+    workspaces: Registry<WorkspaceId, WorkspaceController>,
+    /// The task that takes announced changes into the live agent, user and
+    /// workspace controllers, started with the first of them.
     follower: OnceLock<()>,
 }
 
 impl ControllerManager {
-    pub fn new(stores: EntityStores, event_bus: Arc<EventBus>) -> Self {
+    pub fn new(stores: EntityStores, event_bus: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>) -> Self {
         Self {
             stores,
             event_bus,
+            security,
+            confidentiality,
+            storages,
             agents: Default::default(),
             users: Default::default(),
+            workspaces: Default::default(),
             follower: OnceLock::new(),
         }
     }
@@ -136,6 +159,27 @@ impl ControllerManager {
         Ok(controller)
     }
 
+    /// The controller of workspace `id` in this instance, like
+    /// `agent_controller`: with its storage, if that is still configured.
+    /// Read as the runtime: whoever changes or uses the workspace through
+    /// it is asked as they do.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if the workspace no longer exists, or
+    /// whatever else the store reports.
+    pub async fn workspace_controller(&self, id: WorkspaceId) -> StoreResult<Arc<WorkspaceController>> {
+        self.start_follower();
+        let mut workspaces = self.workspaces.lock().await;
+        if let Some(controller) = workspaces.get(&id).and_then(Weak::upgrade) {
+            return Ok(controller);
+        }
+        let workspace = self.stores.workspaces.get(&SecurityContext::system(), id).await?;
+        let provider = self.storages.get(&workspace.storage).cloned();
+        let controller = Arc::new(WorkspaceController::new(workspace, provider, Arc::<EventBus>::clone(&self.event_bus), &self.stores, Arc::clone(&self.security), Arc::clone(&self.confidentiality)));
+        remember(&mut workspaces, id, &controller);
+        Ok(controller)
+    }
+
     /// The context in which what `owner` owns is built, in `channel` of
     /// `session`: a channel's components, a session's commands (issue
     /// 321). A user's as their controller gives it, with their roles as they
@@ -170,8 +214,8 @@ impl ControllerManager {
         }
     }
 
-    /// Starts the task that takes the changes announced about agents and
-    /// users into their live controllers - once per instance, not once per
+    /// Starts the task that takes the changes announced about agents,
+    /// users and workspaces into their live controllers - once per instance, not once per
     /// session that uses them, and the one place where changes made in
     /// other instances will arrive. Started before the first controller is
     /// loaded, so that nothing announced after loading is missed; an event
@@ -180,7 +224,7 @@ impl ControllerManager {
     fn start_follower(&self) {
         self.follower.get_or_init(|| {
             let mut events = self.event_bus.subscribe_all();
-            let (agents, users) = (Arc::clone(&self.agents), Arc::clone(&self.users));
+            let (agents, users, workspaces) = (Arc::clone(&self.agents), Arc::clone(&self.users), Arc::clone(&self.workspaces));
             tokio::spawn(async move {
                 while let Some(event) = events.recv().await {
                     if let Some((id, EntityChange::Updated(_))) = event.about::<Agent>() {
@@ -190,6 +234,14 @@ impl ControllerManager {
                     } else if let Some((id, EntityChange::Updated(_))) = event.about::<User>().or_else(|| event.about::<UserProfile>()) {
                         if let Some(controller) = users.lock().await.get(&id).and_then(Weak::upgrade) {
                             controller.process_global_event(&event);
+                        }
+                    } else if let Some((id, EntityChange::Updated(_))) = event.about::<Workspace>() {
+                        // Read again as stored, without holding the registry.
+                        let controller = workspaces.lock().await.get(&id).and_then(Weak::upgrade);
+                        if let Some(controller) = controller {
+                            if let Err(e) = controller.process_global_event(&event).await {
+                                warn!(workspace = %id, "A change of the workspace made elsewhere could not be taken over: {e}");
+                            }
                         }
                     }
                 }
@@ -230,13 +282,15 @@ mod tests {
     use caelumora_model::store::StoreError;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::{User, UserUpdateEvent};
+    use caelumora_model::workspace::WorkspaceUpdateEvent;
+    use caelumora_model::security::{AclEntry, Grant, Subject};
     use std::time::Duration;
     use caelumora_model::confidentiality::ConfidentialityRules;
 
     fn manager() -> (Arc<MemoryStore>, Arc<EventBus>, ControllerManager) {
         let store = Arc::new(MemoryStore::new());
         let bus = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())));
-        let manager = ControllerManager::new(store.entity_stores(), Arc::clone(&bus));
+        let manager = ControllerManager::new(store.entity_stores(), Arc::clone(&bus), Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), Default::default());
         (store, bus, manager)
     }
 
@@ -333,6 +387,30 @@ mod tests {
         // the name it set, so the last one leaves the last name.
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(controller.name(), "second");
+    }
+
+    /// A workspace has one controller in the instance, however many use it
+    /// (issue 344); a change made elsewhere reaches it as stored - an access
+    /// list too, which its announcement does not carry.
+    #[tokio::test]
+    async fn a_workspace_has_one_controller_which_takes_over_what_was_changed_elsewhere() {
+        let (store, bus, manager) = manager();
+        let owner = UserId::new();
+        let workspace = Workspace::new(ScopedName::new("docs", Scope::UserScope { user_id: owner }).unwrap(), "main", Default::default(), owner);
+        store.entity_stores().workspaces.create(&SecurityContext::system(), &workspace).await.unwrap();
+        let controller = manager.workspace_controller(workspace.id).await.unwrap();
+        assert!(Arc::ptr_eq(&controller, &manager.workspace_controller(workspace.id).await.unwrap()), "every session gets the same one");
+
+        // As another instance would change it: stored, then announced.
+        let mut changed = workspace.clone();
+        changed.name.name = Name::new("notes").unwrap();
+        changed.security_attributes.acl = vec![AclEntry { subject: Subject::Actor(ActorId::User(UserId::new())), grant: Grant::Read }];
+        store.entity_stores().workspaces.update(&SecurityContext::system(), &changed).await.unwrap();
+        bus.publish(GlobalEvent::updated::<Workspace>(&workspace.id, &WorkspaceUpdateEvent::AccessChanged), Default::default());
+
+        eventually(|| controller.load().name.name.as_str() == "notes" && controller.load().security_attributes.acl.len() == 1).await;
+        let gone = manager.workspace_controller(WorkspaceId::new()).await;
+        assert!(matches!(gone, Err(StoreError::NotFound { .. })), "a workspace that does not exist has none, got {gone:?}");
     }
 
     /// What is built for a user is built with their roles as they are now;

@@ -15,14 +15,17 @@ use anyhow::Result;
 use arc_swap::ArcSwap;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, Participant};
-use crate::controller::{ChannelController, ControllerManager};
+use crate::controller::{ChannelController, ControllerManager, WorkspaceController};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::mention::MentionDirectory;
 use caelumora_model::question::{QuestionError, QuestionId};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::work::TurnId;
-use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext, SecurityManager};
-use caelumora_model::session::SessionId;
+use caelumora_model::security::{ActionType, Enforcement, Grant, Refused, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::session::{Session, SessionId};
+use caelumora_model::workspace::Workspace;
+use crate::terminal::{Shell, Terminal};
+use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::store::{EntityStore, StateStore, StoreError};
 use caelumora_model::user::UserId;
@@ -416,6 +419,43 @@ impl ChannelLoop {
     /// The channel as it is now.
     pub fn channel(&self) -> arc_swap::Guard<Arc<Channel>> {
         self.channel.load()
+    }
+
+    /// The session's workspace and its terminal, for what `need` asks, if
+    /// whoever `ctx` acts for may use it in this channel (issues 251, 296,
+    /// 344): asked by the workspace the session holds, of the session and
+    /// the channel as they are now (`WorkspaceController::terminal_in`).
+    ///
+    /// # Errors
+    /// `NotUsableInChannel` if they may not use one here - also while the
+    /// channel is not attached to its session, or none is attached to it -,
+    /// or what `WorkspaceController::terminal_in` reports.
+    pub async fn workspace_terminal(&self, ctx: &SecurityContext, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+        let (session, workspace) = self.session_workspace()?;
+        workspace.terminal_in(ctx, &session, &self.channel(), need).await
+    }
+
+    /// The session's workspace and its shell as this channel sees it - the
+    /// commands started here alone -, if whoever `ctx` acts for may change
+    /// its files here, as `workspace_terminal` asks; no shell where its
+    /// storage gives none.
+    ///
+    /// # Errors
+    /// As [`Self::workspace_terminal`].
+    pub async fn workspace_shell(&self, ctx: &SecurityContext) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
+        let (session, workspace) = self.session_workspace()?;
+        workspace.shell_in(ctx, &session, &self.channel()).await
+    }
+
+    /// The session as it is now and the workspace it holds.
+    ///
+    /// # Errors
+    /// `NotUsableInChannel` while the channel is not attached to its
+    /// session, or no workspace is attached to that.
+    fn session_workspace(&self) -> WorkspaceResult<(Arc<Session>, Arc<WorkspaceController>)> {
+        let session_loop = self.session_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
+        let workspace = session_loop.workspace().ok_or(WorkspaceError::NotUsableInChannel)?;
+        Ok((Arc::clone(&session_loop.session()), workspace))
     }
 
     /// `action`, refused as a `ChannelError::Forbidden` that names what was

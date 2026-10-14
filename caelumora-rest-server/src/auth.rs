@@ -456,7 +456,7 @@ mod tests {
     fn auth(store: Arc<MemoryStore>, providers: Vec<Arc<dyn UserProvider>>) -> Arc<Auth> {
         let stores = store.entity_stores();
         let events = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())));
-        let controllers = Arc::new(ControllerManager::new(stores.clone(), Arc::<EventBus>::clone(&events)));
+        let controllers = Arc::new(ControllerManager::new(stores.clone(), Arc::<EventBus>::clone(&events), Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), Default::default()));
         Arc::new(Auth { tokens: tokens(), users: Arc::new(UserManager::new(providers, Arc::clone(&stores.users), events)), controllers })
     }
 

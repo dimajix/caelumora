@@ -8,7 +8,7 @@ use caelumora_model::store::{StoreError, Stored};
 use tracing::info;
 use caelumora_model::group::GroupId;
 use caelumora_model::workspace::WorkspaceId;
-use super::{SessionLoop, require_attachable};
+use super::{held_workspace, SessionLoop, require_attachable};
 use caelumora_model::session::Session;
 
 impl SessionLoop {
@@ -91,8 +91,10 @@ impl SessionLoop {
             require_attachable(self.runtime_manager.workspace_manager(), self.security.as_ref(), context, id, self.id).await?;
         }
         self.session_controller.update_workspace(context, workspace).await?;
-        if let (Some(id), Some(grant)) = (workspace, share) {
-            self.runtime_manager.workspace_manager().share(context, id, Subject::Group(GroupId::of_session(self.id)), grant).await?;
+        let held = held_workspace(&self.controllers, self.id, workspace).await?;
+        self.workspace.store(held.clone());
+        if let (Some(controller), Some(grant)) = (held, share) {
+            controller.share(context, Subject::Group(GroupId::of_session(self.id)), grant).await?;
         }
         info!(session = %self.id, workspace = ?workspace, by = %context.caller_id, "Session's workspace changed");
         Ok(())

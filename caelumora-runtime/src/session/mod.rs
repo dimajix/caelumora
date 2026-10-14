@@ -16,16 +16,16 @@ use crate::view::{Viewer, Views};
 #[cfg(any(test, feature = "test-support"))]
 use crate::view::ViewsFactory;
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::store::{EntityKind, EntityStores, StoreError, StoreResult, Stored};
+use caelumora_model::store::{EntityKind, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
 use caelumora_model::template::SessionTemplateId;
 use caelumora_model::group::GroupId;
 use crate::group::purge_participants;
-use caelumora_model::security::Grant;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
 use crate::workspace::WorkspaceManager;
-use crate::controller::{ControllerManager, SessionController};
+use crate::controller::{ControllerManager, SessionController, WorkspaceController};
+use arc_swap::ArcSwapOption;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
@@ -127,6 +127,9 @@ struct ChannelEntry {
 pub struct SessionLoop {
     id: SessionId,
     session_controller: Arc<SessionController>,
+    /// The workspace attached to the session, held live while it runs
+    /// (issue 344); none if none is, or it is gone.
+    workspace: ArcSwapOption<WorkspaceController>,
     /// What builds its channels' runtimes and the views of it.
     runtime_manager: Arc<RuntimeManager>,
     /// The services it works with, taken from `runtime_manager` once (issue
@@ -181,12 +184,27 @@ async fn purge_channel_document(stores: &EntityStores, channel_id: ChannelId) ->
 /// are cleared for, `SessionError::WorkspaceOutOfScope`,
 /// `StoreError::PermissionDenied` if they may not share it.
 async fn require_attachable(workspaces: &WorkspaceManager, security: &dyn SecurityManager, context: &SecurityContext, id: WorkspaceId, session_id: SessionId) -> Result<()> {
-    let shared = workspaces.reached(context, id, Grant::Read).await?;
+    let shared = workspaces.reached(context, id).await?;
     if !shared.name.scope.admits(&Scope::SessionScope { session_id }) {
         return Err(SessionError::WorkspaceOutOfScope(id).into());
     }
     security.require(context, ActionType::update(Workspace::KIND, &shared.security_attributes), StoreError::PermissionDenied).await?;
     Ok(())
+}
+
+/// The controller of the workspace `id` attached to session `session_id`,
+/// to hold while it runs (issue 344); none if none is attached, or it is
+/// gone - the session reads it as absent.
+///
+/// # Errors
+/// Whatever else the store reports.
+async fn held_workspace(controllers: &ControllerManager, session_id: SessionId, id: Option<WorkspaceId>) -> StoreResult<Option<Arc<WorkspaceController>>> {
+    let Some(id) = id else { return Ok(None) };
+    let held = controllers.workspace_controller(id).await.optional()?;
+    if held.is_none() {
+        tracing::warn!(session = %session_id, workspace = %id, "The workspace attached to a session is gone");
+    }
+    Ok(held)
 }
 
 impl SessionLoop {
@@ -206,6 +224,7 @@ impl SessionLoop {
     pub async fn new(session: Session, channels: Vec<Channel>, runtime_manager: Arc<RuntimeManager>) -> Result<Arc<Self>> {
         let id = session.id;
         let commands = Arc::new(runtime_manager.new_command_executor(&session).await?);
+        let workspace = held_workspace(runtime_manager.controller_manager(), id, session.workspace).await?;
         let session_controller = runtime_manager.controller_manager().new_session_controller(session);
         let (start_tx, start_rx) = mpsc::unbounded_channel();
         let channel_docs = channels;
@@ -221,6 +240,7 @@ impl SessionLoop {
         let session_loop = Arc::new(Self {
             id,
             session_controller,
+            workspace: ArcSwapOption::new(workspace),
             security: Arc::clone(runtime_manager.security_manager()),
             confidentiality: Arc::clone(runtime_manager.confidentiality()),
             stores: runtime_manager.entity_stores().clone(),
@@ -261,6 +281,12 @@ impl SessionLoop {
 
     pub fn name(&self) -> Name {
         self.session_controller.name()
+    }
+
+    /// The workspace attached to the session, as it holds it live (issue
+    /// 344); `None` if none is, or it is gone.
+    pub(crate) fn workspace(&self) -> Option<Arc<WorkspaceController>> {
+        self.workspace.load_full()
     }
 
     /// Runs the session's channels, those it has and those created while it

@@ -20,7 +20,7 @@ use crate::group::{keep_participants, purge_participants};
 use caelumora_model::template::{ScopeTemplate, SessionTemplateId, WorkspaceTemplate};
 use caelumora_model::workspace::WorkspaceChoice;
 use crate::scoped::ScopedEntities;
-use crate::workspace::WorkspaceManager;
+use crate::workspace::reaper::CommandReaper;
 use crate::agent::manager::AgentManager;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -43,7 +43,8 @@ pub struct SessionManager {
     security: Arc<dyn SecurityManager>,
     stores: EntityStores,
     events: Arc<EventBus>,
-    workspaces: Arc<WorkspaceManager>,
+    /// What ends the commands of a stopped session's channels (issue 254).
+    command_reaper: Arc<CommandReaper>,
     /// What makes the agents a template names.
     agents: Arc<AgentManager>,
     /// What goes with a session deleted, restored or purged (issue 178).
@@ -79,7 +80,7 @@ impl SessionManager {
             security: Arc::clone(runtime_manager.security_manager()),
             stores: runtime_manager.entity_stores().clone(),
             events: Arc::clone(runtime_manager.event_bus()),
-            workspaces: Arc::clone(runtime_manager.workspace_manager()),
+            command_reaper: Arc::clone(runtime_manager.command_reaper()),
             agents: Arc::clone(runtime_manager.agent_manager()),
             scoped: Arc::clone(runtime_manager.scoped_entities()),
             runtime_manager,
@@ -199,7 +200,8 @@ impl SessionManager {
             Ok(session_loop) => {
                 // Shared once the session it is shared with exists (issue 23).
                 if let Some((chosen, Some(grant))) = existing {
-                    workspaces.share(context, chosen, Subject::Group(GroupId::of_session(id)), grant).await?;
+                    let controller = self.runtime_manager.controller_manager().workspace_controller(chosen).await?;
+                    controller.share(context, Subject::Group(GroupId::of_session(id)), grant).await?;
                 }
                 Ok(session_loop)
             }
@@ -377,7 +379,7 @@ impl SessionManager {
         let removed = self.sessions.remove(&id).map(|(_, s)| s);
         if let Some(session_loop) = &removed {
             let session = Arc::clone(&session_loop.session());
-            self.workspaces.end_commands_in(&session.channels).await;
+            self.command_reaper.end_commands_in(&session.channels).await;
             self.events.publish(GlobalEvent::custom::<Session>(&id, session::STOPPED, &()), session.security_attributes.clone());
         }
         removed

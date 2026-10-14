@@ -1,6 +1,6 @@
 # 344 — The `WorkspaceManager` owns workspaces and also what is done in them
 
-**Status:** open
+**Status:** in progress
 **Area:** Code structure
 
 ## The problem
@@ -74,3 +74,63 @@ the artifact tool, the workspace prompt part, the channel's and the workspace's 
 - **2026-10-13** — Noted while working on [227](227-agent-management.md): `WorkspaceManager::create`
   does not ask whether a workspace may be put into a session's scope, which 227 now asks for
   agents.
+- **2026-10-14** — Decided with the maintainer: a workspace gets a controller, as sessions,
+  channels, agents and users have one - the entity a plain struct in the model, its attributes its
+  controller's, its lifecycle its manager's, and something running that holds it live. The
+  `WorkspaceController` changes what a workspace is - `rename`, `describe`, `reclassify`,
+  `set_access` and `share` move to it - and the `SessionLoop` of every session it is attached to
+  holds it, which is what the rule of ARCHITECTURE.md asks of a kind with a controller. As a
+  workspace of its owner's or the global scope may be attached to several sessions and is used
+  directly through REST, there is one per workspace and instance, kept by the `ControllerManager` as
+  those of agents and users are; a `SessionController` is a session's own only because a session
+  runs once.
+  Terminals are reached through the live workspace, not the terminal: a `Terminal` is a handle its
+  storage makes at each call and knows nothing of who may use it. The controller holds the
+  workspace's provider - which `reclassify` needs for its `destination` anyway - and hands out its
+  terminal to whoever may use it directly (`terminal`, `has_shell`). Whether a workspace may be used
+  in a channel (`terminal_in`, `shell_in`, `usable_in`) is asked on the channel's side, which holds
+  the session, the channel and the workspace live, and which makes the channel the scope of a shell.
+  `kill_command` only reaches a shell to end a command on it, which its caller does itself. The
+  `WorkspaceManager` keeps making, deleting, restoring and purging workspaces with their places.
+  Option A of the considerations - a second service for the use - and a type of its own for the
+  storages are not followed: the map of storages is shared by the manager, which makes and removes
+  places, and the `ControllerManager`, which gives a controller its provider.
+  In steps, each without a change of behaviour: (1) the controller, for the attributes; (2) reaching
+  terminals and shells through it and the channel, `kill_command` out, the `SessionLoop` holding the
+  controller - not before, since nothing would read it; (3) perhaps checking the commands in the
+  `SessionLoop`, which runs the channels they are started in. The gap of the session's scope noted
+  on 2026-10-13 stays open with this issue.
+- **2026-10-14** — First step: the `WorkspaceController`
+  (`caelumora-runtime/src/controller/workspace.rs`) changes what a workspace is - `update_name`,
+  `update_description`, `update_classification`, `update_access`, `share` - and the
+  `WorkspaceManager` no longer does. Each change still reaches the workspace as stored, in the
+  caller's name, before anything else is asked, and is applied to it as stored, not to the live
+  copy: a change made elsewhere, an access list above all, may not have reached that yet. The
+  `ControllerManager` keeps one per workspace (`workspace_controller`) and reads one again as stored
+  at every announced change, since that of an access list does not carry it. It shares the map of
+  storages with the `WorkspaceManager`; the check of a classification against the storage and the
+  policy is one function for both (`workspace::require_classification`). The REST routes and the
+  sessions that share a workspace change it through its controller; what is asked is unchanged.
+  Nothing holds a controller beyond a call yet - the `SessionLoop` does with the second step.
+- **2026-10-14** — Decided with the maintainer while working on the second step: what ends commands
+  is a component of its own, the `CommandReaper` (`caelumora-runtime/src/workspace/reaper.rs`), held
+  by the `RuntimeManager` - neither the `SessionLoop`, which would have to follow users and the
+  workspace and end the commands of a workspace taken away, nor the `SessionManager` or the
+  `WorkspaceManager`, which would only hand it what it needs. It ends the commands nobody may run
+  any longer, asking of the session and the channel as stored, as before, and those of a stopped
+  session's channels. Whether a workspace may be used in a channel is asked on documents, so that a
+  view of a session that does not run asks it too: by the `WorkspaceController` (`usable_in`,
+  `usable_in_channel`, `terminal_in`, `shell_in`), given the session and the channel.
+  Second step: the `WorkspaceController` hands out the terminal of a workspace used directly
+  (`terminal`) and in a channel, and says whether it has a shell; the `SessionLoop` holds the
+  controller of its workspace and changes it with `set_workspace`. A channel reaches the workspace
+  of its session with the session and the channel as they are now
+  (`ChannelLoop::workspace_terminal`, `workspace_shell`), and a turn or an external agent's work
+  through its channel (`AgentWork::workspace_terminal`, `workspace_shell`): the terminal tool, the
+  artifact tool and the workspace prompt part do, the last two no longer using the
+  `WorkspaceManager`. `kill_command` is gone; the REST route reaches the channel as other channel
+  routes do (`open_channel`) and ends the command on its shell. The `WorkspaceManager` keeps making,
+  deleting, restoring and purging workspaces with their places, finding one by name, the storages it
+  lists and the largest file. What a caller is asked is unchanged, but for the REST route ending a
+  command, which now asks whether the user may read the channel first, as every channel route does,
+  and answers a channel that is not the session's as `channel_not_found`.

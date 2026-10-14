@@ -25,7 +25,7 @@ use caelumora_model::security::{AccessQuestions, ActionType, Enforcement};
 use super::ChannelReading;
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{ChannelSnapshot, Detail, MemberSnapshot, PublishedNotes};
-use caelumora_model::store::StoreError;
+use caelumora_model::store::{StoreError, StoreResultExt};
 use caelumora_model::tool::ToolSet;
 use std::sync::Arc;
 use tracing::warn;
@@ -71,7 +71,11 @@ impl ChannelView {
     /// # Errors
     /// `Failed` if reading the workspace failed.
     pub async fn workspace(&self) -> ViewResult<Option<WorkspaceView>> {
-        let usable = self.views().workspace_manager().usable_in(self.views().context(), self.session.as_session(), &self.channel).await
+        let session = self.session.as_session();
+        let Some(id) = session.workspace else { return Ok(None) };
+        let Some(workspace) = self.views().controller_manager().workspace_controller(id).await.optional()
+            .map_err(|e| ViewError::failed(e, "reading the session's workspace"))? else { return Ok(None) };
+        let usable = workspace.usable_in(self.views().context(), session, &self.channel).await
             .map_err(|e| ViewError::failed(e, "reading the session's workspace"))?;
         Ok(usable.map(|workspace| WorkspaceView::of(self.views().clone(), workspace)))
     }

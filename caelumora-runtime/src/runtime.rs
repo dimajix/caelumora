@@ -39,6 +39,7 @@ use crate::group::GroupManager;
 use crate::terminal::TerminalProvider;
 use crate::scoped::{ScopeMember, ScopedEntities, Unowned};
 use crate::workspace::WorkspaceManager;
+use crate::workspace::reaper::CommandReaper;
 
 #[derive(Debug)]
 pub struct RuntimeManager {
@@ -64,6 +65,8 @@ pub struct RuntimeManager {
     agent_states: Arc<AgentStates>,
     /// The one owner of workspaces and their places (issue 253).
     workspaces: Arc<WorkspaceManager>,
+    /// What ends the commands nobody may run any longer (issues 254, 344).
+    command_reaper: Arc<CommandReaper>,
     /// The one writer of teams (issue 286).
     groups: Arc<GroupManager>,
     /// The one owner of agents' lifecycle (issue 314).
@@ -327,6 +330,7 @@ pub struct RuntimeBuilder {
     controller_manager: Arc<ControllerManager>,
     agent_states: Arc<AgentStates>,
     workspaces: Arc<WorkspaceManager>,
+    command_reaper: Arc<CommandReaper>,
     groups: Arc<GroupManager>,
     agents: Arc<AgentManager>,
     scope_members: Vec<Arc<dyn ScopeMember>>,
@@ -387,8 +391,6 @@ impl RuntimeBuilder {
         let backend = backend.into();
         let entity_stores = backend.entity_stores()?;
         let event_bus = Arc::new(EventBus::new(Arc::clone(&security_manager), Arc::clone(&confidentiality)));
-        let controller_manager = Arc::new(ControllerManager::new(entity_stores.clone(), Arc::clone(&event_bus)));
-        let agent_states = Arc::new(AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
         // What a backend may ask for: the policies, the secrets and, for a
         // user provider, the records of the users.
         let backend_services = Services::empty()
@@ -396,8 +398,11 @@ impl RuntimeBuilder {
             .with(Arc::clone(&confidentiality))
             .with(Arc::clone(&secret_manager))
             .with(Arc::clone(&entity_stores.users));
-        let storages = backends.make_named::<dyn TerminalProvider>("storage of workspaces", &config.workspaces.storage, &backend_services)?;
-        let workspaces = WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), Arc::clone(&controller_manager), storages, &config.workspaces)?;
+        let storages = Arc::new(backends.make_named::<dyn TerminalProvider>("storage of workspaces", &config.workspaces.storage, &backend_services)?);
+        let controller_manager = Arc::new(ControllerManager::new(entity_stores.clone(), Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), Arc::clone(&storages)));
+        let agent_states = Arc::new(AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
+        let command_reaper = CommandReaper::new(&entity_stores, &event_bus, Arc::clone(&controller_manager), Arc::clone(&storages))?;
+        let workspaces = Arc::new(WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), storages, &config.workspaces));
         // Users are recorded and their changes announced on the event bus
         // (issue 306).
         let user_providers = backends.make_chain::<dyn UserProvider>("user provider", &config.users.providers, &backend_services)?;
@@ -431,6 +436,7 @@ impl RuntimeBuilder {
             controller_manager,
             agent_states,
             workspaces,
+            command_reaper,
             groups,
             agents,
             scope_members,
@@ -608,6 +614,7 @@ impl RuntimeBuilder {
             approval_rules: self.approval_rules,
             agent_states: self.agent_states,
             workspaces: self.workspaces,
+            command_reaper: self.command_reaper,
             groups: self.groups,
             agents: self.agents,
             scoped,
@@ -709,6 +716,11 @@ impl RuntimeManager {
     /// The one owner of workspaces and their places (issue 253).
     pub fn workspace_manager(&self) -> &Arc<WorkspaceManager> {
         &self.workspaces
+    }
+
+    /// What ends the commands nobody may run any longer (issues 254, 344).
+    pub(crate) fn command_reaper(&self) -> &Arc<CommandReaper> {
+        &self.command_reaper
     }
 
 

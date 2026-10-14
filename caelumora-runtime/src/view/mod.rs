@@ -56,6 +56,8 @@ use caelumora_model::workspace::WorkspaceId;
 use caelumora_model::group::{Group, GroupField, GroupId};
 use caelumora_model::scope::Scope;
 use crate::workspace::WorkspaceManager;
+use crate::channel::ChannelLoop;
+use crate::controller::ControllerManager;
 use caelumora_model::store::{EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
 use crate::component::ComponentRegistry;
 use std::sync::Arc;
@@ -196,6 +198,9 @@ pub struct Views {
     states: Arc<dyn StateStore>,
     components: Arc<ComponentRegistry>,
     workspaces: Arc<WorkspaceManager>,
+    /// Where a session's workspace is asked whether it may be used in a
+    /// channel (issue 344).
+    controllers: Arc<ControllerManager>,
     running: Arc<dyn RunningSessions>,
     viewer: Viewer,
 }
@@ -210,6 +215,7 @@ impl Views {
             states: Arc::clone(runtime.state_store()),
             components: Arc::clone(runtime.component_registry()),
             workspaces: Arc::clone(runtime.workspace_manager()),
+            controllers: Arc::clone(runtime.controller_manager()),
             running,
             viewer,
         }
@@ -261,6 +267,11 @@ impl Views {
 
     pub(crate) fn workspace_manager(&self) -> &Arc<WorkspaceManager> {
         &self.workspaces
+    }
+
+    /// The controllers of this instance: a session's workspace among them.
+    pub(crate) fn controller_manager(&self) -> &Arc<ControllerManager> {
+        &self.controllers
     }
 
     /// Every session the viewer may read, in the order the store lists
@@ -775,6 +786,11 @@ impl ViewsFactory {
         let session_id = SessionId::new();
         let channel = crate::runtime::ChannelRuntime::outside_a_session(runtime, commands, session_id);
         Self::of_actor(channel.new_actor_runtime(ActorId::None, session_id, ChannelId::new()))
+    }
+
+    /// The agent's own channel, while the actor is attached to it.
+    pub(crate) fn channel_loop(&self) -> Option<Arc<ChannelLoop>> {
+        self.actor.channel_loop()
     }
 
     /// The attributes of the agent's own channel as it stands, by which an

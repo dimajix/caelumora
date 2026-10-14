@@ -294,11 +294,11 @@ What changes an entity is split by what it changes:
     and `WorkspaceManager`'s for their kinds, and those of the plugins (`SkillManager`,
     `ArtifactManager`). A channel's is its session's (`SessionLoop`).
 *   **What it is - its attributes - is its controller's**, where it has one: a name, a description,
-    rules, participants. Sessions, channels, agents and users have one, as running sessions hold
-    them live; the controller stores a change and announces it, so that the live copy and the store
-    do not disagree.
-*   **An entity without a controller** - a group, a workspace, a skill, an artifact - is held live
-    by nobody, and its manager changes its attributes too. A controller is made for a kind once
+    rules, participants. Sessions, channels, agents, users and workspaces have one, as running
+    sessions hold them live; the controller stores a change and announces it, so that the live copy
+    and the store do not disagree.
+*   **An entity without a controller** - a group, a skill, an artifact - is held live by nobody,
+    and its manager changes its attributes too. A controller is made for a kind once
     something holds it live, not for the sake of this split.
 
 ## Security and confidentiality
