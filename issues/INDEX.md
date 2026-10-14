@@ -424,6 +424,7 @@ published before anyone else can take it.
 | [344](344-workspace-manager-owns-their-use.md) | done | The `WorkspaceManager` owns workspaces and also what is done in them - reaching terminals and shells for a caller, ending commands, holding the storages -, with the stores and policies that needs. |
 | [345](345-global-event-has-one-variant.md) | done | `GlobalEvent` is an enum with the single variant `Entity`, so every reader takes it apart with an irrefutable `let` and the event streams wrap every event in `{"Entity": …}`. |
 | [346](346-subscription-topics-for-every-kind.md) | open | The event bus has subscription topics only for sessions, channels, agents and users, so a plugin cannot follow a single entity - an artifact, say - without reading every event. |
+| [350](350-lookups-written-out-again.md) | open | The same lookup - the actor's channel, an agent's attributes as stored, a permission with the channel's attributes - is written out again at several places around channels and actors. |
 
 ## Integrations
 
