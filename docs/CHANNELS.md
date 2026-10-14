@@ -220,6 +220,7 @@ flow in:
 | `CommandRequested`, `NudgeRequested` | sent by a user, naming an agent (or, for a nudge, anyone else) taking part |
 | `ApprovalGranted`, `ApprovalDenied` from a user | `ApproveToolCall` of the agent it names - whether that agent asked is the approver's to check (issue 312) |
 | `ApprovalGranted`, `ApprovalDenied`, `ApprovalTimedOut` otherwise | sent by an approver: its decision |
+| `PlanStepStarted`, `CommandExecuted` of a turn, `ActivityStarted`, `ActivityFinished`, `TurnFinished`, `TurnGivenUp` | sent by an agent in its own name: nobody else has turns, and the history records them (issue 284) |
 
 A message is admitted as it arrives, so one said after the channel was lowered below its turn is
 refused. What is refused is written nowhere and delivered to nobody. The channel tells its sender

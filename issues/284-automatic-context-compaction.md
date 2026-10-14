@@ -391,3 +391,8 @@ named.
     `prompt_tokens`, since `completion_tokens` count reasoning the next call may not be given.
   - `TokenUsage::last_call_tokens` is gone: nothing read it any longer, `context_tokens` says how
     full the context is, and what a single call used stands at its message.
+- **2026-10-14** — What the channel records of a turn besides its messages - `PlanStepStarted`, a
+  `CommandExecuted` of a turn, `ActivityFinished`, `TurnFinished`, `TurnGivenUp` - and
+  `ActivityStarted` are admitted from an agent in its own name alone (`ChannelLoop::admission`);
+  before, a user's actor could have had the history record a turn's step or end. Done here, not in
+  an issue of its own, as the maintainer asked.
