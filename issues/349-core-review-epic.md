@@ -14,7 +14,7 @@ and [229](229-services-fetched-through-the-runtime.md) established holds: one wr
 admission in one place, permissions before anything is stored. What is left is repetition - the same
 five services and fields held or threaded again and again, three types carrying the same half of an
 agent, construction sequences written twice - and a few rules of the model that live in the runtime.
-Each group of findings is its own issue, 350-359. This issue is the bracket.
+Each group of findings is its own issue, 350-361. This issue is the bracket.
 
 ## Why it matters
 
@@ -33,7 +33,8 @@ constructors. Doing them in the wrong order means moving code twice.
   `Turn` is split by files, not types, and `Answering` is the one way to publish
   ([211](211-turn-and-agent-work-structure.md)); services are held, not fetched
   ([229](229-services-fetched-through-the-runtime.md)). 357 and 359 are cut so that they do not
-  reopen them.
+  reopen them; the first two are raised again all the same, in 360 and 361, since the code they
+  were decided on has changed - to be discussed, not assumed.
 - **The model holds data and rules** (ARCHITECTURE.md): 353 and 358 move rules there, at the price
   of the model knowing the update events' application.
 
@@ -44,25 +45,22 @@ constructors. Doing them in the wrong order means moving code twice.
 2. [359](359-actor-runtime-hands-out-the-runtime-manager.md) - one accessor, before 355 builds on
    `ActorRuntime`.
 3. [356](356-member-questions-threaded-with-their-services.md), its first step (`Member` knows its
-   place), then [357](357-actor-start-and-channel-construction-written-twice.md).
-4. [356](356-member-questions-threaded-with-their-services.md), its second step (`Membership`) - an
+   place).
+4. [361](361-session-before-its-channels.md) and [360](360-channel-runtime-forwarders-again.md) -
+   architecture decisions first, together, since both decide what a channel's loop is built with;
+   then [357](357-actor-start-and-channel-construction-written-twice.md) in the shape they give it.
+5. [356](356-member-questions-threaded-with-their-services.md), its second step (`Membership`) - an
    architecture decision first.
-5. [355](355-two-agent-actors-share-half-their-fields.md) - an architecture decision first; the
+6. [355](355-two-agent-actors-share-half-their-fields.md) - an architecture decision first; the
    channel tests of both kinds of agent are the net.
-6. [353](353-rules-of-the-model-computed-in-the-runtime.md).
-7. [358](358-controllers-apply-their-events-each-on-its-own.md) - after 353, whose `apply` is one of
+7. [353](353-rules-of-the-model-computed-in-the-runtime.md).
+8. [358](358-controllers-apply-their-events-each-on-its-own.md) - after 353, whose `apply` is one of
    its parts.
-8. [354](354-names-follow-several-schemes.md) - last, in a commit of its own: the renames touch the
+9. [354](354-names-follow-several-schemes.md) - last, in a commit of its own: the renames touch the
    REST server and the tests, and every refactoring before changes which names there are.
 
 ## Considered and not taken up
 
-- **Dropping the forwarders of `ChannelRuntime`** (nine methods, used only in `ChannelLoop::new`):
-  rejected before in [89](89-channel-runtime-delegators.md), for the same gain; not raised again.
-- **Building the session before its channels so that `ChannelRuntime` carries the session:** the
-  option [123](123-session-handle-in-channel-runtime.md) rejected. What is left of it - the loop
-  body of `SessionLoop::new` repeated in `add_channel_loop` - is in 357 without reopening the
-  decision.
 - **Merging `cancel`/`cancel_actor` and `wakeup`/`wakeup_actor` into one method each with an
   `Option<ActorId>`:** they differ on purpose - cancelling one actor does not keep the channel
   quiet (CHANNELS.md) - and the pairs read better than a flag.
@@ -79,3 +77,6 @@ order along the way.
 ## History
 
 - **2026-10-14** — Created from the review at the maintainer's request.
+- **2026-10-14** — [360](360-channel-runtime-forwarders-again.md) and
+  [361](361-session-before-its-channels.md) added at the maintainer's request: what 89 and 123
+  decided is to be discussed again on the code as it is now, before 357.
