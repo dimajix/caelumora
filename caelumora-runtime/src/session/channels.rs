@@ -2,7 +2,6 @@
 
 use caelumora_model::value::name::Name;
 use crate::channel::ChannelLoop;
-use crate::runtime::ChannelRuntime;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
@@ -179,11 +178,9 @@ impl SessionLoop {
     }
 
     /// Builds the loop of `channel`, which the session lists, and has the
-    /// session run it.
-    async fn add_channel_loop(self: &Arc<Self>, channel: &Channel) -> Result<Arc<ChannelLoop>> {
-        let runtime = ChannelRuntime::new(Arc::clone(&self.runtime_manager), Arc::clone(&self.commands), Arc::clone(&self.session_controller));
-        let channel_loop = ChannelLoop::new(channel.clone(), runtime).await?;
-        channel_loop.attach(self);
+    /// session run it: the one place a channel's loop is built.
+    pub(super) async fn add_channel_loop(self: &Arc<Self>, channel: &Channel) -> Result<Arc<ChannelLoop>> {
+        let channel_loop = ChannelLoop::new(channel.clone(), self.channel_runtime()).await?;
         self.channels.insert(channel.id, ChannelEntry { channel: Arc::clone(&channel_loop), task: None });
         let _ = self.start_tx.send(channel.id);
         Ok(channel_loop)

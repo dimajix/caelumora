@@ -436,7 +436,7 @@ published before anyone else can take it.
 | [358](358-controllers-apply-their-events-each-on-its-own.md) | open | The controllers apply, store and announce their update events each on their own, `updated_at` moves on one path only, and the loops forward the updates with uneven logging. |
 | [359](359-actor-runtime-hands-out-the-runtime-manager.md) | done | `ActorRuntime` hands out the `RuntimeManager`, which two actors use to reach past the facade for the `ControllerManager`. |
 | [360](360-channel-runtime-forwarders-again.md) | open | `ChannelRuntime` forwards ten services of the `RuntimeManager` it never uses itself, each read once by `ChannelLoop::new`; what 89 rejected, on code that has changed since. |
-| [361](361-session-before-its-channels.md) | open | A channel is attached to its session in a second step after it is built, though the session's controller already travels through its runtime; the option 123 rejected, on code that has changed since. |
+| [361](361-session-before-its-channels.md) | done | A channel is attached to its session in a second step after it is built, though the session's controller already travels through its runtime; the option 123 rejected, on code that has changed since. |
 
 ## Integrations
 

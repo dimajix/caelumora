@@ -89,9 +89,9 @@ impl<'a> AgentWork<'a> {
     /// The agent's session as the work reads it from its channel (issue
     /// 163): the root of what it may read elsewhere - the other channels'
     /// notes and histories, its own private notes there - at the
-    /// classification the work began with (issue 67). `None` while its
-    /// channel is not attached to its session, once the session is gone, or
-    /// if the agent may not read it.
+    /// classification the work began with (issue 67). `None` while it is not
+    /// attached to its channel, once the session is gone, or if the agent
+    /// may not read it.
     pub async fn session(&self) -> Option<SessionView> {
         self.views.session(&self.work.security_context, self.channel_id(), self.work.classification.clone()).await
     }
@@ -103,8 +103,8 @@ impl<'a> AgentWork<'a> {
     /// is a turn's (`Turn::workspace_terminal`, `Turn::workspace_shell`).
     ///
     /// # Errors
-    /// `NotUsableInChannel` while its channel is not attached to its
-    /// session, or what `ChannelLoop::workspace_terminal` reports.
+    /// `NotUsableInChannel` while it is not attached to its channel, or what
+    /// `ChannelLoop::workspace_terminal` reports.
     pub async fn workspace_for_reading(&self) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
         let channel = self.views.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
         channel.workspace_terminal(&self.work.security_context, Grant::Read).await

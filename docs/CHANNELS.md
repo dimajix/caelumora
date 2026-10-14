@@ -577,14 +577,21 @@ what ties it to the remote side (see [STORAGE.md](STORAGE.md)).
 
 ## The channel and actor runtime
 
-A `ChannelLoop` is built with a `ChannelRuntime`, not with the `RuntimeManager` itself. It carries
-what everything in the channel shares:
+A `ChannelLoop` is built with a `ChannelRuntime`, not with the `RuntimeManager` itself. Its session
+makes it (`SessionLoop::channel_runtime`), and it carries what everything in the channel shares:
 
 *   the process-wide services, each by an accessor of its own, and never the `RuntimeManager`
     itself, so that what a channel can reach is what its runtime offers;
 *   the user commands of the session, built once per session;
+*   the session: its controller, which guards the agents' tool calls with the session's rules, and
+    its loop, by which the channel reaches its session and the other channels in it (issue 361) -
+    a `Weak`, since the session owns its channels, and for the channel alone: the actors are not
+    handed it (issue 123);
 *   a handle to the channel - a `Weak`: the channel owns its actors, and a strong reference back
     would keep a stopped channel alive.
+
+A session exists before its channels: `SessionLoop::new` makes it, and then builds each channel as
+one created later is built (`add_channel_loop`), so that a channel has its session from the start.
 
 The `ChannelRuntime` is the only source of `ActorRuntime`s, so every actor belongs to exactly one
 channel. An `ActorRuntime` is made for one actor and hands out only what concerns that actor: the

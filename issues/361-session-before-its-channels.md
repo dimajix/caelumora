@@ -1,6 +1,6 @@
 # 361 — A channel is attached to its session in a second step, though the session's controller already travels through its runtime
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -70,3 +70,17 @@ An architecture decision, to be discussed with the maintainer before
 - **2026-10-14** — Raised again by the maintainer after the review of agents, sessions and
   channels (epic [349](349-core-review-epic.md)): the option [123](123-session-handle-in-channel-runtime.md)
   rejected, on code that has changed since.
+- **2026-10-14** — Decided with the maintainer: the session first, the channel given it through its
+  runtime; the controller stays beside the loop, since the guard of the tool calls must not depend
+  on a `Weak` and the tests outside a session have a controller only. Not taken: the loop as a
+  parameter of `ChannelLoop::new` beside the runtime, which kept two ways to the session; the
+  controller through the loop alone, which would have made the guard optional.
+- **2026-10-14** — Done. `ChannelRuntime` holds the session's `Weak<SessionLoop>` beside its
+  controller, read by `ChannelLoop::session_loop` and not passed on by `ActorRuntime`; the
+  channel's `OnceLock` and `ChannelLoop::attach` are gone. `SessionLoop::channel_runtime` is the one
+  place a `ChannelRuntime` is made for a session, and `SessionLoop::new` makes the `Arc` first and
+  builds its channels through `add_channel_loop` - which takes the second half of
+  [357](357-actor-start-and-channel-construction-written-twice.md) with it. `ChannelRuntime::new`
+  stays public: the MCP plugin's integration test builds a runtime outside a session, with a
+  dangling `Weak`. The `ChannelHandle` by which actors reach their channel keeps its attach step:
+  the actors are built before the channel's `Arc` exists.

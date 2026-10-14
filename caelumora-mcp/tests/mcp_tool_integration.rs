@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use caelumora_mcp::plugin::McpPlugin;
 use caelumora_mcp::tool::MCP_TOOL_KIND;
@@ -130,7 +130,7 @@ fn detached_views() -> ViewsFactory {
     let session_id = session.id;
     let commands = Arc::new(CommandExecutor::empty(Arc::clone(runtime_manager.security_manager())));
     let session = runtime_manager.controller_manager().new_session_controller(session);
-    let channel = ChannelRuntime::new(runtime_manager, commands, session);
+    let channel = ChannelRuntime::new(runtime_manager, commands, session, Weak::new());
     channel.new_actor_runtime(ActorId::None, session_id, ChannelId::new()).views()
 }
 

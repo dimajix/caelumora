@@ -50,3 +50,7 @@ next step in it (a check, a log line) goes into one of them first.
 
 - **2026-10-14** — From the review of agents, sessions and channels, epic
   [349](349-core-review-epic.md).
+- **2026-10-14** — Its second half is done with [361](361-session-before-its-channels.md):
+  `SessionLoop::new` builds its channels through `add_channel_loop`, and
+  `SessionLoop::channel_runtime` is the one place a `ChannelRuntime` is made for a session. Starting
+  a member's actor is what is left.

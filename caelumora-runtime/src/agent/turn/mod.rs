@@ -120,8 +120,8 @@ impl<'a> Turn<'a> {
     /// 344): what a tool acts on.
     ///
     /// # Errors
-    /// `NotUsableInChannel` while its channel is not attached to its
-    /// session, or what `ChannelLoop::workspace_terminal` reports.
+    /// `NotUsableInChannel` while it is not attached to its channel, or what
+    /// `ChannelLoop::workspace_terminal` reports.
     pub async fn workspace_terminal(&self, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
         let channel = self.views.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
         channel.workspace_terminal(self.security_context(), need).await

@@ -112,7 +112,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [357](357-actor-start-and-channel-construction-written-twice.md) | open | Starting a member's actor is written three times in `ChannelLoop`, and building a channel's loop twice in `SessionLoop`. |
 | [358](358-controllers-apply-their-events-each-on-its-own.md) | open | The controllers apply, store and announce their update events each on their own, `updated_at` moves on one path only, and the loops forward the updates with uneven logging. |
 | [360](360-channel-runtime-forwarders-again.md) | open | `ChannelRuntime` forwards ten services of the `RuntimeManager` it never uses itself, each read once by `ChannelLoop::new`; what 89 rejected, on code that has changed since. |
-| [361](361-session-before-its-channels.md) | open | A channel is attached to its session in a second step after it is built, though the session's controller already travels through its runtime; the option 123 rejected, on code that has changed since. |
 
 ## Open architecture questions
 

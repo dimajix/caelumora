@@ -778,7 +778,7 @@ impl ViewsFactory {
 
     /// The views of an actor in a channel of no running session - for turns
     /// in tests that read nothing elsewhere: their `session` is `None`, as
-    /// for a channel not attached to its session yet.
+    /// for a channel whose session is gone.
     #[cfg(test)]
     pub(crate) fn detached() -> Self {
         let runtime = crate::session::testing::test_runtime();
@@ -803,8 +803,8 @@ impl ViewsFactory {
     /// The agent's own session, as it reads in `context` from `channel` at
     /// `classification`, if it may read it (`GetSession`, as `Views::session`
     /// asks, issue 304) - the agent by the group of the session's
-    /// participants; `None` while the channel is not attached to its session
-    /// yet, once it is gone, or if it may not.
+    /// participants; `None` while the actor is not attached to its channel,
+    /// once the session is gone, or if it may not.
     pub(crate) async fn session(&self, context: &SecurityContext, channel: ChannelId, classification: Classification) -> Option<SessionView> {
         let session_loop = self.actor.channel_loop()?.session_loop()?;
         let from = Place { channel, classification, session: session_loop.privacy() };

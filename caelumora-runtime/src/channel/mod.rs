@@ -33,7 +33,7 @@ use tracing::{info, warn};
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::Arc;
 use crate::session::SessionLoop;
 use std::time::Duration;
 use caelumora_model::agent::Agent;
@@ -242,9 +242,6 @@ pub struct ChannelLoop {
     observed: broadcast::Sender<Envelope>,
     max_route_decisions: i32,
     run_lock: Mutex<()>,
-    /// The session the channel belongs to (issue 123), set by `attach` once
-    /// the session exists. Weak, since the session owns its channels.
-    session: OnceLock<Weak<SessionLoop>>,
 }
 
 impl ChannelLoop {
@@ -311,7 +308,6 @@ impl ChannelLoop {
             observed: broadcast::channel(128).0,
             max_route_decisions: 100,
             run_lock: Mutex::new(()),
-            session: OnceLock::new(),
         });
         channel_loop.runtime.attach(&channel_loop);
         // The participants the channel has; `run` starts their tasks.
@@ -356,16 +352,11 @@ impl ChannelLoop {
         Member::of(participant, self.session_id, Some(self.id), self.agents.as_ref(), &self.controllers, self.security.as_ref()).await
     }
 
-    /// Makes `session` the session of this channel. Called once by the
-    /// session, as soon as it exists and before the channel starts.
-    pub(crate) fn attach(&self, session: &Arc<SessionLoop>) {
-        let _ = self.session.set(Arc::downgrade(session));
-    }
-
-    /// The session the channel belongs to, or `None` until the channel is
-    /// attached to it, or once it is gone.
+    /// The session the channel belongs to (issues 123, 361), given it with
+    /// its runtime; `None` once it is gone, or for a channel of none, in
+    /// tests.
     pub(crate) fn session_loop(&self) -> Option<Arc<SessionLoop>> {
-        self.session.get().and_then(Weak::upgrade)
+        self.runtime.session_loop()
     }
 
     /// Takes `actor` into the channel: the moderator routes to it, it is
@@ -427,8 +418,8 @@ impl ChannelLoop {
     /// the channel as they are now (`WorkspaceController::terminal_in`).
     ///
     /// # Errors
-    /// `NotUsableInChannel` if they may not use one here - also while the
-    /// channel is not attached to its session, or none is attached to it -,
+    /// `NotUsableInChannel` if they may not use one here - also once the
+    /// channel's session is gone, or none is attached to it -,
     /// or what `WorkspaceController::terminal_in` reports.
     pub async fn workspace_terminal(&self, ctx: &SecurityContext, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
         let (session, workspace) = self.session_workspace()?;
@@ -450,8 +441,8 @@ impl ChannelLoop {
     /// The session as it is now and the workspace it holds.
     ///
     /// # Errors
-    /// `NotUsableInChannel` while the channel is not attached to its
-    /// session, or no workspace is attached to that.
+    /// `NotUsableInChannel` once the channel's session is gone, or no
+    /// workspace is attached to it.
     fn session_workspace(&self) -> WorkspaceResult<(Arc<Session>, Arc<WorkspaceController>)> {
         let session_loop = self.session_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
         let workspace = session_loop.workspace().ok_or(WorkspaceError::NotUsableInChannel)?;

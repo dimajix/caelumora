@@ -243,7 +243,7 @@ impl World {
 
     /// A turn of `agent`, of `owner`, in the first channel of `session`,
     /// begun in `state` - for what a component does in a turn.
-    pub fn turn<'a>(session: &SessionLoop, agent: AgentId, owner: UserId, state: &'a mut AgentChannelState) -> Turn<'a> {
+    pub fn turn<'a>(session: &Arc<SessionLoop>, agent: AgentId, owner: UserId, state: &'a mut AgentChannelState) -> Turn<'a> {
         let channel = &session.channels()[0];
         let context = SecurityContext::new(ActorId::User(owner), session.id(), channel.id()).next(ActorId::Agent(agent), ActorId::User(owner), ActorId::User(owner)).with_roles(vec![*STAFF], None);
         state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), context, channel.classification(), Vec::new(), Default::default());
@@ -476,7 +476,7 @@ pub fn denied(error: &Error) -> bool {
 
 /// What `actor` navigates from `channel` of `session`, as its turns do
 /// (`ActorRuntime::views`).
-pub fn views_in(session: &SessionLoop, channel: &Arc<ChannelLoop>, actor: ActorId) -> ViewsFactory {
+pub fn views_in(session: &Arc<SessionLoop>, channel: &Arc<ChannelLoop>, actor: ActorId) -> ViewsFactory {
     session.views_of(channel, actor)
 }
 

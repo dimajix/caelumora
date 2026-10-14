@@ -210,31 +210,28 @@ impl SessionLoop {
     /// What `actor` navigates from `channel` of this session, as its turns
     /// do (`ActorRuntime::views`) - for tests, where no actor runs.
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn views_of(&self, channel: &Arc<ChannelLoop>, actor: ActorId) -> ViewsFactory {
-        let channel_runtime = ChannelRuntime::new(Arc::clone(&self.runtime_manager), Arc::clone(&self.commands), Arc::clone(&self.session_controller));
+    pub(crate) fn views_of(self: &Arc<Self>, channel: &Arc<ChannelLoop>, actor: ActorId) -> ViewsFactory {
+        let channel_runtime = self.channel_runtime();
         channel_runtime.attach(channel);
         channel_runtime.new_actor_runtime(actor, self.id(), channel.id()).views()
     }
 
+    /// What each of its channels runs with: the one place a `ChannelRuntime` is made, so that a
+    /// channel is given everything of its session as it is built (issue 361).
+    fn channel_runtime(self: &Arc<Self>) -> ChannelRuntime {
+        ChannelRuntime::new(Arc::clone(&self.runtime_manager), Arc::clone(&self.commands), Arc::clone(&self.session_controller), Arc::downgrade(self))
+    }
+
     /// The loop of `session`, with its `channels` - documents of their own
-    /// (issue 70), in the order the session lists them - each attached to
-    /// it, so that a channel reaches the others of its session (issues 17,
-    /// 123).
+    /// (issue 70), in the order the session lists them - each built when
+    /// the session exists and given it, so that a channel reaches the
+    /// others of its session (issues 17, 123, 361).
     pub async fn new(session: Session, channels: Vec<Channel>, runtime_manager: Arc<RuntimeManager>) -> Result<Arc<Self>> {
         let id = session.id;
         let commands = Arc::new(runtime_manager.new_command_executor(&session).await?);
         let workspace = held_workspace(runtime_manager.controller_manager(), id, session.workspace).await?;
         let session_controller = runtime_manager.controller_manager().new_session_controller(session);
         let (start_tx, start_rx) = mpsc::unbounded_channel();
-        let channel_docs = channels;
-        let channels = DashMap::new();
-        for channel in channel_docs {
-            let runtime = ChannelRuntime::new(Arc::clone(&runtime_manager), Arc::clone(&commands), Arc::clone(&session_controller));
-            let cl = ChannelLoop::new(channel, runtime).await?;
-            let id = cl.id();
-            channels.insert(id, ChannelEntry { channel: cl, task: None });
-            let _ = start_tx.send(id);
-        }
 
         let session_loop = Arc::new(Self {
             id,
@@ -249,12 +246,12 @@ impl SessionLoop {
             groups: Arc::clone(runtime_manager.group_manager()),
             runtime_manager,
             commands,
-            channels,
+            channels: DashMap::new(),
             start_tx,
             start_rx: Mutex::new(start_rx),
         });
-        for entry in session_loop.channels.iter() {
-            entry.channel.attach(&session_loop);
+        for channel in &channels {
+            session_loop.add_channel_loop(channel).await?;
         }
         Ok(session_loop)
     }
