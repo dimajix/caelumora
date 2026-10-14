@@ -108,6 +108,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [353](353-rules-of-the-model-computed-in-the-runtime.md) | open | Rules of the model - what an approval strategy decides, what a history limit shows, how a stored agent state is made fit to resume, how an update event applies - are computed in the runtime. |
 | [354](354-names-follow-several-schemes.md) | open | Names around sessions, channels and actors follow several schemes: manager verbs with and without the noun, three ways to find by id, and `Member` meaning three things. |
 | [358](358-controllers-apply-their-events-each-on-its-own.md) | open | The controllers apply, store and announce their update events each on their own, `updated_at` moves on one path only, and the loops forward the updates with uneven logging. |
+| [363](363-run-control-built-twice.md) | open | Where an agent's actor stands and what `cancel` and `stop` asked of it is built twice - `RunControl` for the `AgentActor`, three fields of its own for the `ExternalAgentActor` - so the two show and end their work differently, and the loop that carries out commands cannot be shared. |
 
 ## Open architecture questions
 
