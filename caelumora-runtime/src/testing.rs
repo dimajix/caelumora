@@ -40,7 +40,7 @@ use caelumora_model::user::{User, UserId};
 use crate::component::ComponentRegistry;
 use crate::runtime::{RuntimeBuilder, RuntimeManager};
 use crate::plugin::Plugin;
-use crate::agent::manager::AgentError;
+use crate::agent::AgentError;
 use crate::agent::state::AgentStateHandle;
 use crate::agent::turn::Turn;
 use crate::channel::ChannelLoop;

@@ -23,7 +23,7 @@ use caelumora_model::security::Refused;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::TemplateError;
 use caelumora_model::value::ValueError;
-use caelumora_runtime::agent::manager::AgentError;
+use caelumora_runtime::agent::AgentError;
 use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::command::CommandError;
 use caelumora_runtime::error::{refusal, user_message};

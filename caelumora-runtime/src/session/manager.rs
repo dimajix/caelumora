@@ -23,7 +23,7 @@ use caelumora_model::template::{ScopeTemplate, SessionTemplate, SessionTemplateI
 use caelumora_model::workspace::WorkspaceChoice;
 use crate::scoped::ScopedEntities;
 use crate::workspace::reaper::CommandReaper;
-use crate::agent::manager::AgentManager;
+use crate::agent::AgentManager;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -598,7 +598,7 @@ mod tests {
     use crate::runtime::RuntimeManager;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Agent;
-    use crate::agent::manager::AgentError;
+    use crate::agent::AgentError;
     use caelumora_model::channel::{self, Channel};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::value::language::Language;

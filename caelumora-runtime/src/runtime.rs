@@ -35,7 +35,7 @@ use std::fmt;
 use std::path::PathBuf;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use std::sync::{Arc, OnceLock, Weak};
-use crate::agent::manager::AgentManager;
+use crate::agent::AgentManager;
 use crate::group::GroupManager;
 use crate::terminal::TerminalProvider;
 use crate::scoped::{ScopeMember, ScopedEntities, Unowned};

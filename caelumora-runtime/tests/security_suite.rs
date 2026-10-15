@@ -39,7 +39,7 @@ use caelumora_model::store::{ComponentStore, StateStore, StoreError, Stored};
 use caelumora_model::template::{ScopeTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
 use caelumora_model::user::{UserId, UserProfile};
 use caelumora_model::work::TurnId;
-use caelumora_runtime::agent::manager::AgentError;
+use caelumora_runtime::agent::AgentError;
 use caelumora_runtime::channel::{ChannelError, ChannelLoop};
 use caelumora_runtime::controller::WorkspaceController;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, PRECONFIGURED_REF_KIND};

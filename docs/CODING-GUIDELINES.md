@@ -65,6 +65,16 @@ calls something by its module on purpose, so that the call says where the functi
 *   **Components.** A new component kind is registered in the `ComponentRegistry`; where it goes and
     how it is named is described in [COMPONENTS.md](COMPONENTS.md).
 
+### A module's manager
+
+A manager is the one owner of the lifecycle of a kind - it makes, deletes, restores and purges
+it: `AgentManager`, `SessionManager`, `WorkspaceManager`, `GroupManager`, `ControllerManager`,
+`UserManager`. It lives in its module's `manager.rs`, declared `mod manager;` and exported from
+`mod.rs` with `pub use manager::XyzManager;`, so that it is imported by its module's path
+(`crate::workspace::WorkspaceManager`). `mod.rs` holds the module's description, its error type,
+what its parts share, and its exports, so that the manager's methods and tests do not bury them.
+Test helpers the module offers to other modules' tests are its `testing.rs` (issue 364).
+
 ### Small return values
 
 A function that returns two values, called from a few places close to it - inside its module or

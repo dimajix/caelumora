@@ -57,8 +57,12 @@ constructors. Doing them in the wrong order means moving code twice.
 7. [353](353-rules-of-the-model-computed-in-the-runtime.md).
 8. [358](358-controllers-apply-their-events-each-on-its-own.md) - after 353, whose `apply` is one of
    its parts.
-9. [354](354-names-follow-several-schemes.md) - last, in a commit of its own: the renames touch the
-   REST server and the tests, and every refactoring before changes which names there are.
+9. [364](364-managers-in-different-places.md), then [366](366-runtime-rs-holds-four-types.md) -
+   files moved, nothing renamed; before the renames, which then find the files where they belong.
+10. [365](365-security-manager-is-an-access-policy.md) - a rename across every crate, in a commit
+    of its own.
+11. [354](354-names-follow-several-schemes.md) - last, in a commit of its own: the renames touch the
+    REST server and the tests, and every refactoring before changes which names there are.
 
 ## Considered and not taken up
 
@@ -83,3 +87,6 @@ order along the way.
   decided is to be discussed again on the code as it is now, before 357.
 - **2026-10-14** — [363](363-run-control-built-twice.md) added to step 6: where an agent's actor
   stands was built twice, which kept the command loop in both actors after 355.
+- **2026-10-15** — [364](364-managers-in-different-places.md),
+  [365](365-security-manager-is-an-access-policy.md) and [366](366-runtime-rs-holds-four-types.md)
+  added at the maintainer's request, as steps 9 and 10, before 354; 364 taken up first.

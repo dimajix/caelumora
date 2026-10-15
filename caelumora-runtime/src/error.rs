@@ -7,7 +7,7 @@
 //! store backend failure, may carry file paths or other internals and belong
 //! in the log only.
 
-use crate::agent::manager::AgentError;
+use crate::agent::AgentError;
 use crate::command::CommandError;
 use crate::component::ComponentError;
 use crate::context::ContextError;

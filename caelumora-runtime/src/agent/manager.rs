@@ -14,6 +14,7 @@
 //! `ChannelLoop::follow_agent`), a channel that starts leaves it out, and
 //! the views show it as a former member, removed as its mark says.
 
+use super::{store_error, AgentError, AgentResult};
 use crate::event::EventBus;
 use crate::scoped::{ScopeMember, deleted_since, deleted_unless_refused, restored_unless_refused, within};
 use async_trait::async_trait;
@@ -24,41 +25,11 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
 use caelumora_model::session::Session;
 use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
-use caelumora_model::value::ValueError;
-use caelumora_model::value::name::{Name, ScopedName};
+use caelumora_model::value::name::ScopedName;
 use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tracing::info;
-
-#[derive(Debug, thiserror::Error)]
-pub enum AgentError {
-    /// No such agent, or not one the caller may read - one case, so that
-    /// nothing can be probed.
-    #[error("there is no agent {0}")]
-    NotFound(AgentId),
-    /// The personality of an agent lies in a session's or a channel's scope
-    /// the agent would not lie in (issue 178).
-    #[error("the personality '{0}' cannot make an agent outside the session or channel it lies in")]
-    PersonalityOutOfScope(Name),
-    /// What a value was given as does not fit it: the name of an agent to
-    /// make.
-    #[error(transparent)]
-    Invalid(#[from] ValueError),
-    #[error(transparent)]
-    Store(#[from] StoreError),
-}
-
-pub type AgentResult<T> = Result<T, AgentError>;
-
-/// `error` of the store about agent `id`: not found is one case with not
-/// readable.
-fn store_error(id: AgentId) -> impl FnOnce(StoreError) -> AgentError {
-    move |error| match error {
-        StoreError::NotFound { .. } => AgentError::NotFound(id),
-        error => AgentError::Store(error),
-    }
-}
 
 /// The one owner of agents' lifecycle (issue 314).
 pub struct AgentManager {

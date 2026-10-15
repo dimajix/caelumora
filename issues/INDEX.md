@@ -438,7 +438,7 @@ published before anyone else can take it.
 | [360](360-channel-runtime-forwarders-again.md) | done | `ChannelRuntime` forwards ten services of the `RuntimeManager` it never uses itself, each read once by `ChannelLoop::new`; what 89 rejected, on code that has changed since. |
 | [361](361-session-before-its-channels.md) | done | A channel is attached to its session in a second step after it is built, though the session's controller already travels through its runtime; the option 123 rejected, on code that has changed since. |
 | [363](363-run-control-built-twice.md) | done | Where an agent's actor stands and what `cancel` and `stop` asked of it is built twice - `RunControl` for the `AgentActor`, three fields of its own for the `ExternalAgentActor` - so the two show and end their work differently, and the loop that carries out commands cannot be shared. |
-| [364](364-managers-in-different-places.md) | open | A module's manager lives in `manager.rs` in some modules, in `mod.rs` or a flat file in others, and its error type now beside it, now in `mod.rs`. |
+| [364](364-managers-in-different-places.md) | done | A module's manager lives in `manager.rs` in some modules, in `mod.rs` or a flat file in others, and its error type now beside it, now in `mod.rs`. |
 | [365](365-security-manager-is-an-access-policy.md) | open | `SecurityManager` decides who may do what and manages nothing: it is the access policy beside `ConfidentialityPolicy`, under a name that means a lifecycle everywhere else. |
 | [366](366-runtime-rs-holds-four-types.md) | open | `runtime.rs` holds the runtime, how it is built, and what a channel and an actor are given of it, interleaved in one file of 847 lines. |
 

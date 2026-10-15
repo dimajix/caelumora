@@ -17,7 +17,7 @@ use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResultE
 use caelumora_model::template::{ParticipantRequest, SessionTemplate, TemplateError, TemplateResult, WorkspaceTemplate};
 use caelumora_model::user::UserId;
 use caelumora_model::workspace::WorkspaceId;
-use crate::agent::manager::{AgentError, AgentManager};
+use crate::agent::{AgentError, AgentManager};
 use crate::session::SessionLoop;
 use crate::workspace::{WorkspaceError, WorkspaceManager};
 
