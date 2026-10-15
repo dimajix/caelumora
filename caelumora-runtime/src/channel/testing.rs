@@ -6,7 +6,7 @@
 
 use crate::actor::Actor;
 use crate::channel::ChannelLoop;
-use crate::command::{CommandError, CommandExecutor};
+use crate::command::CommandError;
 use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
 use crate::session::testing::{bare_session, user};
 use anyhow::{Result, Error};
@@ -114,9 +114,8 @@ pub async fn channel_of_alice_and(runtime: Arc<RuntimeManager>, alice: UserId, a
     };
     // Stored, so that leaving it can be stored too.
     runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
-    let executor = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
     let session_id = channel.session_id;
-    ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, Arc::new(executor), bare_session(session_id), channel)).await.unwrap()
+    ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, bare_session(session_id), channel)).await.unwrap()
 }
 
 /// Waits for `actor` to reach `wanted`.

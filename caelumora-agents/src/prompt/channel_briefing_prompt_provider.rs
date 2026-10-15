@@ -125,11 +125,10 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::AgentsPlugin;
     use caelumora_runtime::agent::state::AgentStateHandle;
     use crate::turn::Turn;
-    use crate::testing::test_registry;
-    use caelumora_runtime::runtime::RuntimeManager;
+    use crate::testing::TestAgents;
+    use caelumora_runtime::testing::TestRuntime;
     use caelumora_runtime::session::SessionLoop;
     use caelumora_runtime::session::testing::actor_runtime_in;
     use caelumora_model::actor::{ActorId, EventContext};
@@ -138,12 +137,9 @@ mod tests {
     use caelumora_model::confidentiality::{Confidentiality, Visibility};
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::scope::Scope;
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
+    use caelumora_model::security::SecurityContext;
     use caelumora_model::session::{Session, SessionId};
     use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::confidentiality::ConfidentialityRules;
-    use caelumora_model::config::AppConfig;
     use chrono::Utc;
 
     #[test]
@@ -172,9 +168,7 @@ mod tests {
     #[tokio::test]
     async fn the_descriptions_are_read_at_every_turn_and_classified_as_their_place() {
         let store = Arc::new(MemoryStore::new());
-        let access_policy = Arc::new(AllowAllPolicy::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), &[&AgentsPlugin]).unwrap());
+        let runtime = TestRuntime { store: Arc::clone(&store), plugins: vec![&TestAgents], ..Default::default() }.build();
         let system = SecurityContext::system();
 
         let personality = Personality {

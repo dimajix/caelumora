@@ -35,7 +35,7 @@ pub trait Plugin: Send + Sync {
 mod tests {
     use super::*;
     use crate::component::{ComponentContainer, ComponentContext, ComponentFacets, ComponentKind};
-    use crate::testing::test_registry;
+    use crate::testing::TestRuntime;
     use crate::runtime::RuntimeManager;
     use crate::seed::SeedSection;
     use crate::session::SessionManager;
@@ -43,13 +43,12 @@ mod tests {
     use async_trait::async_trait;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::config::AppConfig;
-    use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::define_id;
     use caelumora_model::group::Group;
     use caelumora_model::removal::{Deletable, Removal};
-    use caelumora_model::secret::{SecretManager, SecretProvider, SecretResult};
+    use caelumora_model::secret::{SecretProvider, SecretResult};
     use crate::component::config_of_params;
-    use caelumora_model::security::{AllowAllPolicy, Secured, SecurityAttributes, SecurityContext};
+    use caelumora_model::security::{Secured, SecurityAttributes, SecurityContext};
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::NoField;
     use caelumora_model::store::{EntityKind, EntityStore, EntityStoreFactory, NoEntity, StoreError, Stored};
@@ -213,25 +212,16 @@ mod tests {
         }
     }
 
-    fn builder(store: &Arc<MemoryStore>, config: &AppConfig) -> Result<RuntimeBuilder> {
-        let access_policy = Arc::new(AllowAllPolicy::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
-        RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), config, test_registry(Arc::<MemoryStore>::clone(store)), Backends::built_in())
-    }
-
-    fn built(config: &AppConfig, plugin: &dyn Plugin) -> Result<RuntimeManager> {
-        let mut builder = builder(&Arc::new(MemoryStore::new()), config)?;
-        builder.plugin(plugin)?;
-        builder.build()
+    /// The runtime with `plugin` alone, configured as `config` says, or why it could not be built.
+    fn built(config: AppConfig, plugin: &dyn Plugin) -> Result<RuntimeManager> {
+        TestRuntime { config, plugins: vec![plugin], ..Default::default() }.try_build()
     }
 
     #[tokio::test]
     async fn a_plugin_brings_its_kind_its_manager_its_component_and_its_sections() {
         let store = Arc::new(MemoryStore::new());
         let config = AppConfig::from_yaml("notes:\n  greeting: hello\n").unwrap();
-        let mut builder = builder(&store, &config).unwrap();
-        builder.plugin(&Notes).unwrap();
-        let runtime = Arc::new(builder.build().unwrap());
+        let runtime = TestRuntime { store: Arc::clone(&store), config, plugins: vec![&Notes], ..Default::default() }.build();
 
         let notebook = runtime.services().get::<Notebook>().expect("its manager, a service");
         assert_eq!(notebook.greeting, "hello", "its section of the configuration");
@@ -265,19 +255,17 @@ mod tests {
 
     #[test]
     fn a_section_of_the_configuration_nobody_claims_is_an_error() {
-        let refused = built(&AppConfig::from_yaml("notez:\n  greeting: hello\n").unwrap(), &Notes).expect_err("a typo");
+        let refused = built(AppConfig::from_yaml("notez:\n  greeting: hello\n").unwrap(), &Notes).expect_err("a typo");
         assert!(refused.to_string().contains("'notez'"), "{refused}");
-        let unreadable = built(&AppConfig::from_yaml("notes:\n  greting: hello\n").unwrap(), &Notes).expect_err("not its section");
+        let unreadable = built(AppConfig::from_yaml("notes:\n  greting: hello\n").unwrap(), &Notes).expect_err("not its section");
         assert!(format!("{unreadable:#}").contains("greting"), "{unreadable:#}");
-        let mut twice = builder(&Arc::new(MemoryStore::new()), &AppConfig::default()).unwrap();
-        twice.plugin(&Notes).unwrap();
-        let again = twice.plugin(&Notes).expect_err("claimed twice");
+        let again = TestRuntime { plugins: vec![&Notes, &Notes], ..Default::default() }.try_build().expect_err("claimed twice");
         assert!(format!("{again:#}").contains("claimed twice"), "{again:#}");
     }
 
     #[test]
     fn a_kind_named_as_another_is_refused() {
-        let refused = built(&AppConfig::default(), &Impostor).expect_err("named as the groups are");
+        let refused = built(AppConfig::default(), &Impostor).expect_err("named as the groups are");
         assert!(refused.to_string().contains("impostor"), "names the plugin: {refused}");
         assert!(matches!(refused.root_cause().downcast_ref::<StoreError>(), Some(StoreError::Conflict(_))), "{refused:#}");
     }

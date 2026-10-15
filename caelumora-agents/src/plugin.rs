@@ -55,22 +55,20 @@ impl Plugin for AgentsPlugin {
 mod tests {
     use crate::actor::agent::AgentActor;
     use crate::actor::external_agent::ExternalAgentActor;
-    use super::AgentsPlugin;
     use caelumora_runtime::channel::ChannelLoop;
     use caelumora_runtime::component::testing::config;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};
     use caelumora_runtime::moderator::policy_moderator::POLICY_MODERATOR_KIND;
     use caelumora_runtime::moderator::round_robin_policy::ROUND_ROBIN_POLICY_KIND;
-    use caelumora_runtime::runtime::{RuntimeManager, Services};
+    use caelumora_runtime::runtime::Services;
+    use super::AgentsPlugin;
     use crate::testing::test_registry;
+    use caelumora_runtime::testing::TestRuntime;
     use crate::tool::echo_tool::ECHO_TOOL_KIND;
     use caelumora_model::component::ComponentConfig;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::agent::PersonalityKind;
     use caelumora_model::config::AppConfig;
-    use caelumora_model::confidentiality::ConfidentialityRules;
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::type_map::TypeKey;
     use std::sync::Arc;
@@ -85,9 +83,7 @@ mod tests {
     /// what their actors ask for (issue 337).
     #[test]
     fn the_plugin_brings_both_kinds_of_agent() {
-        let store = Arc::new(MemoryStore::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
-        let runtime = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), &[&AgentsPlugin]).unwrap();
+        let runtime = TestRuntime { plugins: vec![&AgentsPlugin], ..Default::default() }.build();
         assert_eq!(names(runtime.agent_kinds().facets(PersonalityKind::Internal)), names(Some(AgentActor::COMPONENT_FACETS)));
         assert_eq!(names(runtime.agent_kinds().facets(PersonalityKind::External)), names(Some(ExternalAgentActor::COMPONENT_FACETS)));
     }
@@ -114,10 +110,8 @@ mod tests {
     #[test]
     fn the_configuration_may_replace_the_context_provider_but_only_with_one() {
         let manager = |defaults: Value| {
-            let store = Arc::new(MemoryStore::new());
-            let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
             let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
-            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, test_registry(Arc::<MemoryStore>::clone(&store)), &[&AgentsPlugin])
+            TestRuntime { config: AppConfig { component_defaults: defaults, ..Default::default() }, plugins: vec![&AgentsPlugin], ..Default::default() }.try_build()
         };
         // As in `examples/config.yaml`.
         assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());

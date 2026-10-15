@@ -2,8 +2,8 @@
 //! sessions, channels and the views share: one of each, for building a runtime, a user, a session
 //! and its main channel, and the views an actor of a running session navigates (issue 315).
 
-use crate::testing::{Script, ScriptedAgents};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityRules};
+use crate::testing::TestRuntime;
 use caelumora_model::security::{OwnershipPolicy, AccessPolicy};
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::memory::MemoryStore;
@@ -11,7 +11,6 @@ use std::sync::Arc;
 use crate::session::{ChannelSpec, SessionLoop, SessionManager};
 use caelumora_model::value::name::Name;
 use crate::channel::ChannelLoop;
-use crate::command::CommandExecutor;
 use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
 use caelumora_model::actor::ActorId;
 use caelumora_model::group::GroupId;
@@ -23,28 +22,12 @@ use caelumora_model::channel::{Channel, moderation_components};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::secret::SecretManager;
-use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::actor::{ActorEvent, Envelope, Rejection};
 use caelumora_model::message::{MessageId, Message};
 use tokio::sync::broadcast;
-use caelumora_model::config::AppConfig;
-use crate::testing::test_registry;
 use chrono::Utc;
 use crate::event::EventSubscription;
 use std::time::Duration;
-
-/// A store under the ownership policy, which learns who belongs to a
-/// group from that store (issue 23), and `rules` as the confidentiality
-/// policy beside it (issue 304).
-pub fn owned_store(rules: ConfidentialityRules) -> (Arc<dyn AccessPolicy>, Arc<dyn ConfidentialityPolicy>, Arc<MemoryStore>) {
-    let memberships = Arc::new(StoreMemberships::new());
-    let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
-    let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(rules);
-    let store = Arc::new(MemoryStore::with_policies(Arc::clone(&access_policy), Arc::clone(&confidentiality)));
-    memberships.bind(&store.entity_stores().groups);
-    (access_policy, confidentiality, store)
-}
 
 /// A user named `name`, not stored.
 pub fn user(name: &str) -> User {
@@ -63,27 +46,22 @@ pub async fn record_users(manager: &SessionManager, users: &[&User]) -> Vec<Part
     participants
 }
 
-/// A runtime under the ownership policy with `rules` (`owned_store`), and
-/// a manager on it.
+/// A runtime under the ownership policy, which learns who belongs to a
+/// group from its store (issue 23), with `rules` as the confidentiality
+/// policy beside it (issue 304), and a manager on it.
 pub fn owned_runtime(rules: ConfidentialityRules) -> (Arc<MemoryStore>, Arc<SessionManager>) {
-    let (policy, confidentiality, store) = owned_store(rules);
-    let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, confidentiality, &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap());
+    let memberships = Arc::new(StoreMemberships::new());
+    let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
+    let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(rules);
+    let store = Arc::new(MemoryStore::with_policies(Arc::clone(&access_policy), Arc::clone(&confidentiality)));
+    memberships.bind(&store.entity_stores().groups);
+    let runtime = TestRuntime { store: Arc::clone(&store), access_policy, confidentiality, ..Default::default() }.build();
     (store, Arc::new(SessionManager::new(runtime)))
 }
 
-/// A runtime under no policy: everything is allowed.
+/// A runtime under no policy: everything is allowed (`TestRuntime`).
 pub fn test_runtime() -> Arc<RuntimeManager> {
-    test_runtime_under(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default())
-}
-
-/// A runtime under `access_policy` and `confidentiality`, configured as
-/// `config` says - the system's rules for tool calls among it
-/// (`AppConfig::approvals`, issue 13).
-pub fn test_runtime_under(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, config: &AppConfig) -> Arc<RuntimeManager> {
-    let store = Arc::new(MemoryStore::new());
-    let secret_manager = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
-    Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, access_policy, confidentiality, config, test_registry(Arc::<MemoryStore>::clone(&store)), &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap())
+    TestRuntime::default().build()
 }
 
 /// The runtime of an actor in a channel of no running session, never
@@ -100,8 +78,7 @@ pub fn detached_actor_runtime() -> ActorRuntime {
 /// `session` - for tests that give the actor the policy, the rules, the
 /// session and the channel of their own (issues 371, 374).
 pub fn detached_actor_runtime_in(runtime_manager: Arc<RuntimeManager>, session: Session, channel: Channel) -> ActorRuntime {
-    let commands = Arc::new(CommandExecutor::empty(Arc::clone(runtime_manager.access_policy())));
-    ChannelRuntime::outside_a_session(runtime_manager, commands, session, channel).new_actor_runtime(ActorId::None)
+    ChannelRuntime::outside_a_session(runtime_manager, session, channel).new_actor_runtime(ActorId::None)
 }
 
 /// A session that holds nothing but its id `session_id`: what a channel

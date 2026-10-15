@@ -205,12 +205,11 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::AgentsPlugin;
     use crate::turn::Turn;
-    use crate::testing::test_registry;
+    use crate::testing::TestAgents;
+    use caelumora_runtime::testing::TestRuntime;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::runtime::RuntimeManager;
     use caelumora_runtime::session::SessionLoop;
     use caelumora_runtime::session::testing::actor_runtime_in;
     use caelumora_model::actor::EventContext;
@@ -219,13 +218,10 @@ mod tests {
     use caelumora_model::channel::{Channel, Participant};
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::scope::Scope;
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
+    use caelumora_model::security::SecurityContext;
     use caelumora_model::session::{ChannelId, Session, SessionId};
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::{User, UserId, UserProfile};
-    use caelumora_model::confidentiality::ConfidentialityRules;
-    use caelumora_model::config::AppConfig;
     use caelumora_model::value::text::Introduction;
     use chrono::Utc;
     use uuid::Uuid;
@@ -294,9 +290,7 @@ mod tests {
     #[tokio::test]
     async fn the_members_of_the_channel_are_read_with_their_introductions() {
         let store = Arc::new(MemoryStore::new());
-        let access_policy = Arc::new(AllowAllPolicy::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), &[&AgentsPlugin]).unwrap());
+        let runtime = TestRuntime { store: Arc::clone(&store), plugins: vec![&TestAgents], ..Default::default() }.build();
         let system = SecurityContext::system();
 
         let (kaya, bob) = (User { id: UserId::new(), username: Name::new("Kaya").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }, User { id: UserId::new(), username: Name::new("Bob").unwrap(), email: String::new(), roles: Vec::new(), deleted: None });

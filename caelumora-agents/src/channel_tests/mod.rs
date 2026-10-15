@@ -8,8 +8,7 @@ use caelumora_runtime::channel::*;
 use caelumora_runtime::channel::testing::*;
 use caelumora_runtime::session::testing::user;
 use caelumora_runtime::component::{ComponentRegistry, ComponentFacets};
-use caelumora_runtime::runtime::RuntimeManager;
-use caelumora_runtime::testing::test_registry;
+use caelumora_runtime::testing::{test_registry, TestRuntime};
 use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::channel::{Channel, Participant};
@@ -21,9 +20,7 @@ use caelumora_runtime::command::help_command::HelpCommandProvider;
 use caelumora_runtime::command::{CommandExecutor, CommandResult, ProvidesCommands};
 use caelumora_model::agent::AgentId;
 use caelumora_model::component::{ComponentConfig, ComponentFailPolicy, ComponentDescriptor};
-use caelumora_model::confidentiality::ConfidentialityRules;
 use caelumora_model::config::AppConfig;
-use caelumora_model::secret::SecretManager;
 use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_runtime::command::CommandError;
@@ -111,7 +108,6 @@ async fn with_an_agent_under(access_policy: Arc<dyn AccessPolicy>, model: Arc<dy
 pub(super) async fn agent_channel(access_policy: Arc<dyn AccessPolicy>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
     let store = Arc::new(MemoryStore::new());
     let (context, agent, alice) = alice_and_an_agent(&store, components).await;
-    let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
     // The model is a component (issue 130): the stand-in is registered as
     // a kind of its own and made every agent's default.
     let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
@@ -135,7 +131,8 @@ pub(super) async fn agent_channel(access_policy: Arc<dyn AccessPolicy>, model: A
             fail_policy: Default::default(),
         }],
     };
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, registry, &[&AgentsPlugin]).unwrap());
+    let config = AppConfig { component_defaults: defaults, ..Default::default() };
+    let runtime = TestRuntime { store, access_policy, config, registry: Some(registry), plugins: vec![&AgentsPlugin], ..Default::default() }.build();
     (channel_of_alice_and(runtime, alice, agent).await, context, agent, alice)
 }
 

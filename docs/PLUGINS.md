@@ -28,11 +28,10 @@ two steps:
     the runtime. The program names the default kinds of singles after its plugins registered
     (`set_default_kind`).
 
-A test that builds the runtime from parts of its own calls `RuntimeManager::new` with the plugins it
-needs, or `RuntimeBuilder::new` with `Backends::with_plugins` of its plugins and registers them
-afterwards. A test of the agents' logic names the agents' plugin; the runtime's own tests name
-scripted agents (`testing::ScriptedAgents`, issue 370) where an agent takes part, so that they test
-what the runtime does with an agent, not what an agent does. A backend's factory is registered with
+A test builds the runtime with `testing::TestRuntime`, naming the plugins it needs (issue 375). A
+test of the agents' logic names the agents' plugin; the runtime's own tests name scripted agents
+(`testing::ScriptedAgents`, issue 370) where an agent takes part, so that they test what the runtime
+does with an agent, not what an agent does. A backend's factory is registered with
 `Backends::register` for the service it serves (`dyn TerminalProvider`, say), reads its parameters
 with `config_of_params` and asks the services it is given - the policies, the `SecretManager`, the
 store of the users - with `service_of`. While it registers, a plugin

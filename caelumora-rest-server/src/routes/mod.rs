@@ -231,18 +231,14 @@ pub(crate) mod tests {
     use axum::body::Body;
     use axum::http::header::{COOKIE, SET_COOKIE};
     use axum::http::Request;
-    use caelumora_model::config::{AppConfig, AuthConfig};
-    use caelumora_model::confidentiality::ConfidentialityRules;
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::AllowAllPolicy;
-    use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::config::AuthConfig;
     use caelumora_model::user_provider::UserManager;
     use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
-    use caelumora_runtime::component::ComponentRegistry;
     use caelumora_runtime::event::EventBus;
     use caelumora_runtime::plugin::Plugin;
-    use caelumora_runtime::runtime::{RuntimeBuilder, RuntimeManager};
+    use caelumora_runtime::runtime::RuntimeBuilder;
     use caelumora_runtime::session::SessionManager;
+    use caelumora_runtime::testing::TestRuntime;
     use tower::ServiceExt;
     use anyhow::Result;
 
@@ -273,10 +269,7 @@ pub(crate) mod tests {
     /// The state of an API that lets anybody log in and permits everything,
     /// on a runtime of memory stores.
     pub(crate) fn state() -> Arc<AppState> {
-        let store = Arc::new(MemoryStore::new());
-        let access_policy = Arc::new(AllowAllPolicy::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(&store)), &[]).unwrap());
+        let runtime = TestRuntime { plugins: Vec::new(), ..Default::default() }.build();
         let users = Arc::clone(&runtime.entity_stores().users);
         let auth = Arc::new(Auth {
             tokens: TokenService::new(b"0123456789abcdef0123456789abcdef", &AuthConfig::default()).unwrap(),

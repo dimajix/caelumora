@@ -666,18 +666,11 @@ impl Actor for UserActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::testing::bare_session;
-    use crate::testing::{Script, ScriptedAgents};
+    use crate::session::testing::{bare_session, test_runtime};
     use caelumora_model::actor::EventContext;
     use caelumora_model::value::name::Name;
-    use crate::command::CommandExecutor;
-    use crate::runtime::{ChannelRuntime, RuntimeManager};
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{AllowAllPolicy, SecurityAttributes};
-    use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::confidentiality::ConfidentialityRules;
-    use caelumora_model::config::AppConfig;
-    use crate::testing::test_registry;
+    use crate::runtime::ChannelRuntime;
+    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::channel::{Channel, moderation_components};
     use caelumora_model::user::{User, UserId};
     use crate::transport::memory::InMemoryEventSender;
@@ -686,9 +679,7 @@ mod tests {
     /// A user's actor, with the channel it is in - to be kept while the
     /// actor is used: the actor's runtime holds it weakly.
     async fn user_actor() -> (UserActor, Arc<ChannelLoop>) {
-        let store = Arc::new(MemoryStore::new());
-        let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap());
+        let runtime = test_runtime();
         let session_id = SessionId::new();
         let channel = Channel {
             summary: None, briefing: None,
@@ -713,7 +704,7 @@ mod tests {
             roles: Vec::new(),
             deleted: None,
         };
-        let channel_runtime = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy()))), bare_session(session_id), channel);
+        let channel_runtime = ChannelRuntime::outside_a_session(Arc::clone(&runtime), bare_session(session_id), channel);
         let channel_loop = ChannelLoop::new(channel_runtime.clone()).await.unwrap();
         let actor_runtime = channel_runtime.new_actor_runtime(ActorId::User(user.id));
         runtime.entity_stores().users.create(&SecurityContext::system(), &user).await.unwrap();

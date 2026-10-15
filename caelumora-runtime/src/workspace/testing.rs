@@ -2,7 +2,7 @@
 //! running session whose channel "main" an agent takes part in, with a
 //! workspace attached that its storage gives a shell.
 
-use crate::testing::{Script, ScriptedAgents};
+use crate::testing::TestRuntime;
 use crate::runtime::RuntimeManager;
 use crate::session::SessionLoop;
 use caelumora_model::actor::ActorId;
@@ -12,17 +12,14 @@ use caelumora_model::config::{BackendConfig, WorkspacesConfig};
 use serde_json::json;
 use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
 use caelumora_model::scope::Scope;
-use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{AllowAllPolicy, SecurityContext};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::workspace::Workspace;
 use std::sync::Arc;
-use caelumora_model::confidentiality::ConfidentialityRules;
 use caelumora_model::config::AppConfig;
-use crate::testing::test_registry;
 use chrono::Utc;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -52,13 +49,11 @@ impl WithWorkspace {
 
 pub async fn session_with_workspace() -> WithWorkspace {
     let store = Arc::new(MemoryStore::new());
-    let access_policy = Arc::new(AllowAllPolicy::new());
-    let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
     let files = tempfile::tempdir().unwrap();
     let internal = Classification::general(Confidentiality::Internal);
     let storage = BackendConfig::new("local", json!({ "root": files.path(), "shell": true, "destination": { "level": "internal" } }));
     let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig { workspaces, ..Default::default() }, test_registry(Arc::<MemoryStore>::clone(&store)), &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap());
+    let runtime = TestRuntime { store: Arc::clone(&store), config: AppConfig { workspaces, ..Default::default() }, ..Default::default() }.build();
     let system = SecurityContext::system();
 
     let owner = UserId::new();

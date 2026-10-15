@@ -601,8 +601,7 @@ fn store_error(id: SessionId) -> impl FnOnce(StoreError) -> Error {
 #[cfg(test)]
 mod tests {
     use caelumora_model::value::name::Name;
-    use crate::runtime::RuntimeManager;
-    use crate::testing::{Script, ScriptedAgents};
+    use crate::testing::TestRuntime;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Agent;
     use crate::agent::AgentError;
@@ -615,14 +614,9 @@ mod tests {
     use caelumora_model::scope::Scope;
     use std::sync::Arc;
     use caelumora_model::value::name::ScopedName;
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::store::memory::MemoryStore;
     use crate::session::{SessionError, SessionManager};
     use crate::session::testing::*;
-    use caelumora_model::confidentiality::ConfidentialityRules;
-    use caelumora_model::config::AppConfig;
-    use crate::testing::test_registry;
     use caelumora_model::event::EntityChange;
     use caelumora_model::session::Session;
     use caelumora_model::session;
@@ -987,8 +981,7 @@ mod tests {
         use caelumora_model::store::StateStore;
         let entities = Arc::new(MemoryStore::new());
         let states = Arc::new(MemoryStore::new());
-        let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&states), Arc::<MemoryStore>::clone(&entities), secret_manager, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&entities)), &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap());
+        let runtime = TestRuntime { store: Arc::clone(&entities), state_store: Some(Arc::<MemoryStore>::clone(&states)), ..Default::default() }.build();
         let manager = SessionManager::new(runtime);
         let ctx = SecurityContext::default();
         let session = make_session("two-stores", ActorId::None);

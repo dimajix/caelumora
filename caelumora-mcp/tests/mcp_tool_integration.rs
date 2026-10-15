@@ -1,27 +1,25 @@
 use std::net::SocketAddr;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use caelumora_mcp::plugin::McpPlugin;
 use caelumora_mcp::tool::MCP_TOOL_KIND;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, StoredComponents};
-use caelumora_model::confidentiality::{Classification, Confidentiality, ConfidentialityRules};
-use caelumora_model::config::AppConfig;
-use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{AllowAllPolicy, SecurityContext};
+use caelumora_model::confidentiality::{Classification, Confidentiality};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::channel::Channel;
-use caelumora_model::session::{Session, SessionId};
+use caelumora_model::session::SessionId;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::ComponentStore;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
 use caelumora_runtime::agent::state::AgentStates;
 use caelumora_agents::turn::Turn;
-use caelumora_runtime::backend::Backends;
-use caelumora_runtime::command::CommandExecutor;
-use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentRegistry, PRECONFIGURED_REF_KIND};
-use caelumora_runtime::runtime::{ActorRuntime, ChannelRuntime, RuntimeBuilder, RuntimeManager};
+use caelumora_runtime::component::{ComponentContainer, ComponentContext, PRECONFIGURED_REF_KIND};
+use caelumora_runtime::runtime::{ActorRuntime, RuntimeManager};
+use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime_in};
+use caelumora_runtime::testing::TestRuntime;
 use caelumora_agents::tool::ToolProvider;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, ServerConfig};
@@ -32,7 +30,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use axum::Router;
-use chrono::Utc;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
@@ -83,13 +80,8 @@ async fn start_test_server() -> (SocketAddr, JoinHandle<()>) {
 
 /// A runtime over `store` with the plugin of MCP servers, as the programs
 /// build theirs.
-fn runtime(store: &Arc<MemoryStore>) -> RuntimeManager {
-    let access_policy = Arc::new(AllowAllPolicy::new());
-    let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
-    let backends = Backends::with_plugins(&[&McpPlugin]);
-    let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)), backends).unwrap();
-    builder.plugin(&McpPlugin).unwrap();
-    builder.build().unwrap()
+fn runtime(store: &Arc<MemoryStore>) -> Arc<RuntimeManager> {
+    TestRuntime { store: Arc::clone(store), plugins: vec![&McpPlugin], ..Default::default() }.build()
 }
 
 /// A container with one MCP tool component configured with `params`.
@@ -114,29 +106,9 @@ async fn build_container(params: Value) -> ComponentContainer {
 /// What a turn outside of a running session acts through: the runtime of
 /// an actor in a channel that is attached to no session, so it reaches none.
 fn detached_actor_runtime() -> ActorRuntime {
-    let runtime_manager = Arc::new(runtime(&Arc::new(MemoryStore::new())));
-    let now = Utc::now();
-    let session = Session {
-        summary: None, briefing: None,
-        approval_rules: Vec::new(),
-        workspace: None,
-        id: SessionId::new(),
-        name: Name::new("detached").unwrap(),
-        commands: Default::default(),
-        privacy: Default::default(),
-        participants: Vec::new(),
-        channels: Vec::new(),
-        created_at: now,
-        updated_at: now,
-        security_attributes: Default::default(),
-        deleted: None,
-    };
+    let session = bare_session(SessionId::new());
     let channel = Channel::build(session.id, ActorId::None, Name::new("detached").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
-    let commands = Arc::new(CommandExecutor::empty(Arc::clone(runtime_manager.access_policy())));
-    let session = runtime_manager.controller_manager().new_session_controller(session);
-    let channel = runtime_manager.controller_manager().new_channel_controller(channel);
-    let channel = ChannelRuntime::new(runtime_manager, commands, session, channel, Weak::new());
-    channel.new_actor_runtime(ActorId::None)
+    detached_actor_runtime_in(runtime(&Arc::new(MemoryStore::new())), session, channel)
 }
 
 #[tokio::test]
