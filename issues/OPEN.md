@@ -101,6 +101,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [346](346-subscription-topics-for-every-kind.md) | open | The event bus has subscription topics only for sessions, channels, agents and users, so a plugin cannot follow a single entity - an artifact, say - without reading every event. |
 | [370](370-agent-logic-in-a-crate-of-its-own.md) | open | The runtime crate holds the environment agents run in and the agents' own logic - the turn, the tools, the model, the prompts, both actors - in one crate, so nothing enforces that an agent reaches the channel through `ActorRuntime` alone, and the channel cannot be tested without an agent. |
 | [371](371-tool-executor-construction.md) | open | `ToolExecutor::new` takes seven parameters, five of which its one caller reads from the agent's `ActorRuntime` that it passes as well, so they can disagree with it. |
+| [372](372-runtime-test-actors.md) | open | The runtime's tests implement `Actor` four times beside the scripted agent, each writing the trait out again for a test or two. |
 
 ## Open architecture questions
 
