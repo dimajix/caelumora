@@ -10,7 +10,8 @@ use caelumora_model::confidentiality::{Classification, Confidentiality, Confiden
 use caelumora_model::config::AppConfig;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{AllowAllPolicy, SecurityContext};
-use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::channel::Channel;
+use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::ComponentStore;
 use caelumora_model::type_map::TypeKey;
@@ -130,11 +131,12 @@ fn detached_actor_runtime() -> ActorRuntime {
         security_attributes: Default::default(),
         deleted: None,
     };
-    let session_id = session.id;
+    let channel = Channel::build(session.id, ActorId::None, Name::new("detached").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
     let commands = Arc::new(CommandExecutor::empty(Arc::clone(runtime_manager.access_policy())));
     let session = runtime_manager.controller_manager().new_session_controller(session);
-    let channel = ChannelRuntime::new(runtime_manager, commands, session, Weak::new());
-    channel.new_actor_runtime(ActorId::None, session_id, ChannelId::new())
+    let channel = runtime_manager.controller_manager().new_channel_controller(channel);
+    let channel = ChannelRuntime::new(runtime_manager, commands, session, channel, Weak::new());
+    channel.new_actor_runtime(ActorId::None)
 }
 
 #[tokio::test]

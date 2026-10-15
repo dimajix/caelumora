@@ -32,7 +32,7 @@ use crate::command::AgentCommandProvider;
 use caelumora_runtime::component::ComponentImpl;
 use crate::prompt::external_context_provider::EXTERNAL_CONTEXT_PROVIDER_KIND;
 use crate::prompt::ContextProvider;
-use caelumora_runtime::controller::{AgentController, ChannelController};
+use caelumora_runtime::controller::AgentController;
 use crate::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, OutboundMessage, Said};
 use caelumora_runtime::logging::envelope_span;
 use crate::message::PerceiveInProcessor;
@@ -121,15 +121,14 @@ impl ExternalAgentActor {
     /// The actor of the external agent `agent_controller` holds - the
     /// session's controller of it, shared with its actors in the session's
     /// other channels (issue 120) - built from its `personality`, as the
-    /// channel read it for the agent, in the channel `channel_controller`
-    /// holds.
+    /// channel read it for the agent, in the channel of `actor_runtime`.
     ///
     /// # Errors
     /// If its personality provides no `ExternalAgent` - or more than one -
     /// or its answers, as the component classifies them, may not be
     /// published in the channel; whatever its state store reports.
-    pub async fn new(channel_controller: Arc<ChannelController>, agent_controller: Arc<AgentController>, personality: Personality, actor_runtime: ActorRuntime) -> Result<Self> {
-        let channel = Arc::clone(&channel_controller.load());
+    pub async fn new(agent_controller: Arc<AgentController>, personality: Personality, actor_runtime: ActorRuntime) -> Result<Self> {
+        let channel = Arc::clone(&actor_runtime.channel_controller().load());
         // Its context provider is, unless it configures one, not a turn's.
         let defaults = ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new(EXTERNAL_CONTEXT_PROVIDER_KIND, EXTERNAL_CONTEXT_PROVIDER_KIND)],
@@ -137,7 +136,7 @@ impl ExternalAgentActor {
         // It resumes no answer: the remote agent's tasks are followed again
         // (`follow_open_tasks`), and it starts idle.
         let resume = |state: &mut AgentChannelState| state.processing_state = ActorState::Idle;
-        let (body, components) = AgentBody::build(&channel, agent_controller, &personality, Self::COMPONENT_FACETS, &defaults, actor_runtime, resume).await?;
+        let (body, components) = AgentBody::build(agent_controller, &personality, Self::COMPONENT_FACETS, &defaults, actor_runtime, resume).await?;
         let remote = components.one::<dyn ExternalAgent>().await?;
 
         // Answers that may never enter the channel would each be dropped
@@ -221,14 +220,10 @@ impl ExternalAgentActor {
     /// Answers the `ResponseRequested` in `request`. Whatever happens, the
     /// answer ends here: published, given up with `TurnGivenUp`, or -
     /// stopped - not at all; and the state is stored. An error ends the
-    /// answer, never the actor. Without a channel there is nobody to
-    /// answer.
+    /// answer, never the actor.
     async fn respond(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
         let answering = Answering::to(request, self.id(), self.name(), &self.body.security_context());
-        let Some(classification) = self.body.runtime.channel_classification() else {
-            warn!("External agent {} has no channel to answer in", self.id());
-            return;
-        };
+        let classification = self.body.runtime.channel_classification();
         // The work of this exchange, as a turn: bound by the channel as it
         // is now (issue 212), and how it ends is told as its turn's end.
         let mut work = Work::new(answering.event_context.clone(), answering.security_context.clone(), classification);
@@ -293,7 +288,7 @@ impl ExternalAgentActor {
         // taken up: it is cancelled, and the request begins a new one.
         if let Some(asking) = state.remote.asking().cloned() {
             if let Some(begun) = state.remote.work_of(&asking) {
-                if self.lowered(&begun).await.is_some() {
+                if self.lowered(&begun).is_some() {
                     info!("External agent {} does not take up the task that asked back: the channel was lowered since", self.id());
                     self.cancel_remote(state, &begun.security_context, &asking).await;
                 }
@@ -346,7 +341,7 @@ impl ExternalAgentActor {
                     }
                     // A lowering cancels the channel's actors: what came so
                     // far is then not published, but given up (issue 212).
-                    if let Some(channel) = self.lowered(work).await {
+                    if let Some(channel) = self.lowered(work) {
                         return Ok(Ending::Lowered(channel));
                     }
                     break;
@@ -421,7 +416,7 @@ impl ExternalAgentActor {
                 continue;
             }
             if let Some(work) = state.remote.work_of(&task) {
-                if let Some(channel) = self.lowered(&work).await {
+                if let Some(channel) = self.lowered(&work) {
                     self.give_up_task(state, &task, &work, channel, output).await;
                     continue;
                 }
@@ -475,7 +470,7 @@ impl ExternalAgentActor {
         state.remote.set_unsaid(&task, None);
         // Not said at all if its channel was lowered since it began.
         if let Some(work) = &work {
-            if let Some(channel) = self.lowered(work).await {
+            if let Some(channel) = self.lowered(work) {
                 self.give_up_task(state, &task, work, channel, output).await;
                 return;
             }
@@ -499,10 +494,7 @@ impl ExternalAgentActor {
     /// speaks afresh, as the agent itself, classified as its remote agent
     /// declares, else as the channel is now.
     async fn speak(&self, state: &mut AgentChannelState, work: Option<Work>, outcome: Result<Answer, String>, output: &dyn EventSender) {
-        let Some(channel) = self.body.runtime.channel_classification() else {
-            warn!("External agent {} has no channel to speak in", self.id());
-            return;
-        };
+        let channel = self.body.runtime.channel_classification();
         let (answering, label) = match &work {
             Some(work) => (Answering::continuing(work), work.label()),
             None => (
@@ -526,9 +518,9 @@ impl ExternalAgentActor {
     /// The channel's classification as it is now, if `work` - begun under
     /// another - may no longer flow into it (`ConfidentialityPolicy::may_publish`,
     /// in the work's name, as `AgentActor::turn_flow`): then it is given up
-    /// (issue 212). `None` while it flows, or without a channel.
-    async fn lowered(&self, work: &Work) -> Option<Classification> {
-        let channel = self.body.runtime.channel_classification()?;
+    /// (issue 212). `None` while it flows.
+    fn lowered(&self, work: &Work) -> Option<Classification> {
+        let channel = self.body.runtime.channel_classification();
         let flows = self.body.runtime.confidentiality().may_publish(&work.security_context, &work.classification, &channel);
         (!flows).then_some(channel)
     }

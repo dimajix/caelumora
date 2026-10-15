@@ -7,7 +7,7 @@
 use crate::actor::Actor;
 use crate::channel::ChannelLoop;
 use crate::command::{CommandError, CommandExecutor};
-use crate::runtime::{ChannelRuntime, RuntimeManager};
+use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
 use crate::session::testing::{bare_session, user};
 use anyhow::{Result, Error};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
@@ -116,7 +116,7 @@ pub async fn channel_of_alice_and(runtime: Arc<RuntimeManager>, alice: UserId, a
     runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
     let executor = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
     let session_id = channel.session_id;
-    ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), bare_session(session_id))).await.unwrap()
+    ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, Arc::new(executor), bare_session(session_id), channel)).await.unwrap()
 }
 
 /// Waits for `actor` to reach `wanted`.
@@ -209,5 +209,11 @@ impl ChannelLoop {
     /// (`ChannelRuntime::restarted`).
     pub fn restarted_runtime(&self) -> ChannelRuntime {
         self.runtime.restarted()
+    }
+
+    /// The runtime of `actor` in this channel, attached to it, as its turns
+    /// act through it - for tests, where no actor runs.
+    pub(crate) fn new_actor_runtime(&self, actor: ActorId) -> ActorRuntime {
+        self.runtime.new_actor_runtime(actor)
     }
 }

@@ -14,7 +14,6 @@ use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use crate::view::{Viewer, Views};
 #[cfg(any(test, feature = "test-support"))]
-use crate::runtime::ActorRuntime;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::store::{EntityKind, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::scope::Scope;
@@ -210,19 +209,11 @@ async fn held_workspace(controllers: &ControllerManager, session_id: SessionId, 
 }
 
 impl SessionLoop {
-    /// The runtime of `actor` in `channel` of this session, attached to it,
-    /// as its turns act through it - for tests, where no actor runs.
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn actor_runtime_of(self: &Arc<Self>, channel: &Arc<ChannelLoop>, actor: ActorId) -> ActorRuntime {
-        let channel_runtime = self.channel_runtime();
-        channel_runtime.attach(channel);
-        channel_runtime.new_actor_runtime(actor, self.id(), channel.id())
-    }
-
-    /// What each of its channels runs with: the one place a `ChannelRuntime` is made, so that a
-    /// channel is given everything of its session as it is built (issue 361).
-    fn channel_runtime(self: &Arc<Self>) -> ChannelRuntime {
-        ChannelRuntime::new(Arc::clone(&self.runtime_manager), Arc::clone(&self.commands), Arc::clone(&self.session_controller), Arc::downgrade(self))
+    /// What `channel` runs with: the one place a `ChannelRuntime` is made, so that a channel is
+    /// given everything of its session, and its own controller, as it is built (issues 361, 374).
+    fn channel_runtime(self: &Arc<Self>, channel: Channel) -> ChannelRuntime {
+        let channel = self.controllers.new_channel_controller(channel);
+        ChannelRuntime::new(Arc::clone(&self.runtime_manager), Arc::clone(&self.commands), Arc::clone(&self.session_controller), channel, Arc::downgrade(self))
     }
 
     /// The loop of `session`, with its `channels` - documents of their own

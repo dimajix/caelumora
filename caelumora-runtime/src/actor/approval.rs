@@ -49,13 +49,14 @@ pub struct ApproverActor {
 }
 
 impl ApproverActor {
-    pub fn new(channel: Arc<ChannelController>, approver: Approver, actor_runtime: ActorRuntime) -> Self {
+    /// The actor of `approver` in the channel of `actor_runtime`.
+    pub fn new(approver: Approver, actor_runtime: ActorRuntime) -> Self {
         Self {
             id: ActorId::Approver(approver.id),
             approver,
             access_policy: Arc::clone(actor_runtime.access_policy()),
+            channel: Arc::clone(actor_runtime.channel_controller()),
             actor_runtime,
-            channel,
             pending: Mutex::new(HashMap::new()),
             ended: CancellationToken::new(),
         }
@@ -464,7 +465,7 @@ mod tests {
         store.entity_stores().channels.create(&system, &channel).await.unwrap();
         let executor = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
         let session_id = channel.session_id;
-        let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(executor), bare_session(session_id))).await.unwrap();
+        let channel = ChannelLoop::new(ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(executor), bare_session(session_id), channel)).await.unwrap();
         let actor: Arc<dyn Any + Send + Sync> = channel.actor(ActorId::Approver(approver.id)).unwrap();
         let approver = Arc::downcast::<ApproverActor>(actor).unwrap();
 

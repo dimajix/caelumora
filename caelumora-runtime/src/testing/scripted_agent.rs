@@ -6,7 +6,7 @@
 //! as an agent does, and keeps what it hears.
 
 use crate::actor::{Actor, AgentKinds, Answering};
-use crate::controller::{AgentController, ChannelController};
+use crate::controller::AgentController;
 use crate::plugin::Plugin;
 use crate::runtime::{ActorRuntime, RuntimeBuilder};
 use crate::transport::{EventReceiver, EventSender};
@@ -49,9 +49,9 @@ impl Plugin for ScriptedAgents {
         let kinds: &mut AgentKinds = runtime.agent_kinds();
         for kind in [PersonalityKind::Internal, PersonalityKind::External] {
             let script = self.0.clone();
-            kinds.register(kind, &[], move |channel, agent, personality, runtime| {
+            kinds.register(kind, &[], move |agent, personality, runtime| {
                 let script = script.clone();
-                async move { Ok(Box::new(ScriptedAgent::new(&channel, &agent, &personality, runtime, script)) as Box<dyn Actor>) }
+                async move { Ok(Box::new(ScriptedAgent::new(&agent, &personality, runtime, script)) as Box<dyn Actor>) }
             });
         }
         Ok(())
@@ -89,8 +89,8 @@ pub struct ScriptedAgent {
 }
 
 impl ScriptedAgent {
-    fn new(channel: &ChannelController, agent: &AgentController, personality: &Personality, runtime: ActorRuntime, script: Script) -> Self {
-        let channel = channel.load();
+    fn new(agent: &AgentController, personality: &Personality, runtime: ActorRuntime, script: Script) -> Self {
+        let channel = runtime.channel_controller().load();
         Self {
             id: ActorId::Agent(agent.id()),
             name: agent.load().name.name.clone(),
@@ -152,7 +152,7 @@ impl ScriptedAgent {
             sender_name: self.name.to_string(),
             timestamp: Utc::now(),
             turn_id: Some(turn_id),
-            ..Message::new(self.runtime.channel_classification().unwrap_or_default())
+            ..Message::new(self.runtime.channel_classification())
         }
     }
 

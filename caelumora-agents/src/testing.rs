@@ -67,7 +67,7 @@ pub fn turn<'a>(session: &Arc<SessionLoop>, agent: AgentId, owner: UserId, state
     let channel = &session.channels()[0];
     let context = SecurityContext::new(ActorId::User(owner), session.id(), channel.id()).next(ActorId::Agent(agent), ActorId::User(owner), ActorId::User(owner)).with_roles(vec![*STAFF], None);
     state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), context, channel.classification(), Vec::new(), Default::default());
-    Turn::of(agent, agent.to_string(), state, AgentStateHandle::detached(), actor_runtime_in(session, channel, ActorId::Agent(agent))).expect("a turn was begun")
+    Turn::of(agent, agent.to_string(), state, AgentStateHandle::detached(), actor_runtime_in(channel, ActorId::Agent(agent))).expect("a turn was begun")
 }
 
 /// What is asked in `world` when the agent of `owner`, with a component of `kind`,
@@ -228,5 +228,5 @@ pub fn register_once(registry: &mut ComponentRegistry, kind: &str, answer: Messa
 pub fn workspace_turn<'a>(with: &WithWorkspace, state: &'a mut AgentChannelState) -> Turn<'a> {
     let channel = &with.session.channels()[0];
     state.begin_turn(EventContext::new(with.session.id(), channel.id(), ActorId::None, String::new()), with.context.clone(), channel.classification(), Vec::new(), Default::default());
-    Turn::of(with.agent, "Jonathan".to_string(), state, AgentStateHandle::detached(), actor_runtime_in(&with.session, channel, ActorId::Agent(with.agent))).expect("a turn was begun")
+    Turn::of(with.agent, "Jonathan".to_string(), state, AgentStateHandle::detached(), actor_runtime_in(channel, ActorId::Agent(with.agent))).expect("a turn was begun")
 }

@@ -1,7 +1,7 @@
 use crate::channel::ChannelLoop;
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::component::ComponentRegistry;
-use crate::controller::SessionController;
+use crate::controller::{ChannelController, SessionController};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -74,6 +74,13 @@ impl ActorRuntime {
     /// the actor runs, unlike its channel: the guard must not lapse.
     pub fn session_controller(&self) -> &Arc<SessionController> {
         self.runtime.session_controller()
+    }
+
+    /// The controller of the actor's channel (issue 374), held as the
+    /// session's is: what the actor reads its channel by, and what its
+    /// agent's tool calls are guarded by.
+    pub fn channel_controller(&self) -> &Arc<ChannelController> {
+        self.runtime.channel_controller()
     }
 
     /// The user commands of the actor's session. Only a `UserActor` runs
@@ -165,19 +172,18 @@ impl ActorRuntime {
     }
 
     /// The classification of the actor's channel as it is now, which what
-    /// the actor says there is bound by (issues 141, 212); `None` while the
-    /// channel is still being built or once it is gone.
-    pub fn channel_classification(&self) -> Option<Classification> {
-        self.channel_loop().map(|channel| channel.classification())
+    /// the actor says there is bound by (issues 141, 212): read from its
+    /// controller, as it stood last once the channel is gone (issue 374).
+    pub fn channel_classification(&self) -> Classification {
+        self.channel_controller().load().classification.clone()
     }
 
     /// The attributes of the actor's channel as it stands, by which an act
     /// in it is asked - which of an agent's commands someone may see or
     /// carry out (issue 269), an act on what an agent keeps there (issue
-    /// 312); `None` while the channel is still being built or once it is
-    /// gone.
-    pub fn channel_attributes(&self) -> Option<SecurityAttributes> {
-        self.channel_loop().map(|channel| channel.security_attributes())
+    /// 312): read from its controller, as `channel_classification`.
+    pub fn channel_attributes(&self) -> SecurityAttributes {
+        self.channel_controller().load().security_attributes.clone()
     }
 
     /// `questions` put to the users of the actor's channel, their addressees
@@ -220,7 +226,7 @@ impl ActorRuntime {
     /// views. What an agent needs of its channel is asked above (issue
     /// 370): the loop's public API acts in a user's name too.
     pub(crate) fn channel_loop(&self) -> Option<Arc<ChannelLoop>> {
-        self.runtime.channel.get()
+        self.runtime.channel_loop.get()
     }
 
     fn agent_id(&self) -> Result<AgentId> {
@@ -231,24 +237,26 @@ impl ActorRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::testing::{bare_session, test_runtime};
+    use crate::session::testing::{bare_channel, bare_session, test_runtime};
     use caelumora_model::user::UserId;
 
     fn channel_runtime() -> ChannelRuntime {
         let manager = test_runtime();
         let commands = Arc::new(CommandExecutor::empty(Arc::clone(manager.access_policy())));
-        ChannelRuntime::outside_a_session(manager, commands, bare_session(SessionId::new()))
+        let session = bare_session(SessionId::new());
+        let channel = bare_channel(session.id);
+        ChannelRuntime::outside_a_session(manager, commands, session, channel)
     }
 
     #[tokio::test]
     async fn an_actor_runtime_acts_for_its_own_actor_only() {
         let runtime = channel_runtime();
-        let hers = runtime.new_actor_runtime(ActorId::User(UserId::new()), SessionId::new(), ChannelId::new());
+        let hers = runtime.new_actor_runtime(ActorId::User(UserId::new()));
 
         assert!(hers.load_channel_state().await.is_err(), "a user has no agent state");
         assert!(hers.agent_state(Default::default()).await.is_err());
 
-        let its = runtime.new_actor_runtime(ActorId::Agent(AgentId::new()), SessionId::new(), ChannelId::new());
+        let its = runtime.new_actor_runtime(ActorId::Agent(AgentId::new()));
         its.store_channel_state(&mut AgentChannelState::default()).await.expect("its own state in its channel");
         its.load_channel_state().await.expect("and back");
     }

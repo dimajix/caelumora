@@ -41,11 +41,11 @@ impl Plugin for AgentsPlugin {
     fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
         register_components(runtime.components());
         let kinds = runtime.agent_kinds();
-        kinds.register(PersonalityKind::Internal, AgentActor::COMPONENT_FACETS, |channel, agent, personality, runtime| async move {
-            Ok(Box::new(AgentActor::new(channel, agent, personality, runtime).await?) as Box<dyn Actor>)
+        kinds.register(PersonalityKind::Internal, AgentActor::COMPONENT_FACETS, |agent, personality, runtime| async move {
+            Ok(Box::new(AgentActor::new(agent, personality, runtime).await?) as Box<dyn Actor>)
         });
-        kinds.register(PersonalityKind::External, ExternalAgentActor::COMPONENT_FACETS, |channel, agent, personality, runtime| async move {
-            Ok(Box::new(ExternalAgentActor::new(channel, agent, personality, runtime).await?) as Box<dyn Actor>)
+        kinds.register(PersonalityKind::External, ExternalAgentActor::COMPONENT_FACETS, |agent, personality, runtime| async move {
+            Ok(Box::new(ExternalAgentActor::new(agent, personality, runtime).await?) as Box<dyn Actor>)
         });
         Ok(())
     }

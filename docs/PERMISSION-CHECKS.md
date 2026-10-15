@@ -255,7 +255,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
   store asks again: deleting a session, a channel or an agent, sharing, purging, keeping an
   artifact. No token tells the store it was asked already.
 - **The agents' own flow.** An agent asks the flow of what it gives up or brings in its own name -
-  its turn still flows into the channel (`AgentActor::turn_flow`), an external agent's remote side,
+  its turn still flows into the channel (`AgentActor::lowered`), an external agent's remote side,
   what a request brings, a lowered channel (`ExternalAgentActor`). That is the agent's act of
   withholding, not a pre-check of the channel's, which asks again as anything enters it (rule 3).
   Likewise a tool's result is asked into the agent's context before the channel asks it into

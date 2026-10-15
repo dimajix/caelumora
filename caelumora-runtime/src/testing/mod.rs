@@ -420,10 +420,10 @@ pub fn denied(error: &Error) -> bool {
     refusal(error).is_some()
 }
 
-/// The runtime of `actor` in `channel` of `session`, as its turns act
-/// through it and navigate from it (`ActorRuntime::views`).
-pub fn actor_runtime_in(session: &Arc<SessionLoop>, channel: &Arc<ChannelLoop>, actor: ActorId) -> ActorRuntime {
-    session.actor_runtime_of(channel, actor)
+/// The runtime of `actor` in `channel`, as its turns act through it and
+/// navigate from it (`ActorRuntime::views`).
+pub fn actor_runtime_in(channel: &Arc<ChannelLoop>, actor: ActorId) -> ActorRuntime {
+    channel.new_actor_runtime(actor)
 }
 
 pub async fn asked_for(world: &World, line: &str) {

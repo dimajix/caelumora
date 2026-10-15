@@ -221,7 +221,7 @@ mod tests {
 
     /// What `provider` tells agent `agent` in the turn begun in `state`.
     async fn told(provider: &ChannelLanguagePromptProvider, agent: AgentId, session_loop: &Arc<SessionLoop>, state: &mut AgentChannelState) -> Prompt {
-        let turn = Turn::of(agent, "Jonathan".to_string(), state, AgentStateHandle::detached(), actor_runtime_in(session_loop, &session_loop.channels()[0], ActorId::Agent(agent))).expect("a turn was begun");
+        let turn = Turn::of(agent, "Jonathan".to_string(), state, AgentStateHandle::detached(), actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(agent))).expect("a turn was begun");
         provider.get_prompt(&turn.work()).await.unwrap()
     }
 }
