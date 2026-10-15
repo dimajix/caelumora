@@ -1,5 +1,6 @@
 use super::body::AgentBody;
-use super::{failure_message, reject_retries, retry_target};
+use super::{reject_retries, retry_target};
+use crate::agent_error::failure_message;
 use crate::message::apply_stage_processors;
 use crate::actor::{Actor, Answering};
 use super::run_control::{interruption, Interrupt};

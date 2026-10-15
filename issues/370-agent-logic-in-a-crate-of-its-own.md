@@ -271,3 +271,17 @@ crate reaches the environment through the doors named above and nothing else.
   programs call; in point 3, the judges of the agent's errors are registered by it too; in step 2,
   the crate's `plugin.rs` is `AgentsPlugin`, and the runtime's tests that need agents build their
   runtime with it.
+- **2026-10-15** — Step 1, point 3 done, with another mechanism than the one planned: no judges
+  registered with the runtime. `user_message` is a function without state, called where no
+  runtime is at hand (the REST server's `ApiError::internal`, the TUI, user commands), and a
+  registry of judgements is what [336](336-errors-of-a-plugin-shown-as-a-failure.md) rejected as "a
+  registry of downcasts beside the chain". Instead, as 336 has it, whoever defines an error type
+  judges it: the runtime its own in `error::user_message`, which now walks the chain asking
+  another judgement first if it is given one (`user_message_with`), with `view_message` and
+  `store_message` public for the errors that hold those; the agents' logic the error types of its
+  facets - `LLMError`, `ExternalAgentError`, `ToolError`, `ContextError`, `ProcessingError` - in
+  `agent_error::user_message` (in the runtime until step 2, then the crate's `error.rs`), which
+  `failure_message` uses and which moved there from `actor/mod.rs`. Measured: those five types
+  reach no frontend; one that did would be shown as a failure pointing to the log, as 336 says of
+  a plugin's type. The agents' plugin registers no judgement, and the plan's point 3 of the
+  agents' registrations falls away. CODING-GUIDELINES.md and PLUGINS.md say so.

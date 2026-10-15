@@ -488,7 +488,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_runtime::error::user_message;
+    use caelumora_runtime::agent_error::user_message;
 
     #[test]
     fn what_the_catalogue_meets_reaches_the_owner_as_the_core_judges_it() {

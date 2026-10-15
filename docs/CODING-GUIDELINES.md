@@ -194,13 +194,16 @@ Errors carry what failed, and only what may be shown goes to users.
 
 ### What users see
 
-What users may see is decided in one place, `caelumora_runtime::error::user_message`. It looks
-through an error chain for a domain error written to be read and returns its message. Anything else
-stays in the log.
+What users may see is decided by whoever defines an error type, in one function each: the runtime's
+types in `caelumora_runtime::error::user_message`, the types of the agents' logic - the errors of
+its facets - in `agent_error::user_message` (issue 370). Each looks through an error chain for a
+domain error written to be read and returns its message; the agents' asks its own judgement first
+and the runtime's for the rest, in one walk (`error::user_message_with`), so that the outermost
+error that may be shown is shown. Anything else stays in the log.
 
-A new error type of the core meant for users must meet the rules above and be added to
-`user_message`. A plugin's error type is never added there: where the plugin answers the core, it
-answers in a type of the core's (see
+A new error type meant for users must meet the rules above and be added to the function of whoever
+defines it. A plugin's error type is never added there: where the plugin answers the core or the
+agents' logic, it answers in a type of theirs (see
 [PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-core-in-the-cores-types)).
 
 ### Rolling back

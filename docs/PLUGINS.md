@@ -102,9 +102,14 @@ API, rather than reached around (issue 325).
 Where the core calls a plugin - a facet of its component, a `ScopeMember` - the plugin answers with
 an error type of the core, never with one of its own inside an `anyhow` (issue 336). The core
 decides what a person is told of an error by the types it knows -
-`caelumora_runtime::error::user_message` for an agent's owner, the user of a command and the TUI,
-and `From<anyhow::Error> for ApiError` for the REST API -, and a plugin's types are not among them:
+`caelumora_runtime::error::user_message` for the user of a command and the TUI, and
+`From<anyhow::Error> for ApiError` for the REST API -, and a plugin's types are not among them:
 inside an `anyhow`, whatever a plugin's error says is shown as a failure that points to the log.
+The agents' plugin, which defines the facets most plugins serve, is a core of its own in this: what
+an agent's owner is told when an answer fails is judged by `agent_error::user_message`, which knows
+the error types of those facets and asks the runtime's judgement for the rest
+(`error::user_message_with`, issue 370). A registry of judgements the plugins add is not needed,
+and would be the registry of downcasts rejected below.
 
 So the trait names its error type, and the plugin translates its own error into it where it
 answers - deciding there what may be shown, what is a refusal and what is a failure:

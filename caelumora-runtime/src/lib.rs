@@ -12,6 +12,7 @@ pub mod event;
 pub mod tool;
 pub mod actor;
 pub mod agent;
+pub mod agent_error;
 pub mod agent_plugin;
 pub mod channel;
 pub mod command;

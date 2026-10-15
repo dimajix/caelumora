@@ -265,14 +265,6 @@ fn retry_target(retry: &Envelope) -> Option<RetryTarget> {
     }
 }
 
-/// What the channel's users are told of `error`, which ended an answer: its
-/// message where it is one for them (`crate::error::user_message`), else
-/// that the details are in the server log - which has them, and nothing
-/// else about the server.
-fn failure_message(error: &anyhow::Error) -> String {
-    crate::error::user_message(error).unwrap_or_else(|| "internal error - the details are in the server log".to_string())
-}
-
 
 #[cfg(test)]
 mod tests {

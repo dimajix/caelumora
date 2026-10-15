@@ -26,7 +26,8 @@
 //! when the channel was lowered since.
 
 use super::body::AgentBody;
-use super::{failure_message, reject_retries};
+use super::reject_retries;
+use crate::agent_error::failure_message;
 use crate::actor::{Actor, Answering};
 use crate::command::AgentCommandProvider;
 use crate::component::ComponentImpl;

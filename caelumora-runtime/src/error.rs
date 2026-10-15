@@ -10,12 +10,7 @@
 use crate::agent::AgentError;
 use crate::command::CommandError;
 use crate::component::ComponentError;
-use crate::prompt::ContextError;
-use crate::message::ProcessingError;
-use crate::external::ExternalAgentError;
-use crate::llm::LLMError;
 use crate::session::SessionError;
-use crate::tool::ToolError;
 use crate::view::{AgentContextError, ViewError};
 use crate::channel::ChannelError;
 use crate::terminal::TerminalError;
@@ -24,91 +19,83 @@ use caelumora_model::security::Refused;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::TemplateError;
 use caelumora_model::value::ValueError;
+use std::error::Error;
 
 /// The message to show a user for `error`: the outermost error in its chain
 /// whose type is known to be safe to disclose, or `None` if there is none -
 /// in which case the caller should show a generic message and point to the
-/// log.
+/// log. Judged by the runtime's types alone; a crate that defines error
+/// types of its own for others to answer in judges them itself
+/// (`user_message_with`, issue 370).
 pub fn user_message(error: &anyhow::Error) -> Option<String> {
-    error.chain().find_map(|e| {
-        if let Some(e) = e.downcast_ref::<LLMError>() {
-            Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<ExternalAgentError>() {
-            Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<ComponentError>() {
-            Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<ToolError>() {
-            Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<CommandError>() {
-            Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<AgentContextError>() {
-            Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<ViewError>() {
-            view_message(e)
-        } else if let Some(e) = e.downcast_ref::<ContextError>() {
-            context_message(e)
-        } else if let Some(e) = e.downcast_ref::<ProcessingError>() {
-            match e {
-                ProcessingError::Failed(_) => Some(e.to_string()),
-                ProcessingError::View(e) => view_message(e),
-                ProcessingError::Store(e) => store_message(e),
-            }
-        } else if let Some(e) = e.downcast_ref::<ChannelError>() {
-            Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<SessionError>() {
-            Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<WorkspaceError>() {
-            // Its store errors are judged as store errors are; the rest name
-            // the workspace and what the caller wrote, never a place.
-            match e {
-                WorkspaceError::Store(e) => store_message(e),
-                _ => Some(e.to_string()),
-            }
-        } else if let Some(e) = e.downcast_ref::<AgentError>() {
-            // As a workspace's: its store errors are judged as store errors
-            // are, the rest name the agent, its personality or its name.
-            match e {
-                AgentError::Store(e) => store_message(e),
-                _ => Some(e.to_string()),
-            }
-        } else if let Some(e) = e.downcast_ref::<TerminalError>() {
-            Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<TemplateError>() {
-            Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<ValueError>() {
-            Some(e.to_string())
-        } else if let Some(e) = e.downcast_ref::<StoreError>() {
-            store_message(e)
-        } else {
-            None
+    user_message_with(error, |_| None)
+}
+
+/// As `user_message`, each error of the chain asked of `judge` first: what
+/// it shows of an error of a type it knows, `None` for one it does not know
+/// or that may not be shown - then judged as the runtime judges it. One walk
+/// through the chain, so the outermost error that may be shown is shown,
+/// whoever knows its type: the agents' logic judges its own errors so
+/// (`agent_error::user_message`, issue 370).
+pub fn user_message_with(error: &anyhow::Error, judge: impl Fn(&(dyn Error + 'static)) -> Option<String>) -> Option<String> {
+    error.chain().find_map(|e| judge(e).or_else(|| judged(e)))
+}
+
+/// What the runtime shows of `e`, if it is of a type of the runtime's that
+/// may be shown.
+fn judged(e: &(dyn Error + 'static)) -> Option<String> {
+    if let Some(e) = e.downcast_ref::<ComponentError>() {
+        Some(e.to_string())
+    } else if let Some(e) = e.downcast_ref::<CommandError>() {
+        Some(e.to_string())
+    } else if let Some(e) = e.downcast_ref::<AgentContextError>() {
+        Some(e.to_string())
+    } else if let Some(e) = e.downcast_ref::<ViewError>() {
+        view_message(e)
+    } else if let Some(e) = e.downcast_ref::<ChannelError>() {
+        Some(e.to_string())
+    } else if let Some(e) = e.downcast_ref::<SessionError>() {
+        Some(e.to_string())
+    } else if let Some(e) = e.downcast_ref::<WorkspaceError>() {
+        // Its store errors are judged as store errors are; the rest name
+        // the workspace and what the caller wrote, never a place.
+        match e {
+            WorkspaceError::Store(e) => store_message(e),
+            _ => Some(e.to_string()),
         }
-    })
+    } else if let Some(e) = e.downcast_ref::<AgentError>() {
+        // As a workspace's: its store errors are judged as store errors
+        // are, the rest name the agent, its personality or its name.
+        match e {
+            AgentError::Store(e) => store_message(e),
+            _ => Some(e.to_string()),
+        }
+    } else if let Some(e) = e.downcast_ref::<TerminalError>() {
+        Some(e.to_string())
+    } else if let Some(e) = e.downcast_ref::<TemplateError>() {
+        Some(e.to_string())
+    } else if let Some(e) = e.downcast_ref::<ValueError>() {
+        Some(e.to_string())
+    } else if let Some(e) = e.downcast_ref::<StoreError>() {
+        store_message(e)
+    } else {
+        None
+    }
 }
 
 /// View errors: what they name is safe; why reaching it failed is for the
-/// log.
-fn view_message(error: &ViewError) -> Option<String> {
+/// log - for an error of another crate that holds one, too.
+pub fn view_message(error: &ViewError) -> Option<String> {
     match error {
         ViewError::Failed(_) => None,
         _ => Some(error.to_string()),
     }
 }
 
-/// What building a context failed with, each variant judged by what it
-/// holds - a plugin's provider has decided there what may be shown (issue
-/// 336); the component that failed named before its cause.
-fn context_message(error: &ContextError) -> Option<String> {
-    match error {
-        ContextError::Failed(_) => Some(error.to_string()),
-        ContextError::View(e) => view_message(e),
-        ContextError::Store(e) => store_message(e),
-        ContextError::Component { cause, .. } => context_message(cause).map(|cause| format!("{error}: {cause}")),
-    }
-}
-
 /// Store errors name entities and ids - except `Backend`, which wraps what
-/// the storage itself reported, file paths included.
-fn store_message(error: &StoreError) -> Option<String> {
+/// the storage itself reported, file paths included - for an error of
+/// another crate that holds one, too.
+pub fn store_message(error: &StoreError) -> Option<String> {
     match error {
         StoreError::Backend(_) => None,
         _ => Some(error.to_string()),
@@ -131,19 +118,33 @@ pub fn is_forbidden(error: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::channel::ChannelId;
+
+    /// An error of a type of another crate's, holding one of the runtime's.
+    #[derive(Debug, thiserror::Error)]
+    #[error("the other crate's")]
+    struct Others(#[source] ChannelError);
 
     #[test]
     fn finds_the_disclosable_error_inside_a_context_chain() {
-        let error = anyhow::Error::new(LLMError::Connection {
-            endpoint: "http://localhost:11434".to_string(),
-            reason: "connection refused".to_string(),
-        })
-        .context("Error during LLM stream");
+        let channel = ChannelError::ApproverStays { channel: ChannelId::new() };
+        let shown = channel.to_string();
+        let error = anyhow::Error::new(channel).context("removing the approver");
+        assert_eq!(user_message(&error), Some(shown));
+    }
 
-        assert_eq!(
-            user_message(&error).as_deref(),
-            Some("cannot reach LLM backend at http://localhost:11434: connection refused")
-        );
+    /// A crate that judges its own types is asked first, and the outermost
+    /// error that may be shown is shown, whoever knows its type (issue 370).
+    #[test]
+    fn another_crate_judges_its_own_types_and_the_outermost_is_shown() {
+        let inner = ChannelError::ApproverStays { channel: ChannelId::new() };
+        let shown = inner.to_string();
+        let error = anyhow::Error::new(Others(inner));
+
+        assert_eq!(user_message(&error), Some(shown.clone()), "unknown to the runtime: what it holds");
+        let knows = |e: &(dyn Error + 'static)| e.downcast_ref::<Others>().map(ToString::to_string);
+        assert_eq!(user_message_with(&error, knows).as_deref(), Some("the other crate's"), "the outermost");
+        assert_eq!(user_message_with(&error, |_| None), Some(shown), "the runtime's still");
     }
 
     #[test]
@@ -163,18 +164,6 @@ mod tests {
         let error = anyhow::Error::new(StoreError::Backend("/home/someone/local/entity_store: permission denied".to_string()));
         assert_eq!(user_message(&error), None);
         assert_eq!(user_message(&anyhow::anyhow!("something internal")), None);
-    }
-
-    #[test]
-    fn a_prompt_part_that_failed_names_its_component_before_what_it_says() {
-        let failed = |cause| anyhow::Error::new(ContextError::Component { component: "skills".to_string(), cause: Box::new(cause) })
-            .context("component 'context' could not assemble the context");
-
-        let error = failed(ContextError::Failed("skills are not offered here".to_string()));
-        assert_eq!(user_message(&error).as_deref(), Some("component 'skills' failed: skills are not offered here"));
-        // What the store reported is judged as store errors are.
-        let error = failed(ContextError::Store(StoreError::Backend("/home/someone/local/entity_store: permission denied".to_string())));
-        assert_eq!(user_message(&error), None);
     }
 
     #[test]
