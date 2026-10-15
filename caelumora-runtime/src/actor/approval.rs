@@ -369,6 +369,7 @@ impl Actor for ApproverActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::testing::bare_session;
     use crate::testing::{Script, ScriptedAgents};
     use crate::channel::ChannelLoop;
     use caelumora_model::actor::EventContext;
@@ -463,7 +464,7 @@ mod tests {
         store.entity_stores().channels.create(&system, &channel).await.unwrap();
         let executor = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
         let session_id = channel.session_id;
-        let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(executor), session_id)).await.unwrap();
+        let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(executor), bare_session(session_id))).await.unwrap();
         let actor: Arc<dyn Any + Send + Sync> = channel.actor(ActorId::Approver(approver.id)).unwrap();
         let approver = Arc::downcast::<ApproverActor>(actor).unwrap();
 

@@ -1,6 +1,6 @@
 # 371 — `ToolExecutor::new` takes seven parameters, five of which its caller reads from the agent's runtime
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -42,3 +42,20 @@ the tests have no runtime to give that holds what they need.
   without a running channel. Without it, the change only moves the problem into the tests.
 - **Leave it.** The constructor is crate-internal and has one caller; the cost is a long line and
   a disagreement nothing produces today.
+
+## History
+
+- **2026-10-15** — Done, as the first two considerations together, by the maintainer's decision:
+  `ToolExecutor::new(providers, channel, runtime)` takes the policy, the confidentiality, the
+  system's rules and the session's controller from the agent's runtime when it is made, and keeps
+  them. The channel's controller stays a parameter: the `ActorRuntime` does not hold it, since
+  `ChannelLoop::new` makes it after the channel's runtime and hands it to every kind of actor;
+  changing that is a question of its own. For the tests, the runtime's two fixtures are generalized
+  rather than joined by a third: `test_runtime_under(access_policy, confidentiality, config)` builds
+  a runtime under the test's policies and configuration, the system's rules among it, and
+  `detached_actor_runtime_in(runtime, session, channel)` places an actor in a session of the
+  test's that does not run; `test_runtime()` and `detached_actor_runtime()` are these with the
+  defaults. `ChannelRuntime::outside_a_session` takes the session instead of its id
+  (`bare_session` for one that holds nothing else). The executor's tests build their runtime from
+  the rules of their places and read the session's controller from it, so that policy, rules and
+  session can no longer disagree.

@@ -98,16 +98,7 @@ impl AgentActor {
         let compaction_policy = components.one::<dyn CompactionPolicy>().await?;
         let compaction = components.one::<dyn CompactionStrategy>().await?;
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
-        let runtime = &body.runtime;
-        let tool_executor = ToolExecutor::new(
-            Arc::clone(runtime.access_policy()),
-            Arc::clone(runtime.confidentiality()),
-            components.get_all::<dyn ToolProvider>(None)?,
-            Arc::clone(runtime.approval_rules()),
-            Arc::clone(runtime.session_controller()),
-            channel_controller,
-            runtime.clone(),
-        )?;
+        let tool_executor = ToolExecutor::new(components.get_all::<dyn ToolProvider>(None)?, channel_controller, body.runtime.clone())?;
 
         Ok(AgentActor {
             body: body.with_profile(llm_client.profile()),

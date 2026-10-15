@@ -74,9 +74,16 @@ pub fn owned_runtime(rules: ConfidentialityRules) -> (Arc<MemoryStore>, Arc<Sess
 
 /// A runtime under no policy: everything is allowed.
 pub fn test_runtime() -> Arc<RuntimeManager> {
+    test_runtime_under(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default())
+}
+
+/// A runtime under `access_policy` and `confidentiality`, configured as
+/// `config` says - the system's rules for tool calls among it
+/// (`AppConfig::approvals`, issue 13).
+pub fn test_runtime_under(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, config: &AppConfig) -> Arc<RuntimeManager> {
     let store = Arc::new(MemoryStore::new());
-    let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
-    Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap())
+    let secret_manager = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
+    Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, access_policy, confidentiality, config, test_registry(Arc::<MemoryStore>::clone(&store)), &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap())
 }
 
 /// The runtime of an actor in a channel of no running session, never
@@ -84,10 +91,16 @@ pub fn test_runtime() -> Arc<RuntimeManager> {
 /// no channel: its views read nothing elsewhere, its questions have nobody
 /// to be put to, and it has no workspace.
 pub fn detached_actor_runtime() -> ActorRuntime {
-    let runtime = test_runtime();
-    let commands = Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy())));
-    let session_id = SessionId::new();
-    ChannelRuntime::outside_a_session(runtime, commands, session_id).new_actor_runtime(ActorId::None, session_id, ChannelId::new())
+    detached_actor_runtime_in(test_runtime(), bare_session(SessionId::new()), ChannelId::new())
+}
+
+/// As `detached_actor_runtime`, on `runtime_manager`, in the channel
+/// `channel` of `session` - for tests that give the actor the policy, the
+/// rules and the session of their own (issue 371).
+pub fn detached_actor_runtime_in(runtime_manager: Arc<RuntimeManager>, session: Session, channel: ChannelId) -> ActorRuntime {
+    let commands = Arc::new(CommandExecutor::empty(Arc::clone(runtime_manager.access_policy())));
+    let session_id = session.id;
+    ChannelRuntime::outside_a_session(runtime_manager, commands, session).new_actor_runtime(ActorId::None, session_id, channel)
 }
 
 /// A session that holds nothing but its id `session_id`: what a channel

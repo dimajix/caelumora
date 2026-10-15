@@ -117,7 +117,7 @@ async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: Compon
     }
     let executor = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
     let session_id = channel.session_id;
-    let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), session_id)).await?;
+    let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), bare_session(session_id))).await?;
     Ok((channel, context, agent_id, alice.id))
 }
 

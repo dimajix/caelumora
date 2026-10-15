@@ -34,6 +34,7 @@ use std::any::Any;
 mod commands;
 
 pub(super) use crate::session::testing::user;
+use crate::session::testing::bare_session;
 pub(super) use crate::channel::testing::*;
 
 /// A channel of `users`, who are recorded in the store its actors are
@@ -80,7 +81,7 @@ async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, 
         vec![builtin("help", Arc::new(HelpCommandProvider)), builtin("wakeup", Arc::new(WakeupCommandProvider))],
     ).unwrap();
     let session_id = channel.session_id;
-    ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), session_id)).await.unwrap()
+    ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), bare_session(session_id))).await.unwrap()
 }
 
 #[tokio::test]

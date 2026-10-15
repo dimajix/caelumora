@@ -292,7 +292,7 @@ mod testing {
     use super::*;
     use crate::prompt::external_context_provider::ExternalContextProvider;
     use caelumora_runtime::runtime::ChannelRuntime;
-    use caelumora_runtime::session::testing::test_runtime;
+    use caelumora_runtime::session::testing::{bare_session, test_runtime};
     use caelumora_model::agent::{Agent, PersonalityId};
     use caelumora_model::scope::Scope;
     use caelumora_model::session::{ChannelId, SessionId};
@@ -307,7 +307,7 @@ mod testing {
             let agent = Arc::new(AgentController::new(agent, None, Arc::new(()), runtime.entity_stores()));
             let commands = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
             let (session_id, channel_id) = (SessionId::new(), ChannelId::new());
-            let channel = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy()))), session_id);
+            let channel = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy()))), bare_session(session_id));
             let actor_runtime = channel.new_actor_runtime(ActorId::Agent(agent.id()), session_id, channel_id);
             Self {
                 context: agent.security_context(session_id, channel_id, None),

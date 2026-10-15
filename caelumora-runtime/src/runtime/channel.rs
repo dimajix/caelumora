@@ -9,6 +9,8 @@ use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::session::SessionId;
+#[cfg(any(test, feature = "test-support"))]
+use caelumora_model::session::Session;
 use caelumora_model::security::AccessPolicy;
 use caelumora_model::store::StateStore;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
@@ -106,12 +108,11 @@ impl ChannelRuntime {
 
 #[cfg(any(test, feature = "test-support"))]
 impl ChannelRuntime {
-    /// A runtime for a channel of the session `session_id` that is not
-    /// running - in tests: its session holds nothing but its id, and no
-    /// rules, and has no loop.
-    pub fn outside_a_session(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session_id: SessionId) -> Self {
-        use crate::session::testing::bare_session;
-        let session = runtime_manager.controller_manager().new_session_controller(bare_session(session_id));
+    /// A runtime for a channel of `session`, which is not running - in
+    /// tests: it has no loop (`bare_session` for one that holds nothing but
+    /// its id).
+    pub fn outside_a_session(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session: Session) -> Self {
+        let session = runtime_manager.controller_manager().new_session_controller(session);
         Self::new(runtime_manager, command_executor, session, Weak::new())
     }
 

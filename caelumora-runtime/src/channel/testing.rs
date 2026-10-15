@@ -8,7 +8,7 @@ use crate::actor::Actor;
 use crate::channel::ChannelLoop;
 use crate::command::{CommandError, CommandExecutor};
 use crate::runtime::{ChannelRuntime, RuntimeManager};
-use crate::session::testing::user;
+use crate::session::testing::{bare_session, user};
 use anyhow::{Result, Error};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -116,7 +116,7 @@ pub async fn channel_of_alice_and(runtime: Arc<RuntimeManager>, alice: UserId, a
     runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
     let executor = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
     let session_id = channel.session_id;
-    ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), session_id)).await.unwrap()
+    ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), bare_session(session_id))).await.unwrap()
 }
 
 /// Waits for `actor` to reach `wanted`.

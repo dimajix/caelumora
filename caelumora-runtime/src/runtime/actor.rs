@@ -231,21 +231,13 @@ impl ActorRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{Script, ScriptedAgents};
-    use crate::runtime::RuntimeManager;
-    use crate::testing::test_registry;
-    use caelumora_model::security::AllowAllPolicy;
-    use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::config::AppConfig;
+    use crate::session::testing::{bare_session, test_runtime};
     use caelumora_model::user::UserId;
-    use caelumora_model::confidentiality::ConfidentialityRules;
 
     fn channel_runtime() -> ChannelRuntime {
-        let store = Arc::new(MemoryStore::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
-        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap());
+        let manager = test_runtime();
         let commands = Arc::new(CommandExecutor::empty(Arc::clone(manager.access_policy())));
-        ChannelRuntime::outside_a_session(manager, commands, SessionId::new())
+        ChannelRuntime::outside_a_session(manager, commands, bare_session(SessionId::new()))
     }
 
     #[tokio::test]

@@ -665,6 +665,7 @@ impl Actor for UserActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::testing::bare_session;
     use crate::testing::{Script, ScriptedAgents};
     use caelumora_model::actor::EventContext;
     use caelumora_model::value::name::Name;
@@ -688,7 +689,7 @@ mod tests {
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap());
         let session_id = SessionId::new();
-        let channel_runtime = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy()))), session_id);
+        let channel_runtime = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy()))), bare_session(session_id));
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),

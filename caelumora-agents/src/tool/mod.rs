@@ -462,16 +462,25 @@ pub struct ToolExecutor {
 
 impl ToolExecutor {
     /// An executor for the tools of `providers`, in the order of the
-    /// configuration, guarded by `access_policy` and by the rules of the
-    /// system (`system_rules`, `AppConfig::approvals`), of `session` and of
-    /// `channel`, where the agent works, whose users the questions of its
-    /// calls are put to through the agent's `runtime`.
+    /// configuration, for the agent of `runtime` in `channel`: guarded by the
+    /// runtime's policies and by the rules of the system
+    /// (`AppConfig::approvals`), of the agent's session and of `channel`,
+    /// whose users the questions of its calls are put to through `runtime`
+    /// (issue 371).
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` if two providers have a tool of the
     /// same name (`ToolProviders::new`).
-    pub(crate) fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, providers: Vec<ComponentImpl<dyn ToolProvider>>, system_rules: Arc<[ApprovalRule]>, session: Arc<SessionController>, channel: Arc<ChannelController>, runtime: ActorRuntime) -> ComponentResult<Self> {
-        Ok(Self { access_policy, confidentiality, providers: ToolProviders::new(providers)?, system_rules, session, channel, runtime })
+    pub(crate) fn new(providers: Vec<ComponentImpl<dyn ToolProvider>>, channel: Arc<ChannelController>, runtime: ActorRuntime) -> ComponentResult<Self> {
+        Ok(Self {
+            access_policy: Arc::clone(runtime.access_policy()),
+            confidentiality: Arc::clone(runtime.confidentiality()),
+            providers: ToolProviders::new(providers)?,
+            system_rules: Arc::clone(runtime.approval_rules()),
+            session: Arc::clone(runtime.session_controller()),
+            channel,
+            runtime,
+        })
     }
 
     /// What `call` asks before it runs, as its tool says, checked and put to
@@ -681,7 +690,8 @@ mod tests {
     use super::*;
     use caelumora_model::event::GlobalEvent;
     use crate::turn::Turn;
-    use caelumora_runtime::session::testing::{detached_actor_runtime, bare_session};
+    use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime, detached_actor_runtime_in, test_runtime_under};
+    use caelumora_model::config::{AppConfig, ApprovalsConfig};
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
 
@@ -845,16 +855,19 @@ mod tests {
         guarding_under(access_policy, Arc::new(ConfidentialityRules::default()), providers, places)
     }
 
-    /// As `guarding`, the flow decided by `confidentiality` (issue 304).
+    /// As `guarding`, the flow decided by `confidentiality` (issue 304): for
+    /// an agent whose runtime holds the policies, the system's rules and the
+    /// session of the test (issue 371).
     fn guarding_under(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, providers: Vec<(&str, Arc<dyn ToolProvider>)>, places: Places) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
         let providers = providers.into_iter().map(|(id, facet)| ComponentImpl { id: id.to_string(), fail_policy: Default::default(), facet }).collect();
-        let store = Arc::new(MemoryStore::new());
-        let session = bare_session(SessionId::new());
+        let config = AppConfig { approvals: ApprovalsConfig { rules: places.system }, ..Default::default() };
+        let session = Session { approval_rules: places.session, ..bare_session(SessionId::new()) };
         let mut channel = Channel::build(session.id, ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
         channel.approval_rules = places.channel;
-        let session = Arc::new(SessionController::new(Session { approval_rules: places.session, ..session }, Arc::new(()), &store.entity_stores()));
-        let channel = Arc::new(ChannelController::new(channel, Arc::new(()), &store.entity_stores()));
-        let executor = ToolExecutor::new(access_policy, confidentiality, providers, places.system.into(), Arc::clone(&session), Arc::clone(&channel), detached_actor_runtime()).unwrap();
+        let runtime = detached_actor_runtime_in(test_runtime_under(access_policy, confidentiality, &config), session, channel.id);
+        let session = Arc::clone(runtime.session_controller());
+        let channel = Arc::new(ChannelController::new(channel, Arc::new(()), &MemoryStore::new().entity_stores()));
+        let executor = ToolExecutor::new(providers, Arc::clone(&channel), runtime).unwrap();
         (executor, session, channel)
     }
 
