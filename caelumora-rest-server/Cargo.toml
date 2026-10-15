@@ -22,6 +22,7 @@ chrono = "0.4.45"
 percent-encoding = "2.3"
 
 [dev-dependencies]
+caelumora-runtime = { path = "../caelumora-runtime", features = ["test-support"] }
 tower = { version = "0.5.3", features = ["util"] }
 # `start_paused`: tests that wait for a token to expire without waiting.
 tokio = { version = "1.0", features = ["test-util"] }

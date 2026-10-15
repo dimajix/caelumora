@@ -689,7 +689,8 @@ mod tests {
     use super::*;
     use caelumora_model::event::GlobalEvent;
     use crate::turn::Turn;
-    use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime_in, test_runtime_under};
+    use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime_in};
+    use caelumora_runtime::testing::TestRuntime;
     use caelumora_model::config::{AppConfig, ApprovalsConfig};
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -861,7 +862,7 @@ mod tests {
         let session = Session { approval_rules: places.session, ..bare_session(SessionId::new()) };
         let mut channel = Channel::build(session.id, ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
         channel.approval_rules = places.channel;
-        let runtime = detached_actor_runtime_in(test_runtime_under(access_policy, confidentiality, &config), session, channel);
+        let runtime = detached_actor_runtime_in(TestRuntime { access_policy, confidentiality, config, ..Default::default() }.build(), session, channel);
         let (session, channel) = (Arc::clone(runtime.session_controller()), Arc::clone(runtime.channel_controller()));
         let executor = ToolExecutor::new(providers, runtime).unwrap();
         (executor, session, channel)

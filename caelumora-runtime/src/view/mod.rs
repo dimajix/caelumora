@@ -752,21 +752,16 @@ impl Debug for Views {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{Script, ScriptedAgents};
+    use crate::testing::{Script, ScriptedAgents, TestRuntime};
     use crate::channel::{ChannelLoop, VisibleHistory};
     use crate::group::keep_participants;
-    use crate::runtime::RuntimeManager;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError};
-    use crate::testing::test_registry;
     use caelumora_model::actor::{Rejection, Envelope};
     use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind, AgentChannelState};
     use caelumora_model::channel::{Channel, Participant};
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules, Visibility};
-    use caelumora_model::config::AppConfig;
     use caelumora_model::scope::Scope;
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::security::{Grant, SecurityAttributes, Subject};
     use caelumora_model::session::Session;
     use caelumora_model::snapshot::Detail;
@@ -1674,10 +1669,7 @@ mod tests {
         use caelumora_model::actor::{ActorEvent, ActorId};
 
         let store = Arc::new(MemoryStore::new());
-        let registry = test_registry(Arc::<MemoryStore>::clone(&store));
-        let access_policy = Arc::new(AllowAllPolicy::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry, &[&ScriptedAgents(Script::Hangs)]).unwrap());
+        let runtime = TestRuntime { store: Arc::clone(&store), plugins: vec![&ScriptedAgents(Script::Hangs)], ..Default::default() }.build();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();
 

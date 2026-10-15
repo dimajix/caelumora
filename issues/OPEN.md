@@ -95,4 +95,3 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | No. | Status | Issue |
 |---|---|---|
 | [346](346-subscription-topics-for-every-kind.md) | open | The event bus has subscription topics only for sessions, channels, agents and users, so a plugin cannot follow a single entity - an artifact, say - without reading every event. |
-| [375](375-test-runtimes-built-by-hand.md) | open | About twenty tests in four crates build a runtime by hand, writing out every service it is made of, so each change to what a runtime is built from changes them all. |

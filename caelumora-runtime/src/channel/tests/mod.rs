@@ -3,9 +3,8 @@
 use super::*;
 use crate::actor::Actor;
 use crate::component::{ComponentImpl, ComponentRegistry};
-use crate::backend::Backends;
-use crate::runtime::{ChannelRuntime, RuntimeBuilder, RuntimeManager};
-use crate::testing::{test_registry, Script, ScriptedAgent, ScriptedAgents, StandIn};
+use crate::runtime::ChannelRuntime;
+use crate::testing::{test_registry, Script, ScriptedAgent, ScriptedAgents, StandIn, TestRuntime};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::channel::{Channel, ChannelId, Participant, moderation_components};
 use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext, AccessPolicy};
@@ -13,16 +12,14 @@ use caelumora_model::session::SessionId;
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::Name;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use crate::command::help_command::HelpCommandProvider;
 use crate::command::wakeup_command::WakeupCommandProvider;
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use caelumora_model::agent::AgentId;
 use caelumora_model::component::{ComponentConfig, ComponentFailPolicy};
-use caelumora_model::confidentiality::{ConfidentialityRules, Classification};
-use caelumora_model::config::AppConfig;
-use caelumora_model::secret::SecretManager;
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::user::User;
@@ -55,8 +52,7 @@ async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, acc
 
 /// A channel of `participants` with `components`, built by `registry`.
 async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, access_policy: Arc<dyn AccessPolicy>, registry: ComponentRegistry, components: ComponentConfig) -> Arc<ChannelLoop> {
-    let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry, &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap());
+    let runtime = TestRuntime { store, access_policy, registry: Some(registry), ..Default::default() }.build();
     let channel = Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
@@ -78,8 +74,9 @@ async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, 
         Arc::clone(runtime.access_policy()),
         vec![builtin("help", Arc::new(HelpCommandProvider)), builtin("wakeup", Arc::new(WakeupCommandProvider))],
     ).unwrap();
-    let session_id = channel.session_id;
-    ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, Arc::new(executor), bare_session(session_id), channel)).await.unwrap()
+    let session = runtime.controller_manager().new_session_controller(bare_session(channel.session_id));
+    let channel = runtime.controller_manager().new_channel_controller(channel);
+    ChannelLoop::new(ChannelRuntime::new(runtime, Arc::new(executor), session, channel, Weak::new())).await.unwrap()
 }
 
 #[tokio::test]
@@ -189,11 +186,8 @@ pub(super) async fn stuck_in_a_turn() -> Stuck {
 pub(super) async fn scripted_channel(script: Script) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
     let store = Arc::new(MemoryStore::new());
     let (context, agent, alice) = alice_and_an_agent(&store, ComponentConfig::default()).await;
-    let access_policy: Arc<dyn AccessPolicy> = Arc::new(AllowAllPolicy::new());
-    let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
-    let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), Backends::built_in()).unwrap();
-    builder.plugin(&ScriptedAgents(script)).unwrap();
-    (channel_of_alice_and(Arc::new(builder.build().unwrap()), alice, agent).await, context, agent, alice)
+    let runtime = TestRuntime { store, plugins: vec![&ScriptedAgents(script)], ..Default::default() }.build();
+    (channel_of_alice_and(runtime, alice, agent).await, context, agent, alice)
 }
 
 

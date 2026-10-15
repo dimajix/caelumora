@@ -317,6 +317,15 @@ that answered it.
     from the type's own API and widens nothing outside `test-support`. The tests of the actors in a
     running channel live in `channel/tests/` of the runtime, those of the agents in
     `channel_tests/` of `caelumora-agents`.
+*   **A runtime in tests:** a test builds its runtime with `testing::TestRuntime` (issue 375), whose
+    parts all have defaults - a new memory store, no policy, the default rules, the default
+    configuration, the runtime's component kinds and agents that answer "ok" - and names only those
+    it differs in: `TestRuntime { plugins: vec![&AgentsPlugin], ..Default::default() }.build()`,
+    or `try_build()` for a test of what refuses to be built. Nobody else calls `RuntimeManager::new`
+    in a test, so that a change to it is a change to one place, and what a test differs in is what
+    it names. `session::testing::test_runtime()` and `owned_runtime(rules)` are the two runtimes
+    most tests share; the program's own test (`caelumora-app`) builds the runtime as the program
+    does.
 *   **Agents in the runtime's tests:** a test of what a channel, a session or the views do with an
     agent among their participants runs a scripted agent (`testing::ScriptedAgents`, issue 370),
     which begins, ends or hangs in its answers as told; a test of what an agent does runs the

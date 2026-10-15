@@ -234,10 +234,10 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::AgentsPlugin;
     use caelumora_model::confidentiality::{ConfidentialityRules, Compartments, Place};
     use caelumora_runtime::transport::Discard;
-    use crate::testing::test_registry;
+    use crate::testing::TestAgents;
+    use caelumora_runtime::testing::TestRuntime;
     use caelumora_runtime::agent::state::{AgentStateHandle, AgentStates};
     use caelumora_runtime::runtime::{ActorRuntime, RuntimeManager};
     use caelumora_runtime::session::SessionLoop;
@@ -248,14 +248,12 @@ mod tests {
     use caelumora_model::channel::Participant;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
-    use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{OwnershipPolicy, SecurityAttributes, SecurityContext};
     use caelumora_model::session::{ChannelId, Session, SessionId};
     use caelumora_model::store::StateStore;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
     use std::collections::HashMap;
-    use caelumora_model::config::AppConfig;
     use caelumora_model::role::{RoleId, Roles};
     use caelumora_model::value::name::Name;
     use chrono::Utc;
@@ -325,9 +323,7 @@ mod tests {
 
     impl Sessions {
         async fn under(access_policy: Arc<dyn AccessPolicy>) -> Self {
-            let store = Arc::new(MemoryStore::new());
-            let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
-            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(store), &[&AgentsPlugin]).unwrap());
+            let runtime = TestRuntime { access_policy, plugins: vec![&TestAgents], ..Default::default() }.build();
             Self { runtime, loops: HashMap::new() }
         }
 

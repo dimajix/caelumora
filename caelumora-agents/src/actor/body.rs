@@ -308,7 +308,7 @@ mod testing {
             let session = bare_session(SessionId::new());
             let channel = bare_channel(session.id);
             let (session_id, channel_id) = (session.id, channel.id);
-            let channel = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy()))), session, channel);
+            let channel = ChannelRuntime::outside_a_session(Arc::clone(&runtime), session, channel);
             let actor_runtime = channel.new_actor_runtime(ActorId::Agent(agent.id()));
             Self {
                 context: agent.security_context(session_id, channel_id, None),

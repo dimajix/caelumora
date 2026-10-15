@@ -371,19 +371,17 @@ impl Actor for ApproverActor {
 mod tests {
     use super::*;
     use crate::session::testing::bare_session;
-    use crate::testing::{Script, ScriptedAgents};
+    use crate::testing::TestRuntime;
     use crate::channel::ChannelLoop;
     use caelumora_model::actor::EventContext;
     use caelumora_model::approval::ApprovalRequest;
-    use crate::command::CommandExecutor;
     use crate::runtime::{ChannelRuntime, RuntimeManager};
     use crate::transport::{InMemoryEventReceiver, InMemoryEventSender};
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::approval::ApproverId;
     use caelumora_model::channel::{Channel, ChannelId, Participant, moderation_components};
     use caelumora_model::value::name::{Name, ScopedName};
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{OwnershipPolicy, AccessPolicy, Grant, Subject};
+    use caelumora_model::security::{OwnershipPolicy, Grant, Subject};
     use caelumora_model::session::SessionId;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::tool::ToolCall;
@@ -391,9 +389,7 @@ mod tests {
     use serde_json::json;
     use std::any::Any;
     use tokio::sync::mpsc;
-    use caelumora_model::confidentiality::{ConfidentialityRules, Classification};
-    use caelumora_model::config::AppConfig;
-    use crate::testing::test_registry;
+    use caelumora_model::confidentiality::Classification;
     use std::time::Duration;
 
     /// The approver of a channel of users, under the ownership policy, run
@@ -439,10 +435,7 @@ mod tests {
         stored.security_attributes = attributes;
         store.entity_stores().agents.create(&system, &stored).await.unwrap();
 
-        let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
-        let registry = test_registry(Arc::<MemoryStore>::clone(&store));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry, &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap());
+        let runtime = TestRuntime { store: Arc::clone(&store), access_policy: Arc::new(OwnershipPolicy::new()), ..Default::default() }.build();
         let approver = Approver { id: ApproverId::new(), strategy };
         let mut participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
         participants.push(Participant::Approver(approver.clone()));
@@ -463,9 +456,8 @@ mod tests {
             former: Vec::new(),
         };
         store.entity_stores().channels.create(&system, &channel).await.unwrap();
-        let executor = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
         let session_id = channel.session_id;
-        let channel = ChannelLoop::new(ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(executor), bare_session(session_id), channel)).await.unwrap();
+        let channel = ChannelLoop::new(ChannelRuntime::outside_a_session(Arc::clone(&runtime), bare_session(session_id), channel)).await.unwrap();
         let actor: Arc<dyn Any + Send + Sync> = channel.actor(ActorId::Approver(approver.id)).unwrap();
         let approver = Arc::downcast::<ApproverActor>(actor).unwrap();
 

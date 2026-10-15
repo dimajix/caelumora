@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, LazyLock, Mutex};
 use caelumora_model::component::ComponentConfig;
-use anyhow::Error;
+use anyhow::{Error, Result};
 use tempfile::TempDir;
 use chrono::Utc;
 use async_trait::async_trait;
@@ -29,7 +29,6 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
 use caelumora_model::channel::{moderation_components, Channel, Participant};
 use caelumora_model::config::{BackendConfig, WorkspacesConfig};
-use crate::backend::Backends;
 use serde_json::{json, Value};
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityPolicy, ConfidentialityRules, Confidentiality, Place};
 use caelumora_model::role::{RoleId, Roles};
@@ -39,14 +38,14 @@ use caelumora_model::value::text::{Description, Introduction};
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::group::{Group, GroupId};
-use caelumora_model::security::{ActionType, Grant, OwnershipPolicy, Reclassified, SecurityAttributes, SecurityContext, AccessPolicy, Subject};
+use caelumora_model::security::{ActionType, AllowAllPolicy, Grant, OwnershipPolicy, Reclassified, SecurityAttributes, SecurityContext, AccessPolicy, Subject};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::store::{ComponentStore, StoreError};
+use caelumora_model::store::{ComponentStore, StateStore, StoreError};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
 use crate::component::ComponentRegistry;
-use crate::runtime::{ActorRuntime, RuntimeBuilder, RuntimeManager};
+use crate::runtime::{ActorRuntime, RuntimeManager};
 use crate::plugin::Plugin;
 use crate::agent::AgentError;
 use crate::channel::ChannelLoop;
@@ -172,6 +171,63 @@ pub fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttribut
     }
 }
 
+/// A runtime of a test, built from its parts as `RuntimeManager::new` builds
+/// one (issue 375): each part has a default, and a test names only those it
+/// differs in - `TestRuntime { plugins: vec![&Notes], ..Default::default() }`.
+/// Its secrets are always none, under its access policy.
+pub struct TestRuntime<'a> {
+    /// What the entities are kept in and, unless `state_store` is another,
+    /// the agents' states: a new, empty store.
+    pub store: Arc<MemoryStore>,
+    /// What the agents' states are kept in, if not in `store`.
+    pub state_store: Option<Arc<dyn StateStore>>,
+    /// Allows everything.
+    pub access_policy: Arc<dyn AccessPolicy>,
+    /// The default rules.
+    pub confidentiality: Arc<dyn ConfidentialityPolicy>,
+    pub config: AppConfig,
+    /// The component kinds; if none, those of `test_registry`, resolving in
+    /// `store`.
+    pub registry: Option<ComponentRegistry>,
+    /// Agents that answer "ok" (`ScriptedAgents`).
+    pub plugins: Vec<&'a dyn Plugin>,
+}
+
+/// The plugin a `TestRuntime` runs its agents with unless a test names others.
+static ANSWERING_OK: LazyLock<ScriptedAgents> = LazyLock::new(|| ScriptedAgents(Script::Answers("ok".to_string())));
+
+impl Default for TestRuntime<'_> {
+    fn default() -> Self {
+        Self {
+            store: Arc::new(MemoryStore::new()),
+            state_store: None,
+            access_policy: Arc::new(AllowAllPolicy::new()),
+            confidentiality: Arc::new(ConfidentialityRules::default()),
+            config: AppConfig::default(),
+            registry: None,
+            plugins: vec![&*ANSWERING_OK],
+        }
+    }
+}
+
+impl TestRuntime<'_> {
+    /// The runtime, for a test that it is built in.
+    pub fn build(self) -> Arc<RuntimeManager> {
+        Arc::new(self.try_build().expect("the runtime of a test is built"))
+    }
+
+    /// The runtime, or why it could not be built - for a test of that.
+    ///
+    /// # Errors
+    /// As `RuntimeManager::new`.
+    pub fn try_build(self) -> Result<RuntimeManager> {
+        let state_store = self.state_store.unwrap_or_else(|| Arc::<MemoryStore>::clone(&self.store));
+        let registry = self.registry.unwrap_or_else(|| test_registry(Arc::<MemoryStore>::clone(&self.store)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&self.access_policy)));
+        RuntimeManager::new(state_store, self.store, secrets, self.access_policy, self.confidentiality, &self.config, registry, &self.plugins)
+    }
+}
+
 /// The role every user of the world holds.
 pub static STAFF: LazyLock<RoleId> = LazyLock::new(RoleId::new);
 
@@ -218,18 +274,13 @@ impl World {
         let access_policy: Arc<dyn AccessPolicy> = Arc::<Recorder>::clone(&recorder);
         let store = Arc::new(MemoryStore::with_policies(Arc::clone(&access_policy), Arc::<Recorder>::clone(&recorder)));
         memberships.bind(&store.entity_stores().groups);
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
         let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
         register(&mut registry);
         let files = tempfile::tempdir().unwrap();
         let shell = BackendConfig::new("local", json!({ "root": files.path().join("shell"), "shell": true, "destination": { "level": "internal" } }));
         let workspaces = WorkspacesConfig { storage: [("main".to_string(), BackendConfig::new("local", json!({ "root": files.path() }))), ("shell".to_string(), shell)].into(), ..Default::default() };
         let config = AppConfig { workspaces, plugins: sections(files.path()), ..Default::default() };
-        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::<Recorder>::clone(&recorder), &config, registry, Backends::with_plugins(plugins)).unwrap();
-        for plugin in plugins {
-            builder.plugin(*plugin).unwrap();
-        }
-        let runtime = Arc::new(builder.build().unwrap());
+        let runtime = TestRuntime { store: Arc::clone(&store), access_policy, confidentiality: Arc::<Recorder>::clone(&recorder), config, registry: Some(registry), plugins: plugins.to_vec(), ..Default::default() }.build();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let mut world = Self { access_policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
         world.alice = world.user("alice").await;

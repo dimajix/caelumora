@@ -241,11 +241,9 @@ mod tests {
     use caelumora_model::user::UserId;
 
     fn channel_runtime() -> ChannelRuntime {
-        let manager = test_runtime();
-        let commands = Arc::new(CommandExecutor::empty(Arc::clone(manager.access_policy())));
         let session = bare_session(SessionId::new());
         let channel = bare_channel(session.id);
-        ChannelRuntime::outside_a_session(manager, commands, session, channel)
+        ChannelRuntime::outside_a_session(test_runtime(), session, channel)
     }
 
     #[tokio::test]

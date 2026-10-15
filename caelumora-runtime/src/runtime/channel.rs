@@ -115,9 +115,10 @@ impl ChannelRuntime {
 #[cfg(any(test, feature = "test-support"))]
 impl ChannelRuntime {
     /// A runtime for `channel` of `session`, which is not running - in
-    /// tests: it has no loop (`bare_session` and `bare_channel` for ones
-    /// that hold nothing but their ids).
-    pub fn outside_a_session(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session: Session, channel: Channel) -> Self {
+    /// tests: it has no loop and no user commands (`bare_session` and
+    /// `bare_channel` for ones that hold nothing but their ids).
+    pub fn outside_a_session(runtime_manager: Arc<RuntimeManager>, session: Session, channel: Channel) -> Self {
+        let command_executor = Arc::new(CommandExecutor::empty(Arc::clone(runtime_manager.access_policy())));
         let session = runtime_manager.controller_manager().new_session_controller(session);
         let channel = runtime_manager.controller_manager().new_channel_controller(channel);
         Self::new(runtime_manager, command_executor, session, channel, Weak::new())

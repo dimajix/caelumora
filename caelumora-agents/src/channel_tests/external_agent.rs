@@ -5,24 +5,21 @@ use crate::plugin::AgentsPlugin;
 use super::*;
 use caelumora_model::value::name::Name;
 use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::command::CommandExecutor;
-use caelumora_runtime::runtime::{ChannelRuntime, RuntimeManager};
+use caelumora_runtime::runtime::ChannelRuntime;
 use crate::testing::test_registry;
+use caelumora_runtime::testing::TestRuntime;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, HistoryAccess, moderation_components};
-use caelumora_model::security::{SecurityAttributes, SecurityContext, AccessPolicy};
+use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId, Participant};
 use std::sync::Arc;
 use caelumora_model::value::name::ScopedName;
-use caelumora_model::secret::SecretManager;
-use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_runtime::session::SessionManager;
 use caelumora_runtime::session::testing::*;
-use caelumora_model::confidentiality::{ConfidentialityRules, Classification, Visibility};
-use caelumora_model::config::AppConfig;
+use caelumora_model::confidentiality::{Classification, Visibility};
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::prompt::PromptProvider;
 use caelumora_model::digest;
@@ -80,8 +77,6 @@ async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: Compon
     store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
     store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
 
-    let access_policy: Arc<dyn AccessPolicy> = Arc::new(AllowAllPolicy::new());
-    let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
     let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
     registry.register(
         ComponentKind::new("test_remote").provides::<dyn ExternalAgent>(),
@@ -94,7 +89,7 @@ async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: Compon
     register_no_secrets(&mut registry);
     register_heard(&mut registry);
     register_marking_command(&mut registry);
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry, &[&AgentsPlugin]).unwrap());
+    let runtime = TestRuntime { store, registry: Some(registry), plugins: vec![&AgentsPlugin], ..Default::default() }.build();
     let channel = Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
@@ -115,9 +110,8 @@ async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: Compon
     if let Some(mut stored) = stored(agent_id) {
         runtime.state_store().put_agent_channel_state(agent_id, channel.id, &mut stored).await.unwrap();
     }
-    let executor = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
     let session_id = channel.session_id;
-    let channel = ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, Arc::new(executor), bare_session(session_id), channel)).await?;
+    let channel = ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, bare_session(session_id), channel)).await?;
     Ok((channel, context, agent_id, alice.id))
 }
 
@@ -1134,9 +1128,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
             Ok(facets)
         } },
     );
-    let access_policy = Arc::new(AllowAllPolicy::new());
-    let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry, &[&AgentsPlugin]).unwrap());
+    let runtime = TestRuntime { store: Arc::clone(&store), registry: Some(registry), plugins: vec![&AgentsPlugin], ..Default::default() }.build();
     let manager = SessionManager::new(Arc::clone(&runtime));
     let system = SecurityContext::system();
 

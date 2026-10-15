@@ -1,6 +1,6 @@
 # 375 — About twenty tests build a runtime by hand, each writing out what it is built from
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -49,3 +49,23 @@ the session it stands in for and almost never gets any.
   commands set afterwards).
 - **Leave it.** Each of the lines is written once and read rarely; the cost is the next change to
   `RuntimeManager::new`.
+
+## History
+
+- **2026-10-15** — Done, by the maintainer's decision, after the survey: the tests differ in the
+  store (one filled first, one under policies, a second one for the states), the policies, the
+  configuration, the registry and the plugins, each for a reason of its own, and only the secrets
+  were the same everywhere - so no single fixture with more parameters, but `testing::TestRuntime`:
+  the parts of a runtime as public fields with defaults, of which a test names those it differs in
+  (`TestRuntime { plugins: vec![&AgentsPlugin], ..Default::default() }`), built by `build()`, or by
+  `try_build()` for a test of what refuses to be built. It replaces `test_runtime_under` and
+  `owned_store`; `test_runtime()`, `owned_runtime` and `World` are built with it, and so are the
+  tests of the runtime and the agents and those of `caelumora-mcp` and `caelumora-rest-server`,
+  which have the runtime's `test-support` among their dev-dependencies now. The tests of
+  `RuntimeBuilder` in `plugin.rs` need no builder of their own: a plugin claiming a section twice is
+  two plugins in the list. Where the agents' tests named the agents' plugin with the agents'
+  component kinds, they name `TestAgents`, which brings the same, unless they register stand-ins of
+  their own or test the plugin itself. `ChannelRuntime::outside_a_session` makes the empty
+  `CommandExecutor` itself; the one test whose channel has commands builds its runtime with
+  `ChannelRuntime::new`. Left as they are: the program's own test in `caelumora-app`, which builds
+  the runtime as the program does.
