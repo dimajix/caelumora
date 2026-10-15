@@ -1,4 +1,4 @@
-# 373 — The agents' test world mirrors the four constructors of the runtime's
+# 373 — The agents' test world mirrors the four constructors of the runtime's `World`
 
 **Status:** open
 **Area:** Code structure
