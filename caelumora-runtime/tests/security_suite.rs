@@ -31,7 +31,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, Grant, SecurityAttributes, SecurityContext, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::{ComponentStore, StoreError, Stored};
-use caelumora_model::user::{UserId, UserProfile};
+use caelumora_model::user::{UserId, UserProfile, User};
 use caelumora_runtime::agent::AgentError;
 use caelumora_runtime::channel::{ChannelError, ChannelLoop};
 use caelumora_runtime::component::PRECONFIGURED_REF_KIND;
@@ -42,6 +42,7 @@ use caelumora_runtime::view::{ViewError, Viewer};
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_runtime::group::GroupError;
 use caelumora_model::workspace::{CommandStatus, Workspace, WorkspaceId};
+use caelumora_runtime::event::EventSubscription;
 
 // --- Personalities and agents ---------------------------------------------
 
@@ -125,7 +126,7 @@ async fn a_channel_is_read_by_its_members_wherever_they_act_and_no_more_once_rem
 
     let mut events = world.runtime.event_bus().subscribe_as(World::as_user(world.carol));
     main.remove_participant(&World::as_user(world.alice), ActorId::User(world.carol)).await.expect("alice's to remove her");
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(5), async {
         while let Some(event) = events.recv().await {
             if matches!(event.about::<Channel>(), Some(((_, channel), change)) if channel == main.id() && change.data::<ActorId>(LEFT) == Some(ActorId::User(world.carol))) {
                 return;
@@ -264,7 +265,7 @@ async fn an_agent_is_taken_in_only_by_who_may_read_it_and_only_if_it_may_run() {
 #[tokio::test]
 async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
     let world = World::new().await;
-    let dave = caelumora_model::user::User { id: UserId::new(), username: Name::new("dave").unwrap(), email: String::new(), roles: vec![], deleted: None };
+    let dave = User { id: UserId::new(), username: Name::new("dave").unwrap(), email: String::new(), roles: vec![], deleted: None };
     world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
     let limited = Personality { roles: Some(vec![]), ..world.personality("limited", Some(world.alice), &[]).await };
     world.runtime.entity_stores().personalities.update(&World::as_user(world.alice), &limited).await.unwrap();
@@ -289,7 +290,7 @@ async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
 async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
     use caelumora_model::snapshot::CandidateRefusal;
     let world = World::new().await;
-    let dave = caelumora_model::user::User { id: UserId::new(), username: Name::new("dave").unwrap(), email: String::new(), roles: vec![], deleted: None };
+    let dave = User { id: UserId::new(), username: Name::new("dave").unwrap(), email: String::new(), roles: vec![], deleted: None };
     world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
     let main = session.channels()[0].id();
@@ -1080,10 +1081,10 @@ async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
 
     session.update_workspace(&alice, Some(hers.id), Some(Grant::Read)).await.expect("shared with its members to read");
     let acl = world.runtime.entity_stores().workspaces.get(&alice, hers.id).await.unwrap().security_attributes.acl;
-    assert_eq!(acl, [caelumora_model::security::AclEntry { subject: members, grant: Grant::Read }]);
+    assert_eq!(acl, [AclEntry { subject: members, grant: Grant::Read }]);
     session.update_workspace(&alice, Some(hers.id), Some(Grant::Write)).await.expect("and widened to write");
     let acl = world.runtime.entity_stores().workspaces.get(&alice, hers.id).await.unwrap().security_attributes.acl;
-    assert_eq!(acl, [caelumora_model::security::AclEntry { subject: members, grant: Grant::Write }], "one entry, widened");
+    assert_eq!(acl, [AclEntry { subject: members, grant: Grant::Write }], "one entry, widened");
 
     assert!(denied(&session.update_workspace(&bob, None, None).await.unwrap_err()), "bob does not take it away");
     session.update_workspace(&alice, None, None).await.expect("alice does");
@@ -1380,7 +1381,7 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
 
 /// Waits until `events` has received each of `wanted`, in any order -
 /// compared as they are shown, since an event has no equality.
-async fn hears<const N: usize>(events: &mut caelumora_runtime::event::EventSubscription, wanted: [GlobalEvent; N]) {
+async fn hears<const N: usize>(events: &mut EventSubscription, wanted: [GlobalEvent; N]) {
     let mut missing: Vec<String> = wanted.iter().map(|event| format!("{event:?}")).collect();
     let _ = tokio::time::timeout(Duration::from_secs(5), async {
         while !missing.is_empty() {

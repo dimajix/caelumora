@@ -19,15 +19,15 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use caelumora_model::actor::{ActorId, Rejection};
+use caelumora_model::actor::{ActorId, Rejection, ActorEvent, Envelope};
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityKind};
-use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
+use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher, ApprovalRequest, ApprovalRuleId};
 use caelumora_model::channel::HistoryAccess;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::value::name::{Name, ScopedName};
-use caelumora_model::question::Addressee;
+use caelumora_model::question::{Addressee, Answers, QuestionId, QuestionRequest, Questions};
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::group::GroupId;
@@ -37,7 +37,7 @@ use caelumora_model::store::{ComponentStore, StateStore, StoreError};
 use caelumora_model::template::{ScopeTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate};
 use caelumora_model::user::UserId;
 use caelumora_model::work::TurnId;
-use caelumora_runtime::channel::ChannelError;
+use caelumora_runtime::channel::{ChannelError, ChannelLoop};
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, PRECONFIGURED_REF_KIND};
 use caelumora_agents::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
 use caelumora_agents::testing::{asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_once, Once, ONCE_MODEL_KIND};
@@ -48,6 +48,26 @@ use caelumora_runtime::view::{ChannelView, ViewError, Viewer};
 use caelumora_model::snapshot::PersonalitySnapshot;
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_model::workspace::WorkspaceChoice;
+use anyhow::Error;
+use caelumora_agents::command::AgentCommandProvider;
+use caelumora_agents::compaction::command::COMPACTION_KIND;
+use caelumora_agents::components::channel_history::CHANNEL_HISTORY_KIND;
+use caelumora_agents::llm::LLMClient;
+use caelumora_agents::tool::{ToolOutput, ToolProvider, ToolResult};
+use caelumora_agents::tool::echo_tool::ECHO_TOOL_KIND;
+use caelumora_agents::tool::sleep_tool::SLEEP_TOOL_KIND;
+use caelumora_agents::tool::terminal_tool::TERMINAL_TOOL_KIND;
+use caelumora_agents::turn::Turn;
+use caelumora_model::command::{Command, CommandOutput};
+use caelumora_model::context::ModelProfile;
+use caelumora_model::message::Message;
+use caelumora_model::tool::{Tool, ToolParameters};
+use caelumora_model::turn::GivenUpReason;
+use caelumora_runtime::actor::user::ChannelWatch;
+use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
+use serde_json::Value;
+use std::time::Duration;
+use tokio::sync::Semaphore;
 
 // --- Personalities and agents ---------------------------------------------
 
@@ -349,7 +369,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
 /// owner, on the word of whoever nudged it.
 #[tokio::test]
 async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_word() {
-    let world = agent_testing::world_with_kinds(|registry| register_once(registry, "silent", caelumora_model::message::Message::new(Classification::PUBLIC))).await;
+    let world = agent_testing::world_with_kinds(|registry| register_once(registry, "silent", Message::new(Classification::PUBLIC))).await;
     let silent = Personality {
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "silent")] },
         ..world.personality("silent", None, &[]).await
@@ -365,7 +385,7 @@ async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_wor
     let (nudged, asked) = world.asked(bob.request_response(ActorId::Agent(helper))).await;
     nudged.expect("his to nudge, as a participant");
     assert!(asked.is_empty(), "nothing beyond taking part: {asked:?}");
-    let finished = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    let finished = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = his.events.recv().await.expect("the channel runs");
             if envelope.event.kind() == "TurnFinished" {
@@ -507,7 +527,7 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
 /// alice's agent `helper`, which calls `sleep` (a call that needs approval)
 /// once it is asked, in a session alice shares with bob and he opened;
 /// with the session's main channel.
-async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>, AgentId) {
+async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, AgentId) {
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
@@ -517,9 +537,9 @@ async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<caelumora_run
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
-    let world = agent_testing::world_with_kinds(|registry| registry.register(ComponentKind::new("once").provides::<dyn caelumora_agents::llm::LLMClient>(), move |_, _| {
+    let world = agent_testing::world_with_kinds(|registry| registry.register(ComponentKind::new("once").provides::<dyn LLMClient>(), move |_, _| {
         let mut facets = ComponentFacets::empty();
-        facets.insert::<dyn caelumora_agents::llm::LLMClient>(Arc::<Once>::clone(&model));
+        facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
         Ok(facets)
     })).await;
     let asking = Personality {
@@ -527,7 +547,7 @@ async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<caelumora_run
             ComponentDescriptor::new("model", "once"),
             ComponentDescriptor {
                 params: serde_json::json!({ "requires_approval": true }),
-                ..ComponentDescriptor::new("sleep", caelumora_agents::tool::sleep_tool::SLEEP_TOOL_KIND)
+                ..ComponentDescriptor::new("sleep", SLEEP_TOOL_KIND)
             },
         ] },
         ..world.personality("asking", None, &[]).await
@@ -549,25 +569,25 @@ struct Asking {
 }
 
 #[async_trait]
-impl caelumora_agents::tool::ToolProvider for Asking {
+impl ToolProvider for Asking {
     fn description(&self) -> String {
         "asks before it runs".to_string()
     }
-    fn tools(&self) -> Vec<caelumora_model::tool::Tool> {
-        vec![caelumora_model::tool::Tool {
+    fn tools(&self) -> Vec<Tool> {
+        vec![Tool {
             name: "asking".to_string(),
             description: "asks before it runs".to_string(),
-            parameters: caelumora_model::tool::ToolParameters::object(Vec::<(String, caelumora_model::tool::ToolParameters)>::new(), Vec::<String>::new()),
+            parameters: ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()),
             requires_approval: false,
             visibility: Default::default(),
             classification: None,
             presentation: Default::default(),
         }]
     }
-    async fn execute(&self, _: &str, _: &serde_json::Value, answers: Option<&caelumora_model::question::Answers>, _: &mut caelumora_agents::turn::Turn) -> caelumora_agents::tool::ToolResult<caelumora_agents::tool::ToolOutput> {
+    async fn execute(&self, _: &str, _: &Value, answers: Option<&Answers>, _: &mut Turn) -> ToolResult<ToolOutput> {
         Ok(serde_json::json!({ "answered": answers.is_some() }).into())
     }
-    fn questions(&self, _: &str, _: &serde_json::Value) -> caelumora_agents::tool::ToolResult<Option<caelumora_model::question::Questions>> {
+    fn questions(&self, _: &str, _: &Value) -> ToolResult<Option<Questions>> {
         use caelumora_model::question::{Question, Questions};
         Ok(Some(Questions {
             questions: vec![Question { header: "Name".to_string(), question: "Who are you?".to_string(), choices: Vec::new(), multi_select: false }],
@@ -582,12 +602,12 @@ impl caelumora_agents::tool::ToolProvider for Asking {
 /// shares with bob and he opened; with the session's main channel, the
 /// questions as the asker is shown them, and what bob was shown since
 /// before it was asked.
-async fn with_a_call_asking(sensitive: bool, asker: fn(&World) -> UserId) -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>, caelumora_model::question::QuestionRequest, caelumora_runtime::actor::user::ChannelWatch) {
+async fn with_a_call_asking(sensitive: bool, asker: fn(&World) -> UserId) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, QuestionRequest, ChannelWatch) {
     with_a_call_asking_whom(Addressee::Owner, sensitive, asker).await
 }
 
 /// `with_a_call_asking`, with a tool that asks `ask`.
-async fn with_a_call_asking_whom(ask: Addressee, sensitive: bool, asker: fn(&World) -> UserId) -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>, caelumora_model::question::QuestionRequest, caelumora_runtime::actor::user::ChannelWatch) {
+async fn with_a_call_asking_whom(ask: Addressee, sensitive: bool, asker: fn(&World) -> UserId) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, QuestionRequest, ChannelWatch) {
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
@@ -598,14 +618,14 @@ async fn with_a_call_asking_whom(ask: Addressee, sensitive: bool, asker: fn(&Wor
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
     let world = agent_testing::world_with_kinds(|registry| {
-        registry.register(ComponentKind::new("once").provides::<dyn caelumora_agents::llm::LLMClient>(), move |_, _| {
+        registry.register(ComponentKind::new("once").provides::<dyn LLMClient>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn caelumora_agents::llm::LLMClient>(Arc::<Once>::clone(&model));
+            facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
             Ok(facets)
         });
-        registry.register(ComponentKind::new("asking").provides::<dyn caelumora_agents::tool::ToolProvider>(), move |_, _| {
+        registry.register(ComponentKind::new("asking").provides::<dyn ToolProvider>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn caelumora_agents::tool::ToolProvider>(Arc::new(Asking { ask: ask.clone(), sensitive }));
+            facets.insert::<dyn ToolProvider>(Arc::new(Asking { ask: ask.clone(), sensitive }));
             Ok(facets)
         });
     }).await;
@@ -624,13 +644,13 @@ async fn with_a_call_asking_whom(ask: Addressee, sensitive: bool, asker: fn(&Wor
     let mut watch = main.user_actor(asker(&world)).expect("the asker takes part").watch();
     let his = main.user_actor(world.bob).expect("he takes part").watch();
     main.user_actor(asker(&world)).unwrap().send_message("@helper ask".to_string(), None).await.expect("sent");
-    let caelumora_model::actor::ActorEvent::QuestionRequested(request) = shown(&mut watch, "QuestionRequested").await else { unreachable!() };
+    let ActorEvent::QuestionRequested(request) = shown(&mut watch, "QuestionRequested").await else { unreachable!() };
     (world, session, main, request, his)
 }
 
 /// The questions of `helper`'s calls in `main`, as `user` is shown them in
 /// a snapshot.
-async fn questions_shown(world: &World, session: SessionId, main: ChannelId, user: UserId) -> Vec<caelumora_model::question::QuestionId> {
+async fn questions_shown(world: &World, session: SessionId, main: ChannelId, user: UserId) -> Vec<QuestionId> {
     use caelumora_model::snapshot::Detail;
     let view = world.manager.views(Viewer::new(World::as_user(user))).session(session).await.unwrap().channel(main).await.unwrap();
     view.snapshot(Detail::MEMBERS | Detail::APPROVALS).await.members.into_iter().flat_map(|m| m.pending_questions).map(|q| q.id).collect()
@@ -675,9 +695,9 @@ async fn sensitive_questions_reach_only_whom_they_are_put_to() {
     let refused = main.user_actor(world.bob).unwrap().answer_questions(request.id, Some(vec![Response::Text { text: "Bob".to_string() }])).await.expect_err("never shown to him");
     assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::Question { reason: QuestionError::NotOpen, .. })), "{refused}");
     main.user_actor(world.alice).unwrap().answer_questions(request.id, Some(vec![Response::Text { text: "Alice".to_string() }])).await.expect("put to her");
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
     while let Ok(envelope) = his.events.try_recv() {
-        assert!(!matches!(envelope.event, caelumora_model::actor::ActorEvent::QuestionRequested(_) | caelumora_model::actor::ActorEvent::QuestionClosed { .. }), "nothing of them reaches him: {}", envelope.event.kind());
+        assert!(!matches!(envelope.event, ActorEvent::QuestionRequested(_) | ActorEvent::QuestionClosed { .. }), "nothing of them reaches him: {}", envelope.event.kind());
     }
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -711,17 +731,17 @@ async fn questions_for_the_initiator_are_put_to_whoever_asked_the_agent() {
 /// by, if one did, and the approver's decision, if it decided within a
 /// while.
 struct Asked {
-    request: Option<caelumora_model::approval::ApprovalRequest>,
-    by_rule: Option<caelumora_model::approval::ApprovalRuleId>,
+    request: Option<ApprovalRequest>,
+    by_rule: Option<ApprovalRuleId>,
     approved: Option<bool>,
 }
 
-async fn ask_helper(world: &World, main: &caelumora_runtime::channel::ChannelLoop, user: UserId) -> Asked {
+async fn ask_helper(world: &World, main: &ChannelLoop, user: UserId) -> Asked {
     use caelumora_model::actor::ActorEvent;
     let mut watch = main.user_actor(user).expect("they take part").watch();
     main.user_actor(world.alice).unwrap().send_message("@helper wait".to_string(), None).await.expect("sent");
     let mut asked = Asked { request: None, by_rule: None, approved: None };
-    let _ = tokio::time::timeout(std::time::Duration::from_millis(1500), async {
+    let _ = tokio::time::timeout(Duration::from_millis(1500), async {
         loop {
             let envelope = watch.events.recv().await.expect("the channel runs");
             let from_approver = matches!(envelope.context.sender_id, ActorId::Approver(_));
@@ -749,7 +769,7 @@ async fn a_persons_rule_answers_for_them_as_they_would() {
     let (world, session, main, _) = with_a_call_to_approve().await;
     let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
     let rule = sleeping(RuleDecision::Allow, Reach::Session(session.id()));
-    assert!(denied(&anyhow::Error::new(hers.add_approval_rule(&World::as_user(world.bob), rule.clone()).await.expect_err("not his to set"))));
+    assert!(denied(&Error::new(hers.add_approval_rule(&World::as_user(world.bob), rule.clone()).await.expect_err("not his to set"))));
     hers.add_approval_rule(&World::as_user(world.alice), rule.clone()).await.expect("hers");
 
     let asked = ask_helper(&world, &main, world.alice).await;
@@ -831,7 +851,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     let mut watch = main.user_actor(world.alice).expect("she takes part").watch();
 
     main.user_actor(world.alice).unwrap().send_message("@helper wait".to_string(), None).await.expect("sent");
-    let request = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    let request = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if let ActorEvent::ApprovalRequested(request) = watch.events.recv().await.expect("the channel runs").event {
                 break request;
@@ -860,7 +880,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
         let ActorEvent::MessageRejected { rejected, reason, .. } = shown(&mut his, "MessageRejected").await else { unreachable!() };
         assert_eq!((rejected.as_str(), reason), ("ApprovalDenied", Rejection::Forbidden), "his answer is refused, and he is told");
         main.user_actor(world.alice).unwrap().send_approval(response.clone(), true).await.expect("sent");
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 // The approver's decision, not the answers shown as given.
                 let envelope = watch.events.recv().await.expect("the channel runs");
@@ -893,15 +913,15 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
 struct Outward;
 
 #[async_trait]
-impl caelumora_agents::tool::ToolProvider for Outward {
+impl ToolProvider for Outward {
     fn description(&self) -> String {
         "sends out".to_string()
     }
-    fn tools(&self) -> Vec<caelumora_model::tool::Tool> {
-        vec![caelumora_model::tool::Tool {
+    fn tools(&self) -> Vec<Tool> {
+        vec![Tool {
             name: "send_out".to_string(),
             description: "sends out".to_string(),
-            parameters: caelumora_model::tool::ToolParameters::object(Vec::<(String, caelumora_model::tool::ToolParameters)>::new(), Vec::<String>::new()),
+            parameters: ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()),
             requires_approval: false,
             visibility: Default::default(),
             classification: None,
@@ -911,7 +931,7 @@ impl caelumora_agents::tool::ToolProvider for Outward {
     fn destination(&self) -> Option<Classification> {
         Some(Classification::PUBLIC)
     }
-    async fn execute(&self, _: &str, _: &serde_json::Value, _: Option<&caelumora_model::question::Answers>, _: &mut caelumora_agents::turn::Turn) -> caelumora_agents::tool::ToolResult<caelumora_agents::tool::ToolOutput> {
+    async fn execute(&self, _: &str, _: &Value, _: Option<&Answers>, _: &mut Turn) -> ToolResult<ToolOutput> {
         panic!("a withheld tool is never run")
     }
 }
@@ -933,14 +953,14 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
     let world = agent_testing::world_with_kinds(|registry| {
-        registry.register(ComponentKind::new("once").provides::<dyn caelumora_agents::llm::LLMClient>(), move |_, _| {
+        registry.register(ComponentKind::new("once").provides::<dyn LLMClient>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn caelumora_agents::llm::LLMClient>(Arc::<Once>::clone(&model));
+            facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
             Ok(facets)
         });
-        registry.register(ComponentKind::new("outward").provides::<dyn caelumora_agents::tool::ToolProvider>(), |_, _| {
+        registry.register(ComponentKind::new("outward").provides::<dyn ToolProvider>(), |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn caelumora_agents::tool::ToolProvider>(Arc::new(Outward));
+            facets.insert::<dyn ToolProvider>(Arc::new(Outward));
             Ok(facets)
         });
     }).await;
@@ -957,9 +977,9 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
 
     let (answered, asked) = world.asked(async {
         main.user_actor(world.bob).unwrap().send_message("@helper send it".to_string(), None).await.expect("sent");
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                if let caelumora_model::actor::ActorEvent::CompleteMessageGenerated(message) = watch.events.recv().await.expect("the channel runs").event {
+                if let ActorEvent::CompleteMessageGenerated(message) = watch.events.recv().await.expect("the channel runs").event {
                     if let Some(result) = message.tool_results.first() {
                         break result.status;
                     }
@@ -1015,7 +1035,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
     let relaying = with("relaying", vec![ComponentDescriptor::new("model", "relaying")]).await;
     let calling = with("calling", vec![
         ComponentDescriptor::new("model", "calling"),
-        ComponentDescriptor::new("echo", caelumora_agents::tool::echo_tool::ECHO_TOOL_KIND),
+        ComponentDescriptor::new("echo", ECHO_TOOL_KIND),
     ]).await;
     let relay = world.agent("relay", world.bob, &relaying).await;
     let doer = world.agent("doer", world.alice, &calling).await;
@@ -1039,7 +1059,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
 /// he opened: "side" is alice's, and `reader` takes part in it if
 /// `in_side`; alice said something there, classified as the main channel
 /// is. With the main channel.
-async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>) {
+async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>) {
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
@@ -1053,7 +1073,7 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
     let reading = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "reading"),
-            ComponentDescriptor::new("history", caelumora_agents::components::channel_history::CHANNEL_HISTORY_KIND),
+            ComponentDescriptor::new("history", CHANNEL_HISTORY_KIND),
         ] },
         ..world.personality("reading", None, &[]).await
     };
@@ -1073,11 +1093,11 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
 /// What the policy is asked when bob asks `reader` in `main` to read
 /// "side", once it was asked `line` and a little after: what side holds is
 /// asked of entry by entry after the channel as a whole.
-async fn asked_to_read_side(world: &World, main: &caelumora_runtime::channel::ChannelLoop, line: &str) -> Vec<String> {
+async fn asked_to_read_side(world: &World, main: &ChannelLoop, line: &str) -> Vec<String> {
     let (_, asked) = world.asked(async {
         main.user_actor(world.bob).expect("he takes part").send_message("@reader what is on side?".to_string(), None).await.expect("sent");
         asked_for(world, line).await;
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }).await;
     asked
 }
@@ -1136,7 +1156,7 @@ struct RemoteAtWork {
     secrets: Arc<SecretManager>,
     calls: Arc<Mutex<Vec<&'static str>>>,
     declared: Option<Classification>,
-    gate: Option<Arc<tokio::sync::Semaphore>>,
+    gate: Option<Arc<Semaphore>>,
 }
 
 impl RemoteAtWork {
@@ -1176,8 +1196,8 @@ impl ExternalAgent for RemoteAtWork {
         self.declared.clone()
     }
 
-    fn profile(&self) -> caelumora_model::context::ModelProfile {
-        caelumora_model::context::ModelProfile::default()
+    fn profile(&self) -> ModelProfile {
+        ModelProfile::default()
     }
 }
 
@@ -1189,7 +1209,7 @@ async fn with_remote_at_work(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Op
 
 /// `with_remote_at_work`, answering each request once `gate` lets it, if
 /// there is one.
-async fn with_remote(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Option<Classification>, gate: Option<Arc<tokio::sync::Semaphore>>) -> World {
+async fn with_remote(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Option<Classification>, gate: Option<Arc<Semaphore>>) -> World {
     let calls = Arc::clone(calls);
     agent_testing::world_with_kinds(|registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>().uses::<SecretManager>(), move |_, context| {
         let mut facets = ComponentFacets::empty();
@@ -1211,9 +1231,9 @@ async fn remote_personality(world: &World) -> Personality {
 
 /// Waits until `calls` holds `count` calls.
 async fn calls_made(calls: &Mutex<Vec<&'static str>>, count: usize) {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(5), async {
         while calls.lock().unwrap().len() < count {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the remote agent is called");
 }
@@ -1241,9 +1261,9 @@ async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_bega
     assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "with alice's credential, asked by bob");
 
     // The task is stored as begun; the session stops with it still open.
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(5), async {
         while world.store.get_agent_channel_state(hermes, main.id()).await.unwrap().remote.open_tasks.is_empty() {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the task is stored");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -1267,7 +1287,7 @@ async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_bega
 #[tokio::test]
 async fn an_agent_asked_by_several_while_it_answers_answers_once_as_asked_by_the_last() {
     let calls = Arc::new(Mutex::new(Vec::new()));
-    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let gate = Arc::new(Semaphore::new(0));
     let world = with_remote(&calls, None, Some(Arc::clone(&gate))).await;
     let remote = remote_personality(&world).await;
     let hermes = world.agent("hermes", world.alice, &remote).await;
@@ -1282,22 +1302,22 @@ async fn an_agent_asked_by_several_while_it_answers_answers_once_as_asked_by_the
         // Both ask while it works; both messages are said before it is free.
         main.user_actor(world.alice).expect("she takes part").send_message("@hermes and this".to_string(), None).await.expect("she asks");
         main.user_actor(world.bob).expect("he takes part").send_message("@hermes and that".to_string(), None).await.expect("he asks");
-        let said_by = |envelope: &caelumora_model::actor::Envelope, sender: ActorId| envelope.context.sender_id == sender
-            && matches!(envelope.event, caelumora_model::actor::ActorEvent::CompleteMessageGenerated(_));
-        let finished_by = |envelope: &caelumora_model::actor::Envelope, sender: ActorId| envelope.context.sender_id == sender
-            && matches!(envelope.event, caelumora_model::actor::ActorEvent::TurnFinished { .. });
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let said_by = |envelope: &Envelope, sender: ActorId| envelope.context.sender_id == sender
+            && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_));
+        let finished_by = |envelope: &Envelope, sender: ActorId| envelope.context.sender_id == sender
+            && matches!(envelope.event, ActorEvent::TurnFinished { .. });
+        tokio::time::timeout(Duration::from_secs(5), async {
             while !said_by(&events.recv().await.expect("the channel runs"), ActorId::User(world.bob)) {}
         }).await.expect("his message is said");
         gate.add_permits(3);
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::time::timeout(Duration::from_secs(5), async {
             let mut answers = 0;
             while answers < 2 {
                 answers += usize::from(finished_by(&events.recv().await.expect("the channel runs"), ActorId::Agent(hermes)));
             }
         }).await.expect("it answers the first request and then the rest");
         // A further answer would call the remote agent right away.
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }).await;
     assert_eq!(calls.lock().unwrap().as_slice(), ["send", "send"], "one call for all that was asked meanwhile");
     let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
@@ -1323,12 +1343,12 @@ async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_
 
     let (failed, asked) = world.asked(async {
         main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel runs");
-                if let caelumora_model::actor::ActorEvent::TurnGivenUp { reason, .. } = envelope.event {
+                if let ActorEvent::TurnGivenUp { reason, .. } = envelope.event {
                     break match reason {
-                        caelumora_model::turn::GivenUpReason::Failed { message } => message,
+                        GivenUpReason::Failed { message } => message,
                         other => other.cause().to_string(),
                     };
                 }
@@ -1361,12 +1381,12 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_be
 
     let (failed, asked) = world.asked(async {
         main.reclassify(&World::as_user(world.alice), Classification::general(Confidentiality::Public)).await.expect("hers to lower");
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = events.recv().await.expect("the channel runs");
-                if let caelumora_model::actor::ActorEvent::TurnGivenUp { reason, .. } = envelope.event {
+                if let ActorEvent::TurnGivenUp { reason, .. } = envelope.event {
                     break match reason {
-                        caelumora_model::turn::GivenUpReason::Failed { message } => message,
+                        GivenUpReason::Failed { message } => message,
                         other => other.cause().to_string(),
                     };
                 }
@@ -1569,9 +1589,9 @@ async fn removing_an_agent_needs_owning_the_channel() {
 /// What is asked when the agent of `owner`, asked by bob, makes `call` in the
 /// session's workspace, where the files `present` lie already - one that
 /// leaves `made`, a file of the workspace.
-async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json::Value, present: &[&str], made: &str, owner: fn(&World) -> UserId) -> Vec<String> {
+async fn asked_for_a_call_on_the_workspace(function: &str, arguments: Value, present: &[&str], made: &str, owner: fn(&World) -> UserId) -> Vec<String> {
     let world = agent_testing::world_with_kinds(|registry| register_once(registry, ONCE_MODEL_KIND, calling(function, arguments))).await;
-    let kind = caelumora_agents::tool::terminal_tool::TERMINAL_TOOL_KIND;
+    let kind = TERMINAL_TOOL_KIND;
     asked_for_a_call(&world, kind, present, |_, place| place.join(made).is_file(), owner(&world)).await
 }
 
@@ -1736,32 +1756,32 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
 #[derive(Debug)]
 struct Commanded(Arc<Mutex<Vec<SecurityContext>>>);
 
-impl caelumora_runtime::command::ProvidesCommands for Commanded {
-    fn commands(&self) -> Vec<caelumora_model::command::Command> {
-        let command = |name: &str, owners_only| caelumora_model::command::Command { name: name.to_string(), description: String::new(), usage: None, owners_only };
+impl ProvidesCommands for Commanded {
+    fn commands(&self) -> Vec<Command> {
+        let command = |name: &str, owners_only| Command { name: name.to_string(), description: String::new(), usage: None, owners_only };
         vec![command("mark", false), command("seal", true)]
     }
 }
 
 #[async_trait]
-impl caelumora_agents::command::AgentCommandProvider for Commanded {
-    async fn execute(&self, name: &str, _args: &str, turn: &mut caelumora_agents::turn::Turn<'_>) -> caelumora_runtime::command::CommandResult<caelumora_model::command::CommandOutput> {
+impl AgentCommandProvider for Commanded {
+    async fn execute(&self, name: &str, _args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
         self.0.lock().unwrap().push(turn.security_context().clone());
-        Ok(caelumora_model::command::CommandOutput::private(format!("{name}: done")))
+        Ok(CommandOutput::private(format!("{name}: done")))
     }
 }
 
 /// A session of alice and bob with alice's `helper`, which carries out the
 /// commands of `Commanded`; what its turns ran in, and how bob's stream
 /// shows the answers to his commands.
-async fn with_a_commanded_agent() -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>, Arc<Mutex<Vec<SecurityContext>>>, caelumora_runtime::actor::user::ChannelWatch) {
+async fn with_a_commanded_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, Arc<Mutex<Vec<SecurityContext>>>, ChannelWatch) {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let world = agent_testing::world_with_kinds(|registry| {
-        register_once(registry, "silent", caelumora_model::message::Message::new(Classification::PUBLIC));
+        register_once(registry, "silent", Message::new(Classification::PUBLIC));
         let seen = Arc::clone(&seen);
-        registry.register(ComponentKind::new("commanded").provides::<dyn caelumora_agents::command::AgentCommandProvider>(), move |_, _| {
+        registry.register(ComponentKind::new("commanded").provides::<dyn AgentCommandProvider>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn caelumora_agents::command::AgentCommandProvider>(Arc::new(Commanded(Arc::clone(&seen))));
+            facets.insert::<dyn AgentCommandProvider>(Arc::new(Commanded(Arc::clone(&seen))));
             Ok(facets)
         });
     }).await;
@@ -1802,7 +1822,7 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
         (sent, shown(&mut his, "CommandExecuted").await)
     }).await;
     sent.expect("his to ask for");
-    assert!(matches!(answer, caelumora_model::actor::ActorEvent::CommandExecuted { ref output, .. } if output == "mark: done"), "{answer:?}");
+    assert!(matches!(answer, ActorEvent::CommandExecuted { ref output, .. } if output == "mark: done"), "{answer:?}");
     assert_eq!(about_agent_commands(&asked), [
         "bob: ShowAgentCommand(alice's) yes",
         "bob: ShowAgentCommand(alice's) no",
@@ -1811,10 +1831,10 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
     ], "what he sees, then the agent asking whether he may ask for it");
 
     let refused = bob.execute_command("seal", "@helper").await.expect_err("not his");
-    assert!(matches!(refused.downcast_ref::<caelumora_runtime::command::CommandError>(), Some(caelumora_runtime::command::CommandError::Unknown(name)) if name == "seal"), "unknown to him: {refused}");
+    assert!(matches!(refused.downcast_ref::<CommandError>(), Some(CommandError::Unknown(name)) if name == "seal"), "unknown to him: {refused}");
     let mut hers = main.user_actor(world.alice).unwrap().watch();
     main.user_actor(world.alice).unwrap().execute_command("seal", "@helper").await.expect("hers, as its owner");
-    assert!(matches!(shown(&mut hers, "CommandExecuted").await, caelumora_model::actor::ActorEvent::CommandExecuted { ref output, .. } if output == "seal: done"));
+    assert!(matches!(shown(&mut hers, "CommandExecuted").await, ActorEvent::CommandExecuted { ref output, .. } if output == "seal: done"));
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -1841,11 +1861,11 @@ async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
 /// agent carries it out for her - here refusing, since it heard nothing yet.
 #[tokio::test]
 async fn only_an_agents_owner_compacts_its_context() {
-    let world = agent_testing::world_with_kinds(|registry| register_once(registry, "silent", caelumora_model::message::Message::new(Classification::PUBLIC))).await;
+    let world = agent_testing::world_with_kinds(|registry| register_once(registry, "silent", Message::new(Classification::PUBLIC))).await;
     let compacting = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "silent"),
-            ComponentDescriptor::new("compaction", caelumora_agents::compaction::command::COMPACTION_KIND),
+            ComponentDescriptor::new("compaction", COMPACTION_KIND),
         ] },
         ..world.personality("compacting", None, &[]).await
     };
@@ -1857,12 +1877,12 @@ async fn only_an_agents_owner_compacts_its_context() {
 
     let (refused, asked) = world.asked(main.user_actor(world.bob).unwrap().execute_command("compact", "@helper")).await;
     let refused = refused.expect_err("not his");
-    assert!(matches!(refused.downcast_ref::<caelumora_runtime::command::CommandError>(), Some(caelumora_runtime::command::CommandError::Unknown(name)) if name == "compact"), "unknown to him: {refused}");
+    assert!(matches!(refused.downcast_ref::<CommandError>(), Some(CommandError::Unknown(name)) if name == "compact"), "unknown to him: {refused}");
     assert!(about_agent_commands(&asked).iter().all(|line| line.ends_with(" no")), "never granted to him: {asked:?}");
 
     let mut hers = main.user_actor(world.alice).unwrap().watch();
     main.user_actor(world.alice).unwrap().execute_command("compact", "@helper").await.expect("hers, as its owner");
-    assert!(matches!(shown(&mut hers, "CommandFailed").await, caelumora_model::actor::ActorEvent::CommandFailed { ref reason, .. } if reason.contains("nothing to compact")),
+    assert!(matches!(shown(&mut hers, "CommandFailed").await, ActorEvent::CommandFailed { ref reason, .. } if reason.contains("nothing to compact")),
         "carried out for her by the agent, which has nothing to compact yet");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
