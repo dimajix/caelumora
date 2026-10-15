@@ -20,7 +20,6 @@ mod manager;
 
 pub use actor::ActorRuntime;
 pub use builder::RuntimeBuilder;
-pub(crate) use channel::ChannelHandle;
 pub use channel::ChannelRuntime;
 pub use manager::RuntimeManager;
 

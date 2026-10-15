@@ -10,8 +10,9 @@
 
 use crate::agent::state::AgentStateHandle;
 use crate::terminal::Terminal;
-use crate::view::{SessionView, ViewsFactory};
-use crate::workspace::{WorkspaceError, WorkspaceResult};
+use crate::runtime::ActorRuntime;
+use crate::view::SessionView;
+use crate::workspace::WorkspaceResult;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::confidentiality::Classification;
@@ -30,21 +31,22 @@ pub struct AgentWork<'a> {
     work: &'a Work,
     agent_channel_state: &'a AgentChannelState,
     agent_state: &'a Arc<AgentStateHandle>,
-    /// What it navigates: the agent's views.
-    views: &'a ViewsFactory,
+    /// The runtime of the agent's actor: what it asks of its channel, and
+    /// what it navigates.
+    runtime: &'a ActorRuntime,
 }
 
 impl<'a> AgentWork<'a> {
     /// `work` of the agent `agent_id`, with its state in the channel and its
-    /// own state, navigating `views`.
+    /// own state, read through the actor's `runtime`.
     pub(crate) fn new(
         agent_id: AgentId,
         work: &'a Work,
         agent_channel_state: &'a AgentChannelState,
         agent_state: &'a Arc<AgentStateHandle>,
-        views: &'a ViewsFactory,
+        runtime: &'a ActorRuntime,
     ) -> Self {
-        Self { agent_id, work, agent_channel_state, agent_state, views }
+        Self { agent_id, work, agent_channel_state, agent_state, runtime }
     }
 
     /// The agent whose work this is.
@@ -77,7 +79,7 @@ impl<'a> AgentWork<'a> {
     /// while it is attached to none -, by which an act on what the agent
     /// keeps there is asked (issue 312).
     pub fn channel_attributes(&self) -> SecurityAttributes {
-        self.views.channel_attributes().unwrap_or_default()
+        self.runtime.channel_attributes().unwrap_or_default()
     }
 
     /// The classification of what the work writes (issue 168): the join of
@@ -93,21 +95,19 @@ impl<'a> AgentWork<'a> {
     /// attached to its channel, once the session is gone, or if the agent
     /// may not read it.
     pub async fn session(&self) -> Option<SessionView> {
-        self.views.session(&self.work.security_context, self.channel_id(), self.work.classification.clone()).await
+        self.runtime.session_view(&self.work.security_context, self.work.classification.clone()).await
     }
 
     /// The workspace of the agent's session and its terminal, to read its
     /// files, if the work may use it in its channel
-    /// (`ChannelLoop::workspace_terminal`, issue 344) - what a component
+    /// (`ActorRuntime::workspace_terminal`, issue 344) - what a component
     /// that only reads looks at. Changing the files, and running commands,
     /// is a turn's (`Turn::workspace_terminal`, `Turn::workspace_shell`).
     ///
     /// # Errors
-    /// `NotUsableInChannel` while it is not attached to its channel, or what
-    /// `ChannelLoop::workspace_terminal` reports.
+    /// As `ActorRuntime::workspace_terminal`.
     pub async fn workspace_for_reading(&self) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
-        let channel = self.views.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
-        channel.workspace_terminal(&self.work.security_context, Grant::Read).await
+        self.runtime.workspace_terminal(&self.work.security_context, Grant::Read).await
     }
 
     /// The agent's state in this channel as it stands: what components read

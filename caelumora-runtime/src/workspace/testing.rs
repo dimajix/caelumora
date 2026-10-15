@@ -6,6 +6,7 @@ use crate::agent::state::AgentStateHandle;
 use crate::agent::turn::Turn;
 use crate::runtime::RuntimeManager;
 use crate::session::SessionLoop;
+use crate::session::testing::actor_runtime_in;
 use caelumora_model::actor::{ActorId, EventContext};
 use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
 use caelumora_model::channel::{Channel, Participant};
@@ -45,7 +46,7 @@ impl WithWorkspace {
     pub(crate) fn turn<'a>(&self, state: &'a mut AgentChannelState) -> Turn<'a> {
         let channel = &self.session.channels()[0];
         state.begin_turn(EventContext::new(self.session.id(), channel.id(), ActorId::None, String::new()), self.context.clone(), channel.classification(), Vec::new(), Default::default());
-        Turn::of(self.agent, "Jonathan".to_string(), state, AgentStateHandle::detached(), crate::session::testing::views_in(&self.session, channel, ActorId::Agent(self.agent))).expect("a turn was begun")
+        Turn::of(self.agent, "Jonathan".to_string(), state, AgentStateHandle::detached(), actor_runtime_in(&self.session, channel, ActorId::Agent(self.agent))).expect("a turn was begun")
     }
 
     /// Where the workspace's files lie on the host.

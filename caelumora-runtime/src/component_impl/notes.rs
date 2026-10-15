@@ -314,6 +314,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::transport::Discard;
+    use crate::session::testing::detached_actor_runtime;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::security::SecurityContext;
     use caelumora_model::message::MessageId;
@@ -353,7 +354,7 @@ mod tests {
         // Asked in the turn's context: the agent's, which reclassifies its own note.
         let context = SecurityContext::default().next(ActorId::Agent(agent), ActorId::None, ActorId::None);
         state.begin_turn(Default::default(), context, Default::default(), Vec::new(), Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
         tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();
         let above = serde_json::json!({ "id": 1, "level": "strictly_confidential" });
         assert!(matches!(tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &above, None, &mut turn).await, Err(ToolError::PermissionDenied(_))), "never above the channel");

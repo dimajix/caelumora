@@ -43,8 +43,11 @@ use crate::agent::state::AgentStateHandle;
 use tool_calls::ToolCalls;
 use crate::transport::EventSender;
 use crate::terminal::{Shell, Terminal};
-use crate::view::{SessionView, ViewsFactory};
-use crate::workspace::{WorkspaceError, WorkspaceResult};
+use crate::runtime::ActorRuntime;
+#[cfg(test)]
+use crate::session::testing::detached_actor_runtime;
+use crate::view::SessionView;
+use crate::workspace::WorkspaceResult;
 use crate::agent::work::AgentWork;
 use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState};
@@ -77,35 +80,38 @@ pub struct Turn<'a> {
     /// The agent's own state, shared by all its actors (issue 62). The turn
     /// reads it and stages changes, never holds it.
     agent_state: Arc<AgentStateHandle>,
-    /// What the turn navigates (issue 163): the agent's session, read from
-    /// its channel at the turn's classification.
-    views: ViewsFactory,
+    /// The runtime of the agent's actor, in whose name the turn acts: what
+    /// it asks of its channel - its workspace among it (issue 370) - and
+    /// what it navigates (issue 163). Its own: the components the turn is
+    /// given to see the turn's methods, never the runtime (issue 128).
+    runtime: ActorRuntime,
 }
 
 impl<'a> Turn<'a> {
     /// The turn under way in the agent `agent_id`'s `agent_channel_state`,
     /// as a step of its run loop works with it; `None` between turns. A
     /// turn is begun on the state (`AgentChannelState::begin_turn`), and
-    /// ended through its handle (`commit`, `give_up`). It navigates `views`.
-    pub fn of(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>, views: ViewsFactory) -> Option<Self> {
+    /// ended through its handle (`commit`, `give_up`). It acts through the
+    /// actor's `runtime`.
+    pub fn of(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>, runtime: ActorRuntime) -> Option<Self> {
         agent_channel_state.turn.as_ref()?;
-        Some(Self { agent_id, agent_name, agent_channel_state, agent_state, views })
+        Some(Self { agent_id, agent_name, agent_channel_state, agent_state, runtime })
     }
 
     /// A turn begun on `agent_channel_state` with default contexts, no
     /// tools and the default profile, in a channel of no running session
-    /// (`ViewsFactory::detached`) - what a test needs to work in one.
+    /// (`detached_actor_runtime`) - what a test needs to work in one.
     #[cfg(test)]
     pub(crate) fn begun(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>) -> Self {
         agent_channel_state.begin_turn(Default::default(), Default::default(), Default::default(), Vec::new(), Default::default());
-        Self { agent_id, agent_name, agent_channel_state, agent_state, views: ViewsFactory::detached() }
+        Self { agent_id, agent_name, agent_channel_state, agent_state, runtime: detached_actor_runtime() }
     }
 
     /// The turn as a piece of work of the agent, to read (issue 204): what
     /// components that only read are given, as an external agent's work
     /// gives it too.
     pub fn work(&self) -> AgentWork<'_> {
-        AgentWork::new(self.agent_id, &self.current().work, self.agent_channel_state, &self.agent_state, &self.views)
+        AgentWork::new(self.agent_id, &self.current().work, self.agent_channel_state, &self.agent_state, &self.runtime)
     }
 
     /// The agent's session as the turn reads it from its channel
@@ -116,26 +122,23 @@ impl<'a> Turn<'a> {
 
     /// The workspace of the agent's session and its terminal, for what
     /// `need` asks - reading its files, or changing them too -, if the turn
-    /// may use it in its channel (`ChannelLoop::workspace_terminal`, issue
+    /// may use it in its channel (`ActorRuntime::workspace_terminal`, issue
     /// 344): what a tool acts on.
     ///
     /// # Errors
-    /// `NotUsableInChannel` while it is not attached to its channel, or what
-    /// `ChannelLoop::workspace_terminal` reports.
+    /// As `ActorRuntime::workspace_terminal`.
     pub async fn workspace_terminal(&self, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
-        let channel = self.views.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
-        channel.workspace_terminal(self.security_context(), need).await
+        self.runtime.workspace_terminal(self.security_context(), need).await
     }
 
     /// The workspace of the agent's session and its shell as its channel
-    /// sees it (`ChannelLoop::workspace_shell`, issue 344): where a tool
+    /// sees it (`ActorRuntime::workspace_shell`, issue 344): where a tool
     /// runs commands.
     ///
     /// # Errors
     /// As [`Self::workspace_terminal`].
     pub async fn workspace_shell(&self) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
-        let channel = self.views.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
-        channel.workspace_shell(self.security_context()).await
+        self.runtime.workspace_shell(self.security_context()).await
     }
 
     /// Which turn this is (issue 235).
@@ -430,7 +433,7 @@ mod tests {
         // Stored and loaded again, as after a restart.
         let stored = serde_json::to_value(&state).unwrap();
         let mut state: AgentChannelState = serde_json::from_value(stored).unwrap();
-        let mut turn = Turn::of(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::default(), String::new(), &mut state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
         assert!(turn.count_model_call(), "the last one it may make");
         assert!(!turn.count_model_call(), "the limit holds across the restart");
 
@@ -448,7 +451,7 @@ mod tests {
         let output = crate::transport::memory::InMemoryEventSender::new(tx);
         let mut state = AgentChannelState::default();
         state.begin_turn(Default::default(), Default::default(), Default::default(), Vec::new(), Default::default());
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn was begun");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
 
         let call = ToolCall { id: Some("1".to_string()), function_name: "write_private_note".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
         let message = Message { role: MessageRole::Assistant, tool_calls: vec![call], ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
@@ -487,13 +490,13 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.transcript.extend(vec![said(&Classification::PUBLIC, "Hello.")]);
         state.begin_turn(EventContext::default(), SecurityContext::default(), confidential.clone(), Vec::new(), Default::default());
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn was begun");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
         assert_eq!(turn.label(), Classification::PUBLIC, "a public transcript");
 
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: Some(Classification::PUBLIC), source: None }], Vec::new());
         assert_eq!(turn.label(), Classification::PUBLIC);
         state.perceive(Vec::new(), vec![said(&internal, "Our numbers are good.")]);
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
         assert_eq!(turn.label(), internal, "what others said during the turn");
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }], Vec::new());
         assert_eq!(turn.label(), confidential, "a part that does not say counts as the channel");

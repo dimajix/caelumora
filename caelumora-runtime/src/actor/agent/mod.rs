@@ -104,7 +104,7 @@ impl AgentActor {
             Arc::clone(runtime.approval_rules()),
             Arc::clone(runtime.session_controller()),
             channel_controller,
-            runtime.channel_handle(),
+            runtime.clone(),
         )?;
 
         Ok(AgentActor {
@@ -160,7 +160,7 @@ impl AgentActor {
         request: &Envelope,
         output: &dyn EventSender,
     ) -> Result<()> {
-        let classification = self.body.runtime.channel_loop().map(|c| c.classification())
+        let classification = self.body.runtime.channel_classification()
             .ok_or_else(|| anyhow!("Agent {} has no channel to take a turn in", self.id()))?;
         let Answering { event_context, security_context } = Answering::to(request, self.id(), self.body.agent.name(), &self.body.security_context());
         // Judged for whoever asked, in the channel as the turn begins.
@@ -404,7 +404,7 @@ impl AgentActor {
     /// its tools' results are admitted) - which it may not once the channel
     /// was lowered below the classification the turn began with (issue 141).
     async fn turn_flow(&self, under_way: &TurnState) -> TurnFlow {
-        let Some(channel) = self.body.runtime.channel_loop().map(|c| c.classification()) else {
+        let Some(channel) = self.body.runtime.channel_classification() else {
             return TurnFlow::NoChannel;
         };
         let context = &under_way.work.security_context;
@@ -978,7 +978,7 @@ impl Actor for AgentActor {
     async fn tool_sets(&self) -> Vec<ToolSet> {
         // As a turn would be offered them now, in the agent's own name:
         // who will ask is not known yet.
-        let Some(channel) = self.body.runtime.channel_loop().map(|c| c.classification()) else { return Vec::new() };
+        let Some(channel) = self.body.runtime.channel_classification() else { return Vec::new() };
         self.tool_executor.tool_sets(&self.body.security_context(), &channel).await
     }
 
@@ -1032,7 +1032,7 @@ impl Actor for AgentActor {
 mod tests {
     use super::*;
     use crate::agent::state::AgentStateHandle;
-    use crate::view::ViewsFactory;
+    use crate::session::testing::detached_actor_runtime;
     use caelumora_model::agent::AgentId;
 
     use caelumora_model::confidentiality::Confidentiality;
@@ -1074,7 +1074,7 @@ mod tests {
         let channel = Classification::general(Confidentiality::Confidential);
         let mut agent_channel_state = AgentChannelState::default();
         agent_channel_state.begin_turn(Default::default(), Default::default(), channel.clone(), vec![ToolSet::new("tools", "some tools", vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)])], Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), ViewsFactory::detached()).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
 
         let mut partial = answer(&[]);
         stamp(&mut partial, &turn, Visibility::Channel, false);
@@ -1104,7 +1104,7 @@ mod tests {
         let reasoning = |tools: Vec<Tool>, personality: Visibility, private_knowledge: bool, calls: &[&str], complete: bool| {
             let mut agent_channel_state = AgentChannelState::default();
             agent_channel_state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, vec![ToolSet::new("tools", "some tools", tools)], Default::default());
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), ViewsFactory::detached()).expect("a turn was begun");
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
             if private_knowledge {
                 turn.record_knowledge(KnowledgeRef { channel: turn.channel_id(), session: turn.session_id(), source: KnowledgeSource::PrivateNotes { agent, digest: None }, classification: None });
             }

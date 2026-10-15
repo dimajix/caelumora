@@ -119,7 +119,10 @@ modification does not take it over: a changed message stays in the turn it was p
 
 Beside its state, a turn reaches its session through its views (`Turn::session`), from which
 components read other channels as the confidentiality rules allow - at the classification the turn
-began with (see [MEMORY.md](MEMORY.md#reading-other-channels)).
+began with (see [MEMORY.md](MEMORY.md#reading-other-channels)). The views only read. What the turn
+does in its channel - using the session's workspace (`Turn::workspace_terminal`,
+`Turn::workspace_shell`) - it does through its actor's `ActorRuntime`, which it holds and which its
+components never see: they are given the turn's methods (issue 370).
 
 ### Beginning and ending a turn
 

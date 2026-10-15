@@ -38,7 +38,7 @@ use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
 use crate::component::ComponentRegistry;
-use crate::runtime::{RuntimeBuilder, RuntimeManager};
+use crate::runtime::{ActorRuntime, RuntimeBuilder, RuntimeManager};
 use crate::plugin::Plugin;
 use crate::agent::AgentError;
 use crate::agent::state::AgentStateHandle;
@@ -47,7 +47,6 @@ use crate::channel::ChannelLoop;
 use crate::actor::user::ChannelWatch;
 use crate::component::{ComponentFacets, ComponentKind};
 use crate::llm::{LLMClient, LLMError, LLMResult};
-use crate::view::ViewsFactory;
 use caelumora_model::actor::{ActorEvent, EventContext};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::context::ModelProfile;
@@ -247,7 +246,7 @@ impl World {
         let channel = &session.channels()[0];
         let context = SecurityContext::new(ActorId::User(owner), session.id(), channel.id()).next(ActorId::Agent(agent), ActorId::User(owner), ActorId::User(owner)).with_roles(vec![*STAFF], None);
         state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), context, channel.classification(), Vec::new(), Default::default());
-        Turn::of(agent, agent.to_string(), state, AgentStateHandle::detached(), views_in(session, channel, ActorId::Agent(agent))).expect("a turn was begun")
+        Turn::of(agent, agent.to_string(), state, AgentStateHandle::detached(), actor_runtime_in(session, channel, ActorId::Agent(agent))).expect("a turn was begun")
     }
 
     pub fn system() -> SecurityContext {
@@ -474,10 +473,10 @@ pub fn denied(error: &Error) -> bool {
     refusal(error).is_some()
 }
 
-/// What `actor` navigates from `channel` of `session`, as its turns do
-/// (`ActorRuntime::views`).
-pub fn views_in(session: &Arc<SessionLoop>, channel: &Arc<ChannelLoop>, actor: ActorId) -> ViewsFactory {
-    session.views_of(channel, actor)
+/// The runtime of `actor` in `channel` of `session`, as its turns act
+/// through it and navigate from it (`ActorRuntime::views`).
+pub fn actor_runtime_in(session: &Arc<SessionLoop>, channel: &Arc<ChannelLoop>, actor: ActorId) -> ActorRuntime {
+    session.actor_runtime_of(channel, actor)
 }
 
 /// The kind of the model the agents of a test talk to unless they name one

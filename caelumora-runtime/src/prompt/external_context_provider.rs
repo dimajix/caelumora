@@ -70,6 +70,7 @@ mod tests {
     use crate::agent::state::AgentStateHandle;
     use crate::prompt::static_system_prompt_provider::StaticSystemPromptProvider;
     use crate::prompt::PromptPosition;
+    use crate::session::testing::detached_actor_runtime;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::component::ComponentFailPolicy;
     use caelumora_model::confidentiality::Classification;
@@ -88,7 +89,7 @@ mod tests {
             fixed("rules", "Answer in German.", PromptPosition::Start),
         ] };
         let (state, agent_state, work) = (AgentChannelState::default(), AgentStateHandle::detached(), Work::default());
-        let (parts, knowledge) = provider.current_context(&AgentWork::new(AgentId::new(), &work, &state, &agent_state, &crate::view::ViewsFactory::detached())).await.unwrap();
+        let (parts, knowledge) = provider.current_context(&AgentWork::new(AgentId::new(), &work, &state, &agent_state, &detached_actor_runtime())).await.unwrap();
 
         let given: Vec<_> = parts.iter().map(|p| (p.source.as_deref(), p.text.as_str(), p.role, p.after)).collect();
         assert_eq!(given, [(Some("frame"), "Be brief.", MessageRole::User, None), (Some("rules"), "Answer in German.", MessageRole::User, None)]);

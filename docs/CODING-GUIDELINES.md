@@ -100,9 +100,18 @@ A running object - `SessionLoop`, `ChannelLoop`, `ActorRuntime` - and the stored
 *   **A runtime answers about its own entity, not about the one above.** A loop may have getters for
     attributes of its own entity that callers need often; they return owned values, so that no
     `arc_swap::Guard` is held across an `await`. Everything else is read from its snapshot. The
-    entity above is reached through the parent - `runtime.channel_loop()`,
-    `channel.session_loop()` - never through a forwarder such as a `channel_classification()` on the
-    actor's runtime. What holds when the parent is missing is the caller's to decide.
+    entity above is reached through the parent - `channel.session_loop()` - never through a
+    forwarder such as a `session_privacy()` on the channel's loop. What holds when the parent is
+    missing is the caller's to decide.
+*   **The `ActorRuntime` is the actor's interface.** The one exception to the rule above: an actor
+    reaches its channel through its `ActorRuntime`, which asks the channel what the actor needs of
+    it - its classification, its attributes, its users for the questions of a tool call, its
+    workspace (issue 370) - and answers `None` while the channel is being built or once it is
+    gone, so that the caller still decides what that means. The public API of `ChannelLoop` is the
+    frontends'; it acts in a user's name too (`ChannelLoop::user_actor`), and is not an actor's.
+    What an actor needs of its channel and does not find on its `ActorRuntime` is added there.
+    `ActorRuntime::channel_loop` stays the runtime's (`pub(crate)`): for the user's and the
+    approver's actors, which act for a person as the frontends do, and for the views.
 *   **One name, one kind of thing.** `channel()` and `session()` return the entity's document as it
     is now; `channel_loop()` and `session_loop()` the running object above; loading any stored
     entity is `load_…` (`ActorRuntime::load_session`).

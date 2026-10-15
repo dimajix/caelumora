@@ -20,7 +20,6 @@ use crate::controller::AgentController;
 use crate::message::PerceiveInProcessor;
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
-use crate::view::ViewsFactory;
 use anyhow::{Context, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
@@ -71,9 +70,6 @@ pub(super) struct AgentBody {
     /// The agent's own state, shared with its actors in other channels and
     /// sessions (issue 62).
     agent_state: Arc<AgentStateHandle>,
-    /// What its turns and its prompt providers navigate (issue 163), as the
-    /// agent.
-    views: ViewsFactory,
     /// What it was built from, its preconfigured components resolved
     /// (issue 270).
     built_from: ComponentConfig,
@@ -129,7 +125,6 @@ impl AgentBody {
         resume(&mut state);
         let control = RunControl::new(state.processing_state, state.turn.as_ref().map(|t| t.work.turn_id));
         let agent_state = runtime.agent_state(attributes).await?;
-        let views = runtime.views();
         let body = Self {
             agent,
             runtime,
@@ -140,7 +135,6 @@ impl AgentBody {
             commands,
             profile: ModelProfile::default(),
             agent_state,
-            views,
             built_from: components.components(),
             state: Mutex::new(state),
             control,
@@ -190,14 +184,14 @@ impl AgentBody {
     /// The turn under way in `state`, as its steps work with it; `None`
     /// between turns.
     pub(super) fn turn<'s>(&self, state: &'s mut AgentChannelState) -> Option<Turn<'s>> {
-        Turn::of(self.agent_id(), self.agent.name(), state, Arc::clone(&self.agent_state), self.views.clone())
+        Turn::of(self.agent_id(), self.agent.name(), state, Arc::clone(&self.agent_state), self.runtime.clone())
     }
 
     /// `work` as the agent's components read it, with its `state` in the
     /// channel - for work that is no turn of `state`, as an external agent's
     /// answer is.
     pub(super) fn work<'a>(&'a self, work: &'a Work, state: &'a AgentChannelState) -> AgentWork<'a> {
-        AgentWork::new(self.agent_id(), work, state, &self.agent_state, &self.views)
+        AgentWork::new(self.agent_id(), work, state, &self.agent_state, &self.runtime)
     }
 
     /// The prompt parts and the knowledge they hold that its context
@@ -291,7 +285,6 @@ mod testing {
             Self {
                 context: agent.security_context(session_id, channel_id, None),
                 agent,
-                views: ViewsFactory::of_actor(actor_runtime.clone()),
                 runtime: actor_runtime,
                 perceive_in_processors: processors,
                 context_provider: ComponentImpl { id: "context".to_string(), fail_policy: Default::default(), facet: Arc::new(ExternalContextProvider { prompt_providers: Vec::new() }) },

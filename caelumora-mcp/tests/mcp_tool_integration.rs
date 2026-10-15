@@ -20,9 +20,8 @@ use caelumora_runtime::agent::turn::Turn;
 use caelumora_runtime::backend::Backends;
 use caelumora_runtime::command::CommandExecutor;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentRegistry, PRECONFIGURED_REF_KIND};
-use caelumora_runtime::runtime::{ChannelRuntime, RuntimeBuilder, RuntimeManager};
+use caelumora_runtime::runtime::{ActorRuntime, ChannelRuntime, RuntimeBuilder, RuntimeManager};
 use caelumora_runtime::tool::ToolProvider;
-use caelumora_runtime::view::ViewsFactory;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, ServerConfig};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -107,9 +106,9 @@ async fn build_container(params: serde_json::Value) -> ComponentContainer {
     ComponentContainer::from_config(&config, &[TypeKey::of::<dyn ToolProvider>()], registry, &context).await.unwrap()
 }
 
-/// What a turn outside of a running session navigates: the views of an
-/// actor in a channel that is attached to no session, so they reach none.
-fn detached_views() -> ViewsFactory {
+/// What a turn outside of a running session acts through: the runtime of
+/// an actor in a channel that is attached to no session, so it reaches none.
+fn detached_actor_runtime() -> ActorRuntime {
     let runtime_manager = Arc::new(runtime(&Arc::new(MemoryStore::new())));
     let now = chrono::Utc::now();
     let session = Session {
@@ -131,7 +130,7 @@ fn detached_views() -> ViewsFactory {
     let commands = Arc::new(CommandExecutor::empty(Arc::clone(runtime_manager.access_policy())));
     let session = runtime_manager.controller_manager().new_session_controller(session);
     let channel = ChannelRuntime::new(runtime_manager, commands, session, Weak::new());
-    channel.new_actor_runtime(ActorId::None, session_id, ChannelId::new()).views()
+    channel.new_actor_runtime(ActorId::None, session_id, ChannelId::new())
 }
 
 #[tokio::test]
@@ -157,7 +156,7 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let states = AgentStates::new(Arc::new(MemoryStore::new()), Arc::new(()));
     let agent_id = AgentId::default();
     let agent_state = states.get(agent_id, Default::default()).await.expect("the state of the agent was loaded");
-    let mut turn = Turn::of(agent_id, "test-agent".to_string(), &mut agent_channel_state, agent_state, detached_views()).expect("a turn was begun");
+    let mut turn = Turn::of(agent_id, "test-agent".to_string(), &mut agent_channel_state, agent_state, detached_actor_runtime()).expect("a turn was begun");
 
     let result = provider
         .execute("test-echo__echo", &json!({ "message": "hello mcp" }), None, &mut turn)

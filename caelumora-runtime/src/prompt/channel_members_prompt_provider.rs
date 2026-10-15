@@ -211,6 +211,7 @@ mod tests {
     use crate::agent::state::AgentStateHandle;
     use crate::runtime::RuntimeManager;
     use crate::session::SessionLoop;
+    use crate::session::testing::actor_runtime_in;
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::{Agent, AgentChannelState, Personality, PersonalityId};
     use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
@@ -333,7 +334,7 @@ mod tests {
         let context = SecurityContext::default().next(ActorId::Agent(jonathan.id), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
         state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Vec::new(), Default::default());
-        let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached(), crate::session::testing::views_in(&session_loop, &session_loop.channels()[0], ActorId::Agent(jonathan.id))).expect("a turn was begun");
+        let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(&session_loop, &session_loop.channels()[0], ActorId::Agent(jonathan.id))).expect("a turn was begun");
 
         let prompt = ChannelMembersPromptProvider::new(PromptPosition::Start).get_prompt(&turn.work()).await.unwrap();
         assert_eq!(prompt.text, "[Who is in this channel]\n\

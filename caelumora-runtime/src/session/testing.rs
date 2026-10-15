@@ -2,7 +2,7 @@
 //! sessions, channels and the views share: one of each, for building a runtime, a user, a session
 //! and its main channel, and the views an actor of a running session navigates (issue 315).
 
-use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
+use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityRules};
 use caelumora_model::security::{OwnershipPolicy, AccessPolicy};
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::memory::MemoryStore;
@@ -10,7 +10,8 @@ use std::sync::Arc;
 use crate::session::{ChannelSpec, SessionLoop, SessionManager};
 use caelumora_model::value::name::Name;
 use crate::channel::ChannelLoop;
-use crate::runtime::RuntimeManager;
+use crate::command::CommandExecutor;
+use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
 use caelumora_model::actor::ActorId;
 use caelumora_model::group::GroupId;
 use caelumora_model::session::Participant;
@@ -74,6 +75,17 @@ pub(crate) fn test_runtime() -> Arc<RuntimeManager> {
     Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store))).unwrap())
 }
 
+/// The runtime of an actor in a channel of no running session, never
+/// attached - for turns and what an actor is built with in tests that reach
+/// no channel: its views read nothing elsewhere, its questions have nobody
+/// to be put to, and it has no workspace.
+pub(crate) fn detached_actor_runtime() -> ActorRuntime {
+    let runtime = test_runtime();
+    let commands = Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy())));
+    let session_id = SessionId::new();
+    ChannelRuntime::outside_a_session(runtime, commands, session_id).new_actor_runtime(ActorId::None, session_id, ChannelId::new())
+}
+
 /// A session that holds nothing but its id `session_id`: what a channel
 /// outside a running session belongs to (`ChannelRuntime::outside_a_session`).
 pub(crate) fn bare_session(session_id: SessionId) -> Session {
@@ -131,7 +143,7 @@ pub(crate) fn main_channel(session: &Session) -> Channel {
         session_id: session.id,
         name: Name::new("main").unwrap(),
         components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
-        classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+        classification: Classification::CHANNEL_DEFAULT,
         language: None,
         history_limits: Vec::new(),
         participants: session.participants.clone(),
@@ -139,6 +151,18 @@ pub(crate) fn main_channel(session: &Session) -> Channel {
         deleted: None,
         former: Vec::new(),
     }
+}
+
+/// The channel `id` of the running `session`, classified as
+/// `classification`: the one it runs, or else one it is made to run as its
+/// main channel is, with that id and classification - for tests whose
+/// agents work in channels of their own.
+pub(crate) async fn running_channel(session: &Arc<SessionLoop>, id: ChannelId, classification: Classification) -> Arc<ChannelLoop> {
+    if let Some(running) = session.channel(id) {
+        return running;
+    }
+    let channel = Channel { id, classification, ..main_channel(&session.session()) };
+    session.add_channel_loop(&channel).await.unwrap()
 }
 
 /// Creates and starts `session` with its main channel.
@@ -174,7 +198,7 @@ pub(crate) async fn running_session_of_a_user(manager: &SessionManager) -> (Arc<
     (session_loop, ctx, other_id)
 }
 
-pub(crate) use crate::testing::views_in;
+pub(crate) use crate::testing::actor_runtime_in;
 
 pub(crate) fn spec(name: &str, participants: Vec<caelumora_model::actor::ActorId>) -> ChannelSpec {
     ChannelSpec { name: name.to_string(), components: Default::default(), participants, classification: None, language: None, uses_workspace: None }

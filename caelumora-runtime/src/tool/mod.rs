@@ -21,7 +21,7 @@ use caelumora_model::approval::{ApprovalRule, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use caelumora_model::question::{Answers, Questions};
-use crate::runtime::ChannelHandle;
+use crate::runtime::ActorRuntime;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -441,22 +441,23 @@ pub struct ToolExecutor {
     system_rules: Arc<[ApprovalRule]>,
     session: Arc<SessionController>,
     channel: Arc<ChannelController>,
-    /// The channel as it runs, whose users a call's questions are put to.
-    running: ChannelHandle,
+    /// The agent's runtime, through which a call's questions are put to
+    /// the users of its channel as it runs.
+    runtime: ActorRuntime,
 }
 
 impl ToolExecutor {
     /// An executor for the tools of `providers`, in the order of the
     /// configuration, guarded by `access_policy` and by the rules of the
     /// system (`system_rules`, `AppConfig::approvals`), of `session` and of
-    /// `channel`, where the agent works - which, `running`, puts the
-    /// questions of its calls to its users.
+    /// `channel`, where the agent works, whose users the questions of its
+    /// calls are put to through the agent's `runtime`.
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` if two providers have a tool of the
     /// same name (`ToolProviders::new`).
-    pub(crate) fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, providers: Vec<ComponentImpl<dyn ToolProvider>>, system_rules: Arc<[ApprovalRule]>, session: Arc<SessionController>, channel: Arc<ChannelController>, running: ChannelHandle) -> ComponentResult<Self> {
-        Ok(Self { access_policy, confidentiality, providers: ToolProviders::new(providers)?, system_rules, session, channel, running })
+    pub(crate) fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, providers: Vec<ComponentImpl<dyn ToolProvider>>, system_rules: Arc<[ApprovalRule]>, session: Arc<SessionController>, channel: Arc<ChannelController>, runtime: ActorRuntime) -> ComponentResult<Self> {
+        Ok(Self { access_policy, confidentiality, providers: ToolProviders::new(providers)?, system_rules, session, channel, runtime })
     }
 
     /// What `call` asks before it runs, as its tool says, checked and put to
@@ -466,8 +467,9 @@ impl ToolExecutor {
     fn questions(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<Option<Questions>> {
         let Some(questions) = self.providers.questions(call)? else { return Ok(None) };
         questions.check().map_err(|e| ToolError::InvalidParameter(e.to_string()))?;
-        let channel = self.running.get().ok_or_else(|| ToolError::ExecutionFailed("the channel does not run".to_string()))?;
-        channel.address_questions(questions, turn.security_context())
+        let addressed = self.runtime.address_questions(questions, turn.security_context())
+            .ok_or_else(|| ToolError::ExecutionFailed("the channel does not run".to_string()))?;
+        addressed
             .map(Some)
             .map_err(|e| ToolError::InvalidParameter(e.to_string()))
     }
@@ -665,6 +667,7 @@ mod tests {
     use super::*;
     use caelumora_model::event::GlobalEvent;
     use crate::agent::turn::Turn;
+    use crate::session::testing::detached_actor_runtime;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
 
@@ -828,7 +831,7 @@ mod tests {
         channel.approval_rules = places.channel;
         let session = Arc::new(SessionController::new(Session { approval_rules: places.session, ..session }, Arc::new(()), &store.entity_stores()));
         let channel = Arc::new(ChannelController::new(channel, Arc::new(()), &store.entity_stores()));
-        let executor = ToolExecutor::new(access_policy, confidentiality, providers, places.system.into(), Arc::clone(&session), Arc::clone(&channel), Default::default()).unwrap();
+        let executor = ToolExecutor::new(access_policy, confidentiality, providers, places.system.into(), Arc::clone(&session), Arc::clone(&channel), detached_actor_runtime()).unwrap();
         (executor, session, channel)
     }
 
@@ -845,7 +848,7 @@ mod tests {
         let access_policy: Arc<dyn AccessPolicy> = Arc::new(AllowAllPolicy::new());
         let admitted = |executor: ToolExecutor| async move {
             let mut agent_channel_state = agent_turn(&executor);
-            let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+            let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
             executor.admit(&call("test_tool"), &turn).await
         };
 
@@ -865,7 +868,7 @@ mod tests {
     async fn a_rule_that_denies_set_while_a_call_waits_refuses_it_when_run() {
         let (executor, session, _channel) = guarded_in(Arc::new(AllowAllPolicy::new()), true, Places::default());
         let mut agent_channel_state = agent_turn(&executor);
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
         assert!(matches!(executor.admit(&call("test_tool"), &turn).await, Admission::Ask { .. }));
 
         // As if set in another instance, and announced.
@@ -886,7 +889,7 @@ mod tests {
         let mut agent_channel_state = AgentChannelState::default();
         let agent_id = AgentId::new();
         agent_channel_state.turn = Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() }, tools: executor.providers.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() });
-        let mut context = Turn::of(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+        let mut context = Turn::of(agent_id, "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
 
         let admitted = executor.admit(&call("test_tool"), &context).await;
         assert!(matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result()), "refused before anyone is asked: {admitted:?}");
@@ -898,7 +901,7 @@ mod tests {
     async fn a_call_is_asked_for_run_or_answered_at_once_as_it_can_succeed() {
         let asking = executor(Arc::new(AllowAllPolicy::new()));
         let mut agent_channel_state = agent_turn(&asking);
-        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
         assert!(matches!(asking.admit(&call("test_tool"), &turn).await, Admission::Ask { description, explicit: false, .. } if description == "desc"), "its tool requires approval");
         match asking.admit(&call("does_not_exist"), &turn).await {
             Admission::Answered(result) => {
@@ -910,12 +913,12 @@ mod tests {
 
         let refusing = executor(Arc::new(DenyAllPolicy));
         let mut agent_channel_state = agent_turn(&refusing);
-        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
         assert!(matches!(refusing.admit(&call("test_tool"), &turn).await, Admission::Answered(r) if r.status == ToolResultStatus::Forbidden), "first the policy");
 
         let running = guarded(Arc::new(AllowAllPolicy::new()), false, Places::default());
         let mut agent_channel_state = agent_turn(&running);
-        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
         let admitted = running.admit(&call("test_tool"), &turn).await;
         assert!(matches!(admitted, Admission::Run), "no approval needed");
         let state = admitted.state(call("test_tool"));
@@ -971,7 +974,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
         let admitted = executor.admit(&call("send_out"), &turn).await;
         assert!(matches!(&admitted, Admission::Answered(r) if r.status == ToolResultStatus::UnknownTool), "not called by its name: {admitted:?}");
         let result = executor.execute(&call("send_out"), None, &mut turn, std::future::pending()).await;
@@ -995,7 +998,7 @@ mod tests {
     async fn only_an_agent_calls_tools() {
         let executor = executor(Arc::new(AllowAllPolicy::new()));
         let mut agent_channel_state = AgentChannelState { turn: Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::User(caelumora_model::user::UserId::new()), ..SecurityContext::default() }, ..Default::default() }, tools: executor.providers.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() }), ..Default::default() };
-        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
 
         let result = executor.execute(&call("test_tool"), None, &mut context, std::future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden, "whatever the policy says");
@@ -1027,7 +1030,7 @@ mod tests {
     async fn a_call_runs_is_timed_and_classified_as_the_channel_unless_it_says_otherwise() {
         let executor = with_hr();
         let mut agent_channel_state = agent_turn(&executor);
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
 
         let result = executor.execute(&call("test_tool"), None, &mut turn, std::future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::Ok);
@@ -1048,7 +1051,7 @@ mod tests {
     async fn a_call_still_running_when_its_turn_ends_is_interrupted_and_counts_as_run() {
         let executor = executor(Arc::new(AllowAllPolicy::new()));
         let mut agent_channel_state = agent_turn(&executor);
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
         let ending = async {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             Interruption::TurnEnded
@@ -1068,7 +1071,7 @@ mod tests {
     async fn a_call_a_user_interrupts_tells_the_model_who_did_and_that_the_turn_goes_on() {
         let executor = executor(Arc::new(AllowAllPolicy::new()));
         let mut agent_channel_state = agent_turn(&executor);
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
         let interrupting = async {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             Interruption::ByUser("alice".to_string())
@@ -1087,7 +1090,7 @@ mod tests {
     async fn a_result_that_may_not_flow_into_the_channel_never_reaches_the_model() {
         let executor = with_hr();
         let mut agent_channel_state = agent_turn(&executor);
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
 
         for name in ["hr_tool", "configured_tool"] {
             let result = executor.execute(&call(name), None, &mut turn, std::future::pending()).await;
@@ -1106,7 +1109,7 @@ mod tests {
         if let Some(turn) = agent_channel_state.turn.as_mut() {
             turn.work.classification = hr();
         }
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
+        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
         let result = executor.execute(&call("hr_tool"), None, &mut turn, std::future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::Ok);
         assert_eq!(result.classification, hr(), "as the tool classified it");

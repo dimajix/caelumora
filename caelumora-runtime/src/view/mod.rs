@@ -40,16 +40,15 @@ pub use group::GroupView;
 pub use session::{PrivateNotesElsewhere, SessionView};
 pub use workspace::WorkspaceView;
 
-use crate::channel::ChannelLoop;
 use crate::component::ComponentRegistry;
 use crate::controller::ControllerManager;
-use crate::runtime::{ActorRuntime, RuntimeManager, Services};
+use crate::runtime::{RuntimeManager, Services};
 use crate::session::{Found, SessionLoop, SessionManager};
 use crate::tool::ToolError;
 use crate::workspace::WorkspaceManager;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions, Place};
+use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
 use caelumora_model::group::{Group, GroupField, GroupId};
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
@@ -758,69 +757,6 @@ impl<T> Reached<T> {
 impl std::fmt::Debug for Views {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Views").field("viewer", &self.viewer).finish_non_exhaustive()
-    }
-}
-
-/// What an agent's views are built from, once per turn (`Turn::session`):
-/// the actor's runtime, which reaches its channel and session once they are
-/// attached. Who reads, from which channel and at which classification is
-/// the work's, given when the views are built - one context per piece of
-/// work (issue 255).
-#[derive(Clone)]
-pub struct ViewsFactory {
-    actor: ActorRuntime,
-}
-
-impl ViewsFactory {
-    pub(crate) fn of_actor(actor: ActorRuntime) -> Self {
-        Self { actor }
-    }
-
-    /// The views of an actor in a channel of no running session - for turns
-    /// in tests that read nothing elsewhere: their `session` is `None`, as
-    /// for a channel whose session is gone.
-    #[cfg(test)]
-    pub(crate) fn detached() -> Self {
-        let runtime = crate::session::testing::test_runtime();
-        let commands = Arc::new(crate::command::CommandExecutor::empty(Arc::clone(runtime.access_policy())));
-        let session_id = SessionId::new();
-        let channel = crate::runtime::ChannelRuntime::outside_a_session(runtime, commands, session_id);
-        Self::of_actor(channel.new_actor_runtime(ActorId::None, session_id, ChannelId::new()))
-    }
-
-    /// The agent's own channel, while the actor is attached to it.
-    pub(crate) fn channel_loop(&self) -> Option<Arc<ChannelLoop>> {
-        self.actor.channel_loop()
-    }
-
-    /// The attributes of the agent's own channel as it stands, by which an
-    /// act on what the agent keeps there is asked (`Reclassified::Note`,
-    /// issue 312); `None` while the actor is not attached to a channel.
-    pub(crate) fn channel_attributes(&self) -> Option<SecurityAttributes> {
-        self.actor.channel_loop().map(|channel| channel.security_attributes())
-    }
-
-    /// The agent's own session, as it reads in `context` from `channel` at
-    /// `classification`, if it may read it (`GetSession`, as `Views::session`
-    /// asks, issue 304) - the agent by the group of the session's
-    /// participants; `None` while the actor is not attached to its channel,
-    /// once the session is gone, or if it may not.
-    pub(crate) async fn session(&self, context: &SecurityContext, channel: ChannelId, classification: Classification) -> Option<SessionView> {
-        let session_loop = self.actor.channel_loop()?.session_loop()?;
-        let from = Place { channel, classification, session: session_loop.privacy() };
-        let views = session_loop.views(Viewer::from_place(context.clone(), from));
-        let attributes = session_loop.session().security_attributes.clone();
-        if !views.access_policy().may_read_session(context, &attributes).await {
-            tracing::debug!(session = %session_loop.id(), caller = %context.caller_id, "An agent may not read its own session");
-            return None;
-        }
-        Some(SessionView::of(views, Found::Running(session_loop)))
-    }
-}
-
-impl std::fmt::Debug for ViewsFactory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ViewsFactory").finish_non_exhaustive()
     }
 }
 
@@ -1679,10 +1615,10 @@ mod tests {
         persist(&runtime, &SecurityContext::new(carol_id, Default::default(), Default::default()), &theirs).await;
 
         let channel = Arc::clone(&hers.channels()[0]);
-        let views = views_in(&hers, &channel, alice_id);
-        let session = views.session(&alice_ctx, channel.id(), channel.classification()).await.expect("attached to its session");
+        let runtime = actor_runtime_in(&hers, &channel, alice_id);
+        let session = runtime.session_view(&alice_ctx, channel.classification()).await.expect("attached to its session");
         let stranger = SecurityContext::new(ActorId::Agent(caelumora_model::agent::AgentId::new()), Default::default(), Default::default());
-        assert!(views.session(&stranger, channel.id(), channel.classification()).await.is_none(), "reached by who may read it alone (issue 304)");
+        assert!(runtime.session_view(&stranger, channel.classification()).await.is_none(), "reached by who may read it alone (issue 304)");
 
         let own = session.privacy();
         assert_eq!((own.policy, own.owner), (PrivacyConfig::SameOwner, alice_id));
@@ -1723,11 +1659,11 @@ mod tests {
         let history = history_of(&hr, 2).await;
         assert_eq!(history[0].classification, classified(Confidentiality::Internal, &["hr"]), "the channel's, unless classified otherwise");
 
-        // Read as an agent in another channel reads: through its turn's views.
+        // Read as an agent in another channel reads: through its actor's runtime.
         let reading_from = |channel: &Arc<ChannelLoop>| {
-            let views = views_in(&session, channel, alice_id);
-            let (context, channel_id, classification) = (alice_ctx.clone(), channel.id(), channel.classification());
-            async move { views.session(&context, channel_id, classification).await.expect("attached to its session") }
+            let runtime = actor_runtime_in(&session, channel, alice_id);
+            let (context, classification) = (alice_ctx.clone(), channel.classification());
+            async move { runtime.session_view(&context, classification).await.expect("attached to its session") }
         };
         let read = reading_from(&finance).await.channel_named("hr").await.expect("reachable for what was released").history().await.expect("what was released to finance");
         let texts: Vec<_> = read.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect();

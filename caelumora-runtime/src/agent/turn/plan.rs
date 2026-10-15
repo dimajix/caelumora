@@ -193,6 +193,7 @@ fn plan_texts(plan: &Plan) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::transport::Discard;
+    use crate::session::testing::detached_actor_runtime;
     use crate::agent::turn::tests::{message, seen};
     use caelumora_model::actor::ActorId;
     use caelumora_model::actor::EventContext;
@@ -281,7 +282,7 @@ mod tests {
         let keeps_system = ModelProfile { system_messages: SystemMessages::Anywhere, ..ModelProfile::default() };
         {
             state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), keeps_system);
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn was begun");
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
             turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }], Vec::new());
             turn.set_plan(plan_of(&["only"]));
             turn.advance_plan(0);
@@ -306,7 +307,7 @@ mod tests {
         assert_eq!(state.transcript.messages().len(), 3, "the instructions are not in the transcript");
 
         state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), keeps_system);
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
         turn.set_context(Vec::new(), Vec::new());
         assert_eq!(given(&turn).len(), 3, "a later turn is not given them");
     }

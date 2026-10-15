@@ -224,13 +224,13 @@ impl ExternalAgentActor {
     /// answer.
     async fn respond(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
         let answering = Answering::to(request, self.id(), self.name(), &self.body.security_context());
-        let Some(channel) = self.body.runtime.channel_loop() else {
+        let Some(classification) = self.body.runtime.channel_classification() else {
             warn!("External agent {} has no channel to answer in", self.id());
             return;
         };
         // The work of this exchange, as a turn: bound by the channel as it
         // is now (issue 212), and how it ends is told as its turn's end.
-        let mut work = Work::new(answering.event_context.clone(), answering.security_context.clone(), channel.classification());
+        let mut work = Work::new(answering.event_context.clone(), answering.security_context.clone(), classification);
         // A turn of its own, whose token `cancel` and `stop` reach.
         self.body.control.begin_turn(work.turn_id);
         let token = self.body.control.token();
@@ -498,7 +498,7 @@ impl ExternalAgentActor {
     /// speaks afresh, as the agent itself, classified as its remote agent
     /// declares, else as the channel is now.
     async fn speak(&self, state: &mut AgentChannelState, work: Option<Work>, outcome: Result<Answer, String>, output: &dyn EventSender) {
-        let Some(channel) = self.body.runtime.channel_loop() else {
+        let Some(channel) = self.body.runtime.channel_classification() else {
             warn!("External agent {} has no channel to speak in", self.id());
             return;
         };
@@ -506,7 +506,7 @@ impl ExternalAgentActor {
             Some(work) => (Answering::continuing(work), work.label()),
             None => (
                 Answering::own(self.id(), self.name(), &self.body.security_context()),
-                self.remote.classification().unwrap_or_else(|| channel.classification()),
+                self.remote.classification().unwrap_or(channel),
             ),
         };
         let events = match outcome {
@@ -527,7 +527,7 @@ impl ExternalAgentActor {
     /// in the work's name, as `AgentActor::turn_flow`): then it is given up
     /// (issue 212). `None` while it flows, or without a channel.
     async fn lowered(&self, work: &Work) -> Option<Classification> {
-        let channel = self.body.runtime.channel_loop()?.classification();
+        let channel = self.body.runtime.channel_classification()?;
         let flows = self.body.runtime.confidentiality().may_publish(&work.security_context, &work.classification, &channel);
         (!flows).then_some(channel)
     }

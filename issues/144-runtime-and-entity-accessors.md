@@ -77,3 +77,12 @@ reaches an attribute of the entity *above* its own, differs from place to place 
   `ChannelLoop::session` is `session_loop`, and `ActorRuntime::session(security, id)` is
   `load_session`. Keeping only snapshots was weighed and not taken: the getters are used in many
   places, each of which would then have to handle a guard.
+- **2026-10-15** — The rule that the entity above is reached through the parent has one exception
+  since [370](370-agent-logic-in-a-crate-of-its-own.md), by the maintainer's decision: the
+  `ActorRuntime` is the actor's interface to its channel, and offers what an actor needs of it -
+  `channel_classification` and `channel_attributes` again, `address_questions`,
+  `workspace_terminal`, `workspace_shell` - each answering `None` or `NotUsableInChannel` without
+  a channel, so that the caller still decides what that means. The reason is one this issue did
+  not have to weigh: across a crate boundary, the way to the parent is its whole public API, and
+  that of `ChannelLoop` is the frontends', which acts in a user's name too. The rule in
+  CODING-GUIDELINES.md says so.

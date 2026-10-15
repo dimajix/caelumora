@@ -1,6 +1,6 @@
 # 370 — The runtime holds the environment agents run in and the agents' own logic in one crate
 
-**Status:** open
+**Status:** in progress
 **Area:** Code structure
 
 ## The problem
@@ -200,3 +200,37 @@ crate reaches the environment through the doors named above and nothing else.
   proposal, the two actors into two crates with the turn and the tools staying, was measured and
   rejected for the width of the interface it would open (above); the cut below the agent's logic
   was measured and found to exist already, with the doors named under *The contract*.
+- **2026-10-15** — Step 1, point 1, in the working tree of the branch: `ActorRuntime` offers
+  `channel_classification`, `channel_attributes` and `address_questions`, `ViewsFactory` offers
+  `workspace_terminal` and `workspace_shell`, `session_controller` is `pub`; the `ToolExecutor`
+  holds the agent's `ActorRuntime` instead of a `ChannelHandle`, and nothing on the agent's side
+  reaches `ChannelLoop`, `ChannelHandle` or `SessionLoop` any more. This contradicts
+  [144](144-runtime-and-entity-accessors.md), which removed `channel_classification` and
+  `channel_attributes` from `ActorRuntime` on purpose ("the entity above is reached through the
+  parent", CODING-GUIDELINES.md), and which the plan above overlooked. The alternative within
+  144's rule - `ActorRuntime::channel_loop` made `pub` - would hand the agent's crate the
+  frontends' API of the channel, `ChannelLoop::user_actor` among it, which acts in a user's name
+  (issue 30). Awaiting the maintainer's decision whether the crate boundary is an exception to
+  144's rule.
+- **2026-10-15** — Decided by the maintainer: the `ActorRuntime` is the central interface of an
+  actor, and what an actor needs that it lacks goes into it - the crate boundary is an exception
+  to 144's rule, written down in CODING-GUIDELINES.md and CHANNELS.md. `workspace_terminal` and
+  `workspace_shell` moved onto `ActorRuntime` too; `ViewsFactory` passes them on to the turns,
+  which are not given the `ActorRuntime` (issue 128). Point 1 of step 1 is done.
+- **2026-10-15** — Raised by the maintainer: point 1 had put `workspace_terminal` and
+  `workspace_shell` on `ViewsFactory`, though views only read
+  ([296](296-workspace-operations-on-the-view.md)). The cause was older: a `Turn` held a
+  `ViewsFactory` as its one link to its actor, and so reached its workspace through
+  `views.channel_loop()`. Decided: `Turn` and `AgentWork` hold the `ActorRuntime` - private, so
+  components still see only the turn's methods ([128](128-actor-runtime-in-components.md)) - and
+  derive the views from it. `ViewsFactory` lost the workspace methods and `channel_attributes`;
+  in tests, `actor_runtime_in` and `detached_actor_runtime()` replace `views_in` and
+  `ViewsFactory::detached`.
+- **2026-10-15** — `ViewsFactory` folded into `ActorRuntime`, as proposed and accepted: it had
+  one method left and one caller. `ActorRuntime::session_view(context, classification)` is the
+  agent's own session, asked through the edge the views have (`Views::session`) instead of a
+  second copy of its question. It reads from the actor's own channel; the channel the caller
+  named before is gone as a parameter, since a public one would let a caller read as from a
+  channel that is not its own. A fixture of `agent_memory` had relied on it - turns in channels
+  of their own, read through the session's main channel -, and now runs those channels
+  (`session::testing::running_channel`).

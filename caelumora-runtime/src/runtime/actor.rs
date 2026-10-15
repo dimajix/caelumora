@@ -12,24 +12,32 @@ use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
 use crate::agent::state::AgentStateHandle;
 use crate::event::{EventSubscription, SubscriptionTopic};
-use crate::view::ViewsFactory;
+use crate::view::{SessionView, Viewer};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{SecurityContext, AccessPolicy};
 use caelumora_model::session::Session;
 use caelumora_model::store::StoreResult;
-use caelumora_model::confidentiality::ConfidentialityPolicy;
+use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Place};
+use caelumora_model::question::{QuestionError, Questions};
+use caelumora_model::security::Grant;
+use caelumora_model::workspace::Workspace;
+use crate::terminal::{Shell, Terminal};
+use crate::workspace::{WorkspaceError, WorkspaceResult};
 use std::sync::Arc;
-use super::{ChannelHandle, ChannelRuntime, Services};
+use tracing::debug;
+use super::{ChannelRuntime, Services};
 
 /// What an actor runs with (issue 69): the services every actor needs, and
 /// access to what concerns this actor alone - its controller, its state, its
-/// events, a narrow view of its channel. It is made for one actor
-/// (`ChannelRuntime::new_actor_runtime`) and hands out nothing about others.
-/// It is the actor's alone: its components get only what they need of it
-/// (`ComponentContext`, issue 128); what they read of the session they read
-/// through their turn's views (`views()`, issue 163), as the
-/// confidentiality rules allow. The full channel and session are
-/// `pub(crate)`, for the user's commands and the views.
+/// events, what it asks of its channel. It is the actor's interface: what an
+/// actor needs and does not find here is added here (issue 370). It is made
+/// for one actor (`ChannelRuntime::new_actor_runtime`) and hands out nothing
+/// about others. It is the actor's alone, and its turns': its components get
+/// only what they need of it (`ComponentContext`, issue 128) and the turn's
+/// methods; what they read of the session they read from the root its work
+/// is given (`session_view`, issue 163), as the confidentiality rules allow.
+/// The full channel and session are `pub(crate)`, for the user's and the
+/// approver's actors and the views.
 #[derive(Debug, Clone)]
 pub struct ActorRuntime {
     pub(super) runtime: ChannelRuntime,
@@ -62,8 +70,9 @@ impl ActorRuntime {
     }
 
     /// The controller of the actor's session: what its agent's tool calls
-    /// are guarded by, beside the channel's (issue 13).
-    pub(crate) fn session_controller(&self) -> &Arc<SessionController> {
+    /// are guarded by, beside the channel's (issue 13). Held for as long as
+    /// the actor runs, unlike its channel: the guard must not lapse.
+    pub fn session_controller(&self) -> &Arc<SessionController> {
         self.runtime.session_controller()
     }
 
@@ -135,22 +144,83 @@ impl ActorRuntime {
             .announce(GlobalEvent::custom::<Channel>(&(self.session_id, self.channel_id), channel::AGENT_STATE_CHANGED, &agent), &**channel.channel());
     }
 
-    /// What the actor's turns navigate (issue 163): its session, read from
-    /// its channel, asked in the context of each turn (issue 255).
-    pub fn views(&self) -> ViewsFactory {
-        ViewsFactory::of_actor(self.clone())
+    /// The actor's own session as `context` reads it from the actor's
+    /// channel at `classification` (issue 163), if it may read it
+    /// (`GetSession`, as `Views::session` asks, issue 304) - an agent by the
+    /// group of the session's participants: the root of what its work
+    /// navigates, asked in the context of each piece of work (issue 255).
+    /// `None` while the channel is still being built or once it or its
+    /// session is gone, or if it may not.
+    pub async fn session_view(&self, context: &SecurityContext, classification: Classification) -> Option<SessionView> {
+        let session_loop = self.channel_loop()?.session_loop()?;
+        let from = Place { channel: self.channel_id, classification, session: session_loop.privacy() };
+        let views = session_loop.views(Viewer::from_place(context.clone(), from));
+        match views.session(session_loop.id()).await {
+            Ok(session) => Some(session),
+            Err(e) => {
+                debug!(session = %session_loop.id(), caller = %context.caller_id, "An agent may not read its own session: {e}");
+                None
+            }
+        }
+    }
+
+    /// The classification of the actor's channel as it is now, which what
+    /// the actor says there is bound by (issues 141, 212); `None` while the
+    /// channel is still being built or once it is gone.
+    pub fn channel_classification(&self) -> Option<Classification> {
+        self.channel_loop().map(|channel| channel.classification())
+    }
+
+    /// The attributes of the actor's channel as it stands, by which an act
+    /// in it is asked - which of an agent's commands someone may see or
+    /// carry out (issue 269), an act on what an agent keeps there (issue
+    /// 312); `None` while the channel is still being built or once it is
+    /// gone.
+    pub fn channel_attributes(&self) -> Option<SecurityAttributes> {
+        self.channel_loop().map(|channel| channel.security_attributes())
+    }
+
+    /// `questions` put to the users of the actor's channel, their addressees
+    /// resolved as `context` - who caused them - names them (issue 165,
+    /// `ChannelLoop::address_questions`); `None` while the channel is still
+    /// being built or once it is gone, when there is nobody to ask.
+    ///
+    /// # Errors
+    /// As `Questions::resolve`: an addressee the channel does not know.
+    pub fn address_questions(&self, questions: Questions, context: &SecurityContext) -> Option<Result<Questions, QuestionError>> {
+        Some(self.channel_loop()?.address_questions(questions, context))
+    }
+
+    /// The workspace of the actor's session and its terminal, for what
+    /// `need` asks, as `context` may use it in the actor's channel
+    /// (`ChannelLoop::workspace_terminal`, issue 344).
+    ///
+    /// # Errors
+    /// `NotUsableInChannel` while the channel is still being built or once
+    /// it is gone, or what `ChannelLoop::workspace_terminal` reports.
+    pub async fn workspace_terminal(&self, context: &SecurityContext, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+        let channel = self.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
+        channel.workspace_terminal(context, need).await
+    }
+
+    /// The workspace of the actor's session and its shell as the actor's
+    /// channel sees it, for `context` (`ChannelLoop::workspace_shell`, issue
+    /// 344).
+    ///
+    /// # Errors
+    /// As [`Self::workspace_terminal`].
+    pub async fn workspace_shell(&self, context: &SecurityContext) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
+        let channel = self.channel_loop().ok_or(WorkspaceError::NotUsableInChannel)?;
+        channel.workspace_shell(context).await
     }
 
     /// The channel the actor is in, or `None` while the channel is still
-    /// being built or once it is gone.
+    /// being built or once it is gone - for the user's and the approver's
+    /// actors, which act for a person as the frontends do, and for the
+    /// views. What an agent needs of its channel is asked above (issue
+    /// 370): the loop's public API acts in a user's name too.
     pub(crate) fn channel_loop(&self) -> Option<Arc<ChannelLoop>> {
         self.runtime.channel.get()
-    }
-
-    /// The channel the actor is in, for what the actor is built with and
-    /// reaches it later (`ToolExecutor`).
-    pub(crate) fn channel_handle(&self) -> ChannelHandle {
-        self.runtime.channel.clone()
     }
 
     fn agent_id(&self) -> Result<AgentId> {
