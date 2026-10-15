@@ -142,7 +142,6 @@ a decision recorded in the issue file.
 
 | No. | What is wrong with it | Proposal |
 |---|---|---|
-| [18](18-knowledge-sharing.md) | Overtaken: agent memory outlives sessions and deliberately does not follow the issue's "commit, not write". "An agent retrieves from its own past sessions" holds; cross-agent sharing was never specified. | Rewrite to the one open half - knowledge shared *between* agents - or close and let 166 and the workspace answer it: a shared workspace is shared knowledge with an owner. |
 | [05](05-postgres-event-recorder.md) | Its three purposes are served by transcripts with digests, recorded given-up turns and the audit log (140). What remains is a second, highly sensitive copy of every envelope - one that would also have to support erasing a message (237). | Decide whether the `Recorder` hook still has a purpose; if not, reject and remove the hook rather than keep a `BlackholeRecorder` wired into every channel. |
 | [57](57-prompt-catalogue.md) | Doubts itself ("first to be discussed is whether this is sensible at all") - rightly: n languages × m models without evaluations. | Decide as the issue's own *Order* suggests: built-in texts become component parameters where someone needs it; the catalogue is rejected. The language problem is solved separately. |
 | [59](59-retrieval-of-notes.md) | Embeddings, an index, finer provenance - for the notes of one session. 166's index tells the model *that* it knows something, which is the weakness the issue names. | Park until a source exists that is too large for an index (documents in a workspace are the likely one, then beside the workspace's text search). |
@@ -153,7 +152,7 @@ a decision recorded in the issue file.
 
 Each milestone leaves the system usable; decisions come before the code that depends on them.
 
-1.  **Clear the table.** The decisions of section D (18, 05, 57, 59, 173, 340 - no code), and
+1.  **Clear the table.** The decisions of section D (05, 57, 59, 173, 340 - no code), and
     the small ones: 218, 223, 297; 374 and 375 before the next change to what an actor or a
     runtime is built from.
 2.  **A team can log in.** 25 with the remainders of 10 and 142; 07; 310.
@@ -194,4 +193,4 @@ The plan stands on assumptions the maintainer should confirm or correct:
 | B3 - tools | 126, 226, 290 |
 | B4 - a team | 10, 25, 140, 142, 310 |
 | C - not now | 03, 04, 26, 27, 42, 122, 124, 139, 143, 181, 182, 237, 238, 252, 287, 307, 332, 342, 343, 346 |
-| D - questionable | 05, 18, 57, 59, 173, 340 |
+| D - questionable | 05, 57, 59, 173, 340 |

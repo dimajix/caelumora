@@ -493,8 +493,7 @@ the binary, such as Open Policy Agent, would state both.
 *   **The answer text.** It carries no label and is always published; the model is only told what
     not to quote ([66](../issues/66-channel-level-in-prompt.md)). Keeping private knowledge out of
     it relies on the model.
-*   **Knowledge beyond the session.** Knowledge kept across sessions or shared between agents
-    ([18](../issues/18-knowledge-sharing.md)) and retrieval of notes
+*   **Knowledge beyond the session.** A retrieval of notes
     ([59](../issues/59-retrieval-of-notes.md)) will have to carry and respect the classification of
     where it came from; a search index must not become a way around the flow rule.
 *   **One enforcement for component state.** Every component that reads across channels asks

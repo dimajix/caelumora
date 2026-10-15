@@ -1,6 +1,6 @@
 # 18 — Knowledge sharing between sessions
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -52,3 +52,15 @@ end.
   knowledge it was derived from, so that it can be retracted when its origin is discarded or
   deleted. Forgetting means retracting and invalidating; knowledge is never learnt into model
   weights.
+- **2026-10-15** — Closed as done; the three points of *Done when* are met or answered:
+  - The scope model of [19](19-memory-tiers.md) exists, in the terms of
+    [MEMORY.md](../docs/MEMORY.md#terms).
+  - An agent keeps what it learnt beyond the session: agent memory (`agent_memory`), recalled in
+    its other sessions where the label of each entry may be read. It does not follow principle 7 of
+    19 - `remember` writes directly rather than committing from notes -, as recorded there on
+    2026-09-28.
+  - Knowledge shared *between* agents is not built as a tier of its own and is deferred: whose it
+    is and who may read it is answered by an owner and an access list, which a workspace shared
+    with others already has - a shared workspace is shared knowledge with an owner, its
+    classification the question of [169](169-changing-classified-content.md). Memory an agent can
+    revise and look up by topic is [166](166-memory-as-topic-documents.md).

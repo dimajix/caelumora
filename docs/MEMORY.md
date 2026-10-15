@@ -181,8 +181,6 @@ branch of the conversation it came from.
 | **Agent memory** | An alternative to private notes, chosen per personality: what an agent remembers across its channels and sessions, each entry recalled only where its label may be read. | agent | beyond the session | no |
 | **Private notes** | An agent's private note chain in one channel - the same mechanism as notes, readable only by the agent. | agent in channel | session | yes |
 | **Agent session memory** | The union of an agent's active private note chains across its channels - a view, readable only by the agent, each note only where its classification allows. | agent in session | session | per channel |
-| **Agent knowledge** | What an agent keeps across sessions, committed from notes - planned ([18](../issues/18-knowledge-sharing.md)). | agent | permanent | no |
-| **Shared knowledge** | Knowledge shared by several agents or users - planned ([18](../issues/18-knowledge-sharing.md)). | group / global | permanent | no |
 | **Workspace** | Documents several channels edit together; outside the branches, every change an effect ([20](../issues/20-transactional-effects.md)). | session or beyond | until deleted | no |
 
 A **skill** is no tier of memory ([SKILLS.md](SKILLS.md)): not what an agent knows but how a task is
