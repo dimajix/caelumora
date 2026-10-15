@@ -1,6 +1,6 @@
 # 125 — There is no administrator who may see every channel
 
-**Status:** open
+**Status:** rejected
 **Area:** Identity and access management
 
 ## The problem
@@ -43,3 +43,8 @@ nobody in the channel sees them.
   ([07](07-session-deletion-audit.md)) purges. The administrator is to be granted, for every
   entity: `ReadDeleted` (the trash of everybody), `Restore` and `Purge`. This answers part of
   "whether an admin may also act" above: these three, at least.
+- **2026-10-15** — Rejected by the maintainer: a wild idea, out of the way for now. Both halves go -
+  the invisible live following and the administrator role with `ReadDeleted`, `Restore` and
+  `Purge`. `Purge` stays the system's alone, so only the retention policy
+  ([07](07-session-deletion-audit.md)) removes for good; purging or restoring what others deleted
+  by hand becomes an issue of its own if it is wanted.

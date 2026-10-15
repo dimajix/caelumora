@@ -1,6 +1,6 @@
 # 19 — Memory tiers
 
-**Status:** open
+**Status:** done
 **Area:** Context & knowledge
 
 ## The problem
@@ -286,3 +286,10 @@ point 7.
   "context" in the usual LLM sense. The stored sequence of an agent's messages the context is built
   from, called *context* in the table above, is now the *transcript*. The term *model input* is
   superseded by *context*.
+- **2026-10-15** — Closed as done. Both points of *Done when* are met: the tiers are defined by the
+  terms in [MEMORY.md](../docs/MEMORY.md#terms) - scope, lifetime and branching each, with readers,
+  writers and storage described in that document's sections on notes, private notes, agent memory
+  and reading other channels -, and the terminology is reconciled with `ARCHITECTURE.md`. The
+  principles above are decided and built in their own issues; what remains open of the tiers is
+  knowledge shared between agents ([18](18-knowledge-sharing.md)) and memory as documents
+  ([166](166-memory-as-topic-documents.md)), each in its own issue.

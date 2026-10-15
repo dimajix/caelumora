@@ -1,6 +1,6 @@
 # 21 — Scaling
 
-**Status:** open
+**Status:** done
 **Area:** Open architecture questions
 
 ## The question
@@ -52,3 +52,10 @@ the hardest blocker as a side effect of solving a problem that exists today.
 ## History
 
 - **2026-09-10** — Issue created from `TODO.md`, where it appears under *"BIG questions"*.
+- **2026-10-15** — Closed as decided by the model of issue [122](122-several-instances.md): sessions
+  run in exactly one instance each, agents and users in several, kept in step by global events -
+  the axis of more concurrent sessions, distributed by session. What keeps that option open is
+  recorded there: database stores ([03](03-postgres-entity-store.md),
+  [04](04-postgres-state-store.md)), versions of documents, an event bus between instances. Which
+  limit is reached first under real load is to be measured by issue
+  [307](307-load-and-performance-tests.md), not argued here.

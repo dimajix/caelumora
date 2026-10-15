@@ -1,6 +1,6 @@
 # 24 — A `SecurityManager` backed by Open Policy Agent
 
-**Status:** open
+**Status:** rejected
 **Area:** Identity & access management
 
 ## The problem
@@ -94,3 +94,8 @@ to evaluate policy over those attributes, not a way to avoid having them.
 
 - **2026-09-13** — Issue created alongside [23](23-acls-in-security-attributes.md), which supplies
   the attributes any policy — in-house or Rego — has to decide on.
+- **2026-10-15** — Rejected by the maintainer as too far off: no deployment asks for a policy
+  outside the binary, and what it would add over the ownership policy - deny entries, rules owned
+  by an organisation's security people - has no user yet. The seam stays: the policy is a trait
+  (`AccessPolicy`), so an external one can be a backend of its own when a deployment needs it,
+  under a new issue that starts from what is decided then.

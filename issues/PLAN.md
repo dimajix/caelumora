@@ -65,7 +65,6 @@ Decisions that cost an hour and close an issue are listed under [D](#d-questiona
 | No. | What is to do | Note |
 |---|---|---|
 | [169](169-changing-classified-content.md) | The rule for changing something classified from several places: fixed container, the writer's label must flow into it, every change records where it was made. | Proposal complete. Skills raise their classification to what the changing turn has seen, while 169's *Done when* wants a classification to change "only by an act of its own" - decide 169 against that, before 256 and 305 record writes and 166 builds a third answer. |
-| [20](20-transactional-effects.md) (part) | Tools declare whether they have an effect or only read; at-least-once made visible, nothing more. | The rest of 20 waits (see C). |
 | [247](247-tool-own-matcher.md) | A matcher that understands a shell command, so that "and from now on" does not allow chained commands. | Next: `run_command` exists, and without this a rule on it is unsafe. |
 | [256](256-workspace-versions.md) | Versions of a workspace: each file keeps its versions with who wrote them from which turn (169), and a version can be restored. | A workspace does not branch with the conversation, so asking for an answer again cannot take back an agent's bad edit. Commands change files past the file tools, so a snapshot is needed around every command (git in the directory, say), not only around a write. Without this, write tools are not safe to hand out. |
 | [305](305-skill-versions.md) | Versions of a skill: every change a new version with who made it, from where, under which label; diffs in the web UI; an earlier version made current by copying it. | The argument of 256 for what agents write with `update_skill`. Recommended, not decided: share the shape of a history with artifacts, not their store; versions as documents beside the skill. Brings a diff library to the web UI, which a diff presentation of write calls (below) can share. |
@@ -79,8 +78,8 @@ Decisions that cost an hour and close an issue are listed under [D](#d-questiona
 
 **Deliberately not in the first release:** converting formats (PDF, office documents) to text.
 
-Order: decide **169**, **338** and the small part of **20** → **247** → **256** → **305** →
-**282** → **208**; **298** and **339** alongside; **272** when wanted.
+Order: decide **169** and **338** → **247** → **256** → **305** → **282** → **208**; **298** and
+**339** alongside; **272** when wanted.
 
 ### B2. Sessions that last: context and memory
 
@@ -97,7 +96,7 @@ Order: 58 → 166 → 55. Only 58 belongs to the first release.
 
 | No. | Size | Note |
 |---|---|---|
-| [226](226-concurrent-tool-calls.md) | M + M | Two steps. The first - tools read the turn and *return* their effects instead of holding `&mut Turn` - changes `ToolProvider::execute` for every provider, the file tools, `terminal_tool` and the skills' tools among them; every new tool makes it dearer. It also gives 20 its "declares an effect". Running concurrently is the second step, in the agent's loop, and can wait. |
+| [226](226-concurrent-tool-calls.md) | M + M | Two steps. The first - tools read the turn and *return* their effects instead of holding `&mut Turn` - changes `ToolProvider::execute` for every provider, the file tools, `terminal_tool` and the skills' tools among them; every new tool makes it dearer. Running concurrently is the second step, in the agent's loop, and can wait. |
 | [290](290-tools-offered-by-the-turn.md) | M | Offer a model only the tools it may call where it is - a workspace's tools where there is one, those that change where its list grants writing. A `ToolProvider` that knows the turn, asked where the turn's tool sets are built; the call keeps its own check. |
 | [126](126-mcp-tools-discovered-once.md) | M | Refresh in the provider; an MCP server's set already says when it is unavailable. What remains is following a server that changes or comes back - the same question for 252 once it exists. |
 
@@ -108,7 +107,6 @@ Order: 58 → 166 → 55. Only 58 belongs to the first release.
 | No. | Size | Note |
 |---|---|---|
 | [25](25-file-user-backend.md) | M | The file backend itself is missing. Without it there are no passwords. With it: roles from the file (142's remainder) and the TUI's real identity (10's remainder) - three "in progress" issues close together. |
-| [07](07-session-deletion-audit.md) | S | See A. Purging by hand needs an administrator: take **only** that part of [125](125-invisible-admin.md) - the role, granted `ReadDeleted`/`Restore`/`Purge` as capabilities (23, decision 4); the actions exist, only the system holds `Purge` -, not the invisible live following. |
 | [310](310-secrets-have-no-owner.md) | M | Decided, with an implementation plan: secrets in vaults of the configuration, each with an access list and the origins its secrets may be sent to; a reference names its vault (`vault/KEY`). Latent while only the seed and the configuration write components - but it changes the form of the configuration and of stored personalities, which is cheaper before a first release has deployments. 343 builds on it. |
 | [140](140-audit-log.md) | M | Seven issues point at it (07, 13, 14, 125, 143, 164, 169). Not needed to *use* the system, but it is what makes the confidentiality model accountable. First thing after the first release - or earlier, if the release is to be shown to someone who asks "who released this". |
 
@@ -131,11 +129,9 @@ Sound issues whose time has not come. None of them changes what a user can do wi
 | [139](139-mcp-result-classification.md) | Small, but no MCP server classifies its results yet. Do it when one does. |
 | [252](252-openapi-tool.md) | A generic OpenAPI tool is worth having, but has no concrete service waiting for it: Open Terminal has a component of its own. Do it when a second OpenAPI service is to be reached - that service decides the open questions (the default of the filter, API keys in a header). |
 | [124](124-observer-participants.md) | Nice for watching agents work among themselves; a participant who stays silent does the job meanwhile. |
-| [125](125-invisible-admin.md) | The live-following half. The role itself: see B4. |
 | [42](42-export-import-chats.md) | Useful for bug reports; the context panel covers reproducing for now. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | A real gap, but it needs finer `KnowledgeRef`s (as 58) and the audit log (140) first. |
 | [181](181-where-roles-decide.md) | A review, not a feature. Whose roles count when an agent acts is settled (its owner's, narrowed by its personality, carried by the `SecurityContext`), and where: wherever an entry of a list or a capability names a role (23). What remains is going through the actions once. |
-| [20](20-transactional-effects.md) | Beyond the small part B1 needs: idempotency keys and transactions wait for a shared database. |
 | [238](238-retry-of-an-older-answer.md) | Retry of an older answer and keeping alternatives - branching. Asking for the last answer again covers what is asked most; 08's plan is the starting point when someone asks for more. |
 | [237](237-erasing-a-message.md) | Erasing for good, beyond taking back. Analysed, not decided. A trusted team can live with "taken back"; data protection cannot. Decide it together with 05: a recorder that keeps every envelope has to support erasing, or 237 needs crypto-shredding. |
 
@@ -146,11 +142,8 @@ a decision recorded in the issue file.
 
 | No. | What is wrong with it | Proposal |
 |---|---|---|
-| [19](19-memory-tiers.md) | An umbrella from `TODO.md`. Its principles are decided and its terms are in MEMORY.md; its own *Done when* can no longer be told from the file. | Close as done with a pointer to MEMORY.md. |
 | [18](18-knowledge-sharing.md) | Overtaken: agent memory outlives sessions and deliberately does not follow the issue's "commit, not write". "An agent retrieves from its own past sessions" holds; cross-agent sharing was never specified. | Rewrite to the one open half - knowledge shared *between* agents - or close and let 166 and the workspace answer it: a shared workspace is shared knowledge with an owner. |
-| [21](21-scaling.md) | A question that 122 answers: sessions in one instance, agents in several. | Close as decided, pointing to 122; which axis matters under load is 307's to measure. |
 | [05](05-postgres-event-recorder.md) | Its three purposes are served by transcripts with digests, recorded given-up turns and the audit log (140). What remains is a second, highly sensitive copy of every envelope - one that would also have to support erasing a message (237). | Decide whether the `Recorder` hook still has a purpose; if not, reject and remove the hook rather than keep a `BlackholeRecorder` wired into every channel. |
-| [24](24-opa-security-manager.md) | A policy outside the binary, for a problem no deployment has; deny entries, which 23 leaves out, are what it would add. | Park until a deployment asks. |
 | [57](57-prompt-catalogue.md) | Doubts itself ("first to be discussed is whether this is sensible at all") - rightly: n languages × m models without evaluations. | Decide as the issue's own *Order* suggests: built-in texts become component parameters where someone needs it; the catalogue is rejected. The language problem is solved separately. |
 | [59](59-retrieval-of-notes.md) | Embeddings, an index, finer provenance - for the notes of one session. 166's index tells the model *that* it knows something, which is the weakness the issue names. | Park until a source exists that is too large for an index (documents in a workspace are the likely one, then beside the workspace's text search). |
 | [173](173-message-inspection.md) | Carefully designed, but expensive in the core: no streaming in an inspected channel, an inspection queue in the channel loop, mechanical repair of transcripts, an admitted hole for derived notes - for a control whose judge is a model and can be talked round (150 measured how easily). No user has asked for it yet. | Park. If content rules become a requirement, start with a deterministic inspector (patterns), which needs none of the hard parts' latency. |
@@ -160,14 +153,12 @@ a decision recorded in the issue file.
 
 Each milestone leaves the system usable; decisions come before the code that depends on them.
 
-1.  **Clear the table.** The decisions of section D (19, 18, 21, 05, 57, 59, 173, 340 - no code),
-    and the small ones: 218, 223, 297; 374 and 375 before the next change to what an actor
-    or a runtime is built from.
-2.  **A team can log in.** 25 with the remainders of 10 and 142; 07, the administrator's
-    capabilities of 125; 310.
-3.  **Working on files, safely.** Decide 169, 338 and the small part of 20; refactor
-    `ToolProvider::execute` (226, first step); then 247, 256, 305, 282, 208, 290; 298 and 339
-    alongside.
+1.  **Clear the table.** The decisions of section D (18, 05, 57, 59, 173, 340 - no code), and
+    the small ones: 218, 223, 297; 374 and 375 before the next change to what an actor or a
+    runtime is built from.
+2.  **A team can log in.** 25 with the remainders of 10 and 142; 07; 310.
+3.  **Working on files, safely.** Decide 169 and 338; refactor `ToolProvider::execute` (226, first
+    step); then 247, 256, 305, 282, 208, 290; 298 and 339 alongside.
 4.  **Sessions that last.** 58; 126.
 
 **This is the first release.** After it, roughly in this order: 140 · 237 (with 05 decided) · 166
@@ -198,9 +189,9 @@ The plan stands on assumptions the maintainer should confirm or correct:
 | Section | Issues |
 |---|---|
 | A - small | 07, 218, 223, 283, 297, 374, 375 |
-| B1 - workspace | 20 (part), 169, 208, 247, 256, 272, 282, 298, 305, 338, 339 |
+| B1 - workspace | 169, 208, 247, 256, 272, 282, 298, 305, 338, 339 |
 | B2 - context and memory | 55, 58, 166, 169 |
 | B3 - tools | 126, 226, 290 |
-| B4 - a team | 07, 10, 25, 125 (part), 140, 142, 310 |
-| C - not now | 03, 04, 20, 26, 27, 42, 122, 124, 125, 139, 143, 181, 182, 237, 238, 252, 287, 307, 332, 342, 343, 346 |
-| D - questionable | 05, 18, 19, 21, 24, 57, 59, 173, 340 |
+| B4 - a team | 10, 25, 140, 142, 310 |
+| C - not now | 03, 04, 26, 27, 42, 122, 124, 139, 143, 181, 182, 237, 238, 252, 287, 307, 332, 342, 343, 346 |
+| D - questionable | 05, 18, 57, 59, 173, 340 |

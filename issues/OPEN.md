@@ -39,11 +39,9 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | No. | Status | Issue |
 |---|---|---|
 | [10](10-user-authentication.md) | in progress | There is no authentication at all; the REST server fabricates its own `SecurityContext` and `DummySecurityManager` approves everything. |
-| [24](24-opa-security-manager.md) | open | `DummySecurityManager` is the only implementation; deployment-specific policy has no home outside the compiled binary. |
 | [25](25-file-user-backend.md) | in progress | There is no source of identities to authenticate against; a hand-edited user file is the smallest one, and defines the provider seam. |
 | [26](26-database-user-backend.md) | open | A file cannot serve several processes or an existing corporate user table; no database-backed user provider exists. |
 | [27](27-ldap-user-backend.md) | open | Where identities are managed in a directory, the system has no way to authenticate against it or read its groups. |
-| [125](125-invisible-admin.md) | open | There is no administrator who may see and follow every channel without taking part in it. |
 | [140](140-audit-log.md) | open | Acts that change who may see what - releases, participants, approvals, deletions - leave no record of who did them and when. |
 | [142](142-roles.md) | in progress | Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them. |
 | [181](181-where-roles-decide.md) | open | Nobody has reviewed where a user's roles - and soon an agent's - enter a permission check; today only the clearance at a channel's door asks for them. |
@@ -81,7 +79,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | No. | Status | Issue |
 |---|---|---|
 | [18](18-knowledge-sharing.md) | open | Sessions are sealed: nothing an agent learns outlives the session, and cross-agent sharing is a harder question again. |
-| [19](19-memory-tiers.md) | open | The four memory tiers from `TODO.md` are named but undefined — scope, lifetime, readers and invalidation are all open. |
 | [55](55-notes-by-reflection.md) | open | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |
 | [57](57-prompt-catalogue.md) | open | The prompts the runtime gives models are English constants spread through the code, in one variant for every language and model. |
 | [58](58-notes-in-every-prompt.md) | open | Every note is put into every prompt in full, which grows without bound, and the writing agent sees its notes a second time as tool calls - revoked ones included. |
@@ -100,10 +97,3 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [346](346-subscription-topics-for-every-kind.md) | open | The event bus has subscription topics only for sessions, channels, agents and users, so a plugin cannot follow a single entity - an artifact, say - without reading every event. |
 | [374](374-channel-controller-beside-the-actor-runtime.md) | open | Every actor is given its channel's controller as a parameter beside its `ActorRuntime`, its interface to that channel, so the two can disagree and every actor's constructor carries both. |
 | [375](375-test-runtimes-built-by-hand.md) | open | About twenty tests in four crates build a runtime by hand, writing out every service it is made of, so each change to what a runtime is built from changes them all. |
-
-## Open architecture questions
-
-| No. | Status | Issue |
-|---|---|---|
-| [20](20-transactional-effects.md) | open | A cognitive turn persists state, runs tools and emits events with no boundary around them; a crash mid-tool re-executes it on restart. |
-| [21](21-scaling.md) | open | The runtime is single-process by design; which of the three scaling axes actually matters has never been decided. |

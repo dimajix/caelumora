@@ -65,3 +65,6 @@ An audit trail that preserves the content defeats that.
     entry and its digest stay. Not planned; noted here for when single messages are to be deleted.
   - *Done when* then reads: the policy is this, `delete_session` marks (164), and the configured
     retention is enforced by the purge task.
+- **2026-10-15** — Issue [125](125-invisible-admin.md) was rejected, the administrator role with
+  it. No administrator runs a purge: the retention policy is the only way to remove a deleted
+  session for good, in the system's name.

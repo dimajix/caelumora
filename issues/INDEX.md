@@ -142,7 +142,7 @@ published before anyone else can take it.
 | [11](11-agent-ownership.md) | done | `SecurityAttributes` carries an `owner_id` that nothing enforces — every agent, session and template is effectively global. |
 | [12](12-user-and-agent-permissions.md) | done | When an agent acts for a user, two sets of rights are involved and there is no rule for combining them. |
 | [23](23-acls-in-security-attributes.md) | done | Who may reach a workspace's files or an artifact follows from the channel one stands in, not from the thing: `SecurityAttributes` can name no reader but the owner and a hand-written list. |
-| [24](24-opa-security-manager.md) | open | `DummySecurityManager` is the only implementation; deployment-specific policy has no home outside the compiled binary. |
+| [24](24-opa-security-manager.md) | rejected | `DummySecurityManager` is the only implementation; deployment-specific policy has no home outside the compiled binary. |
 | [25](25-file-user-backend.md) | in progress | There is no source of identities to authenticate against; a hand-edited user file is the smallest one, and defines the provider seam. |
 | [26](26-database-user-backend.md) | open | A file cannot serve several processes or an existing corporate user table; no database-backed user provider exists. |
 | [27](27-ldap-user-backend.md) | open | Where identities are managed in a directory, the system has no way to authenticate against it or read its groups. |
@@ -152,7 +152,7 @@ published before anyone else can take it.
 | [87](87-security-context-in-entities.md) | done | Stored agents and users carry a `SecurityContext` that the actors overwrite at start. |
 | [94](94-users-unchecked-in-store.md) | done | The store checks access for every entity kind except users, where a placeholder comment stands in for the check. |
 | [95](95-require-for-security-manager.md) | done | The runtime asks the `SecurityManager` for permission in four different ways with four different log lines. |
-| [125](125-invisible-admin.md) | open | There is no administrator who may see and follow every channel without taking part in it. |
+| [125](125-invisible-admin.md) | rejected | There is no administrator who may see and follow every channel without taking part in it. |
 | [133](133-classification-model.md) | done | The confidentiality levels say how far information may travel, not how sensitive it is, so topics cannot be told apart and a tool cannot classify its results one by one. |
 | [138](138-confidentiality-policy-in-ownership.md) | done | The confidentiality rules are applied by the ownership policy, so any other policy has to re-implement them or leave them out. |
 | [140](140-audit-log.md) | open | Acts that change who may see what - releases, participants, approvals, deletions - leave no record of who did them and when. |
@@ -294,7 +294,7 @@ published before anyone else can take it.
 | [16](16-context-compression.md) | done | History and context grow without bound; nothing decides what to drop before the model's context window is exceeded. |
 | [17](17-information-sharing-within-session.md) | done | Agents in one session share nothing but routed messages — there is no scratchpad one can write to and another read. |
 | [18](18-knowledge-sharing.md) | open | Sessions are sealed: nothing an agent learns outlives the session, and cross-agent sharing is a harder question again. |
-| [19](19-memory-tiers.md) | open | The four memory tiers from `TODO.md` are named but undefined — scope, lifetime, readers and invalidation are all open. |
+| [19](19-memory-tiers.md) | done | The four memory tiers from `TODO.md` are named but undefined — scope, lifetime, readers and invalidation are all open. |
 | [47](47-prompt-parts-with-provenance.md) | done | What a model is given besides the conversation is placed and recorded on two separate paths, and can only be a system prompt, whose every change invalidates the prompt cache. |
 | [48](48-shared-digest-chain.md) | done | History and context duplicate one digest-chained structure, and notes would become a third copy that branching would have to change separately. |
 | [50](50-turn-context-naming.md) | done | `TurnContext` calls both the stored context and the input of one model call "context". |
@@ -475,8 +475,8 @@ published before anyone else can take it.
 
 | No. | Status | Issue |
 |---|---|---|
-| [20](20-transactional-effects.md) | open | A cognitive turn persists state, runs tools and emits events with no boundary around them; a crash mid-tool re-executes it on restart. |
-| [21](21-scaling.md) | open | The runtime is single-process by design; which of the three scaling axes actually matters has never been decided. |
+| [20](20-transactional-effects.md) | rejected | A cognitive turn persists state, runs tools and emits events with no boundary around them; a crash mid-tool re-executes it on restart. |
+| [21](21-scaling.md) | done | The runtime is single-process by design; which of the three scaling axes actually matters has never been decided. |
 | [69](69-scoped-actor-runtime.md) | done | Every actor's `ActorRuntime` hands out the process-wide services unrestricted, so it cannot be given to components without letting them read around the confidentiality rules. |
 | [128](128-actor-runtime-in-components.md) | done | Components are given their actor's whole `ActorRuntime` and could store its state or act as it past the turn. |
 | [163](163-navigable-views.md) | done | There is no model to navigate from a session to what is in it: every read of history, notes, contexts or memory is put together anew, with its own conditions, by the REST server, the channel loop, the actors and `SessionReader`. |

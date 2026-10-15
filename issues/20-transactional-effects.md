@@ -1,6 +1,6 @@
 # 20 — Transactional effects
 
-**Status:** open
+**Status:** rejected
 **Area:** Open architecture questions
 
 ## The question
@@ -58,3 +58,10 @@ coherent if there is a defined notion of what a turn did.
   and the calls that ran are told on the active branch. What is told as having run is what has a
   `started_at`; the call a crash cut off (`prepare_resume`) has none and stays the open case of this
   issue.
+- **2026-10-15** — Rejected by the maintainer: a conceptual question that is not being answered at
+  present. What holds until then is what the runtime does today - a dropped or interrupted call
+  counts as having run, and the model is told to check its effect ([TOOLS.md](../docs/TOOLS.md));
+  the call a crash cut off stays without a defined outcome. That tools declare whether they have an
+  effect or only read, which branching and idempotency would both need, goes with this issue; it
+  becomes an issue of its own when something needs it - the first step of
+  [226](226-concurrent-tool-calls.md), say, which changes what a tool returns.
