@@ -6,14 +6,20 @@ use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::value::language::Language;
 use caelumora_model::security::{Secured, SecurityContext};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult};
-use caelumora_model::user::{User, UserId, UserProfile, UserUpdateEvent};
+use caelumora_model::user::{User, UserId, UserProfile};
 use std::sync::Arc;
+use super::document::{log_changed, take_over};
 
 /// The live user of this instance, shared by all the user's actors in all
 /// sessions (issue 121), with their profile. The user record is not changed
 /// through it - it belongs to the system (issue 94) and is only kept current
 /// when a change is announced - but the profile is: the controller is its
 /// one writer in this instance (issue 13).
+///
+/// Unlike the others, it holds no `LiveDocument` (issue 358): the user it
+/// does not write, and the profile is created with its first change rather
+/// than changed, and announced as it then stands rather than by an update
+/// event. It takes the user's changes over and logs its own alike.
 #[derive(Debug)]
 pub struct UserController {
     id: UserId,
@@ -125,6 +131,7 @@ impl UserController {
         let changed = change(&mut profile)?;
         profile.prune_approval_rules(chrono::Utc::now());
         self.save(ctx, &profile).await?;
+        log_changed(ctx, &profile);
         self.profile.store(Arc::new(profile.clone()));
         let attributes = profile.security_attributes().clone();
         self.event_publisher.publish(GlobalEvent::updated::<UserProfile>(&self.id, &profile), attributes);
@@ -145,23 +152,13 @@ impl UserController {
         }
     }
 
-    fn process_user_update(&self, event: &UserUpdateEvent) {
-        let mut user = (**self.user.load()).clone();
-        // Checked where it was made; one that does not fit here is left out
-        // rather than taken over.
-        match user.apply(event) {
-            Ok(()) => self.user.store(Arc::new(user)),
-            Err(e) => tracing::warn!(user = %self.id, error = %e, "A change of the user made elsewhere does not fit it"),
-        }
-    }
-
     /// Takes over a change made elsewhere - already stored there - once it
-    /// is announced. An event carries the resulting value, so taking over
-    /// this controller's own change again changes nothing.
+    /// is announced: of the user as a `LiveDocument` takes it over, of the
+    /// profile as it now stands. An event carries the resulting value, so
+    /// taking over this controller's own change again changes nothing.
     pub fn process_global_event(&self, event: &GlobalEvent) {
-        if let Some(update) = event.about::<User>().filter(|(uid, _)| *uid == self.id).and_then(|(_, change)| change.update::<UserUpdateEvent>()) {
-            self.process_user_update(&update);
-        } else if let Some(profile) = event.about::<UserProfile>().filter(|(uid, _)| *uid == self.id).and_then(|(_, change)| change.update::<UserProfile>()) {
+        take_over(&self.user, &self.id, event);
+        if let Some(profile) = event.about::<UserProfile>().filter(|(uid, _)| *uid == self.id).and_then(|(_, change)| change.update::<UserProfile>()) {
             self.profile.store(Arc::new(profile));
         }
     }
@@ -174,6 +171,7 @@ mod tests {
     use caelumora_model::value::text::Introduction;
     use caelumora_model::actor::ActorId;
     use caelumora_model::role::RoleId;
+    use caelumora_model::user::UserUpdateEvent;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::security::OwnershipPolicy;
     use std::sync::Mutex;

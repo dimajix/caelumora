@@ -46,10 +46,7 @@ impl SessionLoop {
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// session, or whatever else storing it reports.
     pub async fn update_approval_rules(&self, context: &SecurityContext, rules: Vec<ApprovalRule>) -> Result<()> {
-        let count = rules.len();
-        self.session_controller.update_approval_rules(context, rules).await?;
-        info!(session = %self.id, rules = count, by = %context.caller_id, "Session approval rules changed");
-        Ok(())
+        Ok(self.session_controller.update_approval_rules(context, rules).await?)
     }
 
     /// Says what the session is for (issue 245) on behalf of `context`:
@@ -62,9 +59,7 @@ impl SessionLoop {
     /// holds what it may not, `StoreError::PermissionDenied` if `context`
     /// may not change the session, or whatever else storing it reports.
     pub async fn update_description(&self, context: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> Result<()> {
-        self.session_controller.update_description(context, summary, briefing).await?;
-        info!(session = %self.id, by = %context.caller_id, "Session description changed");
-        Ok(())
+        Ok(self.session_controller.update_description(context, summary, briefing).await?)
     }
 
     /// Attaches `workspace` to the session, or with `None` takes the one

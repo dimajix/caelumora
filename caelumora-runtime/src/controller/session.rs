@@ -1,4 +1,4 @@
-use arc_swap::ArcSwap;
+use arc_swap::Guard;
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::Participant;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
@@ -7,46 +7,35 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
 use caelumora_model::value::name::Name;
-use caelumora_model::value::ValueError;
 use caelumora_model::workspace::WorkspaceId;
 use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
-use chrono::Utc;
 use std::sync::Arc;
 use tracing::error;
 use crate::group::keep_participants;
 use super::check_restricting;
+use super::document::LiveDocument;
 
 /// The one writer of a session's document.
 #[derive(Debug)]
 pub struct SessionController {
-    id: SessionId,
-    session: ArcSwap<Session>,
-    event_publisher: Arc<dyn EventPublisher>,
-    sessions: Arc<dyn EntityStore<Session>>,
+    session: LiveDocument<Session>,
     groups: Arc<dyn EntityStore<Group>>,
-    /// Held while the session is changed and stored, so that two changes -
-    /// say a rename and a new channel - cannot overwrite each other.
-    write_lock: tokio::sync::Mutex<()>,
 }
 
 impl SessionController {
     pub fn new(session: Session, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores) -> Self {
         Self {
-            id: session.id,
-            session: ArcSwap::from_pointee(session),
-            event_publisher,
-            sessions: Arc::clone(&stores.sessions),
+            session: LiveDocument::new(session.id, session, Arc::clone(&stores.sessions), event_publisher),
             groups: Arc::clone(&stores.groups),
-            write_lock: tokio::sync::Mutex::new(()),
         }
     }
 
-    pub fn load(&self) -> arc_swap::Guard<Arc<Session>> {
+    pub fn load(&self) -> Guard<Arc<Session>> {
         self.session.load()
     }
 
     pub fn id(&self) -> SessionId {
-        self.id
+        *self.session.address()
     }
 
     pub fn name(&self) -> Name {
@@ -109,34 +98,18 @@ impl SessionController {
     /// as [`Self::update`] does - whoever may change it (`UpdateSession`),
     /// or the runtime for one who joined by themselves (`JOIN`) - using up
     /// an invitation (`Session::take_in`). The group of its participants
-    /// follows before it is announced, so that the new one hears of it too.
-    /// Whether they may be taken in is the caller's to have asked.
+    /// follows (issue 286) before it is announced, so that the new one hears
+    /// of it too. Whether they may be taken in is the caller's to have
+    /// asked.
     ///
     /// # Errors
     /// See [`Self::update`].
     pub async fn add_participant(&self, ctx: &SecurityContext, participant: Participant) -> StoreResult<()> {
-        self.update(ctx, SessionUpdateEvent::ParticipantAdded(participant)).await
-    }
-
-    /// Applies `event` on behalf of `ctx`: stored first - which is where the
-    /// permission is checked (issue 11) - and only then changed live and
-    /// announced. A change of the participants lets the group of them follow
-    /// (issue 286) before it is announced.
-    ///
-    /// # Errors
-    /// `StoreError::Invalid` if what it says does not fit the session,
-    /// otherwise whatever the store reports, `StoreError::PermissionDenied`
-    /// included; the session is then unchanged.
-    async fn update(&self, ctx: &SecurityContext, event: SessionUpdateEvent) -> StoreResult<()> {
-        let _guard = self.write_lock.lock().await;
-        let session = self.apply(&event)?;
-        self.sessions.update(ctx, &session).await?;
-        if matches!(event, SessionUpdateEvent::ParticipantAdded(_)) {
-            self.keep_participants(&session).await;
-        }
-        let attributes = session.security_attributes.clone();
-        self.session.store(Arc::new(session));
-        self.event_publisher.publish(GlobalEvent::updated::<Session>(&self.id, &event), attributes);
+        let event = SessionUpdateEvent::ParticipantAdded(participant);
+        let writing = self.session.write().await;
+        let session = writing.apply(ctx, &event).await?;
+        self.keep_participants(&session).await;
+        writing.announce_update(&event, &session);
         Ok(())
     }
 
@@ -149,10 +122,10 @@ impl SessionController {
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the session is then unchanged.
     pub async fn add_channel(&self, ctx: &SecurityContext, channel: ChannelId) -> StoreResult<()> {
-        let _guard = self.write_lock.lock().await;
-        let mut session = (**self.session.load()).clone();
+        let writing = self.session.write().await;
+        let mut session = writing.current();
         session.channels.push(channel);
-        self.store(ctx, session).await
+        writing.store(ctx, session).await.map(drop)
     }
 
     /// Removes the channel `channel_id` from the session's list on behalf of
@@ -163,26 +136,30 @@ impl SessionController {
     /// `StoreError::NotFound` if the session has no such channel; whatever
     /// the store reports otherwise. The session is then unchanged.
     pub async fn remove_channel(&self, ctx: &SecurityContext, channel_id: ChannelId) -> StoreResult<()> {
-        let _guard = self.write_lock.lock().await;
-        let mut session = (**self.session.load()).clone();
+        let writing = self.session.write().await;
+        let mut session = writing.current();
         let index = session.channels.iter().position(|c| *c == channel_id)
             .ok_or_else(|| StoreError::NotFound { entity: "channel", id: channel_id.to_string() })?;
         session.channels.remove(index);
-        self.store(ctx, session).await
+        writing.store(ctx, session).await.map(drop)
     }
 
     /// Takes over a change made elsewhere - already stored there - once it
-    /// is announced.
+    /// is announced (`LiveDocument::take_over`).
     pub fn process_global_event(&self, event: &GlobalEvent) {
-        let update = event.about::<Session>().filter(|(sid, _)| *sid == self.id).and_then(|(_, change)| change.update::<SessionUpdateEvent>());
-        if let Some(update) = update {
-            // Checked where it was made; one that does not fit here is left
-            // out rather than taken over half.
-            match self.apply(&update) {
-                Ok(session) => self.session.store(Arc::new(session)),
-                Err(e) => tracing::warn!(session = %self.id, error = %e, "A change of the session made elsewhere does not fit it"),
-            }
-        }
+        self.session.take_over(event);
+    }
+
+    /// Applies `event` on behalf of `ctx` (`LiveDocument::update`): stored
+    /// first - which is where the permission is checked (issue 11) - and
+    /// only then changed live and announced.
+    ///
+    /// # Errors
+    /// `StoreError::Invalid` if what it says does not fit the session,
+    /// otherwise whatever the store reports, `StoreError::PermissionDenied`
+    /// included; the session is then unchanged.
+    async fn update(&self, ctx: &SecurityContext, event: SessionUpdateEvent) -> StoreResult<()> {
+        self.session.update(ctx, &event).await.map(drop)
     }
 
     /// Lets the group of the participants of `session` follow them, in the
@@ -194,25 +171,6 @@ impl SessionController {
             error!(session = %session.id, "The group of the session's participants does not follow them: {e}");
         }
     }
-
-    /// Stores `session` as changed by `ctx` and takes it over live.
-    async fn store(&self, ctx: &SecurityContext, mut session: Session) -> StoreResult<()> {
-        session.updated_at = Utc::now();
-        self.sessions.update(ctx, &session).await?;
-        self.session.store(Arc::new(session));
-        Ok(())
-    }
-
-    /// The session with `event` applied (`Session::apply`), not yet stored
-    /// anywhere.
-    ///
-    /// # Errors
-    /// `ValueError` if what it says does not fit.
-    fn apply(&self, event: &SessionUpdateEvent) -> Result<Session, ValueError> {
-        let mut session = (**self.session.load()).clone();
-        session.apply(event)?;
-        Ok(session)
-    }
 }
 
 #[cfg(test)]
@@ -221,6 +179,8 @@ mod tests {
     use caelumora_model::security::SecurityAttributes;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::confidentiality::Classification;
+    use caelumora_model::value::ValueError;
+    use chrono::{Duration, Utc};
 
     fn session() -> Session {
         Session {
@@ -265,6 +225,26 @@ mod tests {
 
         assert_eq!(controller.name(), "renamed");
         assert_eq!(store.entity_stores().sessions.get(&ctx, session.id).await.unwrap().name, "renamed");
+    }
+
+    /// Issue 358: whatever changes the session moves `updated_at`, an update
+    /// event as a channel added.
+    #[tokio::test]
+    async fn every_change_moves_updated_at() {
+        let long_ago = Utc::now() - Duration::days(1);
+        let session = Session { updated_at: long_ago, ..session() };
+        let store = Arc::new(MemoryStore::new());
+        let ctx = SecurityContext::default();
+        store.entity_stores().sessions.create(&ctx, &session).await.unwrap();
+        let controller = SessionController::new(session.clone(), Arc::new(()), &store.entity_stores());
+        let stored = || async { store.entity_stores().sessions.get(&ctx, session.id).await.unwrap().updated_at };
+
+        controller.update_name(&ctx, "renamed").await.unwrap();
+        let renamed = stored().await;
+        assert!(renamed > long_ago, "by a rename");
+        assert_eq!(controller.load().updated_at, renamed, "live as stored");
+        controller.add_channel(&ctx, ChannelId::new()).await.unwrap();
+        assert!(stored().await > renamed, "by a channel added");
     }
 
     #[tokio::test]

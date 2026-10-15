@@ -1,10 +1,10 @@
-use caelumora_model::value::ValueError;
-use arc_swap::ArcSwap;
+use arc_swap::Guard;
 use caelumora_model::agent::{Agent, AgentId, AgentUpdateEvent, Personality};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::role::RoleId;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
+use super::document::LiveDocument;
 use super::UserController;
 use caelumora_model::store::{EntityStore, EntityStores, StoreResult};
 use std::sync::Arc;
@@ -13,17 +13,11 @@ use std::sync::Arc;
 /// the agent's actors in all sessions (issue 121).
 #[derive(Debug)]
 pub struct AgentController {
-    id: AgentId,
-    agent: ArcSwap<Agent>,
+    agent: LiveDocument<Agent>,
     /// The live user who owns the agent, whose roles it acts with (issue
     /// 304); none for an agent of the system, or of an owner who is gone.
     owner: Option<Arc<UserController>>,
-    event_publisher: Arc<dyn EventPublisher>,
-    agents: Arc<dyn EntityStore<Agent>>,
     personalities: Arc<dyn EntityStore<Personality>>,
-    /// Held while the agent is changed and stored, like the other
-    /// controllers.
-    write_lock: tokio::sync::Mutex<()>,
 }
 
 impl AgentController {
@@ -31,22 +25,18 @@ impl AgentController {
     /// the `ControllerManager`, which keeps one per agent.
     pub(crate) fn new(agent: Agent, owner: Option<Arc<UserController>>, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores) -> Self {
         Self {
-            id: agent.id,
-            agent: ArcSwap::from_pointee(agent),
+            agent: LiveDocument::new(agent.id, agent, Arc::clone(&stores.agents), event_publisher),
             owner,
-            event_publisher,
-            agents: Arc::clone(&stores.agents),
             personalities: Arc::clone(&stores.personalities),
-            write_lock: tokio::sync::Mutex::new(()),
         }
     }
 
-    pub fn load(&self) -> arc_swap::Guard<Arc<Agent>> {
+    pub fn load(&self) -> Guard<Arc<Agent>> {
         self.agent.load()
     }
 
     pub fn id(&self) -> AgentId {
-        self.id
+        *self.agent.address()
     }
 
     pub fn name(&self) -> String {
@@ -77,48 +67,21 @@ impl AgentController {
         self.personalities.get(&SecurityContext::system(), id).await
     }
 
-    /// Renames the agent on behalf of `ctx`: stored first - which is where
-    /// the permission is checked (issue 11) - and only then changed live and
-    /// announced.
+    /// Renames the agent on behalf of `ctx` (`LiveDocument::update`):
+    /// stored first - which is where the permission is checked (issue 11) -
+    /// and only then changed live and announced.
     ///
     /// # Errors
     /// `StoreError::Invalid` if `new_name` is no name, otherwise whatever
     /// the store reports; the agent is then unchanged.
     pub async fn update_name(&self, ctx: &SecurityContext, new_name: &str) -> StoreResult<()> {
-        let _guard = self.write_lock.lock().await;
-        let event = AgentUpdateEvent::NameChanged(new_name.to_string());
-        let agent = self.apply(&event)?;
-        self.agents.update(ctx, &agent).await?;
-        let attributes = agent.security_attributes.clone();
-        self.agent.store(Arc::new(agent));
-        self.event_publisher.publish(GlobalEvent::updated::<Agent>(&self.id, &event), attributes);
-        Ok(())
-    }
-
-    /// The agent with `event` applied (`Agent::apply`), not yet stored
-    /// anywhere.
-    ///
-    /// # Errors
-    /// `ValueError` if what it says does not fit.
-    fn apply(&self, event: &AgentUpdateEvent) -> Result<Agent, ValueError> {
-        let mut agent = (**self.agent.load()).clone();
-        agent.apply(event)?;
-        Ok(agent)
+        self.agent.update(ctx, &AgentUpdateEvent::NameChanged(new_name.to_string())).await.map(drop)
     }
 
     /// Takes over a change made elsewhere - already stored there - once it
-    /// is announced. An event carries the resulting value, so taking over
-    /// this controller's own change again changes nothing.
+    /// is announced (`LiveDocument::take_over`).
     pub fn process_global_event(&self, event: &GlobalEvent) {
-        let update = event.about::<Agent>().filter(|(aid, _)| *aid == self.id).and_then(|(_, change)| change.update::<AgentUpdateEvent>());
-        if let Some(update) = update {
-            // Checked where it was made; one that does not fit here is left
-            // out rather than taken over half.
-            match self.apply(&update) {
-                Ok(agent) => self.agent.store(Arc::new(agent)),
-                Err(e) => tracing::warn!(agent = %self.id, error = %e, "A change of the agent made elsewhere does not fit it"),
-            }
-        }
+        self.agent.take_over(event);
     }
 }
 

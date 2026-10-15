@@ -24,6 +24,8 @@ use crate::session::Session;
 use crate::template::SessionTemplate;
 use crate::user::{User, UserProfile};
 use crate::value::name::ScopedName;
+use crate::value::ValueError;
+use chrono::{DateTime, Utc};
 use crate::workspace::Workspace;
 use crate::group::Group;
 use crate::intern::intern;
@@ -52,7 +54,7 @@ pub enum StoreError {
     /// A text that does not fit the field it was to be written into
     /// (issue 248): what the field is called and why.
     #[error("{0}")]
-    Invalid(#[from] crate::value::ValueError),
+    Invalid(#[from] ValueError),
     #[error("backend: {0}")]
     Backend(String),
     /// Refused (issue 323): what was refused is its source.
@@ -210,6 +212,26 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
     fn classification(&self) -> Option<&Classification> {
         None
     }
+}
+
+/// A kind whose changes are told by an update event (issues 248, 358): the
+/// event says what was asked, `apply` makes it into the kind's values - where
+/// it was asked and wherever it is announced, so that every live copy changes
+/// alike.
+pub trait Updatable: Stored {
+    /// What a change of it says, as it is asked and announced
+    /// (`GlobalEvent::updated`).
+    type Update: Serialize + DeserializeOwned + Send + Sync;
+
+    /// Applies `update`: what it says is made into its values here.
+    ///
+    /// # Errors
+    /// `ValueError` if what it says does not fit; it is then unchanged.
+    fn apply(&mut self, update: &Self::Update) -> Result<(), ValueError>;
+
+    /// Notes that it was changed `at`, for a kind that keeps when it was
+    /// changed last; nothing for one that does not.
+    fn touch(&mut self, _at: DateTime<Utc>) {}
 }
 
 /// What a kind can lie in (issue 335): the kind of entity that encloses

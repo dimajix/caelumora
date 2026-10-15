@@ -1,23 +1,21 @@
-use arc_swap::ArcSwap;
+use arc_swap::Guard;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Place};
-use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
+use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::group::Group;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessQuestions, AclEntry, Grant, SecurityContext, AccessPolicy, Subject};
 use caelumora_model::session::{Channel, Session};
-use caelumora_model::store::{EntityStore, EntityStores, StoreResult, StoreResultExt};
-use caelumora_model::value::name::ScopedName;
-use caelumora_model::value::text::Description;
+use caelumora_model::store::{EntityStore, EntityStores, StoreResult, StoreResultExt, Updatable};
 use caelumora_model::workspace::{Workspace, WorkspaceId, WorkspaceUpdateEvent};
-use chrono::Utc;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::warn;
 use crate::group::{prune_gone_groups, require_nameable};
 use crate::terminal::{Shell, Terminal, TerminalProvider};
 use crate::view::{channel_reading, ChannelReader};
 use crate::workspace::reaper::scope_of;
+use super::document::{LiveDocument, Writing};
 use crate::workspace::{require_classification, require_write, store_error, WorkspaceError, WorkspaceResult};
 
 /// The live workspace in this instance (issue 344), shared by everything
@@ -41,21 +39,15 @@ use crate::workspace::{require_classification, require_write, store_error, Works
 /// does by its announcement.
 #[derive(Debug)]
 pub struct WorkspaceController {
-    id: WorkspaceId,
-    workspace: ArcSwap<Workspace>,
+    workspace: LiveDocument<Workspace>,
     /// The storage the workspace's files lie in; none if it is no longer
     /// configured.
     provider: Option<Arc<dyn TerminalProvider>>,
-    event_publisher: Arc<dyn EventPublisher>,
-    workspaces: Arc<dyn EntityStore<Workspace>>,
     groups: Arc<dyn EntityStore<Group>>,
     /// Who may change its files (`WriteWorkspace`, issue 23).
     access_policy: Arc<dyn AccessPolicy>,
     /// What may flow where, and who is cleared for what (issue 304).
     confidentiality: Arc<dyn ConfidentialityPolicy>,
-    /// Held while the workspace is changed and stored, so that no change is
-    /// lost to another.
-    write_lock: tokio::sync::Mutex<()>,
 }
 
 impl WorkspaceController {
@@ -63,24 +55,20 @@ impl WorkspaceController {
     /// `ControllerManager`, which keeps one per workspace.
     pub(crate) fn new(workspace: Workspace, provider: Option<Arc<dyn TerminalProvider>>, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
         Self {
-            id: workspace.id,
-            workspace: ArcSwap::from_pointee(workspace),
+            workspace: LiveDocument::new(workspace.id, workspace, Arc::clone(&stores.workspaces), event_publisher),
             provider,
-            event_publisher,
-            workspaces: Arc::clone(&stores.workspaces),
             groups: Arc::clone(&stores.groups),
             access_policy,
             confidentiality,
-            write_lock: tokio::sync::Mutex::new(()),
         }
     }
 
-    pub fn load(&self) -> arc_swap::Guard<Arc<Workspace>> {
+    pub fn load(&self) -> Guard<Arc<Workspace>> {
         self.workspace.load()
     }
 
     pub fn id(&self) -> WorkspaceId {
-        self.id
+        *self.workspace.address()
     }
 
     /// Whether its terminals have a shell - asked of its storage, without
@@ -104,7 +92,7 @@ impl WorkspaceController {
         if need == Grant::Write {
             require_write(self.access_policy.as_ref(), ctx, &workspace).await?;
         }
-        Ok(self.provider(&workspace)?.terminal_for(self.id).await?)
+        Ok(self.provider(&workspace)?.terminal_for(self.id()).await?)
     }
 
     /// The workspace, if the caller of `ctx` may use it in `channel` of
@@ -122,15 +110,15 @@ impl WorkspaceController {
     /// Whatever reading the workspace reports, other than its absence.
     pub(crate) async fn usable_in(&self, ctx: &SecurityContext, session: &Session, channel: &Channel) -> WorkspaceResult<Option<Workspace>> {
         let member = channel.participants.iter().any(|participant| participant.actor_id() == ctx.caller_id);
-        if session.workspace != Some(self.id) || channel.session_id != session.id || !channel.uses_workspace || !member {
+        if session.workspace != Some(self.id()) || channel.session_id != session.id || !channel.uses_workspace || !member {
             return Ok(None);
         }
-        let Some(workspace) = self.workspaces.get(&SecurityContext::system(), self.id).await.optional()? else {
-            warn!(session = %session.id, workspace = %self.id, "The workspace attached to a session is gone");
+        let Some(workspace) = self.workspace.reached(&SecurityContext::system()).await.optional()? else {
+            warn!(session = %session.id, workspace = %self.id(), "The workspace attached to a session is gone");
             return Ok(None);
         };
         if !workspace.name.scope.admits(&Scope::SessionScope { session_id: session.id }) {
-            warn!(session = %session.id, workspace = %self.id, "A workspace of another session's scope is attached to a session");
+            warn!(session = %session.id, workspace = %self.id(), "A workspace of another session's scope is attached to a session");
             return Ok(None);
         }
         if !self.access_policy.may_read_workspace(ctx, &workspace.security_attributes).await {
@@ -150,7 +138,7 @@ impl WorkspaceController {
     /// `TerminalError` of reaching its place.
     pub(crate) async fn terminal_in(&self, ctx: &SecurityContext, session: &Session, channel: &Channel, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
         let workspace = self.usable_in_channel(ctx, session, channel, need).await?;
-        let terminal = self.provider(&workspace)?.terminal_for(self.id).await?;
+        let terminal = self.provider(&workspace)?.terminal_for(self.id()).await?;
         Ok((workspace, terminal))
     }
 
@@ -237,9 +225,9 @@ impl WorkspaceController {
     /// entry that names an agent, the system or nobody, or a group the
     /// caller cannot read.
     pub async fn update_access(&self, ctx: &SecurityContext, acl: Vec<AclEntry>) -> WorkspaceResult<()> {
-        let _guard = self.write_lock.lock().await;
-        let workspace = self.reached(ctx).await?;
-        self.store_access(ctx, workspace, acl).await
+        let mut writing = self.workspace.write().await;
+        let workspace = writing.reached(ctx).await.map_err(store_error(self.id()))?;
+        self.store_access(ctx, &writing, workspace, acl).await
     }
 
     /// Shares the workspace with `subject` as far as `grant` reaches, on
@@ -249,15 +237,15 @@ impl WorkspaceController {
     /// # Errors
     /// As [`Self::update_access`].
     pub async fn share(&self, ctx: &SecurityContext, subject: Subject, grant: Grant) -> WorkspaceResult<()> {
-        let _guard = self.write_lock.lock().await;
-        let workspace = self.reached(ctx).await?;
+        let mut writing = self.workspace.write().await;
+        let workspace = writing.reached(ctx).await.map_err(store_error(self.id()))?;
         let mut acl = workspace.security_attributes.acl.clone();
         if acl.iter().any(|entry| entry.subject == subject && entry.grant.covers(grant)) {
             return Ok(());
         }
         acl.retain(|entry| entry.subject != subject);
         acl.push(AclEntry { subject, grant });
-        self.store_access(ctx, workspace, acl).await
+        self.store_access(ctx, &writing, workspace, acl).await
     }
 
     /// Takes over a change made elsewhere - already stored there - once it
@@ -267,9 +255,8 @@ impl WorkspaceController {
     /// # Errors
     /// Whatever the store reports; the live copy is then unchanged.
     pub async fn process_global_event(&self, event: &GlobalEvent) -> StoreResult<()> {
-        if event.about::<Workspace>().is_some_and(|(id, change)| id == self.id && change.update::<WorkspaceUpdateEvent>().is_some()) {
-            let workspace = self.workspaces.get(&SecurityContext::system(), self.id).await?;
-            self.workspace.store(Arc::new(workspace));
+        if event.about::<Workspace>().is_some_and(|(id, change)| id == self.id() && change.update::<WorkspaceUpdateEvent>().is_some()) {
+            self.workspace.reload().await?;
         }
         Ok(())
     }
@@ -281,7 +268,7 @@ impl WorkspaceController {
     /// `NotFound` if they do not reach it, or whatever else the store
     /// reports.
     async fn reached(&self, ctx: &SecurityContext) -> WorkspaceResult<Workspace> {
-        self.workspaces.get(ctx, self.id).await.map_err(store_error(self.id))
+        self.workspace.reached(ctx).await.map_err(store_error(self.id()))
     }
 
     /// The storage `workspace` - this one, as reached - lies in.
@@ -304,48 +291,34 @@ impl WorkspaceController {
     /// longer configured, `ClassificationRefused`, `StorageNotCleared` or
     /// `NotCleared` for a classification, or whatever the store reports.
     async fn update(&self, ctx: &SecurityContext, event: WorkspaceUpdateEvent) -> WorkspaceResult<()> {
-        let _guard = self.write_lock.lock().await;
-        let mut workspace = self.reached(ctx).await?;
-        // Announced to who reaches it as it was, too: who no longer does
-        // learns so (issue 312).
-        let had = workspace.classification.clone();
-        match &event {
-            WorkspaceUpdateEvent::NameChanged(name) => workspace.name = ScopedName::new(name, workspace.name.scope.clone())?,
-            WorkspaceUpdateEvent::DescriptionChanged(description) => workspace.description = Description::optional(description.as_deref())?,
-            WorkspaceUpdateEvent::ClassificationChanged(classification) => {
-                let provider = self.provider(&workspace)?;
-                require_classification(self.confidentiality.as_ref(), ctx, &workspace.storage, provider.as_ref(), classification)?;
-                workspace.classification = classification.clone();
-            }
-            // Changed by `update_access`, which announces it without the list.
-            WorkspaceUpdateEvent::AccessChanged => {}
+        let mut writing = self.workspace.write().await;
+        let mut workspace = writing.reached(ctx).await.map_err(store_error(self.id()))?;
+        if let WorkspaceUpdateEvent::ClassificationChanged(classification) = &event {
+            let provider = self.provider(&workspace)?;
+            require_classification(self.confidentiality.as_ref(), ctx, &workspace.storage, provider.as_ref(), classification)?;
         }
-        let workspace = self.store(ctx, workspace).await?;
-        self.event_publisher.publish_classified(GlobalEvent::updated::<Workspace>(&self.id, &event), workspace.security_attributes.clone(), &[had, workspace.classification.clone()]);
-        info!(workspace = %self.id, by = %ctx.caller_id, "Workspace changed");
+        workspace.apply(&event)?;
+        let workspace = self.store(ctx, &writing, workspace).await?;
+        writing.announce_update(&event, &workspace);
         Ok(())
     }
 
     /// Gives the reached `workspace` the access list `acl`, as
-    /// `update_access` says, under the write lock.
-    async fn store_access(&self, ctx: &SecurityContext, mut workspace: Workspace, acl: Vec<AclEntry>) -> WorkspaceResult<()> {
+    /// `update_access` says, under `writing`. Announced without the list
+    /// (`WorkspaceUpdateEvent::AccessChanged`).
+    async fn store_access(&self, ctx: &SecurityContext, writing: &Writing<'_, Workspace>, mut workspace: Workspace, acl: Vec<AclEntry>) -> WorkspaceResult<()> {
         require_nameable(self.groups.as_ref(), ctx, &workspace.security_attributes.acl, &acl).await?;
         workspace.security_attributes.acl = acl;
-        let workspace = self.store(ctx, workspace).await?;
-        self.event_publisher.announce(GlobalEvent::updated::<Workspace>(&self.id, &WorkspaceUpdateEvent::AccessChanged), &*workspace);
-        info!(workspace = %self.id, by = %ctx.caller_id, "Workspace's access changed");
+        let workspace = self.store(ctx, writing, workspace).await?;
+        writing.announce_update(&WorkspaceUpdateEvent::AccessChanged, &workspace);
         Ok(())
     }
 
-    /// Stores `workspace` as changed by `ctx` - its access list without the
-    /// entries naming a group that is gone (issue 347) - and takes it over
-    /// live.
-    async fn store(&self, ctx: &SecurityContext, mut workspace: Workspace) -> WorkspaceResult<Arc<Workspace>> {
+    /// Stores `workspace` as changed by `ctx` under `writing` - its access
+    /// list without the entries naming a group that is gone (issue 347) -
+    /// and takes it over live.
+    async fn store(&self, ctx: &SecurityContext, writing: &Writing<'_, Workspace>, mut workspace: Workspace) -> WorkspaceResult<Arc<Workspace>> {
         prune_gone_groups(self.groups.as_ref(), [&mut workspace.security_attributes.acl]).await;
-        workspace.updated_at = Utc::now();
-        self.workspaces.update(ctx, &workspace).await.map_err(store_error(self.id))?;
-        let workspace = Arc::new(workspace);
-        self.workspace.store(Arc::clone(&workspace));
-        Ok(workspace)
+        writing.store(ctx, workspace).await.map_err(store_error(self.id()))
     }
 }

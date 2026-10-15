@@ -10,7 +10,7 @@ use crate::value::text::Introduction;
 use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
 use crate::removal::{Deletable, Removal};
-use crate::store::{EntityKind, NoEntity, Stored};
+use crate::store::{EntityKind, NoEntity, Stored, Updatable};
 use crate::store::query::{Field, NoField};
 
 define_id!(UserId);
@@ -73,6 +73,21 @@ impl Stored for User {
     }
 }
 
+/// What a change of the user says is made into its values here (issue
+/// 248).
+impl Updatable for User {
+    type Update = UserUpdateEvent;
+
+    fn apply(&mut self, event: &UserUpdateEvent) -> Result<(), ValueError> {
+        match event {
+            UserUpdateEvent::NameChanged(name) => self.username = Name::new(name)?,
+            // As the `UserManager` stored them (issue 306).
+            UserUpdateEvent::RolesChanged(roles) => self.roles = roles.clone(),
+        }
+        Ok(())
+    }
+}
+
 impl Deletable for User {
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
@@ -120,24 +135,6 @@ pub enum UserUpdateEvent {
     /// `UserManager` stored them.
     RolesChanged(Vec<RoleId>),
 }
-
-impl User {
-    /// Applies `event`, a change of the user as it was asked: what it says
-    /// is made into the user's values here (issue 248).
-    ///
-    /// # Errors
-    /// `ValueError` if what it says does not fit; the user is then
-    /// unchanged.
-    pub fn apply(&mut self, event: &UserUpdateEvent) -> Result<(), ValueError> {
-        match event {
-            UserUpdateEvent::NameChanged(name) => self.username = Name::new(name)?,
-            // As the `UserManager` stored them (issue 306).
-            UserUpdateEvent::RolesChanged(roles) => self.roles = roles.clone(),
-        }
-        Ok(())
-    }
-}
-
 
 /// What a user says about themselves (issue 176): the introduction an agent
 /// is given of them in every channel they take part in, marked there as

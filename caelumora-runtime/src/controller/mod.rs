@@ -5,9 +5,12 @@
 //! The documents themselves are the model's; keeping them live, writing
 //! them and announcing is the runtime's.
 //!
-//! Every controller is built the same way - the document, the event
-//! publisher, the store - holds a write lock while it changes its document,
-//! and takes over changes made elsewhere through `process_global_event`.
+//! Every controller holds its document as a `LiveDocument` (issue 358),
+//! which keeps it live, holds a lock while it is changed, stores it - with
+//! when it was changed (`Updatable::touch`) -, announces it and takes over
+//! changes made elsewhere (`process_global_event`), and notes each change in
+//! the log. What a controller does besides, it does between the steps of a
+//! `Writing`.
 //! The user's writes the user's profile; the user record itself belongs to
 //! the system and is not changed through it.
 //!
@@ -22,6 +25,7 @@
 
 mod agent;
 mod channel;
+mod document;
 mod manager;
 mod session;
 mod user;

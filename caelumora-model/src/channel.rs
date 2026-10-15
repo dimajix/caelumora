@@ -12,7 +12,7 @@ use crate::scope::{Scope, Scoped};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::{Session, SessionId};
 use crate::store::query::Field;
-use crate::store::{self, EntityKind, Journaled};
+use crate::store::{self, EntityKind, Journaled, Updatable};
 use crate::user::UserId;
 use crate::value::language::Language;
 use crate::value::name::{Name, ScopedName};
@@ -225,6 +225,24 @@ impl store::Stored for Channel {
     }
 }
 
+/// What a change of the channel says is made into its values here (issue
+/// 248).
+impl Updatable for Channel {
+    type Update = ChannelUpdateEvent;
+
+    fn apply(&mut self, event: &ChannelUpdateEvent) -> Result<(), ValueError> {
+        match event {
+            ChannelUpdateEvent::NameChanged(name) => self.name = Name::new(name)?,
+            ChannelUpdateEvent::ClassificationChanged(classification) => self.classification = classification.clone(),
+            ChannelUpdateEvent::LanguageChanged(language) => self.language = Language::optional(language.as_deref())?,
+            ChannelUpdateEvent::ApprovalRulesChanged(rules) => self.approval_rules = rules.clone(),
+            ChannelUpdateEvent::DescriptionChanged { summary, briefing } => self.describe(summary.as_deref(), briefing.as_deref())?,
+            ChannelUpdateEvent::UsesWorkspaceChanged(uses) => self.uses_workspace = *uses,
+        }
+        Ok(())
+    }
+}
+
 impl Deletable for Channel {
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
@@ -293,24 +311,6 @@ impl Channel {
             uses_workspace: true,
             deleted: None,
         }
-    }
-
-    /// Applies `event`, a change of the channel as it was asked: what it says
-    /// is made into the channel's values here (issue 248).
-    ///
-    /// # Errors
-    /// `ValueError` if what it says does not fit; the channel is then
-    /// unchanged.
-    pub fn apply(&mut self, event: &ChannelUpdateEvent) -> Result<(), ValueError> {
-        match event {
-            ChannelUpdateEvent::NameChanged(name) => self.name = Name::new(name)?,
-            ChannelUpdateEvent::ClassificationChanged(classification) => self.classification = classification.clone(),
-            ChannelUpdateEvent::LanguageChanged(language) => self.language = Language::optional(language.as_deref())?,
-            ChannelUpdateEvent::ApprovalRulesChanged(rules) => self.approval_rules = rules.clone(),
-            ChannelUpdateEvent::DescriptionChanged { summary, briefing } => self.describe(summary.as_deref(), briefing.as_deref())?,
-            ChannelUpdateEvent::UsesWorkspaceChanged(uses) => self.uses_workspace = *uses,
-        }
-        Ok(())
     }
 
     /// Says what the channel is for (issue 245): `summary` and `briefing`

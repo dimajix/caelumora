@@ -31,9 +31,7 @@ impl ChannelLoop {
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// channel, or whatever else storing it reports.
     pub async fn update_language(&self, context: &SecurityContext, language: Option<&str>) -> Result<()> {
-        self.channel.update_language(context, language).await?;
-        info!(channel = %self.id, language = language.unwrap_or("none"), by = %context.caller_id, "Channel language changed");
-        Ok(())
+        Ok(self.channel.update_language(context, language).await?)
     }
 
     /// Says what the channel is for (issue 245) on behalf of `context`:
@@ -46,9 +44,7 @@ impl ChannelLoop {
     /// holds what it may not, `StoreError::PermissionDenied` if `context`
     /// may not change the channel, or whatever else storing it reports.
     pub async fn update_description(&self, context: &SecurityContext, summary: Option<&str>, briefing: Option<&str>) -> Result<()> {
-        self.channel.update_description(context, summary, briefing).await?;
-        info!(channel = %self.id, by = %context.caller_id, "Channel description changed");
-        Ok(())
+        Ok(self.channel.update_description(context, summary, briefing).await?)
     }
 
     /// Sets whether the channel's members work on the workspace of its
@@ -61,9 +57,7 @@ impl ChannelLoop {
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// channel, or whatever else storing it reports.
     pub async fn update_uses_workspace(&self, context: &SecurityContext, uses: bool) -> Result<()> {
-        self.channel.update_uses_workspace(context, uses).await?;
-        info!(channel = %self.id, uses, by = %context.caller_id, "Channel's use of the workspace changed");
-        Ok(())
+        Ok(self.channel.update_uses_workspace(context, uses).await?)
     }
 
     /// Sets what the channel restricts of the tool calls made in it (issue
@@ -76,10 +70,7 @@ impl ChannelLoop {
     /// `StoreError::PermissionDenied` if `context` may not change the
     /// channel, or whatever else storing it reports.
     pub async fn update_approval_rules(&self, context: &SecurityContext, rules: Vec<ApprovalRule>) -> Result<()> {
-        let count = rules.len();
-        self.channel.update_approval_rules(context, rules).await?;
-        info!(channel = %self.id, rules = count, by = %context.caller_id, "Channel approval rules changed");
-        Ok(())
+        Ok(self.channel.update_approval_rules(context, rules).await?)
     }
 
     /// Reclassifies the channel as `classification` on behalf of `context`

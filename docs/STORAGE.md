@@ -275,9 +275,17 @@ controller changes and what its entity's manager does is in
     only then takes it over live and announces it.
 *   **Events.** Controllers publish their changes on the `EventBus` (see [EVENTS.md](EVENTS.md)) and
     take over changes announced elsewhere.
-*   **One shape.** Every controller is built from the document, the event publisher and the store.
-    The `UserController` holds the user's record, which belongs to the system and is only kept
-    current, and their profile, which is written through it and announced to its user and the
+*   **One shape.** Every controller holds its document as a `LiveDocument` (issue 358), which does
+    all of the above alike for every kind: a change told by the kind's update event
+    (`Updatable::apply`, in the model) is applied, stored with when it was changed
+    (`Updatable::touch`, `updated_at` where a kind keeps it), taken over, announced - to who reached
+    the document as it was classified and as it is - and logged, once, by the controller. What a
+    controller does besides - a group that follows the participants, an event of its own, the
+    checks of a workspace, which is changed as stored rather than as live - it does between the
+    steps of a `Writing`, the change under way. A running session's and a channel's loop only
+    forward to their controller what does no more than that. The `UserController` holds no
+    `LiveDocument`: the user's record belongs to the system and is only kept current, and their
+    profile is created with its first change and announced as it stands, to its user and the
     runtime alone. The `WorkspaceController` also holds the storage its workspace lies in and the
     confidentiality policy, which a new classification is asked of.
 

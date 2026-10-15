@@ -16,7 +16,7 @@ use crate::removal::{Deletable, Removal};
 use crate::role::RoleId;
 use crate::scope::{ScopeField, Scoped};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
-use crate::store::{self, EntityKind, Journaled, NoEntity};
+use crate::store::{self, EntityKind, Journaled, NoEntity, Updatable};
 use crate::tool::{RecordedToolSets, Tool, ToolCallResult, ToolCallStatus, ToolResultStatus, ToolSet};
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use crate::turn::GivenUpReason;
@@ -187,6 +187,19 @@ impl store::Stored for Agent {
     }
 }
 
+/// What a change of the agent says is made into its values here (issue
+/// 248).
+impl Updatable for Agent {
+    type Update = AgentUpdateEvent;
+
+    fn apply(&mut self, event: &AgentUpdateEvent) -> Result<(), ValueError> {
+        match event {
+            AgentUpdateEvent::NameChanged(name) => self.name.name = Name::new(name)?,
+        }
+        Ok(())
+    }
+}
+
 impl Deletable for Agent {
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
@@ -248,19 +261,6 @@ pub struct Agent {
 }
 
 impl Agent {
-    /// Applies `event`, a change of the agent as it was asked: what it says
-    /// is made into the agent's values here (issue 248).
-    ///
-    /// # Errors
-    /// `ValueError` if what it says does not fit; the agent is then
-    /// unchanged.
-    pub fn apply(&mut self, event: &AgentUpdateEvent) -> Result<(), ValueError> {
-        match event {
-            AgentUpdateEvent::NameChanged(name) => self.name.name = Name::new(name)?,
-        }
-        Ok(())
-    }
-
     /// The context the agent acts in when nobody asked it, in the channel
     /// `channel` of session `session` (issue 87): begun by the agent itself,
     /// answered for by its owner and acting in the name of its principal

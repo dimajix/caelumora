@@ -1,6 +1,6 @@
 # 358 — The controllers apply, store and announce their events each on their own, and the loops forward them unevenly
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -57,3 +57,33 @@ not depending on the path.
 
 - **2026-10-14** — From the review of agents, sessions and channels, epic
   [349](349-core-review-epic.md).
+- **2026-10-15** — Done, as one generic type by the maintainer's decision, with `updated_at` moved
+  by every change and the logging once, in the controllers.
+  - In the model, a trait `Updatable: Stored` (`store/mod.rs`): the kind's update event
+    (`Update`), `apply` - the `apply` of `Session`, `Channel`, `Agent` and `User` moved into it -
+    and `touch`, which `Session` and `Workspace` answer with their `updated_at`. `Workspace` has an
+    `apply` of its own now; whether a classification may be given stays the runtime's to ask
+    before.
+  - In the runtime, `controller/document.rs`: `LiveDocument<T>` holds the address, the live copy,
+    the store, the publisher and the lock - the fields every controller had -, with `update`
+    (lock, apply, touch, store, take over, announce), `take_over` (today's
+    `process_global_event`), `reached` and `reload` (read as stored). `Writing<'_, T>` is a change
+    under way, under the lock: `current` or `reached`, `apply`, `store`, `announce`,
+    `announce_update`, `announce_also_to`; what a controller does besides it does between them -
+    the participants' group of a session and a channel, the membership events, the workspace's
+    checks.
+  - What a kind announces with needed no method of its own: every change is announced to who
+    reached the document as it was classified when the change began and as it is
+    (`Stored::classification`), once if they are the same - the channel's and the workspace's two
+    classifications, nothing for a kind that is not classified.
+  - `SessionController::store` and `ChannelController::store` are gone, so are the five
+    controllers' `write_lock`, `event_publisher` and store fields and their `id` fields (the
+    address answers it). `AgentController::update_name` goes through `update`.
+  - Every stored change is logged once, `info!` with the kind, the id and who changed it, not what
+    changed - a name or a briefing is someone's text. The loops' `update_*` are one line of
+    forwarding each, without logging; `reclassify` and `set_workspace` keep theirs.
+  - The `UserController` holds no `LiveDocument`, on purpose: it does not write the user, and the
+    profile is created with its first change and announced as it stands. It takes the user over
+    with the same `take_over` and logs a change of the profile with the same `log_changed`.
+  - `updated_at` of a session now moves with every change, not only with its channels; no stored
+    data has to be deleted. STORAGE.md describes the shape.

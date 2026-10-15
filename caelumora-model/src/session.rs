@@ -14,7 +14,7 @@ use crate::value::ValueError;
 use crate::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use crate::removal::{Deletable, Removal};
-use crate::store::{EntityKind, NoEntity, Stored};
+use crate::store::{EntityKind, NoEntity, Stored, Updatable};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionUpdateEvent {
@@ -103,6 +103,28 @@ impl Stored for Session {
     }
 }
 
+/// What a change of the session says is made into its values here (issue
+/// 248).
+impl Updatable for Session {
+    type Update = SessionUpdateEvent;
+
+    fn apply(&mut self, event: &SessionUpdateEvent) -> Result<(), ValueError> {
+        match event {
+            SessionUpdateEvent::NameChanged(name) => self.name = Name::new(name)?,
+            SessionUpdateEvent::PrivacyChanged(privacy) => self.privacy = *privacy,
+            SessionUpdateEvent::ApprovalRulesChanged(rules) => self.approval_rules = rules.clone(),
+            SessionUpdateEvent::DescriptionChanged { summary, briefing } => self.describe(summary.as_deref(), briefing.as_deref())?,
+            SessionUpdateEvent::WorkspaceChanged(workspace) => self.workspace = *workspace,
+            SessionUpdateEvent::ParticipantAdded(participant) => self.take_in(participant.clone()),
+        }
+        Ok(())
+    }
+
+    fn touch(&mut self, at: DateTime<Utc>) {
+        self.updated_at = at;
+    }
+}
+
 impl Deletable for Session {
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
@@ -117,24 +139,6 @@ impl Session {
     pub fn attributes_of(id: SessionId, owner: UserId, access: &[AclEntry]) -> SecurityAttributes {
         let attributes = SecurityAttributes::owned_by(ActorId::User(owner)).granting(Subject::Group(GroupId::of_session(id)), Grant::Read);
         SecurityAttributes { acl: attributes.acl.into_iter().chain(access.iter().copied()).collect(), ..attributes }
-    }
-
-    /// Applies `event`, a change of the session as it was asked: what it says
-    /// is made into the session's values here (issue 248).
-    ///
-    /// # Errors
-    /// `ValueError` if what it says does not fit; the session is then
-    /// unchanged.
-    pub fn apply(&mut self, event: &SessionUpdateEvent) -> Result<(), ValueError> {
-        match event {
-            SessionUpdateEvent::NameChanged(name) => self.name = Name::new(name)?,
-            SessionUpdateEvent::PrivacyChanged(privacy) => self.privacy = *privacy,
-            SessionUpdateEvent::ApprovalRulesChanged(rules) => self.approval_rules = rules.clone(),
-            SessionUpdateEvent::DescriptionChanged { summary, briefing } => self.describe(summary.as_deref(), briefing.as_deref())?,
-            SessionUpdateEvent::WorkspaceChanged(workspace) => self.workspace = *workspace,
-            SessionUpdateEvent::ParticipantAdded(participant) => self.take_in(participant.clone()),
-        }
-        Ok(())
     }
 
     /// Says what the session is for (issue 245): `summary` and `briefing`

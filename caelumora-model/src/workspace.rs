@@ -16,7 +16,8 @@ use crate::value::name::ScopedName;
 use crate::value::text::Description;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::store::{EntityKind, NoEntity, Stored};
+use crate::store::{EntityKind, NoEntity, Stored, Updatable};
+use crate::value::ValueError;
 
 define_id!(WorkspaceId);
 
@@ -138,6 +139,29 @@ impl Stored for Workspace {
     }
 }
 
+/// What a change of the workspace says is made into its values here (issue
+/// 248). Whether a classification may be given is the runtime's to ask
+/// before - of its storage and its owner's clearance -, and a new access
+/// list is never announced: whoever takes the change over reads it as
+/// stored.
+impl Updatable for Workspace {
+    type Update = WorkspaceUpdateEvent;
+
+    fn apply(&mut self, event: &WorkspaceUpdateEvent) -> Result<(), ValueError> {
+        match event {
+            WorkspaceUpdateEvent::NameChanged(name) => self.name = ScopedName::new(name, self.name.scope.clone())?,
+            WorkspaceUpdateEvent::DescriptionChanged(description) => self.description = Description::optional(description.as_deref())?,
+            WorkspaceUpdateEvent::ClassificationChanged(classification) => self.classification = classification.clone(),
+            WorkspaceUpdateEvent::AccessChanged => {}
+        }
+        Ok(())
+    }
+
+    fn touch(&mut self, at: DateTime<Utc>) {
+        self.updated_at = at;
+    }
+}
+
 impl Deletable for Workspace {
     fn set_deleted(&mut self, deleted: Option<Removal>) {
         self.deleted = deleted;
@@ -223,6 +247,21 @@ mod tests {
         assert!(shared.validate().is_ok(), "shared with someone");
         let systems = Workspace { security_attributes: SecurityAttributes::owned_by(ActorId::System), ..workspace };
         assert!(systems.validate().is_err(), "nor nobody's");
+    }
+
+    #[test]
+    fn a_change_is_applied_where_the_workspace_lies() {
+        let session_id = SessionId::new();
+        let mut workspace = Workspace::new(named(Scope::SessionScope { session_id }), "main", Classification::CHANNEL_DEFAULT, UserId::new());
+        workspace.apply(&WorkspaceUpdateEvent::NameChanged("Notes".to_string())).unwrap();
+        assert_eq!(workspace.scoped_name(), ScopedName::new("Notes", Scope::SessionScope { session_id }).unwrap(), "renamed in its scope");
+        workspace.apply(&WorkspaceUpdateEvent::DescriptionChanged(Some("What we found".to_string()))).unwrap();
+        workspace.apply(&WorkspaceUpdateEvent::DescriptionChanged(Some(String::new()))).unwrap();
+        assert_eq!(workspace.description, None, "empty is none");
+        workspace.apply(&WorkspaceUpdateEvent::ClassificationChanged(Classification::PUBLIC)).unwrap();
+        assert_eq!(workspace.classification, Classification::PUBLIC);
+        assert!(workspace.apply(&WorkspaceUpdateEvent::NameChanged(" ".to_string())).is_err(), "no name");
+        assert_eq!(workspace.scoped_name().name.as_str(), "Notes", "unchanged by what does not fit");
     }
 
     #[test]

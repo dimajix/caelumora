@@ -1,5 +1,5 @@
 use caelumora_model::value::name::Name;
-use arc_swap::ArcSwap;
+use arc_swap::Guard;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
@@ -8,50 +8,36 @@ use caelumora_model::channel::{self, Channel, ChannelId, ChannelUpdateEvent, For
 use caelumora_model::removal::Removal;
 use caelumora_model::group::Group;
 use tracing::error;
-use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
-use caelumora_model::security::{Grant, SecurityContext, Subject};
-use caelumora_model::session::SessionId;
+use caelumora_model::event::{EventPublisher, GlobalEvent};
+use caelumora_model::security::{SecurityContext, Subject};
 use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
 use std::sync::Arc;
 use super::check_restricting;
+use super::document::LiveDocument;
 
 /// The one writer of a channel's document (issue 70): changes are stored
 /// first - where the permission is checked, on the channel's own attributes
 /// - and only then taken over live and announced.
 #[derive(Debug)]
 pub struct ChannelController {
-    id: ChannelId,
-    session_id: SessionId,
-    channel: ArcSwap<Channel>,
-    event_publisher: Arc<dyn EventPublisher>,
-    channels: Arc<dyn EntityStore<Channel>>,
+    channel: LiveDocument<Channel>,
     groups: Arc<dyn EntityStore<Group>>,
-    /// Held while the channel is changed and stored, so that two changes
-    /// cannot overwrite each other.
-    write_lock: tokio::sync::Mutex<()>,
 }
 
 impl ChannelController {
     pub fn new(channel: Channel, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores) -> Self {
-        let id = channel.id;
-        let session_id = channel.session_id;
         Self {
-            id,
-            session_id,
-            channel: ArcSwap::from_pointee(channel),
-            event_publisher,
-            channels: Arc::clone(&stores.channels),
+            channel: LiveDocument::new((channel.session_id, channel.id), channel, Arc::clone(&stores.channels), event_publisher),
             groups: Arc::clone(&stores.groups),
-            write_lock: tokio::sync::Mutex::new(()),
         }
     }
 
-    pub fn load(&self) -> arc_swap::Guard<Arc<Channel>> {
+    pub fn load(&self) -> Guard<Arc<Channel>> {
         self.channel.load()
     }
 
     pub fn id(&self) -> ChannelId {
-        self.id
+        self.channel.address().1
     }
 
     pub fn name(&self) -> Name {
@@ -126,8 +112,8 @@ impl ChannelController {
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
     pub async fn add_participant(&self, ctx: &SecurityContext, participant: Participant, start: Option<HistoryStart>) -> StoreResult<()> {
-        let _writing = self.write_lock.lock().await;
-        let mut channel = (**self.channel.load()).clone();
+        let writing = self.channel.write().await;
+        let mut channel = writing.current();
         let id = participant.actor_id();
         channel.participants.push(participant);
         // Back again: no longer a former participant (issue 164).
@@ -136,12 +122,10 @@ impl ChannelController {
         if let Some(start) = start {
             channel.history_limits.push(HistoryLimit { participant: id, start });
         }
-        self.store(ctx, &channel).await?;
+        let channel = writing.store(ctx, channel).await?;
         self.keep_participants(&channel).await;
-        let channel = Arc::new(channel);
-        self.channel.store(Arc::clone(&channel));
         if let Some(event) = self.membership_event(id, true) {
-            self.event_publisher.announce(event, &*channel);
+            writing.announce(event, &channel);
         }
         Ok(())
     }
@@ -157,22 +141,18 @@ impl ChannelController {
     /// `StoreError::NotFound` if `participant` takes no part in the channel;
     /// whatever the store reports otherwise.
     pub async fn remove_participant(&self, ctx: &SecurityContext, participant: ActorId) -> StoreResult<Participant> {
-        let _writing = self.write_lock.lock().await;
-        let mut channel = (**self.channel.load()).clone();
+        let writing = self.channel.write().await;
+        let mut channel = writing.current();
         let index = channel.participants.iter().position(|p| p.actor_id() == participant)
             .ok_or_else(|| StoreError::NotFound { entity: "participant", id: participant.to_string() })?;
         let removed = channel.participants.remove(index);
         channel.history_limits.retain(|l| l.participant != participant);
         channel.former.retain(|f| f.participant.actor_id() != participant);
         channel.former.push(FormerParticipant { participant: removed.clone(), left: Removal::now(ctx.caller_id) });
-        // Never stored: only who receives the announcement.
-        let told = channel.security_attributes.clone().granting(Subject::Actor(participant), Grant::Read);
-        self.store(ctx, &channel).await?;
+        let channel = writing.store(ctx, channel).await?;
         self.keep_participants(&channel).await;
-        let classification = channel.classification.clone();
-        self.channel.store(Arc::new(channel));
         if let Some(event) = self.membership_event(participant, false) {
-            self.event_publisher.publish_classified(event, told, &[classification]);
+            writing.announce_also_to(event, &channel, Subject::Actor(participant));
         }
         Ok(removed)
     }
@@ -194,9 +174,8 @@ impl ChannelController {
     /// channel as a former member; restored, it takes part again. Announced
     /// as a leave or a join is, to whoever reads the channel.
     pub(crate) fn announce_resting(&self, agent: AgentId, resting: bool) {
-        let channel = self.channel.load();
         if let Some(event) = self.membership_event(ActorId::Agent(agent), !resting) {
-            self.event_publisher.announce(event, &**channel);
+            self.channel.announce(event);
         }
     }
 
@@ -204,7 +183,7 @@ impl ChannelController {
     fn membership_event(&self, participant: ActorId, joined: bool) -> Option<GlobalEvent> {
         let name = if joined { channel::JOINED } else { channel::LEFT };
         match participant {
-            ActorId::Agent(_) | ActorId::User(_) => Some(GlobalEvent::custom::<Channel>(&(self.session_id, self.id), name, &participant)),
+            ActorId::Agent(_) | ActorId::User(_) => Some(GlobalEvent::custom::<Channel>(self.channel.address(), name, &participant)),
             _ => None,
         }
     }
@@ -219,28 +198,14 @@ impl ChannelController {
         }
     }
 
-    /// Stores `channel` on behalf of `ctx`.
-    async fn store(&self, ctx: &SecurityContext, channel: &Channel) -> StoreResult<()> {
-        self.channels.update(ctx, channel).await
-    }
-
-    /// Applies `event` (`Channel::apply`), stores the channel, takes it over
-    /// and announces it.
+    /// Applies `event` on behalf of `ctx` (`LiveDocument::update`): stored,
+    /// taken over and announced - to who reached the channel as it was,
+    /// too, so that who no longer does learns so (issue 312).
     ///
     /// # Errors
     /// `StoreError::Invalid` if what it says does not fit, otherwise
     /// whatever the store reports.
     async fn update(&self, ctx: &SecurityContext, event: &ChannelUpdateEvent) -> StoreResult<()> {
-        let _writing = self.write_lock.lock().await;
-        let mut channel = (**self.channel.load()).clone();
-        // Announced to who reaches it as it was, too: who no longer does
-        // learns so (issue 312).
-        let had = channel.classification.clone();
-        channel.apply(event)?;
-        self.store(ctx, &channel).await?;
-        let (attributes, classifications) = (channel.security_attributes.clone(), [had, channel.classification.clone()]);
-        self.channel.store(Arc::new(channel));
-        self.event_publisher.publish_classified(GlobalEvent::updated::<Channel>(&(self.session_id, self.id), event), attributes, &classifications);
-        Ok(())
+        self.channel.update(ctx, event).await.map(drop)
     }
 }
