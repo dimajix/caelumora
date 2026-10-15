@@ -305,9 +305,13 @@ that answered it.
 ### Unit tests
 
 *   **Placement:** in a `mod tests` block at the bottom of the file, guarded by `#[cfg(test)]`.
-*   **Shared fixtures:** what the tests of several files use lives in a `#[cfg(test)] pub(crate) mod
-    testing` of the module it builds, e.g. `session::testing`. The tests of the actors in a running
-    channel share the channel's fixtures and live with them in `channel/tests/`.
+*   **Shared fixtures:** what the tests of several files use lives in a `testing` module of the
+    module it builds, e.g. `session::testing` - `#[cfg(test)] pub(crate)` while only the crate's own
+    tests use it, `#[cfg(any(test, feature = "test-support"))] pub` once the tests of another crate
+    do (`channel::testing`, `session::testing`, `workspace::testing`, `component::testing`, issue
+    370). What such a module adds to a type for tests - `ChannelLoop::actor_of` - is named apart
+    from the type's own API and widens nothing outside `test-support`. The tests of the actors in a
+    running channel live in `channel/tests/`, those of the agents in `channel/tests/agents/`.
 *   **Agents in the runtime's tests:** a test of what a channel, a session or the views do with an
     agent among their participants runs a scripted agent (`testing::ScriptedAgents`, issue 370),
     which begins, ends or hangs in its answers as told; a test of what an agent does runs the

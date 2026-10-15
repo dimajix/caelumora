@@ -27,8 +27,8 @@
 
 mod manager;
 pub(crate) mod reaper;
-#[cfg(test)]
-pub(crate) mod testing;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 
 pub use manager::WorkspaceManager;
 

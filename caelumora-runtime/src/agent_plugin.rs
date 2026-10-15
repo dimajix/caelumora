@@ -63,7 +63,7 @@ mod tests {
     use crate::moderator::policy_moderator::POLICY_MODERATOR_KIND;
     use crate::moderator::round_robin_policy::ROUND_ROBIN_POLICY_KIND;
     use crate::runtime::{RuntimeManager, Services};
-    use crate::testing::test_registry;
+    use crate::agent_testing::test_registry;
     use crate::tool::echo_tool::ECHO_TOOL_KIND;
     use caelumora_model::component::ComponentConfig;
     use caelumora_model::security::SecurityContext;

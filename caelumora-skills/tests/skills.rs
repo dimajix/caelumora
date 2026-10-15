@@ -27,7 +27,8 @@ use caelumora_runtime::agent_command::AgentCommandProvider;
 use caelumora_runtime::compaction::KnowledgeRestorer;
 use caelumora_runtime::prompt::{PromptPosition, PromptProvider};
 use caelumora_runtime::session::SessionLoop;
-use caelumora_runtime::testing::{asked_for, register_once, shown, World, STAFF};
+use caelumora_runtime::agent_testing::{self, register_once};
+use caelumora_runtime::testing::{asked_for, shown, World, STAFF};
 use caelumora_runtime::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_runtime::view::Viewer;
 use caelumora_skills::component::{SkillsComponent, CREATE_SKILL_TOOL_NAME, LIST_SKILLS_TOOL_NAME, LOAD_SKILL_TOOL_NAME, SKILLS_KIND, SKILL_COMMAND_NAME, UPDATE_SKILL_TOOL_NAME};
@@ -40,7 +41,7 @@ use std::sync::Arc;
 
 /// The world with skills.
 async fn world() -> World {
-    World::with(&[&SkillsPlugin], |_| {}).await
+    agent_testing::world_with(&[&SkillsPlugin], |_| {}).await
 }
 
 /// The one writer of skills of `world`.
@@ -77,25 +78,25 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
     let (session, helper) = with_an_agent(&world).await;
     let component = component();
     let mut state = AgentChannelState::default();
-    let prompt = component.get_prompt(&World::turn(&session, helper, world.alice, &mut state).work()).await.unwrap();
+    let prompt = component.get_prompt(&agent_testing::turn(&session, helper, world.alice, &mut state).work()).await.unwrap();
     assert_eq!(prompt.text, "", "nothing to list, no part");
 
     let internal = Classification::general(Confidentiality::Internal);
     let made = manager(&world)
         .create(&SecurityContext::system(), "release-notes", Scope::GlobalScope, "How we write a release note", "1. Collect.\n2. Group.", internal.clone()).await.unwrap();
     let mut state = AgentChannelState::default();
-    let prompt = component.get_prompt(&World::turn(&session, helper, world.alice, &mut state).work()).await.unwrap();
+    let prompt = component.get_prompt(&agent_testing::turn(&session, helper, world.alice, &mut state).work()).await.unwrap();
     assert!(prompt.text.starts_with("[Skills you can load]") && prompt.text.contains("- release-notes: How we write a release note"), "{}", prompt.text);
     assert!(!prompt.text.contains("Collect"), "the catalogue, not the text");
     assert_eq!(prompt.classification, Some(internal.clone()));
 
-    let mut turn = World::turn(&session, helper, world.alice, &mut state);
+    let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     let listed = call(&component, &mut turn, LIST_SKILLS_TOOL_NAME, serde_json::json!({})).await.unwrap();
     assert_eq!(listed.value, serde_json::json!({ "skills": [{ "name": "release-notes", "description": "How we write a release note", "skill_id": made.id }] }), "each with its id, for a frontend to link to");
     assert_eq!(listed.classification, Some(internal.clone()));
     drop(turn);
 
-    let mut turn = World::turn(&session, helper, world.alice, &mut state);
+    let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     let loaded = call(&component, &mut turn, LOAD_SKILL_TOOL_NAME, serde_json::json!({ "name": "release-notes" })).await.unwrap();
     assert_eq!(loaded.value, Value::String("[Skill: release-notes]\n1. Collect.\n2. Group.\n".to_string()), "the text, under its title");
     assert_eq!(loaded.classification, Some(internal));
@@ -103,7 +104,7 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
     let read = state.turn.as_ref().unwrap().work.context.knowledge.clone();
     assert!(matches!(read.as_slice(), [KnowledgeRef { source, .. }] if source.about::<Skill>() == Some((made.id, Some(skill::digest("1. Collect.\n2. Group."))))), "{read:?}");
 
-    let mut turn = World::turn(&session, helper, world.alice, &mut state);
+    let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     let absent = call(&component, &mut turn, LOAD_SKILL_TOOL_NAME, serde_json::json!({ "name": "nothing" })).await;
     assert!(matches!(absent, Err(ToolError::InvalidParameter(_))), "the model's to correct");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -115,7 +116,7 @@ async fn an_agent_writes_a_skill_of_its_owners_classified_as_what_it_saw_and_rai
     let (session, helper) = with_an_agent(&world).await;
     let component = component();
     let mut state = AgentChannelState::default();
-    let mut turn = World::turn(&session, helper, world.alice, &mut state);
+    let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     let created = call(&component, &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.", "scope": "session" })).await.unwrap();
     assert_eq!(created.value["status"], "created");
     let created_id = created.value["skill_id"].clone();
@@ -138,7 +139,7 @@ async fn an_agent_writes_a_skill_of_its_owners_classified_as_what_it_saw_and_rai
     // A turn that saw something internal writes it into the skill: raised first.
     let internal = Classification::general(Confidentiality::Internal);
     let mut state = AgentChannelState::default();
-    let mut turn = World::turn(&session, helper, world.alice, &mut state);
+    let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     turn.see(&internal);
     let updated = call(&component, &mut turn, UPDATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "deploy", "body": "1. Build.\n2. Ship." })).await.unwrap();
     assert_eq!(updated.value["status"], "updated");
@@ -187,7 +188,7 @@ async fn the_skills_given_are_given_again_where_they_may_still_be_loaded() {
     let kept = manager.create(&SecurityContext::system(), "release-notes", Scope::GlobalScope, "How we write a release note", "1. Collect.", internal.clone()).await.unwrap();
     let gone = manager.create(&SecurityContext::system(), "deploy", Scope::GlobalScope, "How we deploy", "1. Build.", internal).await.unwrap();
     let mut state = AgentChannelState::default();
-    let mut turn = World::turn(&session, helper, world.alice, &mut state);
+    let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     AgentCommandProvider::execute(&component(), SKILL_COMMAND_NAME, "release-notes", &mut turn).await.expect("given");
     manager.rewrite(&SecurityContext::system(), kept.id, "1. Collect.\n2. Group.").await.unwrap();
     manager.delete(&SecurityContext::system(), gone.id).await.unwrap();
@@ -263,7 +264,7 @@ async fn the_skills_of_a_seed_are_the_systems_and_seeded_once() {
 /// component, and a skill of alice's, `release-notes`, classified as the
 /// channel; and how bob's stream shows him what comes of his commands.
 async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, AgentId, ChannelWatch) {
-    let world = World::with(&[&SkillsPlugin], |registry| register_once(registry, "silent", Message::new(Classification::PUBLIC))).await;
+    let world = agent_testing::world_with(&[&SkillsPlugin], |registry| register_once(registry, "silent", Message::new(Classification::PUBLIC))).await;
     let skilled = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "silent"),
@@ -342,7 +343,7 @@ async fn with_a_writing_agent(function: &str, arguments: Value) -> (World, Arc<S
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: function.to_string(), arguments, visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
-    let world = World::with(&[&SkillsPlugin], |registry| register_once(registry, "writing", call)).await;
+    let world = agent_testing::world_with(&[&SkillsPlugin], |registry| register_once(registry, "writing", call)).await;
     let writing = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "writing"),

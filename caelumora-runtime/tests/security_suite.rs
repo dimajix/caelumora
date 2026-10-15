@@ -44,7 +44,9 @@ use caelumora_runtime::channel::{ChannelError, ChannelLoop};
 use caelumora_runtime::controller::WorkspaceController;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, PRECONFIGURED_REF_KIND};
 use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
-use caelumora_runtime::testing::{asked_as_a_call_on_the_workspace, asked_for, attributes, calling, denied, not_found, quiet, register_once, shown, Once, World, ONCE_MODEL_KIND, STAFF};
+use caelumora_runtime::agent_testing::{asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_once, Once, ONCE_MODEL_KIND};
+use caelumora_runtime::agent_testing;
+use caelumora_runtime::testing::{asked_for, attributes, denied, not_found, quiet, shown, World, STAFF};
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
 use caelumora_runtime::terminal::{ByteStream, CommandState, Terminal, TerminalError, WorkspacePath};
 use caelumora_runtime::view::{ChannelView, ViewError, Viewer};
@@ -72,7 +74,7 @@ async fn a_session_cannot_be_made_with_a_personality_the_user_may_not_read() {
 /// of the user; its owner gets no say over that agent.
 #[tokio::test]
 async fn a_shared_personality_makes_an_agent_of_whoever_uses_it() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let global = world.personality("global", None, &[]).await;
     for personality in [&shared, &global] {
@@ -93,7 +95,7 @@ async fn a_shared_personality_makes_an_agent_of_whoever_uses_it() {
 /// withdrawn - is not run: its session opens without it.
 #[tokio::test]
 async fn an_agent_whose_personality_was_withdrawn_is_left_out_of_its_channel() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let helper = world.agent("helper", world.alice, &shared).await;
     let session = world.shared_session(&[helper], &[]).await;
@@ -115,7 +117,7 @@ async fn an_agent_whose_personality_was_withdrawn_is_left_out_of_its_channel() {
 /// opens without it.
 #[tokio::test]
 async fn an_agent_whose_personality_is_gone_is_left_out_of_its_channel() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let bobs = world.personality("bobs", Some(world.bob), &[world.alice]).await;
     let helper = world.agent("helper", world.alice, &bobs).await;
     let session = world.shared_session(&[helper], &[]).await;
@@ -167,7 +169,7 @@ async fn a_personality_is_changed_by_its_owner_and_read_by_who_it_is_shared_with
 /// the personality.
 #[tokio::test]
 async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let hers = world.personality("hers", Some(world.alice), &[]).await;
     let helper = world.agent("helper", world.alice, &hers).await;
     let session = world.shared_session(&[helper], &[]).await;
@@ -189,7 +191,7 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
 /// with a withdrawn personality (P3).
 #[tokio::test]
 async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let tools = StoredComponents::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")] }, attributes(Some(world.bob), &[world.alice]));
     world.store.create_components(&World::as_user(world.bob), &tools).await.expect("bob keeps his tools");
     let mut hers = world.personality("hers", Some(world.alice), &[]).await;
@@ -220,7 +222,7 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
 /// shared with, everybody for the system's - and by nobody else.
 #[tokio::test]
 async fn a_template_is_used_only_by_who_may_read_it() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let global = world.personality("global", None, &[]).await;
     let bobs = world.template(Some(world.bob), &[], "private", global.id).await;
     let shared = world.template(Some(world.bob), &[world.alice], "shared", global.id).await;
@@ -430,7 +432,7 @@ async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
 /// nothing of it, and an invitation is used up as it is taken.
 #[tokio::test]
 async fn joining_needs_an_entry_that_lets_one_join() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let shared = world.personality("shared", None, &[]).await;
     let template_id = world.template(Some(world.alice), &[], "helper", shared.id).await;
     let mut template = world.runtime.entity_stores().session_templates.get(&World::system(), template_id).await.unwrap();
@@ -503,7 +505,7 @@ async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
 /// 243).
 #[tokio::test]
 async fn cancelling_one_actor_is_for_whoever_may_cancel_the_channel() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let global = world.personality("global", None, &[]).await;
     let helper = world.agent("helper", world.alice, &global).await;
     let session = world.shared_session(&[helper], &[]).await;
@@ -535,7 +537,7 @@ async fn cancelling_one_actor_is_for_whoever_may_cancel_the_channel() {
 /// is looked at.
 #[tokio::test]
 async fn interrupting_one_tool_call_is_for_whoever_may_cancel_the_channel() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let global = world.personality("global", None, &[]).await;
     let helper = world.agent("helper", world.alice, &global).await;
     let session = world.shared_session(&[helper], &[]).await;
@@ -694,7 +696,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     use caelumora_model::actor::ActorEvent;
     use caelumora_model::message::{Message, MessageRole};
     let answer = Message { role: MessageRole::Assistant, content: Some("an answer".to_string()), ..Message::new(Classification::PUBLIC) };
-    let world = World::with_kinds(|registry| register_once(registry, "answering", answer)).await;
+    let world = agent_testing::world_with_kinds(|registry| register_once(registry, "answering", answer)).await;
     let answering = Personality {
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "answering")] },
         ..world.personality("answering", None, &[]).await
@@ -744,7 +746,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
 /// owner, on the word of whoever nudged it.
 #[tokio::test]
 async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_word() {
-    let world = World::with_kinds(|registry| register_once(registry, "silent", caelumora_model::message::Message::new(Classification::PUBLIC))).await;
+    let world = agent_testing::world_with_kinds(|registry| register_once(registry, "silent", caelumora_model::message::Message::new(Classification::PUBLIC))).await;
     let silent = Personality {
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "silent")] },
         ..world.personality("silent", None, &[]).await
@@ -780,7 +782,7 @@ async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_wor
 /// the channel with it.
 #[tokio::test]
 async fn what_an_agent_saw_is_its_owners_alone() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let global = world.personality("global", None, &[]).await;
     let helper = world.agent("helper", world.alice, &global).await;
     let session = world.shared_session(&[helper], &[]).await;
@@ -807,7 +809,7 @@ async fn what_an_agent_saw_is_its_owners_alone() {
 /// are read as what it saw: by its owner, not by another member.
 #[tokio::test]
 async fn an_agents_private_notes_are_its_owners_alone() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let global = world.personality("global", None, &[]).await;
     let helper = world.agent("helper", world.alice, &global).await;
     let session = world.shared_session(&[helper], &[]).await;
@@ -827,7 +829,7 @@ async fn an_agents_private_notes_are_its_owners_alone() {
 /// whoever is no member.
 #[tokio::test]
 async fn which_tools_an_agent_has_is_read_by_the_members_of_its_channel() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let global = world.personality("global", None, &[]).await;
     let helper = world.agent("helper", world.alice, &global).await;
     let session = world.shared_session(&[helper], &[]).await;
@@ -861,7 +863,7 @@ async fn which_tools_an_agent_has_is_read_by_the_members_of_its_channel() {
 /// alone. Not by bob, who takes part in the channel and sees its tools.
 #[tokio::test]
 async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let tools = StoredComponents::new("bobs-tools", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")] }, attributes(Some(world.bob), &[world.alice]));
     world.store.create_components(&World::as_user(world.bob), &tools).await.unwrap();
     let mut hers = world.personality("hers", Some(world.alice), &[]).await;
@@ -912,7 +914,7 @@ async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<caelumora_run
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
-    let world = World::with_kinds(|registry| registry.register(ComponentKind::new("once").provides::<dyn caelumora_runtime::llm::LLMClient>(), move |_, _| {
+    let world = agent_testing::world_with_kinds(|registry| registry.register(ComponentKind::new("once").provides::<dyn caelumora_runtime::llm::LLMClient>(), move |_, _| {
         let mut facets = ComponentFacets::empty();
         facets.insert::<dyn caelumora_runtime::llm::LLMClient>(Arc::<Once>::clone(&model));
         Ok(facets)
@@ -992,7 +994,7 @@ async fn with_a_call_asking_whom(ask: Addressee, sensitive: bool, asker: fn(&Wor
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
-    let world = World::with_kinds(|registry| {
+    let world = agent_testing::world_with_kinds(|registry| {
         registry.register(ComponentKind::new("once").provides::<dyn caelumora_runtime::llm::LLMClient>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn caelumora_runtime::llm::LLMClient>(Arc::<Once>::clone(&model));
@@ -1327,7 +1329,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
-    let world = World::with_kinds(|registry| {
+    let world = agent_testing::world_with_kinds(|registry| {
         registry.register(ComponentKind::new("once").provides::<dyn caelumora_runtime::llm::LLMClient>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn caelumora_runtime::llm::LLMClient>(Arc::<Once>::clone(&model));
@@ -1395,7 +1397,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "echo".to_string(), arguments: serde_json::json!({ "message": "it" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
         ..Message::new(internal)
     };
-    let world = World::with_kinds(|registry| {
+    let world = agent_testing::world_with_kinds(|registry| {
         register_once(registry, "relaying", relayed);
         register_once(registry, "calling", call);
     }).await;
@@ -1444,7 +1446,7 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "read_history".to_string(), arguments: serde_json::json!({ "channel": "side" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
         ..Message::new(internal)
     };
-    let world = World::with_kinds(|registry| register_once(registry, "reading", call)).await;
+    let world = agent_testing::world_with_kinds(|registry| register_once(registry, "reading", call)).await;
     let reading = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "reading"),
@@ -1586,7 +1588,7 @@ async fn with_remote_at_work(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Op
 /// there is one.
 async fn with_remote(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Option<Classification>, gate: Option<Arc<tokio::sync::Semaphore>>) -> World {
     let calls = Arc::clone(calls);
-    World::with_kinds(|registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>().uses::<SecretManager>(), move |_, context| {
+    agent_testing::world_with_kinds(|registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>().uses::<SecretManager>(), move |_, context| {
         let mut facets = ComponentFacets::empty();
         facets.insert::<dyn ExternalAgent>(Arc::new(RemoteAtWork { secrets: Arc::clone(context.service::<SecretManager>()?), calls: Arc::clone(&calls), declared: declared.clone(), gate: gate.clone() }));
         Ok(facets)
@@ -1830,7 +1832,7 @@ fn checks(lines: &[&str]) -> Vec<String> {
 /// the session and the channel.
 #[tokio::test]
 async fn making_a_session_needs_the_template_the_personalities_and_creating_what_is_made() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let bobs = world.personality("bobs", Some(world.bob), &[]).await;
     let template = world.template(None, &[], "helper", shared.id).await;
@@ -1977,7 +1979,7 @@ async fn making_an_agent_in_a_session_needs_reading_it() {
 /// may read (`GetPersonality`).
 #[tokio::test]
 async fn an_agent_is_seen_by_who_may_read_it_with_the_channels_they_may_read() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let personality = world.personality("shared", Some(world.bob), &[world.alice]).await;
     world.personality("bobs", Some(world.bob), &[]).await;
     let helper = world.agent("helper", world.alice, &personality).await;
@@ -2385,7 +2387,7 @@ async fn deleting_restoring_and_purging_an_agent_is_its_owners_but_purging() {
 /// run -, its clearance, and changing the channel - its owner's alone.
 #[tokio::test]
 async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let (helper, other) = (world.agent("helper", world.alice, &shared).await, world.agent("other", world.alice, &shared).await);
     let session = world.shared_session(&[], &[helper, other]).await;
@@ -2430,7 +2432,7 @@ async fn who_may_not_add_to_a_channel_is_refused_before_the_agent_is_looked_at()
 /// alone; nothing is asked of the agent.
 #[tokio::test]
 async fn removing_an_agent_needs_owning_the_channel() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let global = world.personality("global", None, &[]).await;
     let helper = world.agent("helper", world.alice, &global).await;
     let session = world.shared_session(&[helper], &[]).await;
@@ -3018,9 +3020,9 @@ async fn an_entry_naming_a_group_that_is_gone_is_dropped_as_the_list_is_stored()
 /// session's workspace, where the files `present` lie already - one that
 /// leaves `made`, a file of the workspace.
 async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json::Value, present: &[&str], made: &str, owner: fn(&World) -> UserId) -> Vec<String> {
-    let world = World::with_kinds(|registry| register_once(registry, ONCE_MODEL_KIND, calling(function, arguments))).await;
+    let world = agent_testing::world_with_kinds(|registry| register_once(registry, ONCE_MODEL_KIND, calling(function, arguments))).await;
     let kind = caelumora_runtime::tool::terminal_tool::TERMINAL_TOOL_KIND;
-    world.asked_for_a_call(kind, present, |_, place| place.join(made).is_file(), owner(&world)).await
+    asked_for_a_call(&world, kind, present, |_, place| place.join(made).is_file(), owner(&world)).await
 }
 
 /// An agent's command (issue 251).
@@ -3074,7 +3076,7 @@ async fn template_with_workspace(world: &World, scope: ScopeTemplate, storage: &
 /// goes with it: deleted, restored and purged with it, its files too.
 #[tokio::test]
 async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let alice = World::as_user(world.alice);
     let template = template_with_workspace(&world, ScopeTemplate::SessionScope, "main").await;
     let first = world.manager.create_from_template(&alice, template, None, None).await.expect("a session with its workspace");
@@ -3106,7 +3108,7 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
 /// nor replaced.
 #[tokio::test]
 async fn a_workspace_of_the_user_s_scope_is_found_by_every_session_of_theirs() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let alice = World::as_user(world.alice);
     let template = template_with_workspace(&world, ScopeTemplate::UserScope, "main").await;
     let first = world.manager.create_from_template(&alice, template, None, None).await.unwrap();
@@ -3133,7 +3135,7 @@ async fn a_workspace_of_the_user_s_scope_is_found_by_every_session_of_theirs() {
 /// refuses, leaving no session behind.
 #[tokio::test]
 async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template_s() {
-    let world = World::new().await;
+    let world = agent_testing::world().await;
     let workspaces = world.runtime.workspace_manager();
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let internal = Classification::general(Confidentiality::Internal);
@@ -3228,7 +3230,7 @@ impl caelumora_runtime::agent_command::AgentCommandProvider for Commanded {
 /// shows the answers to his commands.
 async fn with_a_commanded_agent() -> (World, Arc<SessionLoop>, Arc<caelumora_runtime::channel::ChannelLoop>, Arc<Mutex<Vec<SecurityContext>>>, caelumora_runtime::actor::user::ChannelWatch) {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let world = World::with_kinds(|registry| {
+    let world = agent_testing::world_with_kinds(|registry| {
         register_once(registry, "silent", caelumora_model::message::Message::new(Classification::PUBLIC));
         let seen = Arc::clone(&seen);
         registry.register(ComponentKind::new("commanded").provides::<dyn caelumora_runtime::agent_command::AgentCommandProvider>(), move |_, _| {
@@ -3340,7 +3342,7 @@ async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
 /// agent carries it out for her - here refusing, since it heard nothing yet.
 #[tokio::test]
 async fn only_an_agents_owner_compacts_its_context() {
-    let world = World::with_kinds(|registry| register_once(registry, "silent", caelumora_model::message::Message::new(Classification::PUBLIC))).await;
+    let world = agent_testing::world_with_kinds(|registry| register_once(registry, "silent", caelumora_model::message::Message::new(Classification::PUBLIC))).await;
     let compacting = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "silent"),

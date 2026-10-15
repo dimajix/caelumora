@@ -207,6 +207,7 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_testing::workspace_turn;
     use crate::tool::ToolProvider;
     use crate::tool::terminal_tool::tests::tool as terminal_tool;
     use crate::workspace::testing::{session_with_workspace, WithWorkspace};
@@ -220,7 +221,7 @@ mod tests {
     async fn a_command_runs_in_the_session_s_workspace_and_its_result_is_classified_as_it() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let mut turn = world.turn(&mut state);
+        let mut turn = workspace_turn(&world, &mut state);
         let ran = the_tool(&world).execute(RUN_COMMAND, &json!({ "command": "echo draft > notes.md; cat notes.md; ls" }), None, &mut turn).await.unwrap();
         assert_eq!(ran.value["status"], "completed");
         assert_eq!(ran.value["exit_code"], 0);
@@ -233,7 +234,7 @@ mod tests {
     async fn a_long_command_is_handed_back_followed_and_killed() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let mut turn = world.turn(&mut state);
+        let mut turn = workspace_turn(&world, &mut state);
         let tool = the_tool(&world);
         let running = tool.execute(RUN_COMMAND, &json!({ "command": "echo begun; sleep 30", "wait_secs": 0.3 }), None, &mut turn).await.unwrap();
         assert_eq!(running.value["status"], "running");
@@ -252,7 +253,7 @@ mod tests {
     async fn an_interrupted_call_kills_its_command() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let mut turn = world.turn(&mut state);
+        let mut turn = workspace_turn(&world, &mut state);
         let tool = the_tool(&world);
         let marker = world.dir().join("still-running");
         let command = format!("sleep 1.5 && touch {}", marker.display());

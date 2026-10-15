@@ -235,7 +235,7 @@ mod tests {
     use crate::agent_plugin::AgentsPlugin;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use crate::transport::Discard;
-    use crate::testing::test_registry;
+    use crate::agent_testing::test_registry;
     use crate::agent::state::{AgentStateHandle, AgentStates};
     use crate::runtime::{ActorRuntime, RuntimeManager};
     use crate::session::SessionLoop;

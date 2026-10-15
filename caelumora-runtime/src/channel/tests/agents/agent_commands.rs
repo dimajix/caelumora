@@ -55,7 +55,7 @@ async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_iss
     assert_eq!(answer.context.span_id, reply.span_id.unwrap(), "in the span of the request");
     assert_eq!((answer.security.caller_id, answer.security.initiator_id), (ActorId::Agent(agent), ActorId::User(alice)), "carried out by the agent, on her word");
 
-    let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["marked twice"], "what it staged is applied");
     assert!(state.turn.is_none(), "the turn is over");
     let ends: Vec<String> = state.history.items().iter().filter_map(|item| match item {
@@ -64,7 +64,7 @@ async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_iss
         _ => None,
     }).collect();
     assert_eq!(ends, ["/mark", "finished"], "its history records the command before the turn's end");
-    let recorded = channel.state.lock().await.history.items().into_iter()
+    let recorded = channel.history_entries().await.into_iter()
         .any(|item| matches!(item, HistoryEntry::CommandExecuted { issuer, actor, ref command, .. } if issuer == ActorId::User(alice) && actor == ActorId::Agent(agent) && command == "mark"));
     assert!(recorded, "the channel's history records what was carried out, and on whose word");
     assert_eq!(told_states(&mut watch.events, agent, ActorState::Idle).await, [ActorState::Idle], "idle again after, and no answer begun");
@@ -79,7 +79,7 @@ async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_by_the_agent_al
     let alice = alice_of(&context);
     let actor = channel.user_actor(alice).unwrap();
     let mut watch = actor.watch();
-    let before = channel.state.lock().await.history.items().len();
+    let before = channel.history_entries().await.len();
 
     // Her actor finds the agent by what she sees and asks nothing more:
     // the agent decides, once, as it carries it out (issue 304).
@@ -89,9 +89,9 @@ async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_by_the_agent_al
     assert!(started.is_none(), "never begun");
     let ActorEvent::CommandFailed { command, to, turn_id, .. } = answer.event else { panic!("refused, not {:?}", answer.event) };
     assert_eq!((command.as_str(), to, turn_id), ("mark", ActorId::User(alice), None), "to her alone");
-    let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.notes.current().is_empty() && state.turn.is_none(), "nothing staged, no turn left");
-    assert_eq!(channel.state.lock().await.history.items().len(), before, "nothing in the channel's history");
+    assert_eq!(channel.history_entries().await.len(), before, "nothing in the channel's history");
     running.abort();
 }
 
@@ -101,7 +101,7 @@ async fn a_command_that_fails_is_told_to_the_issuer_and_leaves_nothing_behind() 
     let alice = alice_of(&context);
     let actor = channel.user_actor(alice).unwrap();
     let mut watch = actor.watch();
-    let before = channel.state.lock().await.history.items().len();
+    let before = channel.history_entries().await.len();
 
     actor.execute_command("mark", "@helper fail").await.expect("sent to the agent");
     let (started, _, answer) = command_events(&mut watch).await;
@@ -110,11 +110,11 @@ async fn a_command_that_fails_is_told_to_the_issuer_and_leaves_nothing_behind() 
     assert_eq!((command.as_str(), to, turn_id), ("mark", ActorId::User(alice), Some(begun)), "ending what began");
     assert!(reason.contains("it was told to"), "{reason}");
 
-    let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.notes.current().is_empty(), "nothing it staged is applied");
     assert!(state.turn.is_none());
     assert!(!state.history.items().iter().any(|item| matches!(item, HistoryEntry::CommandExecuted { .. } | HistoryEntry::TurnGivenUp { .. })), "no command, no turn given up: nothing happened");
-    assert_eq!(channel.state.lock().await.history.items().len(), before, "nor in the channel's");
+    assert_eq!(channel.history_entries().await.len(), before, "nor in the channel's");
     running.abort();
 }
 
@@ -148,7 +148,7 @@ async fn a_sleeping_agent_carries_out_a_command_and_sleeps_on() {
     assert!(matches!(answer.event, ActorEvent::CommandExecuted { .. }), "carried out asleep: {:?}", answer.event);
     assert!(started.is_some(), "she is told it began, asleep or not");
     assert!(states.is_empty(), "shown asleep all along (issue 299): {states:?}");
-    let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(state.notes.current().len(), 1);
     assert_eq!(helper.state(), ActorState::Sleeping, "a command wakes nobody");
     running.abort();

@@ -392,7 +392,7 @@ impl ChannelLoop {
         }
 
         self.route_event_impl(running, &event).await;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         let _ = self.observed.send(event);
     }
 

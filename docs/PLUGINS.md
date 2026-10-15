@@ -72,9 +72,11 @@ plugin that brings a component kind alone, such as `caelumora-mcp` (issue 325), 
 the plugin (`ComponentRegistry::set_default_kind`), so that two plugins of a facet cannot both
 claim it; one that brings
 backends alone, such as `caelumora-open-terminal` (issue 327), registers them in `backends` and
-nothing in `register`. A plugin's tests use
-the world of the security suite - the runtime with the recording ownership policy and three users -,
-`caelumora_runtime::testing`, as a dev-dependency with the feature `test-support`.
+nothing in `register`. A plugin's tests use the world of the security suite - the runtime with the
+recording ownership policy and three users -, `caelumora_runtime::testing`, as a dev-dependency
+with the feature `test-support`. That world runs no agent; a plugin whose components serve an
+agent's facets tests them in the world of the agents' tests (`agent_testing::world_with`), with the
+agents' plugin and the models of a test (issue 370).
 
 ## What a component kind outside the core may use
 

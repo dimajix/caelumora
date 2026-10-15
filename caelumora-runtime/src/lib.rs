@@ -15,6 +15,8 @@ pub mod agent;
 pub mod agent_command;
 pub mod agent_error;
 pub mod agent_plugin;
+#[cfg(any(test, feature = "test-support"))]
+pub mod agent_testing;
 pub mod channel;
 pub mod command;
 pub mod compaction;

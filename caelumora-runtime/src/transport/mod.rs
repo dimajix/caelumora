@@ -48,10 +48,10 @@ pub trait EventSender: Send + Sync {
 
 /// An output that drops what it is sent: for tests of what an actor does
 /// besides sending.
-#[cfg(test)]
-pub(crate) struct Discard;
+#[cfg(any(test, feature = "test-support"))]
+pub struct Discard;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[async_trait]
 impl EventSender for Discard {
     async fn send(&self, _event: Envelope) -> TransportResult<()> {

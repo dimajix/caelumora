@@ -35,9 +35,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use crate::session::SessionLoop;
 use std::time::Duration;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use caelumora_model::actor::Envelope;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use tokio::sync::broadcast;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::task::TaskTracker;
@@ -48,6 +48,8 @@ mod participation;
 mod participants;
 mod run;
 mod settings;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 #[cfg(test)]
 mod tests;
 
@@ -171,7 +173,7 @@ type Actors = HashMap<ActorId, ChannelActor>;
 /// How long a stopped actor gets to end its task by itself before it is
 /// aborted (issue 75). An agent's tool under way is interrupted by the stop
 /// rather than waited for (issue 161); this is for whatever else hangs.
-const STOP_GRACE: Duration = Duration::from_secs(5);
+pub const STOP_GRACE: Duration = Duration::from_secs(5);
 
 /// How long adding a participant again waits for the actor it had before
 /// to end (issue 171): past `STOP_GRACE`, after which that actor's task is
@@ -240,7 +242,7 @@ pub struct ChannelLoop {
     /// Every event the channel took in, for tests that watch what happens
     /// in it beyond what a user is told; nobody follows a channel this way
     /// otherwise - a user follows their actor (issue 220).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     observed: broadcast::Sender<Envelope>,
     max_route_decisions: i32,
     run_lock: Mutex<()>,
@@ -248,7 +250,7 @@ pub struct ChannelLoop {
 
 impl ChannelLoop {
     /// The facets it asks its components for (issue 337).
-    pub(crate) const COMPONENT_FACETS: &[TypeKey] = &[TypeKey::of::<dyn Moderator>()];
+    pub const COMPONENT_FACETS: &[TypeKey] = &[TypeKey::of::<dyn Moderator>()];
 
     /// Builds the channel and its actors, whose runtimes `runtime` creates and
     /// which reach the channel through it once it exists.
@@ -307,7 +309,7 @@ impl ChannelLoop {
             state,
             state_store,
             quiet: AtomicBool::new(false),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             observed: broadcast::channel(128).0,
             max_route_decisions: 100,
             run_lock: Mutex::new(()),
@@ -381,8 +383,8 @@ impl ChannelLoop {
     }
 
     /// Every event the channel takes in from now on (see `observed`).
-    #[cfg(test)]
-    pub(crate) fn observe(&self) -> broadcast::Receiver<Envelope> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn observe(&self) -> broadcast::Receiver<Envelope> {
         self.observed.subscribe()
     }
 

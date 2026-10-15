@@ -184,6 +184,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_testing::workspace_turn;
     use crate::component::{ComponentContainer, ComponentContext};
     use crate::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::agent::AgentChannelState;
@@ -202,7 +203,7 @@ mod tests {
         let world = session_with_workspace().await;
         world.session.channels()[0].update_uses_workspace(&SecurityContext::system(), false).await.unwrap();
         let mut state = AgentChannelState::default();
-        let mut turn = world.turn(&mut state);
+        let mut turn = workspace_turn(&world, &mut state);
         let tool = tool(&world, json!({}));
         for (name, params) in [(RUN_COMMAND, json!({ "command": "touch here" })), (WRITE_FILE, json!({ "path": "here", "content": "x" }))] {
             let refused = tool.execute(name, &params, None, &mut turn).await;

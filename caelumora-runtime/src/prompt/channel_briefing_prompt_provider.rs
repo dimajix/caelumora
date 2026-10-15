@@ -128,7 +128,7 @@ mod tests {
     use crate::agent_plugin::AgentsPlugin;
     use crate::agent::state::AgentStateHandle;
     use crate::agent::turn::Turn;
-    use crate::testing::test_registry;
+    use crate::agent_testing::test_registry;
     use crate::runtime::RuntimeManager;
     use crate::session::SessionLoop;
     use crate::session::testing::actor_runtime_in;

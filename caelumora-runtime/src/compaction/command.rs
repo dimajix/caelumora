@@ -66,6 +66,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_testing::workspace_turn;
     use crate::compaction::{Compaction, CompactionError};
     use crate::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
@@ -93,7 +94,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let strategy = Arc::new(Answering { answer, asked: AtomicUsize::new(0) });
         let component = CompactionComponent { strategy: Arc::<Answering>::clone(&strategy) };
-        let mut turn = world.turn(&mut state);
+        let mut turn = workspace_turn(&world, &mut state);
         let result = component.execute(COMPACT_COMMAND_NAME, args, &mut turn).await;
         (result, strategy.asked.load(Ordering::SeqCst))
     }

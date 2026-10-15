@@ -49,7 +49,7 @@ async fn a_call_waits_for_the_answers_and_the_turn_goes_on_with_them() {
     assert_eq!(asked.questions.asked(), [ActorId::User(alice)], "the owner, found among the users");
 
     // The turn is their record, as for approvals.
-    let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(stored.pending_questions().into_iter().map(|q| q.id).collect::<Vec<_>>(), [asked.id]);
 
     let actor = channel.user_actor(alice).unwrap();
@@ -60,13 +60,13 @@ async fn a_call_waits_for_the_answers_and_the_turn_goes_on_with_them() {
     let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["Done."], "the turn goes on");
     settled(&helper, ActorState::Idle).await;
-    let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let result = stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).next().expect("the call ran");
     assert!(result.content.contains("Kaya") && result.content.contains("alice"), "the tool gave the model what it was answered: {}", result.content);
     let recorded = |result: &caelumora_model::tool::ToolCallResult| result.answers.as_ref().map(|a| (a.answered_by, a.responses.clone()));
     let kaya = Some((ActorId::User(alice), vec![Response::Text { text: "Kaya".to_string() }]));
     assert_eq!(recorded(&result), kaya, "the transcript keeps the record of the answers");
-    let history = channel.history().await;
+    let history = channel.whole_history().await;
     assert_eq!(history.iter().flat_map(|m| &m.tool_results).map(recorded).next(), Some(kaya), "and so does the history");
     let error = actor.answer_questions(asked.id, Some(vec![Response::Text { text: "again".to_string() }])).await.expect_err("closed");
     assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::Question { reason: caelumora_model::question::QuestionError::NotOpen, .. })), "{error}");
@@ -84,11 +84,11 @@ async fn a_message_instead_of_the_answers_declines_them_and_is_heard_after_the_t
     channel.user_actor(alice_of(&context)).unwrap().send_message("rather not".to_string(), None).await.unwrap();
     let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["Done."], "the turn goes on without the answers");
-    let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let result = stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).next().expect("the call is answered");
     assert_eq!(result.status, caelumora_model::tool::ToolResultStatus::Declined);
     tokio::time::timeout(Duration::from_secs(5), async {
-        while !channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap().transcript.messages().iter().any(|m| m.content.as_deref() == Some("rather not")) {
+        while !channel.stored_agent_channel_state(agent).await.unwrap().transcript.messages().iter().any(|m| m.content.as_deref() == Some("rather not")) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the message is heard after the turn");
@@ -108,9 +108,9 @@ async fn sensitive_answers_reach_the_tool_alone_and_are_never_stored() {
     channel.user_actor(alice_of(&context)).unwrap().answer_questions(asked.id, Some(vec![Response::Text { text: "hunter2".to_string() }])).await.expect("answered");
     answered(&mut events, agent).await;
     settled(&helper, ActorState::Idle).await;
-    let stored = serde_json::to_string(&channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap()).unwrap();
+    let stored = serde_json::to_string(&channel.stored_agent_channel_state(agent).await.unwrap()).unwrap();
     assert!(!stored.contains("hunter2"), "neither in the turn nor in the transcript");
-    assert!(channel.history().await.iter().all(|m| !format!("{m:?}").contains("hunter2")), "nor in the history");
+    assert!(channel.whole_history().await.iter().all(|m| !format!("{m:?}").contains("hunter2")), "nor in the history");
     running.abort();
 }
 
@@ -146,7 +146,7 @@ async fn ask_user_asks_whom_it_names_and_gives_the_model_the_answers() {
     let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["Done."]);
 
-    let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let results: Vec<_> = stored.transcript.messages().into_iter().flat_map(|m| m.tool_results).collect();
     let [unknown, answer] = results.as_slice() else { panic!("two calls: {results:?}") };
     assert_eq!(unknown.status, ToolResultStatus::InvalidArguments);

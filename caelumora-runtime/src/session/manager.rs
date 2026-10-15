@@ -265,8 +265,8 @@ impl SessionManager {
 
     /// Creates a brand-new session with its `channels`, as a template
     /// would: asks to create it (`CreateSession`) before anything else.
-    #[cfg(test)]
-    pub(crate) async fn create(&self, context: &SecurityContext, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn create(&self, context: &SecurityContext, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
         self.access_policy.require(context, ActionType::create(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
         self.establish(context, session, channels).await
     }

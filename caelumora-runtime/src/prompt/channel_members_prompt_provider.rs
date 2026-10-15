@@ -207,7 +207,7 @@ mod tests {
     use super::*;
     use crate::agent_plugin::AgentsPlugin;
     use crate::agent::turn::Turn;
-    use crate::testing::test_registry;
+    use crate::agent_testing::test_registry;
     use caelumora_model::value::name::{Name, ScopedName};
     use crate::agent::state::AgentStateHandle;
     use crate::runtime::RuntimeManager;

@@ -38,8 +38,8 @@ mod channels;
 mod manager;
 mod participants;
 mod settings;
-#[cfg(test)]
-pub(crate) mod testing;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 
 pub use channels::ChannelSpec;
 pub use manager::SessionManager;

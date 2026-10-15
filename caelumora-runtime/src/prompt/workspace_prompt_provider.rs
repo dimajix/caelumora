@@ -188,6 +188,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_testing::workspace_turn;
     use crate::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::security::SecurityContext;
@@ -205,13 +206,13 @@ mod tests {
         let world = session_with_workspace().await;
         let provider = provider();
         let mut state = AgentChannelState::default();
-        let prompt = provider.get_prompt(&world.turn(&mut state).work()).await.unwrap();
+        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
         assert!(prompt.text.starts_with("[Your workspace]") && prompt.text.contains("\"docs\"") && prompt.text.contains("Drafts") && prompt.text.contains("You can run shell commands"), "{}", prompt.text);
         assert_eq!(prompt.classification.as_ref(), Some(&world.workspace.classification));
 
         world.session.channels()[0].update_uses_workspace(&SecurityContext::system(), false).await.unwrap();
         let mut state = AgentChannelState::default();
-        let prompt = provider.get_prompt(&world.turn(&mut state).work()).await.unwrap();
+        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
         assert!(prompt.text.contains("There is no workspace you can use in this channel"), "{}", prompt.text);
         assert!(!prompt.text.contains("docs"), "nor which there is: {}", prompt.text);
     }
@@ -221,21 +222,21 @@ mod tests {
         let world = session_with_workspace().await;
         let provider = provider();
         let mut state = AgentChannelState::default();
-        let prompt = provider.get_prompt(&world.turn(&mut state).work()).await.unwrap();
+        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
         assert!(!prompt.text.contains("At its top"), "none is there, none is named: {}", prompt.text);
         assert!(prompt.text.contains("may hold a file of its own named `AGENTS.md` or `CLAUDE.md`") && prompt.text.contains("takes precedence"), "{}", prompt.text);
 
         std::fs::write(world.dir().join("AGENTS.md"), "Run the tests.").unwrap();
         std::fs::create_dir(world.dir().join("CLAUDE.md")).unwrap();
         let mut state = AgentChannelState::default();
-        let prompt = provider.get_prompt(&world.turn(&mut state).work()).await.unwrap();
+        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
         assert!(prompt.text.contains("At its top lies `AGENTS.md`,") && prompt.text.contains("Read it with `read_file`"), "{}", prompt.text);
         assert!(!prompt.text.contains("Run the tests"), "not its content: {}", prompt.text);
 
         std::fs::remove_dir(world.dir().join("CLAUDE.md")).unwrap();
         std::fs::write(world.dir().join("CLAUDE.md"), "See AGENTS.md").unwrap();
         let mut state = AgentChannelState::default();
-        let prompt = provider.get_prompt(&world.turn(&mut state).work()).await.unwrap();
+        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
         assert!(prompt.text.contains("At its top lie `AGENTS.md` and `CLAUDE.md`,") && prompt.text.contains("Read them"), "every one found: {}", prompt.text);
     }
 
@@ -246,12 +247,12 @@ mod tests {
         std::fs::write(world.dir().join("GUIDE.md"), "").unwrap();
         let provider = provider_of(&["GUIDE.md".to_string()]);
         let mut state = AgentChannelState::default();
-        let prompt = provider.get_prompt(&world.turn(&mut state).work()).await.unwrap();
+        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
         assert!(prompt.text.contains("At its top lies `GUIDE.md`,") && !prompt.text.contains("AGENTS.md"), "{}", prompt.text);
 
         let none = provider_of(&[]);
         let mut state = AgentChannelState::default();
-        let prompt = none.get_prompt(&world.turn(&mut state).work()).await.unwrap();
+        let prompt = none.get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
         assert!(!prompt.text.contains("At its top") && !prompt.text.contains("of its own"), "{}", prompt.text);
 
         for invalid in ["", "docs/AGENTS.md", "../AGENTS.md", "/AGENTS.md"] {
@@ -265,7 +266,7 @@ mod tests {
         std::fs::write(world.dir().join("AGENTS.md"), "").unwrap();
         std::fs::remove_dir_all(world.dir()).unwrap();
         let mut state = AgentChannelState::default();
-        let prompt = provider().get_prompt(&world.turn(&mut state).work()).await.unwrap();
+        let prompt = provider().get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
         assert!(prompt.text.contains("\"docs\"") && !prompt.text.contains("At its top"), "{}", prompt.text);
     }
 }

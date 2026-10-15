@@ -25,8 +25,8 @@ use serde::de::DeserializeOwned;
 mod container;
 mod context;
 mod registry;
-#[cfg(test)]
-pub(crate) mod testing;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 
 pub use container::{ComponentContainer, ComponentImpl};
 pub use context::{service_of, ComponentContext};

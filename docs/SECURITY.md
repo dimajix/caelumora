@@ -515,8 +515,10 @@ leaves it out of the action's questions and records it in a test of its own.
 
 The world the suite runs in - the runtime, the recording policy, the users alice, bob and carol, and
 the helpers that put what the system starts from into the store - is `caelumora_runtime::testing`,
-public behind the feature `test-support` (issue 323). A plugin's actions are tested in the plugin,
-in the same world, taken as a dev-dependency with that feature, and follow the same rule.
+public behind the feature `test-support` (issue 323). It runs no agent; the actions of agents are
+tested in the same world with the agents' plugin and the models of a test
+(`agent_testing::world`, issue 370). A plugin's actions are tested in the plugin, in the same world,
+taken as a dev-dependency with that feature, and follow the same rule.
 
 ### Filters
 

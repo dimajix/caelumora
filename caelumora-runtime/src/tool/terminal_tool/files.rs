@@ -556,6 +556,7 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_testing::workspace_turn;
     use caelumora_model::digest::Digest;
     use crate::tool::ToolProvider;
     use crate::tool::terminal_tool::tests::tool as terminal_tool;
@@ -570,7 +571,7 @@ mod tests {
     async fn files_are_written_listed_read_searched_replaced_and_deleted() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let mut turn = world.turn(&mut state);
+        let mut turn = workspace_turn(&world, &mut state);
         let tool = terminal_tool(&world, json!({}));
         let run = |name: &'static str, params: Value| (name, params);
 
@@ -630,7 +631,7 @@ mod tests {
     async fn a_file_longer_than_a_result_is_given_in_parts_and_one_that_is_no_text_not_at_all() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let mut turn = world.turn(&mut state);
+        let mut turn = workspace_turn(&world, &mut state);
         let tool = terminal_tool(&world, json!({ "max_output_bytes": 10 }));
         std::fs::write(world.dir().join("long.txt"), "line one\nline two\nline three\n").unwrap();
         std::fs::write(world.dir().join("image.bin"), [0xff, 0xfe, 0x00, 0x81]).unwrap();
@@ -656,7 +657,7 @@ mod tests {
     async fn a_file_or_directory_is_renamed_or_moved_but_never_over_something() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let mut turn = world.turn(&mut state);
+        let mut turn = workspace_turn(&world, &mut state);
         let tool = terminal_tool(&world, json!({}));
         std::fs::create_dir_all(world.dir().join("docs")).unwrap();
         std::fs::write(world.dir().join("docs/plan.md"), "plan").unwrap();
@@ -687,7 +688,7 @@ mod tests {
     async fn a_file_is_offered_for_download_as_it_is_with_its_digest() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let mut turn = world.turn(&mut state);
+        let mut turn = workspace_turn(&world, &mut state);
         let tool = terminal_tool(&world, json!({}));
         std::fs::create_dir_all(world.dir().join("out")).unwrap();
         std::fs::write(world.dir().join("out/report.csv"), "a,b\n1,2\n").unwrap();
@@ -721,7 +722,7 @@ mod tests {
     async fn a_write_beyond_what_the_workspace_takes_is_refused() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let mut turn = world.turn(&mut state);
+        let mut turn = workspace_turn(&world, &mut state);
         let tool = terminal_tool(&world, json!({}));
         let too_large = "x".repeat(crate::workspace::testing::MAX_FILE_BYTES as usize + 1);
         let refused = tool.execute(WRITE_FILE, &json!({ "path": "big.txt", "content": too_large }), None, &mut turn).await;

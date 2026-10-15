@@ -3,13 +3,10 @@
 //! workspace attached that its storage gives a shell.
 
 use crate::testing::{Script, ScriptedAgents};
-use crate::agent::state::AgentStateHandle;
-use crate::agent::turn::Turn;
 use crate::runtime::RuntimeManager;
 use crate::session::SessionLoop;
-use crate::session::testing::actor_runtime_in;
-use caelumora_model::actor::{ActorId, EventContext};
-use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
+use caelumora_model::actor::ActorId;
+use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::channel::{Channel, Participant};
 use caelumora_model::config::{BackendConfig, WorkspacesConfig};
 use serde_json::json;
@@ -28,35 +25,29 @@ use caelumora_model::config::AppConfig;
 use crate::testing::test_registry;
 
 /// The largest file the workspace takes.
-pub(crate) const MAX_FILE_BYTES: u64 = 1024 * 1024;
+pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
-pub(crate) struct WithWorkspace {
+pub struct WithWorkspace {
     /// Where the storage keeps the workspace's files.
-    pub(crate) files: tempfile::TempDir,
-    pub(crate) session: Arc<SessionLoop>,
-    pub(crate) agent: AgentId,
+    pub files: tempfile::TempDir,
+    pub session: Arc<SessionLoop>,
+    pub agent: AgentId,
     /// What the agent acts in: for the workspace's owner.
-    pub(crate) context: SecurityContext,
-    pub(crate) workspace: Workspace,
+    pub context: SecurityContext,
+    pub workspace: Workspace,
     /// What it runs on: where skills are made (issue 22).
-    pub(crate) runtime: Arc<RuntimeManager>,
+    pub runtime: Arc<RuntimeManager>,
 }
 
 impl WithWorkspace {
-    /// A turn of the agent in the channel, begun in `state`.
-    pub(crate) fn turn<'a>(&self, state: &'a mut AgentChannelState) -> Turn<'a> {
-        let channel = &self.session.channels()[0];
-        state.begin_turn(EventContext::new(self.session.id(), channel.id(), ActorId::None, String::new()), self.context.clone(), channel.classification(), Vec::new(), Default::default());
-        Turn::of(self.agent, "Jonathan".to_string(), state, AgentStateHandle::detached(), actor_runtime_in(&self.session, channel, ActorId::Agent(self.agent))).expect("a turn was begun")
-    }
 
     /// Where the workspace's files lie on the host.
-    pub(crate) fn dir(&self) -> std::path::PathBuf {
+    pub fn dir(&self) -> std::path::PathBuf {
         self.files.path().join(self.workspace.id.to_string())
     }
 }
 
-pub(crate) async fn session_with_workspace() -> WithWorkspace {
+pub async fn session_with_workspace() -> WithWorkspace {
     let store = Arc::new(MemoryStore::new());
     let access_policy = Arc::new(AllowAllPolicy::new());
     let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));

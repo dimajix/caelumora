@@ -349,7 +349,7 @@ mod tests {
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use crate::moderator::broadcast_policy::BROADCAST_POLICY_KIND;
     use crate::moderator::random_policy::RANDOM_POLICY_KIND;
-    use crate::tool::echo_tool::ECHO_TOOL_KIND;
+    use caelumora_model::command::HELP_COMMAND_KIND;
 
     use crate::channel::ChannelLoop;
 
@@ -454,10 +454,10 @@ mod tests {
             ComponentDescriptor::new("two", RANDOM_POLICY_KIND),
         ] };
         assert!(matches!(refusal(session.create_channel(&ctx, ChannelSpec { components: two, ..spec("x", vec![]) }).await), SessionError::InvalidComponents(_)), "a channel has one policy");
-        let tool = ComponentConfig { component_nodes: vec![
-            ComponentDescriptor::new("echo", ECHO_TOOL_KIND),
+        let command = ComponentConfig { component_nodes: vec![
+            ComponentDescriptor::new("help", HELP_COMMAND_KIND),
         ] };
-        assert!(matches!(refusal(session.create_channel(&ctx, ChannelSpec { components: tool, ..spec("x", vec![]) }).await), SessionError::InvalidComponents(_)), "a channel calls no tool (issue 337)");
+        assert!(matches!(refusal(session.create_channel(&ctx, ChannelSpec { components: command, ..spec("x", vec![]) }).await), SessionError::InvalidComponents(_)), "a channel takes no component it does not ask for, a command of the session (issue 337)");
 
         assert_eq!(session.channels().len(), 1);
         assert_eq!(runtime.entity_stores().sessions.get(&ctx, session.id()).await.unwrap().channels.len(), 1);

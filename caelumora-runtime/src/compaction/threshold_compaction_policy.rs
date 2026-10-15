@@ -84,6 +84,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_testing::workspace_turn;
     use crate::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::Classification;
@@ -96,7 +97,7 @@ mod tests {
         let heard = Message { content: Some("hello".to_string()), ..Message::new(Classification::PUBLIC) };
         let mut state = AgentChannelState::default();
         state.perceive(vec![heard.clone()], vec![heard]);
-        let mut turn = world.turn(&mut state);
+        let mut turn = workspace_turn(&world, &mut state);
         assert!(!policy.is_due(&turn.work()), "nothing measured");
 
         let call = |prompt: u64, size: Option<u64>| Message {

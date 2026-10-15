@@ -346,3 +346,30 @@ crate reaches the environment through the doors named above and nothing else.
   A fresh copy with these changes builds the agents' crate without a further door, and the
   runtime without anything left unused. Step 1 is done; what remains for step 2 is the move
   itself - the script is the start of it - and the tests and fixtures named in the entry above.
+- **2026-10-15** — Step 2, first part: the tests and their fixtures are cut along the same line,
+  before anything moves. Measured as for the code: in a throwaway copy the tests of the agents'
+  logic were cut into the new crate with it, until they built - and ran: 258 there, 230 left in
+  the runtime, the 488 of before.
+  - The world of the security suite (`testing::World`) runs no agent; `agent_testing` (in the
+    runtime until the move, behind `test-support`) is the world with the agents' plugin and the
+    models of a test (`world`, `world_with`, …, `with_agent_kinds`, its own `test_registry`), with
+    `turn` (once `World::turn`), `asked_for_a_call` (once a method of `World`), `workspace_turn`
+    (once `WithWorkspace::turn`), the models `Once` and the one not to be asked, and `calling`.
+    `testing::test_registry` holds the runtime's kinds alone. The 47 tests of the suite that need
+    real agents, and the tests of `caelumora-skills` and `caelumora-artifacts`, build the world of
+    the agents.
+  - The fixtures of `channel/tests/mod.rs` the agents' tests share with the runtime's - `Stuck`,
+    `start`, `settled`, `answered`, `alice_of`, `Policy`, `command_error`, alice and her agent -
+    are `channel::testing`, public behind `test-support`; the agents' own, with their four test
+    files, are `channel/tests/agents/`, which moves as a whole. What those tests read of a channel
+    beyond its API - an actor, the whole history, the stored state of an agent, the runtime of a
+    restart - is a `test-support` block of `channel::testing` (`actor_of`, `whole_history`,
+    `stored_agent_channel_state`, …), so that the channel's API is not widened.
+  - `session::testing`, `workspace::testing` and `component::testing` are public behind
+    `test-support`, and with them `SessionManager::create`, `ChannelRuntime::outside_a_session`
+    and `restarted`, `ChannelLoop::observe`, `transport::Discard` and the test constructor
+    `AgentContextView::of_state`.
+  - Made public for good: `ChannelLoop::COMPONENT_FACETS` and `STOP_GRACE`, and
+    `AgentController::new`, as the constructors of the other controllers are.
+  - A test of `session/channels.rs` showed a channel refusing a component it does not ask for with
+    the echo tool, an agent's kind; it does so with the session's command `/help` now.

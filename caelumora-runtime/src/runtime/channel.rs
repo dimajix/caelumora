@@ -104,12 +104,12 @@ impl ChannelRuntime {
     pub(crate) fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl ChannelRuntime {
     /// A runtime for a channel of the session `session_id` that is not
     /// running - in tests: its session holds nothing but its id, and no
     /// rules, and has no loop.
-    pub(crate) fn outside_a_session(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session_id: SessionId) -> Self {
+    pub fn outside_a_session(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session_id: SessionId) -> Self {
         let session = runtime_manager.controller_manager().new_session_controller(crate::session::testing::bare_session(session_id));
         Self::new(runtime_manager, command_executor, session, Weak::new())
     }
@@ -117,7 +117,7 @@ impl ChannelRuntime {
     /// The runtime of the same channel built again, as after a restart -
     /// in tests: the same services, commands and session, and no channel
     /// attached yet.
-    pub(crate) fn restarted(&self) -> Self {
+    pub fn restarted(&self) -> Self {
         Self::new(Arc::clone(&self.runtime_manager), Arc::clone(&self.command_executor), Arc::clone(&self.session), Weak::clone(&self.session_loop))
     }
 }

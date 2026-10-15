@@ -17,13 +17,13 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
         }
     }).await.expect("the agent asks its model about hello");
     let alice = channel.user_actor(alice_of(&context)).unwrap();
-    let hello = channel.history().await[0].id;
+    let hello = channel.whole_history().await[0].id;
     let until = |what: &'static str, done: Box<dyn Fn(&caelumora_model::agent::AgentChannelState) -> bool + Send>| {
         let channel = Arc::clone(&channel);
         async move {
             tokio::time::timeout(Duration::from_secs(5), async {
                 loop {
-                    if let Ok(state) = channel.state_store.get_agent_channel_state(agent, channel.id).await {
+                    if let Ok(state) = channel.stored_agent_channel_state(agent).await {
                         if done(&state) { break }
                     }
                     tokio::time::sleep(Duration::from_millis(10)).await;
@@ -35,7 +35,7 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
     // Modified while the turn about it runs: the turn ends as it began.
     alice.modify_message(hello, "good evening".to_string(), None).await.expect("hers");
     tokio::time::timeout(Duration::from_secs(5), async {
-        while channel.message(hello).await.and_then(|m| m.content).as_deref() != Some("good evening") {
+        while channel.message_of(hello).await.and_then(|m| m.content).as_deref() != Some("good evening") {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the channel takes it in");
@@ -52,17 +52,17 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
     assert!(heard(&seen[1], "good evening") && !heard(&seen[1], "hello"), "the next is given what stands");
     until("the agent's history holds the modification", Box::new(move |state| state.history.message(hello).is_some_and(|m| m.modified.is_some()))).await;
 
-    let question = channel.history().await.iter().find(|m| m.content.as_deref() == Some("and now?")).expect("said").id;
+    let question = channel.whole_history().await.iter().find(|m| m.content.as_deref() == Some("and now?")).expect("said").id;
     alice.revoke_message(question).await.expect("hers to take back");
     until("the agent takes it back", Box::new(move |state| {
         state.history.message(question).is_some_and(|m| m.revoked.is_some())
             && !state.transcript.messages().iter().any(|m| m.id == question)
     })).await;
-    assert!(channel.message(question).await.is_some_and(|m| m.revoked.is_some()), "so does the channel");
+    assert!(channel.message_of(question).await.is_some_and(|m| m.revoked.is_some()), "so does the channel");
 
     // Another's message released (issue 239), as the policy lets alice
     // here: it reaches the agent that said it, which is not its sender.
-    let first = channel.history().await.iter().find(|m| m.content.as_deref() == Some("first")).expect("answered").id;
+    let first = channel.whole_history().await.iter().find(|m| m.content.as_deref() == Some("first")).expect("answered").id;
     alice.reclassify_message(first, Classification::PUBLIC).await.expect("hers to release");
     until("the agent takes the release in", Box::new(move |state| {
         state.history.message(first).is_some_and(|m| m.classification == Classification::PUBLIC)
@@ -92,8 +92,8 @@ async fn an_agent_asked_to_answer_again_takes_its_answer_back_and_answers_withou
     let seen = model.seen.lock().unwrap().clone();
     let given = |call: &[String], text: &str| call.iter().any(|c| c.contains(text));
     assert!(given(&seen[1], "hello") && !given(&seen[1], "first"), "given what was said before it, not the answer replaced: {:?}", seen[1]);
-    assert!(channel.message(first.id).await.is_some_and(|m| m.revoked.is_some()), "the channel shows it taken back");
-    let history: Vec<_> = channel.history().await.into_iter().filter_map(|m| m.content).collect();
+    assert!(channel.message_of(first.id).await.is_some_and(|m| m.revoked.is_some()), "the channel shows it taken back");
+    let history: Vec<_> = channel.whole_history().await.into_iter().filter_map(|m| m.content).collect();
     assert_eq!(history, ["hello", "second"], "in its place, the new answer at the end");
     running.abort();
 }
@@ -115,7 +115,7 @@ async fn an_agent_does_not_answer_again_once_more_was_said() {
     let ActorEvent::RetryRejected { target, reason } = shown_by(&mut events, agent, "RetryRejected").await else { unreachable!() };
     assert_eq!(target, RetryTarget::Message(first.id));
     assert_eq!(reason, caelumora_model::agent::RetryRefused::NotLast);
-    assert!(channel.message(first.id).await.is_some_and(|m| m.revoked.is_none()), "nothing taken back");
+    assert!(channel.message_of(first.id).await.is_some_and(|m| m.revoked.is_none()), "nothing taken back");
     assert_eq!(model.seen.lock().unwrap().len(), 2, "and no model asked again");
     running.abort();
 }
@@ -146,7 +146,7 @@ async fn asked(model: &Gated, calls: usize) {
 async fn an_answer_under_way_asked_for_again_is_given_up_and_answered_anew() {
     let (Stuck { channel, context, agent, mut events, running, .. }, model) = asking_a_gated_model(&["first", "second"]).await;
     let ActorEvent::ResponseStarted { turn_id: turn } = shown_by(&mut events, agent, "ResponseStarted").await else { unreachable!() };
-    assert_eq!(channel.turn_under_way(ActorId::Agent(agent)), Some(turn), "the turn its start announced");
+    assert_eq!(channel.turn_of(ActorId::Agent(agent)), Some(turn), "the turn its start announced");
     let alice = channel.user_actor(alice_of(&context)).unwrap();
     let error = |result: anyhow::Result<uuid::Uuid>| result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error");
     assert!(matches!(error(alice.request_retry_of_turn(ActorId::Agent(agent), TurnId::new()).await), ChannelError::TurnNotRetryable { .. }), "not another turn");
@@ -161,7 +161,7 @@ async fn an_answer_under_way_asked_for_again_is_given_up_and_answered_anew() {
 
     let seen = model.seen.lock().unwrap().clone();
     assert!(seen[1].iter().any(|c| c.contains("hello")), "asked about what the given-up turn was asked: {:?}", seen[1]);
-    let history: Vec<_> = channel.history().await.into_iter().filter_map(|m| m.content).collect();
+    let history: Vec<_> = channel.whole_history().await.into_iter().filter_map(|m| m.content).collect();
     assert_eq!(history, ["hello", "second"], "nothing of the given-up turn reached the channel");
     assert!(matches!(error(alice.request_retry_of_turn(ActorId::Agent(agent), turn).await), ChannelError::TurnNotRetryable { .. }), "and it is over");
     running.abort();
@@ -219,7 +219,7 @@ async fn an_older_answer_asked_for_again_leaves_the_answer_under_way_alone() {
     let ActorEvent::RetryRejected { target, reason } = shown_by(&mut events, agent, "RetryRejected").await else { unreachable!() };
     assert_eq!((target, reason), (RetryTarget::Message(first.id), caelumora_model::agent::RetryRefused::NotLast));
     assert_eq!(said(answered(&mut events, agent).await), ["third"], "and the request is answered");
-    assert!(channel.message(first.id).await.is_some_and(|m| m.revoked.is_none()), "nothing taken back");
+    assert!(channel.message_of(first.id).await.is_some_and(|m| m.revoked.is_none()), "nothing taken back");
     running.abort();
 }
 
@@ -404,7 +404,7 @@ async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
     // The turn ends with the call - the model is not asked again - and
     // the agent sleeps, as the tool asked; no turn is left behind.
     settled(&helper, ActorState::Sleeping).await;
-    let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(stored.turn.is_none(), "the turn was taken over");
     assert!(stored.history.messages().iter().any(|m| m.content.as_deref() == Some("Good bye.")), "and its answer recorded");
     running.abort();
@@ -440,7 +440,7 @@ async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
     // What reaches alice, from before she asks.
     let mut shown = channel.user_actor(alice).unwrap().watch().events;
     channel.user_actor(alice).unwrap().send_message("hello".to_string(), None).await.unwrap();
-    let helper = channel.actor(ActorId::Agent(agent)).unwrap();
+    let helper = channel.actor_of(ActorId::Agent(agent)).unwrap();
     assert_eq!(told_states(&mut shown, agent, ActorState::Sleeping).await, [ActorState::Planning, ActorState::ExecutingTools, ActorState::Reflecting, ActorState::Sleeping], "each step it moves to, once");
 
     let woken = channel.wakeup(&context).await.expect("alice may wake it");
@@ -508,7 +508,7 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
 
     // The channel keeps every message as it was said, the steps too,
     // each once, and the turn's end after them (issue 258).
-    let history = channel.history().await;
+    let history = channel.whole_history().await;
     let kept: Vec<_> = history.iter().filter(|m| m.sender_id == ActorId::Agent(agent)).map(|m| (m.internal, m.content.clone().unwrap_or_default())).collect();
     assert_eq!(kept, [
         (false, String::new()), (false, String::new()),
@@ -516,13 +516,13 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
         (false, "all done".to_string()),
     ], "the plan's call and its result, the steps, the answer");
     // Each step begins before what it says (issue 263).
-    let items: Vec<String> = channel.state.lock().await.history.items().into_iter().filter_map(|item| match item {
+    let items: Vec<String> = channel.history_entries().await.into_iter().filter_map(|item| match item {
         caelumora_model::history::HistoryEntry::Said { message, .. } if message.sender_id == ActorId::Agent(agent) && message.internal => message.content,
         caelumora_model::history::HistoryEntry::PlanStepStarted { actor, step_index, total_steps, description, .. } if actor == ActorId::Agent(agent) => Some(format!("step {}/{total_steps}: {description}", step_index + 1)),
         _ => None,
     }).collect();
     assert_eq!(items, ["step 1/2: first", "first done", "step 2/2: second", "second done"]);
-    let ended = channel.state.lock().await.history.last().map(|n| n.entry.clone());
+    let ended = channel.last_history_entry().await;
     assert!(matches!(ended, Some(caelumora_model::history::HistoryEntry::TurnFinished { turn_id, .. }) if Some(turn_id) == history.last().and_then(|m| m.turn_id)), "{ended:?}");
     running.abort();
 }
@@ -583,9 +583,9 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
     assert!(shown.iter().all(|turn| *turn == Some(started)), "each shown as the turn's: {shown:?}");
     assert!(final_messages.iter().all(|m| m.turn_id == Some(started)), "and published so");
     let answer = final_messages.iter().find(|m| m.content.as_deref() == Some("all done")).expect("the final answer");
-    assert_eq!(channel.message(answer.id).await.and_then(|m| m.turn_id), Some(started), "the channel's history keeps it");
+    assert_eq!(channel.message_of(answer.id).await.and_then(|m| m.turn_id), Some(started), "the channel's history keeps it");
 
-    let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let (own, heard): (Vec<_>, Vec<_>) = stored.transcript.messages().into_iter().partition(|m| m.sender_id == ActorId::Agent(agent));
     assert!(own.len() >= 4 && own.iter().all(|m| m.turn_id == Some(started)), "its transcript keeps every message of the turn as the turn's");
     assert!(heard.iter().all(|m| m.turn_id.is_none()), "what it heard is no turn's of its own");
@@ -620,7 +620,7 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
     // instead of asking again for the call or running the tool twice.
     let stored = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+            let state = channel.stored_agent_channel_state(agent).await.unwrap();
             let has_result = state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty()));
             if has_result && state.processing_state == ActorState::Planning { break state }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -679,7 +679,7 @@ async fn a_turn_that_failed_is_answered_anew_on_request_and_stays() {
     let said: Vec<_> = answered(&mut events, agent).await.into_iter().filter_map(|m| m.content).collect();
     assert_eq!(said, ["second try"], "answered anew after it");
 
-    let ended: Vec<_> = channel.state.lock().await.history.items().into_iter().filter_map(|item| match item {
+    let ended: Vec<_> = channel.history_entries().await.into_iter().filter_map(|item| match item {
         HistoryEntry::TurnGivenUp { turn_id, .. } => Some(turn_id),
         _ => None,
     }).collect();
@@ -696,7 +696,7 @@ async fn a_turn_given_up_is_not_asked_for_again_once_something_followed_it() {
     alice.send_message("are you there?".to_string(), None).await.unwrap();
     // The message is in the channel's history once it was routed.
     tokio::time::timeout(Duration::from_secs(5), async {
-        while channel.history().await.len() < 2 { tokio::time::sleep(Duration::from_millis(10)).await }
+        while channel.whole_history().await.len() < 2 { tokio::time::sleep(Duration::from_millis(10)).await }
     }).await.expect("the message is said");
 
     let refused = alice.request_retry_of_turn(ActorId::Agent(agent), failed).await;
@@ -759,11 +759,11 @@ async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_
         }
     }).await.expect("the turn fails");
     settled(&helper, ActorState::Idle).await;
-    let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
 
     // The turn's messages stay where they were said, followed by its end
     // (issue 258); what the model saw for them can still be told.
-    let seen = crate::view::AgentContextView::of(ActorId::Agent(agent), stored.clone());
+    let seen = AgentContextView::of_state(ActorId::Agent(agent), stored.clone());
     let turns = crate::message::testing::given_up_turns(&stored);
     assert_eq!(turns.len(), 1);
     assert!(matches!(turns[0].1, GivenUpReason::Failed { .. }));
@@ -805,7 +805,7 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
         with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([calculate].into()))), components).await;
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+            let state = channel.stored_agent_channel_state(agent).await.unwrap();
             if state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty())) { break }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -815,7 +815,7 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
 
     let turns = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let turns = crate::message::testing::given_up_turns(&channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap());
+            let turns = crate::message::testing::given_up_turns(&channel.stored_agent_channel_state(agent).await.unwrap());
             if !turns.is_empty() { break turns }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -869,7 +869,7 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
         with_an_agent_under(Arc::new(caelumora_model::security::AllowAllPolicy::new()), Arc::new(Scripted(std::sync::Mutex::new([calculate.clone()].into()))), components).await;
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+            let state = channel.stored_agent_channel_state(agent).await.unwrap();
             if state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty())) { break }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -883,13 +883,13 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
     let told = turn_given_up(&mut events, agent).await;
     assert!(told.contains("lowered"), "{told}");
     settled(&helper, ActorState::Idle).await;
-    let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let turns = crate::message::testing::given_up_turns(&stored);
     assert_eq!(turns.len(), 1);
     assert_eq!(turns[0].1, GivenUpReason::Lowered { channel: public.clone() });
     // What it said before the lowering was held by the channel: it stays,
     // fitted into the channel as it is now (issue 258).
-    let said = channel.history().await.into_iter().find(|m| m.id == calculate.id).expect("said before the lowering");
+    let said = channel.whole_history().await.into_iter().find(|m| m.id == calculate.id).expect("said before the lowering");
     assert_eq!(said.classification, public);
 
     // The agent keeps what the turn said, but its model is given which
@@ -965,7 +965,7 @@ async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
     running.abort();
 
     // The call is answered as not executed (issue 148).
-    let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let last = stored.transcript.messages().pop().expect("the turn was taken over");
     let answered: Vec<_> = last.tool_results.iter().map(|r| r.status).collect();
     assert_eq!(answered, [caelumora_model::tool::ToolResultStatus::NotExecuted]);
@@ -1036,7 +1036,7 @@ async fn a_turn_waiting_for_approval_can_be_decided_after_a_restart() {
     let asked = approval_requested(&mut events).await;
 
     // The turn is the record of what it waits for (issue 172).
-    let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let pending: Vec<_> = stored.turn.expect("a turn under way").pending_approvals().into_iter().map(|r| r.id).collect();
     assert_eq!(pending, [asked.id]);
 
@@ -1045,10 +1045,10 @@ async fn a_turn_waiting_for_approval_can_be_decided_after_a_restart() {
     running.abort();
     let _ = running.await;
     let document = Channel::clone(&channel.channel());
-    let restarted = ChannelLoop::new(document.clone(), channel.runtime.restarted()).await.unwrap();
+    let restarted = ChannelLoop::new(document.clone(), channel.restarted_runtime()).await.unwrap();
     let mut events = restarted.observe();
     let running = tokio::spawn({ let restarted = Arc::clone(&restarted); async move { restarted.run().await } });
-    let helper = restarted.actor(ActorId::Agent(agent)).unwrap();
+    let helper = restarted.actor_of(ActorId::Agent(agent)).unwrap();
 
     // The agent asks again, with the same id, and the users can decide.
     let asked_again = approval_requested(&mut events).await;
@@ -1107,7 +1107,7 @@ async fn a_turn_asked_for_again_while_it_waits_for_an_approval_withdraws_the_req
     let ActorEvent::ApprovalRequested(request) = shown_by(&mut events, agent, "ApprovalRequested").await else { unreachable!() };
     settled(&helper, ActorState::WaitingForUser).await;
 
-    let turn = channel.turn_under_way(ActorId::Agent(agent)).expect("waiting is under way");
+    let turn = channel.turn_of(ActorId::Agent(agent)).expect("waiting is under way");
     channel.user_actor(alice_of(&context)).unwrap().request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("asked");
     assert!(matches!(shown_by(&mut events, agent, "ApprovalRequestWithdrawn").await, ActorEvent::ApprovalRequestWithdrawn { id } if id == request.id),
         "nobody is asked any longer");
@@ -1120,13 +1120,13 @@ async fn a_turn_asked_for_again_while_it_waits_for_an_approval_withdraws_the_req
 #[tokio::test]
 async fn a_turn_asked_for_again_while_a_tool_runs_tells_the_next_one_of_the_call() {
     let (Stuck { channel, context, agent, mut events, running, .. }, _) = with_an_agent_in_a_long_tool().await;
-    let turn = channel.turn_under_way(ActorId::Agent(agent)).expect("under way");
+    let turn = channel.turn_of(ActorId::Agent(agent)).expect("under way");
     channel.user_actor(alice_of(&context)).unwrap().request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("asked");
 
     assert_eq!(turn_given_up(&mut events, agent).await, "your answer was asked for again", "the users learn why the turn ended (issue 258)");
     let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
     assert_eq!(said(answered(&mut events, agent).await), ["never given"], "the tool is interrupted, and the next turn answers");
-    let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
     let given_up = crate::message::testing::given_up_turns(&state);
     assert_eq!(given_up.len(), 1, "the turn is kept as given up");
     assert_eq!(given_up[0].1, caelumora_model::turn::GivenUpReason::Retried);
@@ -1134,7 +1134,7 @@ async fn a_turn_asked_for_again_while_a_tool_runs_tells_the_next_one_of_the_call
     assert!(given_up[0].2.iter().any(|m| m.tool_calls.iter().any(|c| c.function_name == "sleep")), "the call that ran stays");
     let told: Vec<_> = given_next(&state, agent).into_iter().filter_map(|m| m.content).filter(|c| c.contains("given up")).collect();
     assert!(told.iter().any(|c| c.contains("asked for again")), "the model is told why the turn was given up: {told:?}");
-    let history: Vec<_> = channel.history().await.into_iter().filter_map(|m| m.content).collect();
+    let history: Vec<_> = channel.whole_history().await.into_iter().filter_map(|m| m.content).collect();
     assert_eq!(history, ["hello", "never given"], "the channel's history takes a turn's answer alone");
     running.abort();
 }
@@ -1171,7 +1171,7 @@ async fn a_tool_call_interrupted_alone_is_answered_so_and_the_turn_goes_on() {
     use caelumora_model::tool::ToolResultStatus;
 
     let (Stuck { channel, context, agent, mut events, running, .. }, model) = with_an_agent_in_long_tools(&["1", "2"]).await;
-    let turn = channel.turn_under_way(ActorId::Agent(agent)).expect("under way");
+    let turn = channel.turn_of(ActorId::Agent(agent)).expect("under way");
     let not_running = |refused: Result<()>| matches!(refused.expect_err("refused").downcast_ref::<ChannelError>(), Some(ChannelError::ToolCallNotRunning { .. }));
     assert!(not_running(channel.interrupt_tool_call(&context, ActorId::Agent(agent), TurnId::new(), "1").await), "not of another turn");
     assert!(not_running(channel.interrupt_tool_call(&context, ActorId::Agent(agent), turn, "3").await), "no such call");
@@ -1185,7 +1185,7 @@ async fn a_tool_call_interrupted_alone_is_answered_so_and_the_turn_goes_on() {
     let results: Vec<_> = finished.iter().flat_map(|m| m.tool_results.iter()).collect();
     assert_eq!(results.iter().map(|r| r.status).collect::<Vec<_>>(), [ToolResultStatus::Interrupted, ToolResultStatus::NotExecuted], "{finished:?}");
     assert!(results[0].started_at.is_some() && results[1].started_at.is_none(), "the first ran, the second never did");
-    let alice = channel.actor(context.initiator_id).expect("she takes part").name().to_string();
+    let alice = channel.actor_of(context.initiator_id).expect("she takes part").name().to_string();
     assert!(results.iter().all(|r| r.content.contains(&format!("{alice} interrupted this tool call"))), "the model is told who: {results:?}");
     let said: Vec<_> = finished.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["never given"], "the turn goes on with the results");
@@ -1205,7 +1205,7 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
     // than the actor aborted with the turn left as it was before the tool.
     let stored = tokio::time::timeout(STOP_GRACE, async {
         loop {
-            let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+            let state = channel.stored_agent_channel_state(agent).await.unwrap();
             if state.turn.is_none() && !crate::message::testing::given_up_turns(&state).is_empty() { break state }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -1219,13 +1219,13 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
     // the channel records it after the call it said (issues 258, 262).
     let ended = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let last = channel.state.lock().await.history.last().map(|n| n.entry.clone());
+            let last = channel.last_history_entry().await;
             if let Some(caelumora_model::history::HistoryEntry::TurnGivenUp { actor, reason, .. }) = last { break (actor, reason) }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the channel records the turn's end");
     assert_eq!(ended, (ActorId::Agent(agent), GivenUpReason::Stopped));
-    assert!(channel.history().await.iter().any(|m| m.tool_calls.iter().any(|c| c.function_name == "sleep")), "what it said stays");
+    assert!(channel.whole_history().await.iter().any(|m| m.tool_calls.iter().any(|c| c.function_name == "sleep")), "what it said stays");
     running.abort();
 }
 
@@ -1244,7 +1244,7 @@ async fn an_agent_removed_while_waiting_for_approval_gives_up_its_turn() {
     // with the turn left in its state.
     let stored = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+            let state = channel.stored_agent_channel_state(agent).await.unwrap();
             if state.turn.is_none() && !crate::message::testing::given_up_turns(&state).is_empty() { break state }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -1363,7 +1363,7 @@ async fn a_removed_agent_gives_its_turn_up_says_so_and_leaves_an_idle_state_behi
     settled(&helper, ActorState::Idle).await;
     let stored = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+            let state = channel.stored_agent_channel_state(agent).await.unwrap();
             if state.processing_state == ActorState::Idle { break state }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -1398,11 +1398,11 @@ async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_th
     // Another agent's answer, as the channel's history keeps it.
     let answer = Message { id: MessageId::new(), sender_id: other, sender_name: "hermes".to_string(), role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call], ..Message::new(Classification::CHANNEL_DEFAULT) };
     let tool = Message { id: MessageId::new(), sender_id: other, role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result], ..Message::new(Classification::CHANNEL_DEFAULT) };
-    let actor = channel.actor(ActorId::Agent(agent)).unwrap();
+    let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
 
     actor.catch_up(vec![answer.clone(), tool.clone()]).await.unwrap();
 
-    let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
     let heard = state.transcript.messages();
     assert_eq!(heard.len(), 1, "nothing of the tool message: {heard:?}");
     assert_eq!((heard[0].id, heard[0].role, heard[0].content.as_deref()), (answer.id, MessageRole::User, Some("Let me check.")), "the other's words, as another's");
@@ -1420,12 +1420,12 @@ async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
         id: MessageId::new(), role: MessageRole::User, sender_id: context.initiator_id, content: Some(text.to_string()),
         ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
     };
-    let actor = channel.actor(ActorId::Agent(agent)).unwrap();
+    let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
 
     actor.catch_up(vec![said("hello"), said("the secret is 42")]).await.unwrap();
 
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
-    let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(contents(state.history.messages()), ["hello", "the secret is 42"], "its history keeps all it missed");
     assert_eq!(contents(state.transcript.messages()), ["hello"], "its transcript what passed its processors");
 }
@@ -1444,7 +1444,7 @@ async fn an_agent_keeps_all_it_was_offered_in_its_history_and_what_passes_its_pr
     settled(&helper, ActorState::Planning).await;
 
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
-    let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(contents(state.history.messages()).contains(&"the secret is 42".to_string()), "its history keeps all it was offered");
     assert!(!contents(state.transcript.messages()).contains(&"the secret is 42".to_string()), "its transcript only what passed");
     assert!(contents(state.transcript.messages()).contains(&"hello".to_string()));
@@ -1525,9 +1525,9 @@ async fn an_agent_whose_context_fills_up_compacts_it_on_its_own_before_its_next_
     ], "the users see it compact, and what came of it");
     let said: Vec<_> = answer.expect("answered").iter().filter_map(|m| m.content.clone()).filter(|c| !c.is_empty()).collect();
     assert_eq!(said, ["Done."], "the turn goes on, the summary no part of its answer");
-    let recorded = channel.state.lock().await.history.items().into_iter().any(|item| matches!(item, HistoryEntry::ActivityFinished { activity, .. } if activity == "compacting its context"));
+    let recorded = channel.history_entries().await.into_iter().any(|item| matches!(item, HistoryEntry::ActivityFinished { activity, .. } if activity == "compacting its context"));
     assert!(recorded, "the channel records it where it happened");
-    let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let now: Vec<_> = stored.transcript.messages().into_iter().filter_map(|m| m.content).filter(|c| !c.is_empty()).collect();
     assert!(now[0].contains("They greeted each other.") && !now.iter().any(|c| c == "hello" || c == "Hi."), "the older messages replaced: {now:?}");
     assert_eq!(stored.usage(ActorId::Agent(agent)).map(|u| u.calls), Some(4), "the summary's call counts as used");
@@ -1542,7 +1542,7 @@ async fn a_compaction_that_fails_ends_the_turn() {
 
     assert_eq!(told, ["busy".to_string(), "started compacting its context".to_string()]);
     assert!(ended.is_err(), "given up: the call it was to make room for would not fit");
-    let stored = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(stored.transcript.messages().iter().any(|m| m.content.as_deref() == Some("Hi.")), "the transcript as it was");
     running.abort();
 }

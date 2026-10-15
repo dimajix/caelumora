@@ -12,21 +12,21 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use super::{ComponentContext, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 
-pub(super) trait Marker: std::fmt::Debug + Send + Sync {}
+pub trait Marker: std::fmt::Debug + Send + Sync {}
 
 /// What the tests' containers are asked for, as the owner of one asks.
-pub(super) const ASKED: &[TypeKey] = &[TypeKey::of::<dyn Marker>(), TypeKey::of::<dyn Named>(), TypeKey::of::<dyn Choice>()];
+pub const ASKED: &[TypeKey] = &[TypeKey::of::<dyn Marker>(), TypeKey::of::<dyn Named>(), TypeKey::of::<dyn Choice>()];
 
-pub(super) fn test_context() -> ComponentContext {
+pub fn test_context() -> ComponentContext {
     context_with_session(SessionId::default())
 }
 
-pub(super) fn context_with_session(session_id: SessionId) -> ComponentContext {
+pub fn context_with_session(session_id: SessionId) -> ComponentContext {
     let services = Services::empty().with(Arc::new(AllowAllPolicy::new()) as Arc<dyn AccessPolicy>);
     ComponentContext::new(SecurityContext { session_id, ..SecurityContext::default() }, services)
 }
 
-pub(super) fn descriptor(id: &str, kind: &str, params: serde_json::Value) -> ComponentDescriptor {
+pub fn descriptor(id: &str, kind: &str, params: serde_json::Value) -> ComponentDescriptor {
     ComponentDescriptor {
         id: id.to_string(),
         kind: kind.to_string(),
@@ -37,12 +37,12 @@ pub(super) fn descriptor(id: &str, kind: &str, params: serde_json::Value) -> Com
 }
 
 /// A facet that says which component it came from.
-pub(super) trait Named: std::fmt::Debug + Send + Sync {
+pub trait Named: std::fmt::Debug + Send + Sync {
     fn name(&self) -> String;
 }
 
 #[derive(Debug)]
-pub(super) struct Name(pub(super) String);
+pub struct Name(pub String);
 impl Named for Name {
     fn name(&self) -> String {
         self.0.clone()
@@ -50,25 +50,25 @@ impl Named for Name {
 }
 
 /// A second facet, for components that need each other.
-pub(super) trait Other: std::fmt::Debug + Send + Sync {}
+pub trait Other: std::fmt::Debug + Send + Sync {}
 impl Other for Name {}
 
 /// A facet of which there is one.
-pub(super) trait Choice: std::fmt::Debug + Send + Sync {}
+pub trait Choice: std::fmt::Debug + Send + Sync {}
 impl Choice for Name {}
 
-pub(super) fn named(id: &str) -> ComponentFacets {
+pub fn named(id: &str) -> ComponentFacets {
     let mut facets = ComponentFacets::empty();
     facets.insert::<dyn Named>(Arc::new(Name(id.to_string())));
     facets
 }
 
-pub(crate) fn config(nodes: &[(&str, &str)]) -> ComponentConfig {
+pub fn config(nodes: &[(&str, &str)]) -> ComponentConfig {
     ComponentConfig { component_nodes: nodes.iter().map(|(id, kind)| descriptor(id, kind, json!(null))).collect() }
 }
 
 /// The component errors from the outermost to the innermost.
-pub(super) fn causes(error: &ComponentError) -> Vec<&ComponentError> {
+pub fn causes(error: &ComponentError) -> Vec<&ComponentError> {
     let mut chain = vec![error];
     while let ComponentError::Build { cause, .. } = chain[chain.len() - 1] {
         chain.push(cause);
@@ -76,11 +76,11 @@ pub(super) fn causes(error: &ComponentError) -> Vec<&ComponentError> {
     chain
 }
 
-pub(super) const NAMED: &[TypeKey] = &[TypeKey::of::<dyn Named>()];
+pub const NAMED: &[TypeKey] = &[TypeKey::of::<dyn Named>()];
 
 /// A registry with the single `Choice`, the kinds `default` and `other`
 /// that provide it, and how often `default` was built.
-pub(super) fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
+pub fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
     let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
     let built = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&built);

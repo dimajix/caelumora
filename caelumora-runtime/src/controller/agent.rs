@@ -23,7 +23,7 @@ pub struct AgentController {
 impl AgentController {
     /// The live `agent`, owned by the user `owner` holds, if any. Made by
     /// the `ControllerManager`, which keeps one per agent.
-    pub(crate) fn new(agent: Agent, owner: Option<Arc<UserController>>, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores) -> Self {
+    pub fn new(agent: Agent, owner: Option<Arc<UserController>>, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores) -> Self {
         Self {
             agent: LiveDocument::new(agent.id, agent, Arc::clone(&stores.agents), event_publisher),
             owner,
