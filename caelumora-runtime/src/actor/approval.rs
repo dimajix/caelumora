@@ -369,6 +369,7 @@ impl Actor for ApproverActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{Script, ScriptedAgents};
     use crate::channel::ChannelLoop;
     use caelumora_model::actor::EventContext;
     use caelumora_model::approval::ApprovalRequest;
@@ -438,7 +439,7 @@ mod tests {
         let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
         let registry = test_registry(Arc::<MemoryStore>::clone(&store));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry, &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap());
         let approver = Approver { id: ApproverId::new(), strategy };
         let mut participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
         participants.push(Participant::Approver(approver.clone()));

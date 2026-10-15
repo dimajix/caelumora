@@ -437,14 +437,7 @@ impl ComponentRegistry {
 mod tests {
     use super::*;
     use crate::component::testing::*;
-    use crate::actor::agent::AgentActor;
-    use crate::channel::ChannelLoop;
     use crate::component::ComponentContainer;
-    use crate::moderator::policy_moderator::POLICY_MODERATOR_KIND;
-    use crate::moderator::round_robin_policy::ROUND_ROBIN_POLICY_KIND;
-    use crate::runtime::Services;
-    use crate::testing::test_registry;
-    use crate::tool::echo_tool::ECHO_TOOL_KIND;
     use caelumora_model::component::StoredComponents;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::memory::MemoryStore;
@@ -636,25 +629,6 @@ mod tests {
             let error = ComponentContainer::from_config(&config(&[("picky", "picky"), ("mine", "other"), ("stray", "stray")]), NAMED, &registry, &test_context())
                 .await.expect_err("the configured Choice needs no Other");
             assert!(matches!(&error, ComponentError::Build { component, .. } if component == "stray"), "{error}");
-        }
-
-        /// The owners' own declarations: a channel takes no tool, an agent no
-        /// moderator; each takes what it asks for and what that needs.
-        #[tokio::test]
-        async fn a_channel_takes_no_tool_and_an_agent_no_moderator() {
-            let registry = Arc::new(test_registry(Arc::new(MemoryStore::new())));
-            let context = ComponentContext::new(SecurityContext::default(), Services::empty());
-
-            let channel = config(&[("moderator", POLICY_MODERATOR_KIND), ("policy", ROUND_ROBIN_POLICY_KIND)]);
-            ComponentContainer::from_config(&channel, ChannelLoop::COMPONENT_FACETS, &registry, &context).await.expect("its moderator and what it needs");
-            let with_tool = config(&[("policy", ROUND_ROBIN_POLICY_KIND), ("echo", ECHO_TOOL_KIND)]);
-            let error = ComponentContainer::from_config(&with_tool, ChannelLoop::COMPONENT_FACETS, &registry, &context).await.expect_err("a channel calls no tool");
-            assert!(error.to_string().contains("'echo'") && error.to_string().contains("ToolProvider"), "{error}");
-
-            ComponentContainer::from_config(&config(&[("echo", ECHO_TOOL_KIND)]), AgentActor::COMPONENT_FACETS, &registry, &context).await.expect("an agent's tool");
-            let with_moderator = config(&[("echo", ECHO_TOOL_KIND), ("moderator", POLICY_MODERATOR_KIND)]);
-            let error = ComponentContainer::from_config(&with_moderator, AgentActor::COMPONENT_FACETS, &registry, &context).await.expect_err("an agent moderates nothing");
-            assert!(error.to_string().contains("'moderator'") && error.to_string().contains("Moderator"), "{error}");
         }
 
         #[tokio::test]

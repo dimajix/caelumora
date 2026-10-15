@@ -2,6 +2,7 @@
 //! sessions, channels and the views share: one of each, for building a runtime, a user, a session
 //! and its main channel, and the views an actor of a running session navigates (issue 315).
 
+use crate::testing::{Script, ScriptedAgents};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityRules};
 use caelumora_model::security::{OwnershipPolicy, AccessPolicy};
 use caelumora_model::store::memberships::StoreMemberships;
@@ -64,7 +65,7 @@ pub(crate) async fn record_users(manager: &SessionManager, users: &[&User]) -> V
 pub(crate) fn owned_runtime(rules: ConfidentialityRules) -> (Arc<MemoryStore>, Arc<SessionManager>) {
     let (policy, confidentiality, store) = owned_store(rules);
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, confidentiality, &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, confidentiality, &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap());
     (store, Arc::new(SessionManager::new(runtime)))
 }
 
@@ -72,7 +73,7 @@ pub(crate) fn owned_runtime(rules: ConfidentialityRules) -> (Arc<MemoryStore>, A
 pub(crate) fn test_runtime() -> Arc<RuntimeManager> {
     let store = Arc::new(MemoryStore::new());
     let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
-    Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store))).unwrap())
+    Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap())
 }
 
 /// The runtime of an actor in a channel of no running session, never

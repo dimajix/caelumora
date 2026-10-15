@@ -585,6 +585,7 @@ mod tests {
 
     use crate::channel::tests::*;
     use crate::channel::{ActorChange, ChannelError, ResolvedParticipant};
+    use crate::testing::Script;
     use caelumora_model::security::AllowAllPolicy;
 
     #[tokio::test]
@@ -973,7 +974,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_removal_is_announced_in_the_channel_in_the_name_of_who_removed_after_the_farewell() {
-        let Stuck { channel, context, agent, helper, mut events, running } = stuck_in_a_model_call().await;
+        let Stuck { channel, context, agent, helper, mut events, running } = stuck_in_a_turn().await;
 
         channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
 
@@ -1042,7 +1043,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_removal_still_pending_is_announced_before_an_actor_starts_under_the_same_id() {
-        let (channel, context, agent, _) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default()).await;
+        let (channel, context, agent, _) = scripted_channel(Script::Hangs).await;
         let mut events = channel.observe();
         let participant = ActorId::Agent(agent);
         let joined = channel.actors.load().get(&participant).cloned().expect("the agent takes part");

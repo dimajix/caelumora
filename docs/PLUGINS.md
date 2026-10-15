@@ -14,9 +14,9 @@ know - a kind of entity with what keeps it, its components, its views and its ro
 of a service of the core (issue 324). It implements `caelumora_runtime::plugin::Plugin` - a name for
 messages, `backends` and `register` - and the program lists it: `caelumora-app` in `rest_plugins()`
 if it serves routes, otherwise in `plugins()`, and builds its runtime with both; `caelumora-tui` in
-its own `plugins()`. Both list the agents' plugin first, the essential one (issue 370);
-`RuntimeManager::new`, the runtime tests build, registers it alone. A program builds its runtime
-with `RuntimeBuilder::from_config`, given the configuration and its plugins, in two steps:
+its own `plugins()`. Both list the agents' plugin first, the essential one (issue 370). A program
+builds its runtime with `RuntimeBuilder::from_config`, given the configuration and its plugins, in
+two steps:
 
 1.  Each plugin registers its backends (`backends`, see
     [ARCHITECTURE.md](ARCHITECTURE.md#backends)) with the core's (`Backends::with_plugins`), before
@@ -28,12 +28,14 @@ with `RuntimeBuilder::from_config`, given the configuration and its plugins, in 
     the runtime. The program names the default kinds of singles after its plugins registered
     (`set_default_kind`).
 
-A test that builds the runtime from parts of its own calls `RuntimeBuilder::new` with
-`Backends::with_plugins` of its plugins and registers them afterwards; `RuntimeManager::new` is the
-builder without plugins. A backend's factory is registered with `Backends::register` for the
-service it serves (`dyn TerminalProvider`, say), reads its parameters with `config_of_params` and
-asks the services it is given - the policies, the `SecretManager`, the store of the users - with
-`service_of`. While it registers, a plugin
+A test that builds the runtime from parts of its own calls `RuntimeManager::new` with the plugins it
+needs, or `RuntimeBuilder::new` with `Backends::with_plugins` of its plugins and registers them
+afterwards. A test of the agents' logic names the agents' plugin; the runtime's own tests name
+scripted agents (`testing::ScriptedAgents`, issue 370) where an agent takes part, so that they test
+what the runtime does with an agent, not what an agent does. A backend's factory is registered with
+`Backends::register` for the service it serves (`dyn TerminalProvider`, say), reads its parameters
+with `config_of_params` and asks the services it is given - the policies, the `SecretManager`, the
+store of the users - with `service_of`. While it registers, a plugin
 
 *   asks for the store of its kind (`entity_store::<T>()`). The configured backend opens a store
     for any kind (`EntityStoreFactory`), once - whoever asks for the kind again is given the same

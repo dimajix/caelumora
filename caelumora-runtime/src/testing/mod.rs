@@ -8,6 +8,10 @@
 //! A test of an action asserts the questions asked in a user's name, in
 //! order (`World::asked`): which permissions the action needs.
 
+mod scripted_agent;
+
+pub use scripted_agent::{Script, ScriptedAgent, ScriptedAgents};
+
 use caelumora_model::store::query::Query;
 use std::collections::HashMap;
 use std::future::Future;

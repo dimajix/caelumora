@@ -56,9 +56,25 @@ impl Plugin for AgentsPlugin {
 mod tests {
     use crate::actor::agent::AgentActor;
     use crate::actor::external_agent::ExternalAgentActor;
-    use crate::session::testing::test_runtime;
+    use super::AgentsPlugin;
+    use crate::channel::ChannelLoop;
+    use crate::component::testing::config;
+    use crate::component::{ComponentContainer, ComponentContext};
+    use crate::moderator::policy_moderator::POLICY_MODERATOR_KIND;
+    use crate::moderator::round_robin_policy::ROUND_ROBIN_POLICY_KIND;
+    use crate::runtime::{RuntimeManager, Services};
+    use crate::testing::test_registry;
+    use crate::tool::echo_tool::ECHO_TOOL_KIND;
+    use caelumora_model::component::ComponentConfig;
+    use caelumora_model::security::SecurityContext;
     use caelumora_model::agent::PersonalityKind;
+    use caelumora_model::config::AppConfig;
+    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::secret::SecretManager;
+    use caelumora_model::security::AllowAllPolicy;
+    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::type_map::TypeKey;
+    use std::sync::Arc;
 
     /// The names of `facets`, to compare them by.
     fn names(facets: Option<&[TypeKey]>) -> Option<Vec<&'static str>> {
@@ -69,8 +85,43 @@ mod tests {
     /// what their actors ask for (issue 337).
     #[test]
     fn the_plugin_brings_both_kinds_of_agent() {
-        let runtime = test_runtime();
+        let store = Arc::new(MemoryStore::new());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
+        let runtime = RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), &[&AgentsPlugin]).unwrap();
         assert_eq!(names(runtime.agent_kinds().facets(PersonalityKind::Internal)), names(Some(AgentActor::COMPONENT_FACETS)));
         assert_eq!(names(runtime.agent_kinds().facets(PersonalityKind::External)), names(Some(ExternalAgentActor::COMPONENT_FACETS)));
+    }
+
+    /// The owners' own declarations: a channel takes no tool, an agent no
+    /// moderator; each takes what it asks for and what that needs.
+    #[tokio::test]
+    async fn a_channel_takes_no_tool_and_an_agent_no_moderator() {
+        let registry = Arc::new(test_registry(Arc::new(MemoryStore::new())));
+        let context = ComponentContext::new(SecurityContext::default(), Services::empty());
+
+        let channel = config(&[("moderator", POLICY_MODERATOR_KIND), ("policy", ROUND_ROBIN_POLICY_KIND)]);
+        ComponentContainer::from_config(&channel, ChannelLoop::COMPONENT_FACETS, &registry, &context).await.expect("its moderator and what it needs");
+        let with_tool = config(&[("policy", ROUND_ROBIN_POLICY_KIND), ("echo", ECHO_TOOL_KIND)]);
+        let error = ComponentContainer::from_config(&with_tool, ChannelLoop::COMPONENT_FACETS, &registry, &context).await.expect_err("a channel calls no tool");
+        assert!(error.to_string().contains("'echo'") && error.to_string().contains("ToolProvider"), "{error}");
+
+        ComponentContainer::from_config(&config(&[("echo", ECHO_TOOL_KIND)]), AgentActor::COMPONENT_FACETS, &registry, &context).await.expect("an agent's tool");
+        let with_moderator = config(&[("echo", ECHO_TOOL_KIND), ("moderator", POLICY_MODERATOR_KIND)]);
+        let error = ComponentContainer::from_config(&with_moderator, AgentActor::COMPONENT_FACETS, &registry, &context).await.expect_err("an agent moderates nothing");
+        assert!(error.to_string().contains("'moderator'") && error.to_string().contains("Moderator"), "{error}");
+    }
+
+    #[test]
+    fn the_configuration_may_replace_the_context_provider_but_only_with_one() {
+        let manager = |defaults: serde_json::Value| {
+            let store = Arc::new(MemoryStore::new());
+            let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
+            let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
+            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, test_registry(Arc::<MemoryStore>::clone(&store)), &[&AgentsPlugin])
+        };
+        // As in `examples/config.yaml`.
+        assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());
+        let refused = manager(serde_json::json!([{"id": "context", "kind": "calculator_tool"}])).expect_err("provides no context");
+        assert!(refused.to_string().contains("exactly one facet"), "{refused}");
     }
 }

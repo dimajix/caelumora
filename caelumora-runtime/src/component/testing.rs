@@ -63,7 +63,7 @@ pub(super) fn named(id: &str) -> ComponentFacets {
     facets
 }
 
-pub(super) fn config(nodes: &[(&str, &str)]) -> ComponentConfig {
+pub(crate) fn config(nodes: &[(&str, &str)]) -> ComponentConfig {
     ComponentConfig { component_nodes: nodes.iter().map(|(id, kind)| descriptor(id, kind, json!(null))).collect() }
 }
 

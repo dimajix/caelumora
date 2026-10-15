@@ -2,6 +2,7 @@
 //! running session whose channel "main" an agent takes part in, with a
 //! workspace attached that its storage gives a shell.
 
+use crate::testing::{Script, ScriptedAgents};
 use crate::agent::state::AgentStateHandle;
 use crate::agent::turn::Turn;
 use crate::runtime::RuntimeManager;
@@ -63,7 +64,7 @@ pub(crate) async fn session_with_workspace() -> WithWorkspace {
     let internal = Classification::general(Confidentiality::Internal);
     let storage = BackendConfig::new("local", json!({ "root": files.path(), "shell": true, "destination": { "level": "internal" } }));
     let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig { workspaces, ..Default::default() }, test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig { workspaces, ..Default::default() }, test_registry(Arc::<MemoryStore>::clone(&store)), &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap());
     let system = SecurityContext::system();
 
     let owner = UserId::new();

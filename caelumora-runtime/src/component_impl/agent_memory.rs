@@ -232,6 +232,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_plugin::AgentsPlugin;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use crate::transport::Discard;
     use crate::testing::test_registry;
@@ -320,7 +321,7 @@ mod tests {
         async fn under(access_policy: Arc<dyn AccessPolicy>) -> Self {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
-            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(store)).unwrap());
+            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(store), &[&AgentsPlugin]).unwrap());
             Self { runtime, loops: HashMap::new() }
         }
 

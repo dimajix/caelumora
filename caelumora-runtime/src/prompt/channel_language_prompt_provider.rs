@@ -123,6 +123,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_plugin::AgentsPlugin;
     use crate::agent::state::AgentStateHandle;
     use crate::agent::turn::Turn;
     use crate::testing::test_registry;
@@ -177,7 +178,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let access_policy = Arc::new(AllowAllPolicy::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), &[&AgentsPlugin]).unwrap());
         let system = SecurityContext::system();
 
         let personality = Personality {

@@ -1,6 +1,7 @@
 //! The external agent actor in a running channel: what it is given, how it answers, and the remote
 //! tasks it keeps open.
 
+use crate::agent_plugin::AgentsPlugin;
 use super::*;
 use caelumora_model::value::name::Name;
 use crate::channel::ChannelLoop;
@@ -81,7 +82,7 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
     register_no_secrets(&mut registry);
     register_heard(&mut registry);
     register_marking_command(&mut registry);
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry, &[&AgentsPlugin]).unwrap());
     let channel = Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
@@ -1139,7 +1140,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     );
     let access_policy = Arc::new(AllowAllPolicy::new());
     let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry, &[&AgentsPlugin]).unwrap());
     let manager = SessionManager::new(Arc::clone(&runtime));
     let system = SecurityContext::system();
 

@@ -26,7 +26,7 @@ mod container;
 mod context;
 mod registry;
 #[cfg(test)]
-mod testing;
+pub(crate) mod testing;
 
 pub use container::{ComponentContainer, ComponentImpl};
 pub use context::{service_of, ComponentContext};

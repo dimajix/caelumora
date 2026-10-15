@@ -295,3 +295,22 @@ crate reaches the environment through the doors named above and nothing else.
   (`set_default_kind`) apart from the declarations now, so that declaring a single again keeps
   the program's choice - as the app and the TUI already do in the right order, after their
   plugins.
+- **2026-10-15** — Step 1, point 5 done: a scripted agent. `testing::ScriptedAgent`
+  (`testing/scripted_agent.rs`; `testing.rs` became `testing/mod.rs`) is an actor of a kind of
+  agent with nothing of an agent's logic: asked to respond, it begins a turn and answers at once
+  or hangs until it is cancelled, asked again or stopped (`Script`), tells where it stands, and
+  keeps what it heard and whether it was woken. `ScriptedAgents(script)` is a plugin that
+  registers it for both kinds of personality - the registry of kinds made it a plugin, not a
+  fixture. `RuntimeManager::new` takes the plugins it builds with, so it no longer registers the
+  agents' plugin by itself; the runtime's test helpers (`session::testing::test_runtime`,
+  `owned_runtime` and those of the views, actors and workspaces) name `ScriptedAgents`, the
+  fixtures of the agents' tests `AgentsPlugin`. Measured by letting the agents' plugin register
+  nothing: of the runtime's tests, 13 still needed a real agent. Five test what the channel or a
+  user command does - a participant added again, `/nudge` - and run on scripted agents now
+  (`channel::tests::scripted_channel`, `stuck_in_a_turn`); `a_member_s_answer_under_way…` of the
+  views hangs a scripted agent instead of giving a real one a silent model. The others test an
+  agent: the six commands an agent carries out moved to `channel/tests/agent_commands.rs`, and the
+  two tests of an agent's facets - which a channel and an agent take, and that the configuration
+  replaces the context provider - to the tests of `agent_plugin.rs`. Since then, the runtime's
+  tests that fail without the agents' plugin are those of the modules that move alone. The
+  security suite, which builds its world with the agents' plugin, is sorted in step 2 (point 8).

@@ -763,6 +763,7 @@ impl std::fmt::Debug for Views {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{Script, ScriptedAgents};
     use crate::channel::ChannelLoop;
     use crate::group::keep_participants;
     use crate::runtime::RuntimeManager;
@@ -1673,41 +1674,18 @@ mod tests {
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
-    /// A model whose answer never comes.
-    #[derive(Debug)]
-    struct Silent;
-
-    #[async_trait::async_trait]
-    impl crate::llm::LLMClient for Silent {
-        async fn chat_completion(&self, _: &[caelumora_model::message::Message], _: &[caelumora_model::tool::Tool])
-            -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
-        {
-            Box::pin(futures::stream::pending())
-        }
-
-        fn profile(&self) -> caelumora_model::context::ModelProfile {
-            Default::default()
-        }
-    }
-
     #[tokio::test]
     async fn a_member_s_answer_under_way_is_in_the_snapshot_of_its_channel() {
         use caelumora_model::actor::{ActorEvent, ActorId};
         use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
-        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::scope::Scope;
         use caelumora_model::snapshot::Detail;
 
         let store = Arc::new(MemoryStore::new());
-        let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
-        registry.register(crate::component::ComponentKind::new("silent").provides::<dyn crate::llm::LLMClient>(), |_descriptor, _context| {
-            let mut facets = crate::component::ComponentFacets::empty();
-            facets.insert::<dyn crate::llm::LLMClient>(Arc::new(Silent));
-            Ok(facets)
-        });
+        let registry = test_registry(Arc::<MemoryStore>::clone(&store));
         let access_policy = Arc::new(AllowAllPolicy::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry, &[&ScriptedAgents(Script::Hangs)]).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();
 
@@ -1716,7 +1694,7 @@ mod tests {
         let personality = Personality {
             id: PersonalityId::new(), name: ScopedName::new("thinker", Default::default()).unwrap(), kind: PersonalityKind::Internal,
             roles: None, description: None, introduction: None,
-            components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "silent")] },
+            components: Default::default(),
             security_attributes: Default::default(), reasoning_visibility: Default::default(),
             deleted: None,
         };

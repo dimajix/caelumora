@@ -1,13 +1,15 @@
 //! The tests of `ChannelLoop` itself, and the fixtures of every test of a running channel.
 
+use crate::agent_plugin::AgentsPlugin;
 use super::*;
 use crate::actor::Actor;
 use crate::component::{ComponentImpl, ComponentKind, ComponentRegistry};
 use crate::agent::work::AgentWork;
 use crate::prompt::{ContextError, Prompt, PromptProvider};
 use crate::message::ProcessingError;
-use crate::runtime::{ChannelRuntime, RuntimeManager};
-use crate::testing::test_registry;
+use crate::backend::Backends;
+use crate::runtime::{ChannelRuntime, RuntimeBuilder, RuntimeManager};
+use crate::testing::{test_registry, Script, ScriptedAgent, ScriptedAgents};
 use crate::transport::EventSender;
 use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
@@ -27,7 +29,7 @@ use tokio::sync::broadcast;
 
 use crate::command::help_command::HelpCommandProvider;
 use crate::command::wakeup_command::WakeupCommandProvider;
-use crate::command::CommandExecutor;
+use crate::command::{CommandError, CommandExecutor};
 use crate::llm::LLMClient;
 use caelumora_model::agent::AgentId;
 use caelumora_model::component::{ComponentConfig, ComponentFailPolicy};
@@ -40,6 +42,7 @@ use caelumora_model::user::User;
 use caelumora_model::value::name::ScopedName;
 
 mod agent;
+mod agent_commands;
 mod commands;
 mod external_agent;
 mod questions;
@@ -67,7 +70,7 @@ async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, acc
 /// A channel of `participants` with `components`, built by `registry`.
 async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, access_policy: Arc<dyn AccessPolicy>, registry: ComponentRegistry, components: ComponentConfig) -> Arc<ChannelLoop> {
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry, &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap());
     let channel = Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
@@ -123,6 +126,22 @@ async fn every_user_has_their_own_actor_and_a_stranger_has_none() {
         assert_eq!(actor.name(), participant.username.as_str(), "the actor writes in this user's name");
     }
     assert!(channel.user_actor(UserId::new()).is_none(), "someone who is not a participant has no actor");
+}
+
+/// Decides by a rule over the action alone, to refuse one thing and
+/// allow the rest.
+#[derive(Debug)]
+pub(super) struct Policy(pub(super) fn(ActionType<'_>) -> bool);
+
+#[async_trait::async_trait]
+impl AccessPolicy for Policy {
+    async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
+        (self.0)(action)
+    }
+}
+
+pub(super) fn command_error(error: &anyhow::Error) -> &CommandError {
+    error.downcast_ref().unwrap_or_else(|| panic!("expected a CommandError, got {error:#}"))
 }
 
 /// Answers every event with the same decision: tell `to` what was said,
@@ -248,6 +267,15 @@ pub(super) async fn stuck_in_a_model_call() -> Stuck {
     stuck
 }
 
+/// A running channel with alice and a scripted agent in a turn that does
+/// not end by itself (`Script::Hangs`): what the channel does to an agent
+/// it cancels, asks again or removes, whatever the agent does in its turns.
+pub(super) async fn stuck_in_a_turn() -> Stuck {
+    let stuck = start(scripted_channel(Script::Hangs).await).await;
+    settled(&stuck.helper, ActorState::Planning).await;
+    stuck
+}
+
 /// A running channel with alice and an agent that talks to `model` and
 /// has `components`, after alice said "hello".
 async fn with_an_agent(model: Arc<dyn LLMClient>, components: ComponentConfig) -> Stuck {
@@ -262,30 +290,8 @@ async fn with_an_agent_under(access_policy: Arc<dyn AccessPolicy>, model: Arc<dy
 /// A channel of alice and an agent that talks to `model` and has
 /// `components`, under `access_policy`, built but not running.
 pub(super) async fn agent_channel(access_policy: Arc<dyn AccessPolicy>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
-    use caelumora_model::agent::{Agent, Personality, PersonalityId};
-    use caelumora_model::scope::Scope;
-
     let store = Arc::new(MemoryStore::new());
-    let personality = Personality {
-        description: None,
-        introduction: None,
-        reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
-        id: PersonalityId::new(),
-        name: ScopedName::new("plain", Default::default()).unwrap(),
-        kind: Default::default(),
-        roles: None,
-        components,
-        security_attributes: Default::default(),
-        deleted: None,
-    };
-    store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
-    let alice = user("alice");
-    let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-    let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, context.initiator_id);
-    let agent_id = agent.id;
-    store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
-    store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
-
+    let (context, agent, alice) = alice_and_an_agent(&store, components).await;
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
     // The model is a component (issue 130): the stand-in is registered as
     // a kind of its own and made every agent's default.
@@ -310,7 +316,54 @@ pub(super) async fn agent_channel(access_policy: Arc<dyn AccessPolicy>, model: A
             fail_policy: Default::default(),
         }],
     };
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, registry).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, registry, &[&AgentsPlugin]).unwrap());
+    (channel_of_alice_and(runtime, alice, agent).await, context, agent, alice)
+}
+
+/// A channel of alice and an agent whose answers follow `script`
+/// (`ScriptedAgents`, issue 370), built but not running: for what the
+/// channel does with an agent among its participants, whatever the agent
+/// does in its turns.
+pub(super) async fn scripted_channel(script: Script) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
+    let store = Arc::new(MemoryStore::new());
+    let (context, agent, alice) = alice_and_an_agent(&store, ComponentConfig::default()).await;
+    let access_policy: Arc<dyn AccessPolicy> = Arc::new(AllowAllPolicy::new());
+    let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
+    let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), Backends::built_in()).unwrap();
+    builder.plugin(&ScriptedAgents(script)).unwrap();
+    (channel_of_alice_and(Arc::new(builder.build().unwrap()), alice, agent).await, context, agent, alice)
+}
+
+/// Alice and her agent `helper` of a personality with `components`,
+/// stored in `store`: her context, the agent and her.
+async fn alice_and_an_agent(store: &MemoryStore, components: ComponentConfig) -> (SecurityContext, AgentId, UserId) {
+    use caelumora_model::agent::{Agent, Personality, PersonalityId};
+    use caelumora_model::scope::Scope;
+
+    let personality = Personality {
+        description: None,
+        introduction: None,
+        reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
+        id: PersonalityId::new(),
+        name: ScopedName::new("plain", Default::default()).unwrap(),
+        kind: Default::default(),
+        roles: None,
+        components,
+        security_attributes: Default::default(),
+        deleted: None,
+    };
+    store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
+    let alice = user("alice");
+    let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
+    let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, context.initiator_id);
+    store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
+    store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
+    (context, agent.id, alice.id)
+}
+
+/// The channel of `alice` and `agent`, with its approver, in `runtime`,
+/// built but not running.
+async fn channel_of_alice_and(runtime: Arc<RuntimeManager>, alice: UserId, agent: AgentId) -> Arc<ChannelLoop> {
     let channel = Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
@@ -320,8 +373,8 @@ pub(super) async fn agent_channel(access_policy: Arc<dyn AccessPolicy>, model: A
         name: Name::new("main").unwrap(),
         components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
         participants: vec![
-            Participant::User(alice.id),
-            Participant::Agent(agent_id),
+            Participant::User(alice),
+            Participant::Agent(agent),
             Participant::Approver(caelumora_model::approval::Approver { id: caelumora_model::approval::ApproverId::new(), strategy: caelumora_model::approval::ApprovalStrategy::Any }),
         ],
         security_attributes: SecurityAttributes::default(),
@@ -335,8 +388,7 @@ pub(super) async fn agent_channel(access_policy: Arc<dyn AccessPolicy>, model: A
     runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
     let executor = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
     let session_id = channel.session_id;
-    let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), session_id)).await.unwrap();
-    (channel, context, agent_id, alice.id)
+    ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), session_id)).await.unwrap()
 }
 
 /// A model that gives the answers it was given, one per call, and then
@@ -393,6 +445,12 @@ async fn turn_given_up(events: &mut tokio::sync::broadcast::Receiver<Envelope>, 
             }
         }
     }).await.expect("the turn is given up")
+}
+
+/// The scripted agent `actor` is (`ScriptedAgents`, issue 370).
+pub(super) fn scripted(actor: &Arc<dyn Actor>) -> &ScriptedAgent {
+    let any: &dyn std::any::Any = actor.as_ref();
+    any.downcast_ref::<ScriptedAgent>().expect("a scripted agent")
 }
 
 /// Waits for `actor` to reach `wanted`.
@@ -486,7 +544,7 @@ impl crate::command::AgentCommandProvider for Marking {
     async fn execute(&self, _name: &str, args: &str, turn: &mut crate::agent::turn::Turn<'_>) -> crate::command::CommandResult<caelumora_model::command::CommandOutput> {
         crate::agent::notes::AgentNotes::note(turn, crate::agent::notes::NoteKind::Public, format!("marked {args}"));
         if args == "fail" {
-            return Err(crate::command::CommandError::Failed { command: "mark".to_string(), reason: "it was told to".to_string() });
+            return Err(CommandError::Failed { command: "mark".to_string(), reason: "it was told to".to_string() });
         }
         Ok(caelumora_model::command::CommandOutput::private("Marked."))
     }
@@ -519,14 +577,6 @@ async fn command_events(watch: &mut crate::actor::user::ChannelWatch) -> (Option
             }
         }
     }).await.expect("the command is answered")
-}
-
-pub(super) fn says(text: &str) -> Message {
-    Message {
-        role: caelumora_model::message::MessageRole::Assistant,
-        content: Some(text.to_string()),
-        ..Message::new(Classification::CHANNEL_DEFAULT)
-    }
 }
 
 fn register_asking_tool(registry: &mut ComponentRegistry) {

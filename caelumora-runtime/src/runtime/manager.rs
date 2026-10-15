@@ -1,7 +1,7 @@
 use crate::channel::Participation;
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::actor::AgentKinds;
-use crate::agent_plugin::AgentsPlugin;
+use crate::plugin::Plugin;
 use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
@@ -77,13 +77,15 @@ pub struct RuntimeManager {
 }
 
 impl RuntimeManager {
-    /// The runtime of the core with its essential plugin alone, the agents'
-    /// (`AgentsPlugin`, issue 370): as `RuntimeBuilder` builds it from the
-    /// same parts, with the core's backends.
+    /// The runtime of the core with `plugins`: as `RuntimeBuilder` builds it
+    /// from the same parts, with the core's backends. Without the agents'
+    /// plugin (`AgentsPlugin`, issue 370) it runs no agent; the runtime's
+    /// own tests run scripted ones (`testing::ScriptedAgents`).
     ///
     /// # Errors
     /// As `RuntimeBuilder::new`, `RuntimeBuilder::plugin` and
     /// `RuntimeBuilder::build`.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         state_store: Arc<dyn StateStore>,
         backend: impl Into<StoreBackend>,
@@ -92,9 +94,12 @@ impl RuntimeManager {
         confidentiality: Arc<dyn ConfidentialityPolicy>,
         config: &AppConfig,
         component_registry: ComponentRegistry,
+        plugins: &[&dyn Plugin],
     ) -> Result<Self> {
-        let mut builder = RuntimeBuilder::new(state_store, backend, secret_manager, access_policy, confidentiality, config, component_registry, Backends::built_in())?;
-        builder.plugin(&AgentsPlugin)?;
+        let mut builder = RuntimeBuilder::new(state_store, backend, secret_manager, access_policy, confidentiality, config, component_registry, Backends::with_plugins(plugins))?;
+        for plugin in plugins {
+            builder.plugin(*plugin)?;
+        }
         builder.build()
     }
 
@@ -211,28 +216,5 @@ impl RuntimeManager {
 
     pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> {
         Ok(Box::new(BlackholeRecorder::new()))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::testing::test_registry;
-    use caelumora_model::security::AllowAllPolicy;
-    use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::confidentiality::ConfidentialityRules;
-
-    #[test]
-    fn the_configuration_may_replace_the_context_provider_but_only_with_one() {
-        let manager = |defaults: serde_json::Value| {
-            let store = Arc::new(MemoryStore::new());
-            let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
-            let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
-            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, test_registry(Arc::<MemoryStore>::clone(&store)))
-        };
-        // As in `examples/config.yaml`.
-        assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());
-        let refused = manager(serde_json::json!([{"id": "context", "kind": "calculator_tool"}])).expect_err("provides no context");
-        assert!(refused.to_string().contains("exactly one facet"), "{refused}");
     }
 }

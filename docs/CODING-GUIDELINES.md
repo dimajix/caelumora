@@ -308,6 +308,11 @@ that answered it.
 *   **Shared fixtures:** what the tests of several files use lives in a `#[cfg(test)] pub(crate) mod
     testing` of the module it builds, e.g. `session::testing`. The tests of the actors in a running
     channel share the channel's fixtures and live with them in `channel/tests/`.
+*   **Agents in the runtime's tests:** a test of what a channel, a session or the views do with an
+    agent among their participants runs a scripted agent (`testing::ScriptedAgents`, issue 370),
+    which begins, ends or hangs in its answers as told; a test of what an agent does runs the
+    agents' plugin. The tests of the agents' logic - `channel/tests/agent.rs`, `agent_commands.rs`,
+    `external_agent.rs`, `questions.rs`, and those in its modules - move with it.
 *   **Async tests:** use `#[tokio::test]` for tests involving async code.
 *   **Naming:** use descriptive names, e.g.
     `an_answer_is_its_whole_messages_and_what_was_being_written`.
