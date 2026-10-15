@@ -10,6 +10,8 @@ use crate::plugin::{register_components, AgentsPlugin};
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::llm::{LLMClient, LLMError, LLMResult};
 use caelumora_runtime::plugin::Plugin;
+use caelumora_runtime::runtime::RuntimeBuilder;
+use anyhow::Result;
 use caelumora_runtime::session::SessionLoop;
 use caelumora_runtime::workspace::testing::WithWorkspace;
 use caelumora_runtime::testing::{actor_runtime_in, test_registry as runtime_registry, World, STAFF};
@@ -28,37 +30,35 @@ use caelumora_model::user::UserId;
 use futures::stream::BoxStream;
 use futures::StreamExt;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 
-/// The world with the agents and the models of a test (`with_agent_kinds`).
+/// The agents in the world of a test, as a plugin (issue 373): the agents'
+/// plugin (`AgentsPlugin`) and a model that is not to be asked
+/// (`UNASKED_MODEL_KIND`) as the default. A test gives it to the runtime's
+/// `World` with its own plugins. Naming the default model is the program's
+/// (issue 329), not a plugin's: this one stands in for the program of the
+/// tests.
+#[derive(Debug, Default)]
+pub struct TestAgents;
+
+impl Plugin for TestAgents {
+    fn name(&self) -> &'static str {
+        AgentsPlugin.name()
+    }
+
+    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
+        AgentsPlugin.register(runtime)?;
+        with_unasked_model(runtime.components());
+        Ok(())
+    }
+}
+
+/// The world with the agents (`TestAgents`) and nothing else.
 pub async fn world() -> World {
-    world_with_kinds(|_| {}).await
-}
-
-/// `world`, with the component kinds `register` adds.
-pub async fn world_with_kinds(register: impl FnOnce(&mut ComponentRegistry)) -> World {
-    world_with(&[], register).await
-}
-
-/// `world`, with `plugins` (issue 323) and the component kinds `register`
-/// adds.
-pub async fn world_with(plugins: &[&dyn Plugin], register: impl FnOnce(&mut ComponentRegistry)) -> World {
-    world_configured(plugins, |_| BTreeMap::new(), register).await
-}
-
-/// The world with the agents (`AgentsPlugin`) and `plugins`, configured as
-/// `World::configured` is, with the kinds of an agent's components and the
-/// models of a test (`with_agent_kinds`) and those `register` adds.
-pub async fn world_configured(plugins: &[&dyn Plugin], sections: impl FnOnce(&Path) -> BTreeMap<String, Value>, register: impl FnOnce(&mut ComponentRegistry)) -> World {
-    let all: Vec<&dyn Plugin> = std::iter::once(&AgentsPlugin as &dyn Plugin).chain(plugins.iter().copied()).collect();
-    World::configured(&all, sections, |registry| {
-        with_agent_kinds(registry);
-        register(registry);
-    }).await
+    World::with(&[&TestAgents], |_| {}).await
 }
 
 /// A turn of `agent`, of `owner`, in the first channel of `session`,
@@ -113,7 +113,7 @@ pub async fn asked_for_a_call(world: &World, kind: &str, present: &[&str], done:
 }
 
 /// The kind of the model the agents of a test talk to unless they name one
-/// (`with_agent_kinds`).
+/// (`TestAgents`, `with_agent_kinds`).
 pub const UNASKED_MODEL_KIND: &str = "unasked_model";
 
 /// The model of a test that asks none: a call fails, as one to a model
@@ -143,13 +143,18 @@ pub fn test_registry(component_store: Arc<dyn ComponentStore>) -> ComponentRegis
 }
 
 /// Registers with `registry` the kinds of an agent's components
-/// (`register_components`, for tests that build components without a
-/// runtime; a runtime registers them again with the agents' plugin), and a
-/// model that is not to be asked (`UNASKED_MODEL_KIND`) as the default -
-/// the core names none, each program names its own (issue 329), and so do
-/// the tests.
+/// (`register_components`) and a model that is not to be asked as the
+/// default (`with_unasked_model`) - for tests that build components without
+/// a runtime; a runtime gets them from `TestAgents`.
 pub fn with_agent_kinds(registry: &mut ComponentRegistry) {
     register_components(registry);
+    with_unasked_model(registry);
+}
+
+/// Registers with `registry` a model that is not to be asked
+/// (`UNASKED_MODEL_KIND`) as the default - the core names none, each
+/// program names its own (issue 329), and so do the tests.
+fn with_unasked_model(registry: &mut ComponentRegistry) {
     registry.register(ComponentKind::new(UNASKED_MODEL_KIND).provides::<dyn LLMClient>(), |_, _| {
         let mut facets = ComponentFacets::empty();
         facets.insert::<dyn LLMClient>(Arc::new(Unasked));

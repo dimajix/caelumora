@@ -27,7 +27,7 @@ use caelumora_agents::command::AgentCommandProvider;
 use caelumora_agents::compaction::KnowledgeRestorer;
 use caelumora_agents::prompt::{PromptPosition, PromptProvider};
 use caelumora_runtime::session::SessionLoop;
-use caelumora_agents::testing::{self as agent_testing, register_once};
+use caelumora_agents::testing::{self as agent_testing, register_once, TestAgents};
 use caelumora_runtime::testing::{asked_for, shown, World, STAFF};
 use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_runtime::view::Viewer;
@@ -41,7 +41,7 @@ use std::sync::Arc;
 
 /// The world with skills.
 async fn world() -> World {
-    agent_testing::world_with(&[&SkillsPlugin], |_| {}).await
+    World::with(&[&TestAgents, &SkillsPlugin], |_| {}).await
 }
 
 /// The one writer of skills of `world`.
@@ -264,7 +264,7 @@ async fn the_skills_of_a_seed_are_the_systems_and_seeded_once() {
 /// component, and a skill of alice's, `release-notes`, classified as the
 /// channel; and how bob's stream shows him what comes of his commands.
 async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, AgentId, ChannelWatch) {
-    let world = agent_testing::world_with(&[&SkillsPlugin], |registry| register_once(registry, "silent", Message::new(Classification::PUBLIC))).await;
+    let world = World::with(&[&TestAgents, &SkillsPlugin], |registry| register_once(registry, "silent", Message::new(Classification::PUBLIC))).await;
     let skilled = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "silent"),
@@ -343,7 +343,7 @@ async fn with_a_writing_agent(function: &str, arguments: Value) -> (World, Arc<S
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: function.to_string(), arguments, visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
-    let world = agent_testing::world_with(&[&SkillsPlugin], |registry| register_once(registry, "writing", call)).await;
+    let world = World::with(&[&TestAgents, &SkillsPlugin], |registry| register_once(registry, "writing", call)).await;
     let writing = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "writing"),

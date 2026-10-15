@@ -40,7 +40,7 @@ use caelumora_model::work::TurnId;
 use caelumora_runtime::channel::{ChannelError, ChannelLoop};
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, PRECONFIGURED_REF_KIND};
 use caelumora_agents::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
-use caelumora_agents::testing::{asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_once, Once, ONCE_MODEL_KIND};
+use caelumora_agents::testing::{asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_once, Once, TestAgents, ONCE_MODEL_KIND};
 use caelumora_agents::testing as agent_testing;
 use caelumora_runtime::testing::{asked_for, attributes, checks, denied, not_found, quiet, shown, workspace, World};
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
@@ -319,7 +319,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     use caelumora_model::actor::ActorEvent;
     use caelumora_model::message::{Message, MessageRole};
     let answer = Message { role: MessageRole::Assistant, content: Some("an answer".to_string()), ..Message::new(Classification::PUBLIC) };
-    let world = agent_testing::world_with_kinds(|registry| register_once(registry, "answering", answer)).await;
+    let world = World::with(&[&TestAgents], |registry| register_once(registry, "answering", answer)).await;
     let answering = Personality {
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "answering")] },
         ..world.personality("answering", None, &[]).await
@@ -369,7 +369,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
 /// owner, on the word of whoever nudged it.
 #[tokio::test]
 async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_word() {
-    let world = agent_testing::world_with_kinds(|registry| register_once(registry, "silent", Message::new(Classification::PUBLIC))).await;
+    let world = World::with(&[&TestAgents], |registry| register_once(registry, "silent", Message::new(Classification::PUBLIC))).await;
     let silent = Personality {
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "silent")] },
         ..world.personality("silent", None, &[]).await
@@ -537,7 +537,7 @@ async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>,
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
-    let world = agent_testing::world_with_kinds(|registry| registry.register(ComponentKind::new("once").provides::<dyn LLMClient>(), move |_, _| {
+    let world = World::with(&[&TestAgents], |registry| registry.register(ComponentKind::new("once").provides::<dyn LLMClient>(), move |_, _| {
         let mut facets = ComponentFacets::empty();
         facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
         Ok(facets)
@@ -617,7 +617,7 @@ async fn with_a_call_asking_whom(ask: Addressee, sensitive: bool, asker: fn(&Wor
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
-    let world = agent_testing::world_with_kinds(|registry| {
+    let world = World::with(&[&TestAgents], |registry| {
         registry.register(ComponentKind::new("once").provides::<dyn LLMClient>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
@@ -952,7 +952,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
-    let world = agent_testing::world_with_kinds(|registry| {
+    let world = World::with(&[&TestAgents], |registry| {
         registry.register(ComponentKind::new("once").provides::<dyn LLMClient>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
@@ -1020,7 +1020,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "echo".to_string(), arguments: serde_json::json!({ "message": "it" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
         ..Message::new(internal)
     };
-    let world = agent_testing::world_with_kinds(|registry| {
+    let world = World::with(&[&TestAgents], |registry| {
         register_once(registry, "relaying", relayed);
         register_once(registry, "calling", call);
     }).await;
@@ -1069,7 +1069,7 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "read_history".to_string(), arguments: serde_json::json!({ "channel": "side" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
         ..Message::new(internal)
     };
-    let world = agent_testing::world_with_kinds(|registry| register_once(registry, "reading", call)).await;
+    let world = World::with(&[&TestAgents], |registry| register_once(registry, "reading", call)).await;
     let reading = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "reading"),
@@ -1211,7 +1211,7 @@ async fn with_remote_at_work(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Op
 /// there is one.
 async fn with_remote(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Option<Classification>, gate: Option<Arc<Semaphore>>) -> World {
     let calls = Arc::clone(calls);
-    agent_testing::world_with_kinds(|registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>().uses::<SecretManager>(), move |_, context| {
+    World::with(&[&TestAgents], |registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>().uses::<SecretManager>(), move |_, context| {
         let mut facets = ComponentFacets::empty();
         facets.insert::<dyn ExternalAgent>(Arc::new(RemoteAtWork { secrets: Arc::clone(context.service::<SecretManager>()?), calls: Arc::clone(&calls), declared: declared.clone(), gate: gate.clone() }));
         Ok(facets)
@@ -1590,7 +1590,7 @@ async fn removing_an_agent_needs_owning_the_channel() {
 /// session's workspace, where the files `present` lie already - one that
 /// leaves `made`, a file of the workspace.
 async fn asked_for_a_call_on_the_workspace(function: &str, arguments: Value, present: &[&str], made: &str, owner: fn(&World) -> UserId) -> Vec<String> {
-    let world = agent_testing::world_with_kinds(|registry| register_once(registry, ONCE_MODEL_KIND, calling(function, arguments))).await;
+    let world = World::with(&[&TestAgents], |registry| register_once(registry, ONCE_MODEL_KIND, calling(function, arguments))).await;
     let kind = TERMINAL_TOOL_KIND;
     asked_for_a_call(&world, kind, present, |_, place| place.join(made).is_file(), owner(&world)).await
 }
@@ -1776,7 +1776,7 @@ impl AgentCommandProvider for Commanded {
 /// shows the answers to his commands.
 async fn with_a_commanded_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, Arc<Mutex<Vec<SecurityContext>>>, ChannelWatch) {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let world = agent_testing::world_with_kinds(|registry| {
+    let world = World::with(&[&TestAgents], |registry| {
         register_once(registry, "silent", Message::new(Classification::PUBLIC));
         let seen = Arc::clone(&seen);
         registry.register(ComponentKind::new("commanded").provides::<dyn AgentCommandProvider>(), move |_, _| {
@@ -1861,7 +1861,7 @@ async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
 /// agent carries it out for her - here refusing, since it heard nothing yet.
 #[tokio::test]
 async fn only_an_agents_owner_compacts_its_context() {
-    let world = agent_testing::world_with_kinds(|registry| register_once(registry, "silent", Message::new(Classification::PUBLIC))).await;
+    let world = World::with(&[&TestAgents], |registry| register_once(registry, "silent", Message::new(Classification::PUBLIC))).await;
     let compacting = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "silent"),

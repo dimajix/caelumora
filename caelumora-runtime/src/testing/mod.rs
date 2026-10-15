@@ -193,13 +193,7 @@ pub struct World {
 
 impl World {
     pub async fn new() -> Self {
-        Self::with_kinds(|_| {}).await
-    }
-
-    /// The world, with the component kinds `register` adds besides the
-    /// built-in ones.
-    pub async fn with_kinds(register: impl FnOnce(&mut ComponentRegistry)) -> Self {
-        Self::with(&[], register).await
+        Self::with(&[], |_| {}).await
     }
 
     /// The world with `plugins` (issue 323), and the component kinds
@@ -212,8 +206,8 @@ impl World {
     /// claim, as `sections` writes them given `files` - where a plugin's
     /// storage may lie beside the workspaces' (issue 328) -, and the
     /// component kinds `register` adds besides the built-in ones. It runs
-    /// no agent unless a plugin brings them: the world of the agents'
-    /// tests is `caelumora_agents::testing::world_configured` (issue 370).
+    /// no agent unless a plugin brings them: in the agents' tests,
+    /// `caelumora_agents::testing::TestAgents` does (issues 370, 373).
     pub async fn configured(plugins: &[&dyn Plugin], sections: impl FnOnce(&Path) -> BTreeMap<String, Value>, register: impl FnOnce(&mut ComponentRegistry)) -> Self {
         let roles = Roles::new([(*STAFF, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);

@@ -1,6 +1,6 @@
 # 373 — The agents' test world mirrors the four constructors of the runtime's `World`
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -39,3 +39,19 @@ called eight times between them.
   new type, whose responsibility would be to set up the world in steps.
 - **Leave it.** The functions are short and the two sets are written alike; the cost is
   maintenance in two places.
+
+## History
+
+- **2026-10-15** — Done, by the maintainer's decision, otherwise than the considerations: counted
+  again, `World::with_kinds` and `World::with` were called by nobody but the next shorthand, and
+  the agents' set differed from the runtime's in two things only - the agents' plugin and a model
+  that is not to be asked as the default. Both are a plugin now,
+  `caelumora_agents::testing::TestAgents`, which a test gives to the runtime's `World` with its own
+  plugins (`World::with(&[&TestAgents, &SkillsPlugin], …)`), as plugins are given to it already.
+  `world_with_kinds`, `world_with` and `world_configured` are gone; `world()` stays as the one
+  shorthand of the agents' tests, for its 37 callers, and `World::with_kinds` is gone, as nothing
+  calls it any more: a new way to set up a world is added in the runtime alone. `TestAgents` names
+  the default model, which a plugin otherwise leaves to the program (PLUGINS.md): it stands in for
+  the program of the tests. Two of each and a builder were not taken: the first would have written
+  out empty arguments in 17 calls and kept both sets, the second added a type for what a plugin
+  does.

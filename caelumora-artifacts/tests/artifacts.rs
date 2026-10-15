@@ -38,7 +38,7 @@ use caelumora_runtime::event::{EventBus, EventSubscription};
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
 use caelumora_runtime::terminal::{ByteStream, WorkspacePath};
-use caelumora_agents::testing::{self as agent_testing, asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_once, ONCE_MODEL_KIND};
+use caelumora_agents::testing::{self as agent_testing, asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_once, TestAgents, ONCE_MODEL_KIND};
 use caelumora_runtime::testing::{quiet, World, STAFF};
 use caelumora_agents::tool::{ToolError, ToolProvider};
 use caelumora_runtime::view::Viewer;
@@ -59,7 +59,7 @@ fn kept_beside(files: &Path) -> BTreeMap<String, Value> {
 
 /// The world with artifacts.
 async fn world() -> World {
-    agent_testing::world_configured(&[&ArtifactsPlugin], kept_beside, |_| {}).await
+    World::configured(&[&TestAgents, &ArtifactsPlugin], kept_beside, |_| {}).await
 }
 
 /// The one owner of artifacts of `world`.
@@ -168,7 +168,7 @@ async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
 async fn the_storages_of_the_section_are_made_when_the_plugin_registers() {
     let world = world().await;
     assert!(manager(&world).is_configured(), "kept, the one there is");
-    let without = agent_testing::world_with(&[&ArtifactsPlugin], |_| {}).await;
+    let without = World::with(&[&TestAgents, &ArtifactsPlugin], |_| {}).await;
     assert!(!manager(&without).is_configured(), "no storage unless configured");
 
     let refused = |section: Value| {
@@ -645,7 +645,7 @@ async fn an_artifact_kept_beyond_its_session_drops_its_channel_once_that_is_purg
 #[tokio::test]
 async fn an_agents_artifact_is_published_for_its_owner() {
     let call = calling(PUBLISH_ARTIFACT, json!({ "path": "notes/a.md" }));
-    let world = agent_testing::world_configured(&[&ArtifactsPlugin], kept_beside, |registry| register_once(registry, ONCE_MODEL_KIND, call)).await;
+    let world = World::configured(&[&TestAgents, &ArtifactsPlugin], kept_beside, |registry| register_once(registry, ONCE_MODEL_KIND, call)).await;
     let kept = |files: &Path, _: &Path| std::fs::read_dir(files.join("artifacts")).is_ok_and(|mut entries| entries.next().is_some());
     let asked = asked_for_a_call(&world, ARTIFACT_TOOL_KIND, &["notes/a.md"], kept, world.alice).await;
     asked_as_a_call_on_the_workspace(&asked);

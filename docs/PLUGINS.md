@@ -75,9 +75,10 @@ backends alone, such as `caelumora-open-terminal` (issue 327), registers them in
 nothing in `register`. A plugin's tests use the world of the security suite - the runtime with the
 recording ownership policy and three users -, `caelumora_runtime::testing`, as a dev-dependency
 with the feature `test-support`. That world runs no agent; a plugin whose components serve an
-agent's facets tests them in the world of the agents' tests
-(`caelumora_agents::testing::world_with`), with the
-agents' plugin and the models of a test (issue 370).
+agent's facets tests them with the agents beside it - `World::with(&[&TestAgents, &Plugin], …)` -
+where `caelumora_agents::testing::TestAgents` brings the agents' plugin and a model that is not to
+be asked as the default (issues 370, 373). Naming that default is the program's, and in a test,
+`TestAgents` stands in for the program.
 
 ## What a component kind outside the core may use
 
