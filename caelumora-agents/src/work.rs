@@ -75,11 +75,10 @@ impl<'a> AgentWork<'a> {
         self.work.classification.clone()
     }
 
-    /// The attributes of the agent's channel as it stands - the system's
-    /// while it is attached to none -, by which an act on what the agent
-    /// keeps there is asked (issue 312).
+    /// The attributes of the agent's channel as it stands, by which an act
+    /// on what the agent keeps there is asked (issue 312).
     pub fn channel_attributes(&self) -> SecurityAttributes {
-        self.runtime.channel_attributes().unwrap_or_default()
+        self.runtime.channel_attributes()
     }
 
     /// The classification of what the work writes (issue 168): the join of

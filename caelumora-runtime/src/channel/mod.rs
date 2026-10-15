@@ -252,9 +252,12 @@ impl ChannelLoop {
     /// The facets it asks its components for (issue 337).
     pub const COMPONENT_FACETS: &[TypeKey] = &[TypeKey::of::<dyn Moderator>()];
 
-    /// Builds the channel and its actors, whose runtimes `runtime` creates and
-    /// which reach the channel through it once it exists.
-    pub async fn new(channel: Channel, runtime: ChannelRuntime) -> Result<Arc<Self>> {
+    /// Builds the channel `runtime` holds the controller of, and its actors,
+    /// whose runtimes `runtime` creates and which reach the channel through
+    /// it once it exists.
+    pub async fn new(runtime: ChannelRuntime) -> Result<Arc<Self>> {
+        let channel_controller = Arc::clone(runtime.channel_controller());
+        let channel = Arc::clone(&channel_controller.load());
         let id = channel.id;
         let session_id = channel.session_id;
         let state_store = Arc::clone(runtime.state_store());
@@ -285,8 +288,6 @@ impl ChannelLoop {
         let state = Mutex::new(state);
 
         let recorder = runtime.new_recorder()?;
-
-        let channel_controller = runtime.controller_manager().new_channel_controller(channel);
 
         let (changes_tx, changes_rx) = mpsc::unbounded_channel();
         let channel_loop = Arc::new(Self {
@@ -514,12 +515,11 @@ impl ChannelLoop {
 
     /// The actor of `resolved`, built but not yet taken in (`adopt`).
     async fn create_actor(&self, resolved: &ResolvedParticipant) -> Result<Box<dyn Actor>> {
-        let channel = Arc::clone(&self.channel);
-        let actor_runtime = self.runtime.new_actor_runtime(resolved.actor_id(), self.session_id, self.id);
+        let actor_runtime = self.runtime.new_actor_runtime(resolved.actor_id());
         Ok(match resolved.kind().clone() {
-            ResolvedKind::User(user) => Box::new(UserActor::new(channel, user, actor_runtime).await?),
-            ResolvedKind::Agent(agent, personality) => self.agent_kinds.build(channel, agent, *personality, actor_runtime).await?,
-            ResolvedKind::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
+            ResolvedKind::User(user) => Box::new(UserActor::new(user, actor_runtime).await?),
+            ResolvedKind::Agent(agent, personality) => self.agent_kinds.build(agent, *personality, actor_runtime).await?,
+            ResolvedKind::Approver(approver) => Box::new(ApproverActor::new(approver, actor_runtime)),
         })
     }
 }

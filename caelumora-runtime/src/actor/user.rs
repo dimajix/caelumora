@@ -71,8 +71,9 @@ pub struct ChannelWatch {
 impl UserActor {
     /// The actor of the user `user` - the session's controller of them,
     /// shared with their actors in its other channels (issue 120) - in the
-    /// channel `channel_controller` holds.
-    pub async fn new(channel_controller: Arc<ChannelController>, user: Arc<UserController>, actor_runtime: ActorRuntime) -> Result<Self> {
+    /// channel of `actor_runtime`.
+    pub async fn new(user: Arc<UserController>, actor_runtime: ActorRuntime) -> Result<Self> {
+        let channel_controller = Arc::clone(actor_runtime.channel_controller());
         let channel = Arc::clone(&channel_controller.load());
         let user_id = user.id();
 
@@ -689,7 +690,6 @@ mod tests {
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap());
         let session_id = SessionId::new();
-        let channel_runtime = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy()))), bare_session(session_id));
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
@@ -713,10 +713,11 @@ mod tests {
             roles: Vec::new(),
             deleted: None,
         };
-        let channel_loop = ChannelLoop::new(channel.clone(), channel_runtime.clone()).await.unwrap();
-        let actor_runtime = channel_runtime.new_actor_runtime(ActorId::User(user.id), channel.session_id, channel.id);
+        let channel_runtime = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy()))), bare_session(session_id), channel);
+        let channel_loop = ChannelLoop::new(channel_runtime.clone()).await.unwrap();
+        let actor_runtime = channel_runtime.new_actor_runtime(ActorId::User(user.id));
         runtime.entity_stores().users.create(&SecurityContext::system(), &user).await.unwrap();
-        let actor = UserActor::new(runtime.controller_manager().new_channel_controller(channel.clone()), runtime.controller_manager().user_controller(user.id).await.unwrap(), actor_runtime).await.unwrap();
+        let actor = UserActor::new(runtime.controller_manager().user_controller(user.id).await.unwrap(), actor_runtime).await.unwrap();
         (actor, channel_loop)
     }
 

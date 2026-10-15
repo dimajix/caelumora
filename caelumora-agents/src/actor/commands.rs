@@ -40,9 +40,9 @@ impl AgentBody {
     }
 
     /// The commands `issuer` may see of the agent in its channel, sorted by
-    /// name; none without a channel.
+    /// name.
     pub(super) async fn visible_commands(&self, issuer: &SecurityContext) -> Vec<Command> {
-        let Some(channel) = self.runtime.channel_attributes() else { return Vec::new() };
+        let channel = self.runtime.channel_attributes();
         let agent = self.agent.load().security_attributes.clone();
         self.commands.visible(issuer, &agent, &channel).await
     }
@@ -69,10 +69,7 @@ impl AgentBody {
         let issuer = request.context.sender_id;
         let (agent_id, name) = (self.agent_id(), self.agent.name());
         let answering = Answering::to(request, self.id(), name.clone(), &self.security_context());
-        let (Some(channel_attributes), Some(classification)) = (self.runtime.channel_attributes(), self.runtime.channel_classification()) else {
-            warn!("Agent {} has no channel to carry out /{} in", agent_id, command);
-            return;
-        };
+        let (channel_attributes, classification) = (self.runtime.channel_attributes(), self.runtime.channel_classification());
         let attributes = self.agent.load().security_attributes.clone();
         let kept = CommandRequest { command: command.clone(), args: args.clone(), issuer };
         let turn_id = state.begin_command_turn(

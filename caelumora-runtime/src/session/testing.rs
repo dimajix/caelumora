@@ -91,16 +91,17 @@ pub fn test_runtime_under(access_policy: Arc<dyn AccessPolicy>, confidentiality:
 /// no channel: its views read nothing elsewhere, its questions have nobody
 /// to be put to, and it has no workspace.
 pub fn detached_actor_runtime() -> ActorRuntime {
-    detached_actor_runtime_in(test_runtime(), bare_session(SessionId::new()), ChannelId::new())
+    let session = bare_session(SessionId::new());
+    let channel = bare_channel(session.id);
+    detached_actor_runtime_in(test_runtime(), session, channel)
 }
 
-/// As `detached_actor_runtime`, on `runtime_manager`, in the channel
-/// `channel` of `session` - for tests that give the actor the policy, the
-/// rules and the session of their own (issue 371).
-pub fn detached_actor_runtime_in(runtime_manager: Arc<RuntimeManager>, session: Session, channel: ChannelId) -> ActorRuntime {
+/// As `detached_actor_runtime`, on `runtime_manager`, in `channel` of
+/// `session` - for tests that give the actor the policy, the rules, the
+/// session and the channel of their own (issues 371, 374).
+pub fn detached_actor_runtime_in(runtime_manager: Arc<RuntimeManager>, session: Session, channel: Channel) -> ActorRuntime {
     let commands = Arc::new(CommandExecutor::empty(Arc::clone(runtime_manager.access_policy())));
-    let session_id = session.id;
-    ChannelRuntime::outside_a_session(runtime_manager, commands, session).new_actor_runtime(ActorId::None, session_id, channel)
+    ChannelRuntime::outside_a_session(runtime_manager, commands, session, channel).new_actor_runtime(ActorId::None)
 }
 
 /// A session that holds nothing but its id `session_id`: what a channel
@@ -121,6 +122,28 @@ pub fn bare_session(session_id: SessionId) -> Session {
         updated_at: now,
         security_attributes: Default::default(),
         deleted: None,
+    }
+}
+
+/// A channel of the session `session_id` that holds nothing but its ids:
+/// what an actor outside a running session is in
+/// (`ChannelRuntime::outside_a_session`).
+pub fn bare_channel(session_id: SessionId) -> Channel {
+    Channel {
+        summary: None, briefing: None,
+        approval_rules: Vec::new(),
+        uses_workspace: false,
+        id: ChannelId::new(),
+        session_id,
+        name: Name::new("c").unwrap(),
+        components: Default::default(),
+        classification: Default::default(),
+        language: None,
+        history_limits: Vec::new(),
+        participants: Vec::new(),
+        security_attributes: Default::default(),
+        deleted: None,
+        former: Vec::new(),
     }
 }
 

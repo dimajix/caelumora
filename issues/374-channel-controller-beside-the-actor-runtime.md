@@ -1,6 +1,6 @@
 # 374 — Every actor is given its channel's controller beside its `ActorRuntime`
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -46,3 +46,25 @@ and reaches the actor through `ActorRuntime::session_controller`.
   classification and the attributes) is part of the decision.
 - **Leave it.** The parameter is passed in one place (`create_actor`) and the disagreement is not
   produced anywhere today; the cost is one parameter per actor.
+
+## History
+
+- **2026-10-15** — Done, by the maintainer's decision, as the first consideration has it: the
+  session makes the channel's controller as it makes the channel's runtime
+  (`SessionLoop::channel_runtime(channel)`), and the `ChannelRuntime` holds it as it holds the
+  session's. `ChannelLoop::new` takes the runtime alone and builds the channel from that
+  controller, keeping a handle of its own taken from the runtime once, as it takes the services.
+  The `ActorRuntime` hands the controller out whole (`channel_controller`), as it does the
+  session's: what changes the channel is asked by the controller in the caller's name anyway, so
+  a narrower offer would protect nothing. The constructors of the actors, the factories of
+  `AgentKinds`, `AgentBody::build` and `ToolExecutor::new` lost the parameter, and
+  `ChannelRuntime::new_actor_runtime` the ids of the session and the channel, which it reads from
+  the controllers. As a step of its own, `ActorRuntime::channel_classification` and
+  `channel_attributes` read the controller instead of the channel's loop and are no longer
+  optional: once the channel is gone, what ends a turn is bound by the channel as it stood last,
+  as the session's controller guards its tool calls; the agents' branches for a channel that is
+  not there went away, and `AgentActor`'s `TurnFlow` became `lowered`, as the external agent's
+  already was. The tests build a channel's runtime with its channel (`outside_a_session`,
+  `bare_channel`, `detached_actor_runtime_in`), and a test's actor runtime is made by its channel
+  (`testing::actor_runtime_in(channel, actor)`), so that a test no longer builds a second
+  controller beside the runtime's.

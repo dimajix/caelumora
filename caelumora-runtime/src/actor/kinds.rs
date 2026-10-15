@@ -7,7 +7,7 @@
 //! and the approvers' actors are the runtime's own.
 
 use super::Actor;
-use crate::controller::{AgentController, ChannelController};
+use crate::controller::AgentController;
 use crate::channel::ChannelError;
 use crate::runtime::ActorRuntime;
 use anyhow::Result;
@@ -20,9 +20,9 @@ use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
 
-/// What builds the actor of an agent of one kind: from the channel it takes
-/// part in, its controller, its personality and its runtime.
-type AgentFactory = Box<dyn Fn(Arc<ChannelController>, Arc<AgentController>, Personality, ActorRuntime) -> BoxFuture<'static, Result<Box<dyn Actor>>> + Send + Sync>;
+/// What builds the actor of an agent of one kind: from its controller, its
+/// personality and its runtime, which holds the channel it takes part in.
+type AgentFactory = Box<dyn Fn(Arc<AgentController>, Personality, ActorRuntime) -> BoxFuture<'static, Result<Box<dyn Actor>>> + Send + Sync>;
 
 /// A registered kind of agent.
 struct Registration {
@@ -50,10 +50,10 @@ impl AgentKinds {
     /// kind registered before is replaced.
     pub fn register<F, Fut>(&mut self, kind: PersonalityKind, facets: &'static [TypeKey], factory: F)
     where
-        F: Fn(Arc<ChannelController>, Arc<AgentController>, Personality, ActorRuntime) -> Fut + Send + Sync + 'static,
+        F: Fn(Arc<AgentController>, Personality, ActorRuntime) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<Box<dyn Actor>>> + Send + 'static,
     {
-        let factory: AgentFactory = Box::new(move |channel, agent, personality, runtime| Box::pin(factory(channel, agent, personality, runtime)));
+        let factory: AgentFactory = Box::new(move |agent, personality, runtime| Box::pin(factory(agent, personality, runtime)));
         self.kinds.insert(kind, Registration { facets, factory });
     }
 
@@ -64,17 +64,16 @@ impl AgentKinds {
     }
 
     /// The actor of the agent `agent` holds, built as the kind of its
-    /// `personality` builds it, in the channel `channel` holds, running with
-    /// `runtime`.
+    /// `personality` builds it, running with `runtime` in its channel.
     ///
     /// # Errors
     /// `ChannelError::UnknownAgentKind` for a kind the program runs no agent
     /// of; whatever building the actor reports.
-    pub(crate) async fn build(&self, channel: Arc<ChannelController>, agent: Arc<AgentController>, personality: Personality, runtime: ActorRuntime) -> Result<Box<dyn Actor>> {
+    pub(crate) async fn build(&self, agent: Arc<AgentController>, personality: Personality, runtime: ActorRuntime) -> Result<Box<dyn Actor>> {
         let Some(registration) = self.kinds.get(&personality.kind) else {
-            return Err(ChannelError::UnknownAgentKind { participant: ActorId::Agent(agent.id()), channel: channel.id() }.into());
+            return Err(ChannelError::UnknownAgentKind { participant: ActorId::Agent(agent.id()), channel: runtime.channel_controller().id() }.into());
         };
-        (registration.factory)(channel, agent, personality, runtime).await
+        (registration.factory)(agent, personality, runtime).await
     }
 }
 
@@ -84,13 +83,10 @@ mod tests {
     use crate::session::testing::detached_actor_runtime;
     use anyhow::anyhow;
     use caelumora_model::agent::{Agent, PersonalityId};
-    use caelumora_model::channel::Channel;
     use caelumora_model::component::ComponentConfig;
-    use caelumora_model::confidentiality::Classification;
     use caelumora_model::scope::Scope;
-    use caelumora_model::session::SessionId;
     use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::value::name::{Name, ScopedName};
+    use caelumora_model::value::name::ScopedName;
 
     /// The names of `facets`, to compare them by.
     fn names(facets: Option<&[TypeKey]>) -> Option<Vec<&'static str>> {
@@ -109,11 +105,9 @@ mod tests {
     /// channel of no running session.
     async fn built(kinds: &AgentKinds, personality: Personality) -> Result<Box<dyn Actor>> {
         let stores = MemoryStore::new().entity_stores();
-        let channel = Channel::build(SessionId::new(), ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
-        let channel = Arc::new(ChannelController::new(channel, Arc::new(()), &stores));
         let agent = Agent::new(ScopedName::new("agent", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         let agent = Arc::new(AgentController::new(agent, None, Arc::new(()), &stores));
-        kinds.build(channel, agent, personality, detached_actor_runtime()).await
+        kinds.build(agent, personality, detached_actor_runtime()).await
     }
 
     /// An agent of a kind the program runs none of cannot take part: its
@@ -130,9 +124,9 @@ mod tests {
     async fn an_agent_is_built_by_the_kind_of_its_personality() {
         let mut kinds = AgentKinds::default();
         assert!(kinds.facets(PersonalityKind::Internal).is_none(), "none unless registered");
-        kinds.register(PersonalityKind::Internal, &[], |_, _, _, _| async { Err(anyhow!("built as first registered")) });
-        kinds.register(PersonalityKind::External, &[], |_, _, _, _| async { Err(anyhow!("built as first registered")) });
-        kinds.register(PersonalityKind::External, &[], |_, _, _, _| async { Err(anyhow!("built as registered again")) });
+        kinds.register(PersonalityKind::Internal, &[], |_, _, _| async { Err(anyhow!("built as first registered")) });
+        kinds.register(PersonalityKind::External, &[], |_, _, _| async { Err(anyhow!("built as first registered")) });
+        kinds.register(PersonalityKind::External, &[], |_, _, _| async { Err(anyhow!("built as registered again")) });
 
         let error = built(&kinds, personality(PersonalityKind::External)).await.expect_err("the stand-in builds nothing");
         assert_eq!(error.to_string(), "built as registered again", "replaced");

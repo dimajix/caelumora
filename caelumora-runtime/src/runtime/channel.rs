@@ -2,13 +2,13 @@ use crate::actor::AgentKinds;
 use crate::channel::{ChannelLoop, Participation};
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::component::ComponentRegistry;
-use crate::controller::{ControllerManager, SessionController};
+use crate::controller::{ChannelController, ControllerManager, SessionController};
 use crate::session::SessionLoop;
 use crate::recorder::Recorder;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
-use caelumora_model::channel::ChannelId;
-use caelumora_model::session::SessionId;
+#[cfg(any(test, feature = "test-support"))]
+use caelumora_model::channel::Channel;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::session::Session;
 use caelumora_model::security::AccessPolicy;
@@ -20,9 +20,9 @@ use super::{ActorRuntime, RuntimeManager, Services};
 /// What a channel runs with, made by its session (`SessionLoop::channel_runtime`) as the channel
 /// is built: the process-wide services of the `RuntimeManager` - among them the controllers of its
 /// users and agents (issue 121) - the user commands of its session (issue 28), the session's
-/// controller (issue 13) and its loop (issue 361), and a handle to the channel itself. It is the
-/// only source of `ActorRuntime`s, so every actor lives in exactly one channel and shares its
-/// commands and handle.
+/// controller (issue 13) and its loop (issue 361), the channel's controller (issue 374) and a
+/// handle to the channel's loop. It is the only source of `ActorRuntime`s, so every actor lives in
+/// exactly one channel and shares its controllers, commands and handle.
 #[derive(Debug, Clone)]
 pub struct ChannelRuntime {
     pub(super) runtime_manager: Arc<RuntimeManager>,
@@ -35,13 +35,17 @@ pub struct ChannelRuntime {
     /// handed to the actors (issue 123). Weak, since the session owns its channels; dangling for a
     /// channel of no running session, in tests.
     session_loop: Weak<SessionLoop>,
-    pub(super) channel: ChannelHandle,
+    /// The channel, live: what the channel's loop is built from and holds,
+    /// and what its actors read it by. Held, not reached through
+    /// `channel_loop`, for the same reason as `session`.
+    channel: Arc<ChannelController>,
+    pub(super) channel_loop: ChannelHandle,
 }
 
-/// The channel its actors run in, reachable from what they are built with
-/// once it exists: set by `ChannelLoop::new` as soon as the channel does,
-/// after its actors were built. Weak, because the channel owns its actors
-/// and they hold this handle: a strong reference would keep a stopped
+/// The loop of the channel its actors run in, reachable from what they are
+/// built with once it exists: set by `ChannelLoop::new` as soon as the loop
+/// does, after its actors were built. Weak, because the channel owns its
+/// actors and they hold this handle: a strong reference would keep a stopped
 /// channel alive forever.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChannelHandle(Arc<OnceLock<Weak<ChannelLoop>>>);
@@ -55,27 +59,29 @@ impl ChannelHandle {
 }
 
 impl ChannelRuntime {
-    /// A runtime for a channel of the session `session` holds and `session_loop` runs, whose user
-    /// commands are `command_executor`.
-    pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session: Arc<SessionController>, session_loop: Weak<SessionLoop>) -> Self {
-        Self { runtime_manager, command_executor, session, session_loop, channel: ChannelHandle::default() }
+    /// A runtime for the channel `channel` holds, of the session `session` holds and
+    /// `session_loop` runs, whose user commands are `command_executor`.
+    pub fn new(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session: Arc<SessionController>, channel: Arc<ChannelController>, session_loop: Weak<SessionLoop>) -> Self {
+        Self { runtime_manager, command_executor, session, session_loop, channel, channel_loop: ChannelHandle::default() }
     }
 
-    /// The runtime of `actor` in the channel `channel_id` of session
-    /// `session_id` - the channel this runtime is for, which is not attached
-    /// yet while its actors are built.
-    pub fn new_actor_runtime(&self, actor: ActorId, session_id: SessionId, channel_id: ChannelId) -> ActorRuntime {
-        ActorRuntime { runtime: self.clone(), actor, session_id, channel_id }
+    /// The runtime of `actor` in the channel this runtime is for, whose loop
+    /// is not attached yet while its actors are built.
+    pub fn new_actor_runtime(&self, actor: ActorId) -> ActorRuntime {
+        ActorRuntime { runtime: self.clone(), actor, session_id: self.session.id(), channel_id: self.channel.id() }
     }
 
     /// Makes `channel` reachable from the runtimes of its actors. Called once
     /// by `ChannelLoop::new`, as soon as the channel exists.
     pub(crate) fn attach(&self, channel: &Arc<ChannelLoop>) {
-        let _ = self.channel.0.set(Arc::downgrade(channel));
+        let _ = self.channel_loop.0.set(Arc::downgrade(channel));
     }
 
     /// The controller of the channel's session.
     pub(crate) fn session_controller(&self) -> &Arc<SessionController> { &self.session }
+
+    /// The controller of the channel (issue 374).
+    pub(crate) fn channel_controller(&self) -> &Arc<ChannelController> { &self.channel }
 
     /// The loop of the channel's session, for the channel (`ChannelLoop::session_loop`); `None`
     /// once the session is gone, or for a channel of none, in tests.
@@ -108,18 +114,20 @@ impl ChannelRuntime {
 
 #[cfg(any(test, feature = "test-support"))]
 impl ChannelRuntime {
-    /// A runtime for a channel of `session`, which is not running - in
-    /// tests: it has no loop (`bare_session` for one that holds nothing but
-    /// its id).
-    pub fn outside_a_session(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session: Session) -> Self {
+    /// A runtime for `channel` of `session`, which is not running - in
+    /// tests: it has no loop (`bare_session` and `bare_channel` for ones
+    /// that hold nothing but their ids).
+    pub fn outside_a_session(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session: Session, channel: Channel) -> Self {
         let session = runtime_manager.controller_manager().new_session_controller(session);
-        Self::new(runtime_manager, command_executor, session, Weak::new())
+        let channel = runtime_manager.controller_manager().new_channel_controller(channel);
+        Self::new(runtime_manager, command_executor, session, channel, Weak::new())
     }
 
     /// The runtime of the same channel built again, as after a restart -
-    /// in tests: the same services, commands and session, and no channel
-    /// attached yet.
+    /// in tests: the same services, commands and session, the channel as it
+    /// is stored now in a controller of its own, and no loop attached yet.
     pub fn restarted(&self) -> Self {
-        Self::new(Arc::clone(&self.runtime_manager), Arc::clone(&self.command_executor), Arc::clone(&self.session), Weak::clone(&self.session_loop))
+        let channel = self.runtime_manager.controller_manager().new_channel_controller(Channel::clone(&self.channel.load()));
+        Self::new(Arc::clone(&self.runtime_manager), Arc::clone(&self.command_executor), Arc::clone(&self.session), channel, Weak::clone(&self.session_loop))
     }
 }

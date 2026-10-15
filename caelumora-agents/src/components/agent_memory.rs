@@ -366,7 +366,7 @@ mod tests {
         async fn runtime_in(&self, at: &At) -> ActorRuntime {
             let session = self.loops.get(&at.0.0).expect("a session of the test");
             let channel = running_channel(session, at.0.1, at.1.clone()).await;
-            actor_runtime_in(session, &channel, ActorId::None)
+            actor_runtime_in(&channel, ActorId::None)
         }
     }
 

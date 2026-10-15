@@ -598,8 +598,9 @@ what ties it to the remote side (see [STORAGE.md](STORAGE.md)).
 
 ## The channel and actor runtime
 
-A `ChannelLoop` is built with a `ChannelRuntime`, not with the `RuntimeManager` itself. Its session
-makes it (`SessionLoop::channel_runtime`), and it carries what everything in the channel shares:
+A `ChannelLoop` is built with a `ChannelRuntime` alone, not with the `RuntimeManager` itself nor
+with its `Channel`. Its session makes it (`SessionLoop::channel_runtime`), and it carries what
+everything in the channel shares:
 
 *   the process-wide services the channel is built with, each by an accessor of its own and read
     once by `ChannelLoop::new`, and never the `RuntimeManager` itself, so that what a channel can
@@ -609,27 +610,30 @@ makes it (`SessionLoop::channel_runtime`), and it carries what everything in the
     its loop, by which the channel reaches its session and the other channels in it (issue 361) -
     a `Weak`, since the session owns its channels, and for the channel alone: the actors are not
     handed it (issue 123);
-*   a handle to the channel - a `Weak`: the channel owns its actors, and a strong reference back
-    would keep a stopped channel alive.
+*   the channel's controller, made by the session with the runtime (issue 374): what
+    `ChannelLoop::new` builds the channel from and holds, and what its actors read the channel
+    by, so that the loop and its actors cannot hold two different channels;
+*   a handle to the channel's loop - a `Weak`: the channel owns its actors, and a strong reference
+    back would keep a stopped channel alive.
 
 A session exists before its channels: `SessionLoop::new` makes it, and then builds each channel as
 one created later is built (`add_channel_loop`), so that a channel has its session from the start.
 
 The `ChannelRuntime` is the only source of `ActorRuntime`s, so every actor belongs to exactly one
 channel. An `ActorRuntime` is made for one actor and hands out only what concerns that actor: the
-services every actor needs - the model is not among them, an agent has it as a component - and
-those its components may use; its own agent state and its state in the channel; its own event
+services every actor needs - the model is not among them, an agent has it as a component - and those
+its components may use; its own agent state and its state in the channel; its own event
 subscription, for its channel and nothing else; the attributes of an agent that asks something of
-it, as stored; what an actor asks of its channel - its classification and attributes, its users
-for the questions of a tool call, the workspace as the channel may use it (issue 370); the
-controller of its session, which guards its agent's tool calls; and its own session as the root of
-what its work reads (`session_view`), from which the session's other channels are read as the
-confidentiality rules allow (see
-[MEMORY.md](MEMORY.md#reading-other-channels)). It does not hand out the `RuntimeManager` it is
-made from: what an actor may reach is read from `ActorRuntime` alone (issue 359). It is the actor's
-interface to its channel, not a way to its `ChannelLoop`: the loop's public API is the frontends',
-and acts in a user's name too. The loop is reached through it only by the user's and the approver's
-actors and by the views, all in the runtime (`pub(crate)`, see
+it, as stored; what an actor asks of its channel - its classification and attributes, its users for
+the questions of a tool call, the workspace as the channel may use it (issue 370); the controllers
+of its session and its channel, which the actor reads them by and which guard its agent's tool
+calls, held so that they do not lapse while a turn ends (issue 374); and its own session as the root
+of what its work reads (`session_view`), from which the session's other channels are read as the
+confidentiality rules allow (see [MEMORY.md](MEMORY.md#reading-other-channels)). It does not hand
+out the `RuntimeManager` it is made from: what an actor may reach is read from `ActorRuntime` alone
+(issue 359). It is the actor's interface to its channel, not a way to its `ChannelLoop`: the loop's
+public API is the frontends', and acts in a user's name too. The loop is reached through it only by
+the user's and the approver's actors and by the views, all in the runtime (`pub(crate)`, see
 [CODING-GUIDELINES.md](CODING-GUIDELINES.md#runtimes-and-their-entities)).
 
 The full `ChannelLoop` and `SessionLoop` are `pub(crate)`, so components from other crates cannot

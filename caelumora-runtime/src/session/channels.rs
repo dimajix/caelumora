@@ -180,7 +180,7 @@ impl SessionLoop {
     /// Builds the loop of `channel`, which the session lists, and has the
     /// session run it: the one place a channel's loop is built.
     pub(super) async fn add_channel_loop(self: &Arc<Self>, channel: &Channel) -> Result<Arc<ChannelLoop>> {
-        let channel_loop = ChannelLoop::new(channel.clone(), self.channel_runtime()).await?;
+        let channel_loop = ChannelLoop::new(self.channel_runtime(channel.clone())).await?;
         self.channels.insert(channel.id, ChannelEntry { channel: Arc::clone(&channel_loop), task: None });
         let _ = self.start_tx.send(channel.id);
         Ok(channel_loop)

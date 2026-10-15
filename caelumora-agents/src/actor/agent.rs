@@ -23,7 +23,7 @@ use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::turn::TurnState;
 use caelumora_model::work::TurnId;
-use caelumora_runtime::controller::{AgentController, ChannelController};
+use caelumora_runtime::controller::AgentController;
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::confidentiality::{Classification, Visibility};
 use caelumora_model::message::{Message, MessageEvent};
@@ -77,28 +77,23 @@ impl AgentActor {
     /// The actor of the agent `agent_controller` holds - the session's
     /// controller of it, shared with its actors in the session's other
     /// channels (issue 120) - built from its `personality`, as the channel
-    /// read it for the agent, in the channel `channel_controller` holds.
-    pub async fn new(
-        channel_controller: Arc<ChannelController>,
-        agent_controller: Arc<AgentController>,
-        personality: Personality,
-        actor_runtime: ActorRuntime,
-    ) -> Result<Self> {
-        let channel = Arc::clone(&channel_controller.load());
+    /// read it for the agent, in the channel of `actor_runtime`.
+    pub async fn new(agent_controller: Arc<AgentController>, personality: Personality, actor_runtime: ActorRuntime) -> Result<Self> {
+        let channel_id = actor_runtime.channel_controller().id();
         let agent_id = agent_controller.id();
         // A turn stored under way is resumed (issue 75).
         let resume = |state: &mut AgentChannelState| {
             let not_executed = state.prepare_resume(&not_executed_result());
             if not_executed > 0 {
-                warn!("Agent {} in channel {}: {} approved tool calls were not executed before the restart; the model is told", agent_id, channel.id, not_executed);
+                warn!("Agent {} in channel {}: {} approved tool calls were not executed before the restart; the model is told", agent_id, channel_id, not_executed);
             }
         };
-        let (body, components) = AgentBody::build(&channel, agent_controller, &personality, Self::COMPONENT_FACETS, &ComponentConfig::default(), actor_runtime, resume).await?;
+        let (body, components) = AgentBody::build(agent_controller, &personality, Self::COMPONENT_FACETS, &ComponentConfig::default(), actor_runtime, resume).await?;
         let llm_client = components.one::<dyn LLMClient>().await?;
         let compaction_policy = components.one::<dyn CompactionPolicy>().await?;
         let compaction = components.one::<dyn CompactionStrategy>().await?;
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
-        let tool_executor = ToolExecutor::new(components.get_all::<dyn ToolProvider>(None)?, channel_controller, body.runtime.clone())?;
+        let tool_executor = ToolExecutor::new(components.get_all::<dyn ToolProvider>(None)?, body.runtime.clone())?;
 
         Ok(AgentActor {
             body: body.with_profile(llm_client.profile()),
@@ -153,8 +148,7 @@ impl AgentActor {
         request: &Envelope,
         output: &dyn EventSender,
     ) -> Result<()> {
-        let classification = self.body.runtime.channel_classification()
-            .ok_or_else(|| anyhow!("Agent {} has no channel to take a turn in", self.id()))?;
+        let classification = self.body.runtime.channel_classification();
         let Answering { event_context, security_context } = Answering::to(request, self.id(), self.body.agent.name(), &self.body.security_context());
         // Judged for whoever asked, in the channel as the turn begins.
         let tool_sets = self.tool_executor.tool_sets(&security_context, &classification).await;
@@ -376,9 +370,9 @@ impl AgentActor {
         // lowered, whatever ended it: its model is then given only which
         // tools it called (issue 258). What its users are told follows from
         // what ended it.
-        let recorded = match self.turn_flow(under_way).await {
-            TurnFlow::Lowered(channel) => GivenUpReason::Lowered { channel },
-            TurnFlow::Flows | TurnFlow::NoChannel => reason.clone(),
+        let recorded = match self.lowered(under_way) {
+            Some(channel) => GivenUpReason::Lowered { channel },
+            None => reason.clone(),
         };
         let turn_id = under_way.work.turn_id;
         let agent_name = self.body.agent.name();
@@ -392,20 +386,15 @@ impl AgentActor {
         }
     }
 
-    /// Whether what the turn `under_way` saw may still flow into the channel
-    /// as it is now (`ConfidentialityPolicy::may_publish`, in the agent's name, as
-    /// its tools' results are admitted) - which it may not once the channel
-    /// was lowered below the classification the turn began with (issue 141).
-    async fn turn_flow(&self, under_way: &TurnState) -> TurnFlow {
-        let Some(channel) = self.body.runtime.channel_classification() else {
-            return TurnFlow::NoChannel;
-        };
-        let context = &under_way.work.security_context;
-        if self.body.runtime.confidentiality().may_publish(context, &under_way.work.classification, &channel) {
-            TurnFlow::Flows
-        } else {
-            TurnFlow::Lowered(channel)
-        }
+    /// The channel's classification as it is now, if what the turn
+    /// `under_way` saw may no longer flow into it
+    /// (`ConfidentialityPolicy::may_publish`, in the agent's name, as its
+    /// tools' results are admitted) - once the channel was lowered below the
+    /// classification the turn began with (issue 141); `None` while it flows.
+    fn lowered(&self, under_way: &TurnState) -> Option<Classification> {
+        let channel = self.body.runtime.channel_classification();
+        let flows = self.body.runtime.confidentiality().may_publish(&under_way.work.security_context, &under_way.work.classification, &channel);
+        (!flows).then_some(channel)
     }
 
     /// Waits for a person while in `WaitingForUser`, and records what one
@@ -728,15 +717,6 @@ async fn withdraw_requests(answering: &Answering, abandoned: &[ToolCallState], o
     Ok(())
 }
 
-/// Whether a turn may still flow into its channel (`AgentActor::turn_flow`).
-enum TurnFlow {
-    Flows,
-    /// It may not: the channel is classified so now.
-    Lowered(Classification),
-    /// The channel is gone.
-    NoChannel,
-}
-
 /// Makes `message` of the model the agent's: its sender, its turn
 /// (issue 235) - partial ones too, which the turn never keeps - its labels
 /// (`label`), and whether it is internal - part of executing a plan
@@ -880,7 +860,7 @@ impl Actor for AgentActor {
             // its channel - lowered meanwhile - is given up, whatever it was
             // about to do; nothing of it is run or taken over (issue 141).
             if let Some(under_way) = state.turn.as_ref().filter(|_| current_state.in_turn()) {
-                if let TurnFlow::Lowered(channel) = self.turn_flow(under_way).await {
+                if let Some(channel) = self.lowered(under_way) {
                     info!("Agent {} {} gives up its turn: the channel was lowered to {}", self.id(), self.body.agent.name(), channel);
                     self.give_up(&mut state, GivenUpReason::Lowered { channel }, &*output).instrument(span).await;
                     self.settle(&mut state, ActorState::Idle).await;
@@ -971,7 +951,7 @@ impl Actor for AgentActor {
     async fn tool_sets(&self) -> Vec<ToolSet> {
         // As a turn would be offered them now, in the agent's own name:
         // who will ask is not known yet.
-        let Some(channel) = self.body.runtime.channel_classification() else { return Vec::new() };
+        let channel = self.body.runtime.channel_classification();
         self.tool_executor.tool_sets(&self.body.security_context(), &channel).await
     }
 

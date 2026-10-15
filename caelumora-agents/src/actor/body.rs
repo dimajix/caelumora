@@ -24,7 +24,6 @@ use caelumora_runtime::transport::{EventReceiver, EventSender};
 use anyhow::{Context, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality, RetryRefused};
-use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
 use caelumora_model::security::SecurityContext;
@@ -96,7 +95,6 @@ impl AgentBody {
     /// If its components cannot be built, its commands collide
     /// (`command_executor`), or its state cannot be loaded.
     pub(super) async fn build(
-        channel: &Channel,
         agent: Arc<AgentController>,
         personality: &Personality,
         facets: &[TypeKey],
@@ -108,6 +106,7 @@ impl AgentBody {
         // It acts on behalf of its owner, in this channel (issue 87), with
         // its owner's roles as they are when it is built, limited by its
         // personality (issue 304); `security_context` takes them anew.
+        let channel = runtime.channel_controller().load();
         let context = agent.security_context(channel.session_id, channel.id, personality.limiting_roles());
         let components = ComponentContainer::with_defaults(
             &personality.components,
@@ -292,10 +291,10 @@ mod testing {
     use super::*;
     use crate::prompt::external_context_provider::ExternalContextProvider;
     use caelumora_runtime::runtime::ChannelRuntime;
-    use caelumora_runtime::session::testing::{bare_session, test_runtime};
+    use caelumora_runtime::session::testing::{bare_channel, bare_session, test_runtime};
     use caelumora_model::agent::{Agent, PersonalityId};
     use caelumora_model::scope::Scope;
-    use caelumora_model::session::{ChannelId, SessionId};
+    use caelumora_model::session::SessionId;
     use caelumora_model::value::name::ScopedName;
 
     impl AgentBody {
@@ -306,9 +305,11 @@ mod testing {
             let agent = Agent::new(ScopedName::new("agent", Scope::GlobalScope).unwrap_or_else(|e| panic!("{e}")), PersonalityId::new(), ActorId::None);
             let agent = Arc::new(AgentController::new(agent, None, Arc::new(()), runtime.entity_stores()));
             let commands = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
-            let (session_id, channel_id) = (SessionId::new(), ChannelId::new());
-            let channel = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy()))), bare_session(session_id));
-            let actor_runtime = channel.new_actor_runtime(ActorId::Agent(agent.id()), session_id, channel_id);
+            let session = bare_session(SessionId::new());
+            let channel = bare_channel(session.id);
+            let (session_id, channel_id) = (session.id, channel.id);
+            let channel = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy()))), session, channel);
+            let actor_runtime = channel.new_actor_runtime(ActorId::Agent(agent.id()));
             Self {
                 context: agent.security_context(session_id, channel_id, None),
                 agent,
