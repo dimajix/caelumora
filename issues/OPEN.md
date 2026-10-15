@@ -34,6 +34,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
 | [342](342-invitations.md) | open | Nobody can be invited to a session or channel: who is added is taken in without being asked, told nothing beforehand and unable to decline. |
+| [377](377-stopping-a-session-aborts-its-actors.md) | open | Stopping or deleting a session aborts its actors at once, so a turn ends mid-step, a tool is cut off and a deleted session's external agents keep their remote tasks. |
 
 ## Identity and access management
 

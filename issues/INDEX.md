@@ -134,6 +134,7 @@ published before anyone else can take it.
 | [262](262-stopped-turn-not-recorded-while-reflecting.md) | done | An agent removed while its turn ends leaves the turn's messages in the channel's history without an end. |
 | [342](342-invitations.md) | open | Nobody can be invited to a session or channel: who is added is taken in without being asked, told nothing beforehand and unable to decline. |
 | [362](362-retry-of-a-message-of-an-agent-that-left.md) | done | The channel admits a request to answer a message again for an agent that left, and drops it unseen, while the same request for a turn is refused. |
+| [377](377-stopping-a-session-aborts-its-actors.md) | open | Stopping or deleting a session aborts its actors at once, so a turn ends mid-step, a tool is cut off and a deleted session's external agents keep their remote tasks. |
 
 ## Identity and access management
 
