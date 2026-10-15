@@ -470,7 +470,7 @@ An act that moves information asks its own permission of the `AccessPolicy` and 
 which order is [SECURITY.md](SECURITY.md#operations-that-check-themselves)'s - the flow of the
 actor's own request may come first, since it tells them nothing of others. The two are orthogonal: a
 superuser who may act against both would need a hook in both, which is accepted. A policy outside
-the binary, such as Open Policy Agent ([24](../issues/24-opa-security-manager.md)), states both.
+the binary, such as Open Policy Agent, would state both.
 `allow_all` allows every action, but no flow the rules refuse.
 
 ## Open questions

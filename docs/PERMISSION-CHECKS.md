@@ -46,7 +46,7 @@ a stored entity is decided by the verb, never by the kind (issue
 | `ModifyMessage`, `RevokeMessage` | the author is the caller | 3: authorship, not ownership |
 | `Purge` of every kind | nobody but the system (issue 125) | 3 |
 | `List` of every kind | always; the store filters each item with `Get` | 1 per item |
-| `CallTool`, `ReadSecret` | always: hooks for another policy (issue 24); a call is decided by the tools offered and the rules of its place, a secret has no owner yet (issue [310](../issues/310-secrets-have-no-owner.md)) | 3, decided elsewhere |
+| `CallTool`, `ReadSecret` | always: hooks for another `AccessPolicy`; a call is decided by the tools offered and the rules of its place, a secret has no owner yet (issue [310](../issues/310-secrets-have-no-owner.md)) | 3, decided elsewhere |
 
 Most variants are decided by the principal; `ModifyMessage`, `RevokeMessage` and `Reclassify` of a
 message, note or memory entry by the caller - an agent is judged as itself for what it said.
@@ -284,7 +284,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 - **`GetPersonality` twice.** An agent's personality is read as the member is admitted and again as
   the channel is built: two acts.
 - **The place in a REST context.** No decision reads it; the flow is given its places as arguments.
-- **`CallTool` and `ReadSecret`** stay hooks for another policy (issue 24); secrets get an owner in
+- **`CallTool` and `ReadSecret`** stay hooks for another `AccessPolicy`; secrets get an owner in
   issue [310](../issues/310-secrets-have-no-owner.md).
 
 ### Decided in issue 312
