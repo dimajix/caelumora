@@ -325,7 +325,7 @@ impl From<ChannelError> for ApiError {
             ChannelError::AlreadyResponding { .. } => Self::conflict("already_responding", detail),
             ChannelError::NudgesItself { .. } => Self::bad_request("nudges_itself", detail),
             ChannelError::NotAParticipant { .. } | ChannelError::ParticipantGone { .. } => Self::not_found("participant_not_found", detail),
-            ChannelError::NotInSession { .. } | ChannelError::OutOfScope { .. } | ChannelError::ApproverStays { .. } => Self::bad_request("invalid_participant", detail),
+            ChannelError::NotInSession { .. } | ChannelError::OutOfScope { .. } | ChannelError::ApproverStays { .. } | ChannelError::UnknownAgentKind { .. } => Self::bad_request("invalid_participant", detail),
             ChannelError::ClassificationRefused { .. } => Self::bad_request("invalid_classification", detail),
             ChannelError::MessageNotFound { .. } => Self::not_found("message_not_found", detail),
             ChannelError::MessageRevoked { .. } => Self::conflict("message_revoked", detail),
@@ -584,6 +584,7 @@ mod tests {
         assert_eq!(channel_error(ChannelError::ParticipantGone { participant: someone, channel }), "participant_not_found");
         assert_eq!(channel_error(ChannelError::ApproverStays { channel }), "invalid_participant");
         assert_eq!(channel_error(ChannelError::OutOfScope { participant: someone, channel }), "invalid_participant");
+        assert_eq!(channel_error(ChannelError::UnknownAgentKind { participant: someone, channel }), "invalid_participant");
         assert_eq!(channel_error(ChannelError::ClassificationRefused { classification: Classification::CHANNEL_DEFAULT, channel }), "invalid_classification");
         let message = MessageId::new();
         assert_eq!(channel_error(ChannelError::MessageNotFound { message, channel }), "message_not_found");

@@ -14,8 +14,9 @@ know - a kind of entity with what keeps it, its components, its views and its ro
 of a service of the core (issue 324). It implements `caelumora_runtime::plugin::Plugin` - a name for
 messages, `backends` and `register` - and the program lists it: `caelumora-app` in `rest_plugins()`
 if it serves routes, otherwise in `plugins()`, and builds its runtime with both; `caelumora-tui` in
-its own `plugins()`. A program builds its runtime with `RuntimeBuilder::from_config`, given the
-configuration and its plugins, in two steps:
+its own `plugins()`. Both list the agents' plugin first, the essential one (issue 370);
+`RuntimeManager::new`, the runtime tests build, registers it alone. A program builds its runtime
+with `RuntimeBuilder::from_config`, given the configuration and its plugins, in two steps:
 
 1.  Each plugin registers its backends (`backends`, see
     [ARCHITECTURE.md](ARCHITECTURE.md#backends)) with the core's (`Backends::with_plugins`), before
@@ -40,6 +41,10 @@ asks the services it is given - the policies, the `SecretManager`, the store of 
     kinds use (`ComponentKind::uses`), its views read through (`Views::service`) and its routes
     take when they are built;
 *   registers its component kinds (`components()`), as `register_all` does for the built-in ones;
+*   registers the kinds of agent it brings (`agent_kinds()`, an `AgentKinds`): for a kind of
+    personality, what builds its agents' actors and which facets their components are asked for.
+    The agents' plugin (`AgentsPlugin`, issue 370) registers both kinds there are; a program
+    without it runs no agent;
 *   makes the backends of a service of its own from its section of the configuration
     (`make_named`), with the factories the core and the plugins registered and what a backend may
     ask for, as the core makes those of its services: the storages of artifacts, say, of which

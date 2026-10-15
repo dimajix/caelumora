@@ -1,3 +1,4 @@
+use crate::actor::AgentKinds;
 use crate::channel::{ChannelLoop, Participation};
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::component::ComponentRegistry;
@@ -91,6 +92,8 @@ impl ChannelRuntime {
     pub(crate) fn services(&self) -> &Services { self.runtime_manager.services() }
 
     pub(crate) fn component_registry(&self) -> &Arc<ComponentRegistry> { self.runtime_manager.component_registry() }
+
+    pub(crate) fn agent_kinds(&self) -> &Arc<AgentKinds> { self.runtime_manager.agent_kinds() }
 
     pub(crate) fn state_store(&self) -> &Arc<dyn StateStore> { self.runtime_manager.state_store() }
 

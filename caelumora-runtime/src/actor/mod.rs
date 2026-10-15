@@ -2,7 +2,8 @@
 //! trait, the contexts an actor answers in (`Answering`), and the actors -
 //! an agent's, an external agent's, a user's and an approver's. What both
 //! kinds of agent are in a channel is their `body`; how it takes in what it
-//! is told is `intake`, the commands it carries out `commands`.
+//! is told is `intake`, the commands it carries out `commands`. Which actor
+//! an agent gets is its kind's (`AgentKinds`, issue 370).
 
 pub mod agent;
 pub mod approval;
@@ -11,6 +12,7 @@ mod run_control;
 mod commands;
 pub mod external_agent;
 mod intake;
+mod kinds;
 pub mod user;
 
 use anyhow::{Context, Result};
@@ -20,6 +22,7 @@ use std::fmt::Debug;
 use tracing::warn;
 
 use crate::transport::{EventReceiver, EventSender};
+pub use kinds::AgentKinds;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
 use caelumora_model::agent::RetryRefused;
 use caelumora_model::channel::ChannelId;
@@ -33,8 +36,15 @@ use caelumora_model::value::name::Name;
 use caelumora_model::work::{TurnId, Work};
 use uuid::Uuid;
 
+/// A participant of a channel as the channel runs it. The runtime's own are
+/// the user's and the approver's; an agent's is built by its kind
+/// (`AgentKinds`, issue 370). Public, so that a kind of agent can be built
+/// in a crate of its own; its control methods - `run`, `catch_up`,
+/// `wakeup`, `cancel`, `interrupt_tool_call`, `retry_turn`, `stop` - check
+/// nothing and are called by the channel alone, as the consequence of an
+/// act that was checked (SECURITY.md).
 #[async_trait]
-pub(crate) trait Actor: Any + Debug + Send + Sync {
+pub trait Actor: Any + Debug + Send + Sync {
     fn id(&self) -> ActorId;
     fn name(&self) -> Name;
 

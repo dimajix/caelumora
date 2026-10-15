@@ -234,3 +234,40 @@ crate reaches the environment through the doors named above and nothing else.
   channel that is not its own. A fixture of `agent_memory` had relied on it - turns in channels
   of their own, read through the session's main channel -, and now runs those channels
   (`session::testing::running_channel`).
+- **2026-10-15** — Step 1, point 2 done: actor kinds. `AgentKinds` (`actor/kinds.rs`) holds, by
+  `PersonalityKind`, what builds an agent's actor and the facets its components are asked for;
+  the `RuntimeBuilder` starts with the runtime's two (`AgentKinds::built_in`), the
+  `RuntimeManager` keeps them, and the
+  `ChannelLoop` takes them once and builds every agent's actor through them. `ResolvedKind` has
+  one `Agent` variant instead of two, its personality boxed (clippy's `large_enum_variant`, which
+  the second variant had hidden). A kind nobody registered is refused as
+  `ChannelError::UnknownAgentKind` (REST `400 invalid_participant`). `PersonalityKind` derives
+  `Hash`, a key of the registry, which changes nothing stored. The app's seed test asks the kinds
+  for the facets. Registering a kind stays crate-internal for now, and so does `Actor`: see the
+  next entry.
+- **2026-10-15** — Found while doing point 2, not foreseen by the plan: the crate that implements
+  an actor needs `Actor` public, and SECURITY.md keeps it crate-internal on purpose - its control
+  methods (`cancel`, `stop`, `wakeup`, `retry_turn`, `interrupt_tool_call`) check nothing, and a
+  frontend that reaches its `UserActor` (`ChannelLoop::user_actor`) must not be able to call them.
+  Public, the trait would let any crate do so. Awaiting the maintainer's decision how the
+  guarantee is kept across the crate boundary.
+- **2026-10-15** — Decided by the maintainer: `Actor` is public. There is no boundary within the
+  program the crate-internal trait could have kept: `SecurityContext::system`, the stores and the
+  `RuntimeManager` are public, and the REST server and the plugins use them - code linked into
+  the program is trusted. What the trait's visibility kept was frontends from calling the control
+  methods by mistake; SECURITY.md now says that this is a rule for linked code.
+  `AgentKinds::register` and `RuntimeBuilder::agent_kinds` are public with it; `Moderator` and
+  `ChannelLoop::actor` stay crate-internal, so no agent's actor is handed out.
+- **2026-10-15** — Decided by the maintainer: the agents' crate is a plugin - an essential one;
+  without it the program is a chat between users. It follows the pattern a crate that brings
+  registrations to the `RuntimeBuilder` already has, and `AgentKinds` with it the pattern of
+  `Backends`: empty to begin with, filled by a plugin. So `AgentKinds::built_in` is gone, and
+  `AgentsPlugin` (`agent_plugin.rs`, in the runtime until step 2) registers both kinds;
+  `caelumora-app` and `caelumora-tui` list it first, `testing::World` registers it before the
+  plugins it is given, and `RuntimeManager::new` - the core without plugins, which the tests build -
+  registers it alone, until step 2, when the runtime can no longer name it. What the plan says of
+  the agents' registrations changes with it: in point 4, the agent's component kinds are
+  registered by `AgentsPlugin` (`components()`) rather than by an `agent::register_all` the
+  programs call; in point 3, the judges of the agent's errors are registered by it too; in step 2,
+  the crate's `plugin.rs` is `AgentsPlugin`, and the runtime's tests that need agents build their
+  runtime with it.

@@ -1,5 +1,7 @@
 use crate::channel::Participation;
 use crate::command::{CommandExecutor, ChannelCommandProvider};
+use crate::actor::AgentKinds;
+use crate::agent_plugin::AgentsPlugin;
 use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
@@ -43,6 +45,9 @@ pub struct RuntimeManager {
     /// The one writer of user records, asked at a login (issue 306).
     pub(super) user_manager: Arc<UserManager>,
     pub(super) component_registry: Arc<ComponentRegistry>,
+    /// The kinds of agent it runs, by which a channel builds an agent's
+    /// actor (issue 370).
+    pub(super) agent_kinds: Arc<AgentKinds>,
     pub(super) event_bus: Arc<EventBus>,
     pub(super) controller_manager: Arc<ControllerManager>,
     /// Who takes part in a channel and whether they may (issue 356).
@@ -72,11 +77,13 @@ pub struct RuntimeManager {
 }
 
 impl RuntimeManager {
-    /// The runtime of the core alone, without plugins: as `RuntimeBuilder`
-    /// builds it from the same parts, with the core's backends.
+    /// The runtime of the core with its essential plugin alone, the agents'
+    /// (`AgentsPlugin`, issue 370): as `RuntimeBuilder` builds it from the
+    /// same parts, with the core's backends.
     ///
     /// # Errors
-    /// As `RuntimeBuilder::new` and `RuntimeBuilder::build`.
+    /// As `RuntimeBuilder::new`, `RuntimeBuilder::plugin` and
+    /// `RuntimeBuilder::build`.
     pub fn new(
         state_store: Arc<dyn StateStore>,
         backend: impl Into<StoreBackend>,
@@ -86,7 +93,9 @@ impl RuntimeManager {
         config: &AppConfig,
         component_registry: ComponentRegistry,
     ) -> Result<Self> {
-        RuntimeBuilder::new(state_store, backend, secret_manager, access_policy, confidentiality, config, component_registry, Backends::built_in())?.build()
+        let mut builder = RuntimeBuilder::new(state_store, backend, secret_manager, access_policy, confidentiality, config, component_registry, Backends::built_in())?;
+        builder.plugin(&AgentsPlugin)?;
+        builder.build()
     }
 
     /// Puts what the seed files `paths` hold into the stores (issue 105):
@@ -141,6 +150,12 @@ impl RuntimeManager {
     pub fn user_manager(&self) -> &Arc<UserManager> { &self.user_manager }
 
     pub fn services(&self) -> &Services { &self.services }
+
+    /// The kinds of agent it runs (issue 370): how an agent's actor is
+    /// built, and which facets its components are asked for.
+    pub fn agent_kinds(&self) -> &Arc<AgentKinds> {
+        &self.agent_kinds
+    }
 
     pub fn component_registry(&self) -> &Arc<ComponentRegistry> {
         &self.component_registry

@@ -516,10 +516,11 @@ An **actor** is anything that sends and receives events in a channel.
 *   **`Actor`** (`caelumora_runtime::actor`) is the trait of all actors: `AgentActor`, `UserActor`,
     `ApproverActor` and `ExternalAgentActor`. Its task, `run`, receives envelopes and sends its
     output through the transport it is given. `wakeup`, `cancel` and `stop` are synchronous, because
-    they come from other tasks and must take effect at once. The trait is crate-internal: only the
-    channel controls its actors, after the operation that does it checked its permission (see
-    [SECURITY.md](SECURITY.md#operations-that-check-themselves)). What an agent's model saw is read
-    through the views, not asked of its actor (see
+    they come from other tasks and must take effect at once. The trait is public, so that a kind of
+    agent can be built in a crate of its own (issue 370); only the channel controls its actors,
+    after the operation that does it checked its permission - a rule for linked code, not a
+    boundary (see [SECURITY.md](SECURITY.md#operations-that-check-themselves)). What an agent's
+    model saw is read through the views, not asked of its actor (see
     [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw)).
 *   **An actor's inbox** (`EventReceiver`) can wait for the next envelope of a kind, leaving the
     others queued - as an agent waiting for approvals does - and acknowledges what was taken. Both
@@ -528,10 +529,14 @@ An **actor** is anything that sends and receives events in a channel.
     [AGENT-TURN.md](AGENT-TURN.md#the-cognitive-cycle)).
 *   **Which actor runs an agent** is its personality's `kind`: `internal` - the default - an
     `AgentActor`; `external` an `ExternalAgentActor`, for an agent that runs elsewhere and is
-    reached through the personality's one `ExternalAgent` component. The channel decides it when it
-    builds the actor, reading the personality as the agent may read it; the agent is
-    `ActorId::Agent` either way, and nothing else - the participants, the REST API, the moderator -
-    tells the two apart.
+    reached through the personality's one `ExternalAgent` component. What builds the actor of each
+    kind, and which facets its components are asked for, is registered with the runtime
+    (`AgentKinds`, `RuntimeBuilder::agent_kinds`, issue 370) - both by the agents' plugin
+    (`AgentsPlugin`), an essential one. The channel
+    builds an agent's actor through them and names no actor of an agent itself, reading the
+    personality as the agent may read it; a kind the program registered nothing for is refused
+    (`ChannelError::UnknownAgentKind`). The agent is `ActorId::Agent` either way, and nothing else
+    - the participants, the REST API, the moderator - tells the two apart.
 *   **What both kinds of agent are in a channel** is their `AgentBody` (issue 355): the agent and
     in whose name it acts there, its `AgentChannelState`, how it takes in what it hears, its
     context provider, the commands it carries out itself, and its `RunControl` - where its actor

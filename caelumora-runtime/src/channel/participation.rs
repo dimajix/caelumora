@@ -5,7 +5,7 @@ use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, ChannelId, Participant};
 use crate::controller::{AgentController, ControllerManager, UserController};
-use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityKind};
+use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::approval::Approver;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::role::RoleId;
@@ -31,14 +31,14 @@ pub(crate) struct ResolvedParticipant {
 }
 
 /// What a participant is resolved to: the instance's controller of its
-/// user or agent (issue 121), or the approver itself. An agent is run here
-/// or elsewhere, as its personality's kind says (issue 179). What it is
-/// cleared for follows from it as well (`ResolvedParticipant::clearances`).
+/// user or agent (issue 121), or the approver itself. An agent comes with
+/// its personality, whose kind says how its actor is built (issue 179,
+/// `AgentKinds`). What it is cleared for follows from it as well
+/// (`ResolvedParticipant::clearances`).
 #[derive(Debug, Clone)]
 pub(crate) enum ResolvedKind {
     User(Arc<UserController>),
-    Agent(Arc<AgentController>, Personality),
-    ExternalAgent(Arc<AgentController>, Personality),
+    Agent(Arc<AgentController>, Box<Personality>),
     Approver(Approver),
 }
 
@@ -90,10 +90,7 @@ impl Participation {
             }
         };
         let personality = agent.personality().await?;
-        let resolved = at(match personality.kind {
-            PersonalityKind::Internal => ResolvedKind::Agent(agent, personality),
-            PersonalityKind::External => ResolvedKind::ExternalAgent(agent, personality),
-        });
+        let resolved = at(ResolvedKind::Agent(agent, Box::new(personality)));
         self.require_runnable(&resolved).await?;
         Ok(Some(resolved))
     }
@@ -119,7 +116,7 @@ impl Participation {
     /// to read.
     async fn require_runnable(&self, resolved: &ResolvedParticipant) -> StoreResult<()> {
         match (&resolved.kind, resolved.context()) {
-            (ResolvedKind::Agent(_, personality) | ResolvedKind::ExternalAgent(_, personality), Some(context)) =>
+            (ResolvedKind::Agent(_, personality), Some(context)) =>
                 self.access_policy.require(&context, ActionType::get(Personality::KIND, &personality.security_attributes), StoreError::PermissionDenied).await,
             _ => Ok(()),
         }
@@ -208,7 +205,7 @@ impl ResolvedParticipant {
     pub(crate) fn actor_id(&self) -> ActorId {
         match &self.kind {
             ResolvedKind::User(user) => ActorId::User(user.id()),
-            ResolvedKind::Agent(agent, _) | ResolvedKind::ExternalAgent(agent, _) => ActorId::Agent(agent.id()),
+            ResolvedKind::Agent(agent, _) => ActorId::Agent(agent.id()),
             ResolvedKind::Approver(approver) => ActorId::Approver(approver.id),
         }
     }
@@ -222,7 +219,7 @@ impl ResolvedParticipant {
         let (session, channel) = (self.session_id, self.channel_id.unwrap_or_default());
         match &self.kind {
             ResolvedKind::User(user) => Some(user.security_context(session, channel)),
-            ResolvedKind::Agent(agent, personality) | ResolvedKind::ExternalAgent(agent, personality) => Some(agent.security_context(session, channel, personality.limiting_roles())),
+            ResolvedKind::Agent(agent, personality) => Some(agent.security_context(session, channel, personality.limiting_roles())),
             ResolvedKind::Approver(_) => None,
         }
     }
@@ -246,7 +243,7 @@ impl ResolvedParticipant {
     /// `ChannelError::OutOfScope` if it may not.
     fn require_in_scope(&self) -> Result<(), ChannelError> {
         let Some(channel_id) = self.channel_id else { return Ok(()) };
-        let (ResolvedKind::Agent(agent, _) | ResolvedKind::ExternalAgent(agent, _)) = &self.kind else { return Ok(()) };
+        let ResolvedKind::Agent(agent, _) = &self.kind else { return Ok(()) };
         if agent.load().name.scope.admits(&Scope::ChannelScope { session_id: self.session_id, channel_id }) {
             Ok(())
         } else {

@@ -2,9 +2,8 @@
 
 use caelumora_model::value::name::Name;
 use crate::actor::Actor;
-use crate::actor::agent::AgentActor;
+use crate::actor::AgentKinds;
 use crate::actor::approval::ApproverActor;
-use crate::actor::external_agent::ExternalAgentActor;
 use crate::actor::user::UserActor;
 use crate::component::{ComponentContainer, ComponentContext, ComponentError, ComponentImpl};
 use crate::moderator::Moderator;
@@ -130,6 +129,10 @@ pub enum ChannelError {
     /// 133).
     #[error("{participant} is not cleared for channel {channel} as it is, or would be, classified")]
     NotCleared { participant: ActorId, channel: ChannelId },
+    /// An agent whose personality is of a kind the program runs none of
+    /// (`AgentKinds`, issue 370): its actor cannot be built.
+    #[error("{participant} is of a kind of agent that cannot take part in channel {channel} here")]
+    UnknownAgentKind { participant: ActorId, channel: ChannelId },
     /// A participant added again while the actor it had before is still
     /// ending - one that does not end even when aborted (issue 171).
     #[error("{participant} is still leaving channel {channel}")]
@@ -207,6 +210,8 @@ pub struct ChannelLoop {
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     controllers: Arc<ControllerManager>,
     participation: Arc<Participation>,
+    /// What builds the actors of its agents, as their kind says (issue 370).
+    agent_kinds: Arc<AgentKinds>,
     /// The actors of the participants, each with what it was built from -
     /// what a reclassification asks its clearances of; replaced as a whole
     /// when someone joins or leaves (issue 46), so that every reader sees
@@ -290,6 +295,7 @@ impl ChannelLoop {
             confidentiality: Arc::clone(runtime.confidentiality()),
             controllers: Arc::clone(runtime.controller_manager()),
             participation: Arc::clone(runtime.participation()),
+            agent_kinds: Arc::clone(runtime.agent_kinds()),
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
             leaving: std::sync::Mutex::new(HashMap::new()),
@@ -510,8 +516,7 @@ impl ChannelLoop {
         let actor_runtime = self.runtime.new_actor_runtime(resolved.actor_id(), self.session_id, self.id);
         Ok(match resolved.kind().clone() {
             ResolvedKind::User(user) => Box::new(UserActor::new(channel, user, actor_runtime).await?),
-            ResolvedKind::Agent(agent, personality) => Box::new(AgentActor::new(channel, agent, personality, actor_runtime).await?),
-            ResolvedKind::ExternalAgent(agent, personality) => Box::new(ExternalAgentActor::new(channel, agent, personality, actor_runtime).await?),
+            ResolvedKind::Agent(agent, personality) => self.agent_kinds.build(channel, agent, *personality, actor_runtime).await?,
             ResolvedKind::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
         })
     }

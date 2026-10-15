@@ -18,6 +18,7 @@ use caelumora_rest_server::routes;
 use caelumora_rest_server::state::AppState;
 use caelumora_runtime::component::{ComponentError, ComponentRegistry};
 use caelumora_runtime::llm::LLMClient;
+use caelumora_runtime::agent_plugin::AgentsPlugin;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
@@ -113,9 +114,10 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
 }
 
 /// The plugins of the program that bring no routes (issues 325, 327, 329),
-/// which only its runtime is built with.
+/// which only its runtime is built with - first the essential one, the
+/// agents' (issue 370).
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin)]
+    vec![Box::new(AgentsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin)]
 }
 
 /// Names the defaults of the facets of which an agent has one that the core
@@ -154,7 +156,6 @@ mod tests {
     use axum::routing::get;
     use caelumora_mcp::tool::MCP_TOOL_KIND;
     use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::PersonalityKind;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::secret::SecretManager;
@@ -165,8 +166,6 @@ mod tests {
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::value::text::Description;
     use caelumora_runtime::backend::Backends;
-    use caelumora_runtime::actor::agent::AgentActor;
-    use caelumora_runtime::actor::external_agent::ExternalAgentActor;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};
     use caelumora_model::config::BackendConfig;
     use caelumora_runtime::runtime::{RuntimeManager, Services};
@@ -258,10 +257,7 @@ mod tests {
         let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
         for personality in seed.personalities.iter().map(|seeded| &seeded.personality) {
             // Asked for what its actor asks for (issue 337).
-            let asked = match personality.kind {
-                PersonalityKind::Internal => AgentActor::COMPONENT_FACETS,
-                PersonalityKind::External => ExternalAgentActor::COMPONENT_FACETS,
-            };
+            let asked = runtime.agent_kinds().facets(personality.kind).expect("a kind of agent the program runs");
             ComponentContainer::from_config(&personality.components, asked, runtime.component_registry(), &context).await
                 .unwrap_or_else(|e| panic!("personality {} cannot be built: {e}", personality.name));
         }

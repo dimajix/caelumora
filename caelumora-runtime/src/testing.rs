@@ -21,6 +21,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
 use caelumora_model::channel::{moderation_components, Channel, Participant};
 use caelumora_model::config::{BackendConfig, WorkspacesConfig};
+use crate::agent_plugin::AgentsPlugin;
 use crate::backend::Backends;
 use serde_json::{json, Value};
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityPolicy, ConfidentialityRules, Confidentiality, Place};
@@ -206,10 +207,11 @@ impl World {
         Self::configured(plugins, |_| BTreeMap::new(), register).await
     }
 
-    /// The world with `plugins`, the sections of the configuration they
-    /// claim, as `sections` writes them given `files` - where a plugin's
-    /// storage may lie beside the workspaces' (issue 328) -, and the
-    /// component kinds `register` adds besides the built-in ones.
+    /// The world with the agents (`AgentsPlugin`, issue 370) and `plugins`,
+    /// the sections of the configuration they claim, as `sections` writes
+    /// them given `files` - where a plugin's storage may lie beside the
+    /// workspaces' (issue 328) -, and the component kinds `register` adds
+    /// besides the built-in ones.
     pub async fn configured(plugins: &[&dyn Plugin], sections: impl FnOnce(&Path) -> BTreeMap<String, Value>, register: impl FnOnce(&mut ComponentRegistry)) -> Self {
         let roles = Roles::new([(*STAFF, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
@@ -228,6 +230,7 @@ impl World {
         let workspaces = WorkspacesConfig { storage: [("main".to_string(), BackendConfig::new("local", json!({ "root": files.path() }))), ("shell".to_string(), shell)].into(), ..Default::default() };
         let config = AppConfig { workspaces, plugins: sections(files.path()), ..Default::default() };
         let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::<Recorder>::clone(&recorder), &config, registry, Backends::with_plugins(plugins)).unwrap();
+        builder.plugin(&AgentsPlugin).unwrap();
         for plugin in plugins {
             builder.plugin(*plugin).unwrap();
         }

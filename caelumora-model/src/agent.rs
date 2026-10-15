@@ -42,7 +42,7 @@ define_id!(PersonalityId);
 
 /// What kind of agent a personality makes (issue 179), and so which actor
 /// runs it in a channel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PersonalityKind {
     /// An agent of ours: its model, tools and turns are run here, by an

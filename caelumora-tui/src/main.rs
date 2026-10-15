@@ -16,6 +16,7 @@ use caelumora_model::work::TurnId;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::component::{ComponentError, ComponentRegistry};
 use caelumora_runtime::llm::LLMClient;
+use caelumora_runtime::agent_plugin::AgentsPlugin;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_runtime::session::SessionManager;
@@ -453,9 +454,10 @@ struct Args {
     template: String,
 }
 
-/// The plugins the terminal builds its runtime with (issue 323).
+/// The plugins the terminal builds its runtime with (issue 323) - first the
+/// essential one, the agents' (issue 370).
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(SkillsPlugin), Box::new(ArtifactsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin)]
+    vec![Box::new(AgentsPlugin), Box::new(SkillsPlugin), Box::new(ArtifactsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin)]
 }
 
 /// Names the defaults of the facets of which an agent has one that the core

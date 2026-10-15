@@ -1,3 +1,4 @@
+use crate::actor::AgentKinds;
 use crate::channel::Participation;
 use crate::component::{ComponentRegistry, ComponentResult};
 use crate::controller::ControllerManager;
@@ -44,6 +45,8 @@ pub struct RuntimeBuilder {
     access_policy: Arc<dyn AccessPolicy>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     component_registry: ComponentRegistry,
+    /// The kinds of agent the program runs (issue 370).
+    agent_kinds: AgentKinds,
     component_defaults: ComponentConfig,
     commands: ComponentConfig,
     approval_rules: Arc<[ApprovalRule]>,
@@ -150,6 +153,7 @@ impl RuntimeBuilder {
             access_policy,
             confidentiality,
             component_registry,
+            agent_kinds: AgentKinds::default(),
             component_defaults: config.component_defaults.clone(),
             commands: config.commands.clone(),
             approval_rules: config.approvals.rules.clone().into(),
@@ -250,6 +254,11 @@ impl RuntimeBuilder {
         &mut self.component_registry
     }
 
+    /// The kinds of agent the program runs (issue 370), none to begin
+    /// with, to register a plugin's with - the agents' (`AgentsPlugin`).
+    pub fn agent_kinds(&mut self) -> &mut AgentKinds {
+        &mut self.agent_kinds
+    }
     /// Offers `service` - a plugin's manager, say - to the component kinds
     /// that use it, to the views and to the routes (`Services`).
     pub fn provide<T: ?Sized + Send + Sync + 'static>(&mut self, service: Arc<T>) {
@@ -330,6 +339,7 @@ impl RuntimeBuilder {
             secret_manager: self.secret_manager,
             user_manager: self.user_manager,
             component_registry: Arc::new(self.component_registry),
+            agent_kinds: Arc::new(self.agent_kinds),
             event_bus: self.event_bus,
             controller_manager: self.controller_manager,
             participation,

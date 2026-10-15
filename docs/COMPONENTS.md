@@ -160,8 +160,8 @@ it (issue 337):
 
 | Owner | Asks for | Declared as |
 |---|---|---|
-| agent | `ContextProvider`, `LLMClient`, `CompactionPolicy`, `CompactionStrategy`, `PerceiveInProcessor`, `EmitOutProcessor`, `ToolProvider`, `AgentCommandProvider` | `AgentActor::COMPONENT_FACETS` |
-| external agent | `ExternalAgent`, `PerceiveInProcessor`, `ContextProvider`, `AgentCommandProvider` | `ExternalAgentActor::COMPONENT_FACETS` |
+| agent | `ContextProvider`, `LLMClient`, `CompactionPolicy`, `CompactionStrategy`, `PerceiveInProcessor`, `EmitOutProcessor`, `ToolProvider`, `AgentCommandProvider` | `AgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
+| external agent | `ExternalAgent`, `PerceiveInProcessor`, `ContextProvider`, `AgentCommandProvider` | `ExternalAgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
 | channel | `Moderator` | `ChannelLoop::COMPONENT_FACETS` |
 | a session's commands | `ChannelCommandProvider` | `RuntimeManager::new_command_executor` |
 

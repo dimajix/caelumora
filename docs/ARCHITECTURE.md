@@ -73,7 +73,10 @@ the model; the core knows none. A plugin is one crate, cut into layers by Cargo 
 crates. The first is `caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)), the second
 `caelumora-artifacts`, which depends on the core's workspaces; `caelumora-mcp`
 ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a` and `caelumora-ollama` are ones that bring a
-component kind alone, `caelumora-open-terminal` one that brings backends alone. Where the core calls
+component kind alone, `caelumora-open-terminal` one that brings backends alone. The agents are a
+plugin too, an essential one (issue 370): `AgentsPlugin` registers the kinds of agent, whose actors
+the channel builds (`AgentKinds`); without it, the program is a chat between users. It lies in the
+runtime until the agents' logic is a crate of its own. Where the core calls
 a plugin, the plugin answers in the core's error types, not in its own: the core decides by the
 types it knows what a person is told of an error.
 
