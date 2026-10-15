@@ -87,6 +87,11 @@ struct PreconfiguredRef {
 pub struct ComponentRegistry {
     kinds: HashMap<String, Registration>,
     singles: HashMap<TypeId, Single>,
+    /// The default kinds of singles the program named (`set_default_kind`),
+    /// in place of those they were declared with - kept apart, so that a
+    /// plugin that declares a single after the program named its default
+    /// does not undo the program's choice.
+    chosen: HashMap<TypeId, String>,
     /// The configuration's defaults for singles (`AppConfig::component_defaults`),
     /// by the single they provide.
     defaults: HashMap<TypeId, ComponentDescriptor>,
@@ -107,27 +112,23 @@ impl ComponentRegistry {
         Self {
             kinds: HashMap::new(),
             singles: HashMap::new(),
+            chosen: HashMap::new(),
             defaults: HashMap::new(),
             component_store,
         }
     }
 
-    /// A registry with every built-in component kind (the `register_all` of
-    /// `component_impl`, `prompt`, `tool`, `command`, `llm`, `external`,
-    /// `moderator` and `compaction`), resolving references to
-    /// preconfigured components in `component_store`. A binary passes it to
-    /// the `RuntimeManager` as it is; a test may register kinds of its own
-    /// first, such as a stand-in for the model.
+    /// A registry with the runtime's own component kinds - the user
+    /// commands (`command`) and a channel's moderation (`moderator`) -,
+    /// resolving references to preconfigured components in
+    /// `component_store`. The kinds of an agent's components are the agents'
+    /// plugin's (`AgentsPlugin`, issue 370), those of other plugins theirs.
+    /// A binary passes it to the `RuntimeBuilder` as it is; a test may
+    /// register kinds of its own first, such as a stand-in for the model.
     pub fn built_in(component_store: Arc<dyn ComponentStore>) -> Self {
         let mut registry = Self::new(component_store);
-        crate::component_impl::register_all(&mut registry);
-        crate::prompt::register_all(&mut registry);
-        crate::tool::register_all(&mut registry);
         crate::command::register_all(&mut registry);
-        crate::llm::register_all(&mut registry);
-        crate::external::register_all(&mut registry);
         crate::moderator::register_all(&mut registry);
-        crate::compaction::register_all(&mut registry);
         registry
     }
 
@@ -158,7 +159,10 @@ impl ComponentRegistry {
     /// from `default_kind` - unless the configuration names another default
     /// (`set_defaults`) - if no component of the container provides it. With
     /// no default, a container that is asked for `T` and provides none fails
-    /// to build it (issue 179: a remote agent has no default).
+    /// to build it (issue 179: a remote agent has no default). Declared
+    /// again - by a plugin registered into a registry the program prepared,
+    /// say - the declaration replaces the one before, not the default kind
+    /// the program named (`set_default_kind`).
     pub fn single<T: ?Sized + 'static>(&mut self, default_kind: Option<&str>) {
         let facet = TypeKey::of::<T>();
         self.singles.insert(facet.id, Single { facet, default_kind: default_kind.map(str::to_string) });
@@ -177,9 +181,10 @@ impl ComponentRegistry {
         if !self.provides(kind).is_some_and(|facets| facets.iter().any(|f| f.id == facet.id)) {
             return Err(ComponentError::InvalidConfig(format!("the default kind '{kind}' of {} is not registered as providing it", facet.name())));
         }
-        let single = self.singles.get_mut(&facet.id)
-            .ok_or_else(|| ComponentError::InvalidConfig(format!("{} is not a facet of which there is one", facet.name())))?;
-        single.default_kind = Some(kind.to_string());
+        if !self.singles.contains_key(&facet.id) {
+            return Err(ComponentError::InvalidConfig(format!("{} is not a facet of which there is one", facet.name())));
+        }
+        self.chosen.insert(facet.id, kind.to_string());
         Ok(())
     }
 
@@ -264,13 +269,15 @@ impl ComponentRegistry {
     }
 
     /// What is built for the single `facet` if no component of a container
-    /// provides it: the configuration's default, or else the default kind,
-    /// if it has one.
+    /// provides it: the configuration's default, or else the default kind
+    /// the program named, or else the one it was declared with, if it has
+    /// one.
     fn default_of(&self, facet: TypeId) -> Option<ComponentDescriptor> {
         if let Some(descriptor) = self.defaults.get(&facet) {
             return Some(descriptor.clone());
         }
-        let kind = self.singles.get(&facet)?.default_kind.as_deref()?;
+        let declared = self.singles.get(&facet)?.default_kind.as_deref();
+        let kind = self.chosen.get(&facet).map(String::as_str).or(declared)?;
         Some(ComponentDescriptor::new(kind, kind))
     }
 
@@ -713,5 +720,20 @@ mod tests {
             registry.set_default_kind::<dyn Choice>("other").unwrap();
             registry.set_defaults(&config(&[("configured", "default")])).unwrap();
             assert_eq!(registry.kind_of::<dyn Choice>(&config(&[])).as_deref(), Some("default"), "the configuration's comes first");
+        }
+
+        /// A single declared again - by a plugin registered after the program
+        /// named its default, as the agents' plugin is in a test's registry
+        /// (issue 370) - keeps the program's choice.
+        #[test]
+        fn a_single_declared_again_keeps_the_default_the_program_named() {
+            let (mut registry, _) = choices();
+            registry.set_default_kind::<dyn Choice>("other").unwrap();
+            registry.single::<dyn Choice>(None);
+            assert_eq!(registry.kind_of::<dyn Choice>(&config(&[])).as_deref(), Some("other"), "the program's");
+
+            let (mut registry, _) = choices();
+            registry.single::<dyn Choice>(None);
+            assert_eq!(registry.kind_of::<dyn Choice>(&config(&[])), None, "the declaration replaced");
         }
 }

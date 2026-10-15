@@ -21,7 +21,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
 use caelumora_model::channel::{moderation_components, Channel, Participant};
 use caelumora_model::config::{BackendConfig, WorkspacesConfig};
-use crate::agent_plugin::AgentsPlugin;
+use crate::agent_plugin::{register_components, AgentsPlugin};
 use crate::backend::Backends;
 use serde_json::{json, Value};
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityPolicy, ConfidentialityRules, Confidentiality, Place};
@@ -504,12 +504,15 @@ impl LLMClient for Unasked {
 }
 
 /// The component kinds the tests build with, resolving references to
-/// preconfigured components in `component_store`: the built-in ones, and
-/// a model that is not to be asked (`UNASKED_MODEL_KIND`) as the default -
-/// the core names none, each program names its own (issue 329), and so
-/// do the tests.
+/// preconfigured components in `component_store`: the built-in ones, an
+/// agent's (`agent_plugin::register_components`, for tests that build
+/// components without a runtime; a runtime registers them again with the
+/// agents' plugin, issue 370), and a model that is not to be asked
+/// (`UNASKED_MODEL_KIND`) as the default - the core names none, each
+/// program names its own (issue 329), and so do the tests.
 pub fn test_registry(component_store: Arc<dyn ComponentStore>) -> ComponentRegistry {
     let mut registry = ComponentRegistry::built_in(component_store);
+    register_components(&mut registry);
     registry.register(ComponentKind::new(UNASKED_MODEL_KIND).provides::<dyn LLMClient>(), |_, _| {
         let mut facets = ComponentFacets::empty();
         facets.insert::<dyn LLMClient>(Arc::new(Unasked));

@@ -285,3 +285,13 @@ crate reaches the environment through the doors named above and nothing else.
   reach no frontend; one that did would be shown as a failure pointing to the log, as 336 says of
   a plugin's type. The agents' plugin registers no judgement, and the plan's point 3 of the
   agents' registrations falls away. CODING-GUIDELINES.md and PLUGINS.md say so.
+- **2026-10-15** — Step 1, point 4 done: `ComponentRegistry::built_in` registers the runtime's own
+  kinds alone - `command` and `moderator` -; the kinds of an agent's components (`component_impl`,
+  `prompt`, `tool`, `llm`, `external`, `compaction`) are registered by `AgentsPlugin`, through
+  `agent_plugin::register_components`, which `testing::test_registry` calls too for the tests
+  that build components without a runtime. That made one thing visible: a test's registry names
+  its model before the plugin declares `LLMClient` a single, and the declaration replaced the
+  program's choice. The registry keeps the default kinds the program named
+  (`set_default_kind`) apart from the declarations now, so that declaring a single again keeps
+  the program's choice - as the app and the TUI already do in the right order, after their
+  plugins.

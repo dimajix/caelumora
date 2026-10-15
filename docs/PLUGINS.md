@@ -21,10 +21,12 @@ with `RuntimeBuilder::from_config`, given the configuration and its plugins, in 
 1.  Each plugin registers its backends (`backends`, see
     [ARCHITECTURE.md](ARCHITECTURE.md#backends)) with the core's (`Backends::with_plugins`), before
     anything is made: what the core's services are made of has to be known first.
-2.  The policies, the stores, the secrets and the built-in component kinds are made, then the
+2.  The policies, the stores, the secrets and the core's component kinds are made, then the
     core's services and managers (`RuntimeBuilder::new`), with the backends the configuration
-    names; then each plugin registers the rest of what it brings (`register`), and `build` makes
-    the runtime.
+    names; then each plugin registers the rest of what it brings (`register`) - the agents' plugin
+    the kinds of an agent's components and the kinds of agent (issue 370) -, and `build` makes
+    the runtime. The program names the default kinds of singles after its plugins registered
+    (`set_default_kind`).
 
 A test that builds the runtime from parts of its own calls `RuntimeBuilder::new` with
 `Backends::with_plugins` of its plugins and registers them afterwards; `RuntimeManager::new` is the
@@ -40,7 +42,7 @@ asks the services it is given - the policies, the `SecretManager`, the store of 
     secrets, the controllers - and offers its manager as a service (`provide`), which its component
     kinds use (`ComponentKind::uses`), its views read through (`Views::service`) and its routes
     take when they are built;
-*   registers its component kinds (`components()`), as `register_all` does for the built-in ones;
+*   registers its component kinds (`components()`), as `register_all` does for the core's;
 *   registers the kinds of agent it brings (`agent_kinds()`, an `AgentKinds`): for a kind of
     personality, what builds its agents' actors and which facets their components are asked for.
     The agents' plugin (`AgentsPlugin`, issue 370) registers both kinds there are; a program

@@ -192,7 +192,9 @@ facet): `caelumora-app` and `caelumora-tui` name `ollama_client` of `caelumora-o
     container was built with (an external agent's actor gives its `ContextProvider` so,
     `external_context_provider`); the configuration (`AppConfig::component_defaults`, see
     [CONFIGURATION.md](CONFIGURATION.md)); and finally the default kind - the program's
-    (`set_default_kind`), or else the one it was registered with.
+    (`set_default_kind`), or else the one it was registered with. The program's choice is kept
+    apart from the declaration: a plugin that declares the single after the program named its
+    default - the agents' plugin in a test's registry (issue 370) - does not undo it.
 
 ### Factories and tags
 
@@ -233,8 +235,11 @@ turn runs, a component calls it with the turn's, never with the context it was b
 
 The built-in components live in `caelumora-runtime/src/`, **one file per component kind**, named
 after the kind (`calculator_tool.rs`, `notes.rs`, ...), in the module of the facet that is their
-purpose. That module's `mod.rs` holds the facet trait - with what consumes it, such as the
-`ToolExecutor` - and `register_all`; its other files are the components:
+purpose. Those of `command/` and `moderator/` are the runtime's own (`ComponentRegistry::built_in`);
+the others are an agent's, registered by the agents' plugin (`agent_plugin::register_components`,
+issue 370), and move with the agents' logic into a crate of its own. That module's `mod.rs` holds
+the facet trait - with what consumes it, such as the `ToolExecutor` - and `register_all`; its other
+files are the components:
 
 | Module | Components |
 |---|---|

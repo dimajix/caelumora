@@ -1,16 +1,34 @@
 //! The agents as a plugin (issue 370): what makes the core more than a
 //! chat between users - its kinds of agent, whose actors run a model here
 //! (`AgentActor`) or reach an agent that runs elsewhere
-//! (`ExternalAgentActor`). An essential plugin: a program without it runs
+//! (`ExternalAgentActor`), and the kinds of their components. An
+//! essential plugin: a program without it runs
 //! no agent. It lies in the runtime until the agents' logic is a crate of
 //! its own.
 
 use crate::actor::agent::AgentActor;
 use crate::actor::external_agent::ExternalAgentActor;
 use crate::actor::Actor;
+use crate::component::ComponentRegistry;
 use crate::plugin::Plugin;
+use crate::{compaction, component_impl, external, llm, prompt, tool};
 use crate::runtime::RuntimeBuilder;
 use caelumora_model::agent::PersonalityKind;
+
+/// Registers the kinds of an agent's components with `registry` (issue
+/// 370): its context (`prompt`), its model (`llm`), its tools (`tool`), its
+/// memory and notes (`component_impl`), its compaction (`compaction`) and
+/// the facet an agent that runs elsewhere is reached through (`external`).
+/// What `AgentsPlugin` registers, and a test that builds components without
+/// a runtime.
+pub fn register_components(registry: &mut ComponentRegistry) {
+    component_impl::register_all(registry);
+    prompt::register_all(registry);
+    tool::register_all(registry);
+    llm::register_all(registry);
+    external::register_all(registry);
+    compaction::register_all(registry);
+}
 
 /// The agents, as a plugin.
 #[derive(Debug, Default)]
@@ -22,6 +40,7 @@ impl Plugin for AgentsPlugin {
     }
 
     fn register(&self, runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+        register_components(runtime.components());
         let kinds = runtime.agent_kinds();
         kinds.register(PersonalityKind::Internal, AgentActor::COMPONENT_FACETS, |channel, agent, personality, runtime| async move {
             Ok(Box::new(AgentActor::new(channel, agent, personality, runtime).await?) as Box<dyn Actor>)
