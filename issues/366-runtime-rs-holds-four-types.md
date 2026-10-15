@@ -1,6 +1,6 @@
 # 366 — `runtime.rs` holds the runtime, how it is built, and what a channel and an actor are given of it, in one file
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -49,3 +49,15 @@ of its own and is reviewed and changed on its own - 359, 360 and 361 each touche
 
 - **2026-10-15** — Opened at the maintainer's request, under epic [349](349-core-review-epic.md),
   split off [364](364-managers-in-different-places.md).
+- **2026-10-15** — Done, as considered; no behaviour changes.
+  - `runtime.rs` went to `runtime/builder.rs` (`git mv`), which keeps the largest part:
+    `RuntimeBuilder`, a file of its own as proposed, with the test of the backends the
+    configuration names.
+  - `manager.rs` holds `RuntimeManager`, its struct and its methods together, with the test of the
+    configured defaults; its fields are `pub(super)`, since `RuntimeBuilder::build` makes it.
+  - `channel.rs` holds `ChannelRuntime`, `ChannelHandle` and the constructors for tests
+    (`outside_a_session`, `restarted`); `actor.rs` holds `ActorRuntime` and its test. What the
+    two reach of each other - the fields of `ChannelRuntime` an `ActorRuntime` reads through, the
+    fields of `ActorRuntime` that `new_actor_runtime` sets - is `pub(super)`.
+  - `mod.rs` holds the description of the module, which it had none of, `Services` and the
+    re-exports; every path into the module stays as it was.

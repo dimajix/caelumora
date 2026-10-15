@@ -108,7 +108,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [354](354-names-follow-several-schemes.md) | open | Names around sessions, channels and actors follow several schemes: manager verbs with and without the noun, three ways to find by id, and `Member` meaning three things. |
 | [358](358-controllers-apply-their-events-each-on-its-own.md) | open | The controllers apply, store and announce their update events each on their own, `updated_at` moves on one path only, and the loops forward the updates with uneven logging. |
 | [365](365-security-manager-is-an-access-policy.md) | open | `SecurityManager` decides who may do what and manages nothing: it is the access policy beside `ConfidentialityPolicy`, under a name that means a lifecycle everywhere else. |
-| [366](366-runtime-rs-holds-four-types.md) | open | `runtime.rs` holds the runtime, how it is built, and what a channel and an actor are given of it, interleaved in one file of 847 lines. |
 
 ## Open architecture questions
 
