@@ -584,7 +584,7 @@ mod tests {
     use tokio_util::task::TaskTracker;
 
     use crate::channel::tests::*;
-    use crate::channel::{ActorChange, ChannelError, ActorSource};
+    use crate::channel::{ActorChange, ChannelError, ResolvedParticipant};
     use caelumora_model::security::AllowAllPolicy;
 
     #[tokio::test]
@@ -670,7 +670,7 @@ mod tests {
         let moderator = Arc::new(PolicyModerator::new(responders, 1));
         let channel = channel_moderated_by(&[&alice], Arc::<PolicyModerator>::clone(&moderator)).await;
         let talker = Arc::new(SaysOnce(ActorId::Agent(caelumora_model::agent::AgentId::new())));
-        channel.adopt(Arc::<SaysOnce>::clone(&talker), ActorSource::approver(channel.session_id, channel.id)).await;
+        channel.adopt(Arc::<SaysOnce>::clone(&talker), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
         let mut following = channel.user_actor(alice.id).unwrap().watch().events;
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
@@ -726,7 +726,7 @@ mod tests {
             Envelope { security: SecurityContext::new(her, channel.session_id, channel.id).next(talker, her, her), ..said(talker, talker, talker, "its own") },
         ];
         let says = Arc::new(Says(talker, std::sync::Mutex::new(envelopes)));
-        channel.adopt(Arc::<Says>::clone(&says), ActorSource::approver(channel.session_id, channel.id)).await;
+        channel.adopt(Arc::<Says>::clone(&says), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
         let mut events = channel.observe();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
@@ -783,7 +783,7 @@ mod tests {
         let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(asked.id))).await;
         for actor in [&asked, &other] {
             // Who it is does not matter to routing: the channel only looks it up.
-            channel.adopt(Arc::<Sleeper>::clone(actor), ActorSource::approver(channel.session_id, channel.id)).await;
+            channel.adopt(Arc::<Sleeper>::clone(actor), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
         }
         let said = || Envelope::new(
             context.clone(),
@@ -1103,7 +1103,7 @@ mod tests {
         let (cancelled, other) = (sleeper(), sleeper());
         let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(other.id))).await;
         for actor in [&cancelled, &other] {
-            channel.adopt(Arc::<Sleeper>::clone(actor), ActorSource::approver(channel.session_id, channel.id)).await;
+            channel.adopt(Arc::<Sleeper>::clone(actor), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
         }
 
         channel.cancel_actor(&context, cancelled.id).await.expect("permitted");

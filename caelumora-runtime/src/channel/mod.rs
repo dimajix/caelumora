@@ -54,7 +54,7 @@ mod tests;
 
 pub use history::VisibleHistory;
 pub(crate) use history::visible_part;
-pub(crate) use participation::{ActorSource, SourceKind, Participation};
+pub(crate) use participation::{ResolvedParticipant, ResolvedKind, Participation};
 
 /// A participant of a channel, with the handle it is `@`-mentioned by.
 #[derive(Debug, Clone, PartialEq)]
@@ -141,7 +141,7 @@ pub enum ChannelError {
     Question { question: QuestionId, channel: ChannelId, reason: QuestionError },
 }
 
-/// Whether `error` of `Participation::source_of` or of building its actor says
+/// Whether `error` of `Participation::resolve` or of building its actor says
 /// that the participant cannot be run - its agent's personality, or the
 /// preconfigured components it includes (issue 270), are gone or not the
 /// agent's to read - rather than that the store failed.
@@ -150,12 +150,12 @@ fn cannot_run(error: &anyhow::Error) -> bool {
         || error.chain().any(|e| e.downcast_ref::<ComponentError>().is_some_and(ComponentError::is_unavailable))
 }
 
-/// The actor of a channel's participant, with what it was built from and
-/// what tells when its task has ended.
+/// The actor of a channel's participant, with the participant it was built
+/// from, resolved, and what tells when its task has ended.
 #[derive(Debug, Clone)]
 struct ChannelActor {
     actor: Arc<dyn Actor>,
-    source: ActorSource,
+    participant: ResolvedParticipant,
     /// Tracks the actor's task while `run` runs it, so that whoever stops
     /// the actor can wait for the task to end without going through `run`
     /// (issue 187) - `run`'s `JoinSet` alone owns the task.
@@ -318,9 +318,9 @@ impl ChannelLoop {
             // keep everyone else out, nor can a third party - the
             // personality's owner, or the components' - stop someone's
             // channel so.
-            let found = channel_loop.source_of(participant).await;
-            let source = match found {
-                Ok(Some(source)) => source,
+            let found = channel_loop.resolve(participant).await;
+            let resolved = match found {
+                Ok(Some(resolved)) => resolved,
                 Ok(None) => {
                     info!("{} of channel {} no longer exists and is left out", participant.actor_id(), channel_loop.id);
                     continue;
@@ -331,7 +331,7 @@ impl ChannelLoop {
                 }
                 Err(e) => return Err(e),
             };
-            let actor = match channel_loop.create_actor(&source).await {
+            let actor = match channel_loop.create_actor(&resolved).await {
                 Ok(actor) => actor,
                 Err(e) if cannot_run(&e) => {
                     warn!("{} of channel {} cannot be run and is left out: {:#}", participant.actor_id(), channel_loop.id, e);
@@ -339,15 +339,15 @@ impl ChannelLoop {
                 }
                 Err(e) => return Err(e),
             };
-            channel_loop.adopt(Arc::from(actor), source).await;
+            channel_loop.adopt(Arc::from(actor), resolved).await;
         }
         Ok(channel_loop)
     }
 
     /// `participant` with what its actor is built from
-    /// (`Participation::source_of`).
-    async fn source_of(&self, participant: &Participant) -> Result<Option<ActorSource>> {
-        self.participation.source_of(participant, self.session_id, Some(self.id)).await
+    /// (`Participation::resolve`).
+    async fn resolve(&self, participant: &Participant) -> Result<Option<ResolvedParticipant>> {
+        self.participation.resolve(participant, self.session_id, Some(self.id)).await
     }
 
     /// The session the channel belongs to (issues 123, 361), given it with
@@ -361,10 +361,10 @@ impl ChannelLoop {
     /// among the participants' actors, and it can be mentioned. The one way
     /// an actor enters the channel - when the channel is built and when a
     /// participant joins (issue 91). Its task is `run`'s to start.
-    async fn adopt(&self, actor: Arc<dyn Actor>, source: ActorSource) -> ChannelActor {
+    async fn adopt(&self, actor: Arc<dyn Actor>, resolved: ResolvedParticipant) -> ChannelActor {
         self.moderator.add_actor(Arc::clone(&actor));
         let id = actor.id();
-        let adopted = ChannelActor { actor, source, task: TaskTracker::new() };
+        let adopted = ChannelActor { actor, participant: resolved, task: TaskTracker::new() };
         self.actors.rcu(|actors| {
             let mut actors = HashMap::clone(actors);
             actors.insert(id, adopted.clone());
@@ -504,15 +504,15 @@ impl ChannelLoop {
         Arc::downcast::<UserActor>(any_actor).ok()
     }
 
-    /// The actor of `source`, built but not yet taken in (`adopt`).
-    async fn create_actor(&self, source: &ActorSource) -> Result<Box<dyn Actor>> {
+    /// The actor of `resolved`, built but not yet taken in (`adopt`).
+    async fn create_actor(&self, resolved: &ResolvedParticipant) -> Result<Box<dyn Actor>> {
         let channel = Arc::clone(&self.channel);
-        let actor_runtime = self.runtime.new_actor_runtime(source.actor_id(), self.session_id, self.id);
-        Ok(match source.kind().clone() {
-            SourceKind::User(user) => Box::new(UserActor::new(channel, user, actor_runtime).await?),
-            SourceKind::Agent(agent, personality) => Box::new(AgentActor::new(channel, agent, personality, actor_runtime).await?),
-            SourceKind::ExternalAgent(agent, personality) => Box::new(ExternalAgentActor::new(channel, agent, personality, actor_runtime).await?),
-            SourceKind::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
+        let actor_runtime = self.runtime.new_actor_runtime(resolved.actor_id(), self.session_id, self.id);
+        Ok(match resolved.kind().clone() {
+            ResolvedKind::User(user) => Box::new(UserActor::new(channel, user, actor_runtime).await?),
+            ResolvedKind::Agent(agent, personality) => Box::new(AgentActor::new(channel, agent, personality, actor_runtime).await?),
+            ResolvedKind::ExternalAgent(agent, personality) => Box::new(ExternalAgentActor::new(channel, agent, personality, actor_runtime).await?),
+            ResolvedKind::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
         })
     }
 }

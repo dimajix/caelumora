@@ -14,7 +14,7 @@ use caelumora_model::security::{ActionType, SecurityContext};
 use tracing::{info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
-use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelMember, LEAVE_GRACE, ActorSource};
+use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelMember, LEAVE_GRACE, ResolvedParticipant};
 use caelumora_model::channel::Channel;
 use caelumora_model::store::Stored;
 
@@ -49,9 +49,9 @@ impl ChannelLoop {
 
     /// Takes `participant` into the channel, on behalf of `context`, seeing
     /// as much of the history as `history` grants; by their own act if
-    /// `joining`, which is asked once the source is found. Stored first
+    /// `joining`, which is asked once the participant is resolved. Stored first
     /// (also asked as `ConfidentialityPolicy::cleared`), then its actor
-    /// started (`start_source`) - taken back out of the document if it
+    /// started (`start_participant`) - taken back out of the document if it
     /// cannot be - and the join announced. A participant removed shortly
     /// before is added only once its old actor has ended (`left`, issue
     /// 171).
@@ -68,24 +68,24 @@ impl ChannelLoop {
         let found = self.session_loop()
             .and_then(|s| s.session().participants.iter().find(|p| p.actor_id() == participant).cloned())
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
-        let source = self.source_of(&found).await?
+        let resolved = self.resolve(&found).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
         // Joining was permitted; storing is the runtime's.
         let storing = if joining {
             let channel = self.id;
-            self.participation.require_joinable(&source, context, Channel::KIND, &self.security_attributes(),
+            self.participation.require_joinable(&resolved, context, Channel::KIND, &self.security_attributes(),
                 |refused| ChannelError::Forbidden { action: "joining", channel, refused }).await?;
             SecurityContext::system()
         } else {
             context.clone()
         };
-        self.participation.require_admissible(&source, context, &self.classification())?;
+        self.participation.require_admissible(&resolved, context, &self.classification())?;
 
         let messages = self.history().await;
         let start = history.start_in(&messages, Utc::now());
         self.channel.add_participant(&storing, found.clone(), start).await?;
 
-        if let Err(error) = self.start_source(source).await {
+        if let Err(error) = self.start_participant(resolved).await {
             // Stored, but it cannot run: taken back out, in the runtime's
             // name - adding it was permitted.
             if let Err(undo) = self.channel.remove_participant(&SecurityContext::system(), participant).await {
@@ -160,8 +160,8 @@ impl ChannelLoop {
                     Err(e) => warn!("Whether {} of channel {} exists cannot be read: {}", actor, self.id, e),
                 },
                 None => {
-                    let rejoined = match self.source_of(&participant).await {
-                        Ok(Some(source)) => self.start_source(source).await.map(|()| true),
+                    let rejoined = match self.resolve(&participant).await {
+                        Ok(Some(resolved)) => self.start_participant(resolved).await.map(|()| true),
                         Ok(None) => Ok(false),
                         Err(e) => Err(e),
                     };
@@ -178,7 +178,7 @@ impl ChannelLoop {
         }
     }
 
-    /// Starts the actor of `source` in a channel that is built already - a
+    /// Starts the actor of `resolved` in a channel that is built already - a
     /// participant added or joining (`take_in`), an agent restored
     /// (`follow_agents`): once the actor it had before has ended (`left`),
     /// built, given the part of the history it may see (`Actor::catch_up`,
@@ -189,11 +189,11 @@ impl ChannelLoop {
     /// # Errors
     /// `ChannelError::StillLeaving`, or what building the actor or catching
     /// it up reports; it is not taken in then.
-    async fn start_source(&self, source: ActorSource) -> Result<()> {
-        self.left(source.actor_id()).await?;
-        let actor = self.create_actor(&source).await?;
-        actor.catch_up(self.visible_history(source.actor_id()).await.messages()).await?;
-        let adopted = self.adopt(Arc::from(actor), source).await;
+    async fn start_participant(&self, resolved: ResolvedParticipant) -> Result<()> {
+        self.left(resolved.actor_id()).await?;
+        let actor = self.create_actor(&resolved).await?;
+        actor.catch_up(self.visible_history(resolved.actor_id()).await.messages()).await?;
+        let adopted = self.adopt(Arc::from(actor), resolved).await;
         let _ = self.changes_tx.send(ActorChange::Start(adopted));
         Ok(())
     }

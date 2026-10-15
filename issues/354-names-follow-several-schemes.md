@@ -105,3 +105,10 @@ cheapest part of the API to keep consistent and the most visible.
     (`take_back`), `SessionLoop::roll_back_channel_creation` (`discard_channel`) and
     `roll_back_channel_deletion` (`keep_channel`); the inline rollbacks say so in their comments.
   - CODING-GUIDELINES.md names the manager verbs, the finders and rolling back.
+- **2026-10-15** — `ActorSource` renamed again, at the maintainer's request: "source" named one of
+  its three uses - building the actor - and not the others, the questions whether it may take part
+  and the participant kept with its running actor. It is the participant a document names
+  (`Participant`), resolved in this instance and in its place: `ResolvedParticipant`, with
+  `ResolvedKind`; `Participation::resolve` and `ChannelLoop::resolve` (`source_of`),
+  `SessionLoop::resolve_to_take_in` (`source_to_take_in`), `start_participant` (`start_source`),
+  `ChannelActor::participant` (`source`).

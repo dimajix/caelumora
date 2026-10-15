@@ -103,8 +103,8 @@ impl ChannelLoop {
         self.confidentiality.require_classifiable(&classification, || ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.id })?;
         // Raised above a participant, the channel would show them what they
         // may not see: refused rather than anyone removed.
-        for ChannelActor { source, .. } in self.actors.load().values() {
-            self.participation.require_cleared(source, context, &classification)?;
+        for ChannelActor { participant, .. } in self.actors.load().values() {
+            self.participation.require_cleared(participant, context, &classification)?;
         }
         self.channel.update_classification(context, classification.clone()).await?;
         let lowered = !self.confidentiality.may_publish(context, &channel, &classification);

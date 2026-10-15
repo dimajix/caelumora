@@ -197,7 +197,7 @@ pub(super) async fn channel_with_sleepers(names: &[&'static str]) -> (Arc<Channe
     let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
     let sleepers: Vec<_> = names.iter().map(|name| sleeper_named(name)).collect();
     for sleeper in &sleepers {
-        channel.adopt(Arc::<Sleeper>::clone(sleeper), ActorSource::approver(channel.session_id, channel.id)).await;
+        channel.adopt(Arc::<Sleeper>::clone(sleeper), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
     }
     (channel, alice.id, sleepers)
 }

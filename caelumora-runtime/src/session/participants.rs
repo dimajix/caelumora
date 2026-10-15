@@ -10,7 +10,7 @@ use caelumora_model::session::Session;
 use caelumora_model::store::{StoreError, Stored};
 use std::sync::Arc;
 use tracing::info;
-use crate::channel::{ChannelLoop, ActorSource};
+use crate::channel::{ChannelLoop, ResolvedParticipant};
 use super::{SessionError, SessionLoop};
 
 impl SessionLoop {
@@ -72,7 +72,7 @@ impl SessionLoop {
 
     /// Takes `actor` into the session on behalf of `context` - by their own act if `joining` -,
     /// once it is asked whether they may take part in `channel` as well, if one is named
-    /// (`source_to_take_in`), and whether they may join it by themselves.
+    /// (`resolve_to_take_in`), and whether they may join it by themselves.
     /// Whoever takes them in reads them first, a user to find out that they exist (issue 120).
     /// The session announces it, and follows an agent taken in (`run`).
     ///
@@ -97,18 +97,18 @@ impl SessionLoop {
             }
             other => return Err(SessionError::CannotTakeIn(other).into()),
         };
-        let source = self.source_to_take_in(context, &participant, channel).await?;
+        let resolved = self.resolve_to_take_in(context, &participant, channel).await?;
         // Joining was permitted; storing is the runtime's.
         let storing = match (in_session, joining) {
             (true, _) => None,
             (false, true) => {
-                self.participation.require_joinable(&source, context, Session::KIND, &session.security_attributes, StoreError::PermissionDenied).await?;
+                self.participation.require_joinable(&resolved, context, Session::KIND, &session.security_attributes, StoreError::PermissionDenied).await?;
                 Some(SecurityContext::system())
             }
             (false, false) => Some(context.clone()),
         };
         if let (Some(channel), true) = (channel, joining) {
-            self.participation.require_joinable(&source, context, Channel::KIND, &channel.security_attributes(), StoreError::PermissionDenied).await?;
+            self.participation.require_joinable(&resolved, context, Channel::KIND, &channel.security_attributes(), StoreError::PermissionDenied).await?;
         }
         if let Some(storing) = storing {
             self.session_controller.add_participant(&storing, participant).await?;
@@ -126,13 +126,13 @@ impl SessionLoop {
     /// `SessionError::CannotTakeIn` for a user or agent that no longer exists;
     /// `ChannelError::OutOfScope` or `NotCleared`; `StoreError::PermissionDenied` for an agent
     /// that may not read its personality, and cannot run; whatever reading it reports.
-    pub(crate) async fn source_to_take_in(&self, context: &SecurityContext, participant: &Participant, channel: Option<&Arc<ChannelLoop>>) -> Result<ActorSource> {
-        let source = self.participation.source_of(participant, self.id, channel.map(|channel| channel.id())).await?
+    pub(crate) async fn resolve_to_take_in(&self, context: &SecurityContext, participant: &Participant, channel: Option<&Arc<ChannelLoop>>) -> Result<ResolvedParticipant> {
+        let resolved = self.participation.resolve(participant, self.id, channel.map(|channel| channel.id())).await?
             .ok_or(SessionError::CannotTakeIn(participant.actor_id()))?;
         if let Some(channel) = channel {
-            self.participation.require_admissible(&source, context, &channel.classification())?;
+            self.participation.require_admissible(&resolved, context, &channel.classification())?;
         }
-        Ok(source)
+        Ok(resolved)
     }
 }
 
