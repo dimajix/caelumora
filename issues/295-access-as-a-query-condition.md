@@ -1,6 +1,6 @@
 # 295 — A list asks the policy entity by entity, so no database can take access over
 
-**Status:** open
+**Status:** rejected
 **Area:** Persistence
 
 ## The problem
@@ -108,3 +108,7 @@ holds exactly when `check` allows.
 - **2026-10-10** — Opened at the maintainer's request, split off from phase 2 of issue
   [293](293-store-queries.md). The considerations above record the discussion. The work waits for a
   store that can execute a condition.
+- **2026-10-15** — Rejected as a duplicate of [332](332-policy-as-a-predicate.md), which asks
+  for the same change and goes further: `check` on an entity decided by the same condition, and
+  what a decision needs of the subject carried by the `SecurityContext`. The considerations above
+  stay the record of the discussion of 2026-10-10; 332 refers to them.
