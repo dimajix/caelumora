@@ -4,7 +4,7 @@
 //! them alone, one file per component kind. An agent has exactly one
 //! `ContextProvider` and any number of `PromptProvider`s (issue 98). A
 //! component that offers a prompt part along with another facet - tools,
-//! say - stays in `component_impl`.
+//! say - stays in `components`.
 
 pub mod channel_briefing_prompt_provider;
 pub mod channel_language_prompt_provider;

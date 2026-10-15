@@ -471,7 +471,7 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
     let script = [plan, said("first done"), said("second done"), said("all done")];
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "plan".to_string(),
-        kind: crate::component_impl::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),
+        kind: crate::components::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),
         params: serde_json::Value::Null,
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
@@ -550,7 +550,7 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
     let script = [plan, said("first done"), said("all done")];
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "plan".to_string(),
-        kind: crate::component_impl::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),
+        kind: crate::components::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),
         params: serde_json::Value::Null,
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
@@ -1278,7 +1278,7 @@ async fn a_call_with_invalid_arguments_is_answered_without_asking_anyone() {
     let answer = Message { role: MessageRole::Assistant, content: Some("Let me answer directly.".to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "plan".to_string(),
-        kind: crate::component_impl::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),
+        kind: crate::components::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),
         params: serde_json::Value::Null,
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,

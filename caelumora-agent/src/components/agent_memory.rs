@@ -19,7 +19,7 @@
 //! own, seen by its owner in the context panel only. Its entries are
 //! numbered differently from notes, on purpose: see `AgentMemory::remember`.
 
-use crate::component_impl::notes::NOTE_PRESENTATION;
+use crate::components::notes::NOTE_PRESENTATION;
 use crate::memory::AgentMemory;
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};

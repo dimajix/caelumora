@@ -1053,7 +1053,7 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
     let reading = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "reading"),
-            ComponentDescriptor::new("history", caelumora_agent::component_impl::channel_history::CHANNEL_HISTORY_KIND),
+            ComponentDescriptor::new("history", caelumora_agent::components::channel_history::CHANNEL_HISTORY_KIND),
         ] },
         ..world.personality("reading", None, &[]).await
     };

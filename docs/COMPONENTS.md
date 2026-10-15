@@ -251,13 +251,13 @@ by the agents' plugin (`caelumora_agent::plugin::register_components`, issue 370
 | `moderator/` | the moderator and its responder policies |
 | `compaction/` | `/compact` (`compaction`, in `command.rs`, since a module cannot hold a file of its own name) and the compaction policies (`threshold_compaction_policy`) and strategies (`summary_compaction`) |
 | `external/` | the facet through which an external agent is reached, and no kind: each protocol is a plugin (`a2a_agent` in `caelumora-a2a`) |
-| `component_impl/` | everything else, and every component that offers several facets |
+| `components/` | everything else, and every component that offers several facets |
 
 A component that offers several facets - `create_plan_tool`, `notes` and the other memory components
-provide tools and a prompt part - stays in `component_impl`, because it cannot be sorted by one
+provide tools and a prompt part - stays in `components`, because it cannot be sorted by one
 facet. Each file holds the kind constant, its `register` function and its tests; each module's
 `register_all` registers its kinds and the singles it holds the default for. A new component gets a
-file of its own and a line in its module's `register_all`; `component_impl` holds components only.
+file of its own and a line in its module's `register_all`; `components` holds components only.
 
 They follow one convention:
 

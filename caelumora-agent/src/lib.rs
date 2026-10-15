@@ -6,7 +6,7 @@
 //! their components serve: tools (`tool`), prompt parts and contexts
 //! (`prompt`), the model (`llm`), message stages (`message`), compaction
 //! (`compaction`), an agent that runs elsewhere (`external`) and an agent's
-//! commands (`command`), with the built-in kinds (`component_impl`). It runs
+//! commands (`command`), with the built-in kinds (`components`). It runs
 //! on the runtime (`caelumora-runtime`), which knows agents only as a kind
 //! of participant, and joins it as a plugin (`plugin::AgentsPlugin`) - an
 //! essential one: without it, the program is a chat between users.
@@ -14,7 +14,7 @@
 pub mod actor;
 pub mod command;
 pub mod compaction;
-pub mod component_impl;
+pub mod components;
 pub mod error;
 pub mod external;
 pub mod llm;
