@@ -445,6 +445,7 @@ published before anyone else can take it.
 | [368](368-component-module.md) | done | `component.rs` holds the registry, the container, the context of a factory and 550 lines of their tests in one file of 1541 lines. |
 | [369](369-security-module.md) | done | `security.rs` holds the actions, the attributes, the context, the access policy and its implementations, without a description, in one file of 1331 lines. |
 | [370](370-agent-logic-in-a-crate-of-its-own.md) | open | The runtime crate holds the environment agents run in and the agents' own logic - the turn, the tools, the model, the prompts, both actors - in one crate, so nothing enforces that an agent reaches the channel through `ActorRuntime` alone, and the channel cannot be tested without an agent. |
+| [371](371-tool-executor-construction.md) | open | `ToolExecutor::new` takes seven parameters, five of which its one caller reads from the agent's `ActorRuntime` that it passes as well, so they can disagree with it. |
 
 ## Integrations
 
