@@ -5,16 +5,14 @@ use crate::actor::Actor;
 use crate::component::{ComponentImpl, ComponentRegistry};
 use crate::backend::Backends;
 use crate::runtime::{ChannelRuntime, RuntimeBuilder, RuntimeManager};
-use crate::testing::{test_registry, Script, ScriptedAgent, ScriptedAgents};
-use crate::transport::{EventSender, EventReceiver};
-use anyhow::Result;
+use crate::testing::{test_registry, Script, ScriptedAgent, ScriptedAgents, StandIn};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::channel::{Channel, ChannelId, Participant, moderation_components};
 use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext, AccessPolicy};
 use caelumora_model::session::SessionId;
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::Name;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::command::help_command::HelpCommandProvider;
@@ -153,45 +151,24 @@ pub(super) async fn channel_moderated_by(users: &[&User], moderator: Arc<dyn Mod
     channel_built(store, participants, Arc::new(AllowAllPolicy::new()), registry, components).await
 }
 
-/// An agent asleep that only tells whether it was woken or cancelled.
-#[derive(Debug)]
-pub(super) struct Sleeper {
-    pub(super) id: ActorId,
-    name: &'static str,
-    pub(super) woken: AtomicBool,
-    pub(super) cancelled: AtomicBool,
-}
-
-#[async_trait::async_trait]
-impl Actor for Sleeper {
-    fn id(&self) -> ActorId { self.id }
-    fn name(&self) -> Name { Name::new(self.name).expect("a name") }
-    fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
-    async fn run(&self, _rx: Box<dyn EventReceiver>, _tx: Box<dyn EventSender>) -> Result<()> { Ok(()) }
-    fn state(&self) -> ActorState {
-        if self.woken.load(Ordering::SeqCst) { ActorState::Idle } else { ActorState::Sleeping }
-    }
-    fn wakeup(&self) { self.woken.store(true, Ordering::SeqCst); }
-    fn cancel(&self) { self.cancelled.store(true, Ordering::SeqCst); }
-    fn stop(&self) {}
-}
-
-pub(super) fn sleeper() -> Arc<Sleeper> {
+/// An agent asleep (`StandIn`), that tells whether it was woken or
+/// cancelled.
+pub(super) fn sleeper() -> Arc<StandIn> {
     sleeper_named("sleeper")
 }
 
-fn sleeper_named(name: &'static str) -> Arc<Sleeper> {
-    Arc::new(Sleeper { id: ActorId::Agent(AgentId::new()), name, woken: AtomicBool::new(false), cancelled: AtomicBool::new(false) })
+fn sleeper_named(name: &str) -> Arc<StandIn> {
+    Arc::new(StandIn::sleeping(ActorId::Agent(AgentId::new()), name))
 }
 
 /// A channel of alice's with the sleeping agents `names`, as approvers -
 /// who they are does not matter to finding them.
-pub(super) async fn channel_with_sleepers(names: &[&'static str]) -> (Arc<ChannelLoop>, UserId, Vec<Arc<Sleeper>>) {
+pub(super) async fn channel_with_sleepers(names: &[&str]) -> (Arc<ChannelLoop>, UserId, Vec<Arc<StandIn>>) {
     let alice = user("alice");
     let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
     let sleepers: Vec<_> = names.iter().map(|name| sleeper_named(name)).collect();
     for sleeper in &sleepers {
-        channel.adopt(Arc::<Sleeper>::clone(sleeper), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
+        channel.adopt(Arc::<StandIn>::clone(sleeper), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
     }
     (channel, alice.id, sleepers)
 }

@@ -99,7 +99,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | No. | Status | Issue |
 |---|---|---|
 | [346](346-subscription-topics-for-every-kind.md) | open | The event bus has subscription topics only for sessions, channels, agents and users, so a plugin cannot follow a single entity - an artifact, say - without reading every event. |
-| [372](372-runtime-test-actors.md) | open | The runtime's tests implement `Actor` four times beside the scripted agent, each writing the trait out again for a test or two. |
 | [373](373-agent-test-worlds.md) | open | The agents' test world mirrors the four constructors of the runtime's `World`, each a shorthand for the next, so a new way to set up a world is added in eight places. |
 
 ## Open architecture questions

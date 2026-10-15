@@ -429,13 +429,11 @@ mod tests {
     use caelumora_model::security::SecurityContext;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::UserId;
-    use anyhow::Result;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::turn::GivenUpReason;
-    use caelumora_model::value::name::Name;
     use caelumora_model::work::TurnId;
-    use crate::transport::{EventReceiver, EventSender};
+    use crate::testing::StandIn;
     use serde_json::Value;
 
     fn envelope(sender_id: ActorId, event: ActorEvent) -> Envelope {
@@ -456,30 +454,12 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
-    struct TestActor {
-        id: ActorId,
-        state: ActorState,
-    }
-
-    #[async_trait::async_trait]
-    impl Actor for TestActor {
-        fn id(&self) -> ActorId { self.id }
-        fn name(&self) -> Name { Name::new("test").expect("a name") }
-        fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
-        async fn run(&self, _rx: Box<dyn EventReceiver>, _tx: Box<dyn EventSender>) -> Result<()> {
-            Ok(())
-        }
-        fn state(&self) -> ActorState { self.state }
-        fn stop(&self) {}
-    }
-
     /// Three agents, the middle one asleep, registered with `moderator`.
     fn add_agents(moderator: &dyn Moderator) -> Vec<ActorId> {
         let states = [ActorState::Idle, ActorState::Sleeping, ActorState::Idle];
         states.iter().map(|state| {
             let id = ActorId::Agent(AgentId::new());
-            moderator.add_actor(Arc::new(TestActor { id, state: *state }));
+            moderator.add_actor(Arc::new(StandIn::new(id, "test", *state)));
             id
         }).collect()
     }
@@ -662,7 +642,7 @@ mod tests {
         let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), DEFAULT_MAX_AGENT_HOPS);
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
-        moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
+        moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
         let message = || Message::new(Classification::CHANNEL_DEFAULT);
         let step = || (0, 2, "first".to_string());
         let turn_id = TurnId::new();
@@ -687,7 +667,7 @@ mod tests {
         let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), 2);
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
-        moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
+        moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
         let cut_off = |decision: &[(ActorId, Envelope)]| decision.iter()
             .filter_map(|(id, e)| match &e.event {
                 ActorEvent::ChainCutOff { max_agent_hops, not_asked, .. } => Some((*id, e.context.sender_id, *max_agent_hops, not_asked.clone())),
@@ -793,7 +773,7 @@ mod tests {
         for moderator in moderators() {
             let agents = add_agents(&moderator);
             let user = ActorId::User(UserId::new());
-            moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
+            moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
             let event = envelope(agents[0], ActorEvent::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Failed { message: "boom".to_string() } });
 
             let decision = moderator.route(&event).await;
@@ -807,7 +787,7 @@ mod tests {
         for moderator in moderators() {
             let agents = add_agents(&moderator);
             let user = ActorId::User(UserId::new());
-            moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
+            moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
             let turn_id = TurnId::new();
             let activity = "compacting its context".to_string();
             for event in [ActorEvent::ActivityStarted { turn_id, activity: activity.clone() }, ActorEvent::ActivityFinished { turn_id, activity: activity.clone(), output: "done".to_string() }] {
@@ -822,7 +802,7 @@ mod tests {
         for moderator in moderators() {
             let agents = add_agents(&moderator);
             let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
-            moderator.add_actor(Arc::new(TestActor { id: other, state: ActorState::Idle }));
+            moderator.add_actor(Arc::new(StandIn::new(other, "test", ActorState::Idle)));
             let event = envelope(user, ActorEvent::CommandExecuted { command: "wakeup".to_string(), args: String::new(), output: "Woke b.".to_string(), to: None, turn_id: None });
 
             let decision = moderator.route(&event).await;
@@ -838,8 +818,8 @@ mod tests {
         for moderator in moderators() {
             let agents = add_agents(&moderator);
             let (issuer, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
-            moderator.add_actor(Arc::new(TestActor { id: issuer, state: ActorState::Idle }));
-            moderator.add_actor(Arc::new(TestActor { id: other, state: ActorState::Idle }));
+            moderator.add_actor(Arc::new(StandIn::new(issuer, "test", ActorState::Idle)));
+            moderator.add_actor(Arc::new(StandIn::new(other, "test", ActorState::Idle)));
             let started = ActorEvent::CommandStarted { command: "compact".to_string(), args: String::new(), to: issuer, turn_id: TurnId::new() };
 
             let decision = moderator.route(&envelope(agents[0], started)).await;
@@ -853,8 +833,8 @@ mod tests {
         for moderator in moderators() {
             let agents = add_agents(&moderator);
             let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
-            moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
-            moderator.add_actor(Arc::new(TestActor { id: other, state: ActorState::Idle }));
+            moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
+            moderator.add_actor(Arc::new(StandIn::new(other, "test", ActorState::Idle)));
 
             // The sleeping one, too: the channel wakes whom a decision asks;
             // and a user as well as an agent.
@@ -874,7 +854,7 @@ mod tests {
         for moderator in moderators() {
             let agents = add_agents(&moderator);
             let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
-            moderator.add_actor(Arc::new(TestActor { id: other, state: ActorState::Idle }));
+            moderator.add_actor(Arc::new(StandIn::new(other, "test", ActorState::Idle)));
             let event = envelope(user, ActorEvent::ParticipantRemoved { participant: agents[0] });
 
             let decision = moderator.route(&event).await;
@@ -917,7 +897,7 @@ mod tests {
         for moderator in moderators() {
             let agents = add_agents(&moderator);
             let (sender, user) = (agents[0], ActorId::User(UserId::new()));
-            moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
+            moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
             let said = |message: &Message| envelope(sender, ActorEvent::CompleteMessageGenerated(message.clone()));
             let ended = |messages: Vec<Message>| envelope(sender, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages });
             let calling = Message { sender_id: sender, role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call.clone()], ..Message::new(classified.clone()) };
@@ -951,7 +931,7 @@ mod tests {
         let user = ActorId::User(UserId::new());
         let approver = ActorId::Approver(ApproverId::new());
         for id in [ActorId::Agent(agent), user, approver] {
-            actors.add_actor(Arc::new(TestActor { id, state: ActorState::Idle }));
+            actors.add_actor(Arc::new(StandIn::new(id, "test", ActorState::Idle)));
         }
         (actors, agent, user, approver)
     }
@@ -1002,7 +982,7 @@ mod tests {
         let bob = ActorId::User(UserId::new());
         let other = AgentId::new();
         for id in [bob, ActorId::Agent(other)] {
-            actors.add_actor(Arc::new(TestActor { id, state: ActorState::Idle }));
+            actors.add_actor(Arc::new(StandIn::new(id, "test", ActorState::Idle)));
         }
         let routed = |sender, event| actors.route_question_events(&envelope(sender, event)).into_iter().map(|(to, _)| to).collect::<HashSet<_>>();
         let request = |sensitive| ActorEvent::QuestionRequested(QuestionRequest {

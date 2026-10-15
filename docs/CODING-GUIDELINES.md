@@ -316,7 +316,11 @@ that answered it.
 *   **Agents in the runtime's tests:** a test of what a channel, a session or the views do with an
     agent among their participants runs a scripted agent (`testing::ScriptedAgents`, issue 370),
     which begins, ends or hangs in its answers as told; a test of what an agent does runs the
-    agents' plugin, in `caelumora-agents`.
+    agents' plugin, in `caelumora-agents`. A test that puts an actor straight into a channel or
+    before a moderator - whom it finds, wakes or cancels, whoever the actor is - puts a
+    `testing::StandIn` there, which does nothing (issue 372). No other test implements `Actor`,
+    except one that needs what no actor of the runtime can do, such as sending envelopes in
+    another's name - and then names the actor so.
 *   **Async tests:** use `#[tokio::test]` for tests involving async code.
 *   **Naming:** use descriptive names, e.g.
     `an_answer_is_its_whole_messages_and_what_was_being_written`.

@@ -9,8 +9,12 @@
 //! order (`World::asked`): which permissions the action needs.
 
 mod scripted_agent;
+#[cfg(test)]
+mod stand_in;
 
 pub use scripted_agent::{Script, ScriptedAgent, ScriptedAgents};
+#[cfg(test)]
+pub(crate) use stand_in::StandIn;
 
 use caelumora_model::store::query::Query;
 use std::collections::HashMap;

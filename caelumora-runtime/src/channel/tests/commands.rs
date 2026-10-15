@@ -102,13 +102,13 @@ async fn wakeup_wakes_the_agent_named_and_refuses_an_ambiguous_name() {
 
     let reply = actor.execute_command("wakeup", "@Sassy").await.expect("found regardless of case");
     assert_eq!(reply.output.as_deref(), Some("Woke Sassy."));
-    assert!(sleepers[0].woken.load(Ordering::SeqCst) && !sleepers[1].woken.load(Ordering::SeqCst), "it alone");
+    assert!(sleepers[0].woken() && !sleepers[1].woken(), "it alone");
     let reply = actor.execute_command("wakeup", "Dr. Who").await.expect("by its name, spaces and all");
     assert_eq!(reply.output.as_deref(), Some("Woke Dr. Who."));
 
     let error = actor.execute_command("wakeup", "@dr-who").await.expect_err("ambiguous");
     assert!(matches!(command_error(&error), CommandError::InvalidArguments { reason, .. } if reason.contains("Dr-Who and Dr. Who")), "{error}");
-    assert!(!sleepers[2].woken.load(Ordering::SeqCst), "nobody is picked");
+    assert!(!sleepers[2].woken(), "nobody is picked");
 }
 
 /// Runs `/nudge` with `args` in `channel` as alice.

@@ -576,7 +576,7 @@ mod tests {
     use caelumora_model::value::name::Name;
     use caelumora_model::work::TurnId;
     use std::collections::HashMap;
-    use std::sync::atomic::Ordering;
+    use crate::testing::StandIn;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use tokio::sync::mpsc;
@@ -644,26 +644,37 @@ mod tests {
         assert_eq!(kinds, ["ChainCutOff"], "its own message is not sent back, but what the system tells it is (issue 200)");
     }
 
-    /// An agent that says one thing as it starts, as the answer to a request
-    /// one hop into a chain between agents, and waits.
+    /// An actor that sends the envelopes it is given as it starts, as they
+    /// are written - in whatever name, with whatever hops - and waits:
+    /// what no actor of the runtime can, which builds its envelopes itself
+    /// (`Answering`). For the tests of what the channel does with such
+    /// envelopes, and no fixture to reuse (issue 372).
     #[derive(Debug)]
-    struct SaysOnce(ActorId);
+    struct Forger {
+        id: ActorId,
+        envelopes: Mutex<Vec<Envelope>>,
+    }
+
+    impl Forger {
+        fn sending(id: ActorId, envelopes: Vec<Envelope>) -> Arc<Self> {
+            Arc::new(Self { id, envelopes: Mutex::new(envelopes) })
+        }
+    }
 
     #[async_trait::async_trait]
-    impl Actor for SaysOnce {
-        fn id(&self) -> ActorId { self.0 }
+    impl Actor for Forger {
+        fn id(&self) -> ActorId { self.id }
         fn name(&self) -> Name { Name::new("talker").expect("a name") }
         fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
         async fn run(&self, mut rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
-            let mut context = EventContext { sender_id: self.0, ..EventContext::default() };
-            context.agent_hops = 1;
-            let said = Message { sender_id: self.0, role: MessageRole::Assistant, content: Some("and you?".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-            let _ = tx.send(Envelope::new(SecurityContext::default().next(self.0, ActorId::None, ActorId::None), context, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![said] })).await;
+            let envelopes = std::mem::take(&mut *self.envelopes.lock().unwrap());
+            for envelope in envelopes {
+                let _ = tx.send(envelope).await;
+            }
             while rx.recv().await.is_some() {}
             Ok(())
         }
         fn state(&self) -> ActorState { ActorState::Idle }
-        fn wakeup(&self) {}
         fn stop(&self) {}
     }
 
@@ -674,8 +685,12 @@ mod tests {
         let responders = ComponentImpl { id: "responders".to_string(), fail_policy: Default::default(), facet: Arc::new(BroadcastPolicy) as Arc<dyn ResponderPolicy> };
         let moderator = Arc::new(PolicyModerator::new(responders, 1));
         let channel = channel_moderated_by(&[&alice], Arc::<PolicyModerator>::clone(&moderator)).await;
-        let talker = Arc::new(SaysOnce(ActorId::Agent(AgentId::new())));
-        channel.adopt(Arc::<SaysOnce>::clone(&talker), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
+        // One hop into a chain between agents, as the answer to a request.
+        let talker = ActorId::Agent(AgentId::new());
+        let context = EventContext { sender_id: talker, agent_hops: 1, ..EventContext::default() };
+        let said = Message { sender_id: talker, role: MessageRole::Assistant, content: Some("and you?".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let answer = Envelope::new(SecurityContext::default().next(talker, ActorId::None, ActorId::None), context, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![said] });
+        channel.adopt(Forger::sending(talker, vec![answer]), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
         let mut following = channel.user_actor(alice.id).unwrap().watch().events;
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
@@ -688,29 +703,6 @@ mod tests {
         }).await.expect("the web UI follows the user's actor, which is told (issues 200, 220)");
         assert_eq!(told, 1);
         running.abort();
-    }
-
-    /// An actor that says what it is given to say as it starts, as it is
-    /// written - in whatever name - and waits.
-    #[derive(Debug)]
-    struct Says(ActorId, Mutex<Vec<Envelope>>);
-
-    #[async_trait::async_trait]
-    impl Actor for Says {
-        fn id(&self) -> ActorId { self.0 }
-        fn name(&self) -> Name { Name::new("talker").expect("a name") }
-        fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
-        async fn run(&self, mut rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
-            let said = std::mem::take(&mut *self.1.lock().unwrap());
-            for envelope in said {
-                let _ = tx.send(envelope).await;
-            }
-            while rx.recv().await.is_some() {}
-            Ok(())
-        }
-        fn state(&self) -> ActorState { ActorState::Idle }
-        fn wakeup(&self) {}
-        fn stop(&self) {}
     }
 
     #[tokio::test]
@@ -730,8 +722,7 @@ mod tests {
             // On alice's behalf - she asked - but said by itself: as an agent answers.
             Envelope { security: SecurityContext::new(her, channel.session_id, channel.id).next(talker, her, her), ..said(talker, talker, talker, "its own") },
         ];
-        let says = Arc::new(Says(talker, Mutex::new(envelopes)));
-        channel.adopt(Arc::<Says>::clone(&says), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
+        channel.adopt(Forger::sending(talker, envelopes), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
         let mut events = channel.observe();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
@@ -784,10 +775,10 @@ mod tests {
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let (asked, other) = (sleeper(), sleeper());
-        let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(asked.id))).await;
+        let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(asked.id()))).await;
         for actor in [&asked, &other] {
             // Who it is does not matter to routing: the channel only looks it up.
-            channel.adopt(Arc::<Sleeper>::clone(actor), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
+            channel.adopt(Arc::<StandIn>::clone(actor), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
         }
         let said = || Envelope::new(
             context.clone(),
@@ -796,14 +787,14 @@ mod tests {
         );
 
         channel.route_event(&HashMap::new(), said()).await;
-        assert!(asked.woken.load(Ordering::SeqCst), "asked to respond, it is woken to do so");
-        assert!(!other.woken.load(Ordering::SeqCst), "not addressed, it sleeps on");
+        assert!(asked.woken(), "asked to respond, it is woken to do so");
+        assert!(!other.woken(), "not addressed, it sleeps on");
 
         // A quiet channel asks nobody, and wakes nobody.
-        asked.woken.store(false, Ordering::SeqCst);
+        asked.sleep();
         channel.cancel(&context).await.expect("permitted");
         channel.route_event(&HashMap::new(), said()).await;
-        assert!(!asked.woken.load(Ordering::SeqCst), "nobody is asked in a quiet channel");
+        assert!(!asked.woken(), "nobody is asked in a quiet channel");
     }
 
     #[tokio::test]
@@ -1099,14 +1090,14 @@ mod tests {
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let (cancelled, other) = (sleeper(), sleeper());
-        let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(other.id))).await;
+        let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(other.id()))).await;
         for actor in [&cancelled, &other] {
-            channel.adopt(Arc::<Sleeper>::clone(actor), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
+            channel.adopt(Arc::<StandIn>::clone(actor), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
         }
 
-        channel.cancel_actor(&context, cancelled.id).await.expect("permitted");
-        assert!(cancelled.cancelled.load(Ordering::SeqCst), "its turn is ended");
-        assert!(!other.cancelled.load(Ordering::SeqCst), "the other's goes on");
+        channel.cancel_actor(&context, cancelled.id()).await.expect("permitted");
+        assert!(cancelled.cancelled(), "its turn is ended");
+        assert!(!other.cancelled(), "the other's goes on");
 
         let said = Envelope::new(
             context.clone(),
@@ -1114,7 +1105,7 @@ mod tests {
             ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
         );
         channel.route_event(&HashMap::new(), said).await;
-        assert!(other.woken.load(Ordering::SeqCst), "the channel is not quiet: the next message is answered");
+        assert!(other.woken(), "the channel is not quiet: the next message is answered");
 
         let stranger = ActorId::Agent(AgentId::new());
         let error = channel.cancel_actor(&context, stranger).await.expect_err("not in the channel");

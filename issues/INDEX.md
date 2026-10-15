@@ -446,7 +446,7 @@ published before anyone else can take it.
 | [369](369-security-module.md) | done | `security.rs` holds the actions, the attributes, the context, the access policy and its implementations, without a description, in one file of 1331 lines. |
 | [370](370-agent-logic-in-a-crate-of-its-own.md) | done | The runtime crate holds the environment agents run in and the agents' own logic - the turn, the tools, the model, the prompts, both actors - in one crate, so nothing enforces that an agent reaches the channel through `ActorRuntime` alone, and the channel cannot be tested without an agent. |
 | [371](371-tool-executor-construction.md) | done | `ToolExecutor::new` takes seven parameters, five of which its one caller reads from the agent's `ActorRuntime` that it passes as well, so they can disagree with it. |
-| [372](372-runtime-test-actors.md) | open | The runtime's tests implement `Actor` four times beside the scripted agent, each writing the trait out again for a test or two. |
+| [372](372-runtime-test-actors.md) | done | The runtime's tests implement `Actor` four times beside the scripted agent, each writing the trait out again for a test or two. |
 | [373](373-agent-test-worlds.md) | open | The agents' test world mirrors the four constructors of the runtime's `World`, each a shorthand for the next, so a new way to set up a world is added in eight places. |
 
 ## Integrations

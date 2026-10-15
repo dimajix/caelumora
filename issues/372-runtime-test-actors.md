@@ -1,6 +1,6 @@
 # 372 — The runtime's tests write four actors of their own beside the scripted agent
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -38,3 +38,19 @@ agent should be able to do, and `TestActor` is given to a moderator without a ch
 - **`Says` stays**, named as what it is - an actor that forges envelopes, for the test that the
   channel refuses them - so that nobody mistakes it for a fixture to reuse.
 - **Leave it.** The actors are small and private to their tests; the cost is the repetition.
+
+## History
+
+- **2026-10-15** — Done, by the maintainer's decision, otherwise than the first consideration: five
+  implementations became three, each with a task of its own. `Sleeper` and `TestActor` were the
+  same actor - an id, a name and a state, a `run` that does nothing - and are one now,
+  `testing::StandIn` (`#[cfg(test)] pub(crate)`, as only the runtime's tests use it): in the state
+  it is put in until it is woken, keeping whether it was woken or cancelled. Making them scripts of
+  `ScriptedAgent` was not taken: a scripted agent is built by the runtime from a stored agent,
+  which the tests of routing and of finding agents by their names would have had to store for
+  nothing, and `TestActor` stands for users too. `SaysOnce` was `Says` with one envelope of one hop
+  written by hand, and is that now; `Says` is `Forger`, private to the tests of `channel/run.rs`,
+  documented as an actor that sends what no actor of the runtime can. Building the cut-off chain
+  of real scripted agents instead was weighed and not taken: it needs stored agents and a builder
+  of its own for a hop count the test writes directly. CODING-GUIDELINES.md says which actor a
+  test uses.
