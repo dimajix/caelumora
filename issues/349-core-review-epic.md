@@ -57,8 +57,9 @@ constructors. Doing them in the wrong order means moving code twice.
 7. [353](353-rules-of-the-model-computed-in-the-runtime.md).
 8. [358](358-controllers-apply-their-events-each-on-its-own.md) - after 353, whose `apply` is one of
    its parts.
-9. [364](364-managers-in-different-places.md), then [366](366-runtime-rs-holds-four-types.md) -
-   files moved, nothing renamed; before the renames, which then find the files where they belong.
+9. [364](364-managers-in-different-places.md), then [366](366-runtime-rs-holds-four-types.md),
+   [368](368-component-module.md) and [367](367-prompt-module.md) - files moved, nothing renamed;
+   before the renames, which then find the files where they belong.
 10. [365](365-security-manager-is-an-access-policy.md) - a rename across every crate, in a commit
     of its own.
 11. [354](354-names-follow-several-schemes.md) - last, in a commit of its own: the renames touch the
@@ -90,3 +91,5 @@ order along the way.
 - **2026-10-15** — [364](364-managers-in-different-places.md),
   [365](365-security-manager-is-an-access-policy.md) and [366](366-runtime-rs-holds-four-types.md)
   added at the maintainer's request, as steps 9 and 10, before 354; 364 taken up first.
+- **2026-10-15** — [367](367-prompt-module.md) and [368](368-component-module.md) added to step 9
+  at the maintainer's request, with the other moves of files; 368 taken up after 364.

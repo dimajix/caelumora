@@ -1,6 +1,6 @@
 # 368 — `component.rs` holds the registry, the container, the context of a factory and their tests in one file
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -55,3 +55,22 @@ file that is mostly something else.
 - **2026-10-15** — Opened at the maintainer's request, under epic [349](349-core-review-epic.md),
   with the other moves of files ([364](364-managers-in-different-places.md),
   [366](366-runtime-rs-holds-four-types.md), [367](367-prompt-module.md)).
+- **2026-10-15** — Done, as considered; no behaviour changes.
+  - `component.rs` went to `component/registry.rs` (`git mv`), which keeps the largest part: the
+    kinds, the singles, the preconfigured `ref`, `ComponentRegistry` and the tests of planning a
+    configuration - the `ref`s, what nobody asks for, the defaults and `kind_of`.
+  - `context.rs` holds `service_of` and `ComponentContext`, with the tests of what a component is
+    given - the services its kind uses, the facets it needs, the others that provide them.
+  - `container.rs` holds `ComponentImpl` with `ComponentNode`, `Planned`, `Graph` and
+    `ComponentContainer`, and the tests of building - what a kind declares, cycles, the default of a
+    single built when first asked for. `ComponentImpl` stays there rather than in a file of its
+    own: it is what a container hands out, made from a built node, and about 50 lines.
+  - `mod.rs` holds the description, now with a paragraph naming the three parts, `ComponentError`,
+    `ComponentResult`, the parameter helpers, `require_declared` - which the context and the
+    container both ask -, and the re-exports. The parameter helpers stay there and do not go with
+    `ComponentContext`: a factory reads them from its descriptor's `params`, and `backend.rs` uses
+    `config_of_params` with no context at all.
+  - The helpers the tests share are `component/testing.rs`, `#[cfg(test)]`.
+  - Where the parts reach into each other, the items are `pub(super)`; the one thing added is
+    `ComponentRegistry::is_single`, which `Graph::one` asks in place of reading the registry's
+    `singles`.
