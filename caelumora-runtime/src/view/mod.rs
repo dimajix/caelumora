@@ -958,7 +958,7 @@ mod tests {
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
         let main = main_channel(&session);
-        let running = manager.create_session(as_user(alice.id).context(), session, vec![main]).await.unwrap();
+        let running = manager.create(as_user(alice.id).context(), session, vec![main]).await.unwrap();
         // Alice's alone: bob takes part in the session, not in this channel.
         let hers = running.create_channel(as_user(alice.id).context(), crate::session::ChannelSpec { name: "private".to_string(), components: Default::default(), classification: None, language: None, uses_workspace: None, participants: vec![] }).await.unwrap().id();
         let id = running.id();
@@ -1003,7 +1003,7 @@ mod tests {
             }
         };
         check("running").await;
-        assert!(manager.stop_session(&SecurityContext::system(), id).await.unwrap(), "it ran");
+        assert!(manager.stop(&SecurityContext::system(), id).await.unwrap(), "it ran");
         check("stopped").await;
         assert!(manager.running(id).is_none(), "reaching a session does not start it");
     }
@@ -1657,7 +1657,7 @@ mod tests {
 
         let refused = session.create_channel(&alice_ctx, with("typo", classified(Confidentiality::Internal, &["hrr"]), vec![])).await.expect_err("not configured");
         assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ClassificationRefused(_))), "{refused}");
-        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -1690,7 +1690,7 @@ mod tests {
         let other = session.views().privacy_of(theirs.id).await.unwrap().expect("stored, running or not");
         assert_eq!((other.policy, other.owner), (PrivacyConfig::Private, carol_id), "even a session the reader may not read");
         assert!(session.views().privacy_of(SessionId::new()).await.unwrap().is_none(), "one that is gone");
-        manager.stop_session(&SecurityContext::system(), hers.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), hers.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -1734,7 +1734,7 @@ mod tests {
         assert_eq!(texts, ["for finance too"], "only what was released");
         let nothing = reading_from(&team).await.channel_named("hr").await.expect("reachable, but").history().await;
         assert!(matches!(nothing, Err(ViewError::NoChannelNamed(_))), "nothing was released to a general channel");
-        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     /// A model whose answer never comes.
@@ -1822,7 +1822,7 @@ mod tests {
         channel.cancel_actor(&alice_ctx, agent).await.unwrap();
         ended.await;
         assert_eq!(member().await.turn_under_way, None, "over once it ended");
-        manager.stop_session(&system, session.id()).await.unwrap();
+        manager.stop(&system, session.id()).await.unwrap();
     }
 
 }

@@ -349,8 +349,7 @@ impl<'a> Turn<'a> {
 
     /// The contexts the turn publishes in: those it began with.
     pub(crate) fn answering(&self) -> Answering {
-        let turn = self.current();
-        Answering { event_context: turn.work.event_context.clone(), security_context: turn.work.security_context.clone() }
+        Answering::continuing(&self.current().work)
     }
 
     /// Sends `event` to the channel as the agent publishes it, in the

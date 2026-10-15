@@ -54,7 +54,7 @@ mod tests;
 
 pub use history::VisibleHistory;
 pub(crate) use history::visible_part;
-pub(crate) use participation::{Member, MemberKind, Participation};
+pub(crate) use participation::{ActorSource, SourceKind, Participation};
 
 /// A participant of a channel, with the handle it is `@`-mentioned by.
 #[derive(Debug, Clone, PartialEq)]
@@ -65,8 +65,6 @@ pub struct ChannelMember {
     /// or `None` if it cannot be mentioned - approvers, and names that yield
     /// no handle.
     pub handle: Option<String>,
-    /// The actor kind, e.g. `"user"` or the agent's kind.
-    pub kind: String,
 }
 
 /// Something that may not be done in a channel. Raised by `ChannelLoop`;
@@ -143,8 +141,8 @@ pub enum ChannelError {
     Question { question: QuestionId, channel: ChannelId, reason: QuestionError },
 }
 
-/// Whether `error` of `Member::of` or of building the member's actor says
-/// that the member cannot be run - its agent's personality, or the
+/// Whether `error` of `Participation::source_of` or of building its actor says
+/// that the participant cannot be run - its agent's personality, or the
 /// preconfigured components it includes (issue 270), are gone or not the
 /// agent's to read - rather than that the store failed.
 fn cannot_run(error: &anyhow::Error) -> bool {
@@ -157,7 +155,7 @@ fn cannot_run(error: &anyhow::Error) -> bool {
 #[derive(Debug, Clone)]
 struct ChannelActor {
     actor: Arc<dyn Actor>,
-    member: Member,
+    source: ActorSource,
     /// Tracks the actor's task while `run` runs it, so that whoever stops
     /// the actor can wait for the task to end without going through `run`
     /// (issue 187) - `run`'s `JoinSet` alone owns the task.
@@ -320,9 +318,9 @@ impl ChannelLoop {
             // keep everyone else out, nor can a third party - the
             // personality's owner, or the components' - stop someone's
             // channel so.
-            let found = channel_loop.member_of(participant).await;
-            let member = match found {
-                Ok(Some(member)) => member,
+            let found = channel_loop.source_of(participant).await;
+            let source = match found {
+                Ok(Some(source)) => source,
                 Ok(None) => {
                     info!("{} of channel {} no longer exists and is left out", participant.actor_id(), channel_loop.id);
                     continue;
@@ -333,7 +331,7 @@ impl ChannelLoop {
                 }
                 Err(e) => return Err(e),
             };
-            let actor = match channel_loop.create_actor(&member).await {
+            let actor = match channel_loop.create_actor(&source).await {
                 Ok(actor) => actor,
                 Err(e) if cannot_run(&e) => {
                     warn!("{} of channel {} cannot be run and is left out: {:#}", participant.actor_id(), channel_loop.id, e);
@@ -341,15 +339,15 @@ impl ChannelLoop {
                 }
                 Err(e) => return Err(e),
             };
-            channel_loop.adopt(Arc::from(actor), member).await;
+            channel_loop.adopt(Arc::from(actor), source).await;
         }
         Ok(channel_loop)
     }
 
     /// `participant` with what its actor is built from
-    /// (`Participation::member_of`).
-    async fn member_of(&self, participant: &Participant) -> Result<Option<Member>> {
-        self.participation.member_of(participant, self.session_id, Some(self.id)).await
+    /// (`Participation::source_of`).
+    async fn source_of(&self, participant: &Participant) -> Result<Option<ActorSource>> {
+        self.participation.source_of(participant, self.session_id, Some(self.id)).await
     }
 
     /// The session the channel belongs to (issues 123, 361), given it with
@@ -363,10 +361,10 @@ impl ChannelLoop {
     /// among the participants' actors, and it can be mentioned. The one way
     /// an actor enters the channel - when the channel is built and when a
     /// participant joins (issue 91). Its task is `run`'s to start.
-    async fn adopt(&self, actor: Arc<dyn Actor>, member: Member) -> ChannelActor {
+    async fn adopt(&self, actor: Arc<dyn Actor>, source: ActorSource) -> ChannelActor {
         self.moderator.add_actor(Arc::clone(&actor));
         let id = actor.id();
-        let adopted = ChannelActor { actor, member, task: TaskTracker::new() };
+        let adopted = ChannelActor { actor, source, task: TaskTracker::new() };
         self.actors.rcu(|actors| {
             let mut actors = HashMap::clone(actors);
             actors.insert(id, adopted.clone());
@@ -462,21 +460,21 @@ impl ChannelLoop {
         self.channel.load().classification.clone()
     }
 
-    pub(crate) fn actor_by_id(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
+    pub(crate) fn actor(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
         self.actors.load().get(&actor_id).map(|a| Arc::clone(&a.actor))
     }
 
     /// The actor of `actor_id` if it is an agent of this channel - whom a
     /// request to answer again or to carry out a command may name.
     pub(crate) fn agent_actor(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
-        actor_id.as_agent_id().and_then(|_| self.actor_by_id(actor_id))
+        actor_id.as_agent_id().and_then(|_| self.actor(actor_id))
     }
 
     /// The turn under way of the participant `actor` (issue 235), if it is
     /// in one that can still be ended - what a request to answer it again
     /// names.
     pub(crate) fn turn_under_way(&self, actor: ActorId) -> Option<TurnId> {
-        self.actor_by_id(actor)?.turn_under_way()
+        self.actor(actor)?.turn_under_way()
     }
 
     /// Whether the turn `turn` of `author` can be asked for again: under
@@ -501,20 +499,20 @@ impl ChannelLoop {
     /// whose name a message or an approval carries: there is deliberately no
     /// way to reach "some" user actor (issue 30).
     pub fn user_actor(&self, user: UserId) -> Option<Arc<UserActor>> {
-        let actor = self.actor_by_id(ActorId::User(user))?;
+        let actor = self.actor(ActorId::User(user))?;
         let any_actor: Arc<dyn Any + Send + Sync> = actor;
         Arc::downcast::<UserActor>(any_actor).ok()
     }
 
-    /// The actor of `member`, built but not yet taken in (`adopt`).
-    async fn create_actor(&self, member: &Member) -> Result<Box<dyn Actor>> {
+    /// The actor of `source`, built but not yet taken in (`adopt`).
+    async fn create_actor(&self, source: &ActorSource) -> Result<Box<dyn Actor>> {
         let channel = Arc::clone(&self.channel);
-        let actor_runtime = self.runtime.new_actor_runtime(member.actor_id(), self.session_id, self.id);
-        Ok(match member.kind().clone() {
-            MemberKind::User(user) => Box::new(UserActor::new(channel, user, actor_runtime).await?),
-            MemberKind::Agent(agent, personality) => Box::new(AgentActor::new(channel, agent, personality, actor_runtime).await?),
-            MemberKind::ExternalAgent(agent, personality) => Box::new(ExternalAgentActor::new(channel, agent, personality, actor_runtime).await?),
-            MemberKind::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
+        let actor_runtime = self.runtime.new_actor_runtime(source.actor_id(), self.session_id, self.id);
+        Ok(match source.kind().clone() {
+            SourceKind::User(user) => Box::new(UserActor::new(channel, user, actor_runtime).await?),
+            SourceKind::Agent(agent, personality) => Box::new(AgentActor::new(channel, agent, personality, actor_runtime).await?),
+            SourceKind::ExternalAgent(agent, personality) => Box::new(ExternalAgentActor::new(channel, agent, personality, actor_runtime).await?),
+            SourceKind::Approver(approver) => Box::new(ApproverActor::new(channel, approver, actor_runtime)),
         })
     }
 }

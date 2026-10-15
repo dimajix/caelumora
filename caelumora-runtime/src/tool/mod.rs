@@ -467,7 +467,7 @@ impl ToolExecutor {
         let Some(questions) = self.providers.questions(call)? else { return Ok(None) };
         questions.check().map_err(|e| ToolError::InvalidParameter(e.to_string()))?;
         let channel = self.running.get().ok_or_else(|| ToolError::ExecutionFailed("the channel does not run".to_string()))?;
-        channel.put(questions, turn.security_context())
+        channel.address_questions(questions, turn.security_context())
             .map(Some)
             .map_err(|e| ToolError::InvalidParameter(e.to_string()))
     }

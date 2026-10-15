@@ -10,7 +10,7 @@ use caelumora_model::session::Session;
 use caelumora_model::store::{StoreError, Stored};
 use std::sync::Arc;
 use tracing::info;
-use crate::channel::{ChannelLoop, Member};
+use crate::channel::{ChannelLoop, ActorSource};
 use super::{SessionError, SessionLoop};
 
 impl SessionLoop {
@@ -60,7 +60,7 @@ impl SessionLoop {
     /// otherwise.
     pub async fn join(&self, context: &SecurityContext, participant: ActorId, into: Option<ChannelId>) -> Result<()> {
         let channel = match into {
-            Some(id) => Some(self.channel_by_id(id).ok_or(SessionError::ChannelNotFound { session: self.id, channel: id })?),
+            Some(id) => Some(self.channel(id).ok_or(SessionError::ChannelNotFound { session: self.id, channel: id })?),
             None => None,
         };
         self.take_in(context, participant, channel.as_ref(), true).await?;
@@ -72,7 +72,7 @@ impl SessionLoop {
 
     /// Takes `actor` into the session on behalf of `context` - by their own act if `joining` -,
     /// once it is asked whether they may take part in `channel` as well, if one is named
-    /// (`member_to_take_in`), and whether they may join it by themselves.
+    /// (`source_to_take_in`), and whether they may join it by themselves.
     /// Whoever takes them in reads them first, a user to find out that they exist (issue 120).
     /// The session announces it, and follows an agent taken in (`run`).
     ///
@@ -97,18 +97,18 @@ impl SessionLoop {
             }
             other => return Err(SessionError::CannotTakeIn(other).into()),
         };
-        let member = self.member_to_take_in(context, &participant, channel).await?;
+        let source = self.source_to_take_in(context, &participant, channel).await?;
         // Joining was permitted; storing is the runtime's.
         let storing = match (in_session, joining) {
             (true, _) => None,
             (false, true) => {
-                self.participation.require_joinable(&member, context, Session::KIND, &session.security_attributes, StoreError::PermissionDenied).await?;
+                self.participation.require_joinable(&source, context, Session::KIND, &session.security_attributes, StoreError::PermissionDenied).await?;
                 Some(SecurityContext::system())
             }
             (false, false) => Some(context.clone()),
         };
         if let (Some(channel), true) = (channel, joining) {
-            self.participation.require_joinable(&member, context, Channel::KIND, &channel.security_attributes(), StoreError::PermissionDenied).await?;
+            self.participation.require_joinable(&source, context, Channel::KIND, &channel.security_attributes(), StoreError::PermissionDenied).await?;
         }
         if let Some(storing) = storing {
             self.session_controller.add_participant(&storing, participant).await?;
@@ -117,7 +117,7 @@ impl SessionLoop {
         Ok(())
     }
 
-    /// `participant` as a member, if they may take part in `channel` too, where one is named: it
+    /// `participant` with what its actor is built from, if they may take part in `channel` too, where one is named: it
     /// lies where it may and is cleared for it, asked in `context`, whoever takes them in. What
     /// is asked before anyone is taken in, and what says whom one cannot take in
     /// (`SessionView::candidates`).
@@ -126,13 +126,13 @@ impl SessionLoop {
     /// `SessionError::CannotTakeIn` for a user or agent that no longer exists;
     /// `ChannelError::OutOfScope` or `NotCleared`; `StoreError::PermissionDenied` for an agent
     /// that may not read its personality, and cannot run; whatever reading it reports.
-    pub(crate) async fn member_to_take_in(&self, context: &SecurityContext, participant: &Participant, channel: Option<&Arc<ChannelLoop>>) -> Result<Member> {
-        let member = self.participation.member_of(participant, self.id, channel.map(|channel| channel.id())).await?
+    pub(crate) async fn source_to_take_in(&self, context: &SecurityContext, participant: &Participant, channel: Option<&Arc<ChannelLoop>>) -> Result<ActorSource> {
+        let source = self.participation.source_of(participant, self.id, channel.map(|channel| channel.id())).await?
             .ok_or(SessionError::CannotTakeIn(participant.actor_id()))?;
         if let Some(channel) = channel {
-            self.participation.require_admissible(&member, context, &channel.classification())?;
+            self.participation.require_admissible(&source, context, &channel.classification())?;
         }
-        Ok(member)
+        Ok(source)
     }
 }
 
@@ -194,7 +194,7 @@ mod tests {
         assert!(matches!(again.downcast_ref::<SessionError>(), Some(SessionError::AlreadyParticipant { .. })), "{again}");
         let approver = session.add_participant(&as_user(&alice), ActorId::System, None).await.expect_err("only users and agents");
         assert!(matches!(approver.downcast_ref::<SessionError>(), Some(SessionError::CannotTakeIn(ActorId::System))), "{approver}");
-        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -208,7 +208,7 @@ mod tests {
         record_users(&manager, &[&bob, &carol]).await;
         session.security_attributes = invited(session.security_attributes);
         let channel = Channel { security_attributes: invited(main_channel(&session).security_attributes), ..main_channel(&session) };
-        let session = manager.create_session(&as_user(&alice), session, vec![channel]).await.unwrap();
+        let session = manager.create(&as_user(&alice), session, vec![channel]).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
 
         let uninvited = session.join(&as_user(&carol), carol_id, Some(main.id())).await.expect_err("carol is not let in");
@@ -221,7 +221,7 @@ mod tests {
         assert!(main.members().iter().any(|m| m.id == bob_id), "and in the channel");
         let invitation = AclEntry { subject: Subject::Actor(bob_id), grant: Grant::Join };
         assert!(!session.session().security_attributes.acl.contains(&invitation), "his invitation is used up");
-        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -245,7 +245,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         session.add_participant(&ctx, actor, Some((main.id(), HistoryAccess::All))).await.expect("taken in");
-        assert!(main.actor_ids().contains(&actor), "it runs in the channel");
+        assert!(main.member_ids().contains(&actor), "it runs in the channel");
         // Once the session took in its own announcement, it follows the agent.
         let announced = |events: &[GlobalEvent]| events.iter().any(|e| matches!(e.about::<Session>().and_then(|(_, change)| change.update::<SessionUpdateEvent>()),
             Some(SessionUpdateEvent::ParticipantAdded(p)) if p.actor_id() == actor));
@@ -253,8 +253,8 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         assert!(runtime.agent_manager().delete(&ctx, helper.id).await.expect("deleted"));
-        let stopped = async { while main.actor_ids().contains(&actor) { tokio::time::sleep(Duration::from_millis(10)).await } };
+        let stopped = async { while main.member_ids().contains(&actor) { tokio::time::sleep(Duration::from_millis(10)).await } };
         tokio::time::timeout(Duration::from_secs(2), stopped).await.expect("its actor stops: the session heard of it");
-        manager.stop_session(&system, session.id()).await.unwrap();
+        manager.stop(&system, session.id()).await.unwrap();
     }
 }

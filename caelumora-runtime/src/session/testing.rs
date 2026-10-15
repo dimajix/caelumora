@@ -144,7 +144,7 @@ pub(crate) fn main_channel(session: &Session) -> Channel {
 /// Creates and starts `session` with its main channel.
 pub(crate) async fn create(manager: &SessionManager, ctx: &SecurityContext, session: Session) -> Result<Arc<SessionLoop>> {
     let channels = vec![main_channel(&session)];
-    manager.create_session(ctx, session, channels).await
+    manager.create(ctx, session, channels).await
 }
 
 /// Stores `session` and its main channel without starting it.

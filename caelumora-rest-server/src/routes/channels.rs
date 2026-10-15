@@ -338,7 +338,7 @@ pub async fn revoke_message(
 /// The actor of `channel` whose id is `id`, whatever kind it is - a path
 /// names an actor by its UUID alone.
 fn actor_in(channel: &ChannelLoop, id: Uuid) -> Option<ActorId> {
-    channel.actor_ids().into_iter().find(|actor| actor.id() == id)
+    channel.member_ids().into_iter().find(|actor| actor.id() == id)
 }
 
 /// The member of `channel` whose id is `id`, whatever kind it is - or a

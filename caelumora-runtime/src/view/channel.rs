@@ -550,7 +550,7 @@ impl MemberView {
     /// run.
     pub fn state(&self) -> Option<ActorState> {
         self.state.agent()?;
-        self.channel.running().filter(|_| !self.former)?.actor_by_id(self.id()).map(|actor| actor.state())
+        self.channel.running().filter(|_| !self.former)?.actor(self.id()).map(|actor| actor.state())
     }
 
     /// The commands the member carries out itself that the viewer may see
@@ -561,7 +561,7 @@ impl MemberView {
         if self.former {
             return Vec::new();
         }
-        let Some(actor) = self.channel.running().and_then(|channel| channel.actor_by_id(self.id())) else { return Vec::new() };
+        let Some(actor) = self.channel.running().and_then(|channel| channel.actor(self.id())) else { return Vec::new() };
         actor.commands(self.views().context()).await
     }
 
@@ -582,7 +582,7 @@ impl MemberView {
         if self.former {
             return Ok(Vec::new());
         }
-        let Some(actor) = self.channel.running().and_then(|channel| channel.actor_by_id(self.id())) else { return Ok(Vec::new()) };
+        let Some(actor) = self.channel.running().and_then(|channel| channel.actor(self.id())) else { return Ok(Vec::new()) };
         Ok(actor.tool_sets().await)
     }
 
@@ -603,7 +603,7 @@ impl MemberView {
         if self.former {
             return Ok(ComponentConfig::default());
         }
-        let Some(actor) = self.channel.running().and_then(|channel| channel.actor_by_id(self.id())) else { return Ok(ComponentConfig::default()) };
+        let Some(actor) = self.channel.running().and_then(|channel| channel.actor(self.id())) else { return Ok(ComponentConfig::default()) };
         Ok(actor.components())
     }
 

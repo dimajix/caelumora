@@ -30,13 +30,12 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::tool::ToolSet;
 use caelumora_model::value::name::Name;
-use caelumora_model::work::TurnId;
+use caelumora_model::work::{TurnId, Work};
 use uuid::Uuid;
 
 #[async_trait]
 pub(crate) trait Actor: Any + Debug + Send + Sync {
     fn id(&self) -> ActorId;
-    fn kind(&self) -> String;
     fn name(&self) -> Name;
 
     /// Returns the predicate that declares which events this actor wants to receive.
@@ -160,6 +159,14 @@ impl Answering {
     pub(crate) fn to(request: &Envelope, id: ActorId, name: impl Into<String>, own: &SecurityContext) -> Self {
         let security_context = request.security.next(id, own.owner_id, own.principal_id).with_roles(own.roles.clone(), own.limiting_roles.clone());
         Self { event_context: request.context.next(id, name), security_context }
+    }
+
+    /// The contexts `work` was begun in - the request it answers, continued
+    /// in the actor's name as `to` continued it then: what comes of it,
+    /// later too, is said in them, and stays in the span and the chain of
+    /// the request (issue 45).
+    pub(crate) fn continuing(work: &Work) -> Self {
+        Self { event_context: work.event_context.clone(), security_context: work.security_context.clone() }
     }
 
     /// The contexts of the actor `id`, called `name`, speaking of itself

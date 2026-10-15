@@ -206,7 +206,7 @@ mod tests {
         assert!(prompt.text.contains("In short: Release 2.0") && !prompt.text.contains("[About this channel]"), "{}", prompt.text);
         assert_eq!(prompt.classification, Some(Classification::PUBLIC), "a session's descriptions are public");
 
-        let running = session_loop.channel_by_id(channel.id).expect("the channel runs");
+        let running = session_loop.channel(channel.id).expect("the channel runs");
         running.update_description(&system, Some("Planning"), Some("Dates are in UTC.")).await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         let (ours, its) = (prompt.text.find("[About this session]").unwrap(), prompt.text.find("[About this channel]").unwrap());

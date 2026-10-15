@@ -53,7 +53,7 @@ pub const MIN_PREFIX: usize = 2;
 /// The most users, and the most agents, a search finds.
 pub const CANDIDATES: usize = 20;
 
-/// Why someone cannot be taken in, as `error` of `member_to_take_in` says it;
+/// Why someone cannot be taken in, as `error` of `source_to_take_in` says it;
 /// `None` for an error that says nothing about them - a store that failed -,
 /// which a search does not show.
 fn refusal_of(error: &anyhow::Error) -> Option<CandidateRefusal> {
@@ -132,7 +132,7 @@ impl SessionView {
     /// may read whose names begin with `prefix` - as names are compared, at
     /// least `MIN_PREFIX` characters of it, at most `CANDIDATES` of each -,
     /// each with whether they take part already and why they could not be
-    /// taken in, as `SessionLoop::member_to_take_in` decides. Who may not
+    /// taken in, as `SessionLoop::source_to_take_in` decides. Who may not
     /// change the session searches nobody: the search tells who exists.
     /// Nobody either for a session that does not run.
     ///
@@ -168,7 +168,7 @@ impl SessionView {
             let in_channel = channel.as_ref().is_some_and(|channel| channel.lists(id));
             let refusal = match in_channel {
                 true => None,
-                false => session_loop.member_to_take_in(context, &participant, running.as_ref()).await.err().and_then(|error| refusal_of(&error)),
+                false => session_loop.source_to_take_in(context, &participant, running.as_ref()).await.err().and_then(|error| refusal_of(&error)),
             };
             candidates.push(CandidateSnapshot { id, name, in_session, in_channel, refusal });
         }
@@ -250,7 +250,7 @@ impl SessionView {
     /// permitted, and whether the channel may be read is asked of it.
     async fn document(&self, id: ChannelId) -> ViewResult<Option<Document>> {
         match &self.running {
-            Some(session_loop) => Ok(session_loop.channel_by_id(id).map(|channel_loop| (Arc::clone(&channel_loop.channel()), Some(channel_loop)))),
+            Some(session_loop) => Ok(session_loop.channel(id).map(|channel_loop| (Arc::clone(&channel_loop.channel()), Some(channel_loop)))),
             None if self.session.channels.contains(&id) => {
                 let channel = self.views.stores().channels.get(&SecurityContext::system(), id).await
                     .map_err(|e| ViewError::failed(e, format!("reading channel {id}")))?;

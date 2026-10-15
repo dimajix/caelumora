@@ -106,7 +106,7 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
     let mut turn = World::turn(&session, helper, world.alice, &mut state);
     let absent = call(&component, &mut turn, LOAD_SKILL_TOOL_NAME, serde_json::json!({ "name": "nothing" })).await;
     assert!(matches!(absent, Err(ToolError::InvalidParameter(_))), "the model's to correct");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 #[tokio::test]
@@ -149,7 +149,7 @@ async fn an_agent_writes_a_skill_of_its_owners_classified_as_what_it_saw_and_rai
     let deploy = store(&world).get(&SecurityContext::system(), deploy.id).await.unwrap();
     assert_eq!((deploy.body.as_str(), &deploy.classification), ("1. Build.\n2. Ship.", &internal), "the new steps, classified as what was seen");
     assert_eq!(created_id, serde_json::json!(deploy.id), "the skill it made");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 #[test]
@@ -196,7 +196,7 @@ async fn the_skills_given_are_given_again_where_they_may_still_be_loaded() {
     let again: Vec<_> = again.iter().map(|given| (given.name.as_str(), given.text.as_str())).collect();
     assert_eq!(again, [("release-notes", "[Skill: release-notes]\n1. Collect.\n2. Group.\n")], "as it is now; not the deleted one");
     drop(turn);
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- The views -------------------------------------------------------------
@@ -279,7 +279,7 @@ async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, A
         .expect("hers to make");
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let his = main.user_actor(world.bob).expect("he takes part").watch();
     (world, session, main, helper, his)
 }
@@ -308,7 +308,7 @@ async fn an_agent_loads_a_skill_for_its_owner_whoever_asked() {
     let history = world.store.get_channel_state(main.id()).await.unwrap().history;
     assert!(history.messages().iter().all(|m| !m.content.as_deref().unwrap_or_default().contains("Collect.")), "nothing of the text in the channel's history");
     assert!(history.items().iter().any(|item| matches!(item, HistoryEntry::CommandExecuted { command, issuer, .. } if command == "skill" && *issuer == ActorId::User(world.bob))), "but the command");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// A skill classified above the channel (issue 22) may not flow into it:
@@ -329,7 +329,7 @@ async fn a_skill_classified_above_the_channel_is_neither_listed_nor_loaded() {
     bob.execute_command("skill", "@helper secret-plan").await.expect("sent");
     let ActorEvent::CommandFailed { reason, .. } = shown(&mut his, "CommandFailed").await else { unreachable!() };
     assert!(reason.contains("no skill named \"secret-plan\""), "as absent: {reason}");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// A session of alice and bob with alice's `helper`, whose model calls the
@@ -359,7 +359,7 @@ async fn with_a_writing_agent(function: &str, arguments: Value) -> (World, Arc<S
     store(&world).update(&World::as_user(world.bob), &shared).await.expect("shared with alice");
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     (world, session, main)
 }
 
@@ -381,7 +381,7 @@ async fn an_agents_skill_belongs_to_its_owner_and_lies_in_the_session() {
     assert_eq!(deploy.security_attributes.owner_id, ActorId::User(world.alice), "the agent's owner's");
     assert_eq!(deploy.name.scope, Scope::SessionScope { session_id: session.id() }, "in the session's scope");
     assert!(deploy.classification.surely_flows_to(&main.classification()), "classified as what the turn saw, never above the channel");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// A skill shared with the agent's owner is loaded, not changed: changing a
@@ -395,7 +395,7 @@ async fn an_agent_changes_only_skills_of_its_owners() {
     asked_for(&world, "alice as helper, asked by bob: UpdateSkill(bob's) no").await;
     let review = store(&world).find_by_name(&World::system(), &ScopedName::new("review", Scope::GlobalScope).unwrap()).await.unwrap();
     assert_eq!(review.body.as_str(), "Read it twice.", "unchanged");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// A skill of a session's scope (issue 178) goes with the session: deleted
@@ -412,8 +412,8 @@ async fn a_skill_of_a_sessions_scope_is_deleted_and_restored_with_it() {
     let id = session.id();
     drop(session);
 
-    world.manager.delete_session(&alice, id).await.expect("hers to delete");
+    world.manager.delete(&alice, id).await.expect("hers to delete");
     assert!(store(&world).get(&World::system(), made.id).await.is_err(), "deleted with it");
-    world.manager.restore_session(&alice, id).await.expect("hers to restore");
+    world.manager.restore(&alice, id).await.expect("hers to restore");
     assert!(store(&world).get(&World::system(), made.id).await.is_ok(), "restored with it");
 }

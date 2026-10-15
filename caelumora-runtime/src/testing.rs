@@ -396,7 +396,7 @@ impl World {
         self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_session(&session)).await.unwrap();
         self.runtime.entity_stores().channels.create(&Self::system(), &channel).await.unwrap();
         self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_channel(&channel)).await.unwrap();
-        self.manager.open_session(&Self::as_user(self.alice), session.id).await.expect("alice opens her session")
+        self.manager.open(&Self::as_user(self.alice), session.id).await.expect("alice opens her session")
     }
 
     /// What is asked when the agent of `owner`, with a component of `kind`,
@@ -421,7 +421,7 @@ impl World {
         let alice = Self::as_user(self.alice);
         let docs = self.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: self.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
         let session = self.shared_session(&[helper], &[]).await;
-        session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+        session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
         let main = Arc::clone(&session.channels()[0]);
 
         let place = self.files.path().join("shell").join(docs.id.to_string());
@@ -437,7 +437,7 @@ impl World {
                 }
             }).await.expect("the call reached the workspace");
         }).await;
-        self.manager.stop_session(&alice, session.id()).await.unwrap();
+        self.manager.stop(&alice, session.id()).await.unwrap();
         asked
     }
 

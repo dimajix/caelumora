@@ -457,7 +457,6 @@ mod tests {
     #[async_trait::async_trait]
     impl Actor for TestActor {
         fn id(&self) -> ActorId { self.id }
-        fn kind(&self) -> String { "test".to_string() }
         fn name(&self) -> caelumora_model::value::name::Name { caelumora_model::value::name::Name::new("test").expect("a name") }
         fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
         async fn run(&self, _rx: Box<dyn crate::transport::EventReceiver>, _tx: Box<dyn crate::transport::EventSender>) -> anyhow::Result<()> {

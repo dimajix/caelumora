@@ -81,7 +81,7 @@ impl SessionLoop {
     /// is no workspace they may read or are cleared for,
     /// `SessionError::WorkspaceOutOfScope`, or
     /// whatever else storing reports.
-    pub async fn set_workspace(&self, context: &SecurityContext, workspace: Option<WorkspaceId>, share: Option<Grant>) -> Result<()> {
+    pub async fn update_workspace(&self, context: &SecurityContext, workspace: Option<WorkspaceId>, share: Option<Grant>) -> Result<()> {
         let session = self.session();
         self.access_policy.require(context, ActionType::update(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
         if let Some(id) = workspace {
@@ -98,7 +98,7 @@ impl SessionLoop {
     /// Attaches `workspace` to the session on behalf of `context`, or with
     /// `None` takes the one attached away, and holds it live (issue 344):
     /// stored as changing the session, without asking whether it may be
-    /// attached - its caller asked that (`set_workspace`), or found or made
+    /// attached - its caller asked that (`update_workspace`), or found or made
     /// it for the session as it made the session (`SessionManager`).
     /// Returns the workspace as it is held.
     ///
@@ -155,6 +155,6 @@ mod tests {
                 "announced");
         let for_bob = manager.views(Viewer::new(as_user(bob.id))).session(session.id()).await.unwrap();
         assert_eq!(for_bob.privacy().policy, PrivacyConfig::SharedAudience, "shown to everyone who takes part");
-        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 }

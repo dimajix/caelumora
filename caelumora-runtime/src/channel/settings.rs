@@ -103,8 +103,8 @@ impl ChannelLoop {
         self.confidentiality.require_classifiable(&classification, || ChannelError::ClassificationRefused { classification: classification.clone(), channel: self.id })?;
         // Raised above a participant, the channel would show them what they
         // may not see: refused rather than anyone removed.
-        for ChannelActor { member, .. } in self.actors.load().values() {
-            self.participation.require_cleared(member, context, &classification)?;
+        for ChannelActor { source, .. } in self.actors.load().values() {
+            self.participation.require_cleared(source, context, &classification)?;
         }
         self.channel.update_classification(context, classification.clone()).await?;
         let lowered = !self.confidentiality.may_publish(context, &channel, &classification);
@@ -151,7 +151,7 @@ mod tests {
         assert_eq!(runtime.entity_stores().channels.get(&ctx, side.id()).await.unwrap().name.as_str(), "side", "also as stored");
         side.update_name(&ctx, "Side").await.expect("its own name, written otherwise");
         assert_eq!(side.name().as_str(), "Side");
-        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -203,7 +203,7 @@ mod tests {
         let classification_of = |id| history.iter().find(|m| m.id == id).map(|m| m.classification.clone()).unwrap();
         assert_eq!(classification_of(bobs), released, "what was released stays released");
         assert_eq!(classification_of(alices), lowered, "the rest is released with the channel");
-        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -217,7 +217,7 @@ mod tests {
         let mut session = make_session("hers", alice);
         session.participants = record_users(&manager, &[&users.0, &users.1]).await;
         let running = create(&manager, &as_user(alice), session).await.unwrap();
-        let main = running.channel_by_name("main").unwrap();
+        let main = running.channel_named("main").unwrap();
 
         let refused = main.update_name(&as_user(bob), "bobs").await.expect_err("a contributor may not");
         assert!(crate::error::is_forbidden(&refused), "{refused}");
@@ -226,7 +226,7 @@ mod tests {
         main.update_name(&as_user(alice), "lobby").await.expect("the owner may");
         assert_eq!(main.name(), "lobby");
         assert_eq!(store.entity_stores().channels.get(&as_user(alice), main.id()).await.unwrap().name, "lobby", "stored, not only in memory");
-        manager.stop_session(&SecurityContext::system(), running.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), running.id()).await.unwrap();
     }
 
     /// Waits until `channel`'s history holds `count` messages.

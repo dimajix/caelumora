@@ -14,7 +14,7 @@ use caelumora_model::security::{ActionType, SecurityContext};
 use tracing::{info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
-use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelMember, LEAVE_GRACE, Member};
+use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelMember, LEAVE_GRACE, ActorSource};
 use caelumora_model::channel::Channel;
 use caelumora_model::store::Stored;
 
@@ -49,9 +49,9 @@ impl ChannelLoop {
 
     /// Takes `participant` into the channel, on behalf of `context`, seeing
     /// as much of the history as `history` grants; by their own act if
-    /// `joining`, which is asked once the member is found. Stored first
+    /// `joining`, which is asked once the source is found. Stored first
     /// (also asked as `ConfidentialityPolicy::cleared`), then its actor
-    /// started (`start_member`) - taken back out of the document if it
+    /// started (`start_source`) - taken back out of the document if it
     /// cannot be - and the join announced. A participant removed shortly
     /// before is added only once its old actor has ended (`left`, issue
     /// 171).
@@ -68,24 +68,24 @@ impl ChannelLoop {
         let found = self.session_loop()
             .and_then(|s| s.session().participants.iter().find(|p| p.actor_id() == participant).cloned())
             .ok_or(ChannelError::NotInSession { participant, channel: self.id })?;
-        let member = self.member_of(&found).await?
+        let source = self.source_of(&found).await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
         // Joining was permitted; storing is the runtime's.
         let storing = if joining {
             let channel = self.id;
-            self.participation.require_joinable(&member, context, Channel::KIND, &self.security_attributes(),
+            self.participation.require_joinable(&source, context, Channel::KIND, &self.security_attributes(),
                 |refused| ChannelError::Forbidden { action: "joining", channel, refused }).await?;
             SecurityContext::system()
         } else {
             context.clone()
         };
-        self.participation.require_admissible(&member, context, &self.classification())?;
+        self.participation.require_admissible(&source, context, &self.classification())?;
 
         let messages = self.history().await;
         let start = history.start_in(&messages, Utc::now());
         self.channel.add_participant(&storing, found.clone(), start).await?;
 
-        if let Err(error) = self.start_member(member).await {
+        if let Err(error) = self.start_source(source).await {
             // Stored, but it cannot run: taken back out, in the runtime's
             // name - adding it was permitted.
             if let Err(undo) = self.channel.remove_participant(&SecurityContext::system(), participant).await {
@@ -160,8 +160,8 @@ impl ChannelLoop {
                     Err(e) => warn!("Whether {} of channel {} exists cannot be read: {}", actor, self.id, e),
                 },
                 None => {
-                    let rejoined = match self.member_of(&participant).await {
-                        Ok(Some(member)) => self.start_member(member).await.map(|()| true),
+                    let rejoined = match self.source_of(&participant).await {
+                        Ok(Some(source)) => self.start_source(source).await.map(|()| true),
                         Ok(None) => Ok(false),
                         Err(e) => Err(e),
                     };
@@ -178,7 +178,7 @@ impl ChannelLoop {
         }
     }
 
-    /// Starts the actor of `member` in a channel that is built already - a
+    /// Starts the actor of `source` in a channel that is built already - a
     /// participant added or joining (`take_in`), an agent restored
     /// (`follow_agents`): once the actor it had before has ended (`left`),
     /// built, given the part of the history it may see (`Actor::catch_up`,
@@ -189,11 +189,11 @@ impl ChannelLoop {
     /// # Errors
     /// `ChannelError::StillLeaving`, or what building the actor or catching
     /// it up reports; it is not taken in then.
-    async fn start_member(&self, member: Member) -> Result<()> {
-        self.left(member.actor_id()).await?;
-        let actor = self.create_actor(&member).await?;
-        actor.catch_up(self.visible_history(member.actor_id()).await.messages()).await?;
-        let adopted = self.adopt(Arc::from(actor), member).await;
+    async fn start_source(&self, source: ActorSource) -> Result<()> {
+        self.left(source.actor_id()).await?;
+        let actor = self.create_actor(&source).await?;
+        actor.catch_up(self.visible_history(source.actor_id()).await.messages()).await?;
+        let adopted = self.adopt(Arc::from(actor), source).await;
         let _ = self.changes_tx.send(ActorChange::Start(adopted));
         Ok(())
     }
@@ -248,7 +248,8 @@ impl ChannelLoop {
         self.mentions.store(Arc::new(mentions));
     }
 
-    pub fn actor_ids(&self) -> Vec<ActorId> {
+    /// The ids of all participants of the channel, as `members` lists them.
+    pub fn member_ids(&self) -> Vec<ActorId> {
         self.actors.load().keys().copied().collect()
     }
 
@@ -259,7 +260,7 @@ impl ChannelLoop {
                 let name = a.name();
                 let handle = Some(name.handle())
                     .filter(|h| Self::is_mentionable(a.id()) && !h.is_empty());
-                ChannelMember { id: a.id(), name, handle, kind: a.kind() }
+                ChannelMember { id: a.id(), name, handle }
             })
             .collect()
     }
@@ -300,7 +301,7 @@ impl ChannelLoop {
     pub(crate) async fn agent_commands(&self, issuer: &SecurityContext) -> Vec<(ChannelMember, Vec<caelumora_model::command::Command>)> {
         let mut found = Vec::new();
         for member in self.members().into_iter().filter(|m| m.id.as_agent_id().is_some()) {
-            let Some(actor) = self.actor_by_id(member.id) else { continue };
+            let Some(actor) = self.actor(member.id) else { continue };
             let commands = actor.commands(issuer).await;
             if !commands.is_empty() {
                 found.push((member, commands));
@@ -310,12 +311,12 @@ impl ChannelLoop {
         found
     }
 
-    /// `questions` of a call made in `context` as put to the users of the
+    /// `questions` of a call made in `context`, addressed to the users of the
     /// channel (issue 165): every addressee found among them - a handle as
     /// its participants are mentioned, the agent's owner and whoever caused
     /// the call as `context` names them (`Questions::resolve`).
-    pub(crate) fn put(&self, questions: Questions, context: &SecurityContext) -> Result<Questions, QuestionError> {
-        let users: Vec<ActorId> = self.actor_ids().into_iter().filter(|id| matches!(id, ActorId::User(_))).collect();
+    pub(crate) fn address_questions(&self, questions: Questions, context: &SecurityContext) -> Result<Questions, QuestionError> {
+        let users: Vec<ActorId> = self.member_ids().into_iter().filter(|id| matches!(id, ActorId::User(_))).collect();
         questions.resolve(&self.mentions.load(), &users, context)
     }
 
@@ -443,7 +444,7 @@ mod tests {
         assert!(matches!(session.channel_for(&alice_ctx, hr.id()).await.expect_err("not cleared").downcast_ref::<SessionError>(), Some(SessionError::ChannelNotFound { .. })));
         let listed: Vec<ChannelId> = manager.views(Viewer::new(alice_ctx.clone())).session(session.id()).await.unwrap().channels().await.iter().map(|c| c.id()).collect();
         assert!(!listed.contains(&hr.id()) && listed.contains(&team.id()), "listed without it");
-        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -493,7 +494,7 @@ mod tests {
         let stranger = caelumora_model::actor::ActorId::User(caelumora_model::user::UserId::new());
         let outside = channel.add_participant(&ctx, stranger, HistoryAccess::All).await.expect_err("not in the session");
         assert!(matches!(refusal(outside), ChannelError::NotInSession { .. }));
-        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -517,7 +518,7 @@ mod tests {
         // So does deleting the channel, for everybody.
         session.delete_channel(&ctx, channel.id()).await.expect("deleted");
         within(mine.ended).await.expect("a deleted channel is watched by nobody");
-        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -543,7 +544,7 @@ mod tests {
         let refusal = |error: anyhow::Error| error.downcast::<ChannelError>().expect("a ChannelError");
         let gone = channel.remove_participant(&ctx, other).await.expect_err("not in it any more");
         assert!(matches!(refusal(gone), ChannelError::NotAParticipant { .. }));
-        let approver = channel.members().into_iter().find(|m| m.kind == "approver").expect("an approver").id;
+        let approver = channel.member_ids().into_iter().find(|id| matches!(id, ActorId::Approver(_))).expect("an approver");
         let stays = channel.remove_participant(&ctx, approver).await.expect_err("the approver stays");
         assert!(matches!(refusal(stays), ChannelError::ApproverStays { .. }));
 
@@ -552,7 +553,7 @@ mod tests {
         assert!(channel.user_actor(other.as_user_id().unwrap()).is_some(), "with a new actor");
         let stored = runtime.entity_stores().channels.get(&ctx, channel.id()).await.unwrap();
         assert!(stored.former.is_empty(), "and no longer a former participant");
-        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -579,6 +580,6 @@ mod tests {
         channel.add_participant(&as_user(alice_id), carol_id, HistoryAccess::None).await.expect("the owner may");
         channel.remove_participant(&as_user(alice_id), bob_id).await.expect("the owner may");
         assert!(channel.members().iter().any(|m| m.id == carol_id) && !channel.members().iter().any(|m| m.id == bob_id));
-        manager.stop_session(&SecurityContext::system(), running.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), running.id()).await.unwrap();
     }
 }

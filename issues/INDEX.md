@@ -361,7 +361,7 @@ published before anyone else can take it.
 | [132](132-rest-and-web-ui-docs.md) | done | The REST server and the web UI have no document of their own; what they do is scattered across the documents of other subjects. |
 | [192](192-issue-179-small-duplicates.md) | done | Small duplicates were left from issue 179 in the member views, the reader's place, "not found means none" and `unheard`. |
 | [313](313-docs-too-detailed.md) | done | The documents in `docs/` have about 130,000 tokens, mostly code retold - variants, fields, call orders - and inline issue history, so the concepts and rules are hard to find and every change has a second place to update. |
-| [349](349-core-review-epic.md) | open | Epic for the review of agents, sessions and channels of 2026-10-14: the bracket around issues 350–361 and their recommended order. |
+| [349](349-core-review-epic.md) | done | Epic for the review of agents, sessions and channels of 2026-10-14: the bracket around issues 350–361 and their recommended order. |
 
 ## Code structure
 
@@ -429,7 +429,7 @@ published before anyone else can take it.
 | [351](351-channel-events-announced-by-hand.md) | done | The lifecycle events of a channel are announced at ten places, each assembling the key, the attributes and the classification by hand. |
 | [352](352-envelopes-built-by-hand.md) | done | The approver and the channel build their envelopes by hand beside `Answering`, the one way an actor publishes. |
 | [353](353-rules-of-the-model-computed-in-the-runtime.md) | done | Rules of the model - what an approval strategy decides, what a history limit shows, how a stored agent state is made fit to resume, how an update event applies - are computed in the runtime. |
-| [354](354-names-follow-several-schemes.md) | open | Names around sessions, channels and actors follow several schemes: manager verbs with and without the noun, three ways to find by id, and `Member` meaning three things. |
+| [354](354-names-follow-several-schemes.md) | done | Names around sessions, channels and actors follow several schemes: manager verbs with and without the noun, three ways to find by id, and `Member` meaning three things. |
 | [355](355-two-agent-actors-share-half-their-fields.md) | done | The two agent actors and `AgentCommands` hold the same half of an agent three times, and what both kinds of agent do alike is written twice. |
 | [356](356-member-questions-threaded-with-their-services.md) | done | The questions on a channel's member take its session and channel and four services as parameters each time, so both loops hold the services and one method needs a clippy exception. |
 | [357](357-actor-start-and-channel-construction-written-twice.md) | done | Starting a member's actor is written three times in `ChannelLoop`, and building a channel's loop twice in `SessionLoop`. |

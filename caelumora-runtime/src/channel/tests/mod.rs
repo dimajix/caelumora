@@ -107,8 +107,8 @@ async fn a_participant_that_no_longer_exists_is_left_out() {
     ).await;
 
     assert!(channel.user_actor(alice.id).is_some(), "the others take part");
-    assert!(channel.actor_by_id(ActorId::User(gone_user)).is_none(), "a deleted user has no actor");
-    assert!(channel.actor_by_id(ActorId::Agent(gone_agent)).is_none(), "nor has a deleted agent");
+    assert!(channel.actor(ActorId::User(gone_user)).is_none(), "a deleted user has no actor");
+    assert!(channel.actor(ActorId::Agent(gone_agent)).is_none(), "nor has a deleted agent");
 }
 
 #[tokio::test]
@@ -171,7 +171,6 @@ pub(super) struct Sleeper {
 #[async_trait::async_trait]
 impl Actor for Sleeper {
     fn id(&self) -> ActorId { self.id }
-    fn kind(&self) -> String { "sleeper".to_string() }
     fn name(&self) -> Name { Name::new(self.name).expect("a name") }
     fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
     async fn run(&self, _rx: Box<dyn crate::transport::EventReceiver>, _tx: Box<dyn EventSender>) -> Result<()> { Ok(()) }
@@ -198,7 +197,7 @@ pub(super) async fn channel_with_sleepers(names: &[&'static str]) -> (Arc<Channe
     let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
     let sleepers: Vec<_> = names.iter().map(|name| sleeper_named(name)).collect();
     for sleeper in &sleepers {
-        channel.adopt(Arc::<Sleeper>::clone(sleeper), Member::approver(channel.session_id, channel.id)).await;
+        channel.adopt(Arc::<Sleeper>::clone(sleeper), ActorSource::approver(channel.session_id, channel.id)).await;
     }
     (channel, alice.id, sleepers)
 }
@@ -558,7 +557,7 @@ pub(super) async fn start((channel, context, agent, alice): (Arc<ChannelLoop>, S
     let events = channel.observe();
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
     channel.user_actor(alice).unwrap().send_message("hello".to_string(), None).await.unwrap();
-    let helper = channel.actor_by_id(ActorId::Agent(agent)).unwrap();
+    let helper = channel.actor(ActorId::Agent(agent)).unwrap();
     Stuck { channel, context, agent, helper, events, running }
 }
 

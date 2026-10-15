@@ -336,7 +336,7 @@ impl UserActor {
     /// error if the channel is gone.
     pub async fn request_response(&self, participant: ActorId) -> anyhow::Result<Uuid> {
         let channel_loop = self.channel_loop()?;
-        let actor = channel_loop.actor_by_id(participant)
+        let actor = channel_loop.actor(participant)
             .ok_or(ChannelError::NotAParticipant { participant, channel: self.channel_id })?;
         if participant == self.id {
             return Err(ChannelError::NudgesItself { participant, channel: self.channel_id }.into());
@@ -613,10 +613,6 @@ impl Drop for EndOfRun<'_> {
 impl Actor for UserActor {
     fn id(&self) -> ActorId {
         self.id
-    }
-
-    fn kind(&self) -> String{
-        "user".to_string()
     }
 
     fn name(&self) -> Name {

@@ -146,12 +146,12 @@ pub async fn set_access(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>
 /// Attaches the user's workspace to the session: its owner's act, into a
 /// session they may change.
 pub async fn attach_workspace(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser, Json(request): Json<AttachWorkspaceRequest>) -> Result<Json<SessionSnapshot>, ApiError> {
-    set_workspace(&state, &user, SessionId(id), Some(request.workspace_id), request.share).await
+    update_workspace(&state, &user, SessionId(id), Some(request.workspace_id), request.share).await
 }
 
 /// Takes the attached workspace away from the session; it shares nothing.
 pub async fn detach_workspace(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<SessionSnapshot>, ApiError> {
-    set_workspace(&state, &user, SessionId(id), None, None).await
+    update_workspace(&state, &user, SessionId(id), None, None).await
 }
 
 /// Sets whether the channel uses the session's workspace: whoever may
@@ -174,9 +174,9 @@ pub async fn kill_command(State(state): State<Arc<AppState>>, Path((id, cid, com
     Ok(Json(command_response(shell.kill(&command_id, 0).await?)))
 }
 
-async fn set_workspace(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, workspace: Option<WorkspaceId>, share: Option<Grant>) -> Result<Json<SessionSnapshot>, ApiError> {
+async fn update_workspace(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, workspace: Option<WorkspaceId>, share: Option<Grant>) -> Result<Json<SessionSnapshot>, ApiError> {
     let session = crate::routes::ensure_session(state, user, session_id).await?;
-    session.set_workspace(&user.security_context(), workspace, share).await?;
+    session.update_workspace(&user.security_context(), workspace, share).await?;
     Ok(Json(crate::routes::session_view(state, user, session_id).await?))
 }
 

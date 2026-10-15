@@ -66,7 +66,7 @@ impl ChannelLoop {
     /// `NotAParticipant` if `actor` is not in this channel.
     pub async fn cancel_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<()> {
         self.require(context, |attributes| ActionType::CancelChannel(attributes), "cancelling").await?;
-        self.actor_by_id(actor)
+        self.actor(actor)
             .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?
             .cancel();
         Ok(())
@@ -86,10 +86,10 @@ impl ChannelLoop {
     /// that turn, or the turn is not under way.
     pub async fn interrupt_tool_call(&self, context: &SecurityContext, actor: ActorId, turn: TurnId, call: &str) -> Result<()> {
         self.require(context, |attributes| ActionType::CancelChannel(attributes), "cancelling").await?;
-        let actor = self.actor_by_id(actor)
+        let actor = self.actor(actor)
             .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?;
         // Named to the model as the channel knows them.
-        let by = self.actor_by_id(context.initiator_id).map_or_else(|| "A user".to_string(), |initiator| initiator.name().to_string());
+        let by = self.actor(context.initiator_id).map_or_else(|| "A user".to_string(), |initiator| initiator.name().to_string());
         if !actor.interrupt_tool_call(turn, call, by) {
             return Err(ChannelError::ToolCallNotRunning { call: call.to_string(), turn, channel: self.id }.into());
         }
@@ -104,7 +104,7 @@ impl ChannelLoop {
     /// `WakeChannel`; `NotAParticipant` if `actor` is not in this channel.
     pub async fn wakeup_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<bool> {
         self.require(context, |attributes| ActionType::WakeChannel(attributes), "waking the agents of").await?;
-        let actor = self.actor_by_id(actor)
+        let actor = self.actor(actor)
             .ok_or(ChannelError::NotAParticipant { participant: actor, channel: self.id })?;
         let was_asleep = actor.state() == ActorState::Sleeping;
         self.quiet.store(false, Ordering::SeqCst);

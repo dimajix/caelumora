@@ -541,7 +541,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Start the interactive loop
     run_repl(channel, owner).await?;
-    session_manager.stop_session(&security, session_id).await?;
+    session_manager.stop(&security, session_id).await?;
 
     Ok(())
 }

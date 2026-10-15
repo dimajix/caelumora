@@ -502,8 +502,8 @@ impl ExternalAgentActor {
             warn!("External agent {} has no channel to speak in", self.id());
             return;
         };
-        let (speaking, label) = match &work {
-            Some(work) => (self.speaking_for(work), work.label()),
+        let (answering, label) = match &work {
+            Some(work) => (Answering::continuing(work), work.label()),
             None => (
                 Answering::own(self.id(), self.name(), &self.body.security_context()),
                 self.remote.classification().unwrap_or_else(|| channel.classification()),
@@ -519,13 +519,7 @@ impl ExternalAgentActor {
             },
         };
         self.body.store(state).await;
-        speaking.send_all(events, output).await;
-    }
-
-    /// The contexts what comes of `work` later is said in: those of the
-    /// answer to the request that began it, continued.
-    fn speaking_for(&self, work: &Work) -> Answering {
-        Answering { event_context: work.event_context.next(self.id(), self.name()), security_context: work.security_context.clone() }
+        answering.send_all(events, output).await;
     }
 
     /// The channel's classification as it is now, if `work` - begun under
@@ -549,7 +543,7 @@ impl ExternalAgentActor {
             self.cancel_remote(state, &work.security_context, task).await;
         }
         self.body.store(state).await;
-        self.speaking_for(work).send_all(vec![ActorEvent::TurnGivenUp { turn_id: work.turn_id, reason: GivenUpReason::Lowered { channel } }], output).await;
+        Answering::continuing(work).send_all(vec![ActorEvent::TurnGivenUp { turn_id: work.turn_id, reason: GivenUpReason::Lowered { channel } }], output).await;
     }
 
     /// The authority the open `task` is done with: that of the request that
@@ -785,10 +779,6 @@ fn answered(turn_id: Option<TurnId>, message: Option<Message>) -> Vec<ActorEvent
 impl Actor for ExternalAgentActor {
     fn id(&self) -> ActorId {
         self.body.id()
-    }
-
-    fn kind(&self) -> String {
-        "external_agent".to_string()
     }
 
     fn name(&self) -> Name {

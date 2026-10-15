@@ -323,7 +323,7 @@ impl ChannelLoop {
             // It asks nothing of the policy beyond what a message does - an
             // `@`-mention asks the same.
             ActorEvent::NudgeRequested { participant } => {
-                (event.context.sender_id.as_user_id().is_some() && *participant != event.context.sender_id && self.actor_by_id(*participant).is_some())
+                (event.context.sender_id.as_user_id().is_some() && *participant != event.context.sender_id && self.actor(*participant).is_some())
                     .then_some(()).ok_or(Rejection::Invalid)
             }
             ActorEvent::PlanStepStarted { .. }
@@ -454,7 +454,7 @@ impl ChannelLoop {
             // there is nothing to answer again, and the request is dropped:
             // its sender asked before, and its users see the answer end.
             if let ActorEvent::RetryRequested { target: RetryTarget::Turn(turn), .. } = &target_event.event {
-                let interrupted = self.actor_by_id(target_id).is_some_and(|actor| actor.retry_turn(*turn));
+                let interrupted = self.actor(target_id).is_some_and(|actor| actor.retry_turn(*turn));
                 if !interrupted && !self.given_up_last(target_id, *turn).await {
                     warn!(to = %target_id, "Dropped {}: turn {} is neither under way nor the last given up", event_desc, turn);
                     continue;
@@ -584,7 +584,7 @@ mod tests {
     use tokio_util::task::TaskTracker;
 
     use crate::channel::tests::*;
-    use crate::channel::{ActorChange, ChannelError, Member};
+    use crate::channel::{ActorChange, ChannelError, ActorSource};
     use caelumora_model::security::AllowAllPolicy;
 
     #[tokio::test]
@@ -646,7 +646,6 @@ mod tests {
     #[async_trait::async_trait]
     impl Actor for SaysOnce {
         fn id(&self) -> ActorId { self.0 }
-        fn kind(&self) -> String { "says_once".to_string() }
         fn name(&self) -> Name { Name::new("talker").expect("a name") }
         fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
         async fn run(&self, mut rx: Box<dyn crate::transport::EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
@@ -671,7 +670,7 @@ mod tests {
         let moderator = Arc::new(PolicyModerator::new(responders, 1));
         let channel = channel_moderated_by(&[&alice], Arc::<PolicyModerator>::clone(&moderator)).await;
         let talker = Arc::new(SaysOnce(ActorId::Agent(caelumora_model::agent::AgentId::new())));
-        channel.adopt(Arc::<SaysOnce>::clone(&talker), Member::approver(channel.session_id, channel.id)).await;
+        channel.adopt(Arc::<SaysOnce>::clone(&talker), ActorSource::approver(channel.session_id, channel.id)).await;
         let mut following = channel.user_actor(alice.id).unwrap().watch().events;
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
@@ -694,7 +693,6 @@ mod tests {
     #[async_trait::async_trait]
     impl Actor for Says {
         fn id(&self) -> ActorId { self.0 }
-        fn kind(&self) -> String { "says".to_string() }
         fn name(&self) -> Name { Name::new("talker").expect("a name") }
         fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
         async fn run(&self, mut rx: Box<dyn crate::transport::EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
@@ -728,7 +726,7 @@ mod tests {
             Envelope { security: SecurityContext::new(her, channel.session_id, channel.id).next(talker, her, her), ..said(talker, talker, talker, "its own") },
         ];
         let says = Arc::new(Says(talker, std::sync::Mutex::new(envelopes)));
-        channel.adopt(Arc::<Says>::clone(&says), Member::approver(channel.session_id, channel.id)).await;
+        channel.adopt(Arc::<Says>::clone(&says), ActorSource::approver(channel.session_id, channel.id)).await;
         let mut events = channel.observe();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
@@ -785,7 +783,7 @@ mod tests {
         let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(asked.id))).await;
         for actor in [&asked, &other] {
             // Who it is does not matter to routing: the channel only looks it up.
-            channel.adopt(Arc::<Sleeper>::clone(actor), Member::approver(channel.session_id, channel.id)).await;
+            channel.adopt(Arc::<Sleeper>::clone(actor), ActorSource::approver(channel.session_id, channel.id)).await;
         }
         let said = || Envelope::new(
             context.clone(),
@@ -1105,7 +1103,7 @@ mod tests {
         let (cancelled, other) = (sleeper(), sleeper());
         let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(other.id))).await;
         for actor in [&cancelled, &other] {
-            channel.adopt(Arc::<Sleeper>::clone(actor), Member::approver(channel.session_id, channel.id)).await;
+            channel.adopt(Arc::<Sleeper>::clone(actor), ActorSource::approver(channel.session_id, channel.id)).await;
         }
 
         channel.cancel_actor(&context, cancelled.id).await.expect("permitted");

@@ -440,7 +440,7 @@ async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
     // What reaches alice, from before she asks.
     let mut shown = channel.user_actor(alice).unwrap().watch().events;
     channel.user_actor(alice).unwrap().send_message("hello".to_string(), None).await.unwrap();
-    let helper = channel.actor_by_id(ActorId::Agent(agent)).unwrap();
+    let helper = channel.actor(ActorId::Agent(agent)).unwrap();
     assert_eq!(told_states(&mut shown, agent, ActorState::Sleeping).await, [ActorState::Planning, ActorState::ExecutingTools, ActorState::Reflecting, ActorState::Sleeping], "each step it moves to, once");
 
     let woken = channel.wakeup(&context).await.expect("alice may wake it");
@@ -1048,7 +1048,7 @@ async fn a_turn_waiting_for_approval_can_be_decided_after_a_restart() {
     let restarted = ChannelLoop::new(document.clone(), channel.runtime.restarted()).await.unwrap();
     let mut events = restarted.observe();
     let running = tokio::spawn({ let restarted = Arc::clone(&restarted); async move { restarted.run().await } });
-    let helper = restarted.actor_by_id(ActorId::Agent(agent)).unwrap();
+    let helper = restarted.actor(ActorId::Agent(agent)).unwrap();
 
     // The agent asks again, with the same id, and the users can decide.
     let asked_again = approval_requested(&mut events).await;
@@ -1185,7 +1185,7 @@ async fn a_tool_call_interrupted_alone_is_answered_so_and_the_turn_goes_on() {
     let results: Vec<_> = finished.iter().flat_map(|m| m.tool_results.iter()).collect();
     assert_eq!(results.iter().map(|r| r.status).collect::<Vec<_>>(), [ToolResultStatus::Interrupted, ToolResultStatus::NotExecuted], "{finished:?}");
     assert!(results[0].started_at.is_some() && results[1].started_at.is_none(), "the first ran, the second never did");
-    let alice = channel.actor_by_id(context.initiator_id).expect("she takes part").name().to_string();
+    let alice = channel.actor(context.initiator_id).expect("she takes part").name().to_string();
     assert!(results.iter().all(|r| r.content.contains(&format!("{alice} interrupted this tool call"))), "the model is told who: {results:?}");
     let said: Vec<_> = finished.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["never given"], "the turn goes on with the results");
@@ -1398,7 +1398,7 @@ async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_th
     // Another agent's answer, as the channel's history keeps it.
     let answer = Message { id: MessageId::new(), sender_id: other, sender_name: "hermes".to_string(), role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call], ..Message::new(Classification::CHANNEL_DEFAULT) };
     let tool = Message { id: MessageId::new(), sender_id: other, role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result], ..Message::new(Classification::CHANNEL_DEFAULT) };
-    let actor = channel.actor_by_id(ActorId::Agent(agent)).unwrap();
+    let actor = channel.actor(ActorId::Agent(agent)).unwrap();
 
     actor.catch_up(vec![answer.clone(), tool.clone()]).await.unwrap();
 
@@ -1420,7 +1420,7 @@ async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
         id: MessageId::new(), role: MessageRole::User, sender_id: context.initiator_id, content: Some(text.to_string()),
         ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
     };
-    let actor = channel.actor_by_id(ActorId::Agent(agent)).unwrap();
+    let actor = channel.actor(ActorId::Agent(agent)).unwrap();
 
     actor.catch_up(vec![said("hello"), said("the secret is 42")]).await.unwrap();
 

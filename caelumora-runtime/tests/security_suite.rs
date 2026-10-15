@@ -85,7 +85,7 @@ async fn a_shared_personality_makes_an_agent_of_whoever_uses_it() {
         assert!(matches!(gone, StoreError::NotFound { .. }), "{gone}");
         let renamed = Agent { name: ScopedName::new("taken", Scope::GlobalScope).unwrap(), ..agent.clone() };
         assert!(world.runtime.entity_stores().agents.update(&World::as_user(world.bob), &renamed).await.is_err(), "nor his to change, though the personality is his");
-        world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 }
 
@@ -99,16 +99,16 @@ async fn an_agent_whose_personality_was_withdrawn_is_left_out_of_its_channel() {
     let session = world.shared_session(&[helper], &[]).await;
     let channel = session.channels()[0].id();
     assert!(world.members(world.alice, session.id(), channel).await.contains(&ActorId::Agent(helper)), "it runs while shared");
-    assert!(session.channels()[0].actor_ids().contains(&ActorId::Agent(helper)));
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    assert!(session.channels()[0].member_ids().contains(&ActorId::Agent(helper)));
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 
     let withdrawn = Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
     world.runtime.entity_stores().personalities.update(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
 
-    let reopened = world.manager.open_session(&World::as_user(world.alice), session.id()).await.expect("the session still opens");
-    assert!(!reopened.channels()[0].actor_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
-    assert!(reopened.channels()[0].actor_ids().contains(&ActorId::User(world.alice)), "everyone else is");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    let reopened = world.manager.open(&World::as_user(world.alice), session.id()).await.expect("the session still opens");
+    assert!(!reopened.channels()[0].member_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
+    assert!(reopened.channels()[0].member_ids().contains(&ActorId::User(world.alice)), "everyone else is");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// P3b: an agent whose personality is gone is not run either; its session
@@ -119,12 +119,12 @@ async fn an_agent_whose_personality_is_gone_is_left_out_of_its_channel() {
     let bobs = world.personality("bobs", Some(world.bob), &[world.alice]).await;
     let helper = world.agent("helper", world.alice, &bobs).await;
     let session = world.shared_session(&[helper], &[]).await;
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     world.runtime.entity_stores().personalities.delete(&World::as_user(world.bob), bobs.id).await.expect("bob deletes his personality");
 
-    let reopened = world.manager.open_session(&World::as_user(world.alice), session.id()).await.expect("the session still opens");
-    assert!(!reopened.channels()[0].actor_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    let reopened = world.manager.open(&World::as_user(world.alice), session.id()).await.expect("the session still opens");
+    assert!(!reopened.channels()[0].member_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// P4: such an agent cannot be added to a channel either.
@@ -141,8 +141,8 @@ async fn an_agent_whose_personality_was_withdrawn_cannot_join_a_channel() {
 
     let refused = main.add_participant(&World::as_user(world.alice), ActorId::Agent(helper), HistoryAccess::All).await.expect_err("it may not run");
     assert!(denied(&refused), "{refused:#}");
-    assert!(!main.actor_ids().contains(&ActorId::Agent(helper)), "the channel is as it was");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    assert!(!main.member_ids().contains(&ActorId::Agent(helper)), "the channel is as it was");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// P5: a personality is changed and deleted by its owner only; who it is
@@ -179,7 +179,7 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
     let member = members.iter().find(|m| m.id() == ActorId::Agent(helper)).expect("he sees the agent");
     assert_eq!(member.name(), Some("helper"));
     assert_eq!(member.introduction().await.unwrap().as_deref(), Some("I am hers."), "and how it introduces itself");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// P7: the preconfigured components a personality includes (issue 270) -
@@ -201,17 +201,17 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
     let personality = asked.iter().position(|line| line == "alice as helper: GetPersonality(alice's) yes").expect("its personality is read in its name");
     let components = asked.iter().position(|line| line == "alice as helper: GetComponents(bob's) yes").expect("and so are the components it includes");
     assert!(personality < components, "first the personality, then what it includes: {asked:?}");
-    assert!(session.channels()[0].actor_ids().contains(&ActorId::Agent(helper)), "it runs");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    assert!(session.channels()[0].member_ids().contains(&ActorId::Agent(helper)), "it runs");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 
     let withdrawn = StoredComponents { security_attributes: attributes(Some(world.bob), &[]), ..tools };
     world.store.update_components(&World::as_user(world.bob), &withdrawn).await.expect("bob owns them");
-    let (reopened, asked) = world.asked(world.manager.open_session(&World::as_user(world.alice), session.id())).await;
+    let (reopened, asked) = world.asked(world.manager.open(&World::as_user(world.alice), session.id())).await;
     let reopened = reopened.expect("the session still opens: bob cannot stop alice's session so");
     assert!(asked.contains(&"alice as helper: GetComponents(bob's) no".to_string()), "{asked:?}");
-    assert!(!reopened.channels()[0].actor_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
-    assert!(reopened.channels()[0].actor_ids().contains(&ActorId::User(world.alice)), "everyone else is");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    assert!(!reopened.channels()[0].member_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
+    assert!(reopened.channels()[0].member_ids().contains(&ActorId::User(world.alice)), "everyone else is");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- Templates --------------------------------------------------------------
@@ -232,7 +232,7 @@ async fn a_template_is_used_only_by_who_may_read_it() {
     for usable in [shared, systems] {
         let session = world.manager.create_from_template(&alice, usable, None, None).await.expect("hers to use");
         assert_eq!(session.session().security_attributes.owner_id, ActorId::User(world.alice), "the session is hers, not the template's owner's");
-        world.manager.stop_session(&alice, session.id()).await.unwrap();
+        world.manager.stop(&alice, session.id()).await.unwrap();
     }
 }
 
@@ -245,14 +245,14 @@ async fn a_stranger_finds_nothing_of_a_session() {
     let session = world.shared_session(&[], &[]).await;
     let carol = World::as_user(world.carol);
 
-    assert!(not_found(&world.manager.open_session(&carol, session.id()).await.expect_err("not hers to open")));
-    assert!(not_found(&world.manager.stop_session(&carol, session.id()).await.expect_err("nor to stop")));
-    assert!(not_found(&world.manager.delete_session(&carol, session.id()).await.expect_err("nor to delete")));
+    assert!(not_found(&world.manager.open(&carol, session.id()).await.expect_err("not hers to open")));
+    assert!(not_found(&world.manager.stop(&carol, session.id()).await.expect_err("nor to stop")));
+    assert!(not_found(&world.manager.delete(&carol, session.id()).await.expect_err("nor to delete")));
     let views = world.manager.views(Viewer::new(carol));
     assert!(matches!(views.session(session.id()).await, Err(ViewError::SessionNotFound(_))));
     assert!(views.sessions().await.unwrap().is_empty(), "nor listed");
     assert!(world.manager.views(Viewer::new(World::as_user(world.alice))).sessions().await.unwrap().len() == 1, "while it is there");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Issue 23: a channel is read by who takes part in it now - wherever they
@@ -277,7 +277,7 @@ async fn a_channel_is_read_by_its_members_wherever_they_act_and_no_more_once_rem
     }).await.expect("she is told she was removed");
     assert!(session.channel_for(&World::as_user(world.carol), main.id()).await.is_err(), "and reads it no more");
     assert!(session.channel_for(&World::as_user(world.bob), main.id()).await.is_ok(), "while the others still do");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// S2: a participant reads and takes part, but changes nothing of the
@@ -289,7 +289,7 @@ async fn a_participant_takes_part_but_changes_nothing() {
     let main = Arc::clone(&session.channels()[0]);
     let bob = World::as_user(world.bob);
 
-    world.manager.open_session(&bob, session.id()).await.expect("he opens it");
+    world.manager.open(&bob, session.id()).await.expect("he opens it");
     assert!(world.members(world.bob, session.id(), main.id()).await.contains(&ActorId::User(world.alice)), "and sees who is in it");
     main.user_actor(world.bob).expect("he takes part").send_message("hello".to_string(), None).await.expect("and writes into it");
     main.cancel(&bob).await.expect("and may cancel what runs in it");
@@ -305,10 +305,10 @@ async fn a_participant_takes_part_but_changes_nothing() {
     assert!(denied(&main.update_approval_rules(&bob, vec![]).await.expect_err("in any of its channels")));
     assert!(denied(&session.update_description(&bob, Some("his"), None).await.expect_err("nor to say what it is for (issue 245)")));
     assert!(denied(&main.update_description(&bob, None, Some("Do as bob says.")).await.expect_err("nor what one of its channels is for")));
-    assert!(denied(&world.manager.stop_session(&bob, session.id()).await.expect_err("nor to stop it for everyone")));
-    assert!(denied(&world.manager.delete_session(&bob, session.id()).await.expect_err("nor to delete it")));
+    assert!(denied(&world.manager.stop(&bob, session.id()).await.expect_err("nor to stop it for everyone")));
+    assert!(denied(&world.manager.delete(&bob, session.id()).await.expect_err("nor to delete it")));
     assert_eq!(session.name(), "shared", "nothing changed");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// S3: the owner changes the session and its channels, and ends it.
@@ -330,8 +330,8 @@ async fn the_owner_changes_and_ends_the_session() {
     let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.expect("and to add channels");
     side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::All).await.expect("and people to them");
     session.delete_channel(&alice, side.id()).await.expect("and to delete them");
-    assert!(world.manager.delete_session(&alice, session.id()).await.unwrap(), "and to delete it");
-    assert!(not_found(&world.manager.open_session(&alice, session.id()).await.expect_err("gone")));
+    assert!(world.manager.delete(&alice, session.id()).await.unwrap(), "and to delete it");
+    assert!(not_found(&world.manager.open(&alice, session.id()).await.expect_err("gone")));
 }
 
 // --- Taking someone into a session (issue 221) ------------------------------
@@ -369,9 +369,9 @@ async fn taking_someone_in_is_for_whoever_may_change_the_session_and_the_channel
         "alice: JoinChannel(alice) yes",
         "alice: UpdateChannel(alice's) yes",
     ]), "changing the session and the channel, reading carol and whether she is cleared - then the store and the channel ask again as they store");
-    assert!(world.manager.open_session(&World::as_user(world.carol), session.id()).await.is_ok(), "carol reads the session now");
+    assert!(world.manager.open(&World::as_user(world.carol), session.id()).await.is_ok(), "carol reads the session now");
     assert!(world.members(world.carol, session.id(), main.id()).await.contains(&carol), "and takes part in the channel");
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 /// An agent is taken in only by who may read it (issue 14): nobody brings
@@ -397,7 +397,7 @@ async fn an_agent_is_taken_in_only_by_who_may_read_it_and_only_if_it_may_run() {
     assert!(denied(&refused.expect_err("it may not run")));
     assert_eq!(asked.last().map(String::as_str), Some("alice as alices-helper: GetPersonality(bob's) no"), "its personality, in its own name: {asked:?}");
     assert!(!session.session().participants.iter().any(|p| p.actor_id() == ActorId::Agent(alices_helper)), "nothing was stored");
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 /// Who is not cleared for the channel is not taken in - into the channel,
@@ -421,7 +421,7 @@ async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
         assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { .. })), "{what}: {refused:#}");
         assert!(!session.session().participants.iter().any(|p| p.actor_id() == who), "{what}: not in the session either");
     }
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 /// Joining by one's own act needs an entry of the access list that lets one
@@ -460,7 +460,7 @@ async fn joining_needs_an_entry_that_lets_one_join() {
     ]), "joining the session and the channel by the entries in his own name, and his clearance - stored in the runtime's");
     assert!(world.members(world.bob, session.id(), main).await.contains(&ActorId::User(world.bob)), "in the channel");
     assert!(!session.session().security_attributes.acl.contains(&bob_joins), "his invitation is used up");
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 /// Searching whom to take in is for whoever may change the session: the
@@ -489,7 +489,7 @@ async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
     assert!(matches!(bob.as_slice(), [b] if b.in_session && b.in_channel), "bob takes part: {bob:?}");
     let dave_found = found("da").await;
     assert!(matches!(dave_found.as_slice(), [d] if d.id == ActorId::User(dave.id) && d.refusal == Some(CandidateRefusal::NotCleared)), "dave exists, but is not cleared: {dave_found:?}");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- Messages ----------------------------------------------------------------
@@ -509,7 +509,7 @@ async fn cancelling_one_actor_is_for_whoever_may_cancel_the_channel() {
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let (bob, carol) = (World::as_user(world.bob), World::as_user(world.carol));
-    world.manager.open_session(&bob, session.id()).await.expect("he opens it");
+    world.manager.open(&bob, session.id()).await.expect("he opens it");
 
     let (cancelled, asked) = world.asked(main.cancel_actor(&bob, ActorId::User(world.alice))).await;
     cancelled.expect("his to cancel, as a participant");
@@ -525,7 +525,7 @@ async fn cancelling_one_actor_is_for_whoever_may_cancel_the_channel() {
     let (offered, asked) = world.asked(member.may_cancel()).await;
     assert!(offered, "offered to him, of the agent");
     assert_eq!(asked, checks(&["bob: CancelChannel(alice's) yes"]), "by the same question");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Interrupting one tool call of an actor (issue 276) is cancelling a part
@@ -541,7 +541,7 @@ async fn interrupting_one_tool_call_is_for_whoever_may_cancel_the_channel() {
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let (bob, carol) = (World::as_user(world.bob), World::as_user(world.carol));
-    world.manager.open_session(&bob, session.id()).await.expect("he opens it");
+    world.manager.open(&bob, session.id()).await.expect("he opens it");
 
     let (permitted, asked) = world.asked(main.interrupt_tool_call(&bob, ActorId::Agent(helper), TurnId::new(), "1")).await;
     assert!(matches!(permitted.expect_err("no call runs").downcast_ref::<ChannelError>(), Some(ChannelError::ToolCallNotRunning { .. })), "his to interrupt, but nothing runs");
@@ -550,7 +550,7 @@ async fn interrupting_one_tool_call_is_for_whoever_may_cancel_the_channel() {
     let (refused, asked) = world.asked(main.interrupt_tool_call(&carol, ActorId::Agent(helper), TurnId::new(), "1")).await;
     assert!(denied(&refused.expect_err("not hers to interrupt")), "refused, not told whether the call runs");
     assert_eq!(asked, checks(&["carol: CancelChannel(alice's) no"]));
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// M0: a message enters the channel as its sender classified it, if the
@@ -564,7 +564,7 @@ async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let (mut hers, mut his) = (alice.watch(), bob.watch());
 
@@ -583,7 +583,7 @@ async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
     while let Ok(envelope) = his.events.try_recv() {
         assert_ne!(envelope.event.kind(), "MessageRejected", "nor of the refusal");
     }
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// M1: a message is its author's to modify and to take back (issue 234) -
@@ -599,7 +599,7 @@ async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let mut watch = bob.watch();
     alice.send_message("helo".to_string(), None).await.expect("sent");
@@ -626,7 +626,7 @@ async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
         shown(&mut watch, "MessageRevoked").await;
     }).await;
     assert_eq!(asked, checks(&["alice: RevokeMessage(alice's) yes"]));
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// M3: a message is reclassified (issues 133, 239) by its author, or by the
@@ -641,7 +641,7 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let (mut hers, mut his) = (alice.watch(), bob.watch());
     alice.send_message("from alice".to_string(), None).await.expect("sent");
@@ -678,7 +678,7 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
         while !matches!(shown(&mut his, "MessageReclassified").await, ActorEvent::MessageReclassified { classification, .. } if classification == internal) {}
     }).await;
     assert_eq!(asked, checks(&["alice: Reclassify(bob's message) yes", "alice: Publish yes"]), "the owner, another's");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// M2: asking an agent to answer again (issue 234) is an act on the
@@ -703,7 +703,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     let helper = world.agent("helper", world.alice, &answering).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let mut watch = bob.watch();
     alice.send_message("@helper hello".to_string(), None).await.expect("sent");
@@ -734,7 +734,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     let (offered, asked) = world.asked(member.may_retry()).await;
     assert!(offered, "and offered to him, of the agent (issue 242)");
     assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "by the same question");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// M4: nudging an agent (issue 278) asks it to respond without a message,
@@ -753,7 +753,7 @@ async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_wor
     let helper = world.agent("helper", world.alice, &silent).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let bob = main.user_actor(world.bob).unwrap();
     let mut his = bob.watch();
 
@@ -771,7 +771,7 @@ async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_wor
     let turn = finished.security;
     assert_eq!((turn.caller_id, turn.owner_id, turn.principal_id, turn.initiator_id), (ActorId::Agent(helper), ActorId::User(world.alice), ActorId::User(world.alice), ActorId::User(world.bob)), "alice's, for alice, on his word");
     assert!(main.user_actor(world.carol).is_none(), "carol takes no part, and has no actor to nudge through");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- What an agent saw --------------------------------------------------------
@@ -800,7 +800,7 @@ async fn what_an_agent_saw_is_its_owners_alone() {
     let his = member(world.bob).await;
     assert!(!his.may_read_context().await, "not offered to bob");
     assert!(matches!(his.context().await, Err(ViewError::Forbidden { .. })), "nor read by him");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// An agent's private notes across the channels of a session (issue 233)
@@ -819,7 +819,7 @@ async fn an_agents_private_notes_are_its_owners_alone() {
 
     assert!(notes(world.alice).await.is_ok(), "read by its owner");
     assert!(matches!(notes(world.bob).await, Err(ViewError::Forbidden { .. })), "not by bob, who takes part");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// What an agent can do now - its tools (issue 194) - is read by every
@@ -852,7 +852,7 @@ async fn which_tools_an_agent_has_is_read_by_the_members_of_its_channel() {
     assert_eq!(asked, checks(&["bob: ReadAgentTools(alice's) yes"]));
     let theirs = world.manager.views(Viewer::new(World::as_user(world.carol))).session(session.id()).await;
     assert!(theirs.is_err(), "carol, who is no member, does not even reach the channel");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// What an agent was built from - its components, the preconfigured ones
@@ -893,7 +893,7 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
     let (components, asked) = world.asked(his.components()).await;
     assert!(matches!(components, Err(ViewError::Forbidden { .. })), "nor read by him, though he sees its tools");
     assert_eq!(asked, checks(&["bob: ReadAgentComponents(alice's) no"]));
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- Approvals ---------------------------------------------------------------
@@ -931,7 +931,7 @@ async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<caelumora_run
     let helper = world.agent("helper", world.alice, &asking).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     (world, session, main, helper)
 }
 
@@ -1015,7 +1015,7 @@ async fn with_a_call_asking_whom(ask: Addressee, sensitive: bool, asker: fn(&Wor
     let helper = world.agent("helper", world.alice, &asking).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut watch = main.user_actor(asker(&world)).expect("the asker takes part").watch();
     let his = main.user_actor(world.bob).expect("he takes part").watch();
     main.user_actor(asker(&world)).unwrap().send_message("@helper ask".to_string(), None).await.expect("sent");
@@ -1054,7 +1054,7 @@ async fn questions_are_answered_by_whom_they_are_put_to() {
         asked_for(&world, "alice: AnswerQuestion(alice's) yes").await;
     }).await;
     assert_eq!(asked.first().map(String::as_str), Some(checks(&["alice: AnswerQuestion(alice's) yes"])[0].as_str()), "asked by the channel as it admits it");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Sensitive questions (issue 165) are shown to those they are put to
@@ -1074,7 +1074,7 @@ async fn sensitive_questions_reach_only_whom_they_are_put_to() {
     while let Ok(envelope) = his.events.try_recv() {
         assert!(!matches!(envelope.event, caelumora_model::actor::ActorEvent::QuestionRequested(_) | caelumora_model::actor::ActorEvent::QuestionClosed { .. }), "nothing of them reaches him: {}", envelope.event.kind());
     }
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// The owner a call's questions are put to (`Addressee::Owner`, issue 165)
@@ -1085,7 +1085,7 @@ async fn sensitive_questions_reach_only_whom_they_are_put_to() {
 async fn questions_for_the_owner_are_put_to_the_agents_owner_whoever_asked() {
     let (world, session, _, request, _) = with_a_call_asking(false, |world| world.bob).await;
     assert_eq!(request.questions.asked(), [ActorId::User(world.alice)], "the agent's owner, not bob who asked");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Questions for the initiator (`Addressee::Initiator`, issue 341) are put
@@ -1097,7 +1097,7 @@ async fn questions_for_the_initiator_are_put_to_whoever_asked_the_agent() {
     let (world, session, main, request, _) = with_a_call_asking_whom(Addressee::Initiator, true, |world| world.bob).await;
     assert_eq!(request.questions.asked(), [ActorId::User(world.bob)], "bob who asked, not alice who owns the agent");
     assert!(questions_shown(&world, session.id(), main.id(), world.alice).await.is_empty(), "not shown to the owner");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// What came of asking `helper` in `main`, as `user` follows it: the
@@ -1151,7 +1151,7 @@ async fn a_persons_rule_answers_for_them_as_they_would() {
     assert!(asked.request.is_some_and(|r| !r.explicit), "the call is put up for approval");
     assert_eq!(asked.by_rule, Some(rule.id), "her actor answers by her rule, and shows her so");
     assert_eq!(asked.approved, Some(true), "and the approver decides on it");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// A rule answers only where its person's own answer would count: bob's
@@ -1165,7 +1165,7 @@ async fn a_rule_answers_only_where_its_person_may_approve() {
     let asked = ask_helper(&world, &main, world.bob).await;
     assert!(asked.request.is_some(), "the call is put up for approval");
     assert_eq!((asked.by_rule, asked.approved), (None, None), "his rule does not answer, and nothing is decided");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// A rule answers only within its reach: one for another session or
@@ -1181,7 +1181,7 @@ async fn a_rule_out_of_its_reach_does_not_answer() {
     let asked = ask_helper(&world, &main, world.alice).await;
     assert!(asked.request.is_some());
     assert_eq!((asked.by_rule, asked.approved), (None, None), "neither answers");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// What a place restricts outweighs what a person allows: a channel's
@@ -1198,7 +1198,7 @@ async fn a_rule_of_a_place_outweighs_a_persons_rule() {
     let asked = ask_helper(&world, &main, world.alice).await;
     assert!(asked.request.as_ref().is_some_and(|r| r.explicit), "asked for explicitly");
     assert_eq!((asked.by_rule, asked.approved), (None, None), "her rule does not answer");
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
 
     let (world, session, main, _) = with_a_call_to_approve().await;
     let alice = World::as_user(world.alice);
@@ -1208,7 +1208,7 @@ async fn a_rule_of_a_place_outweighs_a_persons_rule() {
 
     let asked = ask_helper(&world, &main, world.alice).await;
     assert!(asked.request.is_none(), "nobody is asked");
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 /// Approving a tool call (issue 14) is for who is responsible for the
@@ -1279,7 +1279,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
         "alice: ApproveToolCall(alice's) yes",
         "bob: ApproveToolCall(alice's) no",
     ]);
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// A tool whose arguments go to a remote side cleared for public alone -
@@ -1347,7 +1347,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
     let helper = world.agent("helper", world.alice, &sending).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut watch = main.user_actor(world.bob).expect("he takes part").watch();
 
     let (answered, asked) = world.asked(async {
@@ -1372,7 +1372,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
     }).await;
     assert!(sets[0].tools.is_empty() && sets[0].unavailable.is_some(), "shown as unavailable: {sets:?}");
     assert!(asked.contains(&"alice as helper: Publish no".to_string()), "as a turn would be offered them, in the agent's own name: {asked:?}");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- In whose name an agent acts (issue 255) ---------------------------------
@@ -1416,7 +1416,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
     let doer = world.agent("doer", world.alice, &calling).await;
     let session = world.session_of(&[world.bob, world.carol], &[relay, doer], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.carol), session.id()).await.expect("she opens it");
+    world.manager.open(&World::as_user(world.carol), session.id()).await.expect("she opens it");
 
     let (_, asked) = world.asked(async {
         main.user_actor(world.carol).expect("she takes part").send_message("@relay ask doer".to_string(), None).await.expect("sent");
@@ -1426,7 +1426,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
     assert!(!calling.is_empty() && calling.iter().all(|line| *line == "alice as doer, asked by carol: CallTool yes"), "judged as its owner, asked by who began it: {asked:?}");
     assert!(asked.iter().filter(|line| line.contains("as doer")).all(|line| line.starts_with("alice as doer, asked by carol:")), "nothing of it in bob's name: {asked:?}");
     assert!(asked.iter().any(|line| line.starts_with("bob as relay, asked by carol:")), "the relay acted for its own owner: {asked:?}");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// The agent `reader` of `owner`, which reads the channel "side" with
@@ -1459,7 +1459,7 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
     let participants = if in_side { vec![ActorId::Agent(reader)] } else { vec![] };
     let side = session.create_channel(&World::as_user(world.alice), ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None }).await.expect("hers");
     side.user_actor(world.alice).expect("she takes part").send_message("only for side".to_string(), None).await.expect("said");
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let his = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap();
     assert!(his.channel(side.id()).await.is_err(), "not his to read");
     (world, session, main)
@@ -1491,7 +1491,7 @@ async fn an_agent_reads_another_channel_with_its_owners_rights_whoever_asked() {
     let readers: Vec<&String> = asked.iter().filter(|line| line.contains("as reader")).collect();
     assert!(readers.iter().all(|line| line.starts_with("alice as reader, asked by bob:")), "with her rights, asked by him: {asked:?}");
     assert!(readers.contains(&&"alice as reader, asked by bob: GetChannel(alice's) yes".to_string()), "reached first: {asked:?}");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// An agent does not read a channel of its session that its owner may not
@@ -1504,7 +1504,7 @@ async fn an_agent_does_not_read_a_channel_its_owner_may_not_read() {
     let (world, session, main) = with_a_reader_of(|world| world.bob, false).await;
     let asked = asked_to_read_side(&world, &main, "bob as reader: GetChannel(alice's) no").await;
     assert!(!asked.iter().any(|line| line.contains("CopyInformation")), "nothing of side to copy: {asked:?}");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// An agent reads a channel it takes part in from another, though its
@@ -1516,7 +1516,7 @@ async fn an_agent_reads_a_channel_it_takes_part_in_whose_owner_may_not() {
     let asked = asked_to_read_side(&world, &main, "bob as reader: CopyInformation yes").await;
     assert!(asked.contains(&"bob as reader: GetChannel(alice's) yes".to_string()), "reached as taking part: {asked:?}");
     assert!(asked.iter().filter(|line| line.contains("CopyInformation")).all(|line| line.ends_with(" yes")), "{asked:?}");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- External agents ---------------------------------------------------------
@@ -1626,7 +1626,7 @@ async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_bega
     let hermes = world.agent("hermes", world.alice, &remote).await;
     let session = world.shared_session(&[hermes], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
 
     let (_, asked) = world.asked(async {
         main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
@@ -1641,17 +1641,17 @@ async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_bega
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     }).await.expect("the task is stored");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 
     let (reopened, asked) = world.asked(async {
-        let reopened = world.manager.open_session(&World::as_user(world.alice), session.id()).await.expect("alice opens it again");
+        let reopened = world.manager.open(&World::as_user(world.alice), session.id()).await.expect("alice opens it again");
         calls_made(&calls, 2).await;
         reopened
     }).await;
     assert_eq!(calls.lock().unwrap().as_slice(), ["send", "resume"]);
     let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
     assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "followed so too, whoever opened the session");
-    world.manager.stop_session(&World::as_user(world.alice), reopened.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), reopened.id()).await.unwrap();
 }
 
 /// Asked several times while it answers, an agent answers once afterwards
@@ -1668,7 +1668,7 @@ async fn an_agent_asked_by_several_while_it_answers_answers_once_as_asked_by_the
     let hermes = world.agent("hermes", world.alice, &remote).await;
     let session = world.shared_session(&[hermes], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut events = main.user_actor(world.bob).expect("he takes part").watch().events;
     main.user_actor(world.alice).expect("she takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
     calls_made(&calls, 1).await;
@@ -1697,7 +1697,7 @@ async fn an_agent_asked_by_several_while_it_answers_answers_once_as_asked_by_the
     assert_eq!(calls.lock().unwrap().as_slice(), ["send", "send"], "one call for all that was asked meanwhile");
     let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
     assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "as asked by the last who asked");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// An external agent whose answers, as its component declares them, may no
@@ -1713,7 +1713,7 @@ async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_
     let session = world.shared_session(&[hermes], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     main.reclassify(&World::as_user(world.alice), Classification::general(Confidentiality::Public)).await.expect("hers to lower");
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut events = main.user_actor(world.bob).expect("he takes part").watch().events;
 
     let (failed, asked) = world.asked(async {
@@ -1734,7 +1734,7 @@ async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_
     let publish: Vec<&String> = asked.iter().filter(|line| line.starts_with("alice as hermes, asked by bob: Publish")).collect();
     assert_eq!(publish, ["alice as hermes, asked by bob: Publish no"], "as its owner, asked by bob");
     assert!(calls.lock().unwrap().is_empty(), "the remote agent is not called");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// An external agent's task begun before its channel was lowered is given up
@@ -1749,7 +1749,7 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_be
     let hermes = world.agent("hermes", world.alice, &remote).await;
     let session = world.shared_session(&[hermes], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let mut events = main.user_actor(world.bob).expect("he takes part").watch().events;
     main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
     calls_made(&calls, 1).await;
@@ -1774,7 +1774,7 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_be
     // every cancel does - and only then is asked whether it may go on.
     assert_eq!(his, ["alice as hermes, asked by bob: ReadSecret yes", "alice as hermes, asked by bob: Publish no"], "cancelled, and asked whether it goes on, as he asked");
     assert_eq!(calls.lock().unwrap().as_slice(), ["send", "cancel"]);
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- Users and their profiles -------------------------------------------------
@@ -1802,7 +1802,7 @@ async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session
     let members = view.members().await;
     let hers = members.iter().find(|m| m.id() == ActorId::User(world.alice)).unwrap();
     assert_eq!(hers.introduction().await.unwrap().as_deref(), Some("I run the team."), "bob reads how she introduces herself");
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 
@@ -1868,7 +1868,7 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: JoinChannel(alice) yes",
         "alice: UpdateChannel(alice's) yes",
     ]), "the agent's personality is asked for in its name twice: whether it is cleared, and as its actor is built");
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
 
     // Again: the agent is found, not made - its personality is not read
     // for making it, only in its own name, to run.
@@ -1876,7 +1876,7 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
     assert!(again.is_ok());
     assert_eq!(asked.iter().filter(|line| line.contains("CreateAgent")).count(), 0, "{asked:?}");
     assert!(asked.contains(&"alice as helper: GetPersonality(bob's) yes".to_string()), "{asked:?}");
-    world.manager.stop_session(&alice, again.unwrap().id()).await.unwrap();
+    world.manager.stop(&alice, again.unwrap().id()).await.unwrap();
 
     let private = world.template(Some(world.bob), &[], "private", shared.id).await;
     let (refused, asked) = world.asked(world.manager.create_from_template(&carol, private, None, None)).await;
@@ -2047,11 +2047,11 @@ async fn opening_a_session_needs_reading_it() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     for (user, answer) in [(world.alice, "yes"), (world.bob, "yes"), (world.carol, "no")] {
-        let (_, asked) = world.asked(world.manager.open_session(&World::as_user(user), session.id())).await;
+        let (_, asked) = world.asked(world.manager.open(&World::as_user(user), session.id())).await;
         let name = world.access_policy.name(ActorId::User(user));
         assert_eq!(asked, checks(&[&format!("{name}: GetSession(alice's) {answer}")]));
     }
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Stopping a session for everyone in it: reading it, and stopping it -
@@ -2060,11 +2060,11 @@ async fn opening_a_session_needs_reading_it() {
 async fn stopping_a_session_needs_owning_it() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    let (_, asked) = world.asked(world.manager.stop_session(&World::as_user(world.carol), session.id())).await;
+    let (_, asked) = world.asked(world.manager.stop(&World::as_user(world.carol), session.id())).await;
     assert_eq!(asked, checks(&["carol: GetSession(alice's) no"]), "a stranger: not even found");
-    let (_, asked) = world.asked(world.manager.stop_session(&World::as_user(world.bob), session.id())).await;
+    let (_, asked) = world.asked(world.manager.stop(&World::as_user(world.bob), session.id())).await;
     assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: StopSession(alice's) no"]));
-    let (stopped, asked) = world.asked(world.manager.stop_session(&World::as_user(world.alice), session.id())).await;
+    let (stopped, asked) = world.asked(world.manager.stop(&World::as_user(world.alice), session.id())).await;
     assert!(stopped.unwrap());
     assert_eq!(asked, checks(&["alice: GetSession(alice's) yes", "alice: StopSession(alice's) yes"]));
 }
@@ -2081,11 +2081,11 @@ async fn deleting_a_session_needs_owning_it() {
     let personality = world.personality("plain", None, &[]).await;
     let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), personality.id, ActorId::User(world.bob));
     world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
-    let (_, asked) = world.asked(world.manager.delete_session(&World::as_user(world.carol), session.id())).await;
+    let (_, asked) = world.asked(world.manager.delete(&World::as_user(world.carol), session.id())).await;
     assert_eq!(asked, checks(&["carol: GetSession(alice's) no"]));
-    let (_, asked) = world.asked(world.manager.delete_session(&World::as_user(world.bob), session.id())).await;
+    let (_, asked) = world.asked(world.manager.delete(&World::as_user(world.bob), session.id())).await;
     assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: DeleteSession(alice's) no"]));
-    let (refused, asked) = world.asked(world.manager.delete_session(&alice, session.id())).await;
+    let (refused, asked) = world.asked(world.manager.delete(&alice, session.id())).await;
     let refused = refused.expect_err("bob's agent is left");
     assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty { left, .. }) if *left == [(Agent::KIND, 1)]), "{refused}");
     assert_eq!(asked, checks(&[
@@ -2099,9 +2099,9 @@ async fn deleting_a_session_needs_owning_it() {
     assert!(world.runtime.entity_stores().agents.get(&World::system(), bobs.id).await.is_ok(), "and bob's agent");
 
     world.runtime.agent_manager().delete(&World::as_user(world.bob), bobs.id).await.expect("his to delete");
-    let (deleted, _) = world.asked(world.manager.delete_session(&alice, session.id())).await;
+    let (deleted, _) = world.asked(world.manager.delete(&alice, session.id())).await;
     assert!(deleted.unwrap(), "nothing of anybody else's is left");
-    world.manager.restore_session(&alice, session.id()).await.unwrap();
+    world.manager.restore(&alice, session.id()).await.unwrap();
     assert!(world.runtime.entity_stores().agents.get(&World::system(), bobs.id).await.is_err(), "deleted before the session, bob's agent stays deleted");
 }
 
@@ -2117,9 +2117,9 @@ async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it
     let personality = world.personality("plain", None, &[]).await;
     let bobs = Agent::new(ScopedName::new("helper", Scope::SessionScope { session_id: session.id() }).unwrap(), personality.id, ActorId::User(world.bob));
     world.runtime.entity_stores().agents.create(&World::system(), &bobs).await.unwrap();
-    world.manager.delete_session(&World::system(), session.id()).await.expect("the system's to delete, all of it");
+    world.manager.delete(&World::system(), session.id()).await.expect("the system's to delete, all of it");
 
-    let (restored, asked) = world.asked(world.manager.restore_session(&alice, session.id())).await;
+    let (restored, asked) = world.asked(world.manager.restore(&alice, session.id())).await;
     restored.expect("restored all the same");
     assert!(asked.contains(&"alice: ReadDeletedAgent(bob's) no".to_string()), "asked in her name: {asked:?}");
     assert!(world.runtime.entity_stores().agents.get_deleted(&World::system(), bobs.id).await.is_ok(), "bob's agent stays deleted: not hers to restore");
@@ -2144,7 +2144,7 @@ async fn creating_a_channel_needs_owning_its_session() {
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
     ]));
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Who may not create a channel is refused before anything is asked of
@@ -2157,7 +2157,7 @@ async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.bob), spec)).await;
     assert!(refused.is_err());
     assert_eq!(asked, checks(&["bob: CreateChannel(alice's) no"]));
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// The preconfigured components a new channel names are read in the name
@@ -2194,8 +2194,8 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec("other"))).await;
     assert!(matches!(refused.err().and_then(|e| e.downcast::<SessionError>().ok()), Some(SessionError::InvalidComponents(_))));
     assert_eq!(asked, checks(&["alice: GetComponents(bob's) no"]));
-    assert!(session.channel_by_name("other").is_none(), "nothing is created");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    assert!(session.channel_named("other").is_none(), "nothing is created");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Components a channel would not take - a tool, which it never calls - are
@@ -2219,8 +2219,8 @@ async fn a_channel_is_refused_a_tool_before_anything_is_built() {
     assert!(matches!(&refused, Some(SessionError::InvalidComponents(_))), "{refused:?}");
     assert!(refused.is_some_and(|e| e.to_string().contains("'tools'")), "named by the ref that brings it");
     assert_eq!(asked, checks(&["alice: GetComponents(bob's) yes"]), "only the list read as she names it");
-    assert!(session.channel_by_name("tooled").is_none(), "nothing is created");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    assert!(session.channel_named("tooled").is_none(), "nothing is created");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Deleting a channel, in the order of issue 304: reaching the channel as
@@ -2238,7 +2238,7 @@ async fn deleting_a_channel_needs_owning_its_session() {
     let (refused, asked) = world.asked(session.delete_channel(&World::as_user(world.bob), main)).await;
     assert!(denied(&refused.expect_err("not his")));
     assert_eq!(asked, checks(&["bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes", "bob: DeleteChannel(alice's) no"]), "refused before the session is touched");
-    assert!(session.channel_by_id(main).is_some(), "and the channel runs on");
+    assert!(session.channel(main).is_some(), "and the channel runs on");
     let (deleted, asked) = world.asked(session.delete_channel(&World::as_user(world.alice), main)).await;
     assert!(deleted.is_ok());
     assert_eq!(asked, checks(&[
@@ -2251,7 +2251,7 @@ async fn deleting_a_channel_needs_owning_its_session() {
         "alice: JoinChannel(alice) yes",
         "alice: DeleteChannel(alice's) yes",
     ]));
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Restoring a deleted session: reading it as deleted and restoring it -
@@ -2266,12 +2266,12 @@ async fn deleting_a_channel_needs_owning_its_session() {
 async fn restoring_a_session_needs_owning_it() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    world.manager.delete_session(&World::as_user(world.alice), session.id()).await.unwrap();
-    let (_, asked) = world.asked(world.manager.restore_session(&World::as_user(world.carol), session.id())).await;
+    world.manager.delete(&World::as_user(world.alice), session.id()).await.unwrap();
+    let (_, asked) = world.asked(world.manager.restore(&World::as_user(world.carol), session.id())).await;
     assert_eq!(asked, checks(&["carol: ReadDeletedSession(alice's) no"]));
-    let (_, asked) = world.asked(world.manager.restore_session(&World::as_user(world.bob), session.id())).await;
+    let (_, asked) = world.asked(world.manager.restore(&World::as_user(world.bob), session.id())).await;
     assert_eq!(asked, checks(&["bob: ReadDeletedSession(alice's) no"]), "a contributor does not see the trash");
-    let (restored, asked) = world.asked(world.manager.restore_session(&World::as_user(world.alice), session.id())).await;
+    let (restored, asked) = world.asked(world.manager.restore(&World::as_user(world.alice), session.id())).await;
     assert!(restored.is_ok());
     assert_eq!(asked, checks(&[
         "alice: ReadDeletedSession(alice's) yes",
@@ -2287,10 +2287,10 @@ async fn restoring_a_session_needs_owning_it() {
 async fn purging_a_session_is_not_its_owners() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    world.manager.delete_session(&World::as_user(world.alice), session.id()).await.unwrap();
-    let (_, asked) = world.asked(world.manager.purge_session(&World::as_user(world.bob), session.id())).await;
+    world.manager.delete(&World::as_user(world.alice), session.id()).await.unwrap();
+    let (_, asked) = world.asked(world.manager.purge(&World::as_user(world.bob), session.id())).await;
     assert_eq!(asked, checks(&["bob: ReadDeletedSession(alice's) no"]));
-    let (refused, asked) = world.asked(world.manager.purge_session(&World::as_user(world.alice), session.id())).await;
+    let (refused, asked) = world.asked(world.manager.purge(&World::as_user(world.alice), session.id())).await;
     assert!(refused.is_err());
     assert_eq!(asked, checks(&[
         "alice: ReadDeletedSession(alice's) yes",
@@ -2331,7 +2331,7 @@ async fn restoring_a_channel_needs_owning_its_session() {
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
     ]), "everyone's clearance again, as when it was created, and listing it in the session");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Deleting an agent: reading it and deleting it - its owner's alone, not
@@ -2378,7 +2378,7 @@ async fn deleting_restoring_and_purging_an_agent_is_its_owners_but_purging() {
     let (restored, asked) = world.asked(agents.restore(&World::as_user(world.alice), helper)).await;
     assert!(restored.is_ok());
     assert_eq!(asked, checks(&["alice: ReadDeletedAgent(alice's) yes", "alice: RestoreAgent(alice's) yes"]), "only what was deleted, asked by the store");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Adding an agent to a channel: its personality in its own name - may it
@@ -2408,7 +2408,7 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
     let (refused, asked) = world.asked(main.add_participant(&alice, ActorId::Agent(other), HistoryAccess::All)).await;
     assert!(denied(&refused.unwrap_err()));
     assert_eq!(asked, checks(&["alice: UpdateChannel(alice's) yes", "alice as other: GetPersonality(bob's) no"]), "an agent that may not run is not added");
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 /// Who may not change a channel is refused before anything is asked of
@@ -2423,7 +2423,7 @@ async fn who_may_not_add_to_a_channel_is_refused_before_the_agent_is_looked_at()
     let (refused, asked) = world.asked(main.add_participant(&World::as_user(world.bob), ActorId::Agent(helper), HistoryAccess::All)).await;
     assert!(denied(&refused.unwrap_err()));
     assert_eq!(asked, checks(&["bob: UpdateChannel(alice's) no"]));
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Removing an agent from a channel: changing the channel - its owner's
@@ -2440,7 +2440,7 @@ async fn removing_an_agent_needs_owning_the_channel() {
     let (removed, asked) = world.asked(main.remove_participant(&World::as_user(world.alice), ActorId::Agent(helper))).await;
     assert!(removed.is_ok());
     assert_eq!(asked, checks(&["alice: GetChannel(alice's) yes", "alice: JoinChannel(alice) yes", "alice: UpdateChannel(alice's) yes"]));
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- Workspaces (issues 251, 253) ---
@@ -2596,32 +2596,32 @@ async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
     let his = workspaces.create(&bob, "his", Scope::UserScope { user_id: world.bob }, "main", None, internal).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
 
-    let (refused, asked) = world.asked(session.set_workspace(&bob, Some(his.id), None)).await;
+    let (refused, asked) = world.asked(session.update_workspace(&bob, Some(his.id), None)).await;
     assert!(denied(&refused.unwrap_err()), "bob's own, into alice's session");
     assert_eq!(asked, checks(&["bob: UpdateSession(alice's) no"]), "refused before his workspace is asked about");
-    let (refused, asked) = world.asked(session.set_workspace(&alice, Some(his.id), None)).await;
+    let (refused, asked) = world.asked(session.update_workspace(&alice, Some(his.id), None)).await;
     assert!(not_found(&refused.unwrap_err()), "bob's, by alice");
     assert_eq!(asked, checks(&["alice: UpdateSession(alice's) yes", "alice: GetWorkspace(bob's) no"]));
 
-    let (attached, asked) = world.asked(session.set_workspace(&alice, Some(hers.id), None)).await;
+    let (attached, asked) = world.asked(session.update_workspace(&alice, Some(hers.id), None)).await;
     attached.expect("hers, into her session");
     assert_eq!(asked, checks(&["alice: UpdateSession(alice's) yes", "alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: UpdateWorkspace(alice's) yes", "alice: GetSession(alice's) yes", "alice: UpdateSession(alice's) yes"]));
     assert_eq!(session.session().workspace, Some(hers.id));
     let members = Subject::Group(GroupId::of_session(session.id()));
     assert!(world.runtime.entity_stores().workspaces.get(&alice, hers.id).await.unwrap().security_attributes.acl.is_empty(), "attaching alone shares nothing");
 
-    session.set_workspace(&alice, Some(hers.id), Some(Grant::Read)).await.expect("shared with its members to read");
+    session.update_workspace(&alice, Some(hers.id), Some(Grant::Read)).await.expect("shared with its members to read");
     let acl = world.runtime.entity_stores().workspaces.get(&alice, hers.id).await.unwrap().security_attributes.acl;
     assert_eq!(acl, [caelumora_model::security::AclEntry { subject: members, grant: Grant::Read }]);
-    session.set_workspace(&alice, Some(hers.id), Some(Grant::Write)).await.expect("and widened to write");
+    session.update_workspace(&alice, Some(hers.id), Some(Grant::Write)).await.expect("and widened to write");
     let acl = world.runtime.entity_stores().workspaces.get(&alice, hers.id).await.unwrap().security_attributes.acl;
     assert_eq!(acl, [caelumora_model::security::AclEntry { subject: members, grant: Grant::Write }], "one entry, widened");
 
-    assert!(denied(&session.set_workspace(&bob, None, None).await.unwrap_err()), "bob does not take it away");
-    session.set_workspace(&alice, None, None).await.expect("alice does");
+    assert!(denied(&session.update_workspace(&bob, None, None).await.unwrap_err()), "bob does not take it away");
+    session.update_workspace(&alice, None, None).await.expect("alice does");
     assert_eq!(session.session().workspace, None);
     assert_eq!(world.runtime.entity_stores().workspaces.get(&alice, hers.id).await.unwrap().security_attributes.acl.len(), 1, "the list is the workspace's, and stays");
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 /// In a session, a workspace is used through the channels (issue 251,
@@ -2636,7 +2636,7 @@ async fn a_workspace_is_used_in_a_channel_by_its_members_as_its_list_lets_them_w
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), None).await.unwrap();
+    session.update_workspace(&alice, Some(docs.id), None).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
     let in_main = |ctx: &SecurityContext| {
         let views = world.manager.views(Viewer::new(ctx.clone()));
@@ -2649,7 +2649,7 @@ async fn a_workspace_is_used_in_a_channel_by_its_members_as_its_list_lets_them_w
     let bobs = usable.expect("bob, a member of the channel, uses alice's workspace there");
     assert!(asked.ends_with(&checks(&["bob: GetWorkspace(alice's) yes", "bob: Publish yes", "bob: Publish yes"])), "its list, then both ways: {asked:?}");
     assert_eq!(bobs.id(), docs.id);
-    let in_channel = session.channel_by_id(main).expect("the channel");
+    let in_channel = session.channel(main).expect("the channel");
     let his = |need| in_channel.workspace_terminal(&bob, need);
     assert!(matches!(his(Grant::Write).await, Err(WorkspaceError::ReadOnly { .. })), "reading, not changing, where it grants reading");
     workspace(&world, docs.id).await.share(&alice, Subject::Group(GroupId::of_session(session_id)), Grant::Write).await.unwrap();
@@ -2667,7 +2667,7 @@ async fn a_workspace_is_used_in_a_channel_by_its_members_as_its_list_lets_them_w
 
     workspace(&world, docs.id).await.update_classification(&alice, Classification::PUBLIC).await.unwrap();
     assert!(in_main(&bob).await.workspace().await.unwrap().is_none(), "not where what is seen may not flow into it");
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 /// Issue 254: a command is its channel's, and runs on only as long as some
@@ -2681,7 +2681,7 @@ async fn a_command_runs_on_only_while_some_member_could_start_it_in_its_channel(
     let alice = World::as_user(world.alice);
     let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Read)).await.unwrap();
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Read)).await.unwrap();
     let (_, shell) = session.channels()[0].workspace_shell(&alice).await.unwrap();
     let shell = shell.expect("a shell");
     let id = shell.start("sleep 30").await.unwrap();
@@ -2722,7 +2722,7 @@ async fn a_command_runs_on_only_while_some_member_could_start_it_in_its_channel(
     let (_, shell) = channel.workspace_shell(&alice).await.unwrap();
     let shell = shell.expect("a shell");
     let id = shell.start("sleep 30").await.unwrap();
-    let (stopped, asked) = world.asked(world.manager.stop_session(&alice, session.id())).await;
+    let (stopped, asked) = world.asked(world.manager.stop(&alice, session.id())).await;
     assert!(stopped.unwrap());
     assert_eq!(asked, checks(&["alice: GetSession(alice's) yes", "alice: StopSession(alice's) yes"]));
     assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed);
@@ -2741,10 +2741,10 @@ async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let docs = workspaces.create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Read)).await.unwrap();
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Read)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
     // As `run_command` starts them: in the shell of the channel.
-    let in_channel = session.channel_by_id(main).expect("the channel");
+    let in_channel = session.channel(main).expect("the channel");
     let (_, shell) = in_channel.workspace_shell(&alice).await.unwrap();
     let started = shell.expect("a shell").start("sleep 30").await.unwrap();
     let terminal = workspace(&world, docs.id).await.terminal(&alice, Grant::Write).await.unwrap();
@@ -2765,7 +2765,7 @@ async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there
     let unknown = kill(&in_channel, &bob, &elsewhere).await;
     assert!(matches!(unknown, Err(WorkspaceError::Terminal(TerminalError::UnknownCommand(_)))), "not one of another channel: {unknown:?}");
     other.kill(&elsewhere, 0).await.unwrap();
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 /// Issue 23: a workspace is reached by its access list, wherever one acts -
@@ -2888,7 +2888,7 @@ async fn the_group_of_a_channels_participants_follows_who_takes_part() {
     assert!(!group.has_member(ActorId::User(world.bob)), "the group followed");
     let refused = world.runtime.group_manager().set_members(&World::as_user(world.alice), group.id, vec![world.bob]).await;
     assert!(matches!(refused, Err(GroupError::Participants(_))), "nor is it changed by hand, not even by its owner: {refused:?}");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// Who takes part in the session but not in the channel does not use the
@@ -2902,12 +2902,12 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
     let alice = World::as_user(world.alice);
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[waiting]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     // Continued for the agent with its owner's roles, as its controller gives them (issue 304).
     let as_agent = alice.next(ActorId::Agent(waiting), ActorId::User(world.alice), ActorId::User(world.alice)).with_roles(vec![*STAFF], None);
     let main = world.manager.views(Viewer::new(as_agent)).session(session.id()).await.unwrap().channel(session.channels()[0].id()).await.unwrap();
     assert!(main.workspace().await.unwrap().is_none());
-    world.manager.stop_session(&alice, session.id()).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 /// Waits until `events` has received each of `wanted`, in any order -
@@ -2936,11 +2936,11 @@ async fn the_groups_of_a_session_go_and_come_back_with_it_announced() {
     let (of_session, of_channel) = (GroupId::of_session(session_id), GroupId::of_channel(main));
 
     let mut bobs = world.runtime.event_bus().subscribe_as(World::as_user(world.bob));
-    world.manager.stop_session(&alice, session_id).await.unwrap();
-    world.manager.delete_session(&alice, session_id).await.unwrap();
+    world.manager.stop(&alice, session_id).await.unwrap();
+    world.manager.delete(&alice, session_id).await.unwrap();
     hears(&mut bobs, [GlobalEvent::deleted::<Group>(&of_session), GlobalEvent::deleted::<Group>(&of_channel)]).await;
 
-    world.manager.restore_session(&alice, session_id).await.unwrap();
+    world.manager.restore(&alice, session_id).await.unwrap();
     hears(&mut bobs, [GlobalEvent::restored::<Group>(&of_session), GlobalEvent::restored::<Group>(&of_channel)]).await;
 }
 
@@ -2960,14 +2960,14 @@ async fn the_group_of_a_sessions_participants_follows_it_whoever_may_delete_grou
     let mut of_session = groups.get(&system, GroupId::of_session(session_id)).await.unwrap();
     of_session.security_attributes.owner_id = ActorId::User(world.bob);
     groups.update(&system, &of_session).await.unwrap();
-    world.manager.stop_session(&alice, session_id).await.unwrap();
+    world.manager.stop(&alice, session_id).await.unwrap();
 
-    let (deleted, asked) = world.asked(world.manager.delete_session(&alice, session_id)).await;
+    let (deleted, asked) = world.asked(world.manager.delete(&alice, session_id)).await;
     assert!(deleted.expect("hers to delete"), "deleted");
     assert!(!asked.iter().any(|line| line.contains("Group")), "nothing asked of her about the groups: {asked:?}");
     assert!(groups.get_deleted(&system, of_session.id).await.is_ok(), "the group went with it");
 
-    let (restored, asked) = world.asked(world.manager.restore_session(&alice, session_id)).await;
+    let (restored, asked) = world.asked(world.manager.restore(&alice, session_id)).await;
     restored.expect("hers to restore");
     assert!(!asked.iter().any(|line| line.contains("Group")), "nothing asked of her about the groups: {asked:?}");
     assert!(groups.get(&system, of_session.id).await.is_ok(), "and came back with it");
@@ -3006,9 +3006,9 @@ async fn an_entry_naming_a_group_that_is_gone_is_dropped_as_the_list_is_stored()
     let renamed = Arc::clone(&controller.load());
     assert_eq!(named(&renamed), both[1..], "a team purged loses it as the workspace is stored again");
 
-    world.manager.stop_session(&alice, session_id).await.unwrap();
-    world.manager.delete_session(&alice, session_id).await.unwrap();
-    world.manager.purge_session(&system, session_id).await.unwrap();
+    world.manager.stop(&alice, session_id).await.unwrap();
+    world.manager.delete(&alice, session_id).await.unwrap();
+    world.manager.purge(&system, session_id).await.unwrap();
     controller.update_access(&alice, renamed.security_attributes.acl.clone()).await.unwrap();
     let kept = Arc::clone(&controller.load());
     assert!(named(&kept).is_empty(), "the participants of a session purged too, also as the list is written: {:?}", named(&kept));
@@ -3086,18 +3086,18 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
 
     assert_eq!(made.security_attributes.acl, [AclEntry { subject: Subject::Group(GroupId::of_session(first.id())), grant: Grant::Write }], "its members' to work on (issue 23)");
     assert!(workspace(&world, mine).await.terminal(&alice, Grant::Write).await.is_ok(), "used directly, wherever who may use it acts (issue 23)");
-    let refused = second.set_workspace(&alice, Some(mine), None).await.unwrap_err();
+    let refused = second.update_workspace(&alice, Some(mine), None).await.unwrap_err();
     assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::WorkspaceOutOfScope(_))), "nor attached to another session: {refused}");
 
-    world.manager.delete_session(&alice, first.id()).await.unwrap();
+    world.manager.delete(&alice, first.id()).await.unwrap();
     assert!(world.runtime.entity_stores().workspaces.get_deleted(&alice, mine).await.is_ok(), "deleted with it");
-    world.manager.restore_session(&alice, first.id()).await.unwrap();
+    world.manager.restore(&alice, first.id()).await.unwrap();
     assert!(world.runtime.entity_stores().workspaces.get(&alice, mine).await.is_ok(), "restored with it");
-    world.manager.delete_session(&alice, first.id()).await.unwrap();
-    world.manager.purge_session(&World::system(), first.id()).await.unwrap();
+    world.manager.delete(&alice, first.id()).await.unwrap();
+    world.manager.purge(&World::system(), first.id()).await.unwrap();
     assert!(!world.files.path().join(mine.to_string()).exists(), "purged with it, its files too");
     assert!(world.files.path().join(others.to_string()).is_dir(), "the other session's stays");
-    world.manager.stop_session(&alice, second.id()).await.unwrap();
+    world.manager.stop(&alice, second.id()).await.unwrap();
 }
 
 /// A template that names a workspace in its owner's scope finds it there:
@@ -3119,9 +3119,9 @@ async fn a_workspace_of_the_user_s_scope_is_found_by_every_session_of_theirs() {
     let refused = world.manager.create_from_template(&alice, elsewhere, None, None).await.unwrap_err();
     assert!(matches!(refused.downcast_ref::<TemplateError>(), Some(TemplateError::WorkspaceNameTaken(_))), "{refused}");
     for session in [first, second] {
-        world.manager.stop_session(&alice, session.id()).await.unwrap();
+        world.manager.stop(&alice, session.id()).await.unwrap();
     }
-    world.manager.stop_session(&World::as_user(world.bob), bobs.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.bob), bobs.id()).await.unwrap();
 }
 
 /// A workspace chosen as a session is made takes the place of its
@@ -3172,7 +3172,7 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
     let names: Vec<String> = views().workspaces().await.unwrap().iter().map(|w| w.name().to_string()).collect();
     assert!(!names.contains(&"files".to_string()), "the template's was never made: {names:?}");
     for session in [without, attached, made] {
-        world.manager.stop_session(&alice, session.id()).await.unwrap();
+        world.manager.stop(&alice, session.id()).await.unwrap();
     }
 }
 
@@ -3197,7 +3197,7 @@ async fn a_workspace_is_made_in_a_session_s_scope_only_by_who_may_read_the_sessi
     let (made, asked) = world.asked(workspaces.create(&bob, "files", scope.clone(), "main", None, Classification::PUBLIC)).await;
     assert_eq!(made.expect("by a member, who reads it").name.scope, scope);
     assert!(asked.ends_with(&checks(&["bob: CreateWorkspace(bob's) yes", "bob: GetSession(alice's) yes", "bob: CreateWorkspace(bob's) yes"])), "{asked:?}");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- Commands an agent carries out itself (issue 269) ------------------------
@@ -3248,7 +3248,7 @@ async fn with_a_commanded_agent() -> (World, Arc<SessionLoop>, Arc<caelumora_run
     let helper = world.agent("helper", world.alice, &commanded).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let his = main.user_actor(world.bob).expect("he takes part").watch();
     (world, session, main, seen, his)
 }
@@ -3268,7 +3268,7 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let bob = main.user_actor(world.bob).unwrap();
 
     let (reply, asked) = world.asked(bob.execute_command("help", "")).await;
@@ -3282,7 +3282,7 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
         "bob: ShowCommand(alice's) yes",
         "bob: ShowCommand(alice's) yes",
     ], "by the channel's attributes: the command, then what /help lists");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// A command of an agent (issue 269) is seen and asked for by whoever may
@@ -3314,7 +3314,7 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
     let mut hers = main.user_actor(world.alice).unwrap().watch();
     main.user_actor(world.alice).unwrap().execute_command("seal", "@helper").await.expect("hers, as its owner");
     assert!(matches!(shown(&mut hers, "CommandExecuted").await, caelumora_model::actor::ActorEvent::CommandExecuted { ref output, .. } if output == "seal: done"));
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// An agent carries a command out for its owner, on the word of whoever
@@ -3329,7 +3329,7 @@ async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
     shown(&mut his, "CommandExecuted").await;
     let turn = seen.lock().unwrap().pop().expect("carried out");
     assert_eq!((turn.caller_id, turn.principal_id, turn.initiator_id), (helper, ActorId::User(world.alice), ActorId::User(world.bob)));
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 // --- Compaction (issue 16) --------------------------------------------------------
@@ -3352,7 +3352,7 @@ async fn only_an_agents_owner_compacts_its_context() {
     let helper = world.agent("helper", world.alice, &compacting).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
-    world.manager.open_session(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
 
     let (refused, asked) = world.asked(main.user_actor(world.bob).unwrap().execute_command("compact", "@helper")).await;
     let refused = refused.expect_err("not his");
@@ -3363,5 +3363,5 @@ async fn only_an_agents_owner_compacts_its_context() {
     main.user_actor(world.alice).unwrap().execute_command("compact", "@helper").await.expect("hers, as its owner");
     assert!(matches!(shown(&mut hers, "CommandFailed").await, caelumora_model::actor::ActorEvent::CommandFailed { ref reason, .. } if reason.contains("nothing to compact")),
         "carried out for her by the agent, which has nothing to compact yet");
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }

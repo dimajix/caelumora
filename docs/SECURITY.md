@@ -482,7 +482,7 @@ The store asks again as it stores (rule 2): that pair is the rule, not a double.
 was checked - cancelling or waking a channel or an actor, interrupting a tool call, removing a
 participant, deleting a channel, a request to answer again the channel admitted - and know no
 caller. So that this holds by structure rather than by discipline, the `Actor` trait, the
-`Moderator` trait that is handed actors, and `ChannelLoop::actor_by_id` are crate-internal: a
+`Moderator` trait that is handed actors, and `ChannelLoop::actor` are crate-internal: a
 frontend reaches its user's actor through `ChannelLoop::user_actor`, but none of the control
 methods.
 

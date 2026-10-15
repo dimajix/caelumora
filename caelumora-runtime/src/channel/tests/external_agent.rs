@@ -132,7 +132,7 @@ async fn an_external_agent_that_joins_keeps_what_it_may_see_and_on_joining_again
     let said = |text: &str| message(context.initiator_id, text);
     let (one, two, three) = (said("one"), said("two"), said("three"));
     let own = message(ActorId::Agent(agent), "mine");
-    let actor = channel.actor_by_id(ActorId::Agent(agent)).unwrap();
+    let actor = channel.actor(ActorId::Agent(agent)).unwrap();
     let kept = || async {
         channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap()
             .history.messages().into_iter().map(|m| m.content.unwrap()).collect::<Vec<_>>()
@@ -1194,5 +1194,5 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     assert_eq!(second.len(), 1, "{second:?}");
     assert!(second[0].contains("- bob (@bob), a person.\n"), "the whole roster again: {}", second[0]);
     assert!(second[0].ends_with("Since you were last told who is here:\n- Joined: bob (@bob), a person."), "{}", second[0]);
-    manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+    manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
 }

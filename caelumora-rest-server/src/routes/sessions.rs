@@ -79,7 +79,7 @@ pub async fn agent_private_notes(
 /// does. It is not started; opening it starts it.
 pub async fn restore_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
-    state.session_manager.restore_session(&user.security_context(), session_id).await?;
+    state.session_manager.restore(&user.security_context(), session_id).await?;
     Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
 }
 
@@ -87,16 +87,16 @@ pub async fn restore_session(State(state): State<Arc<AppState>>, Path(id): Path<
 /// state (issue 164) - as the policy allows, by default the system's alone.
 pub async fn purge_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let session_id = SessionId(id);
-    state.session_manager.purge_session(&user.security_context(), session_id).await?;
+    state.session_manager.purge(&user.security_context(), session_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn delete_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let session_id = SessionId(id);
-    // `delete_session` stops the running loop, marks the session deleted -
+    // `SessionManager::delete` stops the running loop, marks the session deleted -
     // kept with its channels until it is purged (issue 164) - and emits the
     // corresponding lifecycle events.
-    state.session_manager.delete_session(&user.security_context(), session_id).await?;
+    state.session_manager.delete(&user.security_context(), session_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

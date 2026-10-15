@@ -103,7 +103,7 @@ async fn with_the_tool(world: &World, params: Value) -> (Arc<SessionLoop>, Agent
     let helper = world.agent("helper", world.alice, &personality).await;
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[helper], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let tool = ArtifactTool::new(&params, manager(world)).expect("parameters it takes");
     (session, helper, docs, tool)
 }
@@ -141,7 +141,7 @@ async fn a_file_is_published_as_versions_of_an_artifact_kept_apart_from_the_work
     let long = tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out/x.csv", "name": "x".repeat(101) }), None, &mut turn).await;
     assert!(matches!(long, Err(ToolError::InvalidParameter(_))), "a name of at most 100 characters: {long:?}");
     drop(turn);
-    world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 #[tokio::test]
@@ -249,9 +249,9 @@ async fn the_routes_serve_artifacts_as_the_web_ui_knows_them() {
     let alice = World::as_user(world.alice);
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = session.channel_by_id(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.unwrap();
+    let (_, terminal) = session.channel(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.unwrap();
     let at = WorkspacePath::parse("report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
     let (artifact, _) = publish(&world, &alice, session_id, main, &at, "report.csv", Some("The figures")).await.unwrap();
@@ -274,7 +274,7 @@ async fn the_routes_serve_artifacts_as_the_web_ui_knows_them() {
     let (status, body) = get(&api, &his, &format!("/artifacts/{}", ArtifactId::new())).await;
     let problem: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!((status, problem["code"].clone()), (StatusCode::NOT_FOUND, json!("artifact_not_found")));
-    world.manager.stop_session(&alice, session_id).await.unwrap();
+    world.manager.stop(&alice, session_id).await.unwrap();
 }
 
 // --- Who may do what (issues 271, 23, 316, the security suite) -------------
@@ -284,8 +284,8 @@ async fn the_routes_serve_artifacts_as_the_web_ui_knows_them() {
 /// (issue 296): the workspace reached there for reading, the file read, and
 /// what was read handed to the `ArtifactManager`.
 async fn publish(world: &World, ctx: &SecurityContext, session: SessionId, channel: ChannelId, at: &WorkspacePath, name: &str, description: Option<&str>) -> Result<(Artifact, u32), ArtifactError> {
-    let running = world.manager.open_session(&World::system(), session).await.expect("the session");
-    let (workspace, terminal) = running.channel_by_id(channel).expect("the channel").workspace_terminal(ctx, Grant::Read).await.expect("the workspace, to read");
+    let running = world.manager.open(&World::system(), session).await.expect("the session");
+    let (workspace, terminal) = running.channel(channel).expect("the channel").workspace_terminal(ctx, Grant::Read).await.expect("the workspace, to read");
     let content = terminal.read(at).await.expect("the file");
     manager(world).publish(ctx, content, &workspace.classification, name, description, session, channel).await
 }
@@ -303,9 +303,9 @@ async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
     let groups = world.runtime.group_manager();
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = session.channel_by_id(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.expect("hers to use");
+    let (_, terminal) = session.channel(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.expect("hers to use");
     let at = WorkspacePath::parse("report.md").unwrap();
     terminal.write(&at, file("final"), 100).await.unwrap();
     let (whole, _) = publish(&world, &alice, session_id, main, &at, "report.md", None).await.expect("one to share with its versions");
@@ -335,7 +335,7 @@ async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
     assert!(listed(&bob).await.is_empty(), "who is not in the team does not");
     groups.set_members(&alice, project.id, Vec::new()).await.unwrap();
     assert!(listed(&carol).await.is_empty(), "who left it no longer does");
-    world.manager.stop_session(&alice, session_id).await.unwrap();
+    world.manager.stop(&alice, session_id).await.unwrap();
 }
 
 /// The content of an artifact's version, as text.
@@ -382,13 +382,13 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
     let in_main = |ctx: &SecurityContext| {
         let views = world.manager.views(Viewer::new(ctx.clone()));
         async move { views.session(session_id).await.unwrap().channel(main).await.unwrap() }
     };
-    let (_, terminal) = session.channel_by_id(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.expect("hers to use");
+    let (_, terminal) = session.channel(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.expect("hers to use");
     let at = WorkspacePath::parse("out/report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
 
@@ -435,9 +435,9 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     assert_eq!(kept_one.name.scope, Scope::UserScope { user_id: world.alice });
     let (left, _) = publish(&world, &alice, session_id, main, &at, "draft.csv", None).await.unwrap();
 
-    world.manager.stop_session(&alice, session_id).await.unwrap();
-    world.manager.delete_session(&alice, session_id).await.unwrap();
-    world.manager.purge_session(&World::system(), session_id).await.unwrap();
+    world.manager.stop(&alice, session_id).await.unwrap();
+    world.manager.delete(&alice, session_id).await.unwrap();
+    world.manager.purge(&World::system(), session_id).await.unwrap();
     assert!(store(&world).get(&alice, artifact.id).await.is_ok(), "what was kept stays");
     assert!(world.files.path().join("artifacts").join(artifact.id.to_string()).is_dir(), "with its content");
     assert!(store(&world).get_deleted(&World::system(), left.id).await.is_err(), "what was not kept went with the session");
@@ -452,9 +452,9 @@ async fn session_with_artifacts(world: &World) -> (Arc<SessionLoop>, Artifact, A
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = session.channel_by_id(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.unwrap();
+    let (_, terminal) = session.channel(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.unwrap();
     let at = WorkspacePath::parse("out/report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
     let (hers, _) = publish(world, &alice, session_id, main, &at, "hers.csv", None).await.unwrap();
@@ -475,7 +475,7 @@ async fn an_artifact_goes_with_its_session_only_as_far_as_whoever_deletes_it_may
     let (session, hers, his) = session_with_artifacts(&world).await;
     let session_id = session.id();
 
-    let (refused, asked) = world.asked(world.manager.delete_session(&alice, session_id)).await;
+    let (refused, asked) = world.asked(world.manager.delete(&alice, session_id)).await;
     let refused = refused.expect_err("bob's artifact is left");
     assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::ScopeNotEmpty { left, .. }) if *left == [(Artifact::KIND, 1)]), "{refused}");
     assert!(refused.to_string().contains("1 artifact") && !refused.to_string().contains("his.csv"), "what is left, by kind, not by name: {refused}");
@@ -501,7 +501,7 @@ async fn an_artifact_goes_with_its_session_only_as_far_as_whoever_deletes_it_may
     assert_eq!(removal.by, ActorId::User(world.alice), "in her name");
 
     manager(&world).keep(&bob, his.id, Scope::UserScope { user_id: world.bob }).await.expect("bob keeps his");
-    assert!(world.manager.delete_session(&alice, session_id).await.expect("nothing of anybody else's is left"));
+    assert!(world.manager.delete(&alice, session_id).await.expect("nothing of anybody else's is left"));
     assert!(store(&world).get(&bob, his.id).await.is_ok(), "what bob kept stays");
 }
 
@@ -515,9 +515,9 @@ async fn an_artifact_comes_back_with_its_session_as_far_as_whoever_restores_it_m
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let (session, hers, his) = session_with_artifacts(&world).await;
     let session_id = session.id();
-    world.manager.delete_session(&World::system(), session_id).await.expect("the system's to delete, all of it");
+    world.manager.delete(&World::system(), session_id).await.expect("the system's to delete, all of it");
 
-    let (restored, asked) = world.asked(world.manager.restore_session(&alice, session_id)).await;
+    let (restored, asked) = world.asked(world.manager.restore(&alice, session_id)).await;
     restored.expect("restored all the same");
     assert!(asked.contains(&"alice: ReadDeletedArtifact(bob's) no".to_string()), "asked in her name: {asked:?}");
     assert!(store(&world).get(&alice, hers.id).await.is_ok(), "hers comes back with it");
@@ -536,9 +536,9 @@ async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_i
     let alice = World::as_user(world.alice);
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let (session_id, main) = (session.id(), session.channels()[0].id());
-    let (_, terminal) = session.channel_by_id(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.unwrap();
+    let (_, terminal) = session.channel(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.unwrap();
     let at = WorkspacePath::parse("out/report.csv").unwrap();
     terminal.write(&at, file("a,b"), 100).await.unwrap();
     let (artifact, _) = publish(&world, &alice, session_id, main, &at, "report.csv", None).await.unwrap();
@@ -547,11 +547,11 @@ async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_i
     assert_eq!(artifact.security_attributes.acl, [AclEntry { subject: Subject::Group(of_channel), grant: Grant::Read }], "bob reads it as a member of the channel");
 
     let mut bobs = world.runtime.event_bus().subscribe_as(World::as_user(world.bob));
-    world.manager.stop_session(&alice, session_id).await.unwrap();
-    world.manager.delete_session(&alice, session_id).await.unwrap();
+    world.manager.stop(&alice, session_id).await.unwrap();
+    world.manager.delete(&alice, session_id).await.unwrap();
     hears(&mut bobs, [GlobalEvent::deleted::<Artifact>(&id), GlobalEvent::deleted::<Group>(&of_session), GlobalEvent::deleted::<Group>(&of_channel)]).await;
 
-    world.manager.restore_session(&alice, session_id).await.unwrap();
+    world.manager.restore(&alice, session_id).await.unwrap();
     hears(&mut bobs, [GlobalEvent::restored::<Artifact>(&id), GlobalEvent::restored::<Group>(&of_session), GlobalEvent::restored::<Group>(&of_channel)]).await;
 }
 
@@ -566,13 +566,13 @@ async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let drafts = session.create_channel(&alice, ChannelSpec { name: "drafts".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.expect("hers alone").id();
     let (session_id, main) = (session.id(), session.channels()[0].id());
     let write_in = |channel, text| {
         let (alice, session) = (&alice, &session);
         async move {
-            let (_, terminal) = session.channel_by_id(channel).expect("the channel").workspace_terminal(alice, Grant::Write).await.expect("hers to use");
+            let (_, terminal) = session.channel(channel).expect("the channel").workspace_terminal(alice, Grant::Write).await.expect("hers to use");
             terminal.write(&WorkspacePath::parse("report.md").unwrap(), file(text), 100).await.unwrap();
         }
     };
@@ -606,7 +606,7 @@ async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     let theirs = world.manager.views(Viewer::new(carol.clone())).artifact(artifact.id).await.expect("shared with carol").snapshot_with_publications().await;
     assert_eq!(theirs.artifact.versions.len(), 2, "carol reads both");
     assert!(theirs.publications.is_empty(), "but not where they were published, nor by whom");
-    world.manager.stop_session(&alice, session_id).await.unwrap();
+    world.manager.stop(&alice, session_id).await.unwrap();
 }
 
 /// An artifact kept beyond its session (issue 347) names the channel it was
@@ -619,10 +619,10 @@ async fn an_artifact_kept_beyond_its_session_drops_its_channel_once_that_is_purg
     let alice = World::as_user(world.alice);
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
-    session.set_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let session_id = session.id();
     let main = session.channels()[0].id();
-    let (_, terminal) = session.channel_by_id(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.expect("hers to use");
+    let (_, terminal) = session.channel(main).expect("the channel").workspace_terminal(&alice, Grant::Write).await.expect("hers to use");
     let at = WorkspacePath::parse("report.md").unwrap();
     terminal.write(&at, file("final"), 100).await.unwrap();
     let (artifact, _) = publish(&world, &alice, session_id, main, &at, "report.md", None).await.unwrap();
@@ -630,9 +630,9 @@ async fn an_artifact_kept_beyond_its_session_drops_its_channel_once_that_is_purg
     let members = AclEntry { subject: Subject::Group(GroupId::of_channel(main)), grant: Grant::Read };
     assert_eq!((kept.security_attributes.acl.as_slice(), kept.versions[0].acl.as_slice()), ([members].as_slice(), [members].as_slice()), "read by the channel's members");
 
-    world.manager.stop_session(&alice, session_id).await.unwrap();
-    world.manager.delete_session(&alice, session_id).await.unwrap();
-    world.manager.purge_session(&World::system(), session_id).await.unwrap();
+    world.manager.stop(&alice, session_id).await.unwrap();
+    world.manager.delete(&alice, session_id).await.unwrap();
+    world.manager.purge(&World::system(), session_id).await.unwrap();
     let described = manager(&world).describe(&alice, artifact.id, Some("The report")).await.expect("still hers");
     assert!(described.security_attributes.acl.is_empty() && described.versions[0].acl.is_empty(), "the entries go as it is stored: {described:?}");
 }

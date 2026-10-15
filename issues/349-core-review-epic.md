@@ -1,6 +1,6 @@
 # 349 — Refactoring epic: the review of agents, sessions and channels of 2026-10-14
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -95,3 +95,4 @@ order along the way.
   at the maintainer's request, with the other moves of files; 368 taken up after 364.
 - **2026-10-15** — [369](369-security-module.md) added to step 10 at the maintainer's request,
   after 365, whose rename it builds on.
+- **2026-10-15** — Done: every issue of the order is done, 354 last.

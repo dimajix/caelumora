@@ -1,6 +1,6 @@
 # 354 — Names around sessions, channels and actors follow several schemes
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -76,3 +76,32 @@ cheapest part of the API to keep consistent and the most visible.
   are what REST and the web UI see and are decided here as the consideration above says.
   `SourceKind` has the four kinds of the `ActorKind` proposed above, one variant each; the latter
   could be read off the former.
+- **2026-10-15** — Done, in a commit of its own, with the maintainer's decisions on the code as it
+  had become:
+  - `SessionManager`: `create`, `open`, `stop`, `delete`, `restore`, `purge`, as the other
+    managers. `find` and `running` stay apart: `find` asks whether the caller may read the session
+    and answers it running or stored, `running` is the runtime's own look at what runs.
+  - Finders: `SessionLoop::channel(id)`, `channel_named`, `channel_for`; `ChannelLoop::actor(id)`;
+    `user_actor`, `agents_named` and `participants_named` stayed as they were.
+  - `Member` → `ActorSource`, `MemberKind` → `SourceKind`, `Participation::member_of` and
+    `ChannelLoop::member_of` → `source_of`, `ChannelActor::member` → `source`,
+    `SessionLoop::member_to_take_in` → `source_to_take_in`, `start_member` → `start_source`.
+    `ChannelMember`, `members()` and `MemberView` stay - "member" is what the views and REST call
+    a participant of a channel as it is now -, and `actor_ids()` became `member_ids()`, their pair.
+  - The kind of an actor as a string is gone instead of becoming an enum: nothing but two tests
+    read `Actor::kind()` or `ChannelMember::kind`, and REST tells the kinds apart by the id
+    (`ParticipantKind::of`). The tests ask the `ActorId`.
+  - `ChannelLoop::put` → `address_questions`, `SessionLoop::set_workspace` → `update_workspace`.
+  - `ExternalAgentActor::speaking_for` became `Answering::continuing(&Work)`, which
+    `Turn::answering` uses as well. The external agent continued the work's contexts once more
+    (`EventContext::next`), so that what came of a task later answered a template id no event
+    carries (since 352), one level deeper in the span; it now answers the request, as a turn does.
+  - The agent's steps: `handle_llm_turn` → `handle_planning`; `Reflecting` and `Cancelling` have
+    a step each, `handle_reflecting` and `handle_cancelling`, over the shared `end_turn` - the
+    former is where an agent would one day do something once a turn succeeded (keep what is worth
+    remembering), which a cancelled one does not.
+  - The undo step is a rollback, not an undo - what failed half-way is set back to how it was
+    before, and "taken back" already means a message revoked: `SessionManager::roll_back_creation`
+    (`take_back`), `SessionLoop::roll_back_channel_creation` (`discard_channel`) and
+    `roll_back_channel_deletion` (`keep_channel`); the inline rollbacks say so in their comments.
+  - CODING-GUIDELINES.md names the manager verbs, the finders and rolling back.

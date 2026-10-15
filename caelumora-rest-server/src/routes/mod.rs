@@ -34,7 +34,7 @@ pub async fn ensure_session(
 ) -> Result<Arc<SessionLoop>, ApiError> {
     // The running session, or loaded from the store and started - either way
     // only if this user may read it (issue 11).
-    Ok(state.session_manager.open_session(&user.security_context(), session_id).await?)
+    Ok(state.session_manager.open(&user.security_context(), session_id).await?)
 }
 
 /// Session `session_id` and its channel `channel_id`, as `user` may read

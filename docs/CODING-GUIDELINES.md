@@ -75,6 +75,10 @@ it: `AgentManager`, `SessionManager`, `WorkspaceManager`, `GroupManager`, `Contr
 what its parts share, and its exports, so that the manager's methods and tests do not bury them.
 Test helpers the module offers to other modules' tests are its `testing.rs` (issue 364).
 
+Its methods are named by the verbs of the lifecycle, without the kind - the manager names it:
+`create`, `delete`, `restore` and `purge`, and for what runs, `open` and `stop`
+(`SessionManager::open`, `AgentManager::delete`; issue 354).
+
 ### Small return values
 
 A function that returns two values, called from a few places close to it - inside its module or
@@ -102,6 +106,11 @@ A running object - `SessionLoop`, `ChannelLoop`, `ActorRuntime` - and the stored
 *   **One name, one kind of thing.** `channel()` and `session()` return the entity's document as it
     is now; `channel_loop()` and `session_loop()` the running object above; loading any stored
     entity is `load_…` (`ActorRuntime::load_session`).
+*   **Found by id, by name, for someone.** What a running object holds is found by its id under
+    the plain name of what it is (`SessionLoop::channel(id)`, `ChannelLoop::actor(id)`), by its name
+    with `_named` (`SessionLoop::channel_named`, `ChannelLoop::agents_named`), and in someone's name
+    - who may reach it, asked - with `_for` (`SessionLoop::channel_for(context, id)`); never
+    `_by_id` or `_by_name` (issue 354).
 
 ### Services are held, not fetched
 
@@ -184,6 +193,14 @@ A new error type of the core meant for users must meet the rules above and be ad
 `user_message`. A plugin's error type is never added there: where the plugin answers the core, it
 answers in a type of the core's (see
 [PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-core-in-the-cores-types)).
+
+### Rolling back
+
+An operation that stored something and then fails part of the way is rolled back: what it stored
+is set back to how it was before - in the runtime's name, since the operation was permitted -, and
+its caller gets the error. A step that does so is named `roll_back_…` after what it rolls back
+(`SessionManager::roll_back_creation`, `SessionLoop::roll_back_channel_deletion`). It is no
+transaction: what cannot be set back is logged and stays (issue 354).
 
 ### Errors in a turn end the turn, not the agent
 

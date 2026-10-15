@@ -188,8 +188,20 @@ impl AgentActor {
         self.body.store(state).await;
     }
 
-    /// Takes the turn under way in `state` over and ends it - after
-    /// `Reflecting`, or after a cancel - and returns the state the agent
+    /// Ends the turn under way in `state`, which came to its end: the step
+    /// for what the agent does once a turn is done, before it is taken over.
+    async fn handle_reflecting(&self, state: &mut AgentChannelState, output: &dyn EventSender) -> Result<ActorState> {
+        self.end_turn(state, false, output).await
+    }
+
+    /// Ends the turn under way in `state`, which was cancelled: nothing of
+    /// it is reflected on.
+    async fn handle_cancelling(&self, state: &mut AgentChannelState, output: &dyn EventSender) -> Result<ActorState> {
+        self.end_turn(state, true, output).await
+    }
+
+    /// Takes the turn under way in `state` over and ends it - reflected on
+    /// (`handle_reflecting`), or cancelled (`handle_cancelling`) - and returns the state the agent
     /// lands in: the one a tool requested (the stop tool), or `Idle`; a
     /// cancelled turn lands `Idle` whatever was requested.
     ///
@@ -518,7 +530,7 @@ impl AgentActor {
     /// `IntermediatePartialGenerated`/`IntermediateMessageGenerated` instead
     /// of the `Partial`/`Complete` variants, and is excluded from `history`
     /// in `end_turn`.
-    async fn handle_llm_turn(
+    async fn handle_planning(
         &self,
         turn: &mut Turn<'_>,
         output: &dyn EventSender,
@@ -791,9 +803,6 @@ impl Actor for AgentActor {
     fn id(&self) -> ActorId {
         self.body.id()
     }
-    fn kind(&self) -> String {
-        "agent".to_string()
-    }
     fn name(&self) -> Name {
         self.body.name()
     }
@@ -895,11 +904,11 @@ impl Actor for AgentActor {
                 ActorState::WaitingForUser => {
                     self.handle_waiting_for_user(&mut self.turn_under_way(&mut state)?, &mut rx, &*output).await?
                 }
-                ActorState::Planning => Some(self.handle_llm_turn(&mut self.turn_under_way(&mut state)?, &*output).await?),
+                ActorState::Planning => Some(self.handle_planning(&mut self.turn_under_way(&mut state)?, &*output).await?),
                 ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut self.turn_under_way(&mut state)?, &*output).await?),
                 ActorState::Busy => Some(self.handle_busy(&mut self.turn_under_way(&mut state)?, &*output).await?),
-                ActorState::Cancelling => Some(self.end_turn(&mut state, true, &*output).await?),
-                ActorState::Reflecting => Some(self.end_turn(&mut state, false, &*output).await?),
+                ActorState::Cancelling => Some(self.handle_cancelling(&mut state, &*output).await?),
+                ActorState::Reflecting => Some(self.handle_reflecting(&mut state, &*output).await?),
             }) }.instrument(span.clone()).await;
 
             // A failure inside a turn ends the turn, not the agent (issue 02).

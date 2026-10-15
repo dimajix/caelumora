@@ -210,7 +210,7 @@ mod tests {
         assert!(prompt.text.contains("\"de\""), "{}", prompt.text);
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));
 
-        let running = session_loop.channel_by_id(channel.id).expect("the channel runs");
+        let running = session_loop.channel(channel.id).expect("the channel runs");
         running.update_language(&system, Some("fr")).await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(prompt.text.contains("\"fr\""), "the language as it is now: {}", prompt.text);

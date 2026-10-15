@@ -281,10 +281,6 @@ impl Actor for ApproverActor {
         self.id
     }
 
-    fn kind(&self) -> String {
-        "approver".to_string()
-    }
-
     fn name(&self) -> Name {
         ActorId::approver_name()
     }
@@ -466,7 +462,7 @@ mod tests {
         let executor = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
         let session_id = channel.session_id;
         let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(executor), session_id)).await.unwrap();
-        let actor: Arc<dyn Any + Send + Sync> = channel.actor_by_id(ActorId::Approver(approver.id)).unwrap();
+        let actor: Arc<dyn Any + Send + Sync> = channel.actor(ActorId::Approver(approver.id)).unwrap();
         let approver = Arc::downcast::<ApproverActor>(actor).unwrap();
 
         let (input, rx) = mpsc::channel(100);

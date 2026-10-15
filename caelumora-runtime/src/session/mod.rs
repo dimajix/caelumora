@@ -436,7 +436,7 @@ mod tests {
         };
         tokio::time::timeout(std::time::Duration::from_secs(2), renamed).await.expect("both channels show the new name");
         assert_eq!(first.user_actor(other.as_user_id().unwrap()).unwrap().name(), "other", "nobody else is renamed");
-        manager.stop_session(&SecurityContext::system(), session.id()).await.unwrap();
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
 }
