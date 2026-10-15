@@ -18,7 +18,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::digest::Digest;
-use caelumora_model::history::{HistoryEntry, MessageHistory};
+use caelumora_model::history::{HistoryEntry, History};
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::store::EntityKind;
 use caelumora_model::transcript::{as_they_stand, TranscriptEntry};
@@ -148,7 +148,7 @@ fn given_in(entries: &[Entry], read: &HashMap<MessageId, Vec<Given>>) -> Vec<Giv
 
 /// What each message of `history` was produced after reading, by message:
 /// the entities its context records as knowledge.
-fn given_read(history: &MessageHistory) -> HashMap<MessageId, Vec<Given>> {
+fn given_read(history: &History) -> HashMap<MessageId, Vec<Given>> {
     history.all_entries()
         .filter_map(|node| match &node.entry {
             HistoryEntry::Said { message, context: Some(context) } => Some((message.id, context.knowledge.iter().filter_map(|k| given(&k.source)).collect::<Vec<_>>())),

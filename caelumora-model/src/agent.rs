@@ -6,7 +6,7 @@ use crate::confidentiality::Classification;
 use crate::context::{ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptRef};
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
-use crate::history::{HistoryEntry, MessageHistory};
+use crate::history::{HistoryEntry, History};
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
 use crate::memory::{Memories, MemoryChain};
@@ -307,7 +307,7 @@ pub struct AgentChannelState {
     /// The conversation of the channel as the agent keeps it - all that was
     /// offered to it (issue 196) - each of its own messages with what it was
     /// produced from (issue 06).
-    pub history: MessageHistory,
+    pub history: History,
     /// What the agent's model is given of the conversation: its own
     /// messages in full, internal steps included, and what others said
     /// (issue 50). Of an external agent, what the remote agent was given,

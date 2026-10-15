@@ -20,7 +20,7 @@ without discarding the whole session.
 
 ## Considerations
 
-- The hard part is not the UI, it is the state. `MessageHistory` is shared input to the agent's
+- The hard part is not the UI, it is the state. `History` is shared input to the agent's
   cognitive cycle; truncating it means deciding what happens to everything derived from the
   truncated turns — context, tool results, and any effect the tools had on the outside world. A
   retried turn cannot un-send an email. See [20](20-transactional-effects.md).
@@ -44,7 +44,7 @@ point instead of a new answer, and comes later.
 ### What exists and helps
 
 - Every `Message` has a `prev_id`, and since [06](06-context-in-message-for-auditability.md) every
-  entry of a `MessageHistory` and `MessageContext` stores a digest that covers its predecessor's
+  entry of a `History` and `MessageContext` stores a digest that covers its predecessor's
   digest. The data is already a chain; a tree is "several entries with the same predecessor".
 - Stored digests stay valid in a tree: an entry's digest depends only on its own path. The
   `ContextRef`s of old answers keep pointing at what the agent saw, even after a branch was
@@ -67,7 +67,7 @@ point instead of a new answer, and comes later.
 
 ### Model
 
-1. **`MessageHistory` and `MessageContext` become trees with a head.** Entries keep their digest and
+1. **`History` and `MessageContext` become trees with a head.** Entries keep their digest and
    additionally name their parent entry (by digest). There is one *head*, the entry the active
    branch ends in. `append` appends to the head; `messages()` returns the path from the root to the
    head, so every reader that only wants "the conversation" (the agent loop, context providers,
@@ -130,7 +130,7 @@ point instead of a new answer, and comes later.
 
 ### Steps
 
-1. Model: `MessageHistory`/`MessageContext` as trees with a head, `fork_at`, `switch_to`,
+1. Model: `History`/`MessageContext` as trees with a head, `fork_at`, `switch_to`,
    parent-following `prefix`; tests incl. digests on branches.
 2. Runtime: `ChannelLoop::regenerate`, the branch event for actors, turn state reset, permission,
    recorder event. Only the latest answer at first, where nothing follows the regenerated message.
@@ -206,7 +206,7 @@ it.
 
 | Crate | What changes |
 |---|---|
-| `caelumora-model` | `Message::after`, covered by the digest; `Chain`: the parent of an entry, whether an entry is active, following a path; `MessageHistory`/`Transcript::switch_to` by message ids, the forks of the active path, where a branch ends; `Ledger::switch_to`; `AgentChannelState::switch_to`; `ActorEvent::BranchSwitched`; `ActionType::BranchChannel`. |
+| `caelumora-model` | `Message::after`, covered by the digest; `Chain`: the parent of an entry, whether an entry is active, following a path; `History`/`Transcript::switch_to` by message ids, the forks of the active path, where a branch ends; `Ledger::switch_to`; `AgentChannelState::switch_to`; `ActorEvent::BranchSwitched`; `ActionType::BranchChannel`. |
 | `caelumora-runtime` | `ChannelLoop::regenerate`, `switch_to`, the switch in `run`'s order (`ChannelChange`), `append_history` taking only what continues the active path; the moderator routes `BranchSwitched` to everyone; `AgentActor` handles it between turns (`Turn::switch_to`); `commit_turn`/`give_up_turn` set `after`; `UserActor::edit_message`; a prompt part for the calls off the active path, replacing 145's told message. |
 | `caelumora-rest-server` | `POST …/messages/{mid}/regenerate`, `POST …/branch`, `POST …/messages/{mid}/edit`, `GET …/forks`; the snapshot carries the forks; `BranchSwitched` goes through the stream as every event. |
 | `caelumora-web-ui` | A regenerate button on an agent's answer; `< n/m >` at forks; editing one's own message; a reload on `BranchSwitched`; late messages of a branch no longer shown are dropped. |
@@ -390,7 +390,7 @@ Each compiles, passes and can be committed on its own.
 
 1. **`after` and following a path.** `Message::after` in the model and the digest, set by
    `commit_turn`/`give_up_turn`, `None` from `send_message`; `Chain::follow`, `is_active`, `parent`;
-   `MessageHistory`/`Transcript::switch_to`, `holds`, `path`; the ledgers' `switch_to`;
+   `History`/`Transcript::switch_to`, `holds`, `path`; the ledgers' `switch_to`;
    `AgentChannelState::switch_to`. Model tests: the two answers in opposite order; a turn's internal
    entries cut with its answer; a dead branch of 145 untouched; a message appended again by a
    switch; a chain that holds nothing of the path.

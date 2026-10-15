@@ -82,7 +82,7 @@ pub enum HistoryEntry {
 /// any branch, as a change made in the channel does, so it is folded over
 /// every branch in the order things happened. A message taken back stays, without what it
 /// said (`Message::revoked`), so that whatever names it by id finds it.
-pub type MessageHistory = Chain<HistoryEntry>;
+pub type History = Chain<HistoryEntry>;
 
 impl Chain<HistoryEntry> {
     /// The messages of the active path as they stand.
@@ -344,7 +344,7 @@ mod tests {
     fn a_turn_given_up_is_found_while_its_end_is_the_last_thing() {
         let (agent, other) = (ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()));
         let turn = TurnId::new();
-        let mut history = MessageHistory::default();
+        let mut history = History::default();
         history.push(make_message(id(1)), None);
         assert_eq!(history.turn_given_up_last(agent), None, "no turn ended");
         history.end_turn(HistoryEntry::TurnGivenUp { turn_id: turn, actor: agent, reason: GivenUpReason::Stopped, at: Utc::now() });
@@ -358,7 +358,7 @@ mod tests {
     fn its_items_are_the_messages_as_they_stand_and_how_turns_ended() {
         let (finished, given_up) = (TurnId::new(), TurnId::new());
         let at = Utc::now();
-        let mut history = MessageHistory::default();
+        let mut history = History::default();
         history.push(make_message(id(1)), None);
         history.start_plan_step(HistoryEntry::PlanStepStarted { turn_id: finished, actor: ActorId::default(), step_index: 0, total_steps: 1, description: "first".to_string(), at });
         history.push(Message { turn_id: Some(finished), ..make_message(id(2)) }, None);
@@ -386,7 +386,7 @@ mod tests {
     fn what_a_turn_said_is_what_it_produced_as_it_stands() {
         let turn = TurnId::new();
         let of_turn = |n: u128| Message { turn_id: Some(turn), ..make_message(id(n)) };
-        let mut history = MessageHistory::default();
+        let mut history = History::default();
         history.push(make_message(id(1)), None);
         history.push(of_turn(2), Some(ContextRef::default()));
         // Given to it, or replacing older messages in a compaction: no context.
@@ -405,7 +405,7 @@ mod tests {
     fn what_was_missed_is_what_came_after_the_last_message_kept_and_nothing_older() {
         let ids = |messages: Vec<Message>| messages.into_iter().map(|m| m.id).collect::<Vec<_>>();
         let (one, two, three, four) = (make_message(id(1)), make_message(id(2)), make_message(id(3)), make_message(id(4)));
-        let mut history = MessageHistory::default();
+        let mut history = History::default();
         assert_eq!(ids(history.missing_from(vec![three.clone()])), [id(3)], "joined seeing the last message only");
         history.extend(vec![three.clone()]);
         // Rejoined with all of it: "four" was missed, "one" and "two" are
@@ -417,7 +417,7 @@ mod tests {
     #[test]
     fn what_came_after_a_message_is_the_rest_of_the_active_path() {
         let ids = |messages: Vec<Message>| messages.into_iter().map(|m| m.id).collect::<Vec<_>>();
-        let mut history = MessageHistory::default();
+        let mut history = History::default();
         history.extend(vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
         assert_eq!(ids(history.messages_after(Some(id(1)))), [id(2), id(3)]);
         assert_eq!(ids(history.messages_after(Some(id(3)))), Vec::<MessageId>::new(), "nothing after the last");
@@ -429,11 +429,11 @@ mod tests {
     fn a_history_keeps_what_its_messages_were_produced_from() {
         let reference = ContextRef { transcript: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default() };
         let turn = TurnId::new();
-        let mut history = MessageHistory::default();
+        let mut history = History::default();
         history.extend(vec![make_message(id(1))]);
         history.push(Message { turn_id: Some(turn), ..make_message(id(2)) }, Some(reference.clone()));
 
-        let loaded: MessageHistory = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
+        let loaded: History = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         let entries: Vec<_> = loaded.all_entries().collect();
         assert_eq!(entries[0].entry.context_of(id(1)), None, "said by someone else");
         assert_eq!(entries[1].entry.context_of(id(2)), Some((&reference, turn)), "with the turn it was produced in");
@@ -446,7 +446,7 @@ mod tests {
         let public = Classification::general(Confidentiality::Public);
         let internal = Classification::general(Confidentiality::Internal);
         let said = |n, classification: &Classification| Message { classification: classification.clone(), ..make_message(id(n)) };
-        let mut history = MessageHistory::default();
+        let mut history = History::default();
         history.extend(vec![said(1, &internal)]);
         let fork = history.digest();
         history.extend(vec![said(2, &internal)]);
@@ -469,16 +469,16 @@ mod tests {
         assert!(history.messages().iter().chain(history.message(id(2)).iter()).all(|m| m.classification == public));
         assert_eq!(history.last_message_id(), id(3), "the last message said, not the last entry");
 
-        let loaded: MessageHistory = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
+        let loaded: History = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         assert_eq!(loaded.messages().iter().map(|m| &m.classification).collect::<Vec<_>>(), [&public, &public]);
     }
 
     #[test]
     fn what_was_recorded_since_the_history_was_stored_replays_onto_it() {
         let public = Classification::general(Confidentiality::Public);
-        let mut history = MessageHistory::default();
+        let mut history = History::default();
         history.extend(vec![make_message(id(1)), make_message(id(2))]);
-        let mut stored: MessageHistory = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
+        let mut stored: History = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         history.mark_stored();
 
         history.reclassify(id(2), public.clone());
@@ -494,7 +494,7 @@ mod tests {
     fn a_change_is_recorded_and_read_into_the_messages_as_they_stand() {
         let at = chrono::Utc::now();
         let modified = |n, content: &str| Message { content: Some(content.to_string()), timestamp: at, ..make_message(id(n)) };
-        let mut history = MessageHistory::default();
+        let mut history = History::default();
         history.extend(vec![make_message(id(1))]);
         let fork = history.digest();
         history.extend(vec![make_message(id(2))]);
@@ -517,16 +517,16 @@ mod tests {
         assert!(revoked.content.is_none() && revoked.revoked == Some(at));
         assert_eq!(history.last_message_id(), id(3), "a change is no message said");
 
-        let loaded: MessageHistory = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
+        let loaded: History = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         assert_eq!(loaded.messages()[0].content.as_deref(), Some("corrected"));
         assert_eq!(loaded.digest(), history.digest());
     }
 
     #[test]
     fn a_change_since_the_history_was_stored_replays_onto_it() {
-        let mut history = MessageHistory::default();
+        let mut history = History::default();
         history.extend(vec![make_message(id(1)), make_message(id(2))]);
-        let mut stored: MessageHistory = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
+        let mut stored: History = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         history.mark_stored();
 
         history.revoke(id(2), chrono::Utc::now());

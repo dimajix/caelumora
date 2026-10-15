@@ -16,7 +16,7 @@ What makes them long is less the concepts than four other kinds of content:
 
 - **Code retold.** Every variant of an enum with what it carries, the fields of a type, which
   method calls which, the names of constants and in which order things happen inside a method.
-  `AGENT-TURN.md` lists every entry of `Transcript` and `MessageHistory` with the issue that added
+  `AGENT-TURN.md` lists every entry of `Transcript` and `History` with the issue that added
   it; `CHANNELS.md` describes `ChannelLoop::stop_actors`, its `TaskTracker` and `STOP_GRACE`. This
   is what the code and its doc comments say already, and it has to be changed with every change.
 - **History.** About 650 references to issues, mostly inline - "(issue 187)", "issue 263,

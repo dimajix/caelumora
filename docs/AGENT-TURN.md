@@ -198,7 +198,7 @@ For every message an agent produced, it can be told what its model saw when it w
 ### The transcript as a chain
 
 The `Transcript` is what the agent's context is built from: its own messages in full, with tool
-calls and internal steps, and what others said as it received them. The `MessageHistory` is all that
+calls and internal steps, and what others said as it received them. The `History` is all that
 was offered to the agent and what it said, with how its turns ended. Both are a
 `caelumora_model::chain::Chain` of entries, each with a `Digest` over its content and the digest
 before it, so one digest names everything up to that point by content. What a message's digest

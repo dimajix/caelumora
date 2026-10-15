@@ -28,7 +28,7 @@ channel, so it is shown for the agent as a whole.
 ## Considerations
 
 - **Runtime:** `AgentContextView` gains `history()`, answered by both views (`InternalContext`,
-  `ExternalContext`) from the `MessageHistory` both states hold - a case for
+  `ExternalContext`) from the `History` both states hold - a case for
   [206](206-one-agent-channel-state.md), where it would be written once.
 - **Permission:** the same as a message's context, `ReadAgentContext` (`MemberView::context()`).
   The history holds no prompt parts or tool results of the agent's own turns, only what was said,

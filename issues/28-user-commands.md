@@ -91,7 +91,7 @@ It should be answered by the same rule, not a second one.
 ### Where the output goes
 
 `/help` produces text for the issuing user and nobody else; it is not part of the conversation and
-must not enter `MessageHistory`, or it ends up in the next model context. Other commands
+must not enter `History`, or it ends up in the next model context. Other commands
 (`/compact`) have an effect everyone in the channel should know about. So a result is either private
 to the issuer or a channel event — and both frontends need a way to render it. That is a REST API
 change and has to stay compatible with `caelumora-web-ui`. Whether an executed command is recorded

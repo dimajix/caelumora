@@ -191,7 +191,7 @@ parts are recorded whole, at the end of every sequence**. `changes()` gathers ea
 chain's change onto that chain and overwrites a small part. A sequence of nothing but the small
 parts - `settle` after a step - is a small write, which is the goal. Order is kept within a part;
 across parts it is the fixed order, which loses nothing: every reference between parts is a digest
-or a message id, resolved only when read, never while replaying. `Transcript`, `MessageHistory`
+or a message id, resolved only when read, never while replaying. `Transcript`, `History`
 and `Ledger<K>` delegate `changes`, `mark_stored` and `apply` to their chain, three one-line
 methods each, so that the states need not reach into them. The four enums are data, not behaviour:
 written by hand, no macro.
@@ -344,7 +344,7 @@ kind per state the generic layer is provision for what has not come; a third kin
 - `Chain::entries_mut` goes: the amendments are named operations of the chain, and `mark_given_up`,
   `reclassify` and `fit_into` lose their hand-written searches.
 - The JSON store and the memory store each keep one implementation for four kinds of state.
-- `MessageHistory` and `Transcript` stay two types over one `Chain`: they differ in their entry and
+- `History` and `Transcript` stay two types over one `Chain`: they differ in their entry and
   their amendment, and in what they mean (the channel's record, what the model was given). They
   are not unified here.
 - **The turn as a branch** would be the real simplification of `Turn`: the messages a turn produces
@@ -422,7 +422,7 @@ is left open until a step needs the answer - then it is done at once or opened a
 - **2026-10-02** — Step 2 done: `Chain` keeps a journal of what changed since it was last stored
   (`ChainChange`: `Added`, `Head`, `Amended`; `changes`, `mark_stored`, `apply`), and `amend` and
   `amend_each` replace `entries_mut` as the only way to change an entry. `Transcript`,
-  `MessageHistory` and `Ledger` delegate. The stored form of a chain is unchanged.
+  `History` and `Ledger` delegate. The stored form of a chain is unchanged.
 - **2026-10-02** — Step 3 done: `Kept<V>` keeps the prompt texts and tool sets by digest and
   records what was added; `Journaled` (in `store`) with `AgentChannelStateChange`,
   `ExternalAgentChannelStateChange`, `ChannelStateChange` and `AgentStateChange`, each a variant

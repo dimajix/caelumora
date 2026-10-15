@@ -131,7 +131,7 @@ cancelling needs an end that records what the turn did without taking it into th
   three can be called without a check is [147](147-actor-control-unchecked.md).
 - **2026-09-30** — Refactoring along with it, at the maintainer's request: `message.rs` is split.
   `Transcript` with `TranscriptEntry` and the `GivenUp` types is `crate::transcript`,
-  `MessageHistory` with `HistoryEntry` is `crate::message_history`; `message.rs` keeps `Message` and
+  `History` with `HistoryEntry` is `crate::message_history`; `message.rs` keeps `Message` and
   the parts both chains of messages share (`MessageEntry`, `push_message`, `messages_of`,
   `last_message_id_of`, crate-internal).
 - **2026-09-30** — A gap found with [141](141-turn-during-reclassification.md): an agent stopped

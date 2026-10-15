@@ -12,7 +12,7 @@ head. Around it stand more types than the one idea needs, with no clear line bet
 |---|---|
 | `Chain<E>`, `Node<E>` | the container, and an entry at its place in it |
 | `ChainChange<E>` | what the container did since it was stored: `Added`, `Head`, `Amended` (issue 193) |
-| `Ledger<K>`, `Transcript`, `MessageHistory` | wrappers over one chain each: content-specific methods, the rest delegation |
+| `Ledger<K>`, `Transcript`, `History` | wrappers over one chain each: content-specific methods, the rest delegation |
 | `LedgerEntry<K>`, `Change<Id>`, `Item<K>` | a ledger's entry, what it says, and what stands after folding |
 | `TranscriptEntry`, `HistoryEntry` | the message chains' entries, each with a part changed in place |
 
@@ -53,7 +53,7 @@ Postgres store (issue 04) - is built twice or decides again which model it follo
   becomes an entry of the transcript after the head went back, `TranscriptEntry::GivenUp { end,
   reason, at, turn_entries }`; the model is given the messages only. The record then shows what
   the classification was and when it changed, which is what an audit log wants (issue 140).
-- **No wrappers.** `Transcript`, `MessageHistory` and `NoteChain` become aliases of `Chain<…>`
+- **No wrappers.** `Transcript`, `History` and `NoteChain` become aliases of `Chain<…>`
   with inherent impls for the content: `push` with the content's digest scheme, `messages`,
   `given_up_turns`, `current`, `next_id`, `with_staged`. The generic primitives - `push_with`,
   `amend` while it exists - become `pub(crate)`, so that a transcript still cannot be extended
@@ -121,7 +121,7 @@ Each content is one entry type, an enum of what can happen, with inherent method
 | `MessageHistory = Chain<HistoryEntry>` | `Said { message, context }`, `Reclassified { message: MessageId, classification }`, `Fitted { channel }` | `push(message, context)`, `extend`, `messages()`, `message(id)`, `missing_from`, `last_message_id`, `reclassify`, `fit_into` |
 | `NoteChain`, `MemoryChain = Chain<LedgerEntry<K>>` | `LedgerEntry { change: Change<Id>, origin, after, written_at }` | `push`, `current()`, `next_id()`, `with_staged()` |
 
-`Ledger<K>`, `Transcript` and `MessageHistory` as structs, `MessageEntry`, `push_message`,
+`Ledger<K>`, `Transcript` and `History` as structs, `MessageEntry`, `push_message`,
 `messages_of` and `last_message_id_of` go. `Change<Id>`, `Item<K>`, `Staged<K>`, `GivenUp`,
 `GivenUpTurn` and `LedgerKind` stay what they are. `Kept<V>` and `Journaled` stay; the state
 enums carry `Stored<E>` where they carried `Vec<ChainChange<E>>`, at most one per chain and put.
@@ -154,7 +154,7 @@ enums carry `Stored<E>` where they carried `Vec<ChainChange<E>>`, at most one pe
 
 ### Steps
 
-1. **The wrappers go.** `Transcript`, `MessageHistory` and `Ledger` become aliases with inherent
+1. **The wrappers go.** `Transcript`, `History` and `Ledger` become aliases with inherent
    impls; the generic primitives become `pub(crate)`; `MessageEntry` and its helpers go into the
    two `push`es. The stored form loses its one level of nesting. No behaviour change.
 2. **The history records reclassification.** `HistoryEntry` becomes the enum; `reclassify` and
@@ -192,7 +192,7 @@ meaning. Step 4 is the removal the whole thing is for.
   `Amended` variant only because the message chains change entries in place, which the ledger
   never does. The maintainer asked for one class of change and one container for trees, and for
   the names to stop multiplying. Issue 193 is paused until this is done.
-- **2026-10-02** — Step 1 done: `Transcript`, `MessageHistory` and `Ledger<K>` are aliases of
+- **2026-10-02** — Step 1 done: `Transcript`, `History` and `Ledger<K>` are aliases of
   `Chain<…>` with their content's methods as inherent impls; `push_with`, `amend` and
   `amend_each` are `pub(crate)`; `MessageEntry` and its three helpers are gone. The runtime did
   not change: what it called on the wrappers it now calls on the chain.

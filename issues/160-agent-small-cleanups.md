@@ -10,7 +10,7 @@ Small things, without a structural change:
 - **Dead or crooked surface** (callers outside tests): `Turn::transcript()` 0, `Turn::channel_id()`
   1 and `session_id()` 4 (both are `channel().…`), `Turn::messages()` clones a `Vec` for one caller;
   `Transcript::last_message_id` 0, `Transcript::extend` returns digests both callers ignore,
-  `MessageHistory::entries` 0; `new()` on `Transcript`, `MessageHistory`, `NoteChain`, `MemoryChain`
+  `MessageHistory::entries` 0; `new()` on `Transcript`, `History`, `NoteChain`, `MemoryChain`
   beside `Default`. (`Chain::children` and `leaf_from` have no caller yet but are built for
   [08](08-retry-and-edit-past-answers.md) and stay.)
 - **Duplicates in the actor:** "store the state, then store the document" three times;
@@ -40,7 +40,7 @@ Each is small; together they are the noise a reader of the turn has to step over
 - **2026-09-30** — Done.
   - Gone: `Turn::transcript`, `channel_id`, `session_id` (callers use `channel()`),
     `Transcript::last_message_id`, `MessageHistory::entries`, and `new()` on `Transcript`,
-    `MessageHistory`, `NoteChain` and `MemoryChain` (`Default` instead). `Transcript::extend`
+    `History`, `NoteChain` and `MemoryChain` (`Default` instead). `Transcript::extend`
     returns nothing; `Turn::messages` returns an iterator instead of a cloned `Vec`.
   - Actor: the fields `id` and `kind` are gone - `id()` is `ActorId::Agent(agent_id)`, `kind()` the
     constant. `begin_turn` is part of `request_response`, `AgentActor::next_turn` is

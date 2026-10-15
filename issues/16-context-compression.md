@@ -5,7 +5,7 @@
 
 ## The problem
 
-`MessageHistory` grows for as long as a session lives, and the context providers assemble a
+`History` grows for as long as a session lives, and the context providers assemble a
 `MessageContext` from it on every turn. Nothing bounds either. A long-running session eventually
 exceeds the model's context window, and there is no strategy for what to drop or how to summarise
 before it does.
@@ -99,7 +99,7 @@ and its command.
   `ContextRef::transcript` names, `as_they_stand` (modifications, revocations and
   reclassifications folded in), lowered turns reduced to `names_only`, each message as the
   profile gives it, the prompt parts after the entries they were placed after.
-- **`AgentChannelState`** holds one `Transcript` and one `MessageHistory` per agent and channel.
+- **`AgentChannelState`** holds one `Transcript` and one `History` per agent and channel.
   `begin_turn` takes `transcript.digest()` into the turn's context and `see`s every message of the
   active path; `said` and `given` push to the transcript and the history at once and move the
   turn's context on; `finish_turn` records `CommandExecuted` and `TurnFinished`; `usage` sums the

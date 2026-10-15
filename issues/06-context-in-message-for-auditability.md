@@ -45,7 +45,7 @@ The cost is that context is large and largely redundant between consecutive turn
   message for auditability?"* — the question mark is part of it: the design is not settled.
 - **2026-09-25** — First step done, along the maintainer's design: the context is a hash chain, and
   the history refers to it.
-  - **What was there:** `MessageContext` and `MessageHistory` chained digests, but only over message
+  - **What was there:** `MessageContext` and `History` chained digests, but only over message
     ids (`id + previous digest`), so a digest named a sequence of ids, not a context - a message
     changed under the same id kept its digest. `HistoryEntry.context` existed but was never set: the
     history was filled only through `extend`, which wrote an empty string. The system prompt,

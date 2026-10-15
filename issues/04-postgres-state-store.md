@@ -6,7 +6,7 @@
 ## The problem
 
 `StateStore` holds the frequently changing runtime state: an agent's cognitive state, its
-`MessageHistory`, its `MessageContext`, and session state. As with the `EntityStore`
+`History`, its `MessageContext`, and session state. As with the `EntityStore`
 ([03](03-postgres-entity-store.md)), only in-memory and JSON-file implementations exist.
 
 The access pattern is different from the entity store's, and harder. Agent state is written on every

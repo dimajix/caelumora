@@ -84,7 +84,7 @@ there are none. Which task the call answered may be shown too.
   model was given.
 - **2026-10-03** — Decided: as much of the existing infrastructure as possible is reused. The
   target, perhaps, is one state for agents run here and external agents. What is there to reuse:
-  - `ExternalAgentChannelState::history` is a `MessageHistory` already, whose `Said` entries carry
+  - `ExternalAgentChannelState::history` is a `History` already, whose `Said` entries carry
     an `Option<ContextRef>` - the external agent records `None` today. It records a `ContextRef`
     instead, and `AgentContextView::context_of` finds it as `InternalContext` does.
   - `ContextRef` says what is needed: `transcript`, the digest of the transcript including the call,

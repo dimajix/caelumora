@@ -20,7 +20,7 @@ use crate::agent::AgentChannelState;
 use crate::chain::Node;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
-use crate::history::{HistoryEntry, MessageHistory};
+use crate::history::{HistoryEntry, History};
 use crate::kept::Kept;
 use crate::message::{estimated_tokens, Message, MessageId, MessageRole};
 use crate::store::{EntityKind, Stored};
@@ -408,7 +408,7 @@ pub struct ContextResolver<'a> {
     offered_tools: &'a Kept<Vec<ToolSet>>,
     /// What the agent said, each with the context it was produced from:
     /// which of its messages a call measured (`token_positions`).
-    history: &'a MessageHistory,
+    history: &'a History,
 }
 
 /// The items the model is given before the first entry of a transcript, and

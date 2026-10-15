@@ -7,7 +7,7 @@
 
 When an agent reads a channel's history with `read_history`, the turn records what it read as a
 `KnowledgeRef::History { digest }` (issue 17). The digest is the digest of the channel's
-`MessageHistory` at that moment, and it names the whole history up to that point.
+`History` at that moment, and it names the whole history up to that point.
 
 Since [46](46-channel-participants.md), a participant can be added with a limited view: none of the
 earlier history, the last n messages or the last n days.
@@ -52,7 +52,7 @@ where".
   single public method for the history, `visible_history(participant) -> VisibleHistory { messages,
   digest, start }`; `history_with_digest` and `history_with_digest_visible_to` are gone and
   `history()` is crate-internal, as the maintainer asked for one method rather than pairs with and
-  without digest. Returning the `MessageHistory` itself was considered and rejected: cut at a start
+  without digest. Returning the `History` itself was considered and rejected: cut at a start
   it is no longer a valid chain. `read_history` records digest and start; REST passes the start on
   as `history_start`, and the context panel says "from when it was granted". A correction to the
   description: the context panel did not resolve history references to messages, so nothing was

@@ -5,7 +5,7 @@ use crate::chain::Stored;
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
 use crate::group::GroupId;
-use crate::history::{HistoryEntry, MessageHistory};
+use crate::history::{HistoryEntry, History};
 use crate::message::{Message, MessageId};
 use crate::removal::{Deletable, Removal};
 use crate::scope::{Scope, Scoped};
@@ -337,14 +337,14 @@ pub struct FormerParticipant {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelState {
     pub channel_id: ChannelId,
-    pub history: MessageHistory,
+    pub history: History,
 }
 
 impl ChannelState {
     pub fn new(channel_id: ChannelId) -> Self {
         Self {
             channel_id,
-            history: MessageHistory::default(),
+            history: History::default(),
         }
     }
 }

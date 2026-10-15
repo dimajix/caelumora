@@ -248,7 +248,7 @@ Die beiden hängen so eng zusammen, dass die Befunde zusammen stehen.
     `ApproverActor` hält einen eigenen `Arc<ChannelController>` nur für
     `get_user_count` (`approval.rs:36, 51–54`).
 
-**Fein so:** `Chain<E>` mit `Transcript`/`MessageHistory`; `confidentiality.rs`;
+**Fein so:** `Chain<E>` mit `Transcript`/`History`; `confidentiality.rs`;
 `AccessQuestions`; `store_impl/access.rs`; `mention.rs`; `digest.rs`;
 `AgentChannelState::resolve`/`apply`; `SessionManager` (Start-Lock,
 `running`/`may`); `AgentStates`/`AgentStateHandle`; `AgentNotes`/`AgentMemory`

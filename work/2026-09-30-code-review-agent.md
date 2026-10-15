@@ -499,7 +499,7 @@ Lock, ein Snapshot, klar begründet (Issue 62). `AgentState::apply`,
 
 ## 5. Das Modell
 
-### M1 — Tote Oberfläche von `Transcript` und `MessageHistory`
+### M1 — Tote Oberfläche von `Transcript` und `History`
 
 | | Aufrufer (prod) | Vorschlag |
 |---|---:|---|
