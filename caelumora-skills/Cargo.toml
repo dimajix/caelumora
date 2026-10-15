@@ -36,5 +36,11 @@ tokio = { version = "1.53.1", features = ["full"] }
 serde_json = "1.0"
 tempfile = "3.27"
 
+# Without the feature the test is skipped rather than failing to build:
+# its tests run the plugin in a runtime.
+[[test]]
+name = "skills"
+required-features = ["runtime"]
+
 [lints]
 workspace = true

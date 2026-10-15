@@ -119,7 +119,6 @@ impl Turn<'_> {
 mod tests {
     use super::*;
     use crate::notes::NoteKind;
-    use caelumora_runtime::agent::state::AgentStateHandle;
     use crate::turn::tests::message;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::message::MessageId;
@@ -138,7 +137,7 @@ mod tests {
     fn a_turn_that_called<'a>(state: &'a mut AgentChannelState, tool: &str, ran: bool) -> Turn<'a> {
         use caelumora_model::note::{NoteChange, NoteId};
         use caelumora_model::tool::{ToolResultStatus, ToolVisibility};
-        let mut turn = Turn::begun(AgentId::default(), String::new(), state, AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), state);
         let call = ToolCall { id: Some("1".to_string()), function_name: tool.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let mut result = ToolCallResult::of(&call, ToolResultStatus::Ok, "sent".to_string(), Classification::CHANNEL_DEFAULT);
         result.started_at = ran.then(Utc::now);
@@ -174,7 +173,7 @@ mod tests {
 
     /// What the model of the next turn begun on `state` is given.
     fn given_next(state: &mut AgentChannelState) -> Vec<Message> {
-        let turn = Turn::begun(AgentId::default(), String::new(), state, AgentStateHandle::detached());
+        let turn = Turn::begun(AgentId::default(), state);
         turn.full_context().expect("resolved").0
     }
 
@@ -207,7 +206,7 @@ mod tests {
     fn a_turn_with_an_open_step(state: &mut AgentChannelState) -> Turn<'_> {
         use caelumora_model::approval::ToolMatcher;
         use caelumora_model::tool::{ToolCallState, ToolResultStatus, ToolVisibility};
-        let mut turn = Turn::begun(AgentId::default(), String::new(), state, AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), state);
         let call = |id: &str, name: &str| ToolCall { id: Some(id.to_string()), function_name: name.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let calls = vec![call("1", "send_mail"), call("2", "delete")];
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: calls.clone(), ..Message::new(Classification::CHANNEL_DEFAULT) });
@@ -260,7 +259,7 @@ mod tests {
     #[tokio::test]
     async fn a_turn_given_up_before_it_said_anything_leaves_its_end() {
         let mut state = a_state_with("hello");
-        let turn = Turn::begun(AgentId::default(), String::new(), &mut state, AgentStateHandle::detached());
+        let turn = Turn::begun(AgentId::default(), &mut state);
         turn.give_up(GivenUpReason::Stopped, &Discard).await;
         assert_eq!(given_up_turns(&state).len(), 1, "one rule for every turn (issue 258)");
         assert!(given_up_turns(&state)[0].2.is_empty());
@@ -270,7 +269,7 @@ mod tests {
     #[tokio::test]
     async fn committing_a_turn_answers_with_its_final_messages_and_clears_its_work() {
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
         let mut internal = message("working on it");
         internal.internal = true;
@@ -290,7 +289,7 @@ mod tests {
     #[tokio::test]
     async fn a_turn_compacted_while_under_way_answers_with_all_it_said_and_nothing_else() {
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
         let first = message("first");
         let second = message("second");
         turn.push_message(first.clone());

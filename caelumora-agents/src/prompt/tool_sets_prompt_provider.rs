@@ -71,9 +71,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_runtime::agent::state::AgentStateHandle;
     use crate::turn::Turn;
-    use caelumora_runtime::session::testing::detached_actor_runtime;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::tool::{Tool, ToolParameters};
 
@@ -93,7 +91,7 @@ mod tests {
     async fn told(sets: Vec<ToolSet>) -> Prompt {
         let mut state = AgentChannelState::default();
         state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, sets, Default::default());
-        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
+        let turn = Turn::under_way(AgentId::new(), &mut state);
         let provider = ToolSetsPromptProvider { position: PromptPosition::Start };
         provider.get_prompt(&turn.work()).await.unwrap()
     }

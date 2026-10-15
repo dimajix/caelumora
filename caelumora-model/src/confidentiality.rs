@@ -23,7 +23,6 @@ use crate::session::ChannelId;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use thiserror::Error;
 
 /// How sensitive information is, from `Public` to `StrictlyConfidential`.
 /// Ordered: a higher level is more confidential.
@@ -71,7 +70,7 @@ impl fmt::Display for Compartment {
     }
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ClassificationError {
     #[error("A public classification takes no compartment")]
     PublicWithCompartments,

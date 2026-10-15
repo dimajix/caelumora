@@ -99,12 +99,24 @@ impl<'a> Turn<'a> {
     }
 
     /// A turn begun on `agent_channel_state` with default contexts, no
-    /// tools and the default profile, in a channel of no running session
-    /// (`detached_actor_runtime`) - what a test needs to work in one.
+    /// tools and the default profile, as `under_way` - what a test needs to
+    /// work in one.
     #[cfg(test)]
-    pub(crate) fn begun(agent_id: AgentId, agent_name: String, agent_channel_state: &'a mut AgentChannelState, agent_state: Arc<AgentStateHandle>) -> Self {
+    pub(crate) fn begun(agent_id: AgentId, agent_channel_state: &'a mut AgentChannelState) -> Self {
         agent_channel_state.begin_turn(Default::default(), Default::default(), Default::default(), Vec::new(), Default::default());
-        Self { agent_id, agent_name, agent_channel_state, agent_state, runtime: detached_actor_runtime() }
+        Self::under_way(agent_id, agent_channel_state)
+    }
+
+    /// The turn a test began on `agent_channel_state`, of the agent
+    /// `agent_id` called "agent", with a state of its own
+    /// (`AgentStateHandle::detached`), in a channel of no running session
+    /// (`detached_actor_runtime`).
+    ///
+    /// # Panics
+    /// If no turn is under way.
+    #[cfg(test)]
+    pub(crate) fn under_way(agent_id: AgentId, agent_channel_state: &'a mut AgentChannelState) -> Self {
+        Self::of(agent_id, "agent".to_string(), agent_channel_state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way")
     }
 
     /// The turn as a piece of work of the agent, to read (issue 204): what
@@ -426,7 +438,7 @@ mod tests {
     #[test]
     fn a_resumed_turn_keeps_its_count_of_model_calls() {
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), &mut state);
         for _ in 1..MAX_MODEL_CALLS {
             assert!(turn.count_model_call());
         }
@@ -434,7 +446,7 @@ mod tests {
         // Stored and loaded again, as after a restart.
         let stored = serde_json::to_value(&state).unwrap();
         let mut state: AgentChannelState = serde_json::from_value(stored).unwrap();
-        let mut turn = Turn::of(AgentId::default(), String::new(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
+        let mut turn = Turn::under_way(AgentId::default(), &mut state);
         assert!(turn.count_model_call(), "the last one it may make");
         assert!(!turn.count_model_call(), "the limit holds across the restart");
 
@@ -452,7 +464,7 @@ mod tests {
         let output = InMemoryEventSender::new(tx);
         let mut state = AgentChannelState::default();
         state.begin_turn(Default::default(), Default::default(), Default::default(), Vec::new(), Default::default());
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
+        let mut turn = Turn::under_way(AgentId::new(), &mut state);
 
         let call = ToolCall { id: Some("1".to_string()), function_name: "write_private_note".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
         let message = Message { role: MessageRole::Assistant, tool_calls: vec![call], ..Message::new(Classification::CHANNEL_DEFAULT) };
@@ -491,13 +503,13 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.transcript.extend(vec![said(&Classification::PUBLIC, "Hello.")]);
         state.begin_turn(EventContext::default(), SecurityContext::default(), confidential.clone(), Vec::new(), Default::default());
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
+        let mut turn = Turn::under_way(AgentId::new(), &mut state);
         assert_eq!(turn.label(), Classification::PUBLIC, "a public transcript");
 
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: Some(Classification::PUBLIC), source: None }], Vec::new());
         assert_eq!(turn.label(), Classification::PUBLIC);
         state.perceive(Vec::new(), vec![said(&internal, "Our numbers are good.")]);
-        let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
+        let mut turn = Turn::under_way(AgentId::new(), &mut state);
         assert_eq!(turn.label(), internal, "what others said during the turn");
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }], Vec::new());
         assert_eq!(turn.label(), confidential, "a part that does not say counts as the channel");

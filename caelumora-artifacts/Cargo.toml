@@ -40,5 +40,11 @@ tempfile = "3.27"
 bytes = "1"
 tower = { version = "0.5.3", features = ["util"] }
 
+# Without the feature the test is skipped rather than failing to build:
+# its tests run the plugin in a runtime, its routes too.
+[[test]]
+name = "artifacts"
+required-features = ["server"]
+
 [lints]
 workspace = true

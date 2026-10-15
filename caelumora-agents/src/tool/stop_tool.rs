@@ -97,13 +97,12 @@ mod tests {
     use super::*;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use serde_json::json;
-    use caelumora_runtime::agent::state::AgentStateHandle;
 
     #[tokio::test]
     async fn test_stop_tool() {
         let provider = StopToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
         let result = provider.execute(STOP_TOOL_NAME, &json!({}), None, &mut turn).await.unwrap();
         assert_eq!(result.value["status"], "stopped");

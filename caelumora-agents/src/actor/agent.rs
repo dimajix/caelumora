@@ -1024,8 +1024,6 @@ impl Actor for AgentActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::session::testing::detached_actor_runtime;
     use caelumora_model::agent::AgentId;
 
     use caelumora_model::confidentiality::Confidentiality;
@@ -1067,7 +1065,7 @@ mod tests {
         let channel = Classification::general(Confidentiality::Confidential);
         let mut agent_channel_state = AgentChannelState::default();
         agent_channel_state.begin_turn(Default::default(), Default::default(), channel.clone(), vec![ToolSet::new("tools", "some tools", vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)])], Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
+        let mut turn = Turn::under_way(agent, &mut agent_channel_state);
 
         let mut partial = answer(&[]);
         stamp(&mut partial, &turn, Visibility::Channel, false);
@@ -1097,7 +1095,7 @@ mod tests {
         let reasoning = |tools: Vec<Tool>, personality: Visibility, private_knowledge: bool, calls: &[&str], complete: bool| {
             let mut agent_channel_state = AgentChannelState::default();
             agent_channel_state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, vec![ToolSet::new("tools", "some tools", tools)], Default::default());
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
+            let mut turn = Turn::under_way(agent, &mut agent_channel_state);
             if private_knowledge {
                 turn.record_knowledge(KnowledgeRef { channel: turn.channel_id(), session: turn.session_id(), source: KnowledgeSource::PrivateNotes { agent, digest: None }, classification: None });
             }

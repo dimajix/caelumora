@@ -100,7 +100,6 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_runtime::agent::state::AgentStateHandle;
     use crate::turn::Turn;
     use caelumora_model::component::ComponentFailPolicy;
     use crate::prompt::static_system_prompt_provider::StaticSystemPromptProvider;
@@ -146,7 +145,7 @@ mod tests {
     #[tokio::test]
     async fn a_failing_prompt_part_is_left_out_or_fails_the_turn_as_its_component_says() {
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::new(), &mut agent_channel_state);
         let brief = || part(Arc::new(StaticSystemPromptProvider { prompt: "Be brief.".to_string(), position: PromptPosition::Start, classification: Classification::PUBLIC }), ComponentFailPolicy::FailClosed);
 
         let open = TurnContextProvider { prompt_providers: vec![part(Arc::new(Unavailable), ComponentFailPolicy::FailOpen), brief()] };
@@ -177,7 +176,7 @@ mod tests {
         let mut question = message("question");
         question.role = MessageRole::User;
         agent_channel_state.perceive(Vec::new(), vec![earlier, question]);
-        let mut turn = Turn::begun(agent_id, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached());
+        let mut turn = Turn::begun(agent_id, &mut agent_channel_state);
         assemble(&provider, &mut turn).await.unwrap();
         assert_eq!(contents(&turn), ["System:Be brief.", "User:earlier", "User:Notes: none.", "User:question"],
             "the system prompt first, the notes before the turn's input");
@@ -187,7 +186,7 @@ mod tests {
         let mut own = message("my answer");
         own.sender_id = ActorId::Agent(agent_id);
         agent_channel_state.perceive(Vec::new(), vec![own]);
-        let mut turn = Turn::begun(agent_id, "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached());
+        let mut turn = Turn::begun(agent_id, &mut agent_channel_state);
         assemble(&provider, &mut turn).await.unwrap();
         assert_eq!(contents(&turn).last().map(String::as_str), Some("User:Notes: none."), "then at the end");
     }

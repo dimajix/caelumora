@@ -180,7 +180,6 @@ mod tests {
     use crate::tool::ToolError;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use serde_json::json;
-    use caelumora_runtime::agent::state::AgentStateHandle;
 
     #[test]
     fn create_plan_tool_requires_no_approval() {
@@ -196,7 +195,7 @@ mod tests {
     async fn create_plan_tool_execute_stores_the_parsed_plan() {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
         let params = json!({
             "summary": "Investigate and fix the bug",
@@ -219,7 +218,7 @@ mod tests {
     async fn create_plan_tool_execute_appends_steps_to_a_plan_mid_step() {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
         turn.set_plan(PlanState {
             progress: PlanProgress::Step(0),
@@ -249,7 +248,7 @@ mod tests {
     async fn create_plan_tool_execute_resumes_a_finalizing_plan_when_steps_are_added() {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
         turn.set_plan(PlanState {
             progress: PlanProgress::Finalizing,
@@ -277,7 +276,7 @@ mod tests {
     async fn create_plan_tool_execute_rejects_malformed_arguments() {
         let provider = CreatePlanToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
         let result = provider.execute(CREATE_PLAN_TOOL_NAME, &json!({}), None, &mut turn).await;
         assert!(matches!(result, Err(ToolError::InvalidParameter(_))), "the model is asked to correct the call: {result:?}");
@@ -304,7 +303,7 @@ mod tests {
     #[tokio::test]
     async fn create_plan_tool_contributes_the_planning_system_prompt() {
         let mut state = AgentChannelState::default();
-        let turn = Turn::begun(Default::default(), String::new(), &mut state, AgentStateHandle::detached());
+        let turn = Turn::begun(Default::default(), &mut state);
         let prompt = CreatePlanToolProvider.get_prompt(&turn.work()).await.expect("prompt should be available");
         assert_eq!(prompt.text, format!("[Planning]\n{PLANNING_SYSTEM_PROMPT}\n"), "under a title of its own (issue 249)");
     }

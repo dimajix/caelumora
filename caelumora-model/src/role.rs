@@ -9,7 +9,6 @@
 use crate::confidentiality::{Clearance, Clearances, Compartment, Compartments};
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use thiserror::Error;
 
 define_id!(RoleId);
 
@@ -34,7 +33,7 @@ struct RoleDefinition {
     clearances: Vec<Clearance>,
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum RoleError {
     #[error("A role needs a name")]
     UnnamedRole,
