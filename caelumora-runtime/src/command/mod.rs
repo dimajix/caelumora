@@ -121,7 +121,7 @@ impl<P: ?Sized> CommandEntry<P> {
 }
 
 /// Finds and runs the commands of one set - the session's, from the global
-/// ones and the session's own; an agent's (`agent_command`, issue 370) -
+/// ones and the session's own; an agent's (`caelumora_agent::command`, issue 370) -
 /// with the permission checks for seeing and
 /// running them, as the `ToolExecutor` does for an agent's tools. Like it,
 /// it is no component: how a command runs is the command's own business,

@@ -122,7 +122,8 @@ impl ComponentRegistry {
     /// commands (`command`) and a channel's moderation (`moderator`) -,
     /// resolving references to preconfigured components in
     /// `component_store`. The kinds of an agent's components are the agents'
-    /// plugin's (`AgentsPlugin`, issue 370), those of other plugins theirs.
+    /// plugin's (`caelumora_agent::plugin::AgentsPlugin`, issue 370), those of
+    /// other plugins theirs.
     /// A binary passes it to the `RuntimeBuilder` as it is; a test may
     /// register kinds of its own first, such as a stand-in for the model.
     pub fn built_in(component_store: Arc<dyn ComponentStore>) -> Self {

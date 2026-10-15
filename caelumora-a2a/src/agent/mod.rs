@@ -29,7 +29,7 @@ use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
 use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
-use caelumora_runtime::external::{ExternalAgent, ExternalAgentResult, ExternalStream, OutboundMessage};
+use caelumora_agent::external::{ExternalAgent, ExternalAgentResult, ExternalStream, OutboundMessage};
 use futures::StreamExt;
 use futures::stream::once;
 use serde::Deserialize;
@@ -237,7 +237,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_runtime::external::{ExternalEvent, Said};
+    use caelumora_agent::external::{ExternalEvent, Said};
     use axum::extract::State;
     use axum::http::HeaderMap;
     use axum::routing::{get, post};

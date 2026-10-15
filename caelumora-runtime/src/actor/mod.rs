@@ -5,13 +5,7 @@
 //! is told is `intake`, the commands it carries out `commands`. Which actor
 //! an agent gets is its kind's (`AgentKinds`, issue 370).
 
-pub mod agent;
 pub mod approval;
-mod body;
-mod run_control;
-mod commands;
-pub mod external_agent;
-mod intake;
 mod kinds;
 pub mod user;
 

@@ -1,0 +1,36 @@
+[package]
+name = "caelumora-agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+caelumora-model = { path = "../caelumora-model" }
+caelumora-runtime = { path = "../caelumora-runtime" }
+anyhow = "1.0"
+thiserror = "2.0.21"
+uuid = { version = "1.26", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+futures = "0.3"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "sync", "time", "fs", "io-util", "process"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+bytes = "1"
+aho-corasick = "1.1"
+regex = "1.12"
+meval = "0.2.0"
+tracing = "0.1.44"
+
+[features]
+# The world of the agents' tests (`testing`), on that of the security
+# suite, for the agents' suite and for the tests of a plugin (issue 370).
+test-support = ["caelumora-runtime/test-support"]
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["full"] }
+caelumora-runtime = { path = "../caelumora-runtime", features = ["test-support"] }
+caelumora-agent = { path = ".", features = ["test-support"] }
+
+[lints]
+workspace = true

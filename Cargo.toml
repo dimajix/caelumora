@@ -2,6 +2,7 @@
 members = [
     "caelumora-model",
     "caelumora-runtime",
+    "caelumora-agent",
     "caelumora-logging",
     "caelumora-tui",
     "caelumora-client-api",

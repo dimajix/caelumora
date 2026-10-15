@@ -502,10 +502,12 @@ is answered to its sender alone (`MessageRejected`), never written to the histor
 ## The security suite
 
 `caelumora-runtime/tests/security_suite.rs` runs the whole runtime with the ownership policy, as a
-frontend does, with users of different permissions. Its policy records every question it is asked;
-each test of an action asserts the questions asked in a user's name, in order, for the action's
-owner, someone taking part and a stranger. The suite is the record, in code, of which permissions
-each action needs; issue [198](../issues/198-security-scenarios.md) says what is expected and why.
+frontend does - and `caelumora-agent/tests/security_suite.rs` the actions of agents, in the same
+world with the agents' plugin -, with users of different permissions. Its policy records every
+question it is asked; each test of an action asserts the questions asked in a user's name, in order,
+for the action's owner, someone taking part and a stranger. The suite is the record, in code, of
+which permissions each action needs; issue [198](../issues/198-security-scenarios.md) says what is
+expected and why.
 
 **Every new action that acts in someone's name is added to the suite**, with what it asks and what
 it answers to each of them; so is every change to what an existing action asks. A test of the suite
@@ -517,8 +519,8 @@ The world the suite runs in - the runtime, the recording policy, the users alice
 the helpers that put what the system starts from into the store - is `caelumora_runtime::testing`,
 public behind the feature `test-support` (issue 323). It runs no agent; the actions of agents are
 tested in the same world with the agents' plugin and the models of a test
-(`agent_testing::world`, issue 370). A plugin's actions are tested in the plugin, in the same world,
-taken as a dev-dependency with that feature, and follow the same rule.
+(`caelumora_agent::testing::world`, issue 370). A plugin's actions are tested in the plugin, in the
+same world, taken as a dev-dependency with that feature, and follow the same rule.
 
 ### Filters
 

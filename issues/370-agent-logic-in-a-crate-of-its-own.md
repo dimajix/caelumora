@@ -1,6 +1,6 @@
 # 370 — The runtime holds the environment agents run in and the agents' own logic in one crate
 
-**Status:** in progress
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -373,3 +373,24 @@ crate reaches the environment through the doors named above and nothing else.
     `AgentController::new`, as the constructors of the other controllers are.
   - A test of `session/channels.rs` showed a channel refusing a component it does not ask for with
     the echo tool, an agent's kind; it does so with the session's command `/help` now.
+- **2026-10-15** — Step 2, the move: `caelumora-agent` is a crate of the workspace. Its modules
+  came over by `git mv`, so their history follows: `tool`, `prompt`, `llm`, `compaction`,
+  `component_impl`, `message`, `external`, `actor` (`agent`, `external_agent`, `body`, `intake`,
+  `commands`, `run_control`), and at the top `turn`, `work`, `memory` and `notes` - no longer under
+  `agent/`, so that a turn is `caelumora_agent::turn::Turn` -, `plugin` (once `agent_plugin`),
+  `error` (`agent_error`), `command` (`agent_command`), `testing` (`agent_testing`, behind its own
+  `test-support`) and `channel_tests` (once `channel/tests/agents`). The plugins whose components
+  serve an agent's facets - skills, artifacts, MCP, A2A, Ollama - and the app and the TUI depend on
+  it; skills and artifacts with their layer `runtime`. `aho-corasick`, `regex` and `meval` are its
+  dependencies, no longer the runtime's.
+  - The security suite is cut in two (point 8): the 50 tests of the runtime stay in
+    `caelumora-runtime/tests/security_suite.rs`, the 47 of agents are
+    `caelumora-agent/tests/security_suite.rs`, with the helpers only they use; the four both use
+    (`checks`, `file`, `read`, `workspace`) are `caelumora_runtime::testing`.
+  - Found by building the runtime without `test-support`: the commit before had closed the
+    `impl` of `AgentContextView` too early, so that its methods were behind the feature; the
+    workspace's tests, which build with every feature, did not show it. Fixed here, and every crate
+    is built on its own now as well.
+  - The documents (point 9) name the crate: ARCHITECTURE.md, README.md, AGENTS.md, SECURITY.md,
+    PERMISSION-CHECKS.md, PLUGINS.md, COMPONENTS.md, COMMANDS.md, CODING-GUIDELINES.md.
+  - Measured: 230 unit tests and 50 of the suite in the runtime, 258 and 47 in the agents' crate.

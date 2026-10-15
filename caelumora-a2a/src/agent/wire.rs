@@ -3,7 +3,7 @@
 //! an agent card, of a JSON-RPC response and of what a task, a message or
 //! an update carries; and the constants of the protocol.
 
-use caelumora_runtime::external::{ExternalAgentError, ExternalAgentResult};
+use caelumora_agent::external::{ExternalAgentError, ExternalAgentResult};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

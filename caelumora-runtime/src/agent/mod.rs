@@ -12,11 +12,7 @@
 //!   read and changed within a turn.
 
 mod manager;
-pub mod memory;
-pub mod notes;
 pub mod state;
-pub mod turn;
-pub mod work;
 
 pub use manager::AgentManager;
 

@@ -1,0 +1,118 @@
+//! The `tool_sets_prompt_provider` component (issues 32, 194): tells the
+//! agent's model which of its tool sets are unavailable, and why in general
+//! terms. The model is given its tools natively, so it needs no prompt to
+//! learn of them - but a source whose tools are missing leaves no trace
+//! there, and the model would answer as if it could not do what it normally
+//! can.
+//!
+//! Optional: a personality that does not configure it tells its model
+//! nothing of missing tools. It reads the tool sets the turn began with, so
+//! that what it says matches what the model is offered; with all of them
+//! available it contributes nothing.
+
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::prompt::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::work::AgentWork;
+use async_trait::async_trait;
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::tool::ToolSet;
+use std::sync::Arc;
+
+pub const TOOL_SETS_PROMPT_PROVIDER_KIND: &str = "tool_sets_prompt_provider";
+
+#[derive(Debug)]
+pub struct ToolSetsPromptProvider {
+    pub position: PromptPosition,
+}
+
+#[async_trait]
+impl PromptProvider for ToolSetsPromptProvider {
+    fn position(&self) -> PromptPosition {
+        self.position
+    }
+
+    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
+        // What the agent is configured with, nothing read from a channel.
+        Ok(Prompt::classified(render(work.tool_sets()), Classification::PUBLIC))
+    }
+}
+
+/// The text naming the unavailable sets among `sets`, empty if there are
+/// none.
+fn render(sets: &[ToolSet]) -> String {
+    let lines: Vec<String> = sets.iter()
+        .filter_map(|set| set.unavailable.as_deref().map(|why| format!("{} ({}): {}", set.name, one_line(&set.description), one_line(why))))
+        .collect();
+    render_sections(
+        "Unavailable tools",
+        "Some of your tools are unavailable right now, so you cannot call them. If a request needs them, \
+         say that they are unavailable at the moment rather than that you cannot do it.",
+        &[Section::lines(lines)],
+    )
+}
+
+/// `text` on one line, so that it cannot break out of its entry.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+pub fn register(registry: &mut ComponentRegistry) {
+    registry.register(
+        ComponentKind::new(TOOL_SETS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
+        |descriptor, _context| {
+            let position = PromptPosition::of_params(&descriptor.params)?;
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn PromptProvider>(Arc::new(ToolSetsPromptProvider { position }));
+            Ok(facets)
+        },
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_runtime::agent::state::AgentStateHandle;
+    use crate::turn::Turn;
+    use caelumora_runtime::session::testing::detached_actor_runtime;
+    use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_model::tool::{Tool, ToolParameters};
+
+    fn tool(name: &str) -> Tool {
+        Tool {
+            name: name.to_string(),
+            description: "does something".to_string(),
+            parameters: ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()),
+            requires_approval: false,
+            visibility: Default::default(),
+            classification: None,
+            presentation: Default::default(),
+        }
+    }
+
+    /// What the provider says in a turn begun with `sets`.
+    async fn told(sets: Vec<ToolSet>) -> Prompt {
+        let mut state = AgentChannelState::default();
+        state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, sets, Default::default());
+        let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
+        let provider = ToolSetsPromptProvider { position: PromptPosition::Start };
+        provider.get_prompt(&turn.work()).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_unavailable_tool_sets_are_named_with_what_they_are_for_and_why() {
+        let github = ToolSet {
+            unavailable: Some("its server\ncannot be reached".to_string()),
+            ..ToolSet::new("github-mcp", "The tools of\nthe issue tracker.", Vec::new())
+        };
+        let prompt = told(vec![ToolSet::new("calculator", "Evaluate expressions.", vec![tool("calculate")]), github]).await;
+        assert!(prompt.text.contains("- github-mcp (The tools of the issue tracker.): its server cannot be reached\n"), "{}", prompt.text);
+        assert!(!prompt.text.contains("calculator"), "only the unavailable ones: {}", prompt.text);
+        assert_eq!(prompt.classification, Some(Classification::PUBLIC));
+    }
+
+    #[tokio::test]
+    async fn with_every_tool_set_available_it_says_nothing() {
+        assert!(told(vec![ToolSet::new("calculator", "Evaluate expressions.", vec![tool("calculate")])]).await.text.is_empty());
+        assert!(told(Vec::new()).await.text.is_empty(), "nor without tools");
+    }
+}

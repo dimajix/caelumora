@@ -30,7 +30,6 @@ use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::user::User;
 
-mod agents;
 mod commands;
 
 pub(super) use crate::session::testing::user;

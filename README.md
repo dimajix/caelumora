@@ -16,7 +16,8 @@ Caelumora is a flexible and extensible multi-agent system framework designed for
 The project is organized as a Rust workspace with the following crates:
 
 - **`caelumora-model`**: Core domain entities and data structures.
-- **`caelumora-runtime`**: The execution engine, handling event routing and agent cognitive cycles.
+- **`caelumora-runtime`**: The execution engine: sessions, channels, event routing and the views.
+- **`caelumora-agent`**: What an agent does in a channel: its cognitive cycle, tools, prompts and model.
 - **`caelumora-rest-api`**: The request and response types of the REST interface.
 - **`caelumora-rest-server`**: REST interface for interacting with the system, as a library.
 - **`caelumora-app`**: The program: the REST interface under `/api` and the web UI.

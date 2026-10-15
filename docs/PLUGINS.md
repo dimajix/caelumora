@@ -75,7 +75,8 @@ backends alone, such as `caelumora-open-terminal` (issue 327), registers them in
 nothing in `register`. A plugin's tests use the world of the security suite - the runtime with the
 recording ownership policy and three users -, `caelumora_runtime::testing`, as a dev-dependency
 with the feature `test-support`. That world runs no agent; a plugin whose components serve an
-agent's facets tests them in the world of the agents' tests (`agent_testing::world_with`), with the
+agent's facets tests them in the world of the agents' tests
+(`caelumora_agent::testing::world_with`), with the
 agents' plugin and the models of a test (issue 370).
 
 ## What a component kind outside the core may use
@@ -112,7 +113,8 @@ decides what a person is told of an error by the types it knows -
 `From<anyhow::Error> for ApiError` for the REST API -, and a plugin's types are not among them:
 inside an `anyhow`, whatever a plugin's error says is shown as a failure that points to the log.
 The agents' plugin, which defines the facets most plugins serve, is a core of its own in this: what
-an agent's owner is told when an answer fails is judged by `agent_error::user_message`, which knows
+an agent's owner is told when an answer fails is judged by `caelumora_agent::error::user_message`,
+which knows
 the error types of those facets and asks the runtime's judgement for the rest
 (`error::user_message_with`, issue 370). A registry of judgements the plugins add is not needed,
 and would be the registry of downcasts rejected below.

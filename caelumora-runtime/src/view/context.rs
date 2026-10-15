@@ -25,12 +25,6 @@ pub struct AgentContextView {
     state: AgentChannelState,
 }
 
-impl AgentContextView {
-    pub(crate) fn of(actor: ActorId, state: AgentChannelState) -> Self {
-        Self { actor, state }
-    }
-}
-
 /// What the tests of the agents' logic build a view with (issue 370).
 #[cfg(any(test, feature = "test-support"))]
 impl AgentContextView {
@@ -39,6 +33,12 @@ impl AgentContextView {
     /// shows of it.
     pub fn of_state(actor: ActorId, state: AgentChannelState) -> Self {
         Self::of(actor, state)
+    }
+}
+
+impl AgentContextView {
+    pub(crate) fn of(actor: ActorId, state: AgentChannelState) -> Self {
+        Self { actor, state }
     }
 
     /// The agent whose state this is.

@@ -8,7 +8,7 @@ edition = "2021"
 [features]
 default = ["runtime", "server"]
 # The manager, its storages, the component, the views, the plugin.
-runtime = ["dep:caelumora-runtime", "dep:async-trait", "dep:tokio", "dep:tokio-util", "dep:futures", "dep:tracing", "dep:anyhow", "dep:thiserror", "dep:serde_json"]
+runtime = ["dep:caelumora-runtime", "dep:caelumora-agent", "dep:async-trait", "dep:tokio", "dep:tokio-util", "dep:futures", "dep:tracing", "dep:anyhow", "dep:thiserror", "dep:serde_json"]
 # The routes, and how the plugin's errors are answered.
 server = ["runtime", "dep:caelumora-rest-server", "dep:axum"]
 
@@ -19,6 +19,7 @@ serde = { version = "1.0", features = ["derive"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 caelumora-runtime = { path = "../caelumora-runtime", optional = true }
+caelumora-agent = { path = "../caelumora-agent", optional = true }
 caelumora-rest-server = { path = "../caelumora-rest-server", optional = true }
 axum = { version = "0.8.9", optional = true }
 async-trait = { version = "0.1", optional = true }
@@ -31,6 +32,7 @@ thiserror = { version = "2.0.21", optional = true }
 serde_json = { version = "1.0", optional = true }
 
 [dev-dependencies]
+caelumora-agent = { path = "../caelumora-agent", features = ["test-support"] }
 caelumora-runtime = { path = "../caelumora-runtime", features = ["test-support"] }
 tokio = { version = "1.53.1", features = ["full"] }
 serde_json = "1.0"

@@ -14,9 +14,15 @@ The project is a Rust workspace, with a web UI next to it:
     their fields hold (`value`: `Name`, `Language`, free text such as `Summary`), messages and
     events, the traits of the stores, the security and confidentiality model, and the configuration
     (`AppConfig`). It holds data and rules, but runs nothing.
-*   **`caelumora-runtime`** - everything that runs: sessions, channels and their actors, the agent's
-    cognitive cycle, components, the event bus, the controllers that keep entities live, and the
-    store implementations.
+*   **`caelumora-runtime`** - where everything runs: sessions, channels and the actors of their
+    users and approvers, the kinds of agent registered with it (`AgentKinds`), components, the
+    views, the event bus, the controllers that keep entities live, workspaces, and the store
+    implementations. An actor reaches its channel through its `ActorRuntime` alone.
+*   **`caelumora-agent`** - what an agent does in a channel (issue 370): both kinds of agent - a
+    model run here, or an agent that runs elsewhere -, the agent's cognitive cycle and its turn, and
+    the facets its components serve (tools, prompt parts, the model, message stages, compaction,
+    its commands) with their built-in kinds. It joins the runtime as a plugin, `AgentsPlugin`, an
+    essential one: without it, the program is a chat between users.
 *   **`caelumora-rest-api`** - the wire of the REST API: the requests and responses, as `serde`
     reads and writes them, made from the model's entities and snapshots. It depends on the model
     alone, so that a client reads the API without the server (issue 323).
@@ -74,9 +80,10 @@ crates. The first is `caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-li
 `caelumora-artifacts`, which depends on the core's workspaces; `caelumora-mcp`
 ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a` and `caelumora-ollama` are ones that bring a
 component kind alone, `caelumora-open-terminal` one that brings backends alone. The agents are a
-plugin too, an essential one (issue 370): `AgentsPlugin` registers the kinds of agent, whose actors
-the channel builds (`AgentKinds`); without it, the program is a chat between users. It lies in the
-runtime until the agents' logic is a crate of its own. Where the core calls
+plugin too, an essential one (issue 370): `caelumora-agent` registers the kinds of agent, whose
+actors the channel builds (`AgentKinds`), and the kinds of their components; without it, the
+program is a chat between users. The plugins whose components serve an agent's facets - tools,
+models, external agents - build on it. Where the core calls
 a plugin, the plugin answers in the core's error types, not in its own: the core decides by the
 types it knows what a person is told of an error.
 

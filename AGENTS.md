@@ -77,9 +77,11 @@ The reasons and details are in [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md)
     extension traits of its own - its questions on `AccessQuestions`, its views on `Views` - and
     adds nothing about its kind to the core (see [PLUGINS.md](docs/PLUGINS.md)).
 *   A new action that acts in someone's name, or a change to what an action asks, comes with its
-    test in the security suite (`caelumora-runtime/tests/security_suite.rs`, see
+    test in the security suite (`caelumora-runtime/tests/security_suite.rs`, an agent's in
+    `caelumora-agent/tests/security_suite.rs`, see
     [SECURITY.md](docs/SECURITY.md#the-security-suite)) - a plugin's in its own tests, in the
-    suite's world (`caelumora_runtime::testing`, feature `test-support`).
+    suite's world (`caelumora_runtime::testing`, feature `test-support`; with agents,
+    `caelumora_agent::testing`).
 *   Stored data need not stay readable: until further notice, old data may be deleted. A change to
     what is stored comes without compatibility code - no `serde` aliases, no readers of an older
     form. Instead, say in the summary which stored data has to be deleted.
@@ -139,8 +141,9 @@ feature in somehow. Proposing such refactorings is part of the work, not an extr
     the description of a change needs an "and also", something is on the wrong object. Logic that
     belongs together by subject lives together - its data, rules and checks in one place - and is
     not spread over crates because its callers happen to be there: `caelumora-model` holds data
-    and rules, `caelumora-runtime` everything that runs, `caelumora-rest-server` only maps HTTP to
-    the runtime (see [ARCHITECTURE.md](docs/ARCHITECTURE.md)). When a caller needs something an
+    and rules, `caelumora-runtime` where everything runs, `caelumora-agent` what an agent does
+    there, `caelumora-rest-server` only maps HTTP to the runtime (see
+    [ARCHITECTURE.md](docs/ARCHITECTURE.md)). When a caller needs something an
     owner does not offer, extend the owner rather than computing it at the caller.
 *   **A clear and consistent public API.** The same concept has the same name everywhere (the
     `…_id` of what it identifies, `load_…` for loading, `…Provider` for a facet). Similar things

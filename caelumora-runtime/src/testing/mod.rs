@@ -56,6 +56,10 @@ use crate::session::{SessionError, SessionLoop, SessionManager};
 use crate::error::refusal;
 use crate::view::Viewer;
 use crate::workspace::WorkspaceError;
+use crate::controller::WorkspaceController;
+use crate::terminal::{ByteStream, Terminal, WorkspacePath};
+use caelumora_model::workspace::WorkspaceId;
+use futures::StreamExt;
 use caelumora_model::config::AppConfig;
 
 /// The ownership policy, recording every question it is asked - who acted
@@ -204,7 +208,7 @@ impl World {
     /// storage may lie beside the workspaces' (issue 328) -, and the
     /// component kinds `register` adds besides the built-in ones. It runs
     /// no agent unless a plugin brings them: the world of the agents'
-    /// tests is `agent_testing::world_configured` (issue 370).
+    /// tests is `caelumora_agent::testing::world_configured` (issue 370).
     pub async fn configured(plugins: &[&dyn Plugin], sections: impl FnOnce(&Path) -> BTreeMap<String, Value>, register: impl FnOnce(&mut ComponentRegistry)) -> Self {
         let roles = Roles::new([(*STAFF, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
@@ -453,7 +457,29 @@ pub async fn shown(watch: &mut ChannelWatch, wanted: &str) -> ActorEvent {
 /// The component kinds the tests build with, resolving references to
 /// preconfigured components in `component_store`: the runtime's own
 /// (`ComponentRegistry::built_in`). Those of an agent and a model are the
-/// agents' tests' (`agent_testing::test_registry`, issue 370).
+/// agents' tests' (`caelumora_agent::testing::test_registry`, issue 370).
 pub fn test_registry(component_store: Arc<dyn ComponentStore>) -> ComponentRegistry {
     ComponentRegistry::built_in(component_store)
+}
+
+/// `lines`, as `World::asked` records them.
+pub fn checks(lines: &[&str]) -> Vec<String> {
+    lines.iter().map(|line| line.to_string()).collect()
+}
+
+/// The content of a file to write, as a terminal is given it.
+pub fn file(text: &'static str) -> ByteStream {
+    Box::pin(futures::stream::iter([Ok(bytes::Bytes::from_static(text.as_bytes()))]))
+}
+
+/// The content of the file `path` of `terminal`, as text.
+pub async fn read(terminal: &dyn Terminal, path: &str) -> String {
+    let (_, content) = terminal.read(&WorkspacePath::parse(path).unwrap()).await.unwrap();
+    let chunks: Vec<_> = content.collect().await;
+    String::from_utf8(chunks.into_iter().flat_map(|chunk| chunk.unwrap().to_vec()).collect()).unwrap()
+}
+
+/// The controller through which what workspace `id` is changes (issue 344).
+pub async fn workspace(world: &World, id: WorkspaceId) -> Arc<WorkspaceController> {
+    world.runtime.controller_manager().workspace_controller(id).await.expect("the workspace")
 }

@@ -37,8 +37,8 @@
 //! fails rather than go out unprotected.
 
 use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
-use caelumora_runtime::llm::control_tokens::ControlTokens;
-use caelumora_runtime::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
+use caelumora_agent::llm::control_tokens::ControlTokens;
+use caelumora_agent::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
 use caelumora_runtime::remote::{describe_chain, describe_request_error};
 use caelumora_model::remote::RemoteEndpoint;
 use async_stream::stream;

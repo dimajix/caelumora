@@ -331,6 +331,7 @@ dependencies = [
  "async-trait",
  "axum",
  "bytes",
+ "caelumora-agent",
  "caelumora-model",
  "caelumora-runtime",
  "futures",
@@ -344,12 +345,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "caelumora-agent"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "caelumora-agent",
+ "caelumora-model",
+ "caelumora-runtime",
+ "chrono",
+ "futures",
+ "meval",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "caelumora-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
  "caelumora-a2a",
+ "caelumora-agent",
  "caelumora-artifacts",
  "caelumora-logging",
  "caelumora-mcp",
@@ -377,6 +403,7 @@ dependencies = [
  "async-trait",
  "axum",
  "bytes",
+ "caelumora-agent",
  "caelumora-model",
  "caelumora-rest-api",
  "caelumora-rest-server",
@@ -434,6 +461,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "caelumora-agent",
  "caelumora-model",
  "caelumora-runtime",
  "chrono",
@@ -478,6 +506,7 @@ dependencies = [
  "async-trait",
  "axum",
  "bytes",
+ "caelumora-agent",
  "caelumora-model",
  "caelumora-runtime",
  "chrono",
@@ -564,7 +593,6 @@ dependencies = [
 name = "caelumora-runtime"
 version = "0.1.0"
 dependencies = [
- "aho-corasick",
  "anyhow",
  "arc-swap",
  "async-trait",
@@ -575,10 +603,8 @@ dependencies = [
  "chrono",
  "dashmap",
  "futures",
- "meval",
  "nix",
  "rand 0.10.3",
- "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -598,6 +624,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "caelumora-agent",
  "caelumora-model",
  "caelumora-rest-api",
  "caelumora-rest-server",
@@ -618,6 +645,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "caelumora-a2a",
+ "caelumora-agent",
  "caelumora-artifacts",
  "caelumora-logging",
  "caelumora-mcp",

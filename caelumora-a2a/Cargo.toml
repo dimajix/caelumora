@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 caelumora-model = { path = "../caelumora-model" }
 caelumora-runtime = { path = "../caelumora-runtime" }
+caelumora-agent = { path = "../caelumora-agent" }
 anyhow = "1.0"
 arc-swap = "1.9.2"
 async-stream = "0.3.6"
