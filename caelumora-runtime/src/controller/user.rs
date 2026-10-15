@@ -4,7 +4,6 @@ use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::value::language::Language;
-use caelumora_model::value::name::Name;
 use caelumora_model::security::{Secured, SecurityContext};
 use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use caelumora_model::user::{User, UserId, UserProfile, UserUpdateEvent};
@@ -147,23 +146,12 @@ impl UserController {
     }
 
     fn process_user_update(&self, event: &UserUpdateEvent) {
-        match event {
-            // Checked where it was made; a name that is none here is left
-            // out rather than taken over.
-            UserUpdateEvent::NameChanged(name) => match Name::new(name) {
-                Ok(name) => {
-                    let mut user = (**self.user.load()).clone();
-                    user.username = name;
-                    self.user.store(Arc::new(user));
-                }
-                Err(e) => tracing::warn!(user = %self.id, error = %e, "A change of the user's name made elsewhere does not fit it"),
-            },
-            // As the `UserManager` stored them (issue 306).
-            UserUpdateEvent::RolesChanged(roles) => {
-                let mut user = (**self.user.load()).clone();
-                user.roles = roles.clone();
-                self.user.store(Arc::new(user));
-            }
+        let mut user = (**self.user.load()).clone();
+        // Checked where it was made; one that does not fit here is left out
+        // rather than taken over.
+        match user.apply(event) {
+            Ok(()) => self.user.store(Arc::new(user)),
+            Err(e) => tracing::warn!(user = %self.id, error = %e, "A change of the user made elsewhere does not fit it"),
         }
     }
 
@@ -182,6 +170,7 @@ impl UserController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Introduction;
     use caelumora_model::actor::ActorId;
     use caelumora_model::role::RoleId;

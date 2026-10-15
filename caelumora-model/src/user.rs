@@ -121,6 +121,23 @@ pub enum UserUpdateEvent {
     RolesChanged(Vec<RoleId>),
 }
 
+impl User {
+    /// Applies `event`, a change of the user as it was asked: what it says
+    /// is made into the user's values here (issue 248).
+    ///
+    /// # Errors
+    /// `ValueError` if what it says does not fit; the user is then
+    /// unchanged.
+    pub fn apply(&mut self, event: &UserUpdateEvent) -> Result<(), ValueError> {
+        match event {
+            UserUpdateEvent::NameChanged(name) => self.username = Name::new(name)?,
+            // As the `UserManager` stored them (issue 306).
+            UserUpdateEvent::RolesChanged(roles) => self.roles = roles.clone(),
+        }
+        Ok(())
+    }
+}
+
 
 /// What a user says about themselves (issue 176): the introduction an agent
 /// is given of them in every channel they take part in, marked there as

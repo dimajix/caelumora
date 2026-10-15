@@ -12,7 +12,7 @@ use crate::llm::LLMClient;
 use crate::logging::{agent_span, envelope_span};
 use crate::message::{EmitOutProcessor, PerceiveInProcessor};
 use crate::runtime::ActorRuntime;
-use crate::tool::{ToolExecutor, ToolProvider};
+use crate::tool::{not_executed_result, ToolExecutor, ToolProvider};
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -29,7 +29,7 @@ use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus, ToolSet};
+use caelumora_model::tool::{ToolCall, ToolCallState, ToolCallStatus, ToolSet};
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
 use tracing::{debug, info, warn, Instrument};
@@ -86,7 +86,7 @@ impl AgentActor {
         let agent_id = agent_controller.id();
         // A turn stored under way is resumed (issue 75).
         let resume = |state: &mut AgentChannelState| {
-            let not_executed = prepare_resume(state);
+            let not_executed = state.prepare_resume(&not_executed_result());
             if not_executed > 0 {
                 warn!("Agent {} in channel {}: {} approved tool calls were not executed before the restart; the model is told", agent_id, channel.id, not_executed);
             }
@@ -786,49 +786,6 @@ fn label(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, c
     message.reasoning_visibility = if owners { Visibility::Owner } else { Visibility::Channel };
 }
 
-/// Makes a loaded state fit to run from (issue 75). A state stored
-/// between two steps of a turn is a turn to resume - the server
-/// stopped or crashed in the middle of it - stored with the step that
-/// was to come next (issue 85), and most states resume as they are:
-/// `Planning` asks the model with the turn so far, `Reflecting` takes
-/// the finished turn over, `WaitingForUser` keeps waiting,
-/// `Cancelling` ends the turn. A deliberate end never leaves a turn in the
-/// store (`stop`, `cancel`, the stop tool).
-///
-/// `ExecutingTools` is the exception: a tool may have run without its
-/// result being stored, and running it again would repeat its effect
-/// (issue 20). Every approved call without a result is answered as not
-/// executed, so that the next step builds the tool message and the
-/// model decides again; results already stored stay. Returns how many
-/// calls were answered so.
-///
-/// A state in the middle of a turn without the turn's working state
-/// cannot be resumed; it starts idle.
-fn prepare_resume(state: &mut AgentChannelState) -> usize {
-    // A command turn is carried out between two stores and never stored
-    // under way (issue 269); one found is dropped as its request would have
-    // been, unanswered - and so is carrying it out (issue 299).
-    if state.turn.as_ref().is_some_and(|turn| turn.command.is_some()) {
-        warn!("A command turn was stored under way; it is dropped");
-        state.turn = None;
-    }
-    if (state.processing_state.in_turn() && state.turn.is_none()) || state.processing_state == ActorState::CarryingOutCommand {
-        state.processing_state = ActorState::Idle;
-    }
-    let Some(turn) = state.turn.as_mut().filter(|_| state.processing_state == ActorState::ExecutingTools) else {
-        return 0;
-    };
-    let mut answered = 0;
-    let classification = turn.work.classification.clone();
-    for call in &mut turn.tool_calls {
-        if matches!(call.status, ToolCallStatus::Ready { .. }) {
-            call.status = ToolCallStatus::Finished(ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, crate::tool::not_executed_result(), classification.clone()));
-            answered += 1;
-        }
-    }
-    answered
-}
-
 #[async_trait]
 impl Actor for AgentActor {
     fn id(&self) -> ActorId {
@@ -1157,46 +1114,5 @@ mod tests {
             "while it streams, the agent could still call a tool whose arguments are the owner's");
         assert_eq!(reasoning(vec![tool("shown", ToolVisibility::SHOWN), tool("without_result", ToolVisibility::WITHOUT_RESULT)], Visibility::Channel, false, &[], false), Visibility::Channel,
             "but not if it has no such tool");
-    }
-
-    #[test]
-    fn a_resumed_turn_answers_unfinished_tool_calls_as_not_executed_instead_of_running_them() {
-        use caelumora_model::tool::{ToolCallState, ToolVisibility};
-        let tool_call = ToolCall { id: None, function_name: "write_note".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
-        let ready = ToolCallState::approved(tool_call.clone());
-        let done = ToolCallState::answered(tool_call.clone(), ToolCallResult::of(&tool_call, ToolResultStatus::Ok, "done".to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT));
-        let waiting = ToolCallState::pending(tool_call.clone(), String::new(), false, caelumora_model::approval::ToolMatcher::exact(&tool_call), None);
-        let state_in = |actor_state: ActorState| AgentChannelState {
-            processing_state: actor_state,
-            turn: Some(caelumora_model::turn::TurnState {
-                tool_calls: vec![ready.clone(), done.clone(), waiting.clone()],
-                ..Default::default()
-            }),
-            ..AgentChannelState::default()
-        };
-        let calls = |state: &AgentChannelState| state.turn.as_ref().map(|t| t.tool_calls.clone()).unwrap_or_default();
-
-        let mut executing = state_in(ActorState::ExecutingTools);
-        assert_eq!(prepare_resume(&mut executing), 1, "one approved call had no result");
-        let executing = calls(&executing);
-        let [unfinished, finished, pending] = executing.as_slice() else { panic!("three calls") };
-        let unfinished = unfinished.result().expect("answered");
-        assert_eq!(unfinished.status, ToolResultStatus::NotExecuted);
-        assert!(unfinished.content.contains("not executed"), "the model is told: {}", unfinished.content);
-        assert_eq!(finished.result().map(|r| r.content.as_str()), Some("done"), "a stored result stays");
-        assert!(pending.approval_id().is_some(), "a call nobody approved is still waiting");
-
-        // Every other state resumes as it is.
-        for other in [ActorState::Planning, ActorState::WaitingForUser, ActorState::Reflecting] {
-            let mut state = state_in(other);
-            assert_eq!(prepare_resume(&mut state), 0, "{other:?}");
-            assert!(matches!(calls(&state)[0].status, ToolCallStatus::Ready { .. }));
-            assert_eq!(state.processing_state, other);
-        }
-
-        // A turn state without the turn cannot be resumed.
-        let mut lost = AgentChannelState { processing_state: ActorState::Planning, ..AgentChannelState::default() };
-        prepare_resume(&mut lost);
-        assert_eq!(lost.processing_state, ActorState::Idle);
     }
 }

@@ -6,7 +6,7 @@ use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
 use crate::removal::{Deletable, Removal};
 use crate::value::language::Language;
-use crate::message::MessageId;
+use crate::message::{Message, MessageId};
 use crate::message_history::{HistoryEntry, MessageHistory};
 use crate::scope::{Scope, Scoped};
 use crate::value::name::{Name, ScopedName};
@@ -18,6 +18,7 @@ use crate::session::{Session, SessionId};
 use crate::store::{self, EntityKind, Journaled};
 use crate::store::query::Field;
 use crate::user::UserId;
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -131,8 +132,8 @@ pub struct Channel {
 }
 
 /// How much of a channel's history a new participant may see, as asked for
-/// when adding them (issue 46). Data only: the `ChannelLoop` turns it into a
-/// `HistoryStart` and applies it.
+/// when adding them (issue 46). The `ChannelLoop` fixes it as a
+/// `HistoryStart` when they join (`start_in`) and applies that.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HistoryAccess {
@@ -141,6 +142,29 @@ pub enum HistoryAccess {
     None,
     LastDays { count: u32 },
     LastMessages { count: u32 },
+}
+
+impl HistoryAccess {
+    /// Where the view of `history` begins for a participant granted this,
+    /// fixed `now` - so that "the last three days" does not move day by
+    /// day. `None` if all of it is visible.
+    pub fn start_in(&self, history: &[Message], now: DateTime<Utc>) -> Option<HistoryStart> {
+        let last = || history.last().map(|m| HistoryStart::After(m.id));
+        let from = |index: usize| match index {
+            0 => None,
+            i if i >= history.len() => last(),
+            i => Some(HistoryStart::From(history[i].id)),
+        };
+        match *self {
+            HistoryAccess::All => None,
+            HistoryAccess::None => last(),
+            HistoryAccess::LastMessages { count } => from(history.len().saturating_sub(count as usize)),
+            HistoryAccess::LastDays { count } => {
+                let since = now - Duration::days(i64::from(count));
+                from(history.iter().position(|m| m.timestamp >= since).unwrap_or(history.len()))
+            }
+        }
+    }
 }
 
 /// Where a participant's view of a channel's history begins.
@@ -152,6 +176,22 @@ pub enum HistoryStart {
     /// After this message: what came before the participant joined is not
     /// visible.
     After(MessageId),
+}
+
+impl HistoryStart {
+    /// The part of `items` - a channel's history - visible from here:
+    /// nothing if the message it begins at is not there, rather than more
+    /// than was granted.
+    pub fn visible(&self, items: Vec<HistoryEntry>) -> Vec<HistoryEntry> {
+        let (id, skip) = match *self {
+            HistoryStart::From(id) => (id, 0),
+            HistoryStart::After(id) => (id, 1),
+        };
+        match items.iter().position(|item| item.said().is_some_and(|m| m.id == id)) {
+            Some(index) => items.into_iter().skip(index + skip).collect(),
+            None => Vec::new(),
+        }
+    }
 }
 
 /// The view of the history granted to one participant.
@@ -255,6 +295,24 @@ impl Channel {
         }
     }
 
+    /// Applies `event`, a change of the channel as it was asked: what it says
+    /// is made into the channel's values here (issue 248).
+    ///
+    /// # Errors
+    /// `ValueError` if what it says does not fit; the channel is then
+    /// unchanged.
+    pub fn apply(&mut self, event: &ChannelUpdateEvent) -> Result<(), ValueError> {
+        match event {
+            ChannelUpdateEvent::NameChanged(name) => self.name = Name::new(name)?,
+            ChannelUpdateEvent::ClassificationChanged(classification) => self.classification = classification.clone(),
+            ChannelUpdateEvent::LanguageChanged(language) => self.language = Language::optional(language.as_deref())?,
+            ChannelUpdateEvent::ApprovalRulesChanged(rules) => self.approval_rules = rules.clone(),
+            ChannelUpdateEvent::DescriptionChanged { summary, briefing } => self.describe(summary.as_deref(), briefing.as_deref())?,
+            ChannelUpdateEvent::UsesWorkspaceChanged(uses) => self.uses_workspace = *uses,
+        }
+        Ok(())
+    }
+
     /// Says what the channel is for (issue 245): `summary` and `briefing`
     /// replace what it said - a missing or empty one removes it.
     ///
@@ -347,6 +405,82 @@ mod tests {
     use crate::agent::tests::{replayed, stored};
     use crate::confidentiality::Confidentiality;
     use crate::message::tests::{id, make_message};
+
+    /// Five messages, one a day, the last one `now`.
+    fn daily(now: DateTime<Utc>) -> Vec<Message> {
+        (0..5).rev()
+            .map(|days| Message { id: MessageId::new(), timestamp: now - Duration::days(days), ..Message::new(Classification::CHANNEL_DEFAULT) })
+            .collect()
+    }
+
+    fn ids(history: &[Message]) -> Vec<MessageId> {
+        history.iter().map(|m| m.id).collect()
+    }
+
+    /// `messages` as the items of a history.
+    fn said(messages: &[Message]) -> Vec<HistoryEntry> {
+        messages.iter().map(|message| HistoryEntry::Said { message: message.clone(), context: None }).collect()
+    }
+
+    /// The ids of the messages of `items`.
+    fn ids_of(items: &[HistoryEntry]) -> Vec<MessageId> {
+        items.iter().filter_map(HistoryEntry::said).map(|m| m.id).collect()
+    }
+
+    fn granted(access: HistoryAccess, history: &[Message], now: DateTime<Utc>) -> Vec<MessageId> {
+        let items = match access.start_in(history, now) {
+            Some(start) => start.visible(said(history)),
+            None => said(history),
+        };
+        ids_of(&items)
+    }
+
+    #[test]
+    fn a_change_is_made_into_the_channel_s_values_or_leaves_it_as_it_was() {
+        let owner = ActorId::User(UserId::new());
+        let mut channel = Channel::build(SessionId::new(), owner, Name::new("main").unwrap(), ComponentConfig::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
+        channel.apply(&ChannelUpdateEvent::NameChanged("planning".to_string())).unwrap();
+        channel.apply(&ChannelUpdateEvent::LanguageChanged(Some("de".to_string()))).unwrap();
+        channel.apply(&ChannelUpdateEvent::UsesWorkspaceChanged(false)).unwrap();
+        assert_eq!((channel.name.as_str(), channel.language.as_ref().map(|l| l.as_str()), channel.uses_workspace), ("planning", Some("de"), false));
+
+        assert!(channel.apply(&ChannelUpdateEvent::LanguageChanged(Some("no language".to_string()))).is_err(), "no language tag");
+        assert_eq!(channel.language.as_ref().map(|l| l.as_str()), Some("de"), "unchanged");
+    }
+
+    #[test]
+    fn history_access_all_and_none_grant_everything_and_nothing() {
+        let now = Utc::now();
+        let history = daily(now);
+        assert_eq!(granted(HistoryAccess::All, &history, now), ids(&history), "All sees every message");
+        assert!(granted(HistoryAccess::None, &history, now).is_empty(), "None sees no earlier message");
+        assert_eq!(HistoryAccess::None.start_in(&[], now), None, "an empty channel has nothing to hide");
+    }
+
+    #[test]
+    fn history_access_last_messages_and_days_cut_the_history() {
+        let now = Utc::now();
+        let history = daily(now);
+        assert_eq!(granted(HistoryAccess::LastMessages { count: 2 }, &history, now), ids(&history[3..]));
+        assert_eq!(granted(HistoryAccess::LastMessages { count: 9 }, &history, now), ids(&history),
+                   "more than there is grants all of it");
+        assert!(granted(HistoryAccess::LastMessages { count: 0 }, &history, now).is_empty());
+        // Messages 1, 2 and 3 days ago plus today's - within the last three days.
+        assert_eq!(granted(HistoryAccess::LastDays { count: 3 }, &history, now), ids(&history[1..]));
+        assert!(granted(HistoryAccess::LastDays { count: 3 }, &history, now + Duration::days(10)).is_empty(),
+                "nothing within the last days sees nothing");
+    }
+
+    #[test]
+    fn a_history_start_shows_later_messages_and_nothing_if_its_message_is_gone() {
+        let now = Utc::now();
+        let mut later = daily(now);
+        let start = HistoryStart::After(later[1].id);
+        later.push(Message { id: MessageId::new(), ..Message::new(Classification::CHANNEL_DEFAULT) });
+        assert_eq!(ids_of(&start.visible(said(&later))), ids(&later[2..]), "messages sent after joining stay visible");
+        assert!(HistoryStart::From(MessageId::new()).visible(said(&later)).is_empty(),
+                "an unknown start shows nothing rather than everything");
+    }
 
     #[test]
     fn what_changed_in_a_channels_state_replays_onto_what_was_stored() {

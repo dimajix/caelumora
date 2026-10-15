@@ -40,6 +40,9 @@ session's id and the channel's together with the change, or `None` for an event 
 kind; `change.update::<AgentUpdateEvent>()` answers what an update says, and
 `change.data::<ActorId>(channel::JOINED)` what a custom change says. Who asks about any kind - the
 event bus, which kind of entity a receiver must be allowed to read - takes the fields themselves.
+What an update does to its entity is the entity's own rule: `Session::apply`, `Channel::apply`,
+`Agent::apply` and `User::apply` make what it says into the entity's values (issues 248, 353),
+where it is made and where a change made elsewhere is taken over.
 
 Written as JSON, an event is an object of these fields, `within` absent for a kind that lies in
 nothing, a change of its life written as its name alone (`"change": "Deleted"`), an update as

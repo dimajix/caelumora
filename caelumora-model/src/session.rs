@@ -119,6 +119,24 @@ impl Session {
         SecurityAttributes { acl: attributes.acl.into_iter().chain(access.iter().copied()).collect(), ..attributes }
     }
 
+    /// Applies `event`, a change of the session as it was asked: what it says
+    /// is made into the session's values here (issue 248).
+    ///
+    /// # Errors
+    /// `ValueError` if what it says does not fit; the session is then
+    /// unchanged.
+    pub fn apply(&mut self, event: &SessionUpdateEvent) -> Result<(), ValueError> {
+        match event {
+            SessionUpdateEvent::NameChanged(name) => self.name = Name::new(name)?,
+            SessionUpdateEvent::PrivacyChanged(privacy) => self.privacy = *privacy,
+            SessionUpdateEvent::ApprovalRulesChanged(rules) => self.approval_rules = rules.clone(),
+            SessionUpdateEvent::DescriptionChanged { summary, briefing } => self.describe(summary.as_deref(), briefing.as_deref())?,
+            SessionUpdateEvent::WorkspaceChanged(workspace) => self.workspace = *workspace,
+            SessionUpdateEvent::ParticipantAdded(participant) => self.take_in(participant.clone()),
+        }
+        Ok(())
+    }
+
     /// Says what the session is for (issue 245): `summary` and `briefing`
     /// replace what it said - a missing or empty one removes it.
     ///
@@ -198,5 +216,23 @@ mod tests {
         let joins: Vec<Subject> = session.security_attributes.acl.iter().filter(|e| e.grant == Grant::Join).map(|e| e.subject).collect();
         assert_eq!(joins, [Subject::Actor(ActorId::User(carol)), Subject::Everyone], "bob's invitation is used up, carol's and the rule stay");
         assert!(session.security_attributes.acl.contains(&AclEntry { subject: Subject::Group(GroupId::of_session(id)), grant: Grant::Read }), "read by its members");
+    }
+
+    #[test]
+    fn a_change_is_made_into_the_session_s_values_or_leaves_it_as_it_was() {
+        let (alice, id, now) = (UserId::new(), SessionId::new(), Utc::now());
+        let mut session = Session {
+            id, name: Name::new("s").unwrap(), summary: None, briefing: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
+            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
+            security_attributes: Session::attributes_of(id, alice, &[]), deleted: None,
+        };
+        session.apply(&SessionUpdateEvent::NameChanged("planning".to_string())).unwrap();
+        session.apply(&SessionUpdateEvent::DescriptionChanged { summary: Some("What we plan".to_string()), briefing: None }).unwrap();
+        session.apply(&SessionUpdateEvent::ParticipantAdded(Participant::User(alice))).unwrap();
+        assert_eq!((session.name.as_str(), session.summary.as_ref().map(|s| s.as_str())), ("planning", Some("What we plan")));
+        assert_eq!(session.participants.len(), 1, "taken in as `take_in` does: once");
+
+        assert!(session.apply(&SessionUpdateEvent::NameChanged(String::new())).is_err(), "no name");
+        assert_eq!(session.name.as_str(), "planning", "unchanged");
     }
 }

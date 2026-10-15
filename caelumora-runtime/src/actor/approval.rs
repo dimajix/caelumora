@@ -207,7 +207,7 @@ impl ApproverActor {
         p.responses.insert(user_id, status);
 
         let approvers = self.approvers_of(p.agent_id).await;
-        if let Some(decision) = Self::check_strategy(p, &approvers) {
+        if let Some(decision) = p.strategy.decide(&approvers, &p.responses) {
             if let Some(p) = pending.remove(&response.id) {
                 self.send_decision(p, decision, output).await?;
             }
@@ -235,7 +235,7 @@ impl ApproverActor {
 
         for (id, p) in pending.iter() {
             let approvers = self.approvers_of(p.agent_id).await;
-            if let Some(decision) = Self::check_strategy(p, &approvers) {
+            if let Some(decision) = p.strategy.decide(&approvers, &p.responses) {
                 to_remove.push((*id, decision));
             }
         }
@@ -247,60 +247,6 @@ impl ApproverActor {
         }
 
         Ok(())
-    }
-
-    /// The decision on `p` its strategy reaches, counting the answers of
-    /// `approvers` - those taking part who may approve, now - and only
-    /// theirs: who left or may no longer approve does not count, either
-    /// way. Without anyone who may approve, it is denied.
-    fn check_strategy(p: &PendingApproval, approvers: &[ActorId]) -> Option<ApprovalStatus> {
-        let user_count = approvers.len();
-        if user_count == 0 {
-            return Some(ApprovalStatus::Denied);
-        }
-        let counted = || p.responses.iter().filter(|(id, _)| approvers.contains(id)).map(|(_, status)| *status);
-        let approved_count = counted().filter(|&s| s == ApprovalStatus::Approved).count();
-        let denied_count = counted().filter(|&s| s == ApprovalStatus::Denied).count();
-        let total_responses = counted().count();
-
-        match p.strategy {
-            ApprovalStrategy::Any => {
-                if approved_count > 0 {
-                    Some(ApprovalStatus::Approved)
-                } else if total_responses >= user_count && denied_count == user_count {
-                    Some(ApprovalStatus::Denied)
-                } else {
-                    None
-                }
-            }
-            ApprovalStrategy::Majority => {
-                if approved_count > user_count / 2 {
-                    Some(ApprovalStatus::Approved)
-                } else if denied_count >= user_count.div_ceil(2) {
-                    Some(ApprovalStatus::Denied)
-                } else {
-                    None
-                }
-            }
-            ApprovalStrategy::All => {
-                if approved_count >= user_count && user_count > 0 {
-                    Some(ApprovalStatus::Approved)
-                } else if denied_count > 0 {
-                    Some(ApprovalStatus::Denied)
-                } else {
-                    None
-                }
-            }
-            ApprovalStrategy::DenyOnFirst => {
-                if denied_count > 0 {
-                    Some(ApprovalStatus::Denied)
-                } else if approved_count >= user_count && user_count > 0 {
-                    Some(ApprovalStatus::Approved)
-                } else {
-                    None
-                }
-            }
-        }
     }
 
     async fn send_decision(&self, p: PendingApproval, status: ApprovalStatus, output: &dyn EventSender) -> Result<()> {

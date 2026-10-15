@@ -1,4 +1,3 @@
-use caelumora_model::value::name::Name;
 use caelumora_model::value::ValueError;
 use arc_swap::ArcSwap;
 use caelumora_model::agent::{Agent, AgentId, AgentUpdateEvent, Personality};
@@ -96,16 +95,14 @@ impl AgentController {
         Ok(())
     }
 
-    /// The agent with `event` applied, not yet stored anywhere; what it
-    /// says is made into the agent's values here (issue 248).
+    /// The agent with `event` applied (`Agent::apply`), not yet stored
+    /// anywhere.
     ///
     /// # Errors
     /// `ValueError` if what it says does not fit.
     fn apply(&self, event: &AgentUpdateEvent) -> Result<Agent, ValueError> {
         let mut agent = (**self.agent.load()).clone();
-        match event {
-            AgentUpdateEvent::NameChanged(name) => agent.name.name = Name::new(name)?,
-        }
+        agent.apply(event)?;
         Ok(agent)
     }
 

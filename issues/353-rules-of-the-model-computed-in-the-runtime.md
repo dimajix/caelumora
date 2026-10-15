@@ -1,6 +1,6 @@
 # 353 — Rules of the model are computed in the runtime: approval strategies, history limits, resuming a state
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -55,3 +55,23 @@ share one shape ([358](358-controllers-apply-their-events-each-on-its-own.md)).
 
 - **2026-10-14** — From the review of agents, sessions and channels, epic
   [349](349-core-review-epic.md).
+- **2026-10-14** — Done, as considered:
+  - `ApprovalStrategy::decide(&self, approvers, responses)` in `caelumora-model/src/approval.rs`,
+    tested there for the four strategies; the approver calls it. The `user_count > 0` of `All` and
+    `DenyOnFirst` is gone: no approvers is denied before.
+  - `HistoryAccess::start_in` and `HistoryStart::visible` in `caelumora-model/src/channel.rs`, with
+    their tests; `channel/history.rs` keeps `VisibleHistory`, `visible_part` - the case without a
+    start - and the `ChannelLoop` methods. Its own `said` is gone: `HistoryEntry::said` of the model
+    is public now.
+  - `AgentChannelState::prepare_resume(&mut self, not_executed: &str)`, given the text alone, which
+    stays in the runtime (`not_executed_result`); the `AgentActor` calls it as it resumes (issue
+    363). Its test moved to the model, with a case for a command turn stored under way.
+  - `Session::apply`, `Channel::apply`, `Agent::apply` and, as the issue foresaw, `User::apply` -
+    `&mut self`, `Result<(), ValueError>` -, tested for the session and the channel. The session's
+    and the agent's controller keep their `apply`, now cloning and calling the model's, for 358 to
+    shape; the channel's `update` calls `Channel::apply`; `UserController::process_user_update`
+    calls `User::apply`, and logs a change that does not fit as one of the user, not of the name.
+
+  The documentation of `AgentChannelState::processing_state` said an external agent always stores
+  `Idle`; since 363 it stores where it stood and does not resume from it, which it says now.
+  EVENTS.md says whose rule applying an update is.

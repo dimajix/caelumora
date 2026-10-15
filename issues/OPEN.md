@@ -105,7 +105,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | No. | Status | Issue |
 |---|---|---|
 | [346](346-subscription-topics-for-every-kind.md) | open | The event bus has subscription topics only for sessions, channels, agents and users, so a plugin cannot follow a single entity - an artifact, say - without reading every event. |
-| [353](353-rules-of-the-model-computed-in-the-runtime.md) | open | Rules of the model - what an approval strategy decides, what a history limit shows, how a stored agent state is made fit to resume, how an update event applies - are computed in the runtime. |
 | [354](354-names-follow-several-schemes.md) | open | Names around sessions, channels and actors follow several schemes: manager verbs with and without the noun, three ways to find by id, and `Member` meaning three things. |
 | [358](358-controllers-apply-their-events-each-on-its-own.md) | open | The controllers apply, store and announce their update events each on their own, `updated_at` moves on one path only, and the loops forward the updates with uneven logging. |
 | [364](364-managers-in-different-places.md) | open | A module's manager lives in `manager.rs` in some modules, in `mod.rs` or a flat file in others, and its error type now beside it, now in `mod.rs`. |

@@ -1,3 +1,4 @@
+use crate::actor::ActorId;
 use crate::agent::AgentId;
 use crate::channel::ChannelId;
 use crate::session::SessionId;
@@ -5,7 +6,7 @@ use crate::tool::ToolCall;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 define_id!(ApproverId);
 
@@ -23,6 +24,62 @@ pub enum ApprovalStrategy {
     Majority,
     All,
     DenyOnFirst,
+}
+
+impl ApprovalStrategy {
+    /// The decision this strategy reaches from `responses`, counting the
+    /// answers of `approvers` - those who may approve - and only theirs: who
+    /// may not does not count, either way. `None` while it waits for more
+    /// answers. Without anyone who may approve, it is denied.
+    pub fn decide(&self, approvers: &[ActorId], responses: &HashMap<ActorId, ApprovalStatus>) -> Option<ApprovalStatus> {
+        let user_count = approvers.len();
+        if user_count == 0 {
+            return Some(ApprovalStatus::Denied);
+        }
+        let counted = || responses.iter().filter(|(id, _)| approvers.contains(id)).map(|(_, status)| *status);
+        let approved_count = counted().filter(|&s| s == ApprovalStatus::Approved).count();
+        let denied_count = counted().filter(|&s| s == ApprovalStatus::Denied).count();
+        let total_responses = counted().count();
+
+        match self {
+            ApprovalStrategy::Any => {
+                if approved_count > 0 {
+                    Some(ApprovalStatus::Approved)
+                } else if total_responses >= user_count && denied_count == user_count {
+                    Some(ApprovalStatus::Denied)
+                } else {
+                    None
+                }
+            }
+            ApprovalStrategy::Majority => {
+                if approved_count > user_count / 2 {
+                    Some(ApprovalStatus::Approved)
+                } else if denied_count >= user_count.div_ceil(2) {
+                    Some(ApprovalStatus::Denied)
+                } else {
+                    None
+                }
+            }
+            ApprovalStrategy::All => {
+                if approved_count >= user_count {
+                    Some(ApprovalStatus::Approved)
+                } else if denied_count > 0 {
+                    Some(ApprovalStatus::Denied)
+                } else {
+                    None
+                }
+            }
+            ApprovalStrategy::DenyOnFirst => {
+                if denied_count > 0 {
+                    Some(ApprovalStatus::Denied)
+                } else if approved_count >= user_count {
+                    Some(ApprovalStatus::Approved)
+                } else {
+                    None
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -322,7 +379,45 @@ impl ApprovalRule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::user::UserId;
     use serde_json::json;
+
+    /// What `strategy` decides of `approvers` people, of whom the first
+    /// answered as `answers` says, and one who may not approve approved.
+    fn decided(strategy: ApprovalStrategy, approvers: usize, answers: &[ApprovalStatus]) -> Option<ApprovalStatus> {
+        let approvers: Vec<ActorId> = (0..approvers).map(|_| ActorId::User(UserId::new())).collect();
+        let mut responses: HashMap<ActorId, ApprovalStatus> = approvers.iter().copied().zip(answers.iter().copied()).collect();
+        responses.insert(ActorId::User(UserId::new()), ApprovalStatus::Approved);
+        strategy.decide(&approvers, &responses)
+    }
+
+    #[test]
+    fn each_strategy_decides_by_the_answers_of_those_who_may_approve() {
+        use ApprovalStatus::{Approved, Denied};
+        use ApprovalStrategy::{All, Any, DenyOnFirst, Majority};
+        for strategy in [Any, Majority, All, DenyOnFirst] {
+            assert_eq!(decided(strategy, 0, &[]), Some(Denied), "{strategy:?}: nobody may approve");
+            assert_eq!(decided(strategy, 3, &[]), None, "{strategy:?}: nobody answered; who may not approve does not count");
+        }
+
+        assert_eq!(decided(Any, 3, &[Denied, Approved]), Some(Approved), "one approval is enough");
+        assert_eq!(decided(Any, 3, &[Denied, Denied]), None, "denied only once all denied");
+        assert_eq!(decided(Any, 3, &[Denied, Denied, Denied]), Some(Denied));
+
+        assert_eq!(decided(Majority, 3, &[Approved]), None);
+        assert_eq!(decided(Majority, 3, &[Approved, Approved]), Some(Approved), "more than half");
+        assert_eq!(decided(Majority, 4, &[Approved, Approved, Denied]), None, "half is no majority");
+        assert_eq!(decided(Majority, 4, &[Denied, Denied]), Some(Denied), "half denied: no majority can come");
+        assert_eq!(decided(Majority, 3, &[Denied, Denied]), Some(Denied));
+
+        assert_eq!(decided(All, 3, &[Approved, Approved]), None);
+        assert_eq!(decided(All, 3, &[Approved, Approved, Approved]), Some(Approved));
+        assert_eq!(decided(All, 3, &[Approved, Denied]), Some(Denied), "one denial ends it");
+
+        assert_eq!(decided(DenyOnFirst, 3, &[Denied]), Some(Denied), "the first denial ends it");
+        assert_eq!(decided(DenyOnFirst, 2, &[Approved]), None);
+        assert_eq!(decided(DenyOnFirst, 2, &[Approved, Approved]), Some(Approved));
+    }
 
     fn call(tool: &str, arguments: Value) -> ToolCall {
         ToolCall { id: None, function_name: tool.to_string(), arguments, visibility: Default::default(), presentation: Default::default() }

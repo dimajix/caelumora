@@ -203,21 +203,14 @@ impl SessionController {
         Ok(())
     }
 
-    /// The session with `event` applied, not yet stored anywhere; what it
-    /// says is made into the session's values here (issue 248).
+    /// The session with `event` applied (`Session::apply`), not yet stored
+    /// anywhere.
     ///
     /// # Errors
     /// `ValueError` if what it says does not fit.
     fn apply(&self, event: &SessionUpdateEvent) -> Result<Session, ValueError> {
         let mut session = (**self.session.load()).clone();
-        match event {
-            SessionUpdateEvent::NameChanged(name) => session.name = Name::new(name)?,
-            SessionUpdateEvent::PrivacyChanged(privacy) => session.privacy = *privacy,
-            SessionUpdateEvent::ApprovalRulesChanged(rules) => session.approval_rules = rules.clone(),
-            SessionUpdateEvent::DescriptionChanged { summary, briefing } => session.describe(summary.as_deref(), briefing.as_deref())?,
-            SessionUpdateEvent::WorkspaceChanged(workspace) => session.workspace = *workspace,
-            SessionUpdateEvent::ParticipantAdded(participant) => session.take_in(participant.clone()),
-        }
+        session.apply(event)?;
         Ok(session)
     }
 }

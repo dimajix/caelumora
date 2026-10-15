@@ -3,6 +3,7 @@
 
 use caelumora_model::value::name::Name;
 use anyhow::Result;
+use chrono::Utc;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::Participant;
@@ -14,7 +15,6 @@ use tracing::{info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelMember, LEAVE_GRACE, Member};
-use super::history::history_start;
 use caelumora_model::channel::Channel;
 use caelumora_model::store::Stored;
 
@@ -82,7 +82,7 @@ impl ChannelLoop {
         self.participation.require_admissible(&member, context, &self.classification())?;
 
         let messages = self.history().await;
-        let start = history_start(history, &messages, chrono::Utc::now());
+        let start = history.start_in(&messages, Utc::now());
         self.channel.add_participant(&storing, found.clone(), start).await?;
 
         if let Err(error) = self.start_member(member).await {

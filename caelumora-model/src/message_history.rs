@@ -314,7 +314,7 @@ impl Chain<HistoryEntry> {
 
 impl HistoryEntry {
     /// The message, if this is one said.
-    fn said(&self) -> Option<&Message> {
+    pub fn said(&self) -> Option<&Message> {
         match self {
             HistoryEntry::Said { message, .. } => Some(message),
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }

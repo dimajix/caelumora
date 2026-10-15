@@ -1,6 +1,5 @@
 use caelumora_model::value::name::Name;
 use arc_swap::ArcSwap;
-use caelumora_model::value::language::Language;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
@@ -225,8 +224,8 @@ impl ChannelController {
         self.channels.update(ctx, channel).await
     }
 
-    /// Applies `event`, stores the channel, takes it over and announces it.
-    /// What it says is made into the channel's values here (issue 248).
+    /// Applies `event` (`Channel::apply`), stores the channel, takes it over
+    /// and announces it.
     ///
     /// # Errors
     /// `StoreError::Invalid` if what it says does not fit, otherwise
@@ -237,14 +236,7 @@ impl ChannelController {
         // Announced to who reaches it as it was, too: who no longer does
         // learns so (issue 312).
         let had = channel.classification.clone();
-        match event {
-            ChannelUpdateEvent::NameChanged(name) => channel.name = Name::new(name)?,
-            ChannelUpdateEvent::ClassificationChanged(classification) => channel.classification = classification.clone(),
-            ChannelUpdateEvent::LanguageChanged(language) => channel.language = Language::optional(language.as_deref())?,
-            ChannelUpdateEvent::ApprovalRulesChanged(rules) => channel.approval_rules = rules.clone(),
-            ChannelUpdateEvent::DescriptionChanged { summary, briefing } => channel.describe(summary.as_deref(), briefing.as_deref())?,
-            ChannelUpdateEvent::UsesWorkspaceChanged(uses) => channel.uses_workspace = *uses,
-        }
+        channel.apply(event)?;
         self.store(ctx, &channel).await?;
         let (attributes, classifications) = (channel.security_attributes.clone(), [had, channel.classification.clone()]);
         self.channel.store(Arc::new(channel));
