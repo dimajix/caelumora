@@ -5,7 +5,7 @@ use caelumora_model::value::name::{Name, ScopedName};
 use crate::runtime::RuntimeManager;
 use crate::channel::Participation;
 use crate::event::EventBus;
-use anyhow::Result;
+use anyhow::{Result, Error};
 use caelumora_model::channel::{Channel, ChannelField};
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::actor::ActorId;
@@ -29,6 +29,8 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use super::{SessionError, SessionLoop, purge_channel_document, require_attachable, require_classification};
 use caelumora_model::session;
+use crate::template::{resolve_participants, resolve_workspace, take_in_agents};
+use tokio::sync::Mutex;
 
 pub struct SessionManager {
     sessions: DashMap<SessionId, Arc<SessionLoop>>,
@@ -37,7 +39,7 @@ pub struct SessionManager {
     /// so that a session starts only once however many requests ask for it
     /// at the same time (issue 62): two loops of one session would run two
     /// actors per agent and channel, which overwrite each other's state.
-    starts: DashMap<SessionId, Arc<tokio::sync::Mutex<()>>>,
+    starts: DashMap<SessionId, Arc<Mutex<()>>>,
     /// What builds the loops of the sessions it starts.
     pub(super) runtime_manager: Arc<RuntimeManager>,
     /// The services it works with, taken from `runtime_manager` once (issue
@@ -106,7 +108,7 @@ impl SessionManager {
     }
 
     /// The lock held while session `id` is started.
-    fn start_lock(&self, id: SessionId) -> Arc<tokio::sync::Mutex<()>> {
+    fn start_lock(&self, id: SessionId) -> Arc<Mutex<()>> {
         self.starts.entry(id).or_default().clone()
     }
 
@@ -178,7 +180,7 @@ impl SessionManager {
         let name = Name::optional(name)?;
         let template = self.stores.session_templates.get(context, template_id).await.map_err(|e| match e {
             StoreError::NotFound { .. } => SessionError::TemplateNotFound(template_id).into(),
-            e => anyhow::Error::new(e),
+            e => Error::new(e),
         })?;
         let id = SessionId::new();
         // Its own verb before anything of others is asked or anything is
@@ -193,7 +195,7 @@ impl SessionManager {
             }
             _ => None,
         };
-        let (participants, agents) = crate::template::resolve_participants(&self.stores, context, &template, id, owner).await?;
+        let (participants, agents) = resolve_participants(&self.stores, context, &template, id, owner).await?;
         let name = name.unwrap_or_else(|| template.name.name.clone());
         // What is to be found or made: the template's, unless one was chosen.
         let wanted = match workspace {
@@ -233,7 +235,7 @@ impl SessionManager {
     async fn complete(&self, context: &SecurityContext, owner: UserId, template: &SessionTemplate, session: &SessionLoop, wanted: Option<&WorkspaceTemplate>, agents: Vec<(String, ScopedName, PersonalityId)>) -> Result<()> {
         let workspaces = self.runtime_manager.workspace_manager();
         let resolved = match wanted {
-            Some(wanted) => Some(crate::template::resolve_workspace(workspaces, context, wanted, session.id(), owner).await?),
+            Some(wanted) => Some(resolve_workspace(workspaces, context, wanted, session.id(), owner).await?),
             None => None,
         };
         let made = resolved.and_then(|(workspace, made)| made.then_some(workspace));
@@ -241,7 +243,7 @@ impl SessionManager {
             if let Some((workspace, _)) = resolved {
                 session.attach_workspace(context, Some(workspace)).await?;
             }
-            crate::template::take_in_agents(self.stores.agents.as_ref(), &self.agents, context, template, session, agents).await
+            take_in_agents(self.stores.agents.as_ref(), &self.agents, context, template, session, agents).await
         }.await;
         if let (Err(_), Some(made)) = (&completed, made) {
             let system = SecurityContext::system();
@@ -473,7 +475,7 @@ impl SessionManager {
         let deleted = async {
             self.scoped.delete_lying_in(context, &scope).await?;
             self.groups.delete_participants(&scope).await?;
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, Error>(())
         }.await;
         if let Err(error) = deleted {
             if let Err(undo) = self.stores.sessions.restore(&SecurityContext::system(), id).await {
@@ -589,7 +591,7 @@ impl SessionManager {
 /// `error` of the store about session `id`: that there is none - or none
 /// the caller may see - is the session's own error, what the request named
 /// and did not find (issue 323).
-fn store_error(id: SessionId) -> impl FnOnce(StoreError) -> anyhow::Error {
+fn store_error(id: SessionId) -> impl FnOnce(StoreError) -> Error {
     move |error| match error {
         StoreError::NotFound { .. } => SessionError::NotFound(id).into(),
         error => error.into(),
@@ -604,10 +606,10 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Agent;
     use crate::agent::AgentError;
-    use caelumora_model::channel::{self, Channel};
+    use caelumora_model::channel::{self, Channel, moderation_components};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::value::language::Language;
-    use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use caelumora_model::security::{SecurityAttributes, SecurityContext, Grant, Subject};
     use crate::view::Viewer;
     use caelumora_model::store::StoreError;
     use caelumora_model::scope::Scope;
@@ -624,6 +626,11 @@ mod tests {
     use caelumora_model::event::EntityChange;
     use caelumora_model::session::Session;
     use caelumora_model::session;
+    use caelumora_model::user::UserProfile;
+    use crate::command::{ChannelCommandProvider, CommandExecutor};
+    use crate::error::is_forbidden;
+    use serde_json::Value;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn create_session_emits_created_then_started() {
@@ -751,7 +758,7 @@ mod tests {
             let manager = Arc::clone(&manager);
             async move { manager.stop(&SecurityContext::system(), session_id).await.unwrap() }
         });
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!stopping.is_finished(), "the stop waits for the start");
 
         // ... and registers the session before it lets go: the stop then
@@ -768,7 +775,7 @@ mod tests {
         use caelumora_model::command::HELP_COMMAND_KIND;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let runtime = test_runtime();
-        let names = |executor: crate::command::CommandExecutor<dyn crate::command::ChannelCommandProvider>| async move {
+        let names = |executor: CommandExecutor<dyn ChannelCommandProvider>| async move {
             executor.visible(&SecurityContext::default(), &SecurityAttributes::default()).await.into_iter().map(|c| c.name).collect::<Vec<_>>()
         };
 
@@ -783,7 +790,7 @@ mod tests {
             component_nodes: vec![ComponentDescriptor {
                 id: "help".to_string(),
                 kind: HELP_COMMAND_KIND.to_string(),
-                params: serde_json::Value::Null,
+                params: Value::Null,
                 tags: Vec::new(),
                 fail_policy: Default::default(),
             }],
@@ -796,8 +803,6 @@ mod tests {
     async fn a_deleted_agent_rests_in_its_channels_keeps_its_name_and_comes_back_restored() {
         use caelumora_model::agent::{Personality, PersonalityId};
         use caelumora_model::channel::Participant;
-        use caelumora_model::scope::Scope;
-        use std::time::Duration;
         /// Waits until `holds` does, at most two seconds: a running channel
         /// follows the agent as the session learns of it.
         async fn until(holds: impl Fn() -> bool, what: &str) {
@@ -883,7 +888,6 @@ mod tests {
     async fn a_session_that_missed_an_agent_being_deleted_finds_out_as_it_looks_again() {
         use caelumora_model::agent::{Personality, PersonalityId};
         use caelumora_model::channel::Participant;
-        use caelumora_model::scope::Scope;
         let runtime = test_runtime();
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
@@ -920,7 +924,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_session_is_created_from_a_template_for_its_owner() {
-        use caelumora_model::actor::ActorId;
         use caelumora_model::approval::ApprovalStrategy;
         use caelumora_model::channel::Participant;
         use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
@@ -948,7 +951,7 @@ mod tests {
                 approval_rules: Vec::new(),
                 uses_workspace: true,
                 name: Name::new("main").unwrap(),
-                components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
+                components: moderation_components(None, Some("broadcast_policy")),
                 classification: Classification::CHANNEL_DEFAULT,
                 participants: vec!["user".to_string(), "approval".to_string()],
             }],
@@ -959,7 +962,7 @@ mod tests {
         };
         runtime.entity_stores().session_templates.create(&SecurityContext::system(), &template).await.unwrap();
         let hers = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
-        let mut profile = caelumora_model::user::UserProfile::new(owner, None);
+        let mut profile = UserProfile::new(owner, None);
         profile.preferred_language = Some(Language::new("de").unwrap());
         runtime.entity_stores().user_profiles.create(&hers, &profile).await.unwrap();
 
@@ -1085,7 +1088,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_running_session_is_no_way_around_the_policy() {
-        use caelumora_model::actor::ActorId;
         use caelumora_model::user::UserId;
 
         let (_, manager) = owned_runtime(Default::default());
@@ -1093,7 +1095,7 @@ mod tests {
         let as_user = |id| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
         let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
         let mut session = make_session("hers", ActorId::User(alice));
-        session.security_attributes = session.security_attributes.clone().granting(caelumora_model::security::Subject::Actor(ActorId::User(bob)), caelumora_model::security::Grant::Read);
+        session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
         let id = session.id;
         create(&manager, &as_user(alice), session).await.expect("alice creates her own session");
 
@@ -1102,13 +1104,13 @@ mod tests {
         manager.open(&as_user(bob), id).await.expect("a contributor opens it");
 
         let refused = manager.delete(&as_user(bob), id).await.expect_err("a contributor may not delete it");
-        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        assert!(is_forbidden(&refused), "{refused}");
         assert!(manager.sessions.contains_key(&id), "a refused deletion must not stop the session on the way");
 
         let refused = manager.stop(&as_user(carol), id).await.expect_err("carol may not see it");
         assert!(matches!(refused.downcast_ref::<SessionError>(), Some(SessionError::NotFound(_))), "not refused - absent: {refused}");
         let refused = manager.stop(&as_user(bob), id).await.expect_err("a contributor may not stop it");
-        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        assert!(is_forbidden(&refused), "{refused}");
         assert!(manager.sessions.contains_key(&id), "it runs on");
         assert!(manager.stop(&as_user(alice), id).await.unwrap(), "the owner stops it");
         assert!(!manager.stop(&as_user(alice), id).await.unwrap(), "stopped already");

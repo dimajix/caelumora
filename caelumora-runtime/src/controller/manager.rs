@@ -255,7 +255,8 @@ mod tests {
     use caelumora_model::workspace::WorkspaceUpdateEvent;
     use caelumora_model::security::{AclEntry, Grant, Subject};
     use std::time::Duration;
-    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::confidentiality::{ConfidentialityRules, Visibility};
+    use caelumora_model::approval::ApproverId;
 
     fn manager() -> (Arc<MemoryStore>, Arc<EventBus>, ControllerManager) {
         let store = Arc::new(MemoryStore::new());
@@ -274,7 +275,7 @@ mod tests {
             roles: None,
             components: Default::default(),
             security_attributes: Default::default(),
-            reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
+            reasoning_visibility: Visibility::Channel,
             deleted: None,
         };
         let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
@@ -292,7 +293,7 @@ mod tests {
     async fn an_actor_is_named_by_its_entity_or_by_what_it_is() {
         let (store, _, manager) = manager();
         let (agent, user) = (agent_in(&store).await, user_in(&store).await);
-        let approver = ActorId::Approver(caelumora_model::approval::ApproverId::new());
+        let approver = ActorId::Approver(ApproverId::new());
 
         let mut names = Vec::new();
         for actor in [ActorId::User(user.id), ActorId::Agent(agent.id), approver, ActorId::System] {

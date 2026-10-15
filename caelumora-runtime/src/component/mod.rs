@@ -21,6 +21,7 @@ use caelumora_model::component::ComponentDescriptor;
 use caelumora_model::store::StoreError;
 use caelumora_model::type_map::TypeKey;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 
 mod container;
 mod context;
@@ -96,7 +97,7 @@ pub type ComponentResult<T> = Result<T, ComponentError>;
 ///
 /// # Errors
 /// `ComponentError::InvalidConfig` if it is neither `true` nor `false`.
-pub fn flag_of_params(params: &serde_json::Value, name: &str) -> ComponentResult<bool> {
+pub fn flag_of_params(params: &Value, name: &str) -> ComponentResult<bool> {
     match params.get(name) {
         None => Ok(false),
         Some(value) => value.as_bool()
@@ -110,9 +111,9 @@ pub fn flag_of_params(params: &serde_json::Value, name: &str) -> ComponentResult
 ///
 /// # Errors
 /// `ComponentError::InvalidConfig` if they are not a `T`.
-pub fn config_of_params<T: DeserializeOwned>(params: &serde_json::Value) -> ComponentResult<T> {
+pub fn config_of_params<T: DeserializeOwned>(params: &Value) -> ComponentResult<T> {
     let result = match params {
-        serde_json::Value::Null => T::deserialize(serde_json::json!({})),
+        Value::Null => T::deserialize(serde_json::json!({})),
         params => T::deserialize(params),
     };
     result.map_err(|e| ComponentError::InvalidConfig(format!("invalid parameters: {e}")))
@@ -141,7 +142,7 @@ mod tests {
                 #[serde(default)]
                 limit: u32,
             }
-            assert_eq!(config_of_params::<Config>(&serde_json::Value::Null).unwrap().limit, 0, "left out: all defaults");
+            assert_eq!(config_of_params::<Config>(&Value::Null).unwrap().limit, 0, "left out: all defaults");
             assert_eq!(config_of_params::<Config>(&json!({ "limit": 3 })).unwrap().limit, 3);
             let message = config_of_params::<Config>(&json!({ "limti": 3 })).unwrap_err().to_string();
             assert!(message.starts_with("invalid configuration: invalid parameters: unknown field `limti`"), "{message}");

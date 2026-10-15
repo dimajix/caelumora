@@ -127,7 +127,7 @@ mod tests {
     use crate::channel::ChannelLoop;
 
     use caelumora_model::confidentiality::Classification;
-    use caelumora_model::security::SecurityContext;
+    use caelumora_model::security::{SecurityContext, Grant, Subject};
     use caelumora_model::store::StoreError;
     use std::sync::Arc;
 
@@ -135,6 +135,9 @@ mod tests {
     use caelumora_model::actor::Rejection;
     use crate::session::{ChannelSpec, SessionManager};
     use crate::session::testing::*;
+    use caelumora_model::message::{Message, MessageId};
+    use crate::error::is_forbidden;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn a_channel_is_not_renamed_to_a_name_its_session_has() {
@@ -168,7 +171,7 @@ mod tests {
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
         let bob_ctx = SecurityContext::new(bob_id, Default::default(), Default::default());
         let mut session = make_session("hers", alice_id);
-        session.security_attributes = session.security_attributes.clone().granting(caelumora_model::security::Subject::Actor(bob_id), caelumora_model::security::Grant::Read);
+        session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
 
@@ -179,7 +182,7 @@ mod tests {
         hr.user_actor(alice.id).unwrap().send_message("from alice".to_string(), None).await.unwrap();
         let history = history_of(&hr, 2).await;
         // Two users' messages arrive in either order.
-        let id_of = |history: &[caelumora_model::message::Message], text: &str| history.iter().find(|m| m.content.as_deref() == Some(text)).map(|m| m.id).unwrap();
+        let id_of = |history: &[Message], text: &str| history.iter().find(|m| m.content.as_deref() == Some(text)).map(|m| m.id).unwrap();
         let (bobs, alices) = (id_of(&history, "from bob"), id_of(&history, "from alice"));
 
         // A change to what was said, through the actor of whoever makes it
@@ -190,7 +193,7 @@ mod tests {
         let mut bobs_events = as_bob.watch().events;
         as_bob.reclassify_message(alices, released.clone()).await.expect("sent: the channel decides");
         assert_eq!(rejection(&mut bobs_events).await, (Some(alices), Rejection::Forbidden), "not another's, and he is told (issue 304)");
-        let missing = as_alice.reclassify_message(caelumora_model::message::MessageId::new(), released.clone()).await.expect_err("no such message");
+        let missing = as_alice.reclassify_message(MessageId::new(), released.clone()).await.expect_err("no such message");
         assert!(matches!(missing.downcast_ref::<ChannelError>(), Some(ChannelError::MessageNotFound { .. })), "{missing}");
         classified_as(&hr, bobs, &released).await;
 
@@ -220,7 +223,7 @@ mod tests {
         let main = running.channel_named("main").unwrap();
 
         let refused = main.update_name(&as_user(bob), "bobs").await.expect_err("a contributor may not");
-        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        assert!(is_forbidden(&refused), "{refused}");
         assert_eq!(main.name(), "main", "unchanged");
 
         main.update_name(&as_user(alice), "lobby").await.expect("the owner may");
@@ -231,12 +234,12 @@ mod tests {
 
     /// Waits until `channel`'s history holds `count` messages.
     /// Waits until the message `id` of `channel` is classified `classification`.
-    async fn classified_as(channel: &ChannelLoop, id: caelumora_model::message::MessageId, classification: &Classification) {
+    async fn classified_as(channel: &ChannelLoop, id: MessageId, classification: &Classification) {
         for _ in 0..100 {
             if channel.message(id).await.is_some_and(|m| m.classification == *classification) {
                 return;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("message {id} was never classified {classification}");
     }

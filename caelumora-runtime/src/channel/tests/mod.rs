@@ -6,29 +6,30 @@ use crate::component::{ComponentImpl, ComponentRegistry};
 use crate::backend::Backends;
 use crate::runtime::{ChannelRuntime, RuntimeBuilder, RuntimeManager};
 use crate::testing::{test_registry, Script, ScriptedAgent, ScriptedAgents};
-use crate::transport::EventSender;
+use crate::transport::{EventSender, EventReceiver};
 use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
-use caelumora_model::channel::{Channel, ChannelId, Participant};
+use caelumora_model::channel::{Channel, ChannelId, Participant, moderation_components};
 use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext, AccessPolicy};
 use caelumora_model::session::SessionId;
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::Name;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::command::help_command::HelpCommandProvider;
 use crate::command::wakeup_command::WakeupCommandProvider;
-use crate::command::CommandExecutor;
+use crate::command::{CommandExecutor, ChannelCommandProvider};
 use caelumora_model::agent::AgentId;
 use caelumora_model::component::{ComponentConfig, ComponentFailPolicy};
-use caelumora_model::confidentiality::ConfidentialityRules;
+use caelumora_model::confidentiality::{ConfidentialityRules, Classification};
 use caelumora_model::config::AppConfig;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::user::User;
+use crate::moderator::Moderator;
+use std::any::Any;
 
 mod commands;
 
@@ -50,7 +51,7 @@ pub(super) async fn channel_with(users: &[&User], access_policy: Arc<dyn AccessP
 /// A channel of `participants`, whose actors are read from `store`.
 async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, access_policy: Arc<dyn AccessPolicy>) -> Arc<ChannelLoop> {
     let registry = test_registry(Arc::<MemoryStore>::clone(&store));
-    channel_built(store, participants, access_policy, registry, caelumora_model::channel::moderation_components(None, Some("broadcast_policy"))).await
+    channel_built(store, participants, access_policy, registry, moderation_components(None, Some("broadcast_policy"))).await
 }
 
 /// A channel of `participants` with `components`, built by `registry`.
@@ -67,13 +68,13 @@ async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, 
         components,
         participants,
         security_attributes: SecurityAttributes::default(),
-        classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+        classification: Classification::CHANNEL_DEFAULT,
         language: None,
         history_limits: Vec::new(),
         deleted: None,
         former: Vec::new(),
     };
-    let builtin = |id: &str, facet: Arc<dyn crate::command::ChannelCommandProvider>| ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet };
+    let builtin = |id: &str, facet: Arc<dyn ChannelCommandProvider>| ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet };
     let executor = CommandExecutor::new(
         Arc::clone(runtime.access_policy()),
         vec![builtin("help", Arc::new(HelpCommandProvider)), builtin("wakeup", Arc::new(WakeupCommandProvider))],
@@ -123,7 +124,7 @@ async fn every_user_has_their_own_actor_and_a_stranger_has_none() {
 pub(super) struct AskBack(pub(super) ActorId);
 
 #[async_trait::async_trait]
-impl crate::moderator::Moderator for AskBack {
+impl Moderator for AskBack {
     async fn route(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
         vec![(self.0, event.clone()), (self.0, event.forward(ActorEvent::ResponseRequested))]
     }
@@ -133,7 +134,7 @@ impl crate::moderator::Moderator for AskBack {
 
 /// A channel of `users` whose moderator is `moderator`: a component of a
 /// kind of its own (issue 174).
-pub(super) async fn channel_moderated_by(users: &[&User], moderator: Arc<dyn crate::moderator::Moderator>) -> Arc<ChannelLoop> {
+pub(super) async fn channel_moderated_by(users: &[&User], moderator: Arc<dyn Moderator>) -> Arc<ChannelLoop> {
     use crate::component::{ComponentFacets, ComponentKind};
     let store = Arc::new(MemoryStore::new());
     let mut participants = Vec::new();
@@ -142,12 +143,12 @@ pub(super) async fn channel_moderated_by(users: &[&User], moderator: Arc<dyn cra
         participants.push(Participant::User(user.id));
     }
     let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
-    registry.register(ComponentKind::new("test_moderator").provides::<dyn crate::moderator::Moderator>(), move |_, _| {
+    registry.register(ComponentKind::new("test_moderator").provides::<dyn Moderator>(), move |_, _| {
         let mut facets = ComponentFacets::empty();
-        facets.insert::<dyn crate::moderator::Moderator>(Arc::clone(&moderator));
+        facets.insert::<dyn Moderator>(Arc::clone(&moderator));
         Ok(facets)
     });
-    let components = caelumora_model::channel::moderation_components(Some("test_moderator"), None);
+    let components = moderation_components(Some("test_moderator"), None);
     channel_built(store, participants, Arc::new(AllowAllPolicy::new()), registry, components).await
 }
 
@@ -165,7 +166,7 @@ impl Actor for Sleeper {
     fn id(&self) -> ActorId { self.id }
     fn name(&self) -> Name { Name::new(self.name).expect("a name") }
     fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
-    async fn run(&self, _rx: Box<dyn crate::transport::EventReceiver>, _tx: Box<dyn EventSender>) -> Result<()> { Ok(()) }
+    async fn run(&self, _rx: Box<dyn EventReceiver>, _tx: Box<dyn EventSender>) -> Result<()> { Ok(()) }
     fn state(&self) -> ActorState {
         if self.woken.load(Ordering::SeqCst) { ActorState::Idle } else { ActorState::Sleeping }
     }
@@ -221,7 +222,7 @@ pub(super) async fn scripted_channel(script: Script) -> (Arc<ChannelLoop>, Secur
 
 /// The scripted agent `actor` is (`ScriptedAgents`, issue 370).
 pub(super) fn scripted(actor: &Arc<dyn Actor>) -> &ScriptedAgent {
-    let any: &dyn std::any::Any = actor.as_ref();
+    let any: &dyn Any = actor.as_ref();
     any.downcast_ref::<ScriptedAgent>().expect("a scripted agent")
 }
 

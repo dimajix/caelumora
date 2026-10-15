@@ -152,11 +152,15 @@ pub trait Secured {
 mod tests {
     use super::*;
     use crate::security::testing::*;
+    use crate::agent::AgentId;
+    use crate::store::query::meets_exactly_its_equals;
+    use crate::user::UserId;
+    use uuid::Uuid;
 
     #[test]
     fn an_access_list_names_people_roles_and_groups_never_an_agent() {
         let alice = user();
-        let agent = ActorId::Agent(crate::agent::AgentId::new());
+        let agent = ActorId::Agent(AgentId::new());
         assert_eq!(shared(alice, &[user()]).validate(), Ok(()));
         let place = Subject::Group(GroupId::new());
         assert_eq!(SecurityAttributes::owned_by(alice).granting(Subject::Role(RoleId::new()), Grant::Read).granting(place, Grant::Write).validate(), Ok(()));
@@ -170,9 +174,9 @@ mod tests {
     /// A subject as a query compares it (issue 293).
     #[test]
     fn a_subject_meets_exactly_the_subjects_equal_to_it() {
-        let id = uuid::Uuid::new_v4();
-        crate::store::query::meets_exactly_its_equals(&[
-            Subject::Actor(ActorId::User(crate::user::UserId(id))), Subject::Actor(ActorId::Agent(crate::agent::AgentId(id))),
+        let id = Uuid::new_v4();
+        meets_exactly_its_equals(&[
+            Subject::Actor(ActorId::User(UserId(id))), Subject::Actor(ActorId::Agent(AgentId(id))),
             Subject::Actor(ActorId::System), Subject::Role(RoleId(id)), Subject::Role(RoleId::new()),
             Subject::Group(GroupId(id)), Subject::Group(GroupId::new()), Subject::Everyone,
         ]);

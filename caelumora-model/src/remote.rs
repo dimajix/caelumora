@@ -8,6 +8,8 @@ use crate::secret::{SecretManager, SecretResult};
 use crate::security::SecurityContext;
 use serde::Deserialize;
 use std::time::Duration;
+use std::cmp::Reverse;
+use url::Url;
 
 /// Where and how a component reaches its remote side, written in its
 /// `params` as `endpoint`.
@@ -39,14 +41,14 @@ impl RemoteEndpoint {
     /// and as a client sends it, its credentials moved into a header.
     pub fn redact_in(&self, text: &str) -> String {
         let mut forms = vec![self.url.clone()];
-        if let Ok(mut parsed) = url::Url::parse(&self.url) {
+        if let Ok(mut parsed) = Url::parse(&self.url) {
             forms.push(parsed.to_string());
             let _ = parsed.set_username("");
             let _ = parsed.set_password(None);
             forms.push(parsed.to_string());
         }
         // The longest first, so that no form is left half replaced.
-        forms.sort_by_key(|form| std::cmp::Reverse(form.len()));
+        forms.sort_by_key(|form| Reverse(form.len()));
         let shown = self.shown();
         forms.iter().fold(text.to_string(), |text, form| text.replace(form.as_str(), &shown))
     }
@@ -84,7 +86,7 @@ pub enum RemoteAuthConfig {
 /// messages: any of them may carry a credential (issue 188). Where it
 /// cannot be parsed, nothing of it is shown.
 pub fn redact_endpoint(url: &str) -> String {
-    match url::Url::parse(url) {
+    match Url::parse(url) {
         Ok(mut parsed) => {
             let _ = parsed.set_username("");
             let _ = parsed.set_password(None);

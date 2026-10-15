@@ -12,6 +12,7 @@ use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::digest;
 
 /// What happened in a `Transcript`; its node carries the digest of the
 /// transcript up to and including it (issue 06).
@@ -136,19 +137,19 @@ impl Chain<TranscriptEntry> {
 
     /// Appends `msg` and returns the digest of the transcript before it.
     pub fn push(&mut self, msg: Message) -> Option<Digest> {
-        self.push_with(TranscriptEntry::Message(msg), crate::digest::transcript_chain)
+        self.push_with(TranscriptEntry::Message(msg), digest::transcript_chain)
     }
 
     /// Appends `entry` as it is - a copy of one on another branch, kept
     /// through a compaction (issue 16).
     pub(crate) fn push_entry(&mut self, entry: TranscriptEntry) {
-        self.push_with(entry, crate::digest::transcript_chain);
+        self.push_with(entry, digest::transcript_chain);
     }
 
     /// Appends `msg`, given to read as `source` (issue 16), and returns the
     /// digest of the transcript before it.
     pub fn give(&mut self, msg: Message, source: KnowledgeSource) -> Option<Digest> {
-        self.push_with(TranscriptEntry::Given { message: msg, source }, crate::digest::transcript_chain)
+        self.push_with(TranscriptEntry::Given { message: msg, source }, digest::transcript_chain)
     }
 
     /// Records that the message `modified.id` of the active path is given
@@ -162,7 +163,7 @@ impl Chain<TranscriptEntry> {
         if !self.standing(modified.id).is_some_and(|mut m| m.modify(&modified)) {
             return false;
         }
-        self.push_with(TranscriptEntry::Modified { message: modified }, crate::digest::transcript_chain);
+        self.push_with(TranscriptEntry::Modified { message: modified }, digest::transcript_chain);
         true
     }
 
@@ -174,7 +175,7 @@ impl Chain<TranscriptEntry> {
         if self.standing(id).is_none() {
             return false;
         }
-        self.push_with(TranscriptEntry::Revoked { message: id, at }, crate::digest::transcript_chain);
+        self.push_with(TranscriptEntry::Revoked { message: id, at }, digest::transcript_chain);
         true
     }
 
@@ -187,7 +188,7 @@ impl Chain<TranscriptEntry> {
         if self.standing(id).is_none() {
             return false;
         }
-        self.push_with(TranscriptEntry::Reclassified { message: id, classification }, crate::digest::transcript_chain);
+        self.push_with(TranscriptEntry::Reclassified { message: id, classification }, digest::transcript_chain);
         true
     }
 
@@ -209,7 +210,7 @@ impl Chain<TranscriptEntry> {
     /// `TurnGivenUp`, after its messages.
     pub fn end_turn(&mut self, end: TranscriptEntry) {
         debug_assert!(end.ended_turn().is_some(), "only the end of a turn");
-        self.push_with(end, crate::digest::transcript_chain);
+        self.push_with(end, digest::transcript_chain);
     }
 }
 
@@ -274,11 +275,14 @@ mod tests {
     use crate::digest::{self, message_chain};
     use crate::workspace::{Workspace, WorkspaceId};
     use crate::message::tests::{id, make_message};
+    use chrono::Duration;
+    use crate::confidentiality::Confidentiality;
+    use serde_json::Value;
 
     #[test]
     fn a_transcript_started_anew_holds_what_comes_after_and_keeps_what_it_held_as_a_branch() {
         let mut transcript = Transcript::default();
-        let ids = |entries: Vec<&crate::chain::Node<TranscriptEntry>>| entries.into_iter().filter_map(|e| e.entry.message()).map(|m| m.id).collect::<Vec<_>>();
+        let ids = |entries: Vec<&Node<TranscriptEntry>>| entries.into_iter().filter_map(|e| e.entry.message()).map(|m| m.id).collect::<Vec<_>>();
         assert_eq!(transcript.start_anew(), None, "it held nothing");
         transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
         let first = transcript.start_anew().expect("what it held");
@@ -353,7 +357,7 @@ mod tests {
 
         let prefix = context.prefix(&at_two).expect("an earlier digest names a prefix");
         assert_eq!(prefix.iter().filter_map(|e| e.entry.message()).map(|m| m.id).collect::<Vec<_>>(), vec![id(1), id(2)]);
-        assert!(context.prefix(&crate::digest::prompt("elsewhere")).is_none());
+        assert!(context.prefix(&digest::prompt("elsewhere")).is_none());
     }
 
     #[test]
@@ -364,11 +368,11 @@ mod tests {
         // What was recorded stands, even if today's scheme would compute
         // something else - as it will for anything recorded under an
         // earlier version of it.
-        let recorded = crate::digest::prompt("recorded under another scheme");
+        let recorded = digest::prompt("recorded under another scheme");
         let mut stored = serde_json::to_value(&context).unwrap();
-        stored["entries"][1]["digest"] = serde_json::Value::String(recorded.to_string());
-        stored["entries"][0]["active_child"] = serde_json::Value::String(recorded.to_string());
-        stored["head"] = serde_json::Value::String(recorded.to_string());
+        stored["entries"][1]["digest"] = Value::String(recorded.to_string());
+        stored["entries"][0]["active_child"] = Value::String(recorded.to_string());
+        stored["head"] = Value::String(recorded.to_string());
         let loaded: Transcript = serde_json::from_value(stored).unwrap();
         assert_eq!(loaded.digest(), Some(recorded));
         assert!(loaded.prefix(&recorded).is_some(), "and references to it resolve");
@@ -425,7 +429,7 @@ mod tests {
             other.digest()
         };
         let boom = GivenUpReason::Failed { message: "boom".to_string() };
-        let earlier = Utc::now() - chrono::Duration::hours(1);
+        let earlier = Utc::now() - Duration::hours(1);
         assert_eq!(ended(given_up(turn, boom.clone(), earlier)), transcript.digest(), "the same end at another time");
         assert_ne!(ended(given_up(turn, GivenUpReason::Stopped, earlier)), transcript.digest(), "another reason");
         assert_ne!(ended(given_up(TurnId::new(), boom, earlier)), transcript.digest(), "another turn");
@@ -520,7 +524,7 @@ mod tests {
 
     #[test]
     fn what_an_entry_records_of_a_message_says_how_it_is_classified() {
-        let confidential = Classification::general(crate::confidentiality::Confidentiality::Confidential);
+        let confidential = Classification::general(Confidentiality::Confidential);
         let modified = TranscriptEntry::Modified { message: Message { classification: confidential.clone(), ..make_message(id(1)) } };
         assert_eq!(modified.classification(), Some(&confidential), "a modification may raise it");
         let released = TranscriptEntry::Reclassified { message: id(1), classification: Classification::PUBLIC };

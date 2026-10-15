@@ -146,6 +146,7 @@ impl fmt::Display for ScopedName {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     fn name(text: &str) -> Name {
         Name::new(text).expect("a name")
@@ -173,7 +174,7 @@ mod tests {
         assert!(name("Zoë") == "zoe" && name("Straße") == "STRASSE" && name("Иван") == "ivan", "by their ASCII form");
         assert_eq!(name("Zoë").as_str(), "Zoë", "kept as written");
         assert!(name("Jonathan") != "", "a text that is no name is none");
-        let set: std::collections::HashSet<Name> = [name("Sassy"), name("sassy")].into_iter().collect();
+        let set: HashSet<Name> = [name("Sassy"), name("sassy")].into_iter().collect();
         assert_eq!(set.len(), 1);
         assert_eq!(name("Dr. Who").handle(), "dr-who");
     }

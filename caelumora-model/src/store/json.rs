@@ -134,7 +134,7 @@ async fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> StoreResult<
         .file_name()
         .ok_or_else(|| StoreError::Backend(format!("invalid path: {}", path.display())))?
         .to_os_string();
-    tmp_name.push(format!(".{}.tmp", uuid::Uuid::new_v4()));
+    tmp_name.push(format!(".{}.tmp", Uuid::new_v4()));
     let tmp_path = path.with_file_name(tmp_name);
     if let Err(err) = tokio::fs::write(&tmp_path, payload).await {
         let _ = tokio::fs::remove_file(&tmp_path).await;
@@ -153,7 +153,7 @@ async fn read_json_opt<T: DeserializeOwned>(path: &Path) -> StoreResult<Option<T
             let parsed = serde_json::from_str(&content).map_err(to_backend_error)?;
             Ok(Some(parsed))
         }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
         Err(err) => Err(to_backend_error(err)),
     }
 }
@@ -191,7 +191,7 @@ async fn documents_in_dir(dir: &Path) -> StoreResult<Vec<(String, PathBuf)>> {
 /// deleted since its directory was read, or cannot be read, which is
 /// logged: one broken document does not break a list.
 async fn read_meeting<T: DeserializeOwned, F: Field>(path: PathBuf, filter: Option<&Filter<F>>) -> StoreResult<Option<T>> {
-    let document = match read_json_opt::<serde_json::Value>(&path).await {
+    let document = match read_json_opt::<Value>(&path).await {
         Ok(Some(document)) => document,
         Ok(None) => return Ok(None),
         Err(err) => {
@@ -214,7 +214,7 @@ async fn read_meeting<T: DeserializeOwned, F: Field>(path: PathBuf, filter: Opti
 async fn delete_if_exists(path: &Path) -> StoreResult<bool> {
     match tokio::fs::remove_file(path).await {
         Ok(()) => Ok(true),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
         Err(err) => Err(to_backend_error(err)),
     }
 }
@@ -222,7 +222,7 @@ async fn delete_if_exists(path: &Path) -> StoreResult<bool> {
 async fn delete_dir_if_exists(path: &Path) -> StoreResult<bool> {
     match tokio::fs::remove_dir_all(path).await {
         Ok(()) => Ok(true),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
         Err(err) => Err(to_backend_error(err)),
     }
 }
@@ -236,7 +236,7 @@ fn journal_path(path: &Path) -> PathBuf {
 async fn size_of(path: &Path) -> StoreResult<Option<u64>> {
     match tokio::fs::metadata(path).await {
         Ok(metadata) => Ok(Some(metadata.len())),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
         Err(err) => Err(to_backend_error(err)),
     }
 }
@@ -251,7 +251,7 @@ async fn load_state<T: Journaled>(path: &Path) -> StoreResult<Option<T>> {
     let journal = journal_path(path);
     let text = match tokio::fs::read_to_string(&journal).await {
         Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Some(state)),
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Some(state)),
         Err(err) => return Err(to_backend_error(err)),
     };
     let torn = !text.ends_with('\n');
@@ -278,7 +278,7 @@ async fn load_state<T: Journaled>(path: &Path) -> StoreResult<Option<T>> {
 async fn append_changes<C: Serialize>(journal: &Path, len_before: u64, changes: &[C]) -> StoreResult<()> {
     let mut line = serde_json::to_vec(changes).map_err(to_backend_error)?;
     line.push(b'\n');
-    let mut file = tokio::fs::OpenOptions::new().append(true).create(true).open(journal).await.map_err(to_backend_error)?;
+    let mut file = OpenOptions::new().append(true).create(true).open(journal).await.map_err(to_backend_error)?;
     // A tokio file hands the write to a blocking task: flushed, it is done
     // before the put returns, and the next put sees the journal's size.
     let written = match file.write_all(&line).await {
@@ -304,6 +304,10 @@ fn sanitize_file_component(value: &str) -> String {
 }
 
 use crate::security::SecurityContext;
+use serde_json::Value;
+use std::io::ErrorKind;
+use tokio::fs::OpenOptions;
+use uuid::Uuid;
 
 /// Refuses `value` if another document in `dir` has its name (issue 250).
 async fn name_free_in<T: Stored + DeserializeOwned>(dir: &Path, value: &T) -> StoreResult<()> {
@@ -607,7 +611,7 @@ impl StateStore for JsonFileStore {
         delete_if_exists(&journal_path(&path)).await?;
         let mut channels = match tokio::fs::read_dir(self.agent_channel_states_dir()).await {
             Ok(channels) => channels,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
             Err(err) => return Err(to_backend_error(err)),
         };
         while let Some(channel) = channels.next_entry().await.map_err(to_backend_error)? {
@@ -628,10 +632,10 @@ mod tests {
     use crate::store::suite;
     use tempfile::tempdir;
     use uuid::Uuid;
-    use crate::confidentiality::ConfidentialityRules;
+    use crate::confidentiality::{ConfidentialityRules, Classification};
     use crate::security::{AllowAllPolicy, OwnershipPolicy};
 
-    fn store(dir: &std::path::Path) -> JsonFileStore {
+    fn store(dir: &Path) -> JsonFileStore {
         JsonFileStore::new(dir, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap()
     }
 
@@ -691,7 +695,7 @@ mod tests {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
             workspace: None,
-            id: SessionId(Uuid::new_v4()), name: crate::value::name::Name::new("old").unwrap(), participants: Vec::new(), channels: Vec::new(),
+            id: SessionId(Uuid::new_v4()), name: Name::new("old").unwrap(), participants: Vec::new(), channels: Vec::new(),
             commands: Default::default(), privacy: Default::default(), created_at: Utc::now(), updated_at: Utc::now(),
             security_attributes: SecurityAttributes::default(), deleted: None,
         };
@@ -710,17 +714,17 @@ mod tests {
         let personalities = Arc::new(of_kind::<Personality>(&store(dir.path())));
         let system = SecurityContext::system();
         let personality = Personality {
-            id: PersonalityId::new(), name: crate::value::name::ScopedName::new("plain", Default::default()).unwrap(),
+            id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
             kind: Default::default(), roles: None, description: None, introduction: None,
             components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(),
             deleted: None,
         };
         personalities.create(&system, &personality).await.unwrap();
 
-        let mut writes = tokio::task::JoinSet::new();
+        let mut writes = JoinSet::new();
         for i in 0..16 {
             let (personalities, system) = (Arc::clone(&personalities), system.clone());
-            let changed = Personality { description: Some(crate::value::text::Description::new(format!("version {i}")).unwrap()), ..personality.clone() };
+            let changed = Personality { description: Some(Description::new(format!("version {i}")).unwrap()), ..personality.clone() };
             writes.spawn(async move { personalities.update(&system, &changed).await });
         }
         while let Some(result) = writes.join_next().await {
@@ -746,16 +750,16 @@ mod tests {
         let agents = Arc::new(of_kind::<Agent>(&store(dir.path())));
         let system = SecurityContext::system();
         let personality = Personality {
-            id: PersonalityId::new(), name: crate::value::name::ScopedName::new("plain", Default::default()).unwrap(),
+            id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
             kind: Default::default(), roles: None, description: None, introduction: None,
             components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(),
             deleted: None,
         };
 
-        let mut writes = tokio::task::JoinSet::new();
+        let mut writes = JoinSet::new();
         for _ in 0..16 {
             let (agents, system) = (Arc::clone(&agents), system.clone());
-            let agent = Agent::new(crate::value::name::ScopedName::new("Helper", Default::default()).unwrap(), personality.id, ActorId::None);
+            let agent = Agent::new(ScopedName::new("Helper", Default::default()).unwrap(), personality.id, ActorId::None);
             writes.spawn(async move { agents.create(&system, &agent).await });
         }
         let mut made = 0;
@@ -774,7 +778,7 @@ mod tests {
         use crate::channel::{Channel, ChannelId};
 
         let dir = tempdir().unwrap();
-        let access_policy = Arc::new(crate::security::AllowAllPolicy::new());
+        let access_policy = Arc::new(AllowAllPolicy::new());
         let store = JsonFileStore::new(dir.path(), access_policy, Arc::new(ConfidentialityRules::default())).unwrap();
         let sessions = of_kind::<Session>(&store);
         let ctx = SecurityContext::default();
@@ -786,9 +790,9 @@ mod tests {
             uses_workspace: true,
             id: ChannelId(Uuid::new_v4()),
             session_id,
-            name: crate::value::name::Name::new("general").unwrap(),
-            components: crate::channel::moderation_components(None, Some("broadcast_policy")),
-            classification: crate::confidentiality::Classification::CHANNEL_DEFAULT,
+            name: Name::new("general").unwrap(),
+            components: moderation_components(None, Some("broadcast_policy")),
+            classification: Classification::CHANNEL_DEFAULT,
             language: None,
             history_limits: Vec::new(),
             former: Vec::new(),
@@ -804,7 +808,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: session_id,
-            name: crate::value::name::Name::new("to-delete").unwrap(),
+            name: Name::new("to-delete").unwrap(),
             participants: Vec::new(),
             channels: vec![channel.id],
             created_at: Utc::now(),
@@ -846,7 +850,7 @@ mod tests {
     #[tokio::test]
     async fn list_sessions_skips_corrupted_files() {
         let dir = tempdir().unwrap();
-        let access_policy = Arc::new(crate::security::AllowAllPolicy::new());
+        let access_policy = Arc::new(AllowAllPolicy::new());
         let store = JsonFileStore::new(dir.path(), access_policy, Arc::new(ConfidentialityRules::default())).unwrap();
         let sessions = of_kind::<Session>(&store);
         let ctx = SecurityContext::default();
@@ -858,7 +862,7 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
-            name: crate::value::name::Name::new("session-1").unwrap(),
+            name: Name::new("session-1").unwrap(),
             participants: Vec::new(),
             channels: Vec::new(),
             created_at: Utc::now(),
@@ -879,6 +883,11 @@ mod tests {
     }
 
     use crate::message::tests::{id, make_message};
+    use crate::actor::ActorState;
+    use crate::channel::moderation_components;
+    use crate::value::name::Name;
+    use crate::value::text::Description;
+    use tokio::task::JoinSet;
 
     /// The lines of the journal of the agent channel state of `agent` in
     /// `channel`, `None` if there is no journal.
@@ -915,7 +924,7 @@ mod tests {
 
         said(&mut state, 3, 5);
         store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
-        state.processing_state = crate::actor::ActorState::WaitingForUser;
+        state.processing_state = ActorState::WaitingForUser;
         store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert_eq!(journal_lines(&store, agent, channel), Some(2), "one line per put");
         assert_eq!(std::fs::metadata(store.agent_channel_state_path(agent, channel)).unwrap().len(), snapshot, "the snapshot is untouched");
@@ -939,7 +948,7 @@ mod tests {
         // Small puts go to the journal until it is as large as the snapshot.
         let mut puts = 0;
         while journal_lines(&store, agent, channel).is_some() || puts == 0 {
-            state.processing_state = crate::actor::ActorState::Idle;
+            state.processing_state = ActorState::Idle;
             store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
             puts += 1;
             assert!(puts < 1000, "the journal is never folded");

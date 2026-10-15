@@ -20,11 +20,12 @@ use crate::controller::{ChannelController, UserController};
 use chrono::Utc;
 use tracing::{debug, info, warn};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex, MutexGuard};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+use caelumora_model::agent::AgentId;
 
 /// How many envelopes a watcher of the actor may fall behind before it
 /// loses the oldest (see `UserActor::watch`). A power of two, since a
@@ -111,8 +112,8 @@ impl UserActor {
 
     /// The questions put to this user that are open, forgotten: a message
     /// declines them all.
-    fn take_open_questions(&self) -> Vec<(QuestionId, caelumora_model::agent::AgentId)> {
-        let mut open = self.open_questions.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    fn take_open_questions(&self) -> Vec<(QuestionId, AgentId)> {
+        let mut open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
         let asked: Vec<QuestionId> = open.values().filter(|r| r.questions.is_asked(self.id())).map(|r| r.id).collect();
         asked.iter().filter_map(|id| open.remove(id)).map(|request| (request.id, request.agent_id)).collect()
     }
@@ -130,11 +131,11 @@ impl UserActor {
     /// # Errors
     /// `ChannelError::Question` with why the answer cannot be given; an
     /// error if the channel is gone.
-    pub async fn answer_questions(&self, id: QuestionId, responses: Option<Vec<Response>>) -> anyhow::Result<Uuid> {
+    pub async fn answer_questions(&self, id: QuestionId, responses: Option<Vec<Response>>) -> Result<Uuid> {
         self.channel_loop()?;
         let refused = |reason| ChannelError::Question { question: id, channel: self.channel_id, reason };
         let agent_id = {
-            let open = self.open_questions.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
             let request = open.get(&id).ok_or_else(|| refused(QuestionError::NotOpen))?;
             if !request.questions.is_asked(self.id()) {
                 return Err(refused(QuestionError::NotAsked).into());
@@ -166,7 +167,7 @@ impl UserActor {
     ///
     /// # Errors
     /// An error if the channel is gone.
-    pub async fn send_message(&self, message: String, classification: Option<Classification>) -> anyhow::Result<Uuid> {
+    pub async fn send_message(&self, message: String, classification: Option<Classification>) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         let classification = classification.unwrap_or_else(|| channel_loop.classification());
         let msg = Message {
@@ -210,7 +211,7 @@ impl UserActor {
     /// `ChannelError::MessageNotFound` if the channel has no such message,
     /// `Forbidden` if it is not this user's, `MessageRevoked` if it was
     /// taken back; an error if the channel is gone.
-    pub async fn modify_message(&self, message: MessageId, content: String, classification: Option<Classification>) -> anyhow::Result<Uuid> {
+    pub async fn modify_message(&self, message: MessageId, content: String, classification: Option<Classification>) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         let original = self.message_to_change(&channel_loop, message).await?;
         if original.sender_id != self.id {
@@ -238,7 +239,7 @@ impl UserActor {
     ///
     /// # Errors
     /// As `modify_message`, but for the classification.
-    pub async fn revoke_message(&self, message: MessageId) -> anyhow::Result<Uuid> {
+    pub async fn revoke_message(&self, message: MessageId) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         self.message_to_change(&channel_loop, message).await?;
         let span_id = Uuid::new_v4();
@@ -259,7 +260,7 @@ impl UserActor {
     /// `ChannelError::MessageNotFound` if the channel has no such message,
     /// `MessageRevoked` if it was taken back; an error if the channel is
     /// gone.
-    pub async fn reclassify_message(&self, message: MessageId, classification: Classification) -> anyhow::Result<Uuid> {
+    pub async fn reclassify_message(&self, message: MessageId, classification: Classification) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         self.message_to_change(&channel_loop, message).await?;
         let span_id = Uuid::new_v4();
@@ -282,7 +283,7 @@ impl UserActor {
     /// `ChannelError::MessageNotFound` if the channel has no such message,
     /// `MessageRevoked` if it was taken back, `NotAnAgentsMessage` if no agent of the channel said it;
     /// an error if the channel is gone.
-    pub async fn request_retry(&self, message: MessageId) -> anyhow::Result<Uuid> {
+    pub async fn request_retry(&self, message: MessageId) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         let author = self.message_to_change(&channel_loop, message).await?.sender_id;
         if channel_loop.agent_actor(author).is_none() {
@@ -307,7 +308,7 @@ impl UserActor {
     /// channel; `TurnNotRetryable` if `turn` can be asked for again
     /// neither so;
     /// an error if the channel is gone.
-    pub async fn request_retry_of_turn(&self, author: ActorId, turn: TurnId) -> anyhow::Result<Uuid> {
+    pub async fn request_retry_of_turn(&self, author: ActorId, turn: TurnId) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         if channel_loop.agent_actor(author).is_none() {
             return Err(ChannelError::NotAParticipant { participant: author, channel: self.channel_id }.into());
@@ -334,7 +335,7 @@ impl UserActor {
     /// channel; `NudgesItself` if it is this user; `AlreadyResponding` if it
     /// is in a turn, which it would otherwise follow with a second one; an
     /// error if the channel is gone.
-    pub async fn request_response(&self, participant: ActorId) -> anyhow::Result<Uuid> {
+    pub async fn request_response(&self, participant: ActorId) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         let actor = channel_loop.actor(participant)
             .ok_or(ChannelError::NotAParticipant { participant, channel: self.channel_id })?;
@@ -352,7 +353,7 @@ impl UserActor {
     /// Sends the request to `author` to answer again instead of `target`,
     /// with a `WakeupRequested` ahead of it, as of a message, so that a
     /// quiet channel does not swallow it. Returns the envelopes' `span_id`.
-    async fn send_retry(&self, target: RetryTarget, author: ActorId) -> anyhow::Result<Uuid> {
+    async fn send_retry(&self, target: RetryTarget, author: ActorId) -> Result<Uuid> {
         let span_id = Uuid::new_v4();
         self.send(self.envelope(ActorEvent::WakeupRequested, span_id)).await?;
         self.send(self.envelope(ActorEvent::RetryRequested { target, author }, span_id)).await?;
@@ -363,14 +364,14 @@ impl UserActor {
     ///
     /// # Errors
     /// An error if the channel is gone.
-    fn channel_loop(&self) -> anyhow::Result<Arc<ChannelLoop>> {
+    fn channel_loop(&self) -> Result<Arc<ChannelLoop>> {
         self.actor_runtime.channel_loop().ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))
     }
 
     /// The message `id` of `channel` as it stands, if it can still be
     /// changed: not taken back. Whether this user may change it is the
     /// channel's to decide as it admits the change (issue 304).
-    async fn message_to_change(&self, channel: &ChannelLoop, id: MessageId) -> anyhow::Result<Message> {
+    async fn message_to_change(&self, channel: &ChannelLoop, id: MessageId) -> Result<Message> {
         let message = channel.message(id).await
             .ok_or(ChannelError::MessageNotFound { message: id, channel: self.channel_id })?;
         if message.revoked.is_some() {
@@ -388,7 +389,7 @@ impl UserActor {
     /// which are not said to anyone, and answers
     /// to questions, which are for the tool asking alone (issue 165): their
     /// closing tells the user's frontends that they were answered.
-    async fn send(&self, envelope: Envelope) -> anyhow::Result<()> {
+    async fn send(&self, envelope: Envelope) -> Result<()> {
         // Shown first, so that why the channel did not let it in
         // (`MessageRejected`) always follows it. An error only says that
         // nobody listens.
@@ -402,7 +403,7 @@ impl UserActor {
     /// Sends this user's decision on an approval. Returns the `span_id`, as
     /// `send_message` does. A decision sent so is the user's own, never one
     /// of their rules (`ApprovalResponse::by_rule`).
-    pub async fn send_approval(&self, response: ApprovalResponse, approved: bool) -> anyhow::Result<Uuid> {
+    pub async fn send_approval(&self, response: ApprovalResponse, approved: bool) -> Result<Uuid> {
         let response = ApprovalResponse { by_rule: None, ..response };
         let span_id = Uuid::new_v4();
         self.send(self.envelope(Self::answer(response, approved), span_id)).await?;
@@ -461,7 +462,7 @@ impl UserActor {
     /// # Errors
     /// A `CommandError` if the command is unknown, refused or fails; an error
     /// if the channel is gone.
-    pub async fn execute_command(&self, name: &str, args: &str) -> anyhow::Result<CommandReply> {
+    pub async fn execute_command(&self, name: &str, args: &str) -> Result<CommandReply> {
         let channel = self.channel_loop()?;
         let executor = self.actor_runtime.command_executor();
         let context = CommandContext { issuer: self, channel: &channel, executor };
@@ -493,7 +494,7 @@ impl UserActor {
     /// `CommandError::Unknown` if no agent here carries it out as this user
     /// sees it; `InvalidArguments` if `args` names no agent that does; an
     /// error if a request cannot be sent.
-    async fn request_command(&self, channel: &ChannelLoop, name: &str, args: &str) -> anyhow::Result<CommandReply> {
+    async fn request_command(&self, channel: &ChannelLoop, name: &str, args: &str) -> Result<CommandReply> {
         let understanding: Vec<_> = channel.agent_commands(&self.security_context()).await.into_iter()
             .filter(|(_, commands)| commands.iter().any(|c| c.name == name))
             .map(|(member, _)| member)
@@ -554,11 +555,11 @@ impl UserActor {
         let answer = match &event.event {
             ActorEvent::ApprovalRequested(request) => self.answer_by_rule(&event, request).await,
             ActorEvent::QuestionRequested(request) => {
-                self.open_questions.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(request.id, request.clone());
+                self.open_questions.lock().unwrap_or_else(PoisonError::into_inner).insert(request.id, request.clone());
                 None
             }
             ActorEvent::QuestionClosed { id, .. } => {
-                self.open_questions.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(id);
+                self.open_questions.lock().unwrap_or_else(PoisonError::into_inner).remove(id);
                 None
             }
             _ => None,
@@ -598,7 +599,7 @@ impl UserActor {
 /// stopped channel fails at once instead of filling a queue nobody reads
 /// (issue 90), and every watch ends (issue 104).
 struct EndOfRun<'a> {
-    queue: tokio::sync::MutexGuard<'a, Receiver<Envelope>>,
+    queue: MutexGuard<'a, Receiver<Envelope>>,
     ended: &'a CancellationToken,
 }
 
@@ -637,7 +638,7 @@ impl Actor for UserActor {
         &self,
         mut rx: Box<dyn EventReceiver>,
         tx: Box<dyn EventSender>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let queue = self.user_rx.try_lock()
             .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
         let mut run = EndOfRun { queue, ended: &self.ended };
@@ -675,6 +676,10 @@ mod tests {
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::config::AppConfig;
     use crate::testing::test_registry;
+    use caelumora_model::channel::{Channel, moderation_components};
+    use caelumora_model::user::{User, UserId};
+    use crate::transport::memory::InMemoryEventSender;
+    use std::time::Duration;
 
     /// A user's actor, with the channel it is in - to be kept while the
     /// actor is used: the actor's runtime holds it weakly.
@@ -684,24 +689,24 @@ mod tests {
         let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store)), &[&ScriptedAgents(Script::Answers("ok".to_string()))]).unwrap());
         let session_id = SessionId::new();
         let channel_runtime = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy()))), session_id);
-        let channel = caelumora_model::channel::Channel {
+        let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
             uses_workspace: true,
             id: ChannelId::new(),
             session_id,
             name: Name::new("main").unwrap(),
-            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
+            components: moderation_components(None, Some("broadcast_policy")),
             participants: Vec::new(),
             security_attributes: SecurityAttributes::default(),
-            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+            classification: Classification::CHANNEL_DEFAULT,
             language: None,
             history_limits: Vec::new(),
             deleted: None,
             former: Vec::new(),
         };
-        let user = caelumora_model::user::User {
-            id: caelumora_model::user::UserId::new(),
+        let user = User {
+            id: UserId::new(),
             username: Name::new("alice").unwrap(),
             email: String::new(),
             roles: Vec::new(),
@@ -716,7 +721,7 @@ mod tests {
 
     fn envelope_from(sender: ActorId) -> Envelope {
         let context = EventContext::new(Default::default(), Default::default(), sender, "agent".to_string());
-        Envelope::new(SecurityContext::default(), context, ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() })
+        Envelope::new(SecurityContext::default(), context, ActorEvent::ResponseStarted { turn_id: TurnId::new() })
     }
 
     #[tokio::test]
@@ -763,15 +768,15 @@ mod tests {
 
         actor.send_message("hello".to_string(), None).await.unwrap();
         let ended = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
+            Duration::from_secs(5),
             actor.run(Box::new(InMemoryEventReceiver::new(rx)), Box::new(InMemoryEventSender::new(output))),
         ).await.expect("the actor ends");
         assert!(ended.is_ok(), "a channel that is gone is an end, not an error: {ended:?}");
     }
 
     /// Where what the actor sends goes when nothing is to come of it.
-    fn nowhere() -> crate::transport::memory::InMemoryEventSender {
-        crate::transport::memory::InMemoryEventSender::new(mpsc::channel(1).0)
+    fn nowhere() -> InMemoryEventSender {
+        InMemoryEventSender::new(mpsc::channel(1).0)
     }
 
     #[tokio::test]

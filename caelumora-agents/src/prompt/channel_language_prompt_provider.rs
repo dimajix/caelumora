@@ -142,6 +142,7 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::config::AppConfig;
+    use chrono::Utc;
 
     fn language(tag: &str) -> Option<Language> {
         Some(Language::new(tag).unwrap())
@@ -191,12 +192,12 @@ mod tests {
         store.entity_stores().agents.create(&system, &agent).await.unwrap();
         let session_id = SessionId::new();
         let channel = Channel::build(session_id, ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, language("de"), vec![Participant::Agent(agent.id)]);
-        let now = chrono::Utc::now();
+        let now = Utc::now();
         let session = Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
             workspace: None,
-            id: session_id, name: caelumora_model::value::name::Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
+            id: session_id, name: Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
             deleted: None,
         };

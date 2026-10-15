@@ -154,6 +154,8 @@ mod tests {
     
     use caelumora_model::security::AllowAllPolicy;
     use crate::channel::tests::*;
+    use caelumora_model::agent::AgentId;
+    use crate::error::is_forbidden;
 
     /// Refuses everything, to see that a refusal reaches the caller.
     #[derive(Debug)]
@@ -173,14 +175,14 @@ mod tests {
         let refused = channel_with(&[&alice], Arc::new(DenyAll)).await;
         // Refused before the actor is looked up: who may not learns nothing
         // of who is in the channel.
-        let somebody = ActorId::Agent(caelumora_model::agent::AgentId::new());
+        let somebody = ActorId::Agent(AgentId::new());
         for error in [
             refused.cancel(&context).await.expect_err("cancelling is refused"),
             refused.cancel_actor(&context, somebody).await.expect_err("cancelling one actor is refused"),
             refused.wakeup(&context).await.expect_err("waking is refused"),
             refused.wakeup_actor(&context, somebody).await.expect_err("waking one actor is refused"),
         ] {
-            assert!(crate::error::is_forbidden(&error), "the caller can tell a refusal from a failure: {error}");
+            assert!(is_forbidden(&error), "the caller can tell a refusal from a failure: {error}");
             assert!(!error.to_string().contains("DenyAll"), "a refusal does not disclose the rule: {error}");
         }
         // Waking because something is on its way is not a wakeup of its own:

@@ -10,7 +10,7 @@
 
 use crate::turn::Turn;
 use crate::compaction::{Compaction, CompactionError, CompactionStrategy, GivenAgain, KnowledgeRestorer};
-use caelumora_runtime::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, config_of_params};
 use crate::prompt::titled;
 use crate::llm::LLMClient;
 use async_trait::async_trait;
@@ -29,6 +29,7 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
+use chrono::Utc;
 
 pub const SUMMARY_COMPACTION_KIND: &str = "summary_compaction";
 
@@ -283,7 +284,7 @@ impl CompactionStrategy for SummaryCompaction {
             sender_name: turn.agent_name().to_string(),
             role: MessageRole::User,
             content: Some(titled(SUMMARY_TITLE, &text)),
-            timestamp: chrono::Utc::now(),
+            timestamp: Utc::now(),
             prompt_tokens: answer.prompt_tokens,
             completion_tokens: answer.completion_tokens,
             context_size: answer.context_size,
@@ -298,7 +299,7 @@ impl CompactionStrategy for SummaryCompaction {
                 sender_name: turn.agent_name().to_string(),
                 role: MessageRole::User,
                 content: Some(given.text.clone()),
-                timestamp: chrono::Utc::now(),
+                timestamp: Utc::now(),
                 // Given in the turn, as `Turn::give` gives.
                 turn_id: Some(turn.turn_id()),
                 ..Message::new(given.knowledge.classification.clone().unwrap_or_else(|| turn.label()))
@@ -321,7 +322,7 @@ pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         ComponentKind::new(SUMMARY_COMPACTION_KIND).provides::<dyn CompactionStrategy>().needs::<dyn LLMClient>().needs::<dyn KnowledgeRestorer>(),
         |descriptor, context| async move {
-            let SummaryCompactionConfig { keep } = caelumora_runtime::component::config_of_params(&descriptor.params)?;
+            let SummaryCompactionConfig { keep } = config_of_params(&descriptor.params)?;
             if !(0.0..1.0).contains(&keep) {
                 return Err(ComponentError::InvalidConfig(format!("'keep' is a share of the context size, at least 0 and less than 1, not {keep}")));
             }
@@ -344,11 +345,15 @@ mod tests {
     use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
-    use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
+    use caelumora_model::context::{KnowledgeRef, KnowledgeSource, ModelProfile};
     use caelumora_model::store::{EntityKind, Stored};
     use caelumora_model::tool::Tool;
     use caelumora_model::workspace::{Workspace, WorkspaceId};
     use std::sync::Mutex;
+    use caelumora_model::digest;
+    use crate::llm::{LLMResult, unlabelled_message};
+    use futures::stream::BoxStream;
+    use serde_json::Value;
 
     /// What the agent of a test is given, as a plugin gives it - a skill,
     /// say: a workspace, here, and its text.
@@ -392,30 +397,30 @@ mod tests {
 
     #[async_trait]
     impl LLMClient for Summariser {
-        async fn chat_completion(&self, context: &[Message], _: &[Tool]) -> futures::stream::BoxStream<'static, crate::llm::LLMResult<MessageEvent>> {
+        async fn chat_completion(&self, context: &[Message], _: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>> {
             self.0.lock().unwrap().push(context.to_vec());
             let answer = Message {
                 role: MessageRole::Assistant,
                 content: Some("They want release notes.".to_string()),
                 prompt_tokens: Some(40),
                 completion_tokens: Some(8),
-                ..crate::llm::unlabelled_message()
+                ..unlabelled_message()
             };
             futures::stream::iter(vec![Ok(MessageEvent::Complete(answer))]).boxed()
         }
 
-        fn profile(&self) -> caelumora_model::context::ModelProfile {
+        fn profile(&self) -> ModelProfile {
             Default::default()
         }
     }
 
     fn entry(content: &str, role: MessageRole, turn: Option<TurnId>) -> Entry {
         let message = Message { content: Some(content.to_string()), role, turn_id: turn, ..Message::new(Classification::PUBLIC) };
-        (caelumora_model::digest::content(content.as_bytes()), None, Some(message))
+        (digest::content(content.as_bytes()), None, Some(message))
     }
 
     fn end(turn: &str) -> Entry {
-        (caelumora_model::digest::content(turn.as_bytes()), None, None)
+        (digest::content(turn.as_bytes()), None, None)
     }
 
     #[test]
@@ -461,11 +466,11 @@ mod tests {
     #[test]
     fn a_turn_given_up_for_a_lowered_channel_is_kept_whole() {
         let (lowered, failed) = (TurnId::new(), TurnId::new());
-        let given_up = |turn_id, reason| TranscriptEntry::TurnGivenUp { turn_id, reason, at: chrono::Utc::now() };
+        let given_up = |turn_id, reason| TranscriptEntry::TurnGivenUp { turn_id, reason, at: Utc::now() };
         let entries = [
             given_up(lowered, GivenUpReason::Lowered { channel: Classification::PUBLIC }),
             given_up(failed, GivenUpReason::Stopped),
-            TranscriptEntry::TurnFinished { turn_id: TurnId::new(), at: chrono::Utc::now() },
+            TranscriptEntry::TurnFinished { turn_id: TurnId::new(), at: Utc::now() },
         ];
         assert_eq!(kept_whole(entries.iter()), HashSet::from([lowered]));
     }
@@ -596,7 +601,7 @@ mod tests {
         assert_eq!(strategy.keep_of(1000), 250);
 
         let config = |params| config_of_params::<SummaryCompactionConfig>(&params).map(|c| c.keep);
-        assert_eq!(config(serde_json::Value::Null).ok(), Some(DEFAULT_KEEP));
+        assert_eq!(config(Value::Null).ok(), Some(DEFAULT_KEEP));
         assert!(config(serde_json::json!({ "keep_last": 10 })).is_err(), "what it no longer takes is refused");
         assert!(config(serde_json::json!({ "threshold": 0.8 })).is_err(), "when is its policy's");
     }

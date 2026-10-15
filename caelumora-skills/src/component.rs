@@ -490,10 +490,11 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use caelumora_agents::error::user_message;
+    use anyhow::Error;
 
     #[test]
     fn what_the_catalogue_meets_reaches_the_owner_as_the_core_judges_it() {
-        let shown = |error: SkillError| user_message(&anyhow::Error::new(ContextError::from(error)));
+        let shown = |error: SkillError| user_message(&Error::new(ContextError::from(error)));
         assert_eq!(shown(SkillError::NotJoined).as_deref(), Some("skills are not offered here"));
         assert_eq!(shown(SkillError::Store(StoreError::Backend("/var/lib/skills: permission denied".to_string()))), None);
     }

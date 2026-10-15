@@ -124,6 +124,8 @@ impl PrivacyPolicy for SharedAudience {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::security::SecurityAttributes;
+    use crate::value::name::Name;
 
     fn session(policy: PrivacyConfig, owner: UserId, others: &[UserId]) -> SessionPrivacy {
         let people = others.iter().copied().chain([owner]).collect();
@@ -167,14 +169,14 @@ mod tests {
             approval_rules: Vec::new(),
             workspace: None,
             id: Default::default(),
-            name: crate::value::name::Name::new("s").unwrap(),
+            name: Name::new("s").unwrap(),
             participants: vec![Participant::User(bob), Participant::Agent(Default::default())],
             channels: Vec::new(),
             commands: Default::default(),
             privacy: PrivacyConfig::SharedAudience,
             created_at: Default::default(),
             updated_at: Default::default(),
-            security_attributes: crate::security::SecurityAttributes::owned_by(ActorId::User(alice)),
+            security_attributes: SecurityAttributes::owned_by(ActorId::User(alice)),
             deleted: None,
         };
         let privacy = SessionPrivacy::of(&session);

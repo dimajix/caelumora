@@ -17,6 +17,7 @@ use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use crate::digest;
 
 /// What makes a ledger of one kind: the number of its entries, where a
 /// change is recorded to have been made, and how its chain is digested.
@@ -98,7 +99,7 @@ impl<K: LedgerKind> Chain<LedgerEntry<K>> {
     pub fn push(&mut self, change: Change<K::Id>, origin: K::Origin, after: MessageId) {
         self.push_with(
             LedgerEntry { change, origin, after, written_at: Utc::now() },
-            |previous, entry| crate::digest::ledger_chain::<K>(previous, &entry.change, &entry.origin, entry.after),
+            |previous, entry| digest::ledger_chain::<K>(previous, &entry.change, &entry.origin, entry.after),
         );
     }
 
@@ -211,6 +212,7 @@ impl<K: LedgerKind> Staged<K> {
 mod tests {
     use super::*;
     use crate::note::{NoteChain, NoteId, NoteOrigin};
+    use crate::confidentiality::Confidentiality;
 
     fn add(id: u32, text: &str) -> Change<NoteId> {
         Change::Add { id: NoteId(id), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }
@@ -236,7 +238,6 @@ mod tests {
 
     #[test]
     fn a_reclassified_entry_keeps_its_number_and_text() {
-        use crate::confidentiality::Confidentiality;
         let mut chain = NoteChain::default();
         push(&mut chain, add(1, "a"), MessageId::new());
         let released = Classification::general(Confidentiality::Public);
@@ -248,7 +249,6 @@ mod tests {
 
     #[test]
     fn an_updated_entry_keeps_its_number_and_place_and_stands_where_it_was_updated() {
-        use crate::confidentiality::Confidentiality;
         let mut chain = NoteChain::default();
         push(&mut chain, add(1, "The user likes tea."), MessageId::new());
         push(&mut chain, add(2, "The user lives in Berlin."), MessageId::new());
@@ -324,7 +324,7 @@ mod tests {
         let mut chain = NoteChain::default();
         push(&mut chain, add(1, "a"), MessageId::new());
         push(&mut chain, add(2, "b"), MessageId::new());
-        let released = Classification::general(crate::confidentiality::Confidentiality::Public);
+        let released = Classification::general(Confidentiality::Public);
         let staged = [
             add(3, "c"),
             Change::Remove { id: NoteId(1) },

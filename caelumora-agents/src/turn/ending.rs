@@ -124,19 +124,24 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::message::MessageId;
     use caelumora_model::message::MessageRole;
-    use caelumora_model::confidentiality::Classification;
+    use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::tool::{ToolCall, ToolCallResult};
     use caelumora_runtime::transport::Discard;
+    use caelumora_model::actor::ActorEvent;
+    use caelumora_runtime::transport::memory::InMemoryEventSender;
+    use chrono::Utc;
+    use crate::message::testing::given_up_turns;
+    use serde_json::Value;
 
     /// A turn begun on `state`, whose model called `tool` with `arguments`;
     /// the call ran if `ran`, and a note was staged.
     fn a_turn_that_called<'a>(state: &'a mut AgentChannelState, tool: &str, ran: bool) -> Turn<'a> {
         use caelumora_model::note::{NoteChange, NoteId};
-        use caelumora_model::tool::{ToolCall, ToolCallResult, ToolResultStatus, ToolVisibility};
-        let mut turn = Turn::begun(AgentId::default(), String::new(), state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+        use caelumora_model::tool::{ToolResultStatus, ToolVisibility};
+        let mut turn = Turn::begun(AgentId::default(), String::new(), state, AgentStateHandle::detached());
         let call = ToolCall { id: Some("1".to_string()), function_name: tool.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let mut result = ToolCallResult::of(&call, ToolResultStatus::Ok, "sent".to_string(), Classification::CHANNEL_DEFAULT);
-        result.started_at = ran.then(chrono::Utc::now);
+        result.started_at = ran.then(Utc::now);
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: vec![call], ..Message::new(Classification::CHANNEL_DEFAULT) });
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Tool, tool_results: vec![result], ..Message::new(Classification::CHANNEL_DEFAULT) });
         turn.stage_note(NoteKind::Public, NoteChange::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT });
@@ -161,7 +166,7 @@ mod tests {
         assert_eq!(state.transcript.messages().len(), 3, "what it said is not unsaid (issue 258)");
         assert_eq!(state.history.messages().len(), 3, "in the history as well");
         assert_eq!(state.transcript.all_entries().count(), 4, "followed by its end, and nothing branches");
-        let turns = crate::message::testing::given_up_turns(&state);
+        let turns = given_up_turns(&state);
         assert_eq!(turns.len(), 1);
         assert_eq!((turns[0].1.clone(), turns[0].2.len()), (GivenUpReason::Stopped, 2));
         assert!(state.notes.current().is_empty(), "the note it staged is not taken over");
@@ -185,11 +190,11 @@ mod tests {
         assert!(told.contains("because it failed") && !told.contains("boom"), "where its end stands, without what its users were told: {told}");
 
         let mut state = a_state_with("mail bob");
-        let lowered = Classification::general(caelumora_model::confidentiality::Confidentiality::Public);
+        let lowered = Classification::general(Confidentiality::Public);
         let turn = a_turn_that_called(&mut state, "send_mail", true);
         turn.give_up(GivenUpReason::Lowered { channel: lowered.clone() }, &Discard).await;
         let given = given_next(&mut state);
-        assert_eq!((given[1].tool_calls[0].function_name.as_str(), &given[1].tool_calls[0].arguments), ("send_mail", &serde_json::Value::Null), "only which tool it called");
+        assert_eq!((given[1].tool_calls[0].function_name.as_str(), &given[1].tool_calls[0].arguments), ("send_mail", &Value::Null), "only which tool it called");
         assert!(given[2].tool_results[0].content.is_empty(), "nothing of what it returned");
         assert_eq!(given[1].classification, lowered, "as the channel is now");
         let told = given.last().and_then(|m| m.content.clone()).unwrap_or_default();
@@ -202,7 +207,7 @@ mod tests {
     fn a_turn_with_an_open_step(state: &mut AgentChannelState) -> Turn<'_> {
         use caelumora_model::approval::ToolMatcher;
         use caelumora_model::tool::{ToolCallState, ToolResultStatus, ToolVisibility};
-        let mut turn = Turn::begun(AgentId::default(), String::new(), state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), state, AgentStateHandle::detached());
         let call = |id: &str, name: &str| ToolCall { id: Some(id.to_string()), function_name: name.to_string(), arguments: serde_json::json!({ "to": "bob" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let calls = vec![call("1", "send_mail"), call("2", "delete")];
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: calls.clone(), ..Message::new(Classification::CHANNEL_DEFAULT) });
@@ -213,7 +218,7 @@ mod tests {
         turn.tool_calls().register(states);
         let (id, ran, _) = turn.tool_calls().to_run().remove(0);
         let mut result = ToolCallResult::of(&ran, ToolResultStatus::Ok, "sent".to_string(), Classification::CHANNEL_DEFAULT);
-        result.started_at = Some(chrono::Utc::now());
+        result.started_at = Some(Utc::now());
         turn.tool_calls().record(id, result);
         turn
     }
@@ -224,7 +229,7 @@ mod tests {
         let mut state = a_state_with("mail bob, then delete");
         let turn = a_turn_with_an_open_step(&mut state);
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-        let committed = turn.commit(true, &caelumora_runtime::transport::memory::InMemoryEventSender::new(tx)).await;
+        let committed = turn.commit(true, &InMemoryEventSender::new(tx)).await;
 
         let messages = state.transcript.messages();
         let roles: Vec<MessageRole> = messages.iter().map(|m| m.role).collect();
@@ -234,7 +239,7 @@ mod tests {
         assert!(messages[2].tool_results[1].content.contains("cancelled"), "the model is told why: {}", messages[2].tool_results[1].content);
         assert!(committed.final_messages.iter().any(|m| m.role == MessageRole::Tool), "observers learn of it too");
         let said = rx.try_recv().expect("the answers are said as the turn ends (issue 258)");
-        let caelumora_model::actor::ActorEvent::CompleteMessageGenerated(said) = said.event else { panic!("said as a complete message: {said:?}") };
+        let ActorEvent::CompleteMessageGenerated(said) = said.event else { panic!("said as a complete message: {said:?}") };
         assert_eq!(said.id, messages[2].id, "the message the transcript keeps");
         let abandoned: Vec<_> = committed.abandoned_calls.iter().map(|c| (c.tool_call.function_name.as_str(), c.approval_id().is_some())).collect();
         assert_eq!(abandoned, [("delete", true)], "only the call without a result, as it stood: waiting for its approval");
@@ -247,7 +252,7 @@ mod tests {
         let turn = a_turn_with_an_open_step(&mut state);
         turn.give_up(GivenUpReason::Failed { message: "boom".to_string() }, &Discard).await;
 
-        let turns = crate::message::testing::given_up_turns(&state);
+        let turns = given_up_turns(&state);
         let answered: Vec<_> = turns[0].2.last().unwrap().tool_results.iter().map(|r| r.status).collect();
         assert_eq!(answered, [ToolResultStatus::Ok, ToolResultStatus::NotExecuted], "no call is left without a result");
     }
@@ -255,10 +260,10 @@ mod tests {
     #[tokio::test]
     async fn a_turn_given_up_before_it_said_anything_leaves_its_end() {
         let mut state = a_state_with("hello");
-        let turn = Turn::begun(AgentId::default(), String::new(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+        let turn = Turn::begun(AgentId::default(), String::new(), &mut state, AgentStateHandle::detached());
         turn.give_up(GivenUpReason::Stopped, &Discard).await;
-        assert_eq!(crate::message::testing::given_up_turns(&state).len(), 1, "one rule for every turn (issue 258)");
-        assert!(crate::message::testing::given_up_turns(&state)[0].2.is_empty());
+        assert_eq!(given_up_turns(&state).len(), 1, "one rule for every turn (issue 258)");
+        assert!(given_up_turns(&state)[0].2.is_empty());
         assert_eq!(state.transcript.entries().len(), 2);
     }
 

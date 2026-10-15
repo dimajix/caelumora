@@ -172,6 +172,7 @@ mod tests {
     use super::*;
     use caelumora_model::actor::{ActorEvent, EventContext};
     use caelumora_model::security::SecurityContext;
+    use caelumora_model::work::TurnId;
 
     fn envelope(event: ActorEvent) -> Envelope {
         Envelope::new(SecurityContext::default(), EventContext::default(), event)
@@ -184,8 +185,8 @@ mod tests {
         assert!(receiver.try_recv().is_none(), "nothing queued, nothing waited for");
 
         tx.try_send(envelope(ActorEvent::ResponseRequested)).expect("room");
-        tx.try_send(envelope(ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: Vec::new() })).expect("room");
-        tx.try_send(envelope(ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() })).expect("room");
+        tx.try_send(envelope(ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: Vec::new() })).expect("room");
+        tx.try_send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() })).expect("room");
         // Puts the request aside while it takes what it waits for.
         receiver.recv_matching(|e| matches!(e.event, ActorEvent::TurnFinished { .. })).await.expect("queued");
 
@@ -207,8 +208,8 @@ mod tests {
             |e| matches!(e.event, ActorEvent::ResponseRequested),
         );
 
-        sender.send(envelope(ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() })).await.expect("filtered, not failed");
-        sender.try_send(envelope(ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() })).expect("filtered, not failed");
+        sender.send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() })).await.expect("filtered, not failed");
+        sender.try_send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() })).expect("filtered, not failed");
         sender.try_send(envelope(ActorEvent::ResponseRequested)).expect("passes the filter");
 
         assert!(matches!(rx.try_recv().map(|e| e.event), Ok(ActorEvent::ResponseRequested)), "only what passes arrives");
@@ -224,7 +225,7 @@ mod tests {
         let as_actor = |sender_id: ActorId, caller: ActorId| Envelope::new(
             SecurityContext::default().next(caller, ActorId::None, ActorId::None),
             EventContext { sender_id, ..EventContext::default() },
-            ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() },
+            ActorEvent::ResponseStarted { turn_id: TurnId::new() },
         );
         let someone = ActorId::System;
 

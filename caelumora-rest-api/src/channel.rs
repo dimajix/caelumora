@@ -356,7 +356,7 @@ pub struct CommandReplyResponse {
     pub command: String,
     pub output: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub span_id: Option<uuid::Uuid>,
+    pub span_id: Option<Uuid>,
 }
 
 #[cfg(test)]
@@ -366,6 +366,7 @@ mod tests {
     use caelumora_model::agent::AgentId;
     use caelumora_model::approval::ApproverId;
     use caelumora_model::user::UserId;
+    use chrono::Utc;
 
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
@@ -407,7 +408,6 @@ mod tests {
 
     #[test]
     fn a_stream_lists_its_agents_notes_and_approvals_beside_the_channel() {
-        use caelumora_model::agent::AgentId;
         use caelumora_model::note::{Note, NoteId};
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
         let note = Note {
@@ -416,7 +416,7 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
             origin: Default::default(),
             after: Default::default(),
-            written_at: chrono::Utc::now(),
+            written_at: Utc::now(),
         };
         let member = |id, name: &str, notes: Vec<Note>| snapshot::MemberSnapshot {
             id, name: Some(name.to_string()), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes, pending_approvals: Vec::new(), pending_questions: Vec::new(),

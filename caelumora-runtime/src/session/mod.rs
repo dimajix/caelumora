@@ -25,7 +25,7 @@ use crate::group::{GroupManager, purge_participants};
 use caelumora_model::workspace::{Workspace, WorkspaceId};
 use crate::workspace::WorkspaceManager;
 use crate::controller::{ControllerManager, SessionController, WorkspaceController};
-use arc_swap::ArcSwapOption;
+use arc_swap::{ArcSwapOption, Guard};
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
@@ -33,6 +33,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::task::{AbortHandle, JoinSet};
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::event::EntityChange;
+use crate::component::ComponentError;
 
 mod channels;
 mod manager;
@@ -56,7 +57,7 @@ pub enum SessionError {
     /// fails as they are built, after which a channel created so is taken
     /// back out.
     #[error("The channel's components cannot be built: {0}")]
-    InvalidComponents(#[source] crate::component::ComponentError),
+    InvalidComponents(#[source] ComponentError),
     #[error("{participant} is not a participant of session {session}")]
     NotAParticipant { session: SessionId, participant: ActorId },
     /// Taken in already, and no channel named to take them into (issue 221).
@@ -84,7 +85,7 @@ pub enum SessionError {
     /// The workspace lies in another session's scope, and is used within
     /// that session alone (issue 251, `Scope::admits`).
     #[error("The workspace {0} lies in another session's scope")]
-    WorkspaceOutOfScope(caelumora_model::workspace::WorkspaceId),
+    WorkspaceOutOfScope(WorkspaceId),
     /// What lies in the scope of a session or channel being deleted is not
     /// all the caller's to delete (issue 320): what was is deleted, the
     /// session or channel is kept. `left` says how many of each kind are
@@ -270,7 +271,7 @@ impl SessionLoop {
     }
 
     /// The session as it is now.
-    pub fn session(&self) -> arc_swap::Guard<Arc<Session>> {
+    pub fn session(&self) -> Guard<Arc<Session>> {
         self.session_controller.load()
     }
 
@@ -408,6 +409,7 @@ mod tests {
     use crate::session::SessionManager;
     use crate::session::testing::*;
     use caelumora_model::user::User;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn a_renamed_user_is_renamed_in_every_channel_of_the_session() {
@@ -431,10 +433,10 @@ mod tests {
                 if names.iter().all(|n| n == "renamed") {
                     break;
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         };
-        tokio::time::timeout(std::time::Duration::from_secs(2), renamed).await.expect("both channels show the new name");
+        tokio::time::timeout(Duration::from_secs(2), renamed).await.expect("both channels show the new name");
         assert_eq!(first.user_actor(other.as_user_id().unwrap()).unwrap().name(), "other", "nobody else is renamed");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }

@@ -316,11 +316,14 @@ mod tests {
     use caelumora_runtime::transport::Discard;
     use caelumora_runtime::session::testing::detached_actor_runtime;
     use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::security::SecurityContext;
+    use caelumora_model::security::{SecurityContext, AllowAllPolicy, OwnershipPolicy};
     use caelumora_model::message::MessageId;
+    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_runtime::agent::state::AgentStateHandle;
+    use chrono::Utc;
 
     fn note(id: u32, text: &str) -> Note {
-        Note { id: NoteId(id), text: text.to_string(), classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT, after: MessageId::new(), origin: Default::default(), written_at: chrono::Utc::now() }
+        Note { id: NoteId(id), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT, after: MessageId::new(), origin: Default::default(), written_at: Utc::now() }
     }
 
     #[test]
@@ -350,11 +353,11 @@ mod tests {
         use caelumora_model::confidentiality::{Classification, Confidentiality};
         let agent = AgentId::new();
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent { access_policy: Arc::new(caelumora_model::security::OwnershipPolicy::new()), confidentiality: Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()) };
+        let tools = NotesComponent { access_policy: Arc::new(OwnershipPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()) };
         // Asked in the turn's context: the agent's, which reclassifies its own note.
         let context = SecurityContext::default().next(ActorId::Agent(agent), ActorId::None, ActorId::None);
         state.begin_turn(Default::default(), context, Default::default(), Vec::new(), Default::default());
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
         tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();
         let above = serde_json::json!({ "id": 1, "level": "strictly_confidential" });
         assert!(matches!(tools.execute(RECLASSIFY_NOTE_TOOL_NAME, &above, None, &mut turn).await, Err(ToolError::PermissionDenied(_))), "never above the channel");
@@ -370,9 +373,9 @@ mod tests {
     #[tokio::test]
     async fn notes_are_published_when_the_turn_completes_and_only_the_author_revokes() {
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent { access_policy: Arc::new(caelumora_model::security::AllowAllPolicy::new()), confidentiality: Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()) };
+        let tools = NotesComponent { access_policy: Arc::new(AllowAllPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()) };
         {
-            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached());
             let noted = tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();
             assert_eq!(noted.value["id"], 1);
             assert!(AgentNotes::current(&turn.work(), NoteKind::Public).is_empty(), "not before the turn completes");
@@ -382,7 +385,7 @@ mod tests {
             assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["tea"]);
         }
         {
-            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached());
             tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.unwrap();
             tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "coffee" }), None, &mut turn).await.unwrap();
             turn.commit(false, &Discard).await;
@@ -392,9 +395,9 @@ mod tests {
         {
             // A turn that does not complete publishes nothing: the next one
             // starts without its changes.
-            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached());
             tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "lost" }), None, &mut turn).await.unwrap();
-            let turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+            let turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached());
             assert!(!turn.commit(false, &Discard).await.channel_state_changed);
         }
     }
@@ -403,10 +406,10 @@ mod tests {
     async fn an_updated_note_keeps_its_number_and_is_classified_as_the_turn_that_updated_it() {
         use caelumora_model::confidentiality::{Classification, Confidentiality};
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent { access_policy: Arc::new(caelumora_model::security::AllowAllPolicy::new()), confidentiality: Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()) };
+        let tools = NotesComponent { access_policy: Arc::new(AllowAllPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()) };
         let texts = |state: &AgentChannelState| state.notes.current().into_iter().map(|n| (n.id.0, n.text)).collect::<Vec<_>>();
         {
-            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached());
             tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();
             tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "Berlin" }), None, &mut turn).await.unwrap();
             let updated = tools.execute(UPDATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 2, "text": "Hamburg" }), None, &mut turn).await.expect("noted in this turn");
@@ -415,7 +418,7 @@ mod tests {
             turn.commit(false, &Discard).await;
             assert_eq!(texts(&state), [(1, "tea".to_string()), (2, "Hamburg".to_string())]);
         }
-        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached());
         let internal = Classification::general(Confidentiality::Internal);
         turn.see(&internal);
         let unknown = tools.execute(UPDATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 7, "text": "x" }), None, &mut turn).await;
@@ -437,9 +440,9 @@ mod tests {
     #[tokio::test]
     async fn a_note_revoked_in_the_turn_that_noted_it_is_gone_and_its_number_used_up() {
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent { access_policy: Arc::new(caelumora_model::security::AllowAllPolicy::new()), confidentiality: Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()) };
+        let tools = NotesComponent { access_policy: Arc::new(AllowAllPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()) };
         {
-            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached());
             tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "draft" }), None, &mut turn).await.unwrap();
             tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.expect("noted in this turn");
             let again = tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await;
@@ -449,14 +452,14 @@ mod tests {
             turn.commit(false, &Discard).await;
             assert!(state.notes.current().is_empty());
         }
-        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached());
         let noted = tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "final" }), None, &mut turn).await.unwrap();
         assert_eq!(noted.value["id"], 2);
     }
 
     #[test]
     fn a_note_acted_on_is_shown_as_a_note_and_the_notes_read_as_a_list() {
-        let tools = NotesComponent { access_policy: Arc::new(caelumora_model::security::OwnershipPolicy::new()), confidentiality: Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()) }.tools();
+        let tools = NotesComponent { access_policy: Arc::new(OwnershipPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()) }.tools();
         let notes: Vec<_> = tools.iter().filter(|t| t.presentation == NOTE_PRESENTATION).map(|t| t.name.as_str()).collect();
         assert_eq!(notes, [WRITE_NOTE_TOOL_NAME, UPDATE_NOTE_TOOL_NAME, REVOKE_NOTE_TOOL_NAME, RECLASSIFY_NOTE_TOOL_NAME]);
         let read = tools.iter().find(|t| t.name == READ_NOTES_TOOL_NAME).unwrap();

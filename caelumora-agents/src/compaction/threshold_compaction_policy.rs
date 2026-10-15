@@ -89,6 +89,7 @@ mod tests {
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageId, MessageRole};
+    use serde_json::Value;
 
     #[tokio::test]
     async fn it_is_due_once_a_call_measured_the_context_that_full() {
@@ -121,7 +122,7 @@ mod tests {
     #[test]
     fn its_threshold_is_a_share_of_the_context_size() {
         let config = |params| config_of_params::<ThresholdCompactionPolicyConfig>(&params).map(|c| c.threshold);
-        assert_eq!(config(serde_json::Value::Null).ok(), Some(DEFAULT_THRESHOLD));
+        assert_eq!(config(Value::Null).ok(), Some(DEFAULT_THRESHOLD));
         assert_eq!(config(serde_json::json!({ "threshold": 0.5 })).ok(), Some(0.5));
         assert!(config(serde_json::json!({ "keep": 0.5 })).is_err(), "what it keeps is its strategy's");
     }

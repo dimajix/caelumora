@@ -88,10 +88,12 @@ impl AgentController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::value::name::ScopedName;
+    use caelumora_model::value::name::{ScopedName, Name};
     use caelumora_model::agent::{Personality, PersonalityId};
     use caelumora_model::scope::Scope;
     use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::confidentiality::Visibility;
 
     #[tokio::test]
     async fn a_renamed_agent_is_stored_first() {
@@ -104,10 +106,10 @@ mod tests {
             roles: None,
             components: Default::default(),
             security_attributes: Default::default(),
-            reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
+            reasoning_visibility: Visibility::Channel,
             deleted: None,
         };
-        let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), personality.id, caelumora_model::actor::ActorId::None);
+        let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         let store = Arc::new(MemoryStore::new());
         let ctx = SecurityContext::default();
         store.entity_stores().agents.create(&ctx, &agent).await.unwrap();
@@ -124,12 +126,11 @@ mod tests {
     /// to those its personality names.
     #[tokio::test]
     async fn an_agent_acts_with_its_owners_roles_as_they_are_now_and_its_limit() {
-        use caelumora_model::actor::ActorId;
         use caelumora_model::event::GlobalEvent;
         use caelumora_model::role::RoleId;
         use caelumora_model::user::{User, UserId, UserUpdateEvent};
         let (staff, hr) = (RoleId::new(), RoleId::new());
-        let alice = User { id: UserId::new(), username: caelumora_model::value::name::Name::new("alice").unwrap(), email: String::new(), roles: vec![staff], deleted: None };
+        let alice = User { id: UserId::new(), username: Name::new("alice").unwrap(), email: String::new(), roles: vec![staff], deleted: None };
         let store = Arc::new(MemoryStore::new());
         let owner = Arc::new(UserController::new(alice.clone(), None, Arc::new(()), store.entity_stores().user_profiles));
         let personality = Personality { roles: Some(vec![staff]), ..plain() };
@@ -155,7 +156,7 @@ mod tests {
             roles: None,
             components: Default::default(),
             security_attributes: Default::default(),
-            reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
+            reasoning_visibility: Visibility::Channel,
             deleted: None,
         }
     }

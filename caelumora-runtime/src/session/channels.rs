@@ -2,10 +2,10 @@
 
 use caelumora_model::value::name::Name;
 use crate::channel::ChannelLoop;
-use anyhow::Result;
+use anyhow::{Result, Error};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
-use caelumora_model::channel::{self, Channel};
+use caelumora_model::channel::{self, Channel, Participant};
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::{Classification, Place};
 use caelumora_model::value::language::Language;
@@ -122,7 +122,7 @@ impl SessionLoop {
         ids.extend(spec.participants);
         let mut participants = Vec::new();
         for id in ids {
-            if participants.iter().any(|p: &caelumora_model::channel::Participant| p.actor_id() == id) {
+            if participants.iter().any(|p: &Participant| p.actor_id() == id) {
                 continue;
             }
             match session.participants.iter().find(|p| p.actor_id() == id) {
@@ -228,7 +228,7 @@ impl SessionLoop {
             self.stores.channels.delete(context, channel_id).await?;
             self.scoped.delete_lying_in(context, &scope).await?;
             self.groups.delete_participants(&scope).await?;
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, Error>(())
         }.await;
         if let Err(error) = deleted {
             self.roll_back_channel_deletion(channel_id).await;
@@ -357,13 +357,16 @@ mod tests {
     use caelumora_model::value::language::Language;
     use caelumora_model::channel::{Channel, STARTED, STOPPED};
     use caelumora_model::event::EntityChange;
-    use caelumora_model::security::SecurityContext;
+    use caelumora_model::security::{SecurityContext, Grant, Subject};
     use caelumora_model::store::StoreError;
     use std::sync::Arc;
 
     
     use crate::session::{ChannelSpec, SessionError, SessionLoop, SessionManager};
     use crate::session::testing::*;
+    use caelumora_model::user::UserId;
+    use crate::error::is_forbidden;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn a_channel_created_in_a_running_session_is_stored_announced_and_runs() {
@@ -388,7 +391,7 @@ mod tests {
         assert_eq!(document.name, "side");
 
         // `run` starts it asynchronously.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
         let events = drain(&mut rx);
         let created = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Created)) if cid == channel.id()));
         let started = events.iter().position(|e| matches!(e.about::<Channel>(), Some(((_, cid), EntityChange::Custom { name: STARTED, .. })) if cid == channel.id()));
@@ -441,7 +444,7 @@ mod tests {
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;
-        let stranger = caelumora_model::actor::ActorId::User(caelumora_model::user::UserId::new());
+        let stranger = ActorId::User(UserId::new());
 
         let taken = session.create_channel(&ctx, spec("MAIN", vec![])).await.expect_err("its name is taken");
         assert!(matches!(taken.downcast_ref::<StoreError>(), Some(StoreError::NameTaken { entity: "channel" })), "by the store, as names are compared: {taken}");
@@ -474,7 +477,7 @@ mod tests {
         let id = channel.id();
         let agent = AgentId::new();
         runtime.state_store().put_agent_channel_state(agent, id, &mut AgentChannelState::default()).await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
         let mut rx = runtime.event_bus().subscribe_all();
 
         session.delete_channel(&ctx, id).await.expect("the owner deletes it");
@@ -527,7 +530,7 @@ mod tests {
         // Queued to be started, but deleted before `run` gets to it.
         session_loop.delete_channel(&ctx, channel_id).await.expect("deleted");
         let running = tokio::spawn({ let session_loop = Arc::clone(&session_loop); async move { session_loop.run().await } });
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
         let events = drain(&mut rx);
         let about = |wanted: fn(&EntityChange) -> bool| events.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, id), change)) if id == channel_id && wanted(change)));
@@ -539,8 +542,6 @@ mod tests {
 
     #[tokio::test]
     async fn only_who_may_change_the_session_creates_or_deletes_its_channels() {
-        use caelumora_model::actor::ActorId;
-        use caelumora_model::user::UserId;
 
         let (_, manager) = owned_runtime(Default::default());
 
@@ -548,15 +549,15 @@ mod tests {
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
         let (alice_ctx, bob_ctx) = (as_user(alice.id), as_user(bob.id));
         let mut session = make_session("hers", ActorId::User(alice.id));
-        session.security_attributes = session.security_attributes.clone().granting(caelumora_model::security::Subject::Actor(ActorId::User(bob.id)), caelumora_model::security::Grant::Read);
+        session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
         let main = session.channel_named("main").unwrap().id();
 
         let refused = session.create_channel(&bob_ctx, spec("bobs", vec![])).await.expect_err("a contributor may not");
-        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        assert!(is_forbidden(&refused), "{refused}");
         let refused = session.delete_channel(&bob_ctx, main).await.expect_err("a contributor may not");
-        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        assert!(is_forbidden(&refused), "{refused}");
         assert!(session.channel(main).is_some(), "a refused deletion leaves the channel");
 
         session.create_channel(&alice_ctx, spec("hers", vec![])).await.expect("the owner may");
@@ -565,14 +566,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_channel_its_viewer_may_not_read_is_not_there_for_them() {
-        use caelumora_model::actor::ActorId;
-        use caelumora_model::user::UserId;
 
         let (_, manager) = owned_runtime(Default::default());
         let (alice, bob) = (user("alice"), user("bob"));
         let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
         let mut session = make_session("hers", ActorId::User(alice.id));
-        session.security_attributes = session.security_attributes.clone().granting(caelumora_model::security::Subject::Actor(ActorId::User(bob.id)), caelumora_model::security::Grant::Read);
+        session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(ActorId::User(bob.id)), Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &as_user(alice.id), session).await.unwrap();
         // Alice's alone: bob takes part in the session, not in this channel.

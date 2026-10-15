@@ -13,6 +13,7 @@ use caelumora_model::session::SessionId;
 use caelumora_model::template::SessionTemplateId;
 use std::sync::Arc;
 use uuid::Uuid;
+use crate::routes::{change_error, ensure_session, session_view, views};
 
 pub async fn create_session(
     State(state): State<Arc<AppState>>,
@@ -29,7 +30,7 @@ pub async fn create_session(
 /// The sessions the user may read - or, with `?deleted=true`, those they
 /// deleted and may read as such, the trash (issue 164).
 pub async fn list_sessions(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
-    let views = crate::routes::views(&state, &user);
+    let views = views(&state, &user);
     if options.deleted {
         let deleted = views.deleted_sessions().await
             .map_err(|e| ApiError::internal("sessions_unavailable", "listing the deleted sessions", &e.into()))?;
@@ -53,7 +54,7 @@ pub async fn get_session(
     user: AuthenticatedUser,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
-    Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
+    Ok(Json(session_view(&state, &user, session_id).await?))
 }
 
 /// The private notes agent `aid` wrote in the channels of session `id` the
@@ -65,7 +66,7 @@ pub async fn agent_private_notes(
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<PrivateNotesResponse>>, ApiError> {
     let session_id = SessionId(id);
-    let session = crate::routes::views(&state, &user).session(session_id).await?;
+    let session = views(&state, &user).session(session_id).await?;
     let found = session.private_notes_of(AgentId(aid)).await?;
     Ok(Json(found.into_iter().map(|(channel, notes, digest)| PrivateNotesResponse {
         channel_id: channel.id(),
@@ -80,7 +81,7 @@ pub async fn agent_private_notes(
 pub async fn restore_session(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
     state.session_manager.restore(&user.security_context(), session_id).await?;
-    Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
+    Ok(Json(session_view(&state, &user, session_id).await?))
 }
 
 /// Removes the deleted session `id` for good, with its channels and their
@@ -107,7 +108,7 @@ pub async fn rename_session(
     Json(payload): Json<RenameSessionRequest>,
 ) -> Result<Json<SessionResponse>, ApiError> {
     let session_id = SessionId(id);
-    let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
+    let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop.update_name(&user.security_context(), &payload.name).await?;
 
@@ -123,11 +124,11 @@ pub async fn update_session_privacy(
     Json(payload): Json<SessionPrivacyRequest>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
-    let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
+    let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop.update_privacy(&user.security_context(), payload.privacy).await?;
 
-    Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
+    Ok(Json(session_view(&state, &user, session_id).await?))
 }
 
 /// Sets what the session restricts of the tool calls made in any of its
@@ -142,12 +143,12 @@ pub async fn update_session_approval_rules(
     Json(rules): Json<Vec<ApprovalRule>>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
-    let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
+    let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop.update_approval_rules(&user.security_context(), rules).await
-        .map_err(|e| crate::routes::change_error(e, "invalid_rule"))?;
+        .map_err(|e| change_error(e, "invalid_rule"))?;
 
-    Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
+    Ok(Json(session_view(&state, &user, session_id).await?))
 }
 
 /// Says what session `id` is for (issue 245): its summary and briefing,
@@ -161,11 +162,11 @@ pub async fn update_session_description(
     Json(payload): Json<DescriptionRequest>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
-    let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
+    let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop.update_description(&user.security_context(), payload.summary.as_deref(), payload.briefing.as_deref()).await?;
 
-    Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
+    Ok(Json(session_view(&state, &user, session_id).await?))
 }
 
 /// Whom the user could take into session `id` (issue 221): the users and
@@ -179,8 +180,8 @@ pub async fn candidates(
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<CandidateResponse>>, ApiError> {
     let session_id = SessionId(id);
-    crate::routes::ensure_session(&state, &user, session_id).await?;
-    let session = crate::routes::views(&state, &user).session(session_id).await?;
+    ensure_session(&state, &user, session_id).await?;
+    let session = views(&state, &user).session(session_id).await?;
     let found = session.candidates(&query.prefix, query.channel).await?;
     Ok(Json(found.into_iter().filter_map(CandidateResponse::of).collect()))
 }
@@ -195,10 +196,10 @@ pub async fn add_participant(
     Json(payload): Json<AddSessionParticipantRequest>,
 ) -> Result<Json<SessionSnapshot>, ApiError> {
     let session_id = SessionId(id);
-    let session_loop = crate::routes::ensure_session(&state, &user, session_id).await?;
+    let session_loop = ensure_session(&state, &user, session_id).await?;
     let into = payload.channel.map(|channel| (channel, payload.history));
     session_loop.add_participant(&user.security_context(), payload.participant, into).await?;
-    Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
+    Ok(Json(session_view(&state, &user, session_id).await?))
 }
 
 /// Joins session `id` by the user's own act (issue 221) - the user, or
@@ -215,5 +216,5 @@ pub async fn join_session(
     let context = user.security_context();
     let participant = payload.participant.unwrap_or(context.principal_id);
     state.session_manager.join(&context, session_id, participant, payload.channel).await?;
-    Ok(Json(crate::routes::session_view(&state, &user, session_id).await?))
+    Ok(Json(session_view(&state, &user, session_id).await?))
 }

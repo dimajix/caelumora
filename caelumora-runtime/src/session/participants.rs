@@ -154,12 +154,13 @@ mod tests {
     use crate::session::{SessionError, SessionManager};
     use crate::session::testing::*;
     use crate::view::Viewer;
+    use anyhow::Error;
 
     fn as_user(user: &User) -> SecurityContext {
         SecurityContext::new(ActorId::User(user.id), Default::default(), Default::default())
     }
 
-    fn refused_by_the_store(error: &anyhow::Error) -> bool {
+    fn refused_by_the_store(error: &Error) -> bool {
         matches!(error.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied(_)))
     }
 

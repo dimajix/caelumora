@@ -18,6 +18,9 @@ use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use std::fmt;
 use std::str::FromStr;
+use crate::ledger::{Change, LedgerKind};
+use crate::tool::ToolSet;
+use serde::de::Error;
 
 /// A SHA-256 digest.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -75,7 +78,7 @@ impl Serialize for Digest {
 impl<'de> Deserialize<'de> for Digest {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
-        s.parse().map_err(serde::de::Error::custom)
+        s.parse().map_err(Error::custom)
     }
 }
 
@@ -336,7 +339,7 @@ pub fn history_chain(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest 
 /// (issue 62). It covers what a reader learns - the change, where in the
 /// conversation it was made and, where the kind says so, the origin - not
 /// when it was written.
-pub fn ledger_chain<K: crate::ledger::LedgerKind>(previous: Option<&Digest>, change: &crate::ledger::Change<K::Id>, origin: &K::Origin, after: crate::message::MessageId) -> Digest {
+pub fn ledger_chain<K: LedgerKind>(previous: Option<&Digest>, change: &Change<K::Id>, origin: &K::Origin, after: MessageId) -> Digest {
     let mut e = Encoder::new(K::SCHEME);
     e.opt_digest(previous);
     e.json(&to_json(change));
@@ -387,7 +390,7 @@ pub fn prompt(prompt: &str) -> Digest {
 /// offered them (issues 137, 194): of each set its name, description and
 /// whether it is unavailable, of each of its tools all of it - what the
 /// model is told, and how the runtime treats its calls then.
-pub fn tool_sets(sets: &[crate::tool::ToolSet]) -> Digest {
+pub fn tool_sets(sets: &[ToolSet]) -> Digest {
     let mut e = Encoder::new("caelumora.tool-sets.v2");
     e.bytes(&(sets.len() as u64).to_le_bytes());
     for set in sets {
@@ -408,9 +411,10 @@ mod tests {
     use crate::message::MessageId;
     use crate::tool::ToolCall;
     use serde_json::json;
+    use chrono::{Duration, Utc};
 
     fn message(content: &str) -> Message {
-        Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT) }
+        Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
     }
 
     #[test]
@@ -442,9 +446,9 @@ mod tests {
         assert_ne!(message_chain(None, &original), message_chain(None, &changed), "same id, other content");
 
         let mut described = original.clone();
-        described.timestamp = chrono::Utc::now() + chrono::Duration::hours(1);
+        described.timestamp = Utc::now() + Duration::hours(1);
         described.prompt_tokens = Some(42);
-        described.turn_id = Some(crate::work::TurnId::new());
+        described.turn_id = Some(TurnId::new());
         assert_eq!(message_chain(None, &original), message_chain(None, &described), "only what the model sees counts");
     }
 

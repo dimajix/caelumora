@@ -262,13 +262,14 @@ pub struct SessionPrivacyRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
     
     
     
 
     #[test]
     fn a_new_session_s_workspace_is_chosen_by_its_kind_and_otherwise_the_template_s() {
-        let parse = |json: serde_json::Value| serde_json::from_value::<CreateSessionRequest>(json).unwrap().workspace.map(WorkspaceChoice::from);
+        let parse = |json: Value| serde_json::from_value::<CreateSessionRequest>(json).unwrap().workspace.map(WorkspaceChoice::from);
         let template = Uuid::new_v4();
         assert_eq!(parse(serde_json::json!({ "template_id": template })), None, "the template's");
         assert_eq!(parse(serde_json::json!({ "template_id": template, "workspace": { "kind": "none" } })), Some(WorkspaceChoice::None));

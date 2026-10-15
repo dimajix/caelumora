@@ -10,6 +10,9 @@ use std::future::Future;
 use std::sync::Arc;
 use super::container::Planned;
 use super::{ComponentContext, ComponentError, ComponentResult};
+use crate::{command, moderator};
+use std::fmt;
+use std::fmt::Debug;
 
 /// The facets a component provides, by type.
 pub type ComponentFacets = TypeMap;
@@ -98,8 +101,8 @@ pub struct ComponentRegistry {
     component_store: Arc<dyn ComponentStore>,
 }
 
-impl std::fmt::Debug for ComponentRegistry {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for ComponentRegistry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ComponentRegistry")
             .field("kind_count", &self.kinds.len())
             .field("singles", &self.singles.values().map(|s| s.facet.name()).collect::<Vec<_>>())
@@ -128,8 +131,8 @@ impl ComponentRegistry {
     /// register kinds of its own first, such as a stand-in for the model.
     pub fn built_in(component_store: Arc<dyn ComponentStore>) -> Self {
         let mut registry = Self::new(component_store);
-        crate::command::register_all(&mut registry);
-        crate::moderator::register_all(&mut registry);
+        command::register_all(&mut registry);
+        moderator::register_all(&mut registry);
         registry
     }
 

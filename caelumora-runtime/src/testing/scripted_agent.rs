@@ -45,7 +45,7 @@ impl Plugin for ScriptedAgents {
         "scripted_agents"
     }
 
-    fn register(&self, runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
         let kinds: &mut AgentKinds = runtime.agent_kinds();
         for kind in [PersonalityKind::Internal, PersonalityKind::External] {
             let script = self.0.clone();

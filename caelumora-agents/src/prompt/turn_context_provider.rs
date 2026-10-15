@@ -108,6 +108,7 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageId};
+    use anyhow::Result;
 
     fn message(content: &str) -> Message {
         Message {
@@ -125,7 +126,7 @@ mod tests {
 
     /// What `provider` answers for `turn`, set in it as the agent's actor
     /// sets it.
-    async fn assemble(provider: &TurnContextProvider, turn: &mut Turn<'_>) -> anyhow::Result<()> {
+    async fn assemble(provider: &TurnContextProvider, turn: &mut Turn<'_>) -> Result<()> {
         let (parts, knowledge) = provider.current_context(&turn.work()).await?;
         turn.set_context(parts, knowledge);
         Ok(())

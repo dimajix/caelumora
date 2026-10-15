@@ -61,6 +61,7 @@ use crate::terminal::{ByteStream, Terminal, WorkspacePath};
 use caelumora_model::workspace::WorkspaceId;
 use futures::StreamExt;
 use caelumora_model::config::AppConfig;
+use bytes::Bytes;
 
 /// The ownership policy, recording every question it is asked - who acted
 /// with whose rights and for whom, what, of whose entity, and what it
@@ -469,7 +470,7 @@ pub fn checks(lines: &[&str]) -> Vec<String> {
 
 /// The content of a file to write, as a terminal is given it.
 pub fn file(text: &'static str) -> ByteStream {
-    Box::pin(futures::stream::iter([Ok(bytes::Bytes::from_static(text.as_bytes()))]))
+    Box::pin(futures::stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
 }
 
 /// The content of the file `path` of `terminal`, as text.

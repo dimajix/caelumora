@@ -5,6 +5,8 @@ use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, WAKEUP_COMMAND_KIND};
 use std::sync::Arc;
+use anyhow::Error;
+use crate::error::{refusal, user_message};
 
 pub const WAKEUP_COMMAND_NAME: &str = "wakeup";
 
@@ -15,12 +17,12 @@ pub struct WakeupCommandProvider;
 
 /// A refusal from the channel is the command being refused; anything else is
 /// a failure, described only as far as `user_message` allows.
-fn channel_error(error: anyhow::Error) -> CommandError {
-    if let Some(refused) = crate::error::refusal(&error) {
+fn channel_error(error: Error) -> CommandError {
+    if let Some(refused) = refusal(&error) {
         return CommandError::Forbidden { name: WAKEUP_COMMAND_NAME.to_string(), refused: refused.clone() };
     }
     tracing::warn!("/wakeup failed: {:#}", error);
-    let reason = crate::error::user_message(&error).unwrap_or_else(|| "see the server log".to_string());
+    let reason = user_message(&error).unwrap_or_else(|| "see the server log".to_string());
     CommandError::Failed { command: WAKEUP_COMMAND_NAME.to_string(), reason }
 }
 

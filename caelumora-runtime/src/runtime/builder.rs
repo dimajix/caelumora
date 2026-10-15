@@ -29,6 +29,7 @@ use crate::scoped::{ScopeMember, ScopedEntities, Unowned};
 use crate::workspace::WorkspaceManager;
 use crate::workspace::reaper::CommandReaper;
 use super::{RuntimeManager, Services};
+use serde_json::Value;
 
 /// What builds the `RuntimeManager` (issue 323): the core's services and
 /// managers, made first - their backends by `Backends`, the core's and the
@@ -64,7 +65,7 @@ pub struct RuntimeBuilder {
     backends: Backends,
     backend_services: Services,
     /// The sections of the configuration that no plugin claimed yet.
-    sections: BTreeMap<String, serde_json::Value>,
+    sections: BTreeMap<String, Value>,
     /// The names of the sections of the configuration that were claimed.
     claimed: BTreeSet<String>,
     seed_sections: BTreeMap<String, Arc<dyn SeedSection>>,

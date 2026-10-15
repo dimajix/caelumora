@@ -9,6 +9,8 @@ use axum::{
 use futures::stream::Stream;
 use std::convert::Infallible;
 use std::sync::Arc;
+use crate::routes::views;
+use crate::sse::stream;
 
 pub async fn global_events(
     State(state): State<Arc<AppState>>,
@@ -26,14 +28,14 @@ pub async fn global_events(
         async move { global_snapshot(&state, &user).await }
     };
     // Open until the token that authenticated it expires (issue 33).
-    Sse::new(crate::sse::stream(&user, options.snapshot, receiver, "the global stream".to_string(), snapshot, std::future::pending()).await)
+    Sse::new(stream(&user, options.snapshot, receiver, "the global stream".to_string(), snapshot, std::future::pending()).await)
 }
 
 /// Every session the user may read, with the channels they may read, as the
 /// sessions' events refer to them by id alone - described by the runtime,
 /// running or not (issue 80).
 async fn global_snapshot(state: &Arc<AppState>, user: &AuthenticatedUser) -> Option<GlobalSnapshot> {
-    let sessions = match crate::routes::views(state, user).sessions().await {
+    let sessions = match views(state, user).sessions().await {
         Ok(sessions) => sessions,
         Err(e) => {
             tracing::error!("Cannot assemble the snapshot of the global event stream: {:#}", e);

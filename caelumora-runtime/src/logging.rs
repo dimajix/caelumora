@@ -14,10 +14,11 @@
 
 use caelumora_model::actor::{ActorState, EventContext};
 use caelumora_model::agent::AgentId;
+use tracing::Span;
 
 /// The span for handling one envelope in a channel: which channel, who sent
 /// it, what kind of event, and the ids that tie it to the rest of its chain.
-pub fn envelope_span(context: &EventContext, event: &'static str) -> tracing::Span {
+pub fn envelope_span(context: &EventContext, event: &'static str) -> Span {
     tracing::info_span!(
         "envelope",
         session_id = %context.session_id,
@@ -37,7 +38,7 @@ pub fn envelope_span(context: &EventContext, event: &'static str) -> tracing::Sp
 /// started the turn under way, so the turn can be found by the same
 /// `span_id` as the REST request and the channel dispatch. Without a turn
 /// under way, an `agent` span too.
-pub fn agent_span(agent_id: AgentId, agent: &str, state: ActorState, turn: Option<&EventContext>) -> tracing::Span {
+pub fn agent_span(agent_id: AgentId, agent: &str, state: ActorState, turn: Option<&EventContext>) -> Span {
     match turn.filter(|_| state.in_turn()) {
         None => {
             tracing::info_span!("agent", agent_id = %agent_id, agent = %agent, state = ?state)

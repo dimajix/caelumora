@@ -7,15 +7,16 @@
 
 use caelumora_runtime::component::ComponentImpl;
 use caelumora_runtime::view::ViewError;
-use anyhow::Context;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StoreError;
+use std::fmt::Debug;
 
 #[async_trait]
-pub trait MessageProcessor: Send + Sync + std::fmt::Debug {
+pub trait MessageProcessor: Send + Sync + Debug {
     /// What is made of `input` - filtered, changed, added to - for the actor
     /// whose context is `security`: who perceives or emits it, and where.
     ///
@@ -51,7 +52,7 @@ pub(crate) async fn apply_stage_processors<T>(
     processors: &[ComponentImpl<T>],
     mut input: Vec<Message>,
     security: &SecurityContext,
-) -> anyhow::Result<Vec<Message>>
+) -> Result<Vec<Message>>
 where
     T: MessageProcessor + ?Sized + Send + Sync,
 {
@@ -116,13 +117,14 @@ mod tests {
     use super::*;
     use caelumora_model::confidentiality::Classification;
     use std::sync::Arc;
+    use caelumora_model::message::MessageRole;
 
     fn stage(id: &str, processor: Without, fail_policy: ComponentFailPolicy) -> ComponentImpl<dyn MessageProcessor> {
         ComponentImpl { id: id.to_string(), fail_policy, facet: Arc::new(processor) }
     }
 
     fn said(text: &str) -> Message {
-        Message { role: caelumora_model::message::MessageRole::User, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
+        Message { role: MessageRole::User, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
     }
 
     #[tokio::test]

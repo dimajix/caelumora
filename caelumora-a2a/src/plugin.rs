@@ -4,6 +4,7 @@
 use crate::agent;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
+use anyhow::Result;
 
 /// External agents reached over A2A, as a plugin.
 #[derive(Debug, Default)]
@@ -14,7 +15,7 @@ impl Plugin for A2aPlugin {
         "a2a"
     }
 
-    fn register(&self, runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
         agent::register(runtime.components());
         Ok(())
     }

@@ -2,7 +2,9 @@
 //! 269): an agent's, which move with the agents' logic (issue 370).
 
 use super::*;
-use caelumora_runtime::command::CommandError;
+use caelumora_runtime::command::{CommandContext, CommandError, CommandReply};
+use crate::tool::stop_tool::STOP_TOOL_KIND;
+use std::sync::Mutex;
 
 /// A running channel with alice and an agent, `helper`, that carries
 /// out `/mark`, idle after it answered alice's "hello" - or asleep, if
@@ -25,9 +27,9 @@ async fn with_a_marking_agent_under(access_policy: Arc<dyn AccessPolicy>, asleep
     };
     let components = ComponentConfig { component_nodes: vec![
         ComponentDescriptor::new("marking", "test_marking"),
-        ComponentDescriptor::new("stop", crate::tool::stop_tool::STOP_TOOL_KIND),
+        ComponentDescriptor::new("stop", STOP_TOOL_KIND),
     ] };
-    let mut stuck = with_an_agent_under(access_policy, Arc::new(Scripted(std::sync::Mutex::new([hi].into()))), components).await;
+    let mut stuck = with_an_agent_under(access_policy, Arc::new(Scripted(Mutex::new([hi].into()))), components).await;
     answered(&mut stuck.events, stuck.agent).await;
     settled(&stuck.helper, if asleep { ActorState::Sleeping } else { ActorState::Idle }).await;
     stuck
@@ -122,7 +124,7 @@ async fn a_command_that_fails_is_told_to_the_issuer_and_leaves_nothing_behind() 
 async fn a_command_of_an_agent_names_its_agent() {
     let Stuck { channel, context, running, .. } = with_a_marking_agent(false).await;
     let actor = channel.user_actor(alice_of(&context)).unwrap();
-    let error = |result: Result<caelumora_runtime::command::CommandReply>| result.expect_err("refused");
+    let error = |result: Result<CommandReply>| result.expect_err("refused");
 
     let unnamed = error(actor.execute_command("mark", "twice").await);
     assert!(matches!(command_error(&unnamed), CommandError::InvalidArguments { reason, .. } if reason.contains("@helper") && reason.contains("@all")), "{unnamed}");
@@ -162,7 +164,7 @@ async fn help_lists_the_commands_of_the_agents_with_their_handles() {
     // as it would be among them.
     let executor = CommandExecutor::empty(Arc::new(AllowAllPolicy::new()));
     let issuer = channel.user_actor(alice_of(&context)).expect("alice takes part");
-    let help = caelumora_runtime::command::CommandContext { issuer: &issuer, channel: &channel, executor: &executor };
+    let help = CommandContext { issuer: &issuer, channel: &channel, executor: &executor };
 
     let all = HelpCommandProvider.execute("help", "", &help).await.expect("/help runs").text;
     assert!(all.contains("`/mark @agent [text]` — Marks. (@helper)"), "{all}");

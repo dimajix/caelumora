@@ -663,6 +663,7 @@ mod tests {
     use crate::user::UserId;
     use crate::tool::{ToolCall, ToolCallResult};
     use Confidentiality::*;
+    use crate::session::SessionId;
 
     fn compartment(name: &str) -> Compartment {
         Compartment::new(name)
@@ -871,7 +872,7 @@ mod tests {
         let roles = Roles::new([(hr, "hr".to_string(), vec![Clearance { level: Confidential, compartment: Some(compartment("hr")) }])]).unwrap();
         let rules = ConfidentialityRules::new(organisation()).with_roles(roles);
         let secret = classified(Confidential, &["hr"]);
-        let alice = SecurityContext::new(ActorId::User(crate::user::UserId::new()), Default::default(), Default::default());
+        let alice = SecurityContext::new(ActorId::User(UserId::new()), Default::default(), Default::default());
         assert!(!rules.cleared_for(&alice, &secret), "without roles");
         let hers = alice.clone().with_roles(vec![hr], None);
         assert!(rules.cleared_for(&hers, &secret));
@@ -896,7 +897,7 @@ mod tests {
     }
 
     /// A channel of the session `session_id`, a private one of nobody.
-    fn place(session_id: crate::session::SessionId, level: Confidentiality, compartments: &[&str]) -> Place {
+    fn place(session_id: SessionId, level: Confidentiality, compartments: &[&str]) -> Place {
         in_session(SessionPrivacy { id: session_id, ..SessionPrivacy::default() }, level, compartments)
     }
 
@@ -909,12 +910,12 @@ mod tests {
     }
 
     fn someone() -> SecurityContext {
-        SecurityContext::new(ActorId::User(crate::user::UserId::new()), Default::default(), Default::default())
+        SecurityContext::new(ActorId::User(UserId::new()), Default::default(), Default::default())
     }
 
     #[test]
     fn reading_a_channel_depends_on_the_channels_not_on_the_reader() {
-        let (rules, session) = (ConfidentialityRules::default(), crate::session::SessionId::new());
+        let (rules, session) = (ConfidentialityRules::default(), SessionId::new());
         let (team, secret) = (place(session, Internal, &[]), place(session, Confidential, &[]));
         for reader in [someone(), someone()] {
             assert!(rules.may_copy(&reader, &team, &secret));
@@ -924,7 +925,7 @@ mod tests {
 
     #[test]
     fn reading_a_channel_follows_the_flow_rule_with_the_configured_compartments() {
-        let (rules, session, alice) = (hr_reads_finance(), crate::session::SessionId::new(), someone());
+        let (rules, session, alice) = (hr_reads_finance(), SessionId::new(), someone());
         let (hr, finance, general) = (place(session, Internal, &["hr"]), place(session, Internal, &["finance"]), place(session, Internal, &[]));
         assert!(rules.may_copy(&alice, &finance, &hr), "HR reads finance");
         assert!(!rules.may_copy(&alice, &hr, &finance), "not the other way round");
@@ -935,10 +936,9 @@ mod tests {
     #[test]
     fn a_channel_reads_another_session_only_where_that_session_permits_it() {
         use crate::privacy::PrivacyConfig;
-        use crate::user::UserId;
         let (alice, bob) = (UserId::new(), UserId::new());
         let hers = |policy, others: &[UserId]| SessionPrivacy {
-            id: crate::session::SessionId::new(),
+            id: SessionId::new(),
             policy,
             owner: ActorId::User(alice),
             people: others.iter().copied().chain([alice]).collect(),
@@ -946,7 +946,7 @@ mod tests {
         let rules = ConfidentialityRules::default();
         let reader = in_session(hers(PrivacyConfig::Private, &[]), Internal, &[]);
         let elsewhere = |policy, level| in_session(hers(policy, &[bob]), level, &[]);
-        let agent = SecurityContext::new(ActorId::Agent(crate::agent::AgentId::new()), Default::default(), Default::default());
+        let agent = SecurityContext::new(ActorId::Agent(AgentId::new()), Default::default(), Default::default());
         assert!(!rules.may_copy(&agent, &elsewhere(PrivacyConfig::Private, Internal), &reader), "a private session is read by no other");
         assert!(!rules.may_copy(&agent, &elsewhere(PrivacyConfig::Private, Public), &reader), "not even what is public");
         assert!(rules.may_copy(&agent, &elsewhere(PrivacyConfig::SameOwner, Internal), &reader), "her other sessions, where she lets them");
@@ -956,12 +956,12 @@ mod tests {
 
     #[test]
     fn what_is_released_below_its_channel_is_read_where_the_channel_is_not() {
-        let (rules, session, alice) = (hr_reads_finance(), crate::session::SessionId::new(), someone());
+        let (rules, session, alice) = (hr_reads_finance(), SessionId::new(), someone());
         let (hr, finance) = (place(session, Confidential, &["hr"]), place(session, Confidential, &["finance"]));
         assert!(!rules.may_copy(&alice, &hr, &finance), "finance does not read HR");
         let released = Place { classification: classified(Confidential, &["hr", "finance"]), ..hr.clone() };
         assert!(rules.may_copy(&alice, &released, &finance), "but what HR released to it");
-        let elsewhere = place(crate::session::SessionId::new(), Confidential, &["finance"]);
+        let elsewhere = place(SessionId::new(), Confidential, &["finance"]);
         assert!(!rules.may_copy(&alice, &released, &elsewhere), "not from another session");
     }
 
@@ -989,7 +989,7 @@ mod tests {
             fn compartments(&self) -> &Compartments { &self.0 }
             fn roles(&self) -> Option<&Roles> { None }
         }
-        let session = crate::session::SessionId::new();
+        let session = SessionId::new();
         let (own, other) = (place(session, Confidential, &[]), place(session, Public, &[]));
         let policy = DenyAll(Compartments::default());
         assert!(policy.may_copy_information(&someone(), &own, &own), "a channel into itself, without asking");

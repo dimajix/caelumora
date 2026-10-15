@@ -7,7 +7,7 @@ use crate::store::query::{Field, Filter, Query};
 use crate::actor::ActorId;
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::turn::TurnState;
-use crate::channel::{Channel, ChannelId, ChannelState};
+use crate::channel::{Channel, ChannelId, ChannelState, moderation_components};
 use crate::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
 use crate::confidentiality::{Classification, Visibility};
 use crate::external_agent::ConversationId;
@@ -25,6 +25,8 @@ use crate::group::{Group, GroupId};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use crate::message::Message;
+use crate::role::RoleId;
 
 /// Runs one kind through its whole life: create, create again, update, get,
 /// list, delete, delete again, and get and update once it is gone.
@@ -105,7 +107,7 @@ fn session_template() -> SessionTemplate {
             approval_rules: Vec::new(),
             uses_workspace: true,
             name: Name::new("general").unwrap(),
-            components: crate::channel::moderation_components(None, Some("broadcast_policy")),
+            components: moderation_components(None, Some("broadcast_policy")),
             classification: Classification::CHANNEL_DEFAULT,
             participants: vec!["user".to_string()],
         }],
@@ -139,7 +141,7 @@ fn channel() -> Channel {
         id: ChannelId(Uuid::new_v4()),
         session_id: SessionId(Uuid::new_v4()),
         name: Name::new("general").unwrap(),
-        components: crate::channel::moderation_components(None, Some("broadcast_policy")),
+        components: moderation_components(None, Some("broadcast_policy")),
         classification: Classification::CHANNEL_DEFAULT,
         language: None,
         history_limits: Vec::new(),
@@ -155,7 +157,7 @@ fn user(username: &str) -> User {
         id: UserId::new(),
         username: Name::new(username).unwrap(),
         email: String::new(),
-        roles: vec![crate::role::RoleId::new()],
+        roles: vec![RoleId::new()],
         deleted: None,
     }
 }
@@ -612,8 +614,8 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
     // An external agent's: its history, its transcript and its remote part.
     let mut talking = AgentChannelState::default();
     talking.remote.conversation = Some(ConversationId("c-1".to_string()));
-    let hello = crate::message::Message { content: Some("hello".to_string()), ..crate::message::Message::new(Classification::CHANNEL_DEFAULT) };
-    let answer = crate::message::Message { content: Some("hi".to_string()), ..crate::message::Message::new(Classification::CHANNEL_DEFAULT) };
+    let hello = Message { content: Some("hello".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+    let answer = Message { content: Some("hi".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
     talking.history.extend(vec![hello.clone(), answer]);
     talking.transcript.extend(vec![hello]);
     store.put_agent_channel_state(remote_agent, channel, &mut talking).await.expect("put agent channel state");

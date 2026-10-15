@@ -199,16 +199,19 @@ mod tests {
     use caelumora_runtime::component::ComponentImpl;
     use crate::message::testing::Without;
     use crate::message::PerceiveInProcessor;
-    use caelumora_model::actor::ActorId;
+    use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::security::SecurityContext;
-    use caelumora_runtime::transport::EventReceiver;
+    use caelumora_runtime::transport::{EventReceiver, InMemoryEventReceiver};
     use caelumora_model::component::ComponentFailPolicy;
-    use caelumora_model::message::MessageId;
+    use caelumora_model::message::{MessageId, MessageRole};
     use caelumora_model::confidentiality::Classification;
     use std::sync::Arc;
+    use caelumora_model::user::UserId;
+    use caelumora_model::work::TurnId;
+    use chrono::Utc;
 
     fn said(text: &str) -> Message {
-        Message { role: caelumora_model::message::MessageRole::User, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
+        Message { role: MessageRole::User, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
     }
 
     fn texts(messages: &[Message]) -> Vec<&str> {
@@ -216,12 +219,12 @@ mod tests {
     }
 
     fn envelope(event: ActorEvent) -> Envelope {
-        Envelope::new(SecurityContext::default(), caelumora_model::actor::EventContext::default(), event)
+        Envelope::new(SecurityContext::default(), EventContext::default(), event)
     }
 
     #[tokio::test]
     async fn all_it_hears_is_kept_and_what_others_said_with_text_is_given_once() {
-        let alice = ActorId::User(caelumora_model::user::UserId::new());
+        let alice = ActorId::User(UserId::new());
         let of_alice = |text: &str| Message { id: MessageId::new(), sender_id: alice, sender_name: "alice".to_string(), ..said(text) };
         let (first, second) = (of_alice("hello"), of_alice("how are you?"));
         let empty = Message { content: None, ..of_alice("") };
@@ -243,20 +246,20 @@ mod tests {
     #[tokio::test]
     async fn everything_queued_is_heard_in_order_and_only_the_last_request_is_answered() {
         let (tx, rx) = tokio::sync::mpsc::channel(8);
-        let mut rx: Box<dyn EventReceiver> = Box::new(caelumora_runtime::transport::InMemoryEventReceiver::new(rx));
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
         let body = AgentBody::detached(Vec::new());
 
         let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(said(text)));
         let mut last = envelope(ActorEvent::ResponseRequested);
-        last.security.caller_id = caelumora_model::actor::ActorId::System;
-        for event in [envelope(ActorEvent::ResponseRequested), heard("two"), envelope(ActorEvent::ResponseStarted { turn_id: caelumora_model::work::TurnId::new() }), last, heard("three")] {
+        last.security.caller_id = ActorId::System;
+        for event in [envelope(ActorEvent::ResponseRequested), heard("two"), envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() }), last, heard("three")] {
             tx.try_send(event).expect("room");
         }
 
         let request = body.take_in(&mut state, heard("one"), &mut rx).await.request;
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three"], "all of it, in order, also what came after the last request");
-        assert_eq!(request.map(|r| r.security.caller_id), Some(caelumora_model::actor::ActorId::System), "the last request");
+        assert_eq!(request.map(|r| r.security.caller_id), Some(ActorId::System), "the last request");
         assert!(rx.try_recv().is_none(), "nothing left behind");
 
         let request = body.take_in(&mut state, heard("four"), &mut rx).await.request;
@@ -267,11 +270,11 @@ mod tests {
     #[tokio::test]
     async fn a_command_ends_the_batch_and_what_follows_it_stays_queued() {
         let (tx, rx) = tokio::sync::mpsc::channel(8);
-        let mut rx: Box<dyn EventReceiver> = Box::new(caelumora_runtime::transport::InMemoryEventReceiver::new(rx));
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
         let body = AgentBody::detached(Vec::new());
         let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(said(text)));
-        let command = envelope(ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: caelumora_model::actor::ActorId::None });
+        let command = envelope(ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: ActorId::None });
         for event in [envelope(ActorEvent::ResponseRequested), heard("two"), command, heard("three"), envelope(ActorEvent::ResponseRequested)] {
             tx.try_send(event).expect("room");
         }
@@ -292,7 +295,7 @@ mod tests {
     #[tokio::test]
     async fn a_change_is_recorded_where_the_chains_hold_the_message_and_handed_over_where_the_transcript_does_not() {
         let (tx, rx) = tokio::sync::mpsc::channel(8);
-        let mut rx: Box<dyn EventReceiver> = Box::new(caelumora_runtime::transport::InMemoryEventReceiver::new(rx));
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
         let (given, kept) = (Message { id: MessageId::new(), ..said("given") }, Message { id: MessageId::new(), ..said("kept") });
         state.perceive(vec![given.clone()], vec![given.clone()]);
@@ -313,8 +316,8 @@ mod tests {
         let noting = AgentBody::detached(Vec::new()).handing_over(noted);
         tx.try_send(modified(&given, "given, corrected")).expect("room");
         tx.try_send(heard("and then")).expect("room");
-        tx.try_send(envelope(ActorEvent::MessageRevoked { message: given.id, at: chrono::Utc::now() })).expect("room");
-        tx.try_send(envelope(ActorEvent::MessageRevoked { message: MessageId::new(), at: chrono::Utc::now() })).expect("room");
+        tx.try_send(envelope(ActorEvent::MessageRevoked { message: given.id, at: Utc::now() })).expect("room");
+        tx.try_send(envelope(ActorEvent::MessageRevoked { message: MessageId::new(), at: Utc::now() })).expect("room");
         noting.take_in(&mut state, modified(&kept, "kept, corrected"), &mut rx).await;
 
         assert_eq!(texts(&state.transcript.messages()), ["kept, corrected", "modified: given, corrected", "and then", "taken back", "taken back"],

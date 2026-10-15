@@ -35,6 +35,8 @@ use caelumora_model::security::AccessPolicy;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde_json::Value;
 use std::sync::Arc;
+use std::fmt;
+use std::fmt::Debug;
 
 pub const AGENT_MEMORY_KIND: &str = "agent_memory";
 
@@ -52,8 +54,8 @@ pub struct AgentMemoryComponent {
     confidentiality: Arc<dyn ConfidentialityPolicy>,
 }
 
-impl std::fmt::Debug for AgentMemoryComponent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for AgentMemoryComponent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AgentMemoryComponent").finish_non_exhaustive()
     }
 }
@@ -233,7 +235,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::plugin::AgentsPlugin;
-    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::confidentiality::{ConfidentialityRules, Compartments, Place};
     use caelumora_runtime::transport::Discard;
     use crate::testing::test_registry;
     use caelumora_runtime::agent::state::{AgentStateHandle, AgentStates};
@@ -241,7 +243,7 @@ mod tests {
     use caelumora_runtime::session::SessionLoop;
     use caelumora_runtime::session::testing::{actor_runtime_in, detached_actor_runtime, main_channel, running_channel};
     use crate::tool::ToolError;
-    use caelumora_model::actor::ActorId;
+    use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::Participant;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
@@ -254,14 +256,18 @@ mod tests {
     use caelumora_model::user::UserId;
     use std::collections::HashMap;
     use caelumora_model::config::AppConfig;
+    use caelumora_model::role::{RoleId, Roles};
+    use caelumora_model::value::name::Name;
+    use chrono::Utc;
+    use std::ops::Deref;
 
     /// A channel of the tests: where it is - its session and itself - and
     /// how it is classified.
     type At = ((SessionId, ChannelId), Classification);
 
     /// The context of an envelope routed in the channel `at`.
-    fn in_channel(at: &At) -> caelumora_model::actor::EventContext {
-        caelumora_model::actor::EventContext::new(at.0.0, at.0.1, ActorId::None, String::new())
+    fn in_channel(at: &At) -> EventContext {
+        EventContext::new(at.0.0, at.0.1, ActorId::None, String::new())
     }
 
     fn channel(session: SessionId, level: Confidentiality) -> At {
@@ -284,7 +290,7 @@ mod tests {
         }
     }
 
-    impl std::ops::Deref for Memory {
+    impl Deref for Memory {
         type Target = AgentMemoryComponent;
         fn deref(&self) -> &AgentMemoryComponent {
             &self.component
@@ -366,13 +372,13 @@ mod tests {
 
     /// A session `id` that privacy sees as `privacy`.
     fn session_with(id: SessionId, privacy: &SessionPrivacy) -> Session {
-        let now = chrono::Utc::now();
+        let now = Utc::now();
         Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
             workspace: None,
             id,
-            name: caelumora_model::value::name::Name::new("s").unwrap(),
+            name: Name::new("s").unwrap(),
             participants: privacy.people.iter().map(|user| Participant::User(*user)).collect(),
             channels: vec![ChannelId::new()],
             commands: Default::default(),
@@ -530,15 +536,15 @@ mod tests {
     /// nothing else: what an agent remembered is its own, recalled whoever
     /// may read its channel now (issue 264).
     #[derive(Debug, Default)]
-    struct OnlyFor(Option<ActorId>, caelumora_model::confidentiality::Compartments);
+    struct OnlyFor(Option<ActorId>, Compartments);
     impl ConfidentialityPolicy for OnlyFor {
         fn may_publish(&self, _: &SecurityContext, _: &Classification, _: &Classification) -> bool { true }
-        fn may_copy(&self, context: &SecurityContext, _: &caelumora_model::confidentiality::Place, _: &caelumora_model::confidentiality::Place) -> bool {
+        fn may_copy(&self, context: &SecurityContext, _: &Place, _: &Place) -> bool {
             Some(context.principal_id) == self.0
         }
-        fn cleared(&self, _: &SecurityContext, _: ActorId, _: &[caelumora_model::role::RoleId], _: &Classification) -> bool { true }
-        fn compartments(&self) -> &caelumora_model::confidentiality::Compartments { &self.1 }
-        fn roles(&self) -> Option<&caelumora_model::role::Roles> { None }
+        fn cleared(&self, _: &SecurityContext, _: ActorId, _: &[RoleId], _: &Classification) -> bool { true }
+        fn compartments(&self) -> &Compartments { &self.1 }
+        fn roles(&self) -> Option<&Roles> { None }
     }
 
     #[tokio::test]
@@ -600,7 +606,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_entry_released_to_another_compartment_is_recalled_there() {
-        use caelumora_model::confidentiality::{Compartment, Compartments};
+        use caelumora_model::confidentiality::Compartment;
         let agent = AgentId::new();
         let handle = handle(agent).await;
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();

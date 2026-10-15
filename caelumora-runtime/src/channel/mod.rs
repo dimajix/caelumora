@@ -10,8 +10,8 @@ use crate::moderator::Moderator;
 use crate::session::SessionError;
 use crate::recorder::Recorder;
 use crate::runtime::ChannelRuntime;
-use anyhow::Result;
-use arc_swap::ArcSwap;
+use anyhow::{Result, Error};
+use arc_swap::{ArcSwap, Guard};
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, ChannelId, ChannelState, Participant};
 use crate::controller::{ChannelController, ControllerManager, WorkspaceController};
@@ -150,7 +150,7 @@ pub enum ChannelError {
 /// that the participant cannot be run - its agent's personality, or the
 /// preconfigured components it includes (issue 270), are gone or not the
 /// agent's to read - rather than that the store failed.
-fn cannot_run(error: &anyhow::Error) -> bool {
+fn cannot_run(error: &Error) -> bool {
     matches!(error.downcast_ref::<StoreError>(), Some(StoreError::NotFound { .. } | StoreError::PermissionDenied(_)))
         || error.chain().any(|e| e.downcast_ref::<ComponentError>().is_some_and(ComponentError::is_unavailable))
 }
@@ -414,7 +414,7 @@ impl ChannelLoop {
     }
 
     /// The channel as it is now.
-    pub fn channel(&self) -> arc_swap::Guard<Arc<Channel>> {
+    pub fn channel(&self) -> Guard<Arc<Channel>> {
         self.channel.load()
     }
 

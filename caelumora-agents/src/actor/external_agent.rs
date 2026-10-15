@@ -55,14 +55,15 @@ use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::value::name::Name;
-use chrono::Utc;
+use chrono::{Utc, DateTime};
 use futures::stream::{BoxStream, SelectAll};
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn, Instrument};
 use uuid::Uuid;
+use caelumora_model::digest;
 
 #[derive(Debug)]
 pub struct ExternalAgentActor {
@@ -83,7 +84,7 @@ pub struct ExternalAgentActor {
     /// changed, until a send that reaches the remote agent gave it - also
     /// when its provider, telling only changes, has nothing new by then. A
     /// plain lock, never held across an await.
-    pending_prompts: std::sync::Mutex<Vec<(String, PromptPart)>>,
+    pending_prompts: Mutex<Vec<(String, PromptPart)>>,
 }
 
 /// What tells `part`, the `index`th the context provider gave, apart from
@@ -158,7 +159,7 @@ impl ExternalAgentActor {
             // A change of a message it was given is told by a notice (issue 236).
             body: body.handing_over(tell),
             remote,
-            pending_prompts: std::sync::Mutex::new(Vec::new()),
+            pending_prompts: Mutex::new(Vec::new()),
         })
     }
 
@@ -177,7 +178,7 @@ impl ExternalAgentActor {
         let mut pending = self.pending_prompts();
         for (index, part) in parts.into_iter().enumerate() {
             let key = part_key(&part, index);
-            let due = !state.remote.has_given(&key, &caelumora_model::digest::prompt(&part.text));
+            let due = !state.remote.has_given(&key, &digest::prompt(&part.text));
             match pending.iter().position(|(k, _)| *k == key) {
                 Some(at) if due => pending[at].1 = part,
                 Some(at) => { pending.remove(at); }
@@ -188,7 +189,7 @@ impl ExternalAgentActor {
         Ok(pending.clone())
     }
 
-    fn pending_prompts(&self) -> std::sync::MutexGuard<'_, Vec<(String, PromptPart)>> {
+    fn pending_prompts(&self) -> MutexGuard<'_, Vec<(String, PromptPart)>> {
         self.pending_prompts.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
@@ -321,7 +322,7 @@ impl ExternalAgentActor {
         // what was given is the context of what comes of this call (issue
         // 205). A send that failed sends it again with the next call.
         for (key, part) in prompts {
-            state.remote.give(key, caelumora_model::digest::prompt(&part.text));
+            state.remote.give(key, digest::prompt(&part.text));
         }
         self.pending_prompts().clear();
         work.context.transcript = state.transcript.start_anew();
@@ -737,7 +738,7 @@ const NOTICE_QUOTE: usize = 200;
 /// quote where the two have no audience in common. Worded so that it only
 /// tells: the remote agent decides what to make of it, and a filter may
 /// take an instruction to disregard something for an injection.
-fn notice(was: &Message, now: Option<&Message>, at: chrono::DateTime<Utc>) -> Message {
+fn notice(was: &Message, now: Option<&Message>, at: DateTime<Utc>) -> Message {
     let said = was.content.as_deref().unwrap_or_default();
     let mut quoted: String = said.chars().take(NOTICE_QUOTE).collect();
     if quoted.len() < said.len() {
@@ -872,6 +873,7 @@ impl Actor for ExternalAgentActor {
 mod tests {
     use super::*;
     use caelumora_model::confidentiality::Classification;
+    use caelumora_model::user::UserId;
 
     fn said(sender: ActorId, name: &str, text: &str) -> Message {
         Message {
@@ -887,7 +889,7 @@ mod tests {
     #[test]
     fn a_change_of_a_message_given_is_told_by_a_notice_once_until_it_is_given() {
         use caelumora_model::external_agent::ConversationId;
-        let alice = ActorId::User(caelumora_model::user::UserId::new());
+        let alice = ActorId::User(UserId::new());
         let (first, second) = (said(alice, "alice", "first"), said(alice, "alice", "second"));
         let at = Utc::now();
         let modified = |text: &str| TranscriptEntry::Modified { message: Message { content: Some(text.to_string()), timestamp: at, ..first.clone() } };
@@ -927,7 +929,7 @@ mod tests {
     #[test]
     fn a_notice_names_the_message_by_what_it_said_shortened_and_is_classified_as_both() {
         use caelumora_model::confidentiality::{Compartment, Confidentiality};
-        let alice = ActorId::User(caelumora_model::user::UserId::new());
+        let alice = ActorId::User(UserId::new());
         let at = Utc::now();
         let long = said(alice, "alice", &"ä".repeat(NOTICE_QUOTE + 1));
         let told = notice(&long, None, at).content.unwrap_or_default();

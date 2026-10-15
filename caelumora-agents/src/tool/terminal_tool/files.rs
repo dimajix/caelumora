@@ -31,6 +31,9 @@ use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use bytes::Bytes;
+use caelumora_model::digest::{self, ContentDigest, Digest};
+use regex::{Regex, RegexBuilder};
 
 /// A file read (issue 251): its `path`, and the `content` of its result
 /// as text, with the lines it covers - `start_line`, `end_line`,
@@ -344,25 +347,25 @@ async fn content(terminal: &dyn Terminal, at: &WorkspacePath) -> ToolResult<Vec<
 }
 
 /// The file `at` as text.
-async fn text(terminal: &dyn Terminal, at: &WorkspacePath) -> ToolResult<(String, caelumora_model::digest::Digest)> {
+async fn text(terminal: &dyn Terminal, at: &WorkspacePath) -> ToolResult<(String, Digest)> {
     let bytes = content(terminal, at).await?;
-    let digest = caelumora_model::digest::content(&bytes);
+    let digest = digest::content(&bytes);
     let text = String::from_utf8(bytes).map_err(|_| ToolError::InvalidParameter(format!("'{at}' is no text (not UTF-8)")))?;
     Ok((text, digest))
 }
 
 async fn write(terminal: &dyn Terminal, limit: u64, at: &WorkspacePath, content: String) -> ToolResult<u64> {
-    let stream: ByteStream = Box::pin(futures::stream::iter([Ok(bytes::Bytes::from(content))]));
+    let stream: ByteStream = Box::pin(futures::stream::iter([Ok(Bytes::from(content))]));
     terminal.write(at, stream, limit).await.map_err(ToolError::from)
 }
 
 /// The digest of the file `at`, read in parts, at most `limit` bytes.
-async fn digest(terminal: &dyn Terminal, at: &WorkspacePath, limit: u64) -> ToolResult<(u64, caelumora_model::digest::Digest)> {
+async fn digest(terminal: &dyn Terminal, at: &WorkspacePath, limit: u64) -> ToolResult<(u64, Digest)> {
     let (size, mut stream) = terminal.read(at).await?;
     if size > limit {
         return Err(ToolError::InvalidParameter(format!("'{at}' is {size} bytes, more than the {limit} a file may be offered with")));
     }
-    let (mut digest, mut read) = (caelumora_model::digest::ContentDigest::new(size), 0u64);
+    let (mut digest, mut read) = (ContentDigest::new(size), 0u64);
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| ToolError::ExecutionFailed(format!("reading '{at}' broke off: {}", e.kind())))?;
         read += chunk.len() as u64;
@@ -392,7 +395,7 @@ fn shown(line: &str) -> String {
 
 /// Searches `terminal` from `start` for `pattern`; what was searched and
 /// the matches.
-async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &regex::Regex, most: usize) -> ToolResult<Value> {
+async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &Regex, most: usize) -> ToolResult<Value> {
     let mut pending = vec![start];
     let (mut matches, mut searched, mut skipped, mut complete) = (Vec::new(), 0usize, 0usize, true);
     'walk: while let Some(at) = pending.pop() {
@@ -481,7 +484,7 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
             if pattern.chars().count() > MAX_PATTERN_CHARS {
                 return Err(ToolError::InvalidParameter(format!("the pattern is longer than {MAX_PATTERN_CHARS} characters")));
             }
-            let pattern = regex::RegexBuilder::new(&pattern).size_limit(MAX_COMPILED_PATTERN_BYTES).build()
+            let pattern = RegexBuilder::new(&pattern).size_limit(MAX_COMPILED_PATTERN_BYTES).build()
                 .map_err(|e| ToolError::InvalidParameter(format!("the pattern is no regular expression: {e}")))?;
             let at = path(&at.unwrap_or_default())?;
             let found = search(terminal, at, &pattern, max_matches.unwrap_or(DEFAULT_MATCHES).clamp(1, MAX_MATCHES)).await?;
@@ -560,8 +563,9 @@ mod tests {
     use caelumora_model::digest::Digest;
     use crate::tool::ToolProvider;
     use crate::tool::terminal_tool::tests::tool as terminal_tool;
-    use caelumora_runtime::workspace::testing::session_with_workspace;
+    use caelumora_runtime::workspace::testing::{session_with_workspace, MAX_FILE_BYTES};
     use caelumora_model::agent::AgentChannelState;
+    use caelumora_model::digest;
 
     fn knowledge(state: &AgentChannelState) -> Vec<KnowledgeRef> {
         state.turn.as_ref().map(|turn| turn.work.context.knowledge.clone()).unwrap_or_default()
@@ -696,7 +700,7 @@ mod tests {
         let offered = tool.execute(PUBLISH_FILE, &json!({ "path": "out/report.csv", "name": " Report Q3.csv ", "description": "The figures" }), None, &mut turn).await.unwrap();
         let value = offered.value;
         assert_eq!((value["path"].as_str(), value["name"].as_str(), value["size"].as_u64(), value["description"].as_str()), (Some("out/report.csv"), Some("Report Q3.csv"), Some(8), Some("The figures")));
-        let digest = caelumora_model::digest::content(b"a,b\n1,2\n");
+        let digest = digest::content(b"a,b\n1,2\n");
         assert_eq!(value["digest"], digest.to_string());
         assert_eq!(value["workspace"], json!(world.workspace.id));
         assert!(value["modified"].is_string(), "{value}");
@@ -724,7 +728,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
         let tool = terminal_tool(&world, json!({}));
-        let too_large = "x".repeat(caelumora_runtime::workspace::testing::MAX_FILE_BYTES as usize + 1);
+        let too_large = "x".repeat(MAX_FILE_BYTES as usize + 1);
         let refused = tool.execute(WRITE_FILE, &json!({ "path": "big.txt", "content": too_large }), None, &mut turn).await;
         assert!(matches!(&refused, Err(ToolError::InvalidParameter(why)) if why.contains("larger than")), "{refused:?}");
         assert!(!world.dir().join("big.txt").exists());

@@ -6,6 +6,7 @@ use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, NUDGE_COMMAND_KIND};
 use std::sync::Arc;
+use crate::error::user_message;
 
 pub const NUDGE_COMMAND_NAME: &str = "nudge";
 
@@ -43,7 +44,7 @@ impl ChannelCommandProvider for NudgeCommandProvider {
                 Some(ChannelError::NudgesItself { .. }) => Err(CommandError::InvalidArguments { command: NUDGE_COMMAND_NAME.to_string(), reason: "you cannot nudge yourself".to_string() }),
                 _ => {
                     tracing::warn!("/nudge failed: {:#}", e);
-                    let reason = crate::error::user_message(&e).unwrap_or_else(|| "see the server log".to_string());
+                    let reason = user_message(&e).unwrap_or_else(|| "see the server log".to_string());
                     Err(CommandError::Failed { command: NUDGE_COMMAND_NAME.to_string(), reason })
                 }
             },

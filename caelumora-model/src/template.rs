@@ -404,6 +404,8 @@ impl ParticipantTemplate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::default_commands;
+    use crate::confidentiality::Confidentiality;
 
     fn template() -> SessionTemplate {
         SessionTemplate {
@@ -427,7 +429,7 @@ mod tests {
                     approval_rules: Vec::new(),
                     uses_workspace: true,
                     name: Name::new("main").unwrap(),
-                    components: crate::component::ComponentConfig::default(),
+                    components: ComponentConfig::default(),
                     classification: Classification::CHANNEL_DEFAULT,
                     participants: vec!["user".to_string(), "helper".to_string(), "approval".to_string()],
                 },
@@ -437,12 +439,12 @@ mod tests {
                     approval_rules: Vec::new(),
                     uses_workspace: true,
                     name: Name::new("side").unwrap(),
-                    components: crate::component::ComponentConfig::default(),
+                    components: ComponentConfig::default(),
                     classification: Classification::CHANNEL_DEFAULT,
                     participants: vec!["user".to_string()],
                 },
             ],
-            commands: crate::command::default_commands(),
+            commands: default_commands(),
             privacy: Default::default(),
             deleted: None,
         }
@@ -525,7 +527,7 @@ mod tests {
         assert_eq!(approvers(&channels[0]), 1, "the template's approver, not a second one");
         assert_eq!(approvers(&channels[1]), 1, "a channel that names none gets one");
         assert!(matches!(channels[1].participants[0], Participant::User(u) if u == owner), "the template's \"user\" is the owner");
-        assert_eq!(session.commands.component_nodes.len(), crate::command::default_commands().component_nodes.len(), "the session keeps its template's commands");
+        assert_eq!(session.commands.component_nodes.len(), default_commands().component_nodes.len(), "the session keeps its template's commands");
         assert_eq!(channels[0].classification, Classification::CHANNEL_DEFAULT);
         assert_eq!(session.privacy, PrivacyConfig::Private, "private unless the template says otherwise");
         let shared = SessionTemplate { privacy: PrivacyConfig::SharedAudience, ..template.clone() };
@@ -538,7 +540,7 @@ mod tests {
         assert!(matches!(stray.build(id, owner, Name::new("x").unwrap(), resolved(&stray, id, owner)), Err(TemplateError::ParticipantNotFound(_))));
 
         let unnamed: ChannelTemplate = serde_json::from_value(serde_json::json!({"name": "main", "participants": []})).unwrap();
-        assert_eq!(unnamed.classification, Classification::general(crate::confidentiality::Confidentiality::Internal), "the default");
+        assert_eq!(unnamed.classification, Classification::general(Confidentiality::Internal), "the default");
         let approver: ParticipantTemplate = serde_json::from_value(serde_json::json!({"Approver": {"name": "approval"}})).unwrap();
         assert!(matches!(approver, ParticipantTemplate::Approver { strategy: ApprovalStrategy::Any, .. }), "the default strategy");
 

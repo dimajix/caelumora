@@ -30,6 +30,8 @@ use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
+use tokio::runtime::Handle;
+use uuid::Uuid;
 
 /// How often the commands of the storages are checked besides the events
 /// that can change who may run them (issue 254).
@@ -43,7 +45,7 @@ pub(crate) fn scope_of(id: ChannelId) -> String {
 
 /// The channel scope `scope` is; `None` for one that is no channel's.
 fn channel_of(scope: &str) -> Option<ChannelId> {
-    scope.parse::<uuid::Uuid>().ok().map(ChannelId::from)
+    scope.parse::<Uuid>().ok().map(ChannelId::from)
 }
 
 pub(crate) struct CommandReaper {
@@ -78,7 +80,7 @@ impl CommandReaper {
         let with_shell = storages.values().any(|provider| provider.has_shell());
         let reaper = Arc::new(Self { sessions: Arc::clone(&stores.sessions), channels: Arc::clone(&stores.channels), controllers, storages, checker: OnceLock::new() });
         if with_shell {
-            let runtime = tokio::runtime::Handle::try_current()
+            let runtime = Handle::try_current()
                 .map_err(|_| ComponentError::InvalidConfig("a storage of workspaces with a shell needs a running runtime".to_string()))?;
             let subscription = events.subscribe_all().into_receiver();
             let _ = reaper.checker.set(AbortOnDropHandle::new(runtime.spawn(check_commands(Arc::downgrade(&reaper), subscription))));

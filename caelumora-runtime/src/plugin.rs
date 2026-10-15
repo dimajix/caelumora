@@ -10,6 +10,7 @@
 
 use crate::backend::Backends;
 use crate::runtime::RuntimeBuilder;
+use anyhow::Result;
 
 /// A subject joined to the core, after the pattern of Bevy's
 /// `Plugin::build`.
@@ -27,7 +28,7 @@ pub trait Plugin: Send + Sync {
     /// # Errors
     /// If its section of the configuration cannot be read, or a store of
     /// its cannot be opened - the process does not start then.
-    fn register(&self, runtime: &mut RuntimeBuilder) -> anyhow::Result<()>;
+    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()>;
 }
 
 #[cfg(test)]
@@ -55,6 +56,7 @@ mod tests {
     use caelumora_model::type_map::TypeKey;
     use serde::{Deserialize, Serialize};
     use std::sync::Arc;
+    use serde_json::Value;
 
     define_id!(NoteId);
 
@@ -105,7 +107,7 @@ mod tests {
 
     #[async_trait]
     impl SeedSection for Notebook {
-        async fn seed(&self, section: serde_json::Value) -> anyhow::Result<()> {
+        async fn seed(&self, section: Value) -> Result<()> {
             for note in serde_json::from_value::<Vec<Note>>(section)? {
                 self.notes.create(&SecurityContext::system(), &note).await?;
             }
@@ -127,7 +129,7 @@ mod tests {
             "notes"
         }
 
-        fn register(&self, runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+        fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
             let config: NotesConfig = runtime.config("notes")?;
             let notebook = Arc::new(Notebook { notes: runtime.entity_store::<Note>()?, greeting: config.greeting });
             runtime.provide(Arc::clone(&notebook));
@@ -148,7 +150,7 @@ mod tests {
             "impostor"
         }
 
-        fn register(&self, runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+        fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
             runtime.entity_store::<Group>()?;
             #[derive(Debug, Clone, Serialize, Deserialize)]
             struct Groupie(Note);
@@ -206,18 +208,18 @@ mod tests {
             });
         }
 
-        fn register(&self, _runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+        fn register(&self, _runtime: &mut RuntimeBuilder) -> Result<()> {
             Ok(())
         }
     }
 
-    fn builder(store: &Arc<MemoryStore>, config: &AppConfig) -> anyhow::Result<RuntimeBuilder> {
+    fn builder(store: &Arc<MemoryStore>, config: &AppConfig) -> Result<RuntimeBuilder> {
         let access_policy = Arc::new(AllowAllPolicy::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
         RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), config, test_registry(Arc::<MemoryStore>::clone(store)), Backends::built_in())
     }
 
-    fn built(config: &AppConfig, plugin: &dyn Plugin) -> anyhow::Result<RuntimeManager> {
+    fn built(config: &AppConfig, plugin: &dyn Plugin) -> Result<RuntimeManager> {
         let mut builder = builder(&Arc::new(MemoryStore::new()), config)?;
         builder.plugin(plugin)?;
         builder.build()

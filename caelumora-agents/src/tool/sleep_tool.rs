@@ -102,14 +102,16 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_runtime::agent::state::AgentStateHandle;
+    use std::time::Instant;
 
     #[tokio::test]
     async fn sleep_waits_as_long_as_it_is_told_within_its_limit() {
         let tool = SleepToolProvider { seconds: 0.05, requires_approval: false };
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, AgentStateHandle::detached());
 
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let slept = tool.execute(SLEEP_TOOL_NAME, &Value::Null, None, &mut turn).await.unwrap();
         assert!(started.elapsed() >= Duration::from_millis(50), "the component's default");
         assert_eq!(slept.value["seconds"], 0.05);

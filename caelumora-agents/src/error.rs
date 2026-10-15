@@ -68,10 +68,11 @@ mod tests {
     use super::*;
     use caelumora_runtime::component::ComponentError;
     use caelumora_model::store::StoreError;
+    use anyhow::Error;
 
     #[test]
     fn finds_the_disclosable_error_inside_a_context_chain() {
-        let error = anyhow::Error::new(LLMError::Connection {
+        let error = Error::new(LLMError::Connection {
             endpoint: "http://localhost:11434".to_string(),
             reason: "connection refused".to_string(),
         })
@@ -85,7 +86,7 @@ mod tests {
 
     #[test]
     fn a_prompt_part_that_failed_names_its_component_before_what_it_says() {
-        let failed = |cause| anyhow::Error::new(ContextError::Component { component: "skills".to_string(), cause: Box::new(cause) })
+        let failed = |cause| Error::new(ContextError::Component { component: "skills".to_string(), cause: Box::new(cause) })
             .context("component 'context' could not assemble the context");
 
         let error = failed(ContextError::Failed("skills are not offered here".to_string()));
@@ -100,8 +101,8 @@ mod tests {
     fn the_runtime_s_errors_are_judged_as_the_runtime_judges_them() {
         let component = ComponentError::InvalidConfig("missing field `url`".to_string());
         let shown = component.to_string();
-        assert_eq!(user_message(&anyhow::Error::new(component).context("building the agent")), Some(shown));
-        let backend = anyhow::Error::new(StoreError::Backend("/home/someone/local/entity_store: permission denied".to_string()));
+        assert_eq!(user_message(&Error::new(component).context("building the agent")), Some(shown));
+        let backend = Error::new(StoreError::Backend("/home/someone/local/entity_store: permission denied".to_string()));
         assert_eq!(user_message(&backend), None, "not what the runtime does not show");
         assert_eq!(failure_message(&anyhow::anyhow!("something internal")), "internal error - the details are in the server log");
     }

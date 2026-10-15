@@ -73,12 +73,13 @@ mod tests {
     use super::*;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use serde_json::json;
+    use caelumora_runtime::agent::state::AgentStateHandle;
 
     #[tokio::test]
     async fn test_calculator_tool() {
         let provider = CalculatorToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, AgentStateHandle::detached());
 
         let cases = vec![
             ("2 + 2", 4.0),
@@ -101,7 +102,7 @@ mod tests {
     async fn test_calculator_tool_invalid_expression() {
         let provider = CalculatorToolProvider;
         let mut agent_channel_state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut agent_channel_state, AgentStateHandle::detached());
 
         let params = json!({ "expression": "invalid" });
         let result = provider.execute(CALCULATE_TOOL_NAME, &params, None, &mut turn).await;

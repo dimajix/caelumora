@@ -6,6 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -321,9 +322,9 @@ pub struct ToolCallResult {
     /// history; published with the call, even where its result is
     /// withheld: when it ran is the call's, not the result's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub started_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
     /// The questions the call asked and how they were answered or declined
     /// (issue 165), for the record - kept with the history and the
     /// transcript, published as `content` is, never given to the model,

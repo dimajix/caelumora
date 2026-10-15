@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
+use regex::{Regex, RegexBuilder};
 
 define_id!(ApproverId);
 
@@ -300,11 +301,11 @@ impl ToolMatcher {
 }
 
 /// `pattern` compiled to match a whole value.
-fn compile(argument: &str, pattern: &str) -> Result<regex::Regex, RuleError> {
+fn compile(argument: &str, pattern: &str) -> Result<Regex, RuleError> {
     if pattern.chars().count() > MAX_PATTERN_CHARS {
         return Err(RuleError::PatternTooLong(argument.to_string()));
     }
-    regex::RegexBuilder::new(&format!("^(?:{pattern})$"))
+    RegexBuilder::new(&format!("^(?:{pattern})$"))
         .size_limit(MAX_COMPILED_PATTERN_BYTES)
         .build()
         .map_err(|e| RuleError::InvalidPattern { argument: argument.to_string(), reason: e.to_string() })
@@ -381,6 +382,7 @@ mod tests {
     use super::*;
     use crate::user::UserId;
     use serde_json::json;
+    use chrono::Duration;
 
     /// What `strategy` decides of `approvers` people, of whom the first
     /// answered as `answers` says, and one who may not approve approved.
@@ -486,7 +488,7 @@ mod tests {
         assert!(!within(Reach::Channel(ChannelId::new())).applies(&ls, session, channel, now), "another channel");
 
         let until = |at| ApprovalRule::new(matcher("shell", &[]), RuleDecision::Deny, Reach::Everywhere, Some(at)).unwrap();
-        assert!(until(now + chrono::Duration::minutes(1)).applies(&ls, session, channel, now));
+        assert!(until(now + Duration::minutes(1)).applies(&ls, session, channel, now));
         assert!(!until(now).applies(&ls, session, channel, now), "expired");
     }
 

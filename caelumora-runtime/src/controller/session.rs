@@ -181,6 +181,7 @@ mod tests {
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::value::ValueError;
     use chrono::{Duration, Utc};
+    use std::sync::Mutex;
 
     fn session() -> Session {
         Session {
@@ -201,7 +202,7 @@ mod tests {
     }
 
     #[derive(Debug, Default)]
-    struct Announced(std::sync::Mutex<Vec<GlobalEvent>>);
+    struct Announced(Mutex<Vec<GlobalEvent>>);
 
     impl EventPublisher for Announced {
         fn publish(&self, event: GlobalEvent, _attributes: SecurityAttributes) {

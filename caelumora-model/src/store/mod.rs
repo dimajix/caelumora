@@ -35,6 +35,7 @@ use crate::store::query::{Field, NoField, Page, Query};
 use crate::type_map::TypeKey;
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
+use std::fmt;
 
 
 #[derive(Debug, thiserror::Error)]
@@ -157,7 +158,7 @@ impl<'de> Deserialize<'de> for EntityKind {
 }
 
 impl Display for EntityKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
     }
 }
@@ -520,6 +521,7 @@ mod tests {
     use crate::store::memory::MemoryStore;
     use std::sync::Arc;
     use uuid::Uuid;
+    use crate::value::name::Name;
 
 
     #[test]
@@ -541,11 +543,11 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
-            name: crate::value::name::Name::new("session1").unwrap(),
+            name: Name::new("session1").unwrap(),
             participants: Vec::new(),
             channels: Vec::new(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
             security_attributes: SecurityAttributes::default(),
             deleted: None,
         };
@@ -556,11 +558,11 @@ mod tests {
             commands: Default::default(),
             privacy: Default::default(),
             id: SessionId(Uuid::new_v4()),
-            name: crate::value::name::Name::new("session2").unwrap(),
+            name: Name::new("session2").unwrap(),
             participants: Vec::new(),
             channels: Vec::new(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
             security_attributes: SecurityAttributes::default(),
             deleted: None,
         };
@@ -579,7 +581,7 @@ mod tests {
     define_id!(NoteId);
 
     /// A kind of a plugin's (issue 323).
-    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     struct Note {
         id: NoteId,
         security_attributes: SecurityAttributes,
@@ -614,7 +616,7 @@ mod tests {
     }
 
     /// A kind named as the core's groups are.
-    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     struct Impostor(Note);
 
     impl Secured for Impostor {

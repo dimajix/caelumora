@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU8, Ordering};
 use uuid::Uuid;
 use crate::store::query::FieldValue;
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, Default, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ActorId {
@@ -371,8 +372,8 @@ pub enum RetryTarget {
     Turn(TurnId),
 }
 
-impl std::fmt::Display for RetryTarget {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for RetryTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             RetryTarget::Message(message) => write!(f, "message {message}"),
             RetryTarget::Turn(turn) => write!(f, "turn {turn}"),
@@ -779,6 +780,7 @@ impl ProcessingStateHolder {
 mod tests {
     use super::*;
     use crate::actor::ActorState;
+    use crate::store::query::meets_exactly_its_equals;
 
     #[test]
     fn the_approvers_name_is_a_name() {
@@ -804,13 +806,13 @@ mod tests {
         use crate::tool::{ToolCall, ToolVisibility};
         let hidden = Message {
             tool_calls: vec![ToolCall { id: None, function_name: "f".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() }],
-            ..Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT)
+            ..Message::new(Classification::CHANNEL_DEFAULT)
         };
-        let text = Message { content: Some("hi".to_string()), ..Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT) };
+        let text = Message { content: Some("hi".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
 
         assert!(ActorEvent::CompleteMessageGenerated(hidden.clone()).published().is_none(), "nothing left to show");
         assert!(ActorEvent::PartialMessageGenerated(hidden.clone()).published().is_none());
-        match (ActorEvent::TurnFinished { turn_id: crate::work::TurnId::new(), messages: vec![hidden.clone(), text.clone()] }).published() {
+        match (ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![hidden.clone(), text.clone()] }).published() {
             Some(ActorEvent::TurnFinished { messages, .. }) => {
                 assert_eq!(messages.len(), 1);
                 assert_eq!(messages[0].id, text.id);
@@ -818,7 +820,7 @@ mod tests {
             other => panic!("expected the response, got {other:?}"),
         }
         assert!(
-            matches!(ActorEvent::TurnFinished { turn_id: crate::work::TurnId::new(), messages: vec![hidden] }.published(), Some(ActorEvent::TurnFinished { messages: m, .. }) if m.is_empty()),
+            matches!(ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![hidden] }.published(), Some(ActorEvent::TurnFinished { messages: m, .. }) if m.is_empty()),
             "the end of the turn is still announced"
         );
     }
@@ -828,7 +830,7 @@ mod tests {
     #[test]
     fn an_actor_meets_exactly_the_actors_equal_to_it() {
         let id = Uuid::new_v4();
-        crate::store::query::meets_exactly_its_equals(&[
+        meets_exactly_its_equals(&[
             ActorId::None, ActorId::System,
             ActorId::User(UserId(id)), ActorId::User(UserId::new()),
             ActorId::Agent(AgentId(id)), ActorId::Approver(ApproverId(id)),

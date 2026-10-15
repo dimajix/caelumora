@@ -13,6 +13,7 @@ use caelumora_runtime::backend::Backends;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use std::sync::Arc;
+use anyhow::Result;
 
 /// The section of the configuration and the name of the plugin.
 pub const ARTIFACTS: &str = "artifacts";
@@ -30,7 +31,7 @@ impl Plugin for ArtifactsPlugin {
         local::register_backend(backends);
     }
 
-    fn register(&self, runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
         let config: ArtifactsConfig = runtime.config(ARTIFACTS)?;
         let storages = runtime.make_named::<dyn ArtifactStorage>("storage of artifacts", &config.storage)?;
         let artifacts = runtime.entity_store::<Artifact>()?;

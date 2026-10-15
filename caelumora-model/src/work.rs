@@ -11,7 +11,7 @@ use crate::message::Message;
 use crate::security::SecurityContext;
 use serde::{Deserialize, Serialize};
 
-crate::define_id!(TurnId);
+define_id!(TurnId);
 
 /// A piece of work of an agent: the contexts it is done in, the most it may
 /// write as, what it has seen so far, and what what comes of it is produced
@@ -120,16 +120,18 @@ impl Work {
 mod tests {
     use super::*;
     use crate::confidentiality::{Compartment, Confidentiality};
+    use crate::context::KnowledgeSource;
+    use crate::message::MessageRole;
 
     #[test]
     fn work_takes_in_the_knowledge_and_every_part_of_its_context() {
         let (internal, confidential) = (Classification::general(Confidentiality::Internal), Classification::general(Confidentiality::Confidential));
         let mut work = Work::new(EventContext::default(), SecurityContext::default(), confidential.clone());
-        let part = |classification: Option<Classification>| PromptPart { role: crate::message::MessageRole::System, text: "Be brief.".to_string(), after: None, classification, source: None };
+        let part = |classification: Option<Classification>| PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification, source: None };
         let read = KnowledgeRef {
             channel: Default::default(),
             session: Default::default(),
-            source: crate::context::KnowledgeSource::History { digest: None, start: None },
+            source: KnowledgeSource::History { digest: None, start: None },
             classification: Some(internal.clone()),
         };
 

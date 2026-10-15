@@ -22,6 +22,7 @@ use caelumora_model::command::{Command, CommandOutput, CommandVisibility};
 use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext, AccessPolicy};
 use std::fmt::Debug;
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// Why a command did not run. The messages are meant for the user who
 /// issued it (see `crate::error::user_message`).
@@ -59,7 +60,7 @@ pub struct CommandReply {
     /// For a command sent to agents (issue 269), the span of the requests:
     /// their answers come later, as `CommandExecuted` or `CommandFailed`
     /// on the issuer's stream, in this span.
-    pub span_id: Option<uuid::Uuid>,
+    pub span_id: Option<Uuid>,
 }
 
 /// What a command of the channel runs with: who issued it, the channel,

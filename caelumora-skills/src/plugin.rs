@@ -16,6 +16,8 @@ use caelumora_runtime::seed::SeedSection;
 use std::fmt;
 use std::sync::Arc;
 use tracing::info;
+use anyhow::Result;
+use serde_json::Value;
 
 /// The section of the seed files and the name of the plugin.
 pub const SKILLS: &str = "skills";
@@ -29,7 +31,7 @@ impl Plugin for SkillsPlugin {
         SKILLS
     }
 
-    fn register(&self, runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
         let skills = runtime.entity_store::<Skill>()?;
         let manager = Arc::new(SkillManager::new(Arc::clone(&skills), Arc::clone(runtime.event_bus()), Arc::clone(runtime.confidentiality())));
         runtime.provide(Arc::clone(&manager));
@@ -52,7 +54,7 @@ impl fmt::Debug for SeededSkills {
 
 #[async_trait]
 impl SeedSection for SeededSkills {
-    async fn seed(&self, section: serde_json::Value) -> anyhow::Result<()> {
+    async fn seed(&self, section: Value) -> Result<()> {
         let system = SecurityContext::system();
         for skill in serde_json::from_value::<Vec<Skill>>(section)? {
             if self.0.get(&system, skill.id).await.optional()?.is_none() {

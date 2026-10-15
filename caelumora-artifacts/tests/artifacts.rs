@@ -49,6 +49,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceExt;
+use bytes::Bytes;
 
 /// The section `artifacts` of the world: a storage "kept" in `artifacts`
 /// beside where the workspaces' files lie.
@@ -76,7 +77,7 @@ fn checks(lines: &[&str]) -> Vec<String> {
 }
 
 fn file(text: &'static str) -> ByteStream {
-    Box::pin(futures::stream::iter([Ok(bytes::Bytes::from_static(text.as_bytes()))]))
+    Box::pin(futures::stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
 }
 
 /// Waits until `events` has received each of `wanted`, in any order -

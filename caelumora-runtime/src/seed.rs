@@ -6,7 +6,7 @@
 //! One definition for the REST server and the TUI alike
 //! (`RuntimeManager::seed`).
 
-use anyhow::{bail, Context};
+use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::agent::Personality;
 use caelumora_model::component::StoredComponents;
@@ -21,6 +21,7 @@ use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::info;
+use serde_json::Value;
 
 /// The documents of one seed file. A key it does not know is a section of
 /// a plugin's; one that no plugin claims is an error when it is seeded.
@@ -35,7 +36,7 @@ pub struct Seed {
     /// The sections of the plugins, by name, as they were written: each
     /// seeded by the plugin that claims it (`SeedSection`, issue 323).
     #[serde(flatten)]
-    pub plugins: BTreeMap<String, serde_json::Value>,
+    pub plugins: BTreeMap<String, Value>,
 }
 
 /// A section of the seed files a plugin claims (issue 323,
@@ -49,7 +50,7 @@ pub trait SeedSection: Debug + Send + Sync {
     /// # Errors
     /// If `section` is not what the plugin seeds; whatever the stores
     /// report. What was stored before stays.
-    async fn seed(&self, section: serde_json::Value) -> anyhow::Result<()>;
+    async fn seed(&self, section: Value) -> Result<()>;
 }
 
 /// A personality as a seed writes it: as the store keeps it, but with the
@@ -69,12 +70,12 @@ impl SeedPersonality {
     ///
     /// # Errors
     /// If a role it names is not configured.
-    fn resolved(&self, confidentiality: &dyn ConfidentialityPolicy) -> anyhow::Result<Personality> {
+    fn resolved(&self, confidentiality: &dyn ConfidentialityPolicy) -> Result<Personality> {
         let roles = self.roles.as_ref()
             .map(|names| names.iter()
                 .map(|name| confidentiality.roles().and_then(|roles| roles.id_of(name).ok())
                     .with_context(|| format!("personality {} names the role '{name}', which is not configured", self.personality.name)))
-                .collect::<anyhow::Result<Vec<_>>>())
+                .collect::<Result<Vec<_>>>())
             .transpose()?;
         Ok(Personality { roles, ..self.personality.clone() })
     }
@@ -86,7 +87,7 @@ impl Seed {
     /// # Errors
     /// If the file cannot be read or is no seed; the error names the file
     /// and, for a malformed one, the line.
-    pub fn read(path: &Path) -> anyhow::Result<Self> {
+    pub fn read(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Cannot read the seed file {}", path.display()))?;
         parse_yaml(&content).with_context(|| format!("Cannot parse the seed file {}", path.display()))
@@ -105,7 +106,7 @@ impl Seed {
     /// A section no plugin claims, before anything is stored; a role that
     /// is not configured; whatever the stores report. What was stored
     /// before stays.
-    pub async fn apply(&self, stores: &EntityStores, components: &dyn ComponentStore, confidentiality: &dyn ConfidentialityPolicy, sections: &BTreeMap<String, Arc<dyn SeedSection>>) -> anyhow::Result<()> {
+    pub async fn apply(&self, stores: &EntityStores, components: &dyn ComponentStore, confidentiality: &dyn ConfidentialityPolicy, sections: &BTreeMap<String, Arc<dyn SeedSection>>) -> Result<()> {
         if let Some(name) = self.plugins.keys().find(|name| !sections.contains_key(*name)) {
             bail!("The seed has a section '{name}' that no plugin claims");
         }
@@ -144,7 +145,7 @@ impl Seed {
 ///
 /// # Errors
 /// As `Seed::read` and `Seed::apply`.
-pub async fn load(stores: &EntityStores, components: &dyn ComponentStore, confidentiality: &dyn ConfidentialityPolicy, sections: &BTreeMap<String, Arc<dyn SeedSection>>, paths: &[PathBuf]) -> anyhow::Result<()> {
+pub async fn load(stores: &EntityStores, components: &dyn ComponentStore, confidentiality: &dyn ConfidentialityPolicy, sections: &BTreeMap<String, Arc<dyn SeedSection>>, paths: &[PathBuf]) -> Result<()> {
     for path in paths {
         Seed::read(path)?.apply(stores, components, confidentiality, sections).await
             .with_context(|| format!("Cannot seed the stores from {}", path.display()))?;
@@ -169,7 +170,7 @@ mod tests {
 
     /// The policy of the example configuration, which knows the roles the
     /// example seed names.
-    fn policy() -> std::sync::Arc<dyn ConfidentialityPolicy> {
+    fn policy() -> Arc<dyn ConfidentialityPolicy> {
         let config = AppConfig::load(Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/config.yaml")).unwrap();
         config.create_confidentiality_policy()
     }
@@ -188,11 +189,11 @@ mod tests {
 
     /// What a plugin was given of its section.
     #[derive(Debug, Default)]
-    struct Given(Mutex<Vec<serde_json::Value>>);
+    struct Given(Mutex<Vec<Value>>);
 
     #[async_trait]
     impl SeedSection for Given {
-        async fn seed(&self, section: serde_json::Value) -> anyhow::Result<()> {
+        async fn seed(&self, section: Value) -> Result<()> {
             self.0.lock().unwrap().push(section);
             Ok(())
         }

@@ -4,7 +4,7 @@
 //! `/`, from the binary.
 
 use axum::Router;
-use caelumora_logging::LogTarget;
+use caelumora_logging::{LogTarget, init};
 use caelumora_a2a::plugin::A2aPlugin;
 use caelumora_mcp::plugin::McpPlugin;
 use caelumora_model::config::AppConfig;
@@ -28,6 +28,10 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
+use anyhow::Result;
+use axum::http::Request;
+use tokio::net::TcpListener;
+use tracing::field::Empty;
 
 #[cfg(feature = "web-ui")]
 mod web_ui;
@@ -44,7 +48,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     let args = Args::parse();
 
     let config = if let Some(config_path) = args.config {
@@ -54,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
         AppConfig::default()
     };
 
-    caelumora_logging::init(&config.logging, LogTarget::Stderr, "info,tower_http=debug,axum::rejection=trace")?;
+    init(&config.logging, LogTarget::Stderr, "info,tower_http=debug,axum::rejection=trace")?;
 
     let rest_plugins = rest_plugins();
     let plugins = plugins();
@@ -85,14 +89,14 @@ async fn main() -> anyhow::Result<()> {
     // One span per request. `request_id` is filled in by `error::request_id`,
     // `user_id` by `auth::require_auth`,
     // `span_id` by handlers that start an envelope chain in a channel.
-    let trace_layer = TraceLayer::new_for_http().make_span_with(|request: &axum::http::Request<_>| {
+    let trace_layer = TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
         tracing::info_span!(
             "request",
             method = %request.method(),
             uri = %request.uri(),
-            request_id = tracing::field::Empty,
-            user_id = tracing::field::Empty,
-            span_id = tracing::field::Empty,
+            request_id = Empty,
+            user_id = Empty,
+            span_id = Empty,
         )
     });
     // The request id is set inside the request span, which is the outer layer.
@@ -100,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(axum::middleware::from_fn(error::request_id))
         .layer(trace_layer);
 
-    let listener = tokio::net::TcpListener::bind(config.server.address).await?;
+    let listener = TcpListener::bind(config.server.address).await?;
     tracing::info!("Caelumora listening on {}", listener.local_addr()?);
     axum::serve(listener, app).await?;
 

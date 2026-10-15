@@ -16,6 +16,7 @@ use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use crate::digest;
 
 /// What happened in a `MessageHistory`; its node carries the digest of the
 /// history up to and including it.
@@ -308,7 +309,7 @@ impl Chain<HistoryEntry> {
     }
 
     fn record(&mut self, entry: HistoryEntry) {
-        self.push_with(entry, crate::digest::history_chain);
+        self.push_with(entry, digest::history_chain);
     }
 }
 
@@ -339,10 +340,11 @@ mod tests {
     use crate::confidentiality::Confidentiality;
     use crate::digest::message_chain;
     use crate::message::tests::{id, make_message};
+    use crate::agent::AgentId;
 
     #[test]
     fn a_turn_given_up_is_found_while_its_end_is_the_last_thing() {
-        let (agent, other) = (ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()));
+        let (agent, other) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()));
         let turn = TurnId::new();
         let mut history = History::default();
         history.push(make_message(id(1)), None);
@@ -457,7 +459,7 @@ mod tests {
         assert!(history.reclassify(id(2), public.clone()), "on the branch no longer active");
         assert!(!history.reclassify(id(9), public.clone()), "never said here");
         let mut revoked = history.clone();
-        revoked.revoke(id(1), chrono::Utc::now());
+        revoked.revoke(id(1), Utc::now());
         assert!(!revoked.reclassify(id(1), public.clone()), "taken back: nothing left to release");
         assert_ne!(history.digest(), before, "recorded: the digest covers it");
         assert_eq!(history.all_entries().len(), 4, "one entry");
@@ -492,7 +494,7 @@ mod tests {
 
     #[test]
     fn a_change_is_recorded_and_read_into_the_messages_as_they_stand() {
-        let at = chrono::Utc::now();
+        let at = Utc::now();
         let modified = |n, content: &str| Message { content: Some(content.to_string()), timestamp: at, ..make_message(id(n)) };
         let mut history = History::default();
         history.extend(vec![make_message(id(1))]);
@@ -506,7 +508,7 @@ mod tests {
         assert!(history.revoke(id(2), at), "on a branch no longer active");
         assert!(!history.modify(modified(9, "never said")), "never said here");
         assert!(!history.modify(modified(2, "too late")), "taken back already");
-        assert!(!history.modify(Message { sender_id: crate::actor::ActorId::System, ..make_message(id(3)) }), "by another sender");
+        assert!(!history.modify(Message { sender_id: ActorId::System, ..make_message(id(3)) }), "by another sender");
         assert_ne!(history.digest(), before, "recorded: the digest covers it");
         assert_eq!(history.all_entries().len(), 5, "one entry each, nothing rewritten");
 
@@ -529,7 +531,7 @@ mod tests {
         let mut stored: History = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         history.mark_stored();
 
-        history.revoke(id(2), chrono::Utc::now());
+        history.revoke(id(2), Utc::now());
         stored.apply(history.changes().expect("changed")).unwrap();
         assert_eq!(stored.digest(), history.digest());
         assert!(stored.message(id(2)).is_some_and(|m| m.revoked.is_some()));

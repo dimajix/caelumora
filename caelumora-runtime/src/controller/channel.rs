@@ -14,6 +14,7 @@ use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult}
 use std::sync::Arc;
 use super::check_restricting;
 use super::document::LiveDocument;
+use crate::group::keep_participants;
 
 /// The one writer of a channel's document (issue 70): changes are stored
 /// first - where the permission is checked, on the channel's own attributes
@@ -193,7 +194,7 @@ impl ChannelController {
     /// permitted and is stored. A failure is logged and corrected by the
     /// next change, which derives the group anew.
     async fn keep_participants(&self, channel: &Channel) {
-        if let Err(e) = crate::group::keep_participants(self.groups.as_ref(), Group::of_channel(channel)).await {
+        if let Err(e) = keep_participants(self.groups.as_ref(), Group::of_channel(channel)).await {
             error!(channel = %channel.id, "The group of the channel's participants does not follow them: {e}");
         }
     }

@@ -137,7 +137,7 @@ mod tests {
     use caelumora_model::message::MessageId;
 
     fn text(content: &str) -> Message {
-        Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) }
+        Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
     }
 
     #[test]

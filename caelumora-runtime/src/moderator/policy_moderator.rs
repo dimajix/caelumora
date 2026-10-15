@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::message::Message;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::{debug, warn};
 
 pub const POLICY_MODERATOR_KIND: &str = "policy_moderator";
@@ -45,7 +45,7 @@ impl PolicyModerator {
 
     /// The actors, locked only while they are read or changed, never while
     /// the policy is asked.
-    fn actors(&self) -> std::sync::MutexGuard<'_, ModeratorActors> {
+    fn actors(&self) -> MutexGuard<'_, ModeratorActors> {
         self.actors.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
@@ -425,10 +425,18 @@ mod tests {
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::AgentId;
     use caelumora_model::message::MessageRole;
-    use caelumora_model::approval::{ApprovalRequest, ApprovalResponse};
+    use caelumora_model::approval::{ApprovalRequest, ApprovalResponse, ApproverId};
     use caelumora_model::security::SecurityContext;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::UserId;
+    use anyhow::Result;
+    use caelumora_model::confidentiality::Classification;
+    use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::turn::GivenUpReason;
+    use caelumora_model::value::name::Name;
+    use caelumora_model::work::TurnId;
+    use crate::transport::{EventReceiver, EventSender};
+    use serde_json::Value;
 
     fn envelope(sender_id: ActorId, event: ActorEvent) -> Envelope {
         let context = EventContext::new(Default::default(), Default::default(), sender_id, "test".to_string());
@@ -457,9 +465,9 @@ mod tests {
     #[async_trait::async_trait]
     impl Actor for TestActor {
         fn id(&self) -> ActorId { self.id }
-        fn name(&self) -> caelumora_model::value::name::Name { caelumora_model::value::name::Name::new("test").expect("a name") }
+        fn name(&self) -> Name { Name::new("test").expect("a name") }
         fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
-        async fn run(&self, _rx: Box<dyn crate::transport::EventReceiver>, _tx: Box<dyn crate::transport::EventSender>) -> anyhow::Result<()> {
+        async fn run(&self, _rx: Box<dyn EventReceiver>, _tx: Box<dyn EventSender>) -> Result<()> {
             Ok(())
         }
         fn state(&self) -> ActorState { self.state }
@@ -482,14 +490,14 @@ mod tests {
             role: MessageRole::User,
             content: Some(content.to_string()),
             mentions,
-            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+            ..Message::new(Classification::CHANNEL_DEFAULT)
         }
     }
 
     /// The end of the answer `content` of `sender_id`, whom the moderator
     /// decides from whom to ask.
     fn message_from(sender_id: ActorId, content: &str, mentions: Vec<ActorId>) -> Envelope {
-        envelope(sender_id, ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: vec![text_from(sender_id, content, mentions)] })
+        envelope(sender_id, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![text_from(sender_id, content, mentions)] })
     }
 
     /// The message `content` of `sender_id` as it is said (issue 258).
@@ -548,7 +556,7 @@ mod tests {
         use crate::component::{ComponentContainer, ComponentContext};
         use crate::runtime::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-        let store = Arc::new(caelumora_model::store::memory::MemoryStore::new());
+        let store = Arc::new(MemoryStore::new());
         let registry = Arc::new(test_registry(store));
         let context = ComponentContext::new(SecurityContext::default(), Services::empty());
         let config = ComponentConfig { component_nodes: config.iter().map(|(id, kind)| ComponentDescriptor::new(id, kind)).collect() };
@@ -655,9 +663,9 @@ mod tests {
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
         moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
-        let message = || Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT);
+        let message = || Message::new(Classification::CHANNEL_DEFAULT);
         let step = || (0, 2, "first".to_string());
-        let turn_id = caelumora_model::work::TurnId::new();
+        let turn_id = TurnId::new();
         let events = [
             ActorEvent::ResponseStarted { turn_id },
             ActorEvent::PartialMessageGenerated(message()),
@@ -710,10 +718,10 @@ mod tests {
         use crate::component::{ComponentContainer, ComponentContext};
         use crate::runtime::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-        let store = Arc::new(caelumora_model::store::memory::MemoryStore::new());
+        let store = Arc::new(MemoryStore::new());
         let registry = Arc::new(test_registry(store));
         let context = ComponentContext::new(SecurityContext::default(), Services::empty());
-        let configured = |max_agent_hops: serde_json::Value| ComponentConfig { component_nodes: vec![ComponentDescriptor {
+        let configured = |max_agent_hops: Value| ComponentConfig { component_nodes: vec![ComponentDescriptor {
             params: serde_json::json!({ "max_agent_hops": max_agent_hops }),
             ..ComponentDescriptor::new("moderator", POLICY_MODERATOR_KIND)
         }] };
@@ -786,7 +794,7 @@ mod tests {
             let agents = add_agents(&moderator);
             let user = ActorId::User(UserId::new());
             moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
-            let event = envelope(agents[0], ActorEvent::TurnGivenUp { turn_id: caelumora_model::work::TurnId::new(), reason: caelumora_model::turn::GivenUpReason::Failed { message: "boom".to_string() } });
+            let event = envelope(agents[0], ActorEvent::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Failed { message: "boom".to_string() } });
 
             let decision = moderator.route(&event).await;
 
@@ -800,7 +808,7 @@ mod tests {
             let agents = add_agents(&moderator);
             let user = ActorId::User(UserId::new());
             moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
-            let turn_id = caelumora_model::work::TurnId::new();
+            let turn_id = TurnId::new();
             let activity = "compacting its context".to_string();
             for event in [ActorEvent::ActivityStarted { turn_id, activity: activity.clone() }, ActorEvent::ActivityFinished { turn_id, activity: activity.clone(), output: "done".to_string() }] {
                 let decision = moderator.route(&envelope(agents[0], event)).await;
@@ -832,7 +840,7 @@ mod tests {
             let (issuer, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
             moderator.add_actor(Arc::new(TestActor { id: issuer, state: ActorState::Idle }));
             moderator.add_actor(Arc::new(TestActor { id: other, state: ActorState::Idle }));
-            let started = ActorEvent::CommandStarted { command: "compact".to_string(), args: String::new(), to: issuer, turn_id: caelumora_model::work::TurnId::new() };
+            let started = ActorEvent::CommandStarted { command: "compact".to_string(), args: String::new(), to: issuer, turn_id: TurnId::new() };
 
             let decision = moderator.route(&envelope(agents[0], started)).await;
 
@@ -856,7 +864,7 @@ mod tests {
                 assert_eq!(responders(&decision), vec![nudged], "{:?} must ask whom the nudge names, and no policy", moderator);
                 assert_eq!(decision[0].1.context.sender_id, user, "{:?} must ask in the name of who nudged", moderator);
             }
-            let stranger = ActorId::Agent(caelumora_model::agent::AgentId::new());
+            let stranger = ActorId::Agent(AgentId::new());
             assert!(moderator.route(&envelope(user, ActorEvent::NudgeRequested { participant: stranger })).await.is_empty(), "{:?} must ask nobody it does not know", moderator);
         }
     }
@@ -891,7 +899,7 @@ mod tests {
             }
 
             // Within a turn it asks nobody yet: the turn's end does.
-            let turn = caelumora_model::work::TurnId::new();
+            let turn = TurnId::new();
             let in_turn = Message { turn_id: Some(turn), ..text_from(agents[0], "@c?", mention()) };
             let decision = moderator.route(&envelope(agents[0], ActorEvent::CompleteMessageGenerated(in_turn.clone()))).await;
             assert!(responders(&decision).is_empty(), "{:?}: not before the turn ended", moderator);
@@ -902,8 +910,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_message_reaches_the_agents_if_it_is_heard_and_the_end_of_an_answer_the_users_alone() {
-        use caelumora_model::tool::{ToolCall, ToolCallResult, ToolVisibility};
-        let classified = caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT;
+        use caelumora_model::tool::{ToolCallResult, ToolVisibility};
+        let classified = Classification::CHANNEL_DEFAULT;
         let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let result = ToolCallResult::of(&call, Default::default(), "done".to_string(), classified.clone());
         for moderator in moderators() {
@@ -911,7 +919,7 @@ mod tests {
             let (sender, user) = (agents[0], ActorId::User(UserId::new()));
             moderator.add_actor(Arc::new(TestActor { id: user, state: ActorState::Idle }));
             let said = |message: &Message| envelope(sender, ActorEvent::CompleteMessageGenerated(message.clone()));
-            let ended = |messages: Vec<Message>| envelope(sender, ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages });
+            let ended = |messages: Vec<Message>| envelope(sender, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages });
             let calling = Message { sender_id: sender, role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call.clone()], ..Message::new(classified.clone()) };
             let tool = Message { sender_id: sender, role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result.clone()], ..Message::new(classified.clone()) };
             let silent = Message { content: None, ..calling.clone() };
@@ -941,7 +949,7 @@ mod tests {
         let mut actors = ModeratorActors::new();
         let agent = AgentId::new();
         let user = ActorId::User(UserId::new());
-        let approver = ActorId::Approver(caelumora_model::approval::ApproverId::new());
+        let approver = ActorId::Approver(ApproverId::new());
         for id in [ActorId::Agent(agent), user, approver] {
             actors.add_actor(Arc::new(TestActor { id, state: ActorState::Idle }));
         }

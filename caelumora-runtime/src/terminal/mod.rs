@@ -46,9 +46,10 @@ use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{fmt, io};
 
 /// The content of a file, read or to be written, in pieces.
-pub type ByteStream = Pin<Box<dyn Stream<Item = std::io::Result<Bytes>> + Send>>;
+pub type ByteStream = Pin<Box<dyn Stream<Item = io::Result<Bytes>> + Send>>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TerminalError {
@@ -137,8 +138,8 @@ impl WorkspacePath {
     }
 }
 
-impl std::fmt::Display for WorkspacePath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for WorkspacePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.components.join("/"))
     }
 }

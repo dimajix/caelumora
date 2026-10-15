@@ -1,4 +1,4 @@
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, Guard};
 use caelumora_model::actor::ActorId;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
 use caelumora_model::session::{ChannelId, SessionId};
@@ -9,6 +9,8 @@ use caelumora_model::store::{EntityStore, StoreError, StoreResult};
 use caelumora_model::user::{User, UserId, UserProfile};
 use std::sync::Arc;
 use super::document::{log_changed, take_over};
+use chrono::Utc;
+use tokio::sync::Mutex;
 
 /// The live user of this instance, shared by all the user's actors in all
 /// sessions (issue 121), with their profile. The user record is not changed
@@ -31,7 +33,7 @@ pub struct UserController {
     profiles: Arc<dyn EntityStore<UserProfile>>,
     /// Held while the profile is changed and stored, like the other
     /// controllers.
-    write_lock: tokio::sync::Mutex<()>,
+    write_lock: Mutex<()>,
 }
 
 impl UserController {
@@ -45,17 +47,17 @@ impl UserController {
             profile: ArcSwap::from_pointee(profile.unwrap_or_else(|| UserProfile::new(id, None))),
             event_publisher,
             profiles,
-            write_lock: tokio::sync::Mutex::new(()),
+            write_lock: Mutex::new(()),
         }
     }
 
-    pub fn load(&self) -> arc_swap::Guard<Arc<User>> {
+    pub fn load(&self) -> Guard<Arc<User>> {
         self.user.load()
     }
 
     /// The user's profile as it stands. Handed out as the runtime holds it:
     /// whoever acts with it in someone's name checks that themselves.
-    pub fn profile(&self) -> arc_swap::Guard<Arc<UserProfile>> {
+    pub fn profile(&self) -> Guard<Arc<UserProfile>> {
         self.profile.load()
     }
 
@@ -129,7 +131,7 @@ impl UserController {
         let _guard = self.write_lock.lock().await;
         let mut profile = (**self.profile.load()).clone();
         let changed = change(&mut profile)?;
-        profile.prune_approval_rules(chrono::Utc::now());
+        profile.prune_approval_rules(Utc::now());
         self.save(ctx, &profile).await?;
         log_changed(ctx, &profile);
         self.profile.store(Arc::new(profile.clone()));
@@ -183,7 +185,7 @@ mod tests {
     struct Announced(Mutex<Vec<GlobalEvent>>);
 
     impl EventPublisher for Announced {
-        fn publish(&self, event: GlobalEvent, _attributes: caelumora_model::security::SecurityAttributes) {
+        fn publish(&self, event: GlobalEvent, _attributes: SecurityAttributes) {
             self.0.lock().unwrap().push(event);
         }
 

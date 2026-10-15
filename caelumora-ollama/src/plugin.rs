@@ -5,6 +5,7 @@
 use crate::client;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
+use anyhow::Result;
 
 /// Models served by Ollama, as a plugin.
 #[derive(Debug, Default)]
@@ -15,7 +16,7 @@ impl Plugin for OllamaPlugin {
         "ollama"
     }
 
-    fn register(&self, runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
         client::register(runtime.components());
         Ok(())
     }

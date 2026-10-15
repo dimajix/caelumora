@@ -61,6 +61,9 @@ use caelumora_model::store::{EntityStores, StateStore, StoreError, StoreResult, 
 use caelumora_model::workspace::Workspace;
 use caelumora_model::workspace::WorkspaceId;
 use std::sync::Arc;
+use anyhow::Error;
+use std::{fmt, result};
+use std::fmt::Debug;
 
 /// Who navigates: in whose name every edge asks its question (issue 131),
 /// and - for an agent - from where.
@@ -132,19 +135,19 @@ pub enum ViewError {
     NoContext { actor: ActorId },
     /// Reaching it failed; the cause is in the log.
     #[error("Reading failed")]
-    Failed(#[source] anyhow::Error),
+    Failed(#[source] Error),
 }
 
 impl ViewError {
     /// Reaching something failed: `error`, with what was being done, for
     /// the log - the viewer learns only that it failed.
-    pub(crate) fn failed<E>(error: E, doing: impl std::fmt::Display + Send + Sync + 'static) -> Self
+    pub(crate) fn failed<E>(error: E, doing: impl fmt::Display + Send + Sync + 'static) -> Self
     where E: std::error::Error + Send + Sync + 'static {
-        ViewError::Failed(anyhow::Error::new(error).context(doing))
+        ViewError::Failed(Error::new(error).context(doing))
     }
 }
 
-pub type ViewResult<T> = std::result::Result<T, ViewError>;
+pub type ViewResult<T> = result::Result<T, ViewError>;
 
 /// Where the running sessions are: a root of views reaches a session
 /// through its loop if it runs. The `SessionManager` knows them all; an
@@ -740,8 +743,8 @@ impl<T> Reached<T> {
     }
 }
 
-impl std::fmt::Debug for Views {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for Views {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Views").field("viewer", &self.viewer).finish_non_exhaustive()
     }
 }
@@ -750,14 +753,14 @@ impl std::fmt::Debug for Views {
 mod tests {
     use super::*;
     use crate::testing::{Script, ScriptedAgents};
-    use crate::channel::ChannelLoop;
+    use crate::channel::{ChannelLoop, VisibleHistory};
     use crate::group::keep_participants;
     use crate::runtime::RuntimeManager;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError};
     use crate::testing::test_registry;
-    use caelumora_model::actor::Rejection;
-    use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
+    use caelumora_model::actor::{Rejection, Envelope};
+    use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind, AgentChannelState};
     use caelumora_model::channel::{Channel, Participant};
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules, Visibility};
     use caelumora_model::config::AppConfig;
@@ -772,6 +775,15 @@ mod tests {
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::value::text::Introduction;
     use caelumora_model::value::text::{Briefing, Summary};
+    use caelumora_model::approval::ToolMatcher;
+    use caelumora_model::context::{ContextItem, ContextRef};
+    use caelumora_model::history::HistoryEntry;
+    use caelumora_model::turn::GivenUpReason;
+    use caelumora_model::work::TurnId;
+    use chrono::Utc;
+    use std::time::Duration;
+    use tokio::sync::broadcast::Receiver;
+    use uuid::Uuid;
 
     fn as_user(id: UserId) -> Viewer {
         Viewer::new(SecurityContext::new(ActorId::User(id), Default::default(), Default::default()))
@@ -824,7 +836,6 @@ mod tests {
 
     #[tokio::test]
     async fn the_context_of_an_external_agent_is_what_the_remote_agent_was_given() {
-        use caelumora_model::agent::AgentChannelState;
         use caelumora_model::message::{Message, MessageId};
         use caelumora_model::store::StateStore;
 
@@ -839,12 +850,12 @@ mod tests {
         stored_channel(&store, &channel).await;
 
         let said = |t: &str| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        let (question, answer) = (said("question"), Message { turn_id: Some(caelumora_model::work::TurnId::new()), ..said("answer") });
+        let (question, answer) = (said("question"), Message { turn_id: Some(TurnId::new()), ..said("answer") });
         let mut state = AgentChannelState::default();
         // One call: the question was given, the transcript started anew,
         // and the answer came of it.
         state.transcript.extend(vec![question.clone()]);
-        let given = caelumora_model::context::ContextRef { transcript: state.transcript.start_anew(), ..Default::default() };
+        let given = ContextRef { transcript: state.transcript.start_anew(), ..Default::default() };
         let later = said("later");
         state.transcript.extend(vec![later.clone()]);
         state.history.extend(vec![question.clone()]);
@@ -858,10 +869,10 @@ mod tests {
         let texts = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
         assert_eq!(texts(seen.transcript().messages()), ["later"], "what it is given next, not what it was given or answered");
         assert_eq!(seen.private_notes(), (Vec::new(), None), "an external agent writes none");
-        assert!(!seen.history().iter().any(|item| matches!(item, caelumora_model::history::HistoryEntry::TurnGivenUp { .. })));
+        assert!(!seen.history().iter().any(|item| matches!(item, HistoryEntry::TurnGivenUp { .. })));
         let context = seen.context_of(answer.id).expect("what the call was given (issue 205)");
         assert_eq!(context.items.len(), 1, "the messages of the one call, no prompt parts");
-        assert!(matches!(&context.items[0], caelumora_model::context::ContextItem::Conversation { message } if message.id == question.id));
+        assert!(matches!(&context.items[0], ContextItem::Conversation { message } if message.id == question.id));
         assert!(context.tool_sets.is_empty(), "and no tools: those are the remote agent's");
         assert_eq!(seen.classification_of(answer.id), Some(Classification::CHANNEL_DEFAULT), "its answer is in its history");
         assert_eq!(member.private_notes().await.unwrap(), (Vec::new(), None));
@@ -883,7 +894,7 @@ mod tests {
         let main = main_channel(&session);
         let running = manager.create(as_user(alice.id).context(), session, vec![main]).await.unwrap();
         // Alice's alone: bob takes part in the session, not in this channel.
-        let hers = running.create_channel(as_user(alice.id).context(), crate::session::ChannelSpec { name: "private".to_string(), components: Default::default(), classification: None, language: None, uses_workspace: None, participants: vec![] }).await.unwrap().id();
+        let hers = running.create_channel(as_user(alice.id).context(), ChannelSpec { name: "private".to_string(), components: Default::default(), classification: None, language: None, uses_workspace: None, participants: vec![] }).await.unwrap().id();
         let id = running.id();
 
         let check = |state: &'static str| {
@@ -938,7 +949,7 @@ mod tests {
         let (store, manager) = owned_runtime(Default::default());
         let alice = user("Alice Example");
         let gone = UserId::new();
-        let approver = Approver { id: ApproverId(uuid::Uuid::new_v4()), strategy: ApprovalStrategy::Any };
+        let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::Any };
         let mut session = make_session("s", ActorId::User(alice.id));
         session.participants = record_users(&manager, &[&alice]).await;
         let mut channel = main_channel(&session);
@@ -988,7 +999,7 @@ mod tests {
         let mut personality = store.entity_stores().personalities.get(&system, remote.personality_id).await.unwrap();
         personality.introduction = Some(Introduction::new("Answers questions about the weather.").unwrap());
         store.entity_stores().personalities.update(&system, &personality).await.unwrap();
-        let approver = Approver { id: ApproverId(uuid::Uuid::new_v4()), strategy: ApprovalStrategy::Any };
+        let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::Any };
 
         let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&manager, &[&alice, &bob]).await;
@@ -1045,7 +1056,7 @@ mod tests {
         state.history.extend(vec![first.clone(), second.clone()]);
         store.put_channel_state(channel.id, &mut state).await.unwrap();
         // What the agent noted and saw.
-        let mut agent_state = caelumora_model::agent::AgentChannelState::default();
+        let mut agent_state = AgentChannelState::default();
         agent_state.notes.push(Change::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         agent_state.private_notes.push(Change::Add { id: NoteId(1), text: "mine".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         agent_state.transcript.push(first.clone());
@@ -1117,7 +1128,7 @@ mod tests {
         let mut state = ChannelState::new(hers.id);
         state.history.extend(vec![Message { id: MessageId::new(), content: Some("hers alone".to_string()), ..Message::new(hers.classification.clone()) }]);
         store.put_channel_state(hers.id, &mut state).await.unwrap();
-        let mut agent_state = caelumora_model::agent::AgentChannelState::default();
+        let mut agent_state = AgentChannelState::default();
         let note = |text: &str| Change::Add { id: NoteId(1), text: text.to_string(), classification: hers.classification.clone() };
         agent_state.notes.push(note("noted for all"), NoteOrigin::default(), MessageId::default());
         agent_state.private_notes.push(note("noted for itself"), NoteOrigin::default(), MessageId::default());
@@ -1161,7 +1172,7 @@ mod tests {
             stored_channel(&store, channel).await;
         }
         for (channel, text) in [(&zeta, "noted in zeta"), (&alpha, "noted in alpha")] {
-            let mut state = caelumora_model::agent::AgentChannelState::default();
+            let mut state = AgentChannelState::default();
             state.private_notes.push(Change::Add { id: NoteId(1), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
             store.put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
         }
@@ -1196,7 +1207,7 @@ mod tests {
         stored_channel(&store, &channel).await;
         // What it kept while it ran: the same state, whatever its kind was
         // (issue 206).
-        let mut kept = caelumora_model::agent::AgentChannelState::default();
+        let mut kept = AgentChannelState::default();
         kept.notes.push(Change::Add { id: NoteId(1), text: "kept".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         store.put_agent_channel_state(helper.id, channel.id, &mut kept).await.unwrap();
         assert!(store.entity_stores().personalities.delete(&system, helper.personality_id).await.unwrap());
@@ -1215,7 +1226,6 @@ mod tests {
     #[tokio::test]
     async fn the_approvals_a_channel_waits_for_are_read_from_its_agents_turns() {
         use caelumora_model::actor::ActorState;
-        use caelumora_model::agent::AgentChannelState;
         use caelumora_model::store::StateStore;
         use caelumora_model::tool::{ToolCall, ToolCallState};
         use caelumora_model::turn::TurnState;
@@ -1232,7 +1242,7 @@ mod tests {
 
         // The agent's turn waits for one call, the other was approved.
         let call = |name: &str| ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
-        let waiting = ToolCallState::pending(call("delete"), "Delete it?".to_string(), false, caelumora_model::approval::ToolMatcher::everything(), None);
+        let waiting = ToolCallState::pending(call("delete"), "Delete it?".to_string(), false, ToolMatcher::everything(), None);
         let mut turn = TurnState::default();
         turn.work.event_context.session_id = session.id;
         turn.work.event_context.channel_id = channel.id;
@@ -1250,7 +1260,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_snapshot_holds_the_details_asked_for_and_no_others() {
-        use caelumora_model::agent::AgentChannelState;
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId, TokenUsage};
         use caelumora_model::note::{NoteId, NoteOrigin};
@@ -1283,7 +1292,7 @@ mod tests {
         let mut turn = TurnState::default();
         turn.work.event_context.sender_id = ActorId::Agent(helper.id);
         let call = ToolCall { id: Some("delete".to_string()), function_name: "delete".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
-        turn.tool_calls = vec![ToolCallState::pending(call, "Delete it?".to_string(), false, caelumora_model::approval::ToolMatcher::everything(), None)];
+        turn.tool_calls = vec![ToolCallState::pending(call, "Delete it?".to_string(), false, ToolMatcher::everything(), None)];
         state.turn = Some(turn);
         store.put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
 
@@ -1310,7 +1319,7 @@ mod tests {
     #[tokio::test]
     async fn an_agent_reads_another_channel_as_a_whole_by_their_classifications_or_what_was_released_to_it() {
         use caelumora_model::channel::ChannelState;
-        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality, ConfidentialityRules};
+        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId};
         use caelumora_model::note::{NoteId, NoteOrigin};
@@ -1345,10 +1354,10 @@ mod tests {
         let said = |t: &str, classification: &Classification| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(classification.clone()) };
         let mut state = ChannelState::new(secret.id);
         state.history.extend(vec![said("the plan", &secret.classification), said("the date", &public.classification)]);
-        let ended = caelumora_model::history::HistoryEntry::TurnGivenUp { turn_id: caelumora_model::work::TurnId::new(), actor: ActorId::Agent(helper.id), reason: caelumora_model::turn::GivenUpReason::Stopped, at: chrono::Utc::now() };
+        let ended = HistoryEntry::TurnGivenUp { turn_id: TurnId::new(), actor: ActorId::Agent(helper.id), reason: GivenUpReason::Stopped, at: Utc::now() };
         state.history.end_turn(ended);
         store.put_channel_state(secret.id, &mut state).await.unwrap();
-        let mut agent_state = caelumora_model::agent::AgentChannelState::default();
+        let mut agent_state = AgentChannelState::default();
         let note = |id, text: &str, classification: &Classification| Change::Add { id: NoteId(id), text: text.to_string(), classification: classification.clone() };
         agent_state.notes.push(note(1, "noted secretly", &secret.classification), NoteOrigin::default(), MessageId::default());
         agent_state.notes.push(note(2, "noted openly", &public.classification), NoteOrigin::default(), MessageId::default());
@@ -1364,7 +1373,7 @@ mod tests {
             Viewer::from_place(context, from)
         };
         let names = |channels: Vec<ChannelView>| channels.iter().map(|c| c.name().to_string()).collect::<Vec<_>>();
-        let texts = |history: crate::channel::VisibleHistory| history.messages().iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        let texts = |history: VisibleHistory| history.messages().iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
 
         let from_team = manager.views(reading_from(&team)).session(session.id).await.unwrap();
         assert_eq!(names(from_team.channels().await), ["public", "team"], "as a whole: what is public, and itself");
@@ -1538,7 +1547,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_reads_another_by_their_classification_not_by_who_takes_part() {
         use caelumora_model::actor::ActorId;
-        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality, ConfidentialityRules};
+        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let (_, manager) = owned_runtime(ConfidentialityRules::new(compartments));
@@ -1550,7 +1559,7 @@ mod tests {
         // Her context carries her roles, as her controller gives it (issue 304).
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default()).with_roles(alice.roles.clone(), None);
         let mut session = make_session("hers", alice_id);
-        session.security_attributes = session.security_attributes.clone().granting(caelumora_model::security::Subject::Actor(bob_id), caelumora_model::security::Grant::Read);
+        session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
 
@@ -1604,7 +1613,7 @@ mod tests {
         let channel = Arc::clone(&hers.channels()[0]);
         let runtime = actor_runtime_in(&hers, &channel, alice_id);
         let session = runtime.session_view(&alice_ctx, channel.classification()).await.expect("attached to its session");
-        let stranger = SecurityContext::new(ActorId::Agent(caelumora_model::agent::AgentId::new()), Default::default(), Default::default());
+        let stranger = SecurityContext::new(ActorId::Agent(AgentId::new()), Default::default(), Default::default());
         assert!(runtime.session_view(&stranger, channel.classification()).await.is_none(), "reached by who may read it alone (issue 304)");
 
         let own = session.privacy();
@@ -1620,7 +1629,7 @@ mod tests {
     async fn a_released_message_is_read_where_its_channel_is_not() {
         use crate::view::ViewError;
         use caelumora_model::actor::ActorId;
-        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality, ConfidentialityRules};
+        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
         let (_, manager) = owned_runtime(ConfidentialityRules::new(compartments));
@@ -1663,9 +1672,6 @@ mod tests {
     #[tokio::test]
     async fn a_member_s_answer_under_way_is_in_the_snapshot_of_its_channel() {
         use caelumora_model::actor::{ActorEvent, ActorId};
-        use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
-        use caelumora_model::scope::Scope;
-        use caelumora_model::snapshot::Detail;
 
         let store = Arc::new(MemoryStore::new());
         let registry = test_registry(Arc::<MemoryStore>::clone(&store));
@@ -1696,10 +1702,10 @@ mod tests {
         let session = create(&manager, &alice_ctx, session).await.unwrap();
         let channel = session.create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), agent])).await.unwrap();
         let mut events = channel.user_actor(alice.id).unwrap().watch().events;
-        let shown = |events: &mut tokio::sync::broadcast::Receiver<caelumora_model::actor::Envelope>, wanted: &'static str| {
+        let shown = |events: &mut Receiver<Envelope>, wanted: &'static str| {
             let mut events = events.resubscribe();
             async move {
-                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                tokio::time::timeout(Duration::from_secs(5), async {
                     loop {
                         let envelope = events.recv().await.expect("the channel is running");
                         if envelope.context.sender_id == agent && envelope.event.kind() == wanted { break envelope.event }

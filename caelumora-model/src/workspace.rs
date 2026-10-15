@@ -8,7 +8,7 @@
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::removal::{Deletable, Removal};
-use crate::scope::{Scope, ScopeField, Scoped};
+use crate::scope::{Scope, ScopeField, Scoped, validate_users_own};
 use crate::group::GroupId;
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::user::UserId;
@@ -131,7 +131,7 @@ impl Stored for Workspace {
     /// lies in a session's scope, its owner's or the global one: not in a
     /// channel's, since a session's channels share one.
     fn validate(&self) -> Result<(), String> {
-        crate::scope::validate_users_own("workspace", &self.security_attributes, &self.name.scope)
+        validate_users_own("workspace", &self.security_attributes, &self.name.scope)
     }
 
     fn classification(&self) -> Option<&Classification> {
@@ -189,7 +189,7 @@ pub enum WorkspaceChoice {
     /// One of its maker's own, attached as to a running session - theirs to
     /// share and of no other session's scope -, shared with the session's
     /// members as far as `share` says, if it says anything (issue 23).
-    Existing { id: WorkspaceId, share: Option<crate::security::Grant> },
+    Existing { id: WorkspaceId, share: Option<Grant> },
     /// One made for the session alone, in its scope and named as it is, as
     /// a template's of the session's scope is made.
     New { storage: String, classification: Classification },

@@ -332,7 +332,7 @@ impl EventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy};
+    use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy, AclEntry};
     use caelumora_model::actor::ActorId;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use std::time::Duration;
@@ -341,6 +341,9 @@ mod tests {
     use caelumora_model::event::EntityChange;
     use caelumora_model::store::Stored;
     use caelumora_model::workspace::{Workspace, WorkspaceId};
+    use caelumora_model::scope::Scope;
+    use caelumora_model::value::name::ScopedName;
+    use caelumora_model::value::text::Introduction;
 
     fn bus() -> EventBus {
         EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()))
@@ -439,7 +442,7 @@ mod tests {
         let mut bobs = bus.subscribe_as(as_user(bob));
         let mut carols = bus.subscribe_as(as_user(carol));
 
-        let hers = SecurityAttributes::owned_by(ActorId::User(alice)).granting(caelumora_model::security::Subject::Actor(ActorId::User(bob)), caelumora_model::security::Grant::Read);
+        let hers = SecurityAttributes::owned_by(ActorId::User(alice)).granting(Subject::Actor(ActorId::User(bob)), Grant::Read);
         let (session, deleted) = (SessionId::new(), SessionId::new());
         bus.publish(GlobalEvent::created::<Session>(&session), hers.clone());
         bus.publish(GlobalEvent::created::<Channel>(&(session, ChannelId::new())), hers.clone());
@@ -510,8 +513,8 @@ mod tests {
         let mut alices = bus.subscribe_as(as_user(alice));
         let mut bobs = bus.subscribe_as(as_user(bob));
 
-        let profile = caelumora_model::user::UserProfile::new(alice, Some(caelumora_model::value::text::Introduction::new("I run the budget.").unwrap()));
-        let attributes = caelumora_model::security::Secured::security_attributes(&profile).clone();
+        let profile = UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
+        let attributes = Secured::security_attributes(&profile).clone();
         bus.publish(GlobalEvent::updated::<UserProfile>(&alice, &profile), attributes);
 
         assert_eq!(drain(&mut alices).await.len(), 1, "hers");
@@ -549,8 +552,8 @@ mod tests {
         let mut carols = bus.subscribe_as(as_user(carol));
         let mut everything = bus.subscribe_all();
 
-        let mut workspace = caelumora_model::workspace::Workspace::new(caelumora_model::value::name::ScopedName::new("docs", caelumora_model::scope::Scope::UserScope { user_id: alice }).unwrap(), "main", Default::default(), alice);
-        workspace.security_attributes.acl.push(caelumora_model::security::AclEntry { subject: caelumora_model::security::Subject::Actor(ActorId::User(bob)), grant: caelumora_model::security::Grant::Read });
+        let mut workspace = Workspace::new(ScopedName::new("docs", Scope::UserScope { user_id: alice }).unwrap(), "main", Default::default(), alice);
+        workspace.security_attributes.acl.push(AclEntry { subject: Subject::Actor(ActorId::User(bob)), grant: Grant::Read });
         let attributes = workspace.security_attributes.clone();
         bus.publish(GlobalEvent::created::<Workspace>(&workspace.id), attributes.clone());
         bus.publish(GlobalEvent::deleted::<Workspace>(&workspace.id), attributes);

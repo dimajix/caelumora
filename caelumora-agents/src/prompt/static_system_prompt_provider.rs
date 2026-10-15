@@ -9,6 +9,7 @@ use crate::work::AgentWork;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use std::sync::Arc;
+use serde_json::Value;
 
 pub const STATIC_SYSTEM_PROMPT_PROVIDER_KIND: &str = "static_system_prompt_provider";
 
@@ -39,7 +40,7 @@ impl StaticSystemPromptProvider {
     /// # Errors
     /// `ComponentError::InvalidConfig` if `prompt` is missing or a parameter
     /// is not what it should be.
-    fn of_params(params: &serde_json::Value) -> Result<Self, ComponentError> {
+    fn of_params(params: &Value) -> Result<Self, ComponentError> {
         let prompt = params.get("prompt")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())

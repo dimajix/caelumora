@@ -7,6 +7,7 @@ use crate::docker;
 use caelumora_runtime::backend::Backends;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
+use anyhow::Result;
 
 /// The storages `open_terminal_shared` and, with the feature `docker`,
 /// `open_terminal_docker`, as a plugin.
@@ -24,7 +25,7 @@ impl Plugin for OpenTerminalPlugin {
         docker::register_backend(backends);
     }
 
-    fn register(&self, _runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+    fn register(&self, _runtime: &mut RuntimeBuilder) -> Result<()> {
         Ok(())
     }
 }

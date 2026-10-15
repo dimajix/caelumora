@@ -200,6 +200,7 @@ mod tests {
     use crate::template::SessionTemplate;
     use crate::value::name::ScopedName;
     use crate::workspace::Workspace;
+    use crate::agent::AgentId;
 
     /// A plugin's kind (issue 323), as skills are.
     const SKILL: EntityKind = EntityKind::new("skill");
@@ -229,7 +230,7 @@ mod tests {
             assert_eq!(allows(who, ActionType::ModifyMessage { author, channel: &bobs }).await, allowed, "modified by {who}: the author's, not the channel owner's");
             assert_eq!(allows(who, ActionType::RevokeMessage { author, channel: &bobs }).await, allowed, "taken back by {who}");
         }
-        let agent = ActorId::Agent(crate::agent::AgentId::new());
+        let agent = ActorId::Agent(AgentId::new());
         let for_alice = context(alice).next(agent, alice, alice);
         let access_policy = OwnershipPolicy::new();
         assert!(access_policy.check(&for_alice, ActionType::RevokeMessage { author: agent, channel: &bobs }).await, "an agent its own, acting for alice");
@@ -239,7 +240,7 @@ mod tests {
     #[tokio::test]
     async fn an_agent_is_judged_by_its_owner_not_by_whoever_asked_it() {
         let (alice, bob) = (user(), user());
-        let agent = ActorId::Agent(crate::agent::AgentId::new());
+        let agent = ActorId::Agent(AgentId::new());
         let hers = SecurityAttributes::owned_by(alice);
         let access_policy = OwnershipPolicy::new();
         let asked_by_bob = context(bob).next(agent, alice, alice);
@@ -311,7 +312,7 @@ mod tests {
     #[tokio::test]
     async fn an_agent_reads_what_its_owner_may_read_or_it_takes_part_in_and_changes_as_its_owner() {
         let (alice, bob) = (user(), user());
-        let (hers, his, member) = (ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()));
+        let (hers, his, member) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()));
         let place = GroupId::of_channel(ChannelId::new());
         let alices = SecurityAttributes::owned_by(alice).granting(Subject::Group(place), Grant::Read);
         let access_policy = knowing(Known { members: vec![(member, place)] });
@@ -341,7 +342,7 @@ mod tests {
         assert!(may(owner, message).await, "so does the channel's owner");
         assert!(!may(stranger, message).await, "nobody else");
 
-        let agent = ActorId::Agent(crate::agent::AgentId::new());
+        let agent = ActorId::Agent(AgentId::new());
         for own in [Reclassified::Note { author: agent, attributes: &attributes }, Reclassified::Memory { author: agent, attributes: &attributes }] {
             assert!(may(agent, own).await, "an agent what it wrote");
             assert!(!may(owner, own).await, "not even the channel's owner another's");
@@ -399,7 +400,7 @@ mod tests {
     async fn a_role_grants_to_whoever_holds_it_an_agent_narrowed_by_its_personality() {
         let (alice, bob) = (user(), user());
         let (hr, staff) = (RoleId::new(), RoleId::new());
-        let agent = ActorId::Agent(crate::agent::AgentId::new());
+        let agent = ActorId::Agent(AgentId::new());
         let hers = SecurityAttributes::owned_by(alice).granting(Subject::Role(hr), Grant::Read);
         // Bob holds hr; his agent is limited to staff, so of his roles only
         // that counts for it - as its context says (issue 304).
@@ -452,7 +453,7 @@ mod tests {
         assert!(!allows(bob, join(&written)).await, "nor writing");
         let open = SecurityAttributes::owned_by(alice).granting(Subject::Everyone, Grant::Join);
         assert!(allows(carol, join(&open)).await, "an entry for everyone lets every user join");
-        let agent = ActorId::Agent(crate::agent::AgentId::new());
+        let agent = ActorId::Agent(AgentId::new());
         assert!(OwnershipPolicy::new().check(&context(carol).next(agent, carol, carol), join(&open)).await, "an agent by its owner");
         assert!(!allows(carol, ActionType::get(Session::KIND, &open)).await, "and reading it is another entry");
         assert!(allows(carol, ActionType::get(Session::KIND, &SecurityAttributes::owned_by(alice).granting(Subject::Everyone, Grant::Read))).await, "which may be for everyone, too");

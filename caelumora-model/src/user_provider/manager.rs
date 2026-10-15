@@ -4,7 +4,7 @@
 use super::{AuthError, AuthResult, Credential, UserProvider};
 use crate::event::{EventPublisher, GlobalEvent};
 use crate::security::{Secured, SecurityContext};
-use crate::store::{EntityStore, StoreResultExt};
+use crate::store::{EntityStore, StoreResultExt, StoreError};
 use crate::user::{User, UserId, UserUpdateEvent};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -93,7 +93,7 @@ impl UserManager {
     /// kept -, and announced. Answers the record as it now stands.
     async fn record(&self, found: User) -> AuthResult<User> {
         let system = SecurityContext::system();
-        let backend = |e: crate::store::StoreError| AuthError::Backend(e.to_string());
+        let backend = |e: StoreError| AuthError::Backend(e.to_string());
         let Some(stored) = self.store.get(&system, found.id).await.optional().map_err(backend)? else {
             self.store.create(&system, &found).await.map_err(backend)?;
             self.events.publish(GlobalEvent::created::<User>(&found.id), found.security_attributes().clone());

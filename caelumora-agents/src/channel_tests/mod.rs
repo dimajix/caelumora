@@ -7,7 +7,7 @@
 use caelumora_runtime::channel::*;
 use caelumora_runtime::channel::testing::*;
 use caelumora_runtime::session::testing::user;
-use caelumora_runtime::component::ComponentRegistry;
+use caelumora_runtime::component::{ComponentRegistry, ComponentFacets};
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::testing::test_registry;
 use anyhow::Result;
@@ -15,12 +15,12 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::channel::{Channel, Participant};
 use caelumora_model::security::{ActionType, SecurityContext, AccessPolicy};
 use caelumora_model::user::UserId;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use caelumora_runtime::command::help_command::HelpCommandProvider;
-use caelumora_runtime::command::CommandExecutor;
+use caelumora_runtime::command::{CommandExecutor, CommandResult, ProvidesCommands};
 use caelumora_model::agent::AgentId;
-use caelumora_model::component::{ComponentConfig, ComponentFailPolicy};
+use caelumora_model::component::{ComponentConfig, ComponentFailPolicy, ComponentDescriptor};
 use caelumora_model::confidentiality::ConfidentialityRules;
 use caelumora_model::config::AppConfig;
 use caelumora_model::secret::SecretManager;
@@ -31,7 +31,7 @@ use caelumora_runtime::component::ComponentKind;
 use caelumora_model::actor::{EventContext, RetryTarget};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::history::HistoryEntry;
-use caelumora_model::message::{Message, MessageId};
+use caelumora_model::message::{Message, MessageId, MessageEvent};
 use caelumora_model::work::TurnId;
 use tokio::sync::broadcast;
 use caelumora_runtime::view::AgentContextView;
@@ -39,8 +39,20 @@ use crate::command::AgentCommandProvider;
 use crate::plugin::AgentsPlugin;
 use crate::work::AgentWork;
 use crate::prompt::{ContextError, Prompt, PromptProvider};
-use crate::message::ProcessingError;
-use crate::llm::LLMClient;
+use crate::message::{ProcessingError, MessageProcessor, PerceiveInProcessor};
+use crate::llm::{LLMClient, LLMResult};
+use caelumora_model::command::{Command, CommandOutput};
+use caelumora_model::context::ModelProfile;
+use caelumora_model::question::{Answers, Questions};
+use caelumora_model::tool::{Tool, ToolParameters};
+use caelumora_runtime::actor::user::ChannelWatch;
+use crate::notes::{AgentNotes, NoteKind};
+use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::turn::Turn;
+use futures::stream::BoxStream;
+use serde_json::Value;
+use std::collections::VecDeque;
+use tokio::sync::broadcast::Receiver;
 
 mod agent;
 mod agent_commands;
@@ -48,7 +60,7 @@ mod external_agent;
 mod questions;
 
 /// What the channel shows next of `wanted`'s kind from `agent`.
-async fn shown_by(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: AgentId, wanted: &str) -> ActorEvent {
+async fn shown_by(events: &mut Receiver<Envelope>, agent: AgentId, wanted: &str) -> ActorEvent {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
@@ -65,13 +77,13 @@ pub(super) struct NeverAnswers;
 
 #[async_trait::async_trait]
 impl LLMClient for NeverAnswers {
-    async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::Tool])
-        -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
+    async fn chat_completion(&self, _: &[Message], _: &[Tool])
+        -> BoxStream<'static, LLMResult<MessageEvent>>
     {
         Box::pin(futures::stream::pending())
     }
 
-    fn profile(&self) -> caelumora_model::context::ModelProfile {
+    fn profile(&self) -> ModelProfile {
         Default::default()
     }
 }
@@ -106,7 +118,7 @@ pub(super) async fn agent_channel(access_policy: Arc<dyn AccessPolicy>, model: A
     registry.register(
         ComponentKind::new("test_model").provides::<dyn LLMClient>(),
         move |_descriptor, _context| {
-            let mut facets = caelumora_runtime::component::ComponentFacets::empty();
+            let mut facets = ComponentFacets::empty();
             facets.insert::<dyn LLMClient>(Arc::clone(&model));
             Ok(facets)
         },
@@ -115,10 +127,10 @@ pub(super) async fn agent_channel(access_policy: Arc<dyn AccessPolicy>, model: A
     register_asking_tool(&mut registry);
     register_marking_command(&mut registry);
     let defaults = ComponentConfig {
-        component_nodes: vec![caelumora_model::component::ComponentDescriptor {
+        component_nodes: vec![ComponentDescriptor {
             id: "model".to_string(),
             kind: "test_model".to_string(),
-            params: serde_json::Value::Null,
+            params: Value::Null,
             tags: Vec::new(),
             fail_policy: Default::default(),
         }],
@@ -130,20 +142,20 @@ pub(super) async fn agent_channel(access_policy: Arc<dyn AccessPolicy>, model: A
 /// A model that gives the answers it was given, one per call, and then
 /// none.
 #[derive(Debug)]
-struct Scripted(std::sync::Mutex<std::collections::VecDeque<Message>>);
+struct Scripted(Mutex<VecDeque<Message>>);
 
 #[async_trait::async_trait]
 impl LLMClient for Scripted {
-    async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::Tool])
-        -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
+    async fn chat_completion(&self, _: &[Message], _: &[Tool])
+        -> BoxStream<'static, LLMResult<MessageEvent>>
     {
         match self.0.lock().unwrap().pop_front() {
-            Some(answer) => Box::pin(futures::stream::iter([Ok(caelumora_model::message::MessageEvent::Complete(answer))])),
+            Some(answer) => Box::pin(futures::stream::iter([Ok(MessageEvent::Complete(answer))])),
             None => Box::pin(futures::stream::pending()),
         }
     }
 
-    fn profile(&self) -> caelumora_model::context::ModelProfile {
+    fn profile(&self) -> ModelProfile {
         Default::default()
     }
 }
@@ -165,7 +177,7 @@ async fn told_states(shown: &mut broadcast::Receiver<Envelope>, agent: AgentId, 
 /// Why the agent `agent` gave its next turn up, as its `TurnGivenUp`
 /// says: what its users are told of a failure, else the cause - with
 /// the channel, if it was lowered.
-async fn turn_given_up(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: AgentId) -> String {
+async fn turn_given_up(events: &mut Receiver<Envelope>, agent: AgentId) -> String {
     use caelumora_model::turn::GivenUpReason;
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -188,13 +200,13 @@ async fn turn_given_up(events: &mut tokio::sync::broadcast::Receiver<Envelope>, 
 struct NoSecrets;
 
 #[async_trait::async_trait]
-impl crate::message::MessageProcessor for NoSecrets {
+impl MessageProcessor for NoSecrets {
     async fn process_messages(&self, input: Vec<Message>, _security: &SecurityContext) -> Result<Vec<Message>, ProcessingError> {
         Ok(input.into_iter().filter(|m| !m.content.as_deref().unwrap_or_default().contains("secret")).collect())
     }
 }
 
-impl crate::message::PerceiveInProcessor for NoSecrets {}
+impl PerceiveInProcessor for NoSecrets {}
 
 /// A prompt part that changes with every message the agent hears: how
 /// many its history holds.
@@ -218,30 +230,30 @@ struct Asking {
 }
 
 #[async_trait::async_trait]
-impl crate::tool::ToolProvider for Asking {
+impl ToolProvider for Asking {
     fn description(&self) -> String {
         "asks first".to_string()
     }
-    fn tools(&self) -> Vec<caelumora_model::tool::Tool> {
-        vec![caelumora_model::tool::Tool {
+    fn tools(&self) -> Vec<Tool> {
+        vec![Tool {
             name: "asking".to_string(),
             description: "asks first".to_string(),
-            parameters: caelumora_model::tool::ToolParameters::object(Vec::<(String, caelumora_model::tool::ToolParameters)>::new(), Vec::<String>::new()),
+            parameters: ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()),
             requires_approval: false,
             visibility: Default::default(),
             classification: None,
             presentation: Default::default(),
         }]
     }
-    async fn execute(&self, _name: &str, _params: &serde_json::Value, answers: Option<&caelumora_model::question::Answers>, _turn: &mut crate::turn::Turn) -> crate::tool::ToolResult<crate::tool::ToolOutput> {
-        let answers = answers.ok_or_else(|| crate::tool::ToolError::ExecutionFailed("no answers".to_string()))?;
+    async fn execute(&self, _name: &str, _params: &Value, answers: Option<&Answers>, _turn: &mut Turn) -> ToolResult<ToolOutput> {
+        let answers = answers.ok_or_else(|| ToolError::ExecutionFailed("no answers".to_string()))?;
         if self.sensitive {
             return Ok(serde_json::json!({ "received": answers.responses.len() }).into());
         }
         Ok(serde_json::json!({ "answered_by": answers.answered_by_name, "responses": answers.responses }).into())
     }
-    fn questions(&self, _name: &str, _params: &serde_json::Value) -> crate::tool::ToolResult<Option<caelumora_model::question::Questions>> {
-        use caelumora_model::question::{Addressee, Question, Questions};
+    fn questions(&self, _name: &str, _params: &Value) -> ToolResult<Option<Questions>> {
+        use caelumora_model::question::{Addressee, Question};
         Ok(Some(Questions {
             questions: vec![Question { header: "Secret".to_string(), question: "What is it?".to_string(), choices: Vec::new(), multi_select: false }],
             ask: vec![Addressee::Owner],
@@ -256,20 +268,20 @@ impl crate::tool::ToolProvider for Asking {
 #[derive(Debug)]
 struct Marking;
 
-impl caelumora_runtime::command::ProvidesCommands for Marking {
-    fn commands(&self) -> Vec<caelumora_model::command::Command> {
-        vec![caelumora_model::command::Command { name: "mark".to_string(), description: "Marks.".to_string(), usage: Some("[text]".to_string()), owners_only: false }]
+impl ProvidesCommands for Marking {
+    fn commands(&self) -> Vec<Command> {
+        vec![Command { name: "mark".to_string(), description: "Marks.".to_string(), usage: Some("[text]".to_string()), owners_only: false }]
     }
 }
 
 #[async_trait::async_trait]
 impl AgentCommandProvider for Marking {
-    async fn execute(&self, _name: &str, args: &str, turn: &mut crate::turn::Turn<'_>) -> caelumora_runtime::command::CommandResult<caelumora_model::command::CommandOutput> {
-        crate::notes::AgentNotes::note(turn, crate::notes::NoteKind::Public, format!("marked {args}"));
+    async fn execute(&self, _name: &str, args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
+        AgentNotes::note(turn, NoteKind::Public, format!("marked {args}"));
         if args == "fail" {
             return Err(CommandError::Failed { command: "mark".to_string(), reason: "it was told to".to_string() });
         }
-        Ok(caelumora_model::command::CommandOutput::private("Marked."))
+        Ok(CommandOutput::private("Marked."))
     }
 }
 
@@ -277,7 +289,7 @@ fn register_marking_command(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new("test_marking").provides::<dyn AgentCommandProvider>(),
         |_descriptor, _context| {
-            let mut facets = caelumora_runtime::component::ComponentFacets::empty();
+            let mut facets = ComponentFacets::empty();
             facets.insert::<dyn AgentCommandProvider>(Arc::new(Marking));
             Ok(facets)
         },
@@ -287,7 +299,7 @@ fn register_marking_command(registry: &mut ComponentRegistry) {
 /// What reaches `watch` of a command carried out (issues 269, 299):
 /// that it began, if it was told so, the states the agent told of
 /// meanwhile, and the answer.
-async fn command_events(watch: &mut caelumora_runtime::actor::user::ChannelWatch) -> (Option<Envelope>, Vec<ActorState>, Envelope) {
+async fn command_events(watch: &mut ChannelWatch) -> (Option<Envelope>, Vec<ActorState>, Envelope) {
     tokio::time::timeout(Duration::from_secs(5), async {
         let (mut started, mut states) = (None, Vec::new());
         loop {
@@ -304,11 +316,11 @@ async fn command_events(watch: &mut caelumora_runtime::actor::user::ChannelWatch
 
 fn register_asking_tool(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new("test_asking_tool").provides::<dyn crate::tool::ToolProvider>(),
+        ComponentKind::new("test_asking_tool").provides::<dyn ToolProvider>(),
         |descriptor, _context| {
-            let sensitive = descriptor.params.get("sensitive").and_then(serde_json::Value::as_bool).unwrap_or(false);
-            let mut facets = caelumora_runtime::component::ComponentFacets::empty();
-            facets.insert::<dyn crate::tool::ToolProvider>(Arc::new(Asking { sensitive }));
+            let sensitive = descriptor.params.get("sensitive").and_then(Value::as_bool).unwrap_or(false);
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ToolProvider>(Arc::new(Asking { sensitive }));
             Ok(facets)
         },
     );
@@ -316,10 +328,10 @@ fn register_asking_tool(registry: &mut ComponentRegistry) {
 
 fn register_no_secrets(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new("test_no_secrets").provides::<dyn crate::message::PerceiveInProcessor>(),
+        ComponentKind::new("test_no_secrets").provides::<dyn PerceiveInProcessor>(),
         |_descriptor, _context| {
-            let mut facets = caelumora_runtime::component::ComponentFacets::empty();
-            facets.insert::<dyn crate::message::PerceiveInProcessor>(Arc::new(NoSecrets));
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn PerceiveInProcessor>(Arc::new(NoSecrets));
             Ok(facets)
         },
     );

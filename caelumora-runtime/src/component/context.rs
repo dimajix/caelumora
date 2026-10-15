@@ -5,6 +5,8 @@ use std::sync::Arc;
 use super::container::{ComponentImpl, Graph};
 use super::registry::Registration;
 use super::{require_declared, ComponentError, ComponentResult};
+use std::fmt;
+use std::fmt::Debug;
 
 /// The service `T` of `services`, for what is made with them: a component
 /// (`ComponentContext::service`), a backend (`Backends`).
@@ -44,8 +46,8 @@ pub struct ComponentContext {
     pub(super) building: Option<(Arc<Graph>, String)>,
 }
 
-impl std::fmt::Debug for ComponentContext {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for ComponentContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ComponentContext")
             .field("security_context", &self.security_context)
             .field("services", &self.services.names())

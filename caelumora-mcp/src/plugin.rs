@@ -4,6 +4,7 @@
 use crate::tool;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
+use anyhow::Result;
 
 /// The tools of MCP servers, as a plugin.
 #[derive(Debug, Default)]
@@ -14,7 +15,7 @@ impl Plugin for McpPlugin {
         "mcp"
     }
 
-    fn register(&self, runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
         tool::register(runtime.components());
         Ok(())
     }

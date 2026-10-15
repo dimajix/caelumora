@@ -14,7 +14,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::workspace::WorkspaceId;
 use futures::StreamExt;
 use serde::Deserialize;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Error};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,6 +22,8 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 use tracing::warn;
+use std::fs::Metadata;
+use uuid::Uuid;
 
 /// The parameters of `local`: a directory per workspace under `root`, on
 /// Caelumora's host, read and written by Caelumora itself. With `shell`,
@@ -79,7 +81,7 @@ impl LocalProvider {
 
 /// What failed with `error` at `path`, as the caller wrote it: never where
 /// on the host.
-fn failed(path: &WorkspacePath, error: std::io::Error) -> TerminalError {
+fn failed(path: &WorkspacePath, error: Error) -> TerminalError {
     let shown = path.to_string();
     match error.kind() {
         ErrorKind::NotFound => TerminalError::NotFound(shown),
@@ -92,7 +94,7 @@ fn failed(path: &WorkspacePath, error: std::io::Error) -> TerminalError {
 }
 
 /// What failed with `error` at the place of a workspace itself.
-fn unavailable(error: std::io::Error) -> TerminalError {
+fn unavailable(error: Error) -> TerminalError {
     TerminalError::Unavailable(error.kind().to_string())
 }
 
@@ -182,7 +184,7 @@ impl LocalTerminal {
     }
 }
 
-fn entry(name: String, metadata: &std::fs::Metadata) -> FileEntry {
+fn entry(name: String, metadata: &Metadata) -> FileEntry {
     FileEntry {
         name,
         is_dir: metadata.is_dir(),
@@ -195,7 +197,7 @@ fn entry(name: String, metadata: &std::fs::Metadata) -> FileEntry {
 /// that a write that breaks off leaves the file as it was.
 fn partial(target: &Path) -> PathBuf {
     let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    target.with_file_name(format!(".{name}.{}.part", uuid::Uuid::new_v4()))
+    target.with_file_name(format!(".{name}.{}.part", Uuid::new_v4()))
 }
 
 /// Why writing a file whole failed (`write_whole`).
@@ -206,7 +208,7 @@ pub enum WriteFailure {
     /// What was to be written broke off.
     BrokeOff(ErrorKind),
     /// The file could not be written.
-    Io(std::io::Error),
+    Io(Error),
 }
 
 /// Writes `content` to `target` whole, at most `limit` bytes, or not at
@@ -330,9 +332,10 @@ mod tests {
     use super::*;
     use crate::runtime::Services;
     use caelumora_model::config::BackendConfig;
-    use serde_json::json;
+    use serde_json::{json, Value};
     use caelumora_model::workspace::CommandStatus;
     use bytes::Bytes;
+    use tempfile::TempDir;
 
     fn content(text: &'static str) -> ByteStream {
         Box::pin(futures::stream::iter([Ok(Bytes::from_static(text.as_bytes()))]))
@@ -344,7 +347,7 @@ mod tests {
         String::from_utf8(chunks.into_iter().flat_map(|c| c.unwrap().to_vec()).collect()).unwrap()
     }
 
-    async fn workspace() -> (tempfile::TempDir, LocalProvider, Arc<dyn Terminal>, WorkspaceId) {
+    async fn workspace() -> (TempDir, LocalProvider, Arc<dyn Terminal>, WorkspaceId) {
         let root = tempfile::tempdir().unwrap();
         let provider = LocalProvider::new(root.path().to_path_buf(), false, Duration::from_secs(3600), None);
         let id = WorkspaceId::new();
@@ -465,13 +468,13 @@ mod tests {
 
     #[test]
     fn an_error_names_no_more_than_the_caller_wrote() {
-        let error = failed(&path("docs/a.md"), std::io::Error::new(ErrorKind::PermissionDenied, "/srv/secret/path"));
+        let error = failed(&path("docs/a.md"), Error::new(ErrorKind::PermissionDenied, "/srv/secret/path"));
         assert!(!error.to_string().contains("/srv"), "{error}");
     }
 
     #[test]
     fn its_parameters_are_a_root_and_what_it_takes_by_default() {
-        let make = |params: serde_json::Value| {
+        let make = |params: Value| {
             let storages = [("dev".to_string(), BackendConfig::new("local", params))].into();
             Backends::built_in().make_named::<dyn TerminalProvider>("storage of workspaces", &storages, &Services::empty())
         };

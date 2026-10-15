@@ -3,7 +3,12 @@
 //! are the agents' (`agent_commands`).
 
 use super::*;
-use crate::command::CommandError;
+use crate::command::{CommandContext, CommandError, CommandResult};
+use caelumora_model::agent::AgentId;
+use caelumora_model::command::{CommandOutput, CommandVisibility};
+use crate::error::is_forbidden;
+use std::time::Duration;
+use tokio::sync::broadcast::Receiver;
 
 #[tokio::test]
 async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
@@ -16,7 +21,7 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
     let reply = actor.execute_command("help", "").await.expect("/help runs");
-    assert_eq!(reply.visibility, caelumora_model::command::CommandVisibility::Private, "/help answers the issuer alone");
+    assert_eq!(reply.visibility, CommandVisibility::Private, "/help answers the issuer alone");
     let text = reply.output.expect("/help answers here");
     assert!(text.contains("/help"), "{text}");
     assert!(!text.contains("/wakeup"), "a hidden command is not listed: {text}");
@@ -28,7 +33,7 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
     let error = actor.execute_command("help", "wakeup").await.expect_err("hidden");
     assert!(matches!(command_error(&error), CommandError::Unknown(_)), "/help does not describe it either: {error}");
 
-    let quiet = tokio::time::timeout(std::time::Duration::from_millis(200), events.recv()).await;
+    let quiet = tokio::time::timeout(Duration::from_millis(200), events.recv()).await;
     assert!(quiet.is_err(), "a private answer is not sent into the channel: {quiet:?}");
     assert!(channel.history().await.is_empty(), "commands never enter the history");
     running.abort();
@@ -45,10 +50,10 @@ async fn wakeup_is_announced_to_the_channel_in_the_issuers_name() {
 
     let reply = actor.execute_command("wakeup", "").await.expect("/wakeup runs");
     assert!(matches!(following.try_recv().map(|e| e.event), Ok(ActorEvent::CommandExecuted { .. })), "the issuer sees it from its own actor (issue 220)");
-    assert_eq!(reply.visibility, caelumora_model::command::CommandVisibility::Channel, "the answer goes to the channel");
+    assert_eq!(reply.visibility, CommandVisibility::Channel, "the answer goes to the channel");
     assert_eq!(reply.output.as_deref(), Some("No agent was asleep."), "and back to the issuer, whom the channel does not route it to");
 
-    let envelope = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+    let envelope = tokio::time::timeout(Duration::from_secs(2), events.recv())
         .await
         .expect("the announcement arrives")
         .unwrap();
@@ -72,7 +77,7 @@ async fn wakeup_reports_refusals_and_unknown_agents() {
     let actor = channel.user_actor(alice.id).unwrap();
     let error = actor.execute_command("wakeup", "").await.expect_err("waking is refused");
     assert!(matches!(command_error(&error), CommandError::Forbidden { .. }), "{error}");
-    assert!(crate::error::is_forbidden(&error), "{error}");
+    assert!(is_forbidden(&error), "{error}");
 
     let refuse_running = Policy(|action| !matches!(action, ActionType::ExecuteCommand { command, .. } if command.name == "wakeup"));
     let channel = channel_with(&[&alice], Arc::new(refuse_running)).await;
@@ -107,17 +112,17 @@ async fn wakeup_wakes_the_agent_named_and_refuses_an_ambiguous_name() {
 }
 
 /// Runs `/nudge` with `args` in `channel` as alice.
-async fn nudge(channel: &ChannelLoop, alice: UserId, args: &str) -> crate::command::CommandResult<caelumora_model::command::CommandOutput> {
+async fn nudge(channel: &ChannelLoop, alice: UserId, args: &str) -> CommandResult<CommandOutput> {
     use crate::command::ChannelCommandProvider;
     use crate::command::nudge_command::NudgeCommandProvider;
     let executor = CommandExecutor::empty(Arc::new(AllowAllPolicy::new()));
     let issuer = channel.user_actor(alice).expect("alice takes part");
-    let context = crate::command::CommandContext { issuer: &issuer, channel, executor: &executor };
+    let context = CommandContext { issuer: &issuer, channel, executor: &executor };
     NudgeCommandProvider.execute("nudge", args, &context).await
 }
 
 /// The next end of a turn of `agent` on `events`, with its envelope.
-async fn turn_finished(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId) -> Envelope {
+async fn turn_finished(events: &mut Receiver<Envelope>, agent: AgentId) -> Envelope {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
@@ -137,7 +142,7 @@ async fn a_nudged_agent_responds_in_the_name_of_who_nudged_it_and_the_history_ke
     let mut following = channel.user_actor(alice).unwrap().watch().events;
 
     let output = nudge(&channel, alice, "@helper").await.expect("/nudge runs");
-    assert_eq!((output.text.as_str(), output.visibility), ("Asked helper to respond.", caelumora_model::command::CommandVisibility::Private), "told to the issuer alone");
+    assert_eq!((output.text.as_str(), output.visibility), ("Asked helper to respond.", CommandVisibility::Private), "told to the issuer alone");
 
     let finished = turn_finished(&mut events, agent).await;
     let ActorEvent::TurnFinished { messages, .. } = &finished.event else { unreachable!() };
@@ -192,7 +197,7 @@ async fn only_someone_else_in_the_channel_is_nudged() {
     let actor = channel.user_actor(alice).unwrap();
     let error = actor.request_response(ActorId::User(alice)).await.expect_err("herself");
     assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NudgesItself { .. })), "{error}");
-    let error = actor.request_response(ActorId::Agent(caelumora_model::agent::AgentId::new())).await.expect_err("a stranger");
+    let error = actor.request_response(ActorId::Agent(AgentId::new())).await.expect_err("a stranger");
     assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })), "{error}");
     running.abort();
 }

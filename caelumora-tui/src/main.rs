@@ -29,7 +29,7 @@ use caelumora_ollama::client::OLLAMA_CLIENT_KIND;
 use caelumora_ollama::plugin::OllamaPlugin;
 use caelumora_runtime::view::Viewer;
 use clap::Parser;
-use caelumora_logging::LogTarget;
+use caelumora_logging::{LogTarget, init};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use std::collections::HashMap;
@@ -39,6 +39,10 @@ use std::sync::Arc;
 use std::thread;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use anyhow::Result;
+use caelumora_runtime::error::user_message;
+use rustyline::history::DefaultHistory;
+use std::io::Error;
 
 fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, String>) -> String {
     let mentioned: Vec<&String> = message.mentions.iter().filter_map(|id| handles.get(id)).collect();
@@ -122,7 +126,7 @@ fn questions_named(open: &[QuestionRequest], arg: &str, me: ActorId) -> Option<Q
     }
 }
 
-async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()> {
+async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
     let user_actor = channel.user_actor(user)
         .ok_or_else(|| anyhow::anyhow!("The user is not a participant of the channel"))?;
 
@@ -305,7 +309,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                                 Some(request) => {
                                     answering = None;
                                     if let Err(e) = user_actor.answer_questions(request.id, None).await {
-                                        println!("[error] {}", caelumora_runtime::error::user_message(&e).unwrap_or_else(|| e.to_string()));
+                                        println!("[error] {}", user_message(&e).unwrap_or_else(|| e.to_string()));
                                     }
                                 }
                                 None => println!("No open questions put to you{}", if rest.trim().is_empty() { String::new() } else { format!(" with id {}", rest.trim()) }),
@@ -335,7 +339,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                                     answering = Some((request, responses));
                                 }
                                 None => if let Err(e) = user_actor.answer_questions(request.id, Some(responses)).await {
-                                    println!("[error] {}", caelumora_runtime::error::user_message(&e).unwrap_or_else(|| e.to_string()));
+                                    println!("[error] {}", user_message(&e).unwrap_or_else(|| e.to_string()));
                                 },
                             }
                             continue;
@@ -366,7 +370,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                                 }
                             };
                             if let Err(e) = asked {
-                                let message = caelumora_runtime::error::user_message(&e).unwrap_or_else(|| e.to_string());
+                                let message = user_message(&e).unwrap_or_else(|| e.to_string());
                                 println!("[error] {}", message);
                             }
                             continue;
@@ -382,7 +386,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
                                     Ok(reply) => if let Some(output) = reply.output { println!("{}", output) },
                                     Err(e) => {
                                         tracing::warn!("Command /{} failed: {:#}", name, e);
-                                        let message = caelumora_runtime::error::user_message(&e)
+                                        let message = user_message(&e)
                                             .unwrap_or_else(|| format!("/{} failed; the details are in local/tui.log", name));
                                         println!("[error] {}", message);
                                     }
@@ -414,10 +418,10 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> anyhow::Result<()>
 fn spawn_rustyline_input() -> mpsc::UnboundedReceiver<Result<String, ReadlineError>> {
     let (input_tx, input_rx) = mpsc::unbounded_channel::<Result<String, ReadlineError>>();
     thread::spawn(move || {
-        let mut rl = match Editor::<(), rustyline::history::DefaultHistory>::new() {
+        let mut rl = match Editor::<(), DefaultHistory>::new() {
             Ok(rl) => rl,
             Err(err) => {
-                let _ = input_tx.send(Err(ReadlineError::Io(std::io::Error::other(err.to_string()))));
+                let _ = input_tx.send(Err(ReadlineError::Io(Error::other(err.to_string()))));
                 return;
             }
         };
@@ -472,7 +476,7 @@ fn default_kinds(components: &mut ComponentRegistry) -> Result<(), ComponentErro
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     let args = Args::parse();
 
     let config = if let Some(config_path) = args.config {
@@ -483,7 +487,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Into a file by default: log lines on the terminal would break the prompt.
-    caelumora_logging::init(&config.logging, LogTarget::File(PathBuf::from("local/tui.log")), "info")?;
+    init(&config.logging, LogTarget::File(PathBuf::from("local/tui.log")), "info")?;
 
     let plugins = plugins();
     let plugins: Vec<&dyn Plugin> = plugins.iter().map(Box::as_ref).collect();

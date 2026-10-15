@@ -7,12 +7,13 @@ use caelumora_model::session::SessionId;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::type_map::TypeKey;
 use crate::runtime::Services;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use super::{ComponentContext, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
+use std::fmt::Debug;
 
-pub trait Marker: std::fmt::Debug + Send + Sync {}
+pub trait Marker: Debug + Send + Sync {}
 
 /// What the tests' containers are asked for, as the owner of one asks.
 pub const ASKED: &[TypeKey] = &[TypeKey::of::<dyn Marker>(), TypeKey::of::<dyn Named>(), TypeKey::of::<dyn Choice>()];
@@ -26,7 +27,7 @@ pub fn context_with_session(session_id: SessionId) -> ComponentContext {
     ComponentContext::new(SecurityContext { session_id, ..SecurityContext::default() }, services)
 }
 
-pub fn descriptor(id: &str, kind: &str, params: serde_json::Value) -> ComponentDescriptor {
+pub fn descriptor(id: &str, kind: &str, params: Value) -> ComponentDescriptor {
     ComponentDescriptor {
         id: id.to_string(),
         kind: kind.to_string(),
@@ -37,7 +38,7 @@ pub fn descriptor(id: &str, kind: &str, params: serde_json::Value) -> ComponentD
 }
 
 /// A facet that says which component it came from.
-pub trait Named: std::fmt::Debug + Send + Sync {
+pub trait Named: Debug + Send + Sync {
     fn name(&self) -> String;
 }
 
@@ -50,11 +51,11 @@ impl Named for Name {
 }
 
 /// A second facet, for components that need each other.
-pub trait Other: std::fmt::Debug + Send + Sync {}
+pub trait Other: Debug + Send + Sync {}
 impl Other for Name {}
 
 /// A facet of which there is one.
-pub trait Choice: std::fmt::Debug + Send + Sync {}
+pub trait Choice: Debug + Send + Sync {}
 impl Choice for Name {}
 
 pub fn named(id: &str) -> ComponentFacets {

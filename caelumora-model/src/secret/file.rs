@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::io::ErrorKind;
 
 /// Resolves secrets from a flat JSON object file (`{"KEY": "value", ...}`).
 ///
@@ -34,7 +35,7 @@ impl SecretProvider for FileSecretProvider {
     async fn get_secret(&self, key: &str) -> SecretResult<Option<String>> {
         let content = match std::fs::read_to_string(&self.path) {
             Ok(content) => content,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(SecretError::Backend(e.to_string())),
         };
 
@@ -49,12 +50,13 @@ impl SecretProvider for FileSecretProvider {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::fs::File;
 
     #[tokio::test]
     async fn reads_existing_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("secrets.json");
-        let mut f = std::fs::File::create(&path).unwrap();
+        let mut f = File::create(&path).unwrap();
         write!(f, r#"{{"KEY": "value"}}"#).unwrap();
 
         let provider = FileSecretProvider::new(&path);

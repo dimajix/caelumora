@@ -564,12 +564,12 @@ mod tests {
     use super::*;
     use crate::actor::Actor;
     use crate::component::ComponentImpl;
-    use crate::transport::EventSender;
+    use crate::transport::{EventSender, EventReceiver};
     use crate::transport::InMemoryEventSender;
     use anyhow::Result;
     use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RetryTarget};
     use caelumora_model::agent::AgentId;
-    use caelumora_model::confidentiality::Classification;
+    use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::message::{Message, MessageId, MessageRole};
     use caelumora_model::security::SecurityContext;
     use caelumora_model::user::UserId;
@@ -577,7 +577,7 @@ mod tests {
     use caelumora_model::work::TurnId;
     use std::collections::HashMap;
     use std::sync::atomic::Ordering;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use tokio::sync::mpsc;
     use tokio::task::JoinSet;
@@ -587,6 +587,12 @@ mod tests {
     use crate::channel::{ActorChange, ChannelError, ResolvedParticipant};
     use crate::testing::Script;
     use caelumora_model::security::AllowAllPolicy;
+    use caelumora_model::tool::{ToolCall, ToolCallResult};
+    use caelumora_model::turn::GivenUpReason;
+    use chrono::Utc;
+    use crate::moderator::{Moderator, ResponderPolicy};
+    use crate::moderator::broadcast_policy::BroadcastPolicy;
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn a_users_own_message_is_shown_with_its_mentions_resolved() {
@@ -608,7 +614,7 @@ mod tests {
     struct TellsTheSender;
 
     #[async_trait::async_trait]
-    impl crate::moderator::Moderator for TellsTheSender {
+    impl Moderator for TellsTheSender {
         async fn route(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
             let mut notice = event.forward(ActorEvent::ChainCutOff { message: MessageId::new(), max_agent_hops: 0, not_asked: Vec::new() });
             notice.context.sender_id = ActorId::System;
@@ -620,9 +626,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_sender_gets_back_only_what_the_moderator_sends_in_another_name() {
-        use caelumora_model::actor::EventContext;
         let alice = user("alice");
-        let bob = ActorId::Agent(caelumora_model::agent::AgentId::new());
+        let bob = ActorId::Agent(AgentId::new());
         let channel = channel_moderated_by(&[&alice], Arc::new(TellsTheSender)).await;
         let (tx, mut rx) = mpsc::channel(8);
         let abort_handle = tokio::spawn(async {}).abort_handle();
@@ -630,7 +635,7 @@ mod tests {
         let said = Envelope::new(
             SecurityContext::default(),
             EventContext { sender_id: bob, ..EventContext::default() },
-            ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
+            ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
         );
 
         channel.route_event(&actors, said).await;
@@ -649,12 +654,11 @@ mod tests {
         fn id(&self) -> ActorId { self.0 }
         fn name(&self) -> Name { Name::new("talker").expect("a name") }
         fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
-        async fn run(&self, mut rx: Box<dyn crate::transport::EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
-            use caelumora_model::actor::EventContext;
+        async fn run(&self, mut rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
             let mut context = EventContext { sender_id: self.0, ..EventContext::default() };
             context.agent_hops = 1;
-            let said = Message { sender_id: self.0, role: caelumora_model::message::MessageRole::Assistant, content: Some("and you?".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-            let _ = tx.send(Envelope::new(SecurityContext::default().next(self.0, ActorId::None, ActorId::None), context, ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: vec![said] })).await;
+            let said = Message { sender_id: self.0, role: MessageRole::Assistant, content: Some("and you?".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+            let _ = tx.send(Envelope::new(SecurityContext::default().next(self.0, ActorId::None, ActorId::None), context, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![said] })).await;
             while rx.recv().await.is_some() {}
             Ok(())
         }
@@ -667,10 +671,10 @@ mod tests {
     async fn a_user_following_the_channel_is_told_when_a_chain_is_cut_off() {
         use crate::moderator::policy_moderator::PolicyModerator;
         let alice = user("alice");
-        let responders = ComponentImpl { id: "responders".to_string(), fail_policy: Default::default(), facet: Arc::new(crate::moderator::broadcast_policy::BroadcastPolicy) as Arc<dyn crate::moderator::ResponderPolicy> };
+        let responders = ComponentImpl { id: "responders".to_string(), fail_policy: Default::default(), facet: Arc::new(BroadcastPolicy) as Arc<dyn ResponderPolicy> };
         let moderator = Arc::new(PolicyModerator::new(responders, 1));
         let channel = channel_moderated_by(&[&alice], Arc::<PolicyModerator>::clone(&moderator)).await;
-        let talker = Arc::new(SaysOnce(ActorId::Agent(caelumora_model::agent::AgentId::new())));
+        let talker = Arc::new(SaysOnce(ActorId::Agent(AgentId::new())));
         channel.adopt(Arc::<SaysOnce>::clone(&talker), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
         let mut following = channel.user_actor(alice.id).unwrap().watch().events;
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
@@ -689,14 +693,14 @@ mod tests {
     /// An actor that says what it is given to say as it starts, as it is
     /// written - in whatever name - and waits.
     #[derive(Debug)]
-    struct Says(ActorId, std::sync::Mutex<Vec<Envelope>>);
+    struct Says(ActorId, Mutex<Vec<Envelope>>);
 
     #[async_trait::async_trait]
     impl Actor for Says {
         fn id(&self) -> ActorId { self.0 }
         fn name(&self) -> Name { Name::new("talker").expect("a name") }
         fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
-        async fn run(&self, mut rx: Box<dyn crate::transport::EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
+        async fn run(&self, mut rx: Box<dyn EventReceiver>, tx: Box<dyn EventSender>) -> Result<()> {
             let said = std::mem::take(&mut *self.1.lock().unwrap());
             for envelope in said {
                 let _ = tx.send(envelope).await;
@@ -713,10 +717,10 @@ mod tests {
     async fn an_actor_cannot_speak_in_the_name_of_another() {
         let alice = user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
-        let talker = ActorId::Agent(caelumora_model::agent::AgentId::new());
+        let talker = ActorId::Agent(AgentId::new());
         let her = ActorId::User(alice.id);
         let said = |sender: ActorId, caller: ActorId, author: ActorId, text: &str| {
-            let message = Message { sender_id: author, role: caelumora_model::message::MessageRole::Assistant, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+            let message = Message { sender_id: author, role: MessageRole::Assistant, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
             Envelope::new(SecurityContext::default().next(caller, ActorId::None, ActorId::None), EventContext { sender_id: sender, ..EventContext::default() }, ActorEvent::CompleteMessageGenerated(message))
         };
         let envelopes = vec![
@@ -726,7 +730,7 @@ mod tests {
             // On alice's behalf - she asked - but said by itself: as an agent answers.
             Envelope { security: SecurityContext::new(her, channel.session_id, channel.id).next(talker, her, her), ..said(talker, talker, talker, "its own") },
         ];
-        let says = Arc::new(Says(talker, std::sync::Mutex::new(envelopes)));
+        let says = Arc::new(Says(talker, Mutex::new(envelopes)));
         channel.adopt(Arc::<Says>::clone(&says), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
         let mut events = channel.observe();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
@@ -748,7 +752,7 @@ mod tests {
     async fn what_is_recorded_of_a_turn_comes_from_an_agent_in_its_own_name() {
         let alice = user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
-        let agent = ActorId::Agent(caelumora_model::agent::AgentId::new());
+        let agent = ActorId::Agent(AgentId::new());
         let her = ActorId::User(alice.id);
         let sent = |sender: ActorId, caller: ActorId, event: ActorEvent| Envelope::new(
             SecurityContext::default().next(caller, ActorId::None, ActorId::None),
@@ -763,7 +767,7 @@ mod tests {
             ActorEvent::ActivityStarted { turn_id, activity: activity.clone() },
             ActorEvent::ActivityFinished { turn_id, activity, output: "done".to_string() },
             ActorEvent::TurnFinished { turn_id, messages: Vec::new() },
-            ActorEvent::TurnGivenUp { turn_id, reason: caelumora_model::turn::GivenUpReason::Stopped },
+            ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Stopped },
         ];
         for event in of_a_turn {
             let kind = event.kind();
@@ -777,7 +781,6 @@ mod tests {
 
     #[tokio::test]
     async fn the_channel_wakes_only_whom_the_moderator_asks_to_respond() {
-        use caelumora_model::actor::EventContext;
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let (asked, other) = (sleeper(), sleeper());
@@ -789,7 +792,7 @@ mod tests {
         let said = || Envelope::new(
             context.clone(),
             EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
-            ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
+            ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
         );
 
         channel.route_event(&HashMap::new(), said()).await;
@@ -805,8 +808,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_channel_admits_only_what_may_flow_into_it_in_its_senders_name() {
-        use caelumora_model::actor::EventContext;
-        use caelumora_model::confidentiality::Confidentiality;
         use caelumora_model::security::OwnershipPolicy;
         let alice = user("alice");
         let channel = channel_with(&[&alice], Arc::new(OwnershipPolicy::new())).await;
@@ -824,8 +825,8 @@ mod tests {
         assert_eq!(channel.history().await.len(), 1, "neither above the channel nor in another's name");
 
         // A tool result is a part of its own.
-        let call = caelumora_model::tool::ToolCall { id: None, function_name: "f".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
-        let result = caelumora_model::tool::ToolCallResult::of(&call, Default::default(), "secret".to_string(), Classification::general(Confidentiality::Confidential));
+        let call = ToolCall { id: None, function_name: "f".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
+        let result = ToolCallResult::of(&call, Default::default(), "secret".to_string(), Classification::general(Confidentiality::Confidential));
         let mut with_result = from(alice_id, alice_id, internal);
         if let ActorEvent::CompleteMessageGenerated(message) = &mut with_result.event {
             message.tool_results.push(result);
@@ -836,7 +837,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_change_to_a_message_enters_the_channel_only_from_its_author_as_it_stands() {
-        use caelumora_model::actor::EventContext;
         use caelumora_model::security::OwnershipPolicy;
         let alice = user("alice");
         let channel = channel_with(&[&alice], Arc::new(OwnershipPolicy::new())).await;
@@ -846,9 +846,9 @@ mod tests {
             EventContext { sender_id: sender, ..EventContext::default() },
             event,
         );
-        let said = Message { id: MessageId::new(), sender_id: alice_id, role: caelumora_model::message::MessageRole::User, content: Some("helo".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        let modified = |sender: ActorId, content: &str| Message { sender_id: sender, content: Some(content.to_string()), timestamp: chrono::Utc::now(), ..said.clone() };
-        let revoked = || ActorEvent::MessageRevoked { message: said.id, at: chrono::Utc::now() };
+        let said = Message { id: MessageId::new(), sender_id: alice_id, role: MessageRole::User, content: Some("helo".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let modified = |sender: ActorId, content: &str| Message { sender_id: sender, content: Some(content.to_string()), timestamp: Utc::now(), ..said.clone() };
+        let revoked = || ActorEvent::MessageRevoked { message: said.id, at: Utc::now() };
         let actors = HashMap::new();
         channel.process_envelope(from(alice_id, ActorEvent::CompleteMessageGenerated(said.clone())), &actors).await;
         let entries = || async { channel.state.lock().await.history.all_entries().len() };
@@ -865,7 +865,7 @@ mod tests {
         // Reclassified as the policy says (issue 239): here, with nobody
         // owning the channel, by its author alone.
         let reclassified = |classification| ActorEvent::MessageReclassified { message: said.id, classification };
-        let above = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
+        let above = Classification::general(Confidentiality::Confidential);
         channel.process_envelope(from(bob_id, reclassified(Classification::PUBLIC)), &actors).await;
         channel.process_envelope(from(alice_id, reclassified(above)), &actors).await;
         assert_eq!(entries().await, 2, "neither by another nor above the channel");
@@ -883,24 +883,23 @@ mod tests {
         // Only an agent is asked to answer again, and only for its own message.
         let mut routed = channel.observe();
         channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Message(said.id), author: alice_id }), &actors).await;
-        channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Message(said.id), author: ActorId::Agent(caelumora_model::agent::AgentId::new()) }), &actors).await;
+        channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Message(said.id), author: ActorId::Agent(AgentId::new()) }), &actors).await;
         // An answer under way only of an agent of the channel.
         channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Turn(TurnId::new()), author: alice_id }), &actors).await;
-        channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Turn(TurnId::new()), author: ActorId::Agent(caelumora_model::agent::AgentId::new()) }), &actors).await;
+        channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Turn(TurnId::new()), author: ActorId::Agent(AgentId::new()) }), &actors).await;
         // A nudge only of someone else in the channel (issue 278).
         channel.process_envelope(from(alice_id, ActorEvent::NudgeRequested { participant: alice_id }), &actors).await;
-        channel.process_envelope(from(alice_id, ActorEvent::NudgeRequested { participant: ActorId::Agent(caelumora_model::agent::AgentId::new()) }), &actors).await;
+        channel.process_envelope(from(alice_id, ActorEvent::NudgeRequested { participant: ActorId::Agent(AgentId::new()) }), &actors).await;
         assert!(routed.try_recv().is_err(), "neither a user's message nor one another said, nor a turn of someone who is no agent here, nor a nudge of oneself or of a stranger");
     }
 
     #[tokio::test]
     async fn a_user_changes_only_their_own_message_and_learns_why_not() {
-        use caelumora_model::actor::EventContext;
         use caelumora_model::security::OwnershipPolicy;
         let (alice, bob) = (user("alice"), user("bob"));
         let channel = channel_with(&[&alice, &bob], Arc::new(OwnershipPolicy::new())).await;
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
-        let said = Message { id: MessageId::new(), sender_id: alice_id, role: caelumora_model::message::MessageRole::User, content: Some("helo".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let said = Message { id: MessageId::new(), sender_id: alice_id, role: MessageRole::User, content: Some("helo".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let from = |sender: ActorId, event| Envelope::new(SecurityContext::new(sender, Default::default(), Default::default()), EventContext { sender_id: sender, ..EventContext::default() }, event);
         let (to_alice, mut alices) = mpsc::channel(16);
         let (to_bob, mut bobs) = mpsc::channel(16);
@@ -920,10 +919,10 @@ mod tests {
 
         // What the channel does not let in, it tells its sender alone, and
         // why (issue 304).
-        let above = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
+        let above = Classification::general(Confidentiality::Confidential);
         let modified = |content: &str, classification: &Classification| ActorEvent::MessageModified(Message { content: Some(content.to_string()), classification: classification.clone(), ..said.clone() });
         let reclassified = |classification: &Classification| ActorEvent::MessageReclassified { message: said.id, classification: classification.clone() };
-        let revoked = |message| ActorEvent::MessageRevoked { message, at: chrono::Utc::now() };
+        let revoked = |message| ActorEvent::MessageRevoked { message, at: Utc::now() };
         channel.process_envelope(from(bob_id, modified("bob's", &Classification::CHANNEL_DEFAULT)), &actors).await;
         channel.process_envelope(from(bob_id, revoked(said.id)), &actors).await;
         channel.process_envelope(from(bob_id, reclassified(&Classification::PUBLIC)), &actors).await;
@@ -962,7 +961,7 @@ mod tests {
         // Her actor looks at what it can see at once, and asks nothing of the
         // policy: that is the channel's.
         let (hers, his) = (channel.user_actor(alice.id).unwrap(), channel.user_actor(bob.id).unwrap());
-        let error = |result: anyhow::Result<uuid::Uuid>| result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error");
+        let error = |result: Result<Uuid>| result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error");
         his.reclassify_message(MessageId::new(), Classification::PUBLIC).await.expect_err("never said");
         assert!(matches!(error(hers.revoke_message(MessageId::new()).await), ChannelError::MessageNotFound { .. }), "never said");
         assert!(matches!(error(hers.modify_message(said.id, "hello".to_string(), None).await), ChannelError::MessageRevoked { .. }), "taken back");
@@ -1008,8 +1007,8 @@ mod tests {
         let alice = user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let mut events = channel.observe();
-        let gone = ActorId::Agent(caelumora_model::agent::AgentId::new());
-        let late = Envelope::new(SecurityContext::default(), EventContext::new(channel.session_id, channel.id, gone, "helper".to_string()), ActorEvent::TurnGivenUp { turn_id: caelumora_model::work::TurnId::new(), reason: caelumora_model::turn::GivenUpReason::Failed { message: "too late".to_string() } });
+        let gone = ActorId::Agent(AgentId::new());
+        let late = Envelope::new(SecurityContext::default(), EventContext::new(channel.session_id, channel.id, gone, "helper".to_string()), ActorEvent::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Failed { message: "too late".to_string() } });
 
         // Its actor no longer runs, nor is it leaving: it was aborted.
         channel.handle_actor_event(Some(late), &HashMap::new()).await;
@@ -1028,9 +1027,9 @@ mod tests {
         let alice = user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let mut events = channel.observe();
-        let going = ActorId::Agent(caelumora_model::agent::AgentId::new());
-        let turn_id = caelumora_model::work::TurnId::new();
-        let farewell = Envelope::new(SecurityContext::default().next(going, ActorId::None, ActorId::None), EventContext::new(channel.session_id, channel.id, going, "helper".to_string()), ActorEvent::TurnGivenUp { turn_id, reason: caelumora_model::turn::GivenUpReason::Stopped });
+        let going = ActorId::Agent(AgentId::new());
+        let turn_id = TurnId::new();
+        let farewell = Envelope::new(SecurityContext::default().next(going, ActorId::None, ActorId::None), EventContext::new(channel.session_id, channel.id, going, "helper".to_string()), ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Stopped });
 
         // Told to stop, its task still runs: what it says is its own (issue 262).
         let running = HashMap::from([(going, leaving_actor(going, SecurityContext::default()))]);
@@ -1064,10 +1063,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_cancelled_channel_delivers_what_is_said_but_asks_nobody_until_it_is_asked_to_wake() {
-        use caelumora_model::actor::EventContext;
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
-        let bob = ActorId::Agent(caelumora_model::agent::AgentId::new());
+        let bob = ActorId::Agent(AgentId::new());
         let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(bob))).await;
         let (tx, mut rx) = mpsc::channel(8);
         let abort_handle = tokio::spawn(async {}).abort_handle();
@@ -1077,7 +1075,7 @@ mod tests {
             EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
             event,
         );
-        let said = || from_alice(ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: vec![Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)] });
+        let said = || from_alice(ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] });
         let delivered = |rx: &mut mpsc::Receiver<Envelope>| {
             let mut kinds = Vec::new();
             while let Ok(envelope) = rx.try_recv() { kinds.push(envelope.event.kind()); }
@@ -1098,7 +1096,6 @@ mod tests {
 
     #[tokio::test]
     async fn cancelling_one_actor_ends_its_turn_alone_and_keeps_the_channel_answering() {
-        use caelumora_model::actor::EventContext;
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let (cancelled, other) = (sleeper(), sleeper());
@@ -1114,12 +1111,12 @@ mod tests {
         let said = Envelope::new(
             context.clone(),
             EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
-            ActorEvent::TurnFinished { turn_id: caelumora_model::work::TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
+            ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
         );
         channel.route_event(&HashMap::new(), said).await;
         assert!(other.woken.load(Ordering::SeqCst), "the channel is not quiet: the next message is answered");
 
-        let stranger = ActorId::Agent(caelumora_model::agent::AgentId::new());
+        let stranger = ActorId::Agent(AgentId::new());
         let error = channel.cancel_actor(&context, stranger).await.expect_err("not in the channel");
         assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })), "{error}");
         let error = channel.wakeup_actor(&context, stranger).await.expect_err("nor to be woken");

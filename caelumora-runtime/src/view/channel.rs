@@ -29,6 +29,7 @@ use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::work::TurnId;
 use std::sync::Arc;
 use tracing::warn;
+use caelumora_model::workspace::WorkspaceId;
 
 /// A channel the viewer may read.
 #[derive(Debug, Clone)]
@@ -343,7 +344,7 @@ impl ChannelView {
     /// empty: the channel can be shown without it.
     /// The session's workspace, if the channel uses it and the viewer may
     /// read it as its access list lets them (issue 23).
-    async fn readable_workspace(&self) -> Option<caelumora_model::workspace::WorkspaceId> {
+    async fn readable_workspace(&self) -> Option<WorkspaceId> {
         let id = self.session.as_session().workspace.filter(|_| self.channel.uses_workspace)?;
         self.views().workspace(id).await.ok().map(|workspace| workspace.id())
     }

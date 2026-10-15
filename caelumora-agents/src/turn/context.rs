@@ -83,7 +83,7 @@ impl Turn<'_> {
     /// reference to it, given in `role` after the entry `after`, its text
     /// classified `classification`. The model is given it: the turn has
     /// seen it (issue 168).
-    pub(super) fn keep_prompt(&mut self, role: MessageRole, text: String, after: Option<caelumora_model::digest::Digest>, classification: Option<Classification>) -> PromptRef {
+    pub(super) fn keep_prompt(&mut self, role: MessageRole, text: String, after: Option<Digest>, classification: Option<Classification>) -> PromptRef {
         self.current_mut().work.see_classified(classification.as_ref());
         self.agent_channel_state.keep_prompt(role, text, after, classification)
     }
@@ -112,9 +112,10 @@ mod tests {
     use caelumora_model::actor::EventContext;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::context::{KnowledgeRef, ModelProfile};
+    use caelumora_model::context::{KnowledgeRef, ModelProfile, KnowledgeSource};
     use caelumora_model::message::MessageId;
     use caelumora_model::tool::{Tool, ToolSet};
+    use caelumora_runtime::agent::state::AgentStateHandle;
 
     #[tokio::test]
     async fn the_model_is_given_reasoning_as_its_rule_says_and_that_is_recorded() {
@@ -127,7 +128,7 @@ mod tests {
             role: if sender == ActorId::Agent(agent) { MessageRole::Assistant } else { MessageRole::User },
             content: Some(content.to_string()),
             reasoning: Some(format!("why {content}")),
-            ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+            ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         let other = ActorId::Agent(AgentId::new());
         let mut state = AgentChannelState::default();
@@ -141,7 +142,7 @@ mod tests {
         let reasoning_of = |messages: &[Message]| messages.iter().map(|m| m.reasoning.is_some()).collect::<Vec<_>>();
         {
             state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), profile(ReasoningHistory::CurrentTurn));
-            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
+            let mut turn = Turn::of(agent, "agent".to_string(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
             turn.set_context(Vec::new(), Vec::new());
             turn.push_message(first.clone());
             assert_eq!(reasoning_of(&turn.full_context().unwrap().0), [false, false, true], "only the turn's own reasoning");
@@ -163,7 +164,7 @@ mod tests {
         // still not another agent's.
         let third = thought(ActorId::Agent(agent), "third");
         state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), profile(ReasoningHistory::Always));
-        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
+        let mut turn = Turn::of(agent, "agent".to_string(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
         turn.set_context(Vec::new(), Vec::new());
         turn.push_message(third);
         assert_eq!(reasoning_of(&turn.full_context().unwrap().0), [true, false, true, true, true]);
@@ -172,7 +173,7 @@ mod tests {
     #[tokio::test]
     async fn what_the_agent_saw_can_be_told_for_each_message_it_produced() {
         let agent = AgentId::new();
-        let text = |role: MessageRole, content: &str| Message { id: MessageId::new(), role, content: Some(content.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
+        let text = |role: MessageRole, content: &str| Message { id: MessageId::new(), role, content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let mut state = AgentChannelState::default();
         let question = text(MessageRole::User, "What is 2+2?");
         state.transcript.push(question.clone());
@@ -184,7 +185,7 @@ mod tests {
             ContextItem::Conversation { message } => message.content.clone().unwrap_or_default(),
         }).collect::<Vec<_>>();
         {
-            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, AgentStateHandle::detached());
             turn.set_context(vec![system()], Vec::new());
             let (given, _) = turn.full_context().unwrap();
             assert_eq!(given.len(), 2, "the prompt is given to the model as a message");
@@ -205,11 +206,11 @@ mod tests {
         let read = KnowledgeRef {
             channel: Default::default(),
             session: Default::default(),
-            source: caelumora_model::context::KnowledgeSource::History { digest: None, start: None },
+            source: KnowledgeSource::History { digest: None, start: None },
             classification: None,
         };
         {
-            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, AgentStateHandle::detached());
             turn.push_message(before.clone());
             turn.record_knowledge(read.clone());
             turn.record_knowledge(read.clone());
@@ -222,7 +223,7 @@ mod tests {
 
         // The same prompt in another turn is kept once.
         {
-            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+            let mut turn = Turn::begun(agent, "agent".to_string(), &mut state, AgentStateHandle::detached());
             turn.set_context(vec![system()], Vec::new());
         }
         assert_eq!(state.prompts.len(), 1);
@@ -241,13 +242,13 @@ mod tests {
             classification: None,
             presentation: Default::default(),
         };
-        let answer = |content: &str| Message { id: MessageId::new(), role: MessageRole::Assistant, content: Some(content.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
+        let answer = |content: &str| Message { id: MessageId::new(), role: MessageRole::Assistant, content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let mut state = AgentChannelState::default();
         let (first, second, third, fourth) = (answer("first"), answer("second"), answer("third"), answer("fourth"));
         let take_turn = |state: &mut AgentChannelState, tools: Vec<Tool>, messages: &[&Message]| {
             let sets = if tools.is_empty() { Vec::new() } else { vec![ToolSet::new("tools", "some tools", tools.clone())] };
             state.begin_turn(Default::default(), Default::default(), Default::default(), sets, Default::default());
-            let mut turn = Turn::of(agent, "agent".to_string(), state, caelumora_runtime::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
+            let mut turn = Turn::of(agent, "agent".to_string(), state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
             let (_, offered) = turn.full_context().unwrap();
             assert_eq!(offered, tools, "the model is offered what the turn began with");
             for message in messages {

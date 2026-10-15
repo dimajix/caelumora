@@ -12,6 +12,7 @@ use caelumora_runtime::plugin::Plugin;
 use crate::{compaction, components, external, llm, prompt, tool};
 use caelumora_runtime::runtime::RuntimeBuilder;
 use caelumora_model::agent::PersonalityKind;
+use anyhow::Result;
 
 /// Registers the kinds of an agent's components with `registry` (issue
 /// 370): its context (`prompt`), its model (`llm`), its tools (`tool`), its
@@ -37,7 +38,7 @@ impl Plugin for AgentsPlugin {
         "agents"
     }
 
-    fn register(&self, runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
         register_components(runtime.components());
         let kinds = runtime.agent_kinds();
         kinds.register(PersonalityKind::Internal, AgentActor::COMPONENT_FACETS, |channel, agent, personality, runtime| async move {
@@ -73,6 +74,7 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::type_map::TypeKey;
     use std::sync::Arc;
+    use serde_json::Value;
 
     /// The names of `facets`, to compare them by.
     fn names(facets: Option<&[TypeKey]>) -> Option<Vec<&'static str>> {
@@ -111,7 +113,7 @@ mod tests {
 
     #[test]
     fn the_configuration_may_replace_the_context_provider_but_only_with_one() {
-        let manager = |defaults: serde_json::Value| {
+        let manager = |defaults: Value| {
             let store = Arc::new(MemoryStore::new());
             let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
             let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();

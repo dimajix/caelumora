@@ -5,6 +5,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::channel::HistoryStart;
 use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::Message;
+use caelumora_model::digest::Digest;
 
 /// The part of a channel's history a participant sees (issue 46), as
 /// `ChannelLoop::visible_history` gives it.
@@ -15,7 +16,7 @@ pub struct VisibleHistory {
     pub items: Vec<HistoryEntry>,
     /// The digest of the channel's history at the time: up to where it was
     /// read. It names the whole chain, so it is recorded with `start`.
-    pub digest: Option<caelumora_model::digest::Digest>,
+    pub digest: Option<Digest>,
     /// Where their view begins - from where it was read; `None`: all of it.
     pub start: Option<HistoryStart>,
 }

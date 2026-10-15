@@ -3,6 +3,8 @@ pub use memory::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSende
 
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorId, Envelope};
+use anyhow::Error;
+use tokio::sync::mpsc::error::TrySendError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
@@ -20,18 +22,18 @@ pub enum TransportError {
 
 pub type TransportResult<T> = Result<T, TransportError>;
 
-impl From<tokio::sync::mpsc::error::TrySendError<Envelope>> for TransportError {
-    fn from(e: tokio::sync::mpsc::error::TrySendError<Envelope>) -> Self {
+impl From<TrySendError<Envelope>> for TransportError {
+    fn from(e: TrySendError<Envelope>) -> Self {
         match e {
-            tokio::sync::mpsc::error::TrySendError::Full(_) => TransportError::Full,
-            tokio::sync::mpsc::error::TrySendError::Closed(_) => TransportError::Closed,
+            TrySendError::Full(_) => TransportError::Full,
+            TrySendError::Closed(_) => TransportError::Closed,
         }
     }
 }
 
 /// Whether `error` says the receiving end is gone - for an actor's output,
 /// that its channel no longer runs. Found through any context added to it.
-pub fn is_closed(error: &anyhow::Error) -> bool {
+pub fn is_closed(error: &Error) -> bool {
     matches!(error.downcast_ref::<TransportError>(), Some(TransportError::Closed))
 }
 

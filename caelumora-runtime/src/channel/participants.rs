@@ -17,6 +17,7 @@ use std::sync::Arc;
 use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelMember, LEAVE_GRACE, ResolvedParticipant};
 use caelumora_model::channel::Channel;
 use caelumora_model::store::Stored;
+use caelumora_model::command::Command;
 
 impl ChannelLoop {
     /// Adds `participant` - a participant of the session - to the channel on
@@ -298,7 +299,7 @@ impl ChannelLoop {
     /// The agents of the channel that carry out commands themselves (issue
     /// 269), each with the commands `issuer` may see of it, by handle; an
     /// agent with none is left out.
-    pub(crate) async fn agent_commands(&self, issuer: &SecurityContext) -> Vec<(ChannelMember, Vec<caelumora_model::command::Command>)> {
+    pub(crate) async fn agent_commands(&self, issuer: &SecurityContext) -> Vec<(ChannelMember, Vec<Command>)> {
         let mut found = Vec::new();
         for member in self.members().into_iter().filter(|m| m.id.as_agent_id().is_some()) {
             let Some(actor) = self.actor(member.id) else { continue };
@@ -344,7 +345,7 @@ impl ChannelLoop {
 #[cfg(test)]
 mod tests {
     use caelumora_model::actor::ActorId;
-    use caelumora_model::channel::{Channel, JOINED, LEFT};
+    use caelumora_model::channel::{Channel, JOINED, LEFT, HistoryAccess, HistoryStart};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
@@ -356,13 +357,17 @@ mod tests {
     use caelumora_model::value::name::Name;
 
     use caelumora_model::confidentiality::Classification;
-    use caelumora_model::security::SecurityContext;
+    use caelumora_model::security::{SecurityContext, Grant, Subject};
     use crate::view::Viewer;
     use caelumora_model::session::ChannelId;
 
     
     use crate::session::{ChannelSpec, SessionError, SessionManager};
     use crate::session::testing::*;
+    use anyhow::Error;
+    use caelumora_model::user::UserId;
+    use crate::error::is_forbidden;
+    use tokio_util::sync::CancellationToken;
     #[tokio::test]
     async fn an_agent_is_found_by_its_name_or_its_handle_however_it_is_written() {
         let (channel, _, _) = channel_with_sleepers(&["Sassy", "Dr. Who", "Dr-Who", "Zoë"]).await;
@@ -404,10 +409,9 @@ mod tests {
     #[tokio::test]
     async fn only_who_is_cleared_takes_part_in_or_reads_a_channel() {
         use crate::channel::ChannelError;
-        use caelumora_model::actor::ActorId;
         use caelumora_model::confidentiality::{Clearance, Compartment, Compartments, ConfidentialityRules, Confidentiality};
         use caelumora_model::role::{RoleId, Roles};
-        use caelumora_model::user::{User, UserId};
+        use caelumora_model::user::User;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let roles = Roles::new([
@@ -421,7 +425,7 @@ mod tests {
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let alice_ctx = SecurityContext::new(alice_id, Default::default(), Default::default());
         let mut session = make_session("hers", alice_id);
-        session.security_attributes = session.security_attributes.clone().granting(caelumora_model::security::Subject::Actor(bob_id), caelumora_model::security::Grant::Read);
+        session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         let session = create(&manager, &alice_ctx, session).await.unwrap();
 
@@ -430,7 +434,7 @@ mod tests {
         let refused = session.create_channel(&alice_ctx, with("hr", &hr_confidential, vec![bob_id])).await.expect_err("bob is not cleared for HR");
         assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { participant, .. }) if *participant == bob_id), "{refused}");
         let hr = session.create_channel(&alice_ctx, with("hr", &hr_confidential, vec![])).await.expect("alice is");
-        let joining = hr.add_participant(&alice_ctx, bob_id, caelumora_model::channel::HistoryAccess::All).await.expect_err("nor may he join");
+        let joining = hr.add_participant(&alice_ctx, bob_id, HistoryAccess::All).await.expect_err("nor may he join");
         assert!(matches!(joining.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { .. })), "{joining}");
 
         let team = session.create_channel(&alice_ctx, with("team", &Classification::general(Confidentiality::Internal), vec![bob_id])).await.expect("both are cleared for internal");
@@ -450,12 +454,11 @@ mod tests {
     #[tokio::test]
     async fn a_participant_added_later_sees_the_history_granted_and_is_announced() {
         use crate::channel::ChannelError;
-        use caelumora_model::channel::HistoryAccess;
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
-        let owner = match ctx.initiator_id { caelumora_model::actor::ActorId::User(id) => id, _ => unreachable!() };
+        let owner = match ctx.initiator_id { ActorId::User(id) => id, _ => unreachable!() };
         let writer = channel.user_actor(owner).expect("the creator takes part");
         for text in ["one", "two", "three"] {
             writer.send_message(text.to_string(), None).await.unwrap();
@@ -466,14 +469,14 @@ mod tests {
         channel.add_participant(&ctx, other, HistoryAccess::LastMessages { count: 1 }).await.expect("a user of the session joins");
 
         assert!(channel.members().iter().any(|m| m.id == other), "a member now");
-        let other_user = match other { caelumora_model::actor::ActorId::User(id) => id, _ => unreachable!() };
+        let other_user = match other { ActorId::User(id) => id, _ => unreachable!() };
         assert!(channel.user_actor(other_user).is_some(), "with an actor of their own");
         let visible: Vec<_> = channel.visible_history(other).await.messages().into_iter().map(|m| m.content).collect();
         assert_eq!(visible, vec![Some("three".to_string())], "the last message and no more");
         assert_eq!(channel.visible_history(ctx.initiator_id).await.messages().len(), before.len(), "the others still see everything");
         // What a reader records as read says from where (issue 72).
         let (limited, full) = (channel.visible_history(other).await, channel.visible_history(ctx.initiator_id).await);
-        assert_eq!(limited.start, Some(caelumora_model::channel::HistoryStart::From(before[2].id)), "from the last message");
+        assert_eq!(limited.start, Some(HistoryStart::From(before[2].id)), "from the last message");
         assert_eq!(full.start, None, "all of it");
         assert_eq!(limited.digest, full.digest, "up to where is the same for both");
         let stored = runtime.entity_stores().channels.get(&ctx, channel.id()).await.unwrap();
@@ -488,10 +491,10 @@ mod tests {
         history_of(&channel, 4).await;
         assert_eq!(channel.visible_history(other).await.messages().len(), 2);
 
-        let refusal = |error: anyhow::Error| error.downcast::<ChannelError>().expect("a ChannelError");
+        let refusal = |error: Error| error.downcast::<ChannelError>().expect("a ChannelError");
         let again = channel.add_participant(&ctx, other, HistoryAccess::All).await.expect_err("already in");
         assert!(matches!(refusal(again), ChannelError::AlreadyParticipant { .. }));
-        let stranger = caelumora_model::actor::ActorId::User(caelumora_model::user::UserId::new());
+        let stranger = ActorId::User(UserId::new());
         let outside = channel.add_participant(&ctx, stranger, HistoryAccess::All).await.expect_err("not in the session");
         assert!(matches!(refusal(outside), ChannelError::NotInSession { .. }));
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
@@ -503,8 +506,8 @@ mod tests {
         let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let owner = ctx.initiator_id.as_user_id().unwrap();
-        let within = |ended: tokio_util::sync::CancellationToken| async move {
-            tokio::time::timeout(std::time::Duration::from_secs(5), ended.cancelled_owned()).await
+        let within = |ended: CancellationToken| async move {
+            tokio::time::timeout(Duration::from_secs(5), ended.cancelled_owned()).await
         };
 
         // Leaving ends it.
@@ -541,7 +544,7 @@ mod tests {
         assert!(events.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, cid), change)) if cid == channel.id() && change.data::<ActorId>(LEFT).is_some())),
                 "the leave is announced: {events:?}");
 
-        let refusal = |error: anyhow::Error| error.downcast::<ChannelError>().expect("a ChannelError");
+        let refusal = |error: Error| error.downcast::<ChannelError>().expect("a ChannelError");
         let gone = channel.remove_participant(&ctx, other).await.expect_err("not in it any more");
         assert!(matches!(refusal(gone), ChannelError::NotAParticipant { .. }));
         let approver = channel.member_ids().into_iter().find(|id| matches!(id, ActorId::Approver(_))).expect("an approver");
@@ -549,7 +552,7 @@ mod tests {
         assert!(matches!(refusal(stays), ChannelError::ApproverStays { .. }));
 
         // Added again at once, once its old actor has ended (issue 171).
-        channel.add_participant(&ctx, other, caelumora_model::channel::HistoryAccess::All).await.expect("added again");
+        channel.add_participant(&ctx, other, HistoryAccess::All).await.expect("added again");
         assert!(channel.user_actor(other.as_user_id().unwrap()).is_some(), "with a new actor");
         let stored = runtime.entity_stores().channels.get(&ctx, channel.id()).await.unwrap();
         assert!(stored.former.is_empty(), "and no longer a former participant");
@@ -558,8 +561,6 @@ mod tests {
 
     #[tokio::test]
     async fn only_who_may_change_a_channel_adds_or_removes_its_participants() {
-        use caelumora_model::actor::ActorId;
-        use caelumora_model::channel::HistoryAccess;
 
         let (_, manager) = owned_runtime(Default::default());
         let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
@@ -567,14 +568,14 @@ mod tests {
         let as_user = |actor| SecurityContext::new(actor, Default::default(), Default::default());
         let mut session = make_session("hers", alice_id);
         session.participants = record_users(&manager, &[&alice, &bob, &carol]).await;
-        session.security_attributes = session.security_attributes.clone().granting(caelumora_model::security::Subject::Actor(bob_id), caelumora_model::security::Grant::Read).granting(caelumora_model::security::Subject::Actor(carol_id), caelumora_model::security::Grant::Read);
+        session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read).granting(Subject::Actor(carol_id), Grant::Read);
         let running = create(&manager, &as_user(alice_id), session).await.unwrap();
         let channel = running.create_channel(&as_user(alice_id), spec("side", vec![bob_id])).await.unwrap();
 
         let refused = channel.add_participant(&as_user(bob_id), carol_id, HistoryAccess::All).await.expect_err("a participant may not");
-        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        assert!(is_forbidden(&refused), "{refused}");
         let refused = channel.remove_participant(&as_user(bob_id), bob_id).await.expect_err("nor remove anyone");
-        assert!(crate::error::is_forbidden(&refused), "{refused}");
+        assert!(is_forbidden(&refused), "{refused}");
         assert_eq!(channel.members().len(), 3, "alice, bob and the approver, unchanged");
 
         channel.add_participant(&as_user(alice_id), carol_id, HistoryAccess::None).await.expect("the owner may");

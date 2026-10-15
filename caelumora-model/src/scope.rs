@@ -238,6 +238,7 @@ pub fn found_from<'a, D: Scoped>(scoped: impl IntoIterator<Item = &'a D>, place:
 mod tests {
     use super::*;
     use uuid::Uuid;
+    use crate::store::query::meets_exactly_its_equals;
 
     #[test]
     fn test_global_scope_contains_all() {
@@ -437,7 +438,7 @@ mod tests {
     #[test]
     fn a_scope_meets_exactly_the_scopes_equal_to_it() {
         let id = Uuid::new_v4();
-        crate::store::query::meets_exactly_its_equals(&[
+        meets_exactly_its_equals(&[
             Scope::GlobalScope, Scope::UserScope { user_id: UserId(id) }, Scope::GroupScope { group_id: GroupId(id) },
             Scope::SessionScope { session_id: SessionId(id) }, Scope::SessionScope { session_id: SessionId::new() },
             Scope::ChannelScope { session_id: SessionId(id), channel_id: ChannelId(id) },

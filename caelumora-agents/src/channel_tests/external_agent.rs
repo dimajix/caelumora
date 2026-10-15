@@ -10,9 +10,9 @@ use caelumora_runtime::runtime::{ChannelRuntime, RuntimeManager};
 use crate::testing::test_registry;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
-use caelumora_model::channel::Channel;
+use caelumora_model::channel::{Channel, HistoryAccess, moderation_components};
 use caelumora_model::security::{SecurityAttributes, SecurityContext, AccessPolicy};
-use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::session::{ChannelId, SessionId, Participant};
 use std::sync::Arc;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::secret::SecretManager;
@@ -21,29 +21,41 @@ use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_runtime::session::SessionManager;
 use caelumora_runtime::session::testing::*;
-use caelumora_model::confidentiality::ConfidentialityRules;
+use caelumora_model::confidentiality::{ConfidentialityRules, Classification, Visibility};
 use caelumora_model::config::AppConfig;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::prompt::PromptProvider;
+use caelumora_model::digest;
+use caelumora_model::agent::{AgentChannelState, AgentId, RetryRefused};
+use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+use caelumora_model::context::ContextItem;
+use caelumora_model::external_agent::{OpenTaskState, TaskId};
+use caelumora_model::work::Work;
+use chrono::Utc;
+use crate::external::ExternalAgent;
+use crate::external::testing::ScriptedExternalAgent;
+use std::time::Duration;
+use tokio::sync::Semaphore;
+use tokio::sync::broadcast::Receiver;
 
 /// A running channel with alice and an external agent (issue 179) that
 /// `remote` stands in for, after alice said "hello". The remote agent is
 /// its personality's component, of a kind registered for the test.
-async fn with_an_external_agent(remote: Arc<crate::external::testing::ScriptedExternalAgent>) -> Stuck {
+async fn with_an_external_agent(remote: Arc<ScriptedExternalAgent>) -> Stuck {
     let channel = external_channel(remote, external_components(), |_| None).await.expect("the external agent can be run");
     start(channel).await
 }
 
 /// The components of an external personality: the remote agent, of the
 /// kind `external_channel` registers for it.
-fn external_components() -> caelumora_model::component::ComponentConfig {
-    caelumora_model::component::ComponentConfig { component_nodes: vec![caelumora_model::component::ComponentDescriptor::new("remote", "test_remote")] }
+fn external_components() -> ComponentConfig {
+    ComponentConfig { component_nodes: vec![ComponentDescriptor::new("remote", "test_remote")] }
 }
 
 /// A channel of alice and an external agent with `components`, built but
 /// not running - with the agent's state in it `stored`, as a restart
 /// finds it.
-async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternalAgent>, components: caelumora_model::component::ComponentConfig, stored: impl FnOnce(caelumora_model::agent::AgentId) -> Option<caelumora_model::agent::AgentChannelState>) -> Result<(Arc<ChannelLoop>, SecurityContext, caelumora_model::agent::AgentId, UserId)> {
+async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: ComponentConfig, stored: impl FnOnce(AgentId) -> Option<AgentChannelState>) -> Result<(Arc<ChannelLoop>, SecurityContext, AgentId, UserId)> {
     use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
     use caelumora_model::scope::Scope;
 
@@ -51,7 +63,7 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
     let personality = Personality {
         description: None,
         introduction: None,
-        reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
+        reasoning_visibility: Visibility::Channel,
         id: PersonalityId::new(),
         name: ScopedName::new("remote", Default::default()).unwrap(),
         kind: PersonalityKind::External,
@@ -68,14 +80,14 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
     store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
     store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
 
-    let access_policy: Arc<dyn AccessPolicy> = Arc::new(caelumora_model::security::AllowAllPolicy::new());
+    let access_policy: Arc<dyn AccessPolicy> = Arc::new(AllowAllPolicy::new());
     let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
     let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
     registry.register(
-        caelumora_runtime::component::ComponentKind::new("test_remote").provides::<dyn crate::external::ExternalAgent>(),
+        ComponentKind::new("test_remote").provides::<dyn ExternalAgent>(),
         move |_descriptor, _context| {
-            let mut facets = caelumora_runtime::component::ComponentFacets::empty();
-            facets.insert::<dyn crate::external::ExternalAgent>(Arc::<crate::external::testing::ScriptedExternalAgent>::clone(&remote));
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
             Ok(facets)
         },
     );
@@ -90,10 +102,10 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
         id: ChannelId::new(),
         session_id: SessionId::new(),
         name: Name::new("main").unwrap(),
-        components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
+        components: moderation_components(None, Some("broadcast_policy")),
         participants: vec![Participant::User(alice.id), Participant::Agent(agent_id)],
         security_attributes: SecurityAttributes::default(),
-        classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+        classification: Classification::CHANNEL_DEFAULT,
         language: None,
         history_limits: Vec::new(),
         deleted: None,
@@ -124,11 +136,11 @@ fn register_heard(registry: &mut ComponentRegistry) {
 #[tokio::test]
 async fn an_external_agent_that_joins_keeps_what_it_may_see_and_on_joining_again_what_it_missed() {
     use caelumora_model::message::{MessageId, MessageRole};
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default());
+    let remote = Arc::new(ScriptedExternalAgent::default());
     let (channel, context, agent, _) = external_channel(remote, external_components(), |_| None).await.unwrap();
     let message = |sender: ActorId, text: &str| Message {
         id: MessageId::new(), role: MessageRole::User, sender_id: sender, content: Some(text.to_string()),
-        ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        ..Message::new(Classification::CHANNEL_DEFAULT)
     };
     let said = |text: &str| message(context.initiator_id, text);
     let (one, two, three) = (said("one"), said("two"), said("three"));
@@ -148,7 +160,7 @@ async fn an_external_agent_that_joins_keeps_what_it_may_see_and_on_joining_again
 #[tokio::test]
 async fn an_external_agent_does_not_answer_again() {
     use crate::external::ExternalEvent;
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Message("Hello, alice.".to_string())), Ok(ExternalEvent::Completed)],
     ]));
     let built = external_channel(Arc::clone(&remote), external_components(), |_| None).await.expect("the external agent can be run");
@@ -157,13 +169,13 @@ async fn an_external_agent_does_not_answer_again() {
 
     channel.user_actor(alice_of(&context)).unwrap().request_retry(answer.id).await.expect("asked");
     let ActorEvent::RetryRejected { target, reason } = shown_by(&mut events, agent, "RetryRejected").await else { unreachable!() };
-    assert_eq!((target, reason), (RetryTarget::Message(answer.id), caelumora_model::agent::RetryRefused::Elsewhere), "the remote agent keeps what it was given");
+    assert_eq!((target, reason), (RetryTarget::Message(answer.id), RetryRefused::Elsewhere), "the remote agent keeps what it was given");
     running.abort();
 }
 
 #[tokio::test]
 async fn an_external_agent_s_answer_under_way_is_not_asked_for_again() {
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default());
+    let remote = Arc::new(ScriptedExternalAgent::default());
     let Stuck { channel, context, agent, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
     assert_eq!(channel.turn_of(ActorId::Agent(agent)), None, "it has no turn here to give up");
     let refused = channel.user_actor(alice_of(&context)).unwrap().request_retry_of_turn(ActorId::Agent(agent), TurnId::new()).await;
@@ -175,12 +187,12 @@ async fn an_external_agent_s_answer_under_way_is_not_asked_for_again() {
 async fn what_an_external_agents_perceive_processors_drop_is_kept_but_never_given() {
     use crate::external::ExternalEvent;
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Message("Hello, alice.".to_string())), Ok(ExternalEvent::Completed)],
         vec![Ok(ExternalEvent::Completed)],
     ]));
     let mut components = external_components();
-    components.component_nodes.push(caelumora_model::component::ComponentDescriptor::new("filter", "test_no_secrets"));
+    components.component_nodes.push(ComponentDescriptor::new("filter", "test_no_secrets"));
     let built = external_channel(Arc::clone(&remote), components, |_| None).await.expect("the external agent can be run");
     let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
     answered(&mut events, agent).await;
@@ -203,18 +215,18 @@ async fn what_an_external_agents_perceive_processors_drop_is_kept_but_never_give
     running.abort();
 }
 
-fn task(id: &str) -> caelumora_model::external_agent::TaskId {
-    caelumora_model::external_agent::TaskId(id.to_string())
+fn task(id: &str) -> TaskId {
+    TaskId(id.to_string())
 }
 
 /// What the remote agent was given in the call `answer` came of: the
 /// context recorded with it in the `state` of `agent` (issue 205).
-fn given_for(state: &caelumora_model::agent::AgentChannelState, agent: caelumora_model::agent::AgentId, answer: &Message) -> Vec<String> {
+fn given_for(state: &AgentChannelState, agent: AgentId, answer: &Message) -> Vec<String> {
     let seen = AgentContextView::of_state(ActorId::Agent(agent), state.clone());
     seen.context_of(answer.id).expect("recorded with the answer").items.into_iter()
         .filter_map(|item| match item {
-            caelumora_model::context::ContextItem::Conversation { message } => message.content,
-            caelumora_model::context::ContextItem::Prompt { .. } => None,
+            ContextItem::Conversation { message } => message.content,
+            ContextItem::Prompt { .. } => None,
         })
         .collect()
 }
@@ -228,7 +240,7 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
     let conversation = ConversationId("c-1".to_string());
     // Told who said what, by the handle (issue 135).
     let marking = ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() };
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![
             Ok(ExternalEvent::Conversation(conversation.clone())),
             Ok(ExternalEvent::Started(task("t-1"))),
@@ -285,7 +297,7 @@ async fn an_external_agent_tells_its_remote_agent_of_a_message_it_was_given_that
     let answer = |text: &str| vec![Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
     let mut first = vec![Ok(ExternalEvent::Conversation(ConversationId("c-1".to_string())))];
     first.extend(answer("Hello."));
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![first, answer("Fine."), answer("Bye.")]).marking(marking));
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![first, answer("Fine."), answer("Bye.")]).marking(marking));
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
     answered(&mut events, agent).await;
     let alice = channel.user_actor(alice_of(&context)).unwrap();
@@ -314,7 +326,7 @@ async fn an_external_agent_tells_its_remote_agent_of_a_message_it_was_given_that
 #[tokio::test]
 async fn an_external_agent_tells_that_it_works_while_it_answers() {
     use crate::external::ExternalEvent;
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![vec![
         Ok(ExternalEvent::Started(task("t-1"))),
         Ok(ExternalEvent::Message("Hello, alice.".to_string())),
         Ok(ExternalEvent::Completed),
@@ -343,8 +355,7 @@ async fn an_external_agent_tells_that_it_works_while_it_answers() {
 #[tokio::test]
 async fn an_external_agent_is_shown_carrying_out_a_command_as_an_agent_run_here_is() {
     use crate::external::ExternalEvent;
-    use caelumora_model::component::ComponentDescriptor;
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![vec![
         Ok(ExternalEvent::Message("Hello, alice.".to_string())),
         Ok(ExternalEvent::Completed),
     ]]));
@@ -367,7 +378,7 @@ async fn an_external_agent_is_shown_carrying_out_a_command_as_an_agent_run_here_
 #[tokio::test]
 async fn an_external_agent_s_answer_carries_the_turn_its_start_announced() {
     use crate::external::ExternalEvent;
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![vec![
         Ok(ExternalEvent::Started(task("t-1"))),
         Ok(ExternalEvent::Partial("Hel".to_string())),
         Ok(ExternalEvent::Message("Hello, alice.".to_string())),
@@ -401,8 +412,8 @@ async fn an_external_agent_asked_several_times_while_it_answers_is_called_once_a
     use crate::external::{ExternalEvent, Said};
 
     let answer = |id: &str, text: &str| vec![Ok(ExternalEvent::Started(task(id))), Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
-    let gate = Arc::new(tokio::sync::Semaphore::new(0));
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let gate = Arc::new(Semaphore::new(0));
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         answer("t-1", "First."), answer("t-2", "Second."), answer("t-3", "Third."),
     ]).gated(Arc::clone(&gate)));
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
@@ -449,7 +460,7 @@ async fn an_external_agent_asked_several_times_while_it_answers_is_called_once_a
 async fn an_external_agent_that_fails_or_cannot_be_reached_fails_its_answer_and_goes_on() {
     use crate::external::{ExternalAgentError, ExternalEvent};
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::Failed("out of coffee".to_string()))],
         vec![Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "refused".to_string() })],
     ]));
@@ -471,7 +482,7 @@ async fn an_external_agent_that_fails_or_cannot_be_reached_fails_its_answer_and_
 async fn what_an_external_agent_could_not_send_is_sent_with_its_next_call() {
     use crate::external::ExternalEvent;
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Message("Back again.".to_string())), Ok(ExternalEvent::Completed)],
     ]).unreachable_for(1));
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
@@ -489,12 +500,12 @@ async fn what_an_external_agent_could_not_send_is_sent_with_its_next_call() {
 
 /// The components of an external personality with prompt parts (issue
 /// 204): a fixed one, and one that changes with what it hears.
-fn external_components_with_prompts() -> caelumora_model::component::ComponentConfig {
+fn external_components_with_prompts() -> ComponentConfig {
     let mut components = external_components();
-    let mut frame = caelumora_model::component::ComponentDescriptor::new("frame", "static_system_prompt_provider");
+    let mut frame = ComponentDescriptor::new("frame", "static_system_prompt_provider");
     frame.params = serde_json::json!({ "prompt": "[Frame]\nBe brief.", "position": "before_turn_input" });
     components.component_nodes.push(frame);
-    components.component_nodes.push(caelumora_model::component::ComponentDescriptor::new("heard", "test_heard"));
+    components.component_nodes.push(ComponentDescriptor::new("heard", "test_heard"));
     components
 }
 
@@ -502,7 +513,7 @@ fn external_components_with_prompts() -> caelumora_model::component::ComponentCo
 async fn an_external_agent_is_given_its_prompt_parts_first_and_again_only_when_they_change() {
     use crate::external::ExternalEvent;
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Message("Hello, alice.".to_string())), Ok(ExternalEvent::Completed)],
         vec![Ok(ExternalEvent::Message("Fine.".to_string())), Ok(ExternalEvent::Completed)],
     ]));
@@ -522,7 +533,7 @@ async fn an_external_agent_is_given_its_prompt_parts_first_and_again_only_when_t
     let seen = AgentContextView::of_state(ActorId::Agent(agent), state);
     let items = seen.context_of(first[0].id).expect("recorded with the answer").items;
     let given_prompts: Vec<_> = items.iter().filter_map(|item| match item {
-        caelumora_model::context::ContextItem::Prompt { text, .. } => Some(text.as_str()),
+        ContextItem::Prompt { text, .. } => Some(text.as_str()),
         _ => None,
     }).collect();
     assert_eq!(given_prompts, [prompts[0].as_str(), prompts[1].as_str()]);
@@ -534,15 +545,15 @@ async fn after_a_restart_an_external_agent_is_given_only_the_prompt_parts_it_was
     use crate::external::ExternalEvent;
     use caelumora_model::external_agent::ConversationId;
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Message("Hello again.".to_string())), Ok(ExternalEvent::Completed)],
     ]));
     // Before the restart it was given the frame, and how much it heard
     // then.
-    let mut stored = caelumora_model::agent::AgentChannelState::default();
+    let mut stored = AgentChannelState::default();
     stored.remote.converse_in(ConversationId("c-1".to_string()));
-    stored.remote.give("frame".to_string(), caelumora_model::digest::prompt("[Frame]\nBe brief."));
-    stored.remote.give("heard".to_string(), caelumora_model::digest::prompt("[Heard]\n0"));
+    stored.remote.give("frame".to_string(), digest::prompt("[Frame]\nBe brief."));
+    stored.remote.give("heard".to_string(), digest::prompt("[Heard]\n0"));
     let built = external_channel(Arc::clone(&remote), external_components_with_prompts(), |_| Some(stored)).await.expect("the external agent can be run");
     let Stuck { agent, mut events, running, .. } = start(built).await;
     answered(&mut events, agent).await;
@@ -556,7 +567,7 @@ async fn after_a_restart_an_external_agent_is_given_only_the_prompt_parts_it_was
 async fn the_prompt_parts_an_external_agent_could_not_send_are_sent_with_its_next_call() {
     use crate::external::ExternalEvent;
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Message("Back again.".to_string())), Ok(ExternalEvent::Completed)],
     ]).unreachable_for(1));
     let built = external_channel(Arc::clone(&remote), external_components_with_prompts(), |_| None).await.expect("the external agent can be run");
@@ -574,15 +585,14 @@ async fn the_prompt_parts_an_external_agent_could_not_send_are_sent_with_its_nex
 #[tokio::test]
 async fn after_a_restart_an_external_agent_sends_what_it_heard_but_had_not_sent() {
     use crate::external::ExternalEvent;
-    use caelumora_model::agent::AgentChannelState;
     use caelumora_model::message::MessageRole;
 
-    let said = |text: &str| Message { role: MessageRole::User, sender_name: "bob".to_string(), content: Some(text.to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
+    let said = |text: &str| Message { role: MessageRole::User, sender_name: "bob".to_string(), content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
     let mut stored = AgentChannelState::default();
     stored.perceive(vec![said("sent before")], vec![said("sent before")]);
     stored.transcript.start_anew();
     stored.perceive(vec![said("heard, then the crash")], vec![said("heard, then the crash")]);
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Message("Noted.".to_string())), Ok(ExternalEvent::Completed)],
     ]));
     let built = external_channel(Arc::clone(&remote), external_components(), |_| Some(stored)).await.unwrap();
@@ -599,7 +609,7 @@ async fn a_cancel_ends_the_answer_of_an_external_agent_and_its_remote_task() {
     use crate::external::ExternalEvent;
 
     // The remote agent takes the task on and then works on it for ever.
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::Partial("Let me think".to_string()))],
     ]));
     let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(Arc::clone(&remote)).await;
@@ -621,7 +631,7 @@ async fn an_external_agent_removed_while_it_answers_cancels_its_task_and_gives_i
     use crate::external::ExternalEvent;
     use caelumora_model::turn::GivenUpReason;
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Started(task("t-1")))],
     ]));
     let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(Arc::clone(&remote)).await;
@@ -656,7 +666,7 @@ async fn an_external_agent_removed_while_it_answers_cancels_its_task_and_gives_i
 async fn a_stopped_channel_waits_for_its_external_agent_to_cancel_its_open_task() {
     use crate::external::ExternalEvent;
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::InputRequired("Which city?".to_string()))],
     ]));
     let Stuck { channel, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
@@ -675,9 +685,8 @@ async fn a_stopped_channel_waits_for_its_external_agent_to_cancel_its_open_task(
 #[tokio::test]
 async fn an_external_agent_that_asked_back_is_answered_within_the_same_task() {
     use crate::external::ExternalEvent;
-    use caelumora_model::external_agent::OpenTaskState;
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::InputRequired("Which city?".to_string()))],
         vec![Ok(ExternalEvent::Message("Sunny in Bonn.".to_string())), Ok(ExternalEvent::Completed)],
     ]));
@@ -706,7 +715,7 @@ async fn a_task_taken_up_again_is_done_as_the_call_that_took_it_up_though_the_re
 
     // The answer to the question comes without the task told again,
     // and breaks off; re-attached, the task finishes (issue 213).
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::InputRequired("Which city?".to_string()))],
         vec![Ok(ExternalEvent::Partial("Sun".to_string())), Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "reset".to_string() })],
     ]).resuming(vec![vec![Ok(ExternalEvent::Message("Sunny in Bonn.".to_string())), Ok(ExternalEvent::Completed)]]));
@@ -736,7 +745,7 @@ async fn a_task_taken_up_again_is_done_as_the_call_that_took_it_up_though_the_re
 
 #[tokio::test]
 async fn an_external_personality_that_names_no_remote_agent_cannot_be_run() {
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default());
+    let remote = Arc::new(ScriptedExternalAgent::default());
     let refused = external_channel(remote, Default::default(), |_| None).await.expect_err("nothing to reach");
     let message = format!("{refused:#}");
     assert!(message.contains("no component provides ExternalAgent, and it has no default"), "{message}");
@@ -748,7 +757,7 @@ async fn an_open_task_whose_answer_broke_off_is_followed_and_its_end_said_unaske
 
     // The connection breaks while the remote agent works; re-attached,
     // it finishes.
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Started(task("t-1"))), Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "reset".to_string() })],
     ]).resuming(vec![vec![Ok(ExternalEvent::Message("Here it is.".to_string())), Ok(ExternalEvent::Completed)]]));
     let Stuck { channel, agent, mut events, running, .. } = with_an_external_agent(remote).await;
@@ -779,7 +788,7 @@ async fn an_open_task_whose_answer_broke_off_is_followed_and_its_end_said_unaske
 async fn what_an_open_task_says_unasked_continues_the_answer_to_its_request() {
     use crate::external::{ExternalAgentError, ExternalEvent};
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Started(task("t-1"))), Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "reset".to_string() })],
     ]).resuming(vec![vec![Ok(ExternalEvent::Message("Here it is.".to_string())), Ok(ExternalEvent::Completed)]]));
     let Stuck { agent, mut events, running, .. } = with_an_external_agent(remote).await;
@@ -817,7 +826,7 @@ async fn an_answer_that_broke_off_is_said_once_in_full_when_its_task_ends() {
         (vec![Ok(ExternalEvent::Message("Here it is.".to_string())), Ok(ExternalEvent::Completed)], "Here it is."),
         (vec![Ok(ExternalEvent::Message("is.".to_string())), Ok(ExternalEvent::Completed)], "Here it\n\nis."),
     ] {
-        let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![broken()]).resuming(vec![resumed]));
+        let remote = Arc::new(ScriptedExternalAgent::answering(vec![broken()]).resuming(vec![resumed]));
         let Stuck { channel, agent, mut events, running, .. } = with_an_external_agent(remote).await;
 
         assert!(answered(&mut events, agent).await.is_empty(), "nothing is said cut off");
@@ -834,11 +843,10 @@ async fn an_answer_that_broke_off_is_said_once_in_full_when_its_task_ends() {
 #[tokio::test]
 async fn an_external_agent_answers_as_what_it_was_given_whatever_it_declares() {
     use crate::external::ExternalEvent;
-    use caelumora_model::confidentiality::Classification;
 
     // It declares to bring in nothing that is not public; it was told
     // what is internal.
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Partial("He".to_string())), Ok(ExternalEvent::Message("Hello, alice.".to_string())), Ok(ExternalEvent::Completed)],
     ]).declaring(Classification::PUBLIC));
     let Stuck { mut events, agent, running, .. } = with_an_external_agent(remote).await;
@@ -865,10 +873,9 @@ async fn an_external_agent_answers_as_what_it_was_given_whatever_it_declares() {
 #[tokio::test]
 async fn a_task_is_stored_as_soon_as_it_is_begun() {
     use crate::external::ExternalEvent;
-    use caelumora_model::external_agent::OpenTaskState;
 
     // The remote agent takes the request on, and is still at work.
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![vec![Ok(ExternalEvent::Started(task("t-1")))]]));
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![vec![Ok(ExternalEvent::Started(task("t-1")))]]));
     let Stuck { channel, agent, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
 
     let state = tokio::time::timeout(Duration::from_secs(5), async {
@@ -886,27 +893,26 @@ async fn a_task_is_stored_as_soon_as_it_is_begun() {
     let sent_as = remote.called_as.lock().unwrap()[0].1.clone();
     assert_eq!(work.security_context, sent_as, "the authority of the request it was sent with");
     assert_eq!(work.event_context.sender_id, ActorId::Agent(agent), "the request's envelope, continued in the agent's name");
-    assert_eq!(work.classification, caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT, "bound by the channel as it began");
+    assert_eq!(work.classification, Classification::CHANNEL_DEFAULT, "bound by the channel as it began");
     running.abort();
 }
 
 #[tokio::test]
 async fn after_a_restart_an_open_task_is_followed_again_and_one_that_asked_back_waits() {
     use crate::external::ExternalEvent;
-    use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::external_agent::{OpenTask, OpenTaskState, RemoteState};
+    use caelumora_model::external_agent::{OpenTask, RemoteState};
 
     let stored = AgentChannelState {
         remote: RemoteState {
             open_tasks: vec![
-                OpenTask { task: task("t-working"), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None, work: None },
-                OpenTask { task: task("t-asking"), since: chrono::Utc::now(), state: OpenTaskState::InputRequired, unsaid: None, work: None },
+                OpenTask { task: task("t-working"), since: Utc::now(), state: OpenTaskState::Working, unsaid: None, work: None },
+                OpenTask { task: task("t-asking"), since: Utc::now(), state: OpenTaskState::InputRequired, unsaid: None, work: None },
             ],
             ..RemoteState::default()
         },
         ..AgentChannelState::default()
     };
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
+    let remote = Arc::new(ScriptedExternalAgent::default()
         .resuming(vec![vec![Ok(ExternalEvent::Message("Finished while you were away.".to_string())), Ok(ExternalEvent::Completed)]]));
     let (channel, _, agent, owner) = external_channel(Arc::clone(&remote), external_components(), |_| Some(stored)).await.unwrap();
     let mut events = channel.observe();
@@ -932,8 +938,7 @@ async fn after_a_restart_an_open_task_is_followed_again_and_one_that_asked_back_
 #[tokio::test]
 async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_that_began_it() {
     use crate::external::ExternalEvent;
-    use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::external_agent::{OpenTask, OpenTaskState, RemoteState};
+    use caelumora_model::external_agent::{OpenTask, RemoteState};
 
     let bob = ActorId::User(UserId::new());
     // Bob's request, answered by the agent - continued in its name.
@@ -943,20 +948,20 @@ async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_tha
         remote: RemoteState {
             open_tasks: vec![OpenTask {
                 task: task("t-1"),
-                since: chrono::Utc::now(),
+                since: Utc::now(),
                 state: OpenTaskState::Working,
                 unsaid: None,
-                work: Some(caelumora_model::work::Work::new(
+                work: Some(Work::new(
                     begun.next(hermes, "hermes".to_string()),
                     SecurityContext::new(bob, SessionId::default(), ChannelId::default()).next(hermes, ActorId::None, ActorId::None),
-                    caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+                    Classification::CHANNEL_DEFAULT,
                 )),
             }],
             ..RemoteState::default()
         },
         ..AgentChannelState::default()
     }) };
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
+    let remote = Arc::new(ScriptedExternalAgent::default()
         .resuming(vec![vec![Ok(ExternalEvent::Message("Done for bob.".to_string())), Ok(ExternalEvent::Completed)]]));
     let (channel, _, agent, _) = external_channel(Arc::clone(&remote), external_components(), stored).await.unwrap();
     let mut events = channel.observe();
@@ -980,16 +985,14 @@ async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_tha
 /// The state of external agent `agent` with one task `standing` so,
 /// begun while its channel was confidential - above the channel as it is
 /// now - in its own name.
-fn begun_above(agent: caelumora_model::agent::AgentId, open: &str, standing: caelumora_model::external_agent::OpenTaskState) -> caelumora_model::agent::AgentChannelState {
-    use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::confidentiality::{Classification, Confidentiality};
+fn begun_above(agent: AgentId, open: &str, standing: OpenTaskState) -> AgentChannelState {
+    use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::external_agent::{OpenTask, RemoteState};
-    use caelumora_model::work::Work;
     let own = ActorId::Agent(agent);
     let work = Work::new(EventContext::default().next(own, "hermes".to_string()), SecurityContext::default().next(own, ActorId::None, ActorId::None), Classification::general(Confidentiality::Confidential));
     AgentChannelState {
         remote: RemoteState {
-            open_tasks: vec![OpenTask { task: task(open), since: chrono::Utc::now(), state: standing, unsaid: None, work: Some(work) }],
+            open_tasks: vec![OpenTask { task: task(open), since: Utc::now(), state: standing, unsaid: None, work: Some(work) }],
             ..RemoteState::default()
         },
         ..AgentChannelState::default()
@@ -999,9 +1002,9 @@ fn begun_above(agent: caelumora_model::agent::AgentId, open: &str, standing: cae
 #[tokio::test]
 async fn lowering_the_channel_gives_up_an_external_agents_answer_under_way() {
     use crate::external::ExternalEvent;
-    use caelumora_model::confidentiality::{Classification, Confidentiality};
+    use caelumora_model::confidentiality::Confidentiality;
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::Partial("Let me think".to_string()))],
     ]));
     let Stuck { channel, context, agent, helper, mut events, running } = with_an_external_agent(Arc::clone(&remote)).await;
@@ -1021,9 +1024,8 @@ async fn lowering_the_channel_gives_up_an_external_agents_answer_under_way() {
 
 #[tokio::test]
 async fn a_task_begun_before_its_channel_was_lowered_is_given_up_instead_of_followed() {
-    use caelumora_model::external_agent::OpenTaskState;
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default());
+    let remote = Arc::new(ScriptedExternalAgent::default());
     let (channel, _, agent, _) = external_channel(Arc::clone(&remote), external_components(), |agent| Some(begun_above(agent, "t-1", OpenTaskState::Working))).await.unwrap();
     let mut events = channel.observe();
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
@@ -1040,9 +1042,8 @@ async fn a_task_begun_before_its_channel_was_lowered_is_given_up_instead_of_foll
 #[tokio::test]
 async fn a_task_that_asked_back_before_its_channel_was_lowered_is_not_taken_up() {
     use crate::external::ExternalEvent;
-    use caelumora_model::external_agent::OpenTaskState;
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::answering(vec![
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Message("Hello.".to_string())), Ok(ExternalEvent::Completed)],
     ]));
     let built = external_channel(Arc::clone(&remote), external_components(), |agent| Some(begun_above(agent, "t-1", OpenTaskState::InputRequired))).await.unwrap();
@@ -1056,12 +1057,11 @@ async fn a_task_that_asked_back_before_its_channel_was_lowered_is_not_taken_up()
 
 /// The state of an external agent with one task working, as a restart
 /// finds it.
-fn working_on(open: &str) -> caelumora_model::agent::AgentChannelState {
-    use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::external_agent::{OpenTask, OpenTaskState, RemoteState};
+fn working_on(open: &str) -> AgentChannelState {
+    use caelumora_model::external_agent::{OpenTask, RemoteState};
     AgentChannelState {
         remote: RemoteState {
-            open_tasks: vec![OpenTask { task: task(open), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: None, work: None }],
+            open_tasks: vec![OpenTask { task: task(open), since: Utc::now(), state: OpenTaskState::Working, unsaid: None, work: None }],
             ..RemoteState::default()
         },
         ..AgentChannelState::default()
@@ -1070,7 +1070,7 @@ fn working_on(open: &str) -> caelumora_model::agent::AgentChannelState {
 
 /// Whether `agent` said anything - a message or an answer - among the
 /// events published so far.
-fn said_anything(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId) -> bool {
+fn said_anything(events: &mut Receiver<Envelope>, agent: AgentId) -> bool {
     std::iter::from_fn(|| events.try_recv().ok()).any(|envelope| {
         envelope.context.sender_id == ActorId::Agent(agent)
             && matches!(envelope.event, ActorEvent::CompleteMessageGenerated(_) | ActorEvent::TurnFinished { .. })
@@ -1081,7 +1081,7 @@ fn said_anything(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent:
 async fn a_followed_task_that_fails_says_so_and_keeps_nothing_of_what_came_before() {
     use crate::external::ExternalEvent;
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
+    let remote = Arc::new(ScriptedExternalAgent::default()
         .resuming(vec![vec![Ok(ExternalEvent::Message("Half of it".to_string())), Ok(ExternalEvent::Failed("out of coffee".to_string()))]]));
     let (channel, _, agent, _) = external_channel(remote, external_components(), |_| Some(working_on("t-1"))).await.unwrap();
     let mut events = channel.observe();
@@ -1098,9 +1098,8 @@ async fn a_followed_task_that_fails_says_so_and_keeps_nothing_of_what_came_befor
 #[tokio::test]
 async fn a_followed_task_whose_stream_breaks_says_nothing_and_stays_open() {
     use crate::external::{ExternalAgentError, ExternalEvent};
-    use caelumora_model::external_agent::OpenTaskState;
 
-    let remote = Arc::new(crate::external::testing::ScriptedExternalAgent::default()
+    let remote = Arc::new(ScriptedExternalAgent::default()
         .resuming(vec![vec![
             Ok(ExternalEvent::Message("Half of it".to_string())),
             Err(ExternalAgentError::Connection { endpoint: "https://agent.example".to_string(), reason: "reset".to_string() }),
@@ -1120,10 +1119,7 @@ async fn a_followed_task_whose_stream_breaks_says_nothing_and_stays_open() {
 #[tokio::test]
 async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() {
     use crate::external::ExternalEvent;
-    use crate::external::testing::ScriptedExternalAgent;
-    use caelumora_model::actor::{ActorEvent, ActorId};
     use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::scope::Scope;
 
     let answer = |text: &str| vec![Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
@@ -1131,10 +1127,10 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     let store = Arc::new(MemoryStore::new());
     let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
     registry.register(
-        caelumora_runtime::component::ComponentKind::new("test_remote").provides::<dyn crate::external::ExternalAgent>(),
+        ComponentKind::new("test_remote").provides::<dyn ExternalAgent>(),
         { let remote = Arc::clone(&remote); move |_descriptor, _context| {
-            let mut facets = caelumora_runtime::component::ComponentFacets::empty();
-            facets.insert::<dyn crate::external::ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
             Ok(facets)
         } },
     );
@@ -1162,14 +1158,14 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
     let mut session = make_session("roster", ActorId::None);
     session.participants = participants;
-    session.participants.push(caelumora_model::session::Participant::Agent(hermes.id));
+    session.participants.push(Participant::Agent(hermes.id));
     let session = create(&manager, &alice_ctx, session).await.unwrap();
     let channel = session.create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), ActorId::Agent(hermes.id)])).await.unwrap();
     let mut events = channel.user_actor(alice.id).unwrap().watch().events;
-    let answered = |events: &mut tokio::sync::broadcast::Receiver<caelumora_model::actor::Envelope>| {
+    let answered = |events: &mut Receiver<Envelope>| {
         let mut events = events.resubscribe();
         async move {
-            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::time::timeout(Duration::from_secs(5), async {
                 loop {
                     let envelope = events.recv().await.expect("the channel is running");
                     if envelope.context.sender_id == ActorId::Agent(hermes.id) && matches!(envelope.event, ActorEvent::TurnFinished { .. }) { break }
@@ -1182,7 +1178,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     channel.user_actor(alice.id).unwrap().send_message("hello".to_string(), None).await.unwrap();
     waiting.await;
     let waiting = answered(&mut events);
-    channel.add_participant(&alice_ctx, ActorId::User(bob.id), caelumora_model::channel::HistoryAccess::All).await.unwrap();
+    channel.add_participant(&alice_ctx, ActorId::User(bob.id), HistoryAccess::All).await.unwrap();
     channel.user_actor(alice.id).unwrap().send_message("bob is here".to_string(), None).await.unwrap();
     waiting.await;
 

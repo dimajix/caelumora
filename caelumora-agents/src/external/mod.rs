@@ -152,6 +152,7 @@ pub(crate) mod testing {
     use futures::StreamExt;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
+    use tokio::sync::Semaphore;
 
     /// A remote agent that answers each request with the next of its
     /// scripted event lists, and records what it was given. A script that
@@ -177,7 +178,7 @@ pub(crate) mod testing {
         profile: ModelProfile,
         /// What each answer to a request waits for, one permit each, if
         /// anything: a slow remote agent.
-        gate: Option<Arc<tokio::sync::Semaphore>>,
+        gate: Option<Arc<Semaphore>>,
     }
 
     impl ScriptedExternalAgent {
@@ -203,7 +204,7 @@ pub(crate) mod testing {
 
         /// Begins each answer to a request only once `gate` gives it a
         /// permit.
-        pub(crate) fn gated(self, gate: Arc<tokio::sync::Semaphore>) -> Self {
+        pub(crate) fn gated(self, gate: Arc<Semaphore>) -> Self {
             Self { gate: Some(gate), ..self }
         }
 
@@ -270,6 +271,7 @@ mod tests {
     use super::testing::ScriptedExternalAgent;
     use super::*;
     use futures::StreamExt;
+    use std::time::Duration;
 
     fn hello() -> OutboundMessage {
         OutboundMessage { prompts: Vec::new(), said: vec![Said { sender: "alice".to_string(), text: "hello".to_string() }], answers: None }
@@ -316,7 +318,7 @@ mod tests {
         assert_eq!(agent.cancelled.lock().unwrap().as_slice(), &[task]);
 
         let mut nothing_left = agent.send(&security, None, hello()).await.unwrap();
-        let waited = tokio::time::timeout(std::time::Duration::from_millis(20), nothing_left.next()).await;
+        let waited = tokio::time::timeout(Duration::from_millis(20), nothing_left.next()).await;
         assert!(waited.is_err(), "with no script left, the answer never comes");
     }
 }

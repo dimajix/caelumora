@@ -2,7 +2,7 @@ use crate::actor::{ActorId, ActorState, EventContext};
 use crate::approval::ApprovalRequest;
 use crate::chain::Stored;
 use crate::component::ComponentConfig;
-use crate::confidentiality::Classification;
+use crate::confidentiality::{Classification, Visibility};
 use crate::context::{ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptRef};
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
@@ -10,7 +10,7 @@ use crate::history::{HistoryEntry, History};
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
 use crate::memory::{Memories, MemoryChain};
-use crate::message::{Message, MessageId, MessageRole, TokenUsage};
+use crate::message::{Message, MessageId, MessageRole, TokenUsage, executed_calls};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
 use crate::removal::{Deletable, Removal};
 use crate::role::RoleId;
@@ -25,10 +25,14 @@ use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Description, Introduction};
 use crate::value::ValueError;
 use crate::work::{TurnId, Work};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize, Deserializer};
+use std::collections::{HashMap, HashSet};
 use tracing::warn;
 use uuid::Uuid;
+use chrono::Utc;
+use crate::digest;
+use crate::question::QuestionRequest;
+use crate::session::{ChannelId, SessionId};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentUpdateEvent {
@@ -108,7 +112,7 @@ pub struct Personality {
     /// it from the channel always; otherwise what a turn saw decides.
     /// `channel` unless named.
     #[serde(default)]
-    pub reasoning_visibility: crate::confidentiality::Visibility,
+    pub reasoning_visibility: Visibility,
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -265,7 +269,7 @@ impl Agent {
     /// `channel` of session `session` (issue 87): begun by the agent itself,
     /// answered for by its owner and acting in the name of its principal
     /// (issues 255, 341).
-    pub fn security_context(&self, session: crate::session::SessionId, channel: crate::session::ChannelId) -> SecurityContext {
+    pub fn security_context(&self, session: SessionId, channel: ChannelId) -> SecurityContext {
         let agent = ActorId::Agent(self.id);
         SecurityContext::new(agent, session, channel).next(agent, self.security_attributes.owner_id, self.principal_id)
     }
@@ -519,7 +523,7 @@ impl AgentChannelState {
             moved.insert(old, self.transcript.digest());
         }
         let to = self.transcript.digest()?;
-        self.history.record_compaction(HistoryEntry::Compacted { turn_id, actor, from, to, at: chrono::Utc::now() });
+        self.history.record_compaction(HistoryEntry::Compacted { turn_id, actor, from, to, at: Utc::now() });
         for message in given {
             self.history.push(message, None);
         }
@@ -562,7 +566,7 @@ impl AgentChannelState {
                 // Taken back already.
                 (TranscriptEntry::Message(_), None) => {}
                 (TranscriptEntry::Message(_), Some(step)) if step.turn_id == Some(turn) => {
-                    if !crate::message::executed_calls(&[&step]).is_empty() {
+                    if !executed_calls(&[&step]).is_empty() {
                         return Err(RetryRefused::CallsRan);
                     }
                     taken_back.push(step.id);
@@ -578,7 +582,7 @@ impl AgentChannelState {
     /// the entry `after` - `None`: before everything - its text classified
     /// `classification`.
     pub fn keep_prompt(&mut self, role: MessageRole, text: String, after: Option<Digest>, classification: Option<Classification>) -> PromptRef {
-        let digest = crate::digest::prompt(&text);
+        let digest = digest::prompt(&text);
         self.prompts.keep(digest, || text);
         PromptRef { text: digest, role, after, classification }
     }
@@ -603,7 +607,7 @@ impl AgentChannelState {
         profile: ModelProfile,
     ) -> TurnId {
         let offered = (!tool_sets.is_empty()).then(|| {
-            let digest = crate::digest::tool_sets(&tool_sets);
+            let digest = digest::tool_sets(&tool_sets);
             self.offered_tools.keep(digest, || tool_sets.clone());
             digest
         });
@@ -680,7 +684,7 @@ impl AgentChannelState {
         for change in private_notes {
             self.private_notes.push(change, origin.clone(), after);
         }
-        let at = chrono::Utc::now();
+        let at = Utc::now();
         if let Some(CommandRequest { command, args, issuer }) = command {
             self.history.record_command(HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, at });
         }
@@ -693,7 +697,7 @@ impl AgentChannelState {
     /// 258): its end, `TurnGivenUp`, after what it said, which stays - also
     /// for a turn that said nothing. What it staged is not applied.
     pub fn give_up_turn(&mut self, turn_id: TurnId, actor: ActorId, reason: GivenUpReason) {
-        let at = chrono::Utc::now();
+        let at = Utc::now();
         self.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id, reason: reason.clone(), at });
         self.history.end_turn(HistoryEntry::TurnGivenUp { turn_id, actor, reason, at });
     }
@@ -712,7 +716,7 @@ impl AgentChannelState {
 
     /// The questions its turn waits for the answers to (issue 165); none
     /// without a turn.
-    pub fn pending_questions(&self) -> Vec<crate::question::QuestionRequest> {
+    pub fn pending_questions(&self) -> Vec<QuestionRequest> {
         self.turn.as_ref().map(TurnState::pending_questions).unwrap_or_default()
     }
 
@@ -726,7 +730,7 @@ impl AgentChannelState {
     /// `context_tokens`, is read from what the model is given next
     /// (`next_context_tokens`, issue 284).
     pub fn usage(&self, agent: ActorId) -> Option<TokenUsage> {
-        let mut counted = std::collections::HashSet::new();
+        let mut counted = HashSet::new();
         let usage = TokenUsage::of(self.transcript.all_entries().filter_map(|node| node.entry.message()).filter(|m| m.sender_id == agent && counted.insert(m.id)))?;
         let context_tokens = self.next_context_tokens(agent).unwrap_or(usage.context_tokens);
         Some(TokenUsage { context_tokens, ..usage })
@@ -814,12 +818,12 @@ pub enum AgentChannelStateChange {
 }
 
 /// The tool sets of one offer as they were recorded (`RecordedToolSets`).
-fn recorded_offer<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<ToolSet>, D::Error> {
+fn recorded_offer<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<ToolSet>, D::Error> {
     RecordedToolSets::deserialize(deserializer).map(Into::into)
 }
 
 /// Every offer of tool sets as it was recorded (`RecordedToolSets`).
-fn recorded_offers<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Kept<Vec<ToolSet>>, D::Error> {
+fn recorded_offers<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Kept<Vec<ToolSet>>, D::Error> {
     Kept::<RecordedToolSets>::deserialize(deserializer).map(|kept| kept.map(Into::into))
 }
 
@@ -912,6 +916,7 @@ pub(crate) mod tests {
     use crate::tool::{ToolParameters, ToolVisibility};
     use crate::user::UserId;
     use crate::workspace::{Workspace, WorkspaceId};
+    use crate::note::NoteId;
 
     #[test]
     fn a_resumed_turn_answers_unfinished_tool_calls_as_not_executed_instead_of_running_them() {
@@ -1029,7 +1034,7 @@ pub(crate) mod tests {
         assert!(decoded.turn.is_none() && decoded.processing_state == ActorState::Idle);
 
         let mut waiting = AgentChannelState { processing_state: ActorState::WaitingForUser, turn: Some(TurnState::default()), ..AgentChannelState::default() };
-        waiting.said(Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT));
+        waiting.said(Message::new(Classification::CHANNEL_DEFAULT));
         let json = serde_json::to_string(&waiting).unwrap();
         assert!(json.contains("\"WaitingForUser\""));
         let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
@@ -1038,7 +1043,7 @@ pub(crate) mod tests {
         assert_eq!(decoded.transcript.messages().len(), 1, "with what it said, in the transcript (issue 260)");
         assert_eq!(decoded.turn.as_ref().map(|t| t.work.context.transcript), Some(decoded.transcript.digest()), "its context names the transcript's head");
         let context = decoded.turn.as_ref().map(|t| t.work.context.clone()).unwrap_or_default();
-        assert!(crate::context::ContextResolver::of(&decoded).resolve(&context, turn_id, ActorId::default()).is_some(), "so a resumed turn's next call resolves");
+        assert!(ContextResolver::of(&decoded).resolve(&context, turn_id, ActorId::default()).is_some(), "so a resumed turn's next call resolves");
         assert_eq!(decoded.turn.map(|t| t.work.turn_id), waiting.turn.map(|t| t.work.turn_id), "as the same turn");
     }
 
@@ -1096,7 +1101,7 @@ pub(crate) mod tests {
         assert_eq!(produced_from.transcript, state.transcript.entries().nth(1).map(|n| n.digest), "said after the step, from the transcript with it");
         assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "the context moved on to the head");
         assert_eq!(state.recorded_context_of(answer.id), Some((produced_from.clone(), turn_id)), "recorded as it is said (issue 260)");
-        let note = NoteChange::Add { id: crate::note::NoteId(1), text: "sums".to_string(), classification: Classification::CHANNEL_DEFAULT };
+        let note = NoteChange::Add { id: NoteId(1), text: "sums".to_string(), classification: Classification::CHANNEL_DEFAULT };
 
         state.turn = None;
         assert!(state.finish_turn(turn_id, ActorId::default(), vec![note], Vec::new(), None), "a note changed");
@@ -1147,13 +1152,13 @@ pub(crate) mod tests {
         let (again, gone) = (said("again", Classification::PUBLIC), said("gone", Classification::PUBLIC));
         state.perceive(vec![again.clone(), gone.clone()], vec![again.clone(), gone.clone()]);
         state.transcript.modify(Message { content: Some("again!".to_string()), ..again.clone() });
-        state.transcript.revoke(gone.id, chrono::Utc::now());
+        state.transcript.revoke(gone.id, Utc::now());
         let head = state.transcript.digest();
 
         assert_eq!(state.compact(agent, vec![(said("summary", Classification::PUBLIC), None)], None), None, "not between turns");
         begin(&mut state, Vec::new());
         assert_eq!(state.compact(agent, Vec::new(), None), None, "not to nothing");
-        assert_eq!(state.compact(agent, Vec::new(), Some(crate::digest::content(b"elsewhere"))), None, "not from what is not on the active path");
+        assert_eq!(state.compact(agent, Vec::new(), Some(digest::content(b"elsewhere"))), None, "not from what is not on the active path");
         assert_eq!(state.transcript.digest(), head, "nothing changed");
 
         let summary = Message { sender_id: agent, role: MessageRole::User, prompt_tokens: Some(50), ..said("[Summary] they greeted", Classification::PUBLIC) };
@@ -1238,7 +1243,7 @@ pub(crate) mod tests {
     #[test]
     fn a_command_turn_offers_no_tools_and_records_its_command_before_its_end() {
         let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
-        let issuer = ActorId::User(crate::user::UserId::new());
+        let issuer = ActorId::User(UserId::new());
         let request = CommandRequest { command: "compact".to_string(), args: "hard".to_string(), issuer };
         let turn_id = state.begin_command_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), request.clone());
         let turn = state.turn.as_ref().expect("a turn was begun");
@@ -1334,7 +1339,6 @@ pub(crate) mod tests {
     #[test]
     fn what_changed_in_an_agents_channel_state_replays_onto_what_was_stored() {
         use crate::message::tests::{id, make_message};
-        use crate::note::NoteId;
         let mut state = AgentChannelState::default();
         state.history.extend(vec![make_message(id(1))]);
         state.transcript.push(make_message(id(1)));
@@ -1344,8 +1348,8 @@ pub(crate) mod tests {
         state.history.push(make_message(id(2)), Some(ContextRef { transcript: before, ..ContextRef::default() }));
         state.notes.push(NoteChange::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), id(2));
         state.private_notes.push(NoteChange::Add { id: NoteId(1), text: "mine".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), id(2));
-        state.prompts.keep(crate::digest::prompt("system"), || "system".to_string());
-        state.offered_tools.keep(crate::digest::tool_sets(&[]), Vec::new);
+        state.prompts.keep(digest::prompt("system"), || "system".to_string());
+        state.offered_tools.keep(digest::tool_sets(&[]), Vec::new);
         state.processing_state = ActorState::WaitingForUser;
         state.turn = Some(TurnState { model_calls: 3, ..TurnState::default() });
 
@@ -1373,8 +1377,7 @@ pub(crate) mod tests {
 
     #[test]
     fn the_tools_offered_are_read_as_they_were_stored_before_issue_194() {
-        use crate::tool::ToolParameters;
-        let digest = crate::digest::tool_sets(&[]);
+        let digest = digest::tool_sets(&[]);
         let flat = serde_json::json!([{ "name": "calc", "description": "calculates", "parameters": ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()) }]);
         let change: AgentChannelStateChange = serde_json::from_value(serde_json::json!({ "tool_set": { "digest": digest, "tools": flat } })).unwrap();
         let AgentChannelStateChange::OfferedTools { tools: sets, .. } = change else { panic!("read under its old name") };
@@ -1395,7 +1398,6 @@ pub(crate) mod tests {
 
     #[test]
     fn all_that_is_heard_is_kept_and_what_is_perceived_is_seen_by_a_turn_under_way() {
-        use crate::confidentiality::Confidentiality;
         use crate::message::tests::{id, make_message};
         let mut state = AgentChannelState::default();
         state.perceive(vec![make_message(id(1)), make_message(id(2))], vec![make_message(id(1))]);
@@ -1423,7 +1425,7 @@ pub(crate) mod tests {
         state.transcript.extend(vec![make_message(id(1)), make_message(id(2))]);
         let remote = &mut state.remote;
         remote.conversation = Some(ConversationId("c-1".to_string()));
-        remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: chrono::Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), work: None });
+        remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), work: None });
         assert_eq!(state.changes().len(), 2 + 3, "the history's, the transcript's, the small parts");
         replayed(&state, &mut copy);
 
@@ -1465,7 +1467,7 @@ pub(crate) mod tests {
 
     #[test]
     fn only_an_agents_last_answer_is_answered_again() {
-        use crate::tool::{ToolCall, ToolCallResult, ToolResultStatus, ToolVisibility};
+        use crate::tool::{ToolCall, ToolCallResult, ToolResultStatus};
         let agent = ActorId::Agent(AgentId::new());
         let turn = TurnId::new();
         let answer = |content: &str| Message { sender_id: agent, role: MessageRole::Assistant, turn_id: Some(turn), ..said(content, Classification::CHANNEL_DEFAULT) };
@@ -1486,10 +1488,10 @@ pub(crate) mod tests {
         // Its turn ended: taken over, it is still its last answer; given up,
         // what it said stands and nothing is taken back.
         let mut finished = state.clone();
-        finished.transcript.end_turn(TranscriptEntry::TurnFinished { turn_id: turn, at: chrono::Utc::now() });
+        finished.transcript.end_turn(TranscriptEntry::TurnFinished { turn_id: turn, at: Utc::now() });
         assert_eq!(finished.retried(first.id, agent), Ok(vec![first.id]), "its own turn's end");
         let mut given_up = state.clone();
-        given_up.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: turn, reason: GivenUpReason::Stopped, at: chrono::Utc::now() });
+        given_up.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: turn, reason: GivenUpReason::Stopped, at: Utc::now() });
         assert_eq!(given_up.retried(first.id, agent), Err(RetryRefused::NotLast), "a turn given up");
 
         // What its turn did after it is taken back with it - not a step of
@@ -1503,7 +1505,7 @@ pub(crate) mod tests {
         let step = Message { internal: true, ..answer("thinking") };
         state.transcript.push(step.clone());
         assert_eq!(state.retried(first.id, agent), Ok(vec![first.id, step.id]));
-        result.started_at = Some(chrono::Utc::now());
+        result.started_at = Some(Utc::now());
         state.transcript.push(Message { internal: true, role: MessageRole::Tool, tool_results: vec![result], ..answer("") });
         assert_eq!(state.retried(first.id, agent), Err(RetryRefused::CallsRan));
 
@@ -1515,7 +1517,7 @@ pub(crate) mod tests {
 
         let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
         state.transcript.push(first.clone());
-        state.transcript.revoke(first.id, chrono::Utc::now());
+        state.transcript.revoke(first.id, Utc::now());
         assert_eq!(state.retried(first.id, agent), Err(RetryRefused::NotItsAnswer), "taken back already");
         assert_eq!(serde_json::to_value(RetryRefused::NotLast).unwrap(), serde_json::json!("not_last"), "as a user interface reads it");
     }

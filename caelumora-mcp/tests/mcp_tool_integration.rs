@@ -29,7 +29,11 @@ use rmcp::transport::streamable_http_server::tower::{StreamableHttpServerConfig,
 use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
+use axum::Router;
+use chrono::Utc;
+use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct EchoArgs {
@@ -61,14 +65,14 @@ impl ServerHandler for EchoServer {
     }
 }
 
-async fn start_test_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
+async fn start_test_server() -> (SocketAddr, JoinHandle<()>) {
     let service = StreamableHttpService::new(
         || Ok(EchoServer),
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default(),
     );
-    let router = axum::Router::new().route_service("/mcp", service);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let router = Router::new().route_service("/mcp", service);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
@@ -88,7 +92,7 @@ fn runtime(store: &Arc<MemoryStore>) -> RuntimeManager {
 }
 
 /// A container with one MCP tool component configured with `params`.
-async fn build_container(params: serde_json::Value) -> ComponentContainer {
+async fn build_container(params: Value) -> ComponentContainer {
     let runtime_manager = runtime(&Arc::new(MemoryStore::new()));
     let registry = runtime_manager.component_registry();
     let context = ComponentContext::new(SecurityContext::default(), runtime_manager.services().clone());
@@ -110,7 +114,7 @@ async fn build_container(params: serde_json::Value) -> ComponentContainer {
 /// an actor in a channel that is attached to no session, so it reaches none.
 fn detached_actor_runtime() -> ActorRuntime {
     let runtime_manager = Arc::new(runtime(&Arc::new(MemoryStore::new())));
-    let now = chrono::Utc::now();
+    let now = Utc::now();
     let session = Session {
         summary: None, briefing: None,
         approval_rules: Vec::new(),

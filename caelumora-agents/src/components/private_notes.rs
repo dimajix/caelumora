@@ -249,9 +249,14 @@ mod tests {
     use caelumora_runtime::transport::Discard;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::message::MessageId;
+    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy};
+    use caelumora_model::session::ChannelId;
+    use caelumora_runtime::agent::state::AgentStateHandle;
+    use chrono::Utc;
 
     fn note(id: u32, text: &str) -> Note {
-        Note { id: NoteId(id), text: text.to_string(), classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT, after: MessageId::new(), origin: Default::default(), written_at: chrono::Utc::now() }
+        Note { id: NoteId(id), text: text.to_string(), classification: Classification::CHANNEL_DEFAULT, after: MessageId::new(), origin: Default::default(), written_at: Utc::now() }
     }
 
     #[test]
@@ -261,7 +266,7 @@ mod tests {
 
     #[test]
     fn the_prompt_part_shows_this_channel_first_then_the_others_by_name() {
-        let elsewhere = [PrivateNotesElsewhere { channel: caelumora_model::session::ChannelId::default(), name: "research".to_string(), notes: vec![note(1, "Kaya prefers short answers.")], digest: None }];
+        let elsewhere = [PrivateNotesElsewhere { channel: ChannelId::default(), name: "research".to_string(), notes: vec![note(1, "Kaya prefers short answers.")], digest: None }];
         let text = render(&[note(2, "Remind Kaya of the deadline.")], &elsewhere);
         assert!(text.find("#2: Remind Kaya").unwrap() < text.find("From channel research (change them only there):").unwrap(), "{text}");
         assert!(text.contains("- Kaya prefers short answers."), "unnumbered: it cannot be revoked here");
@@ -270,8 +275,8 @@ mod tests {
     #[tokio::test]
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
-        let tools = PrivateNotesComponent { access_policy: Arc::new(caelumora_model::security::AllowAllPolicy::new()), confidentiality: Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()) };
-        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+        let tools = PrivateNotesComponent { access_policy: Arc::new(AllowAllPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()) };
+        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached());
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
         let noted = tools.execute(WRITE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), None, &mut turn).await.unwrap();
         assert_eq!(noted.value["id"], 1, "its own numbering");
@@ -281,7 +286,7 @@ mod tests {
         assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["public"], "the chains are apart");
 
         // The next turn.
-        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached());
         let unknown = tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 9 }), None, &mut turn).await;
         assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))));
         let unknown = tools.execute(UPDATE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 9, "text": "x" }), None, &mut turn).await;
@@ -291,7 +296,7 @@ mod tests {
         assert_eq!(state.private_notes.current().iter().map(|n| (n.id.0, n.text.as_str())).collect::<Vec<_>>(), [(1, "a secret")], "updated in its own chain");
         assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["public"]);
 
-        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, AgentStateHandle::detached());
         tools.execute(REVOKE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn).await.unwrap();
         turn.commit(false, &Discard).await;
         assert!(state.private_notes.current().is_empty());
@@ -299,7 +304,7 @@ mod tests {
 
     #[test]
     fn every_private_note_acted_on_is_shown_as_a_note_to_the_owner_alone() {
-        let tools = PrivateNotesComponent { access_policy: Arc::new(caelumora_model::security::OwnershipPolicy::new()), confidentiality: Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()) }.tools();
+        let tools = PrivateNotesComponent { access_policy: Arc::new(OwnershipPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()) }.tools();
         assert!(tools.iter().all(|t| (t.presentation, t.visibility) == (NOTE_PRESENTATION, ToolVisibility::HIDDEN)));
     }
 }

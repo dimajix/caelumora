@@ -16,11 +16,12 @@ use caelumora_model::group::GroupId;
 use caelumora_model::user::UserId;
 use std::sync::Arc;
 use uuid::Uuid;
+use crate::routes::views;
 
 /// The teams the user owns or belongs to - or, with `?deleted=true`, those
 /// they deleted, the trash.
 pub async fn list_groups(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
-    let views = crate::routes::views(&state, &user);
+    let views = views(&state, &user);
     if options.deleted {
         let deleted = views.deleted_groups().await?;
         return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>()).into_response());
@@ -93,6 +94,6 @@ pub async fn purge_group(State(state): State<Arc<AppState>>, Path(id): Path<Uuid
 
 /// Group `id` as the user sees it.
 async fn readable(state: &Arc<AppState>, user: &AuthenticatedUser, id: GroupId) -> Result<GroupResponse, ApiError> {
-    let group = crate::routes::views(state, user).group(id).await?;
+    let group = views(state, user).group(id).await?;
     Ok(group.snapshot().await.into())
 }

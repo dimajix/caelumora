@@ -16,7 +16,7 @@
 //!   Caelumora ends is not killed by it.
 
 use super::commands::{locked, Commands, Kept};
-use super::{CommandState, Shell, TerminalError, TerminalResult};
+use super::{CommandKey, CommandState, Shell, TerminalError, TerminalResult};
 use caelumora_model::workspace::CommandStatus;
 use async_trait::async_trait;
 use caelumora_model::workspace::WorkspaceId;
@@ -31,6 +31,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::watch;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::info;
+use uuid::Uuid;
 
 /// How much of a command's output is kept; older output is dropped.
 const KEPT_OUTPUT: usize = 1024 * 1024;
@@ -108,7 +109,7 @@ pub(super) struct LocalShell {
 }
 
 impl LocalShell {
-    fn key(&self, id: &str) -> super::CommandKey {
+    fn key(&self, id: &str) -> CommandKey {
         (self.workspace, self.scope.clone(), id.to_string())
     }
 }
@@ -214,7 +215,7 @@ impl Shell for LocalShell {
             shared.end.send_replace(Some(End { status, exit_code, at: Instant::now() }));
         });
 
-        let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+        let id = Uuid::new_v4().simple().to_string()[..12].to_string();
         let command = Arc::new(Command { running, group, _task: AbortOnDropHandle::new(task) });
         self.commands.insert(self.key(&id), command);
         Ok(id)
@@ -239,14 +240,16 @@ impl Shell for LocalShell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+    use std::process::Command;
 
     /// The shell of a workspace in `dir`, as the scope "channel" sees it,
     /// whose commands may run for `max_run`.
-    fn bounded(dir: &std::path::Path, max_run: Duration) -> LocalShell {
+    fn bounded(dir: &Path, max_run: Duration) -> LocalShell {
         LocalShell { dir: dir.to_path_buf(), workspace: WorkspaceId::new(), scope: "channel".to_string(), commands: Arc::default(), max_run }
     }
 
-    fn shell(dir: &std::path::Path) -> LocalShell {
+    fn shell(dir: &Path) -> LocalShell {
         bounded(dir, Duration::from_secs(3600))
     }
 
@@ -258,7 +261,7 @@ mod tests {
     /// Whether anything of the process group of command `id` still runs.
     fn group_runs(shell: &LocalShell, id: &str) -> bool {
         let group = shell.commands.get(&shell.key(id)).unwrap().group.unwrap();
-        !std::process::Command::new("pgrep").args(["-g", &group.to_string()]).output().unwrap().stdout.is_empty()
+        !Command::new("pgrep").args(["-g", &group.to_string()]).output().unwrap().stdout.is_empty()
     }
 
     const LONG: Duration = Duration::from_secs(10);

@@ -37,6 +37,9 @@ use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
+use anyhow::Result;
+use std::time::Duration;
+use tracing::Span;
 
 /// Name of the cookie holding the session token.
 pub const SESSION_COOKIE: &str = "caelumora_session";
@@ -85,7 +88,7 @@ impl TokenService {
     /// # Errors
     /// What `secrets` reports other than a missing secret, and what `new`
     /// reports.
-    pub async fn from_secret(secrets: &SecretManager, config: &AuthConfig) -> anyhow::Result<Self> {
+    pub async fn from_secret(secrets: &SecretManager, config: &AuthConfig) -> Result<Self> {
         let key = match secrets.resolve(&SecurityContext::system(), &config.jwt_secret).await {
             Ok(key) => key.into_bytes(),
             Err(SecretError::NotFound(_)) => {
@@ -103,7 +106,7 @@ impl TokenService {
     ///
     /// # Errors
     /// If the key is shorter than 32 bytes.
-    pub fn new(key: &[u8], config: &AuthConfig) -> anyhow::Result<Self> {
+    pub fn new(key: &[u8], config: &AuthConfig) -> Result<Self> {
         if key.len() < MIN_KEY_LEN {
             anyhow::bail!("JWT signing key '{}' is too short: {} bytes, at least {} required", config.jwt_secret, key.len(), MIN_KEY_LEN);
         }
@@ -129,7 +132,7 @@ impl TokenService {
         (now + self.lifetime).min(auth_time + self.max_session)
     }
 
-    fn issue(&self, user: UserId, auth_time: i64, now: i64) -> anyhow::Result<String> {
+    fn issue(&self, user: UserId, auth_time: i64, now: i64) -> Result<String> {
         let claims = Claims {
             sub: user.0,
             iat: now,
@@ -162,7 +165,7 @@ impl TokenService {
     /// A `Set-Cookie` value. The values are a JWT (base64url and dots), a
     /// timestamp or nothing and the names constants, so this fails only if
     /// that stops being true.
-    fn cookie(&self, name: &str, value: &str, max_age: i64, http_only: bool) -> anyhow::Result<HeaderValue> {
+    fn cookie(&self, name: &str, value: &str, max_age: i64, http_only: bool) -> Result<HeaderValue> {
         let secure = if self.secure_cookie { "; Secure" } else { "" };
         let http_only = if http_only { "; HttpOnly" } else { "" };
         let cookie = format!("{name}={value}{http_only}; SameSite=Strict; Path=/; Max-Age={max_age}{secure}");
@@ -171,7 +174,7 @@ impl TokenService {
 
     /// The pair of cookies that carries a session - the token itself, and
     /// its expiry for the UI to read - and that expiry.
-    fn session_cookies(&self, user: UserId, auth_time: i64, now: i64) -> anyhow::Result<([HeaderValue; 2], i64)> {
+    fn session_cookies(&self, user: UserId, auth_time: i64, now: i64) -> Result<([HeaderValue; 2], i64)> {
         let token = self.issue(user, auth_time, now)?;
         let expires_at = self.expires_at(auth_time, now);
         let max_age = expires_at - now;
@@ -182,7 +185,7 @@ impl TokenService {
         Ok((cookies, expires_at))
     }
 
-    fn clear_cookies(&self) -> anyhow::Result<[HeaderValue; 2]> {
+    fn clear_cookies(&self) -> Result<[HeaderValue; 2]> {
         Ok([
             self.cookie(SESSION_COOKIE, "", 0, true)?,
             self.cookie(SESSION_EXPIRES_COOKIE, "", 0, false)?,
@@ -227,8 +230,8 @@ impl AuthenticatedUser {
 
     /// How much of the session token is left, from now. Zero once it has
     /// expired.
-    pub fn expires_in(&self) -> std::time::Duration {
-        std::time::Duration::from_secs((self.expires_at - Utc::now().timestamp()).max(0) as u64)
+    pub fn expires_in(&self) -> Duration {
+        Duration::from_secs((self.expires_at - Utc::now().timestamp()).max(0) as u64)
     }
 }
 
@@ -343,7 +346,7 @@ async fn authenticate(auth: Arc<Auth>, mut request: Request, next: Next, renew: 
             return ApiError::unavailable("user_unavailable", "The user cannot be read").into_response();
         }
     };
-    tracing::Span::current().record("user_id", tracing::field::display(user));
+    Span::current().record("user_id", tracing::field::display(user));
     request.extensions_mut().insert(AuthenticatedUser { id: user, context, expires_at });
     let mut response = next.run(request).await;
     if let Some(cookies) = renewed {

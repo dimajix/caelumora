@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
+use serde_json::Value;
 
 define_id!(MessageId);
 
@@ -170,7 +171,7 @@ impl Message {
         message.tool_calls.retain(|c| c.visibility.call.is_channel());
         for call in &mut message.tool_calls {
             if !call.visibility.arguments.is_channel() {
-                call.arguments = serde_json::Value::Null;
+                call.arguments = Value::Null;
             }
         }
         message.tool_results.retain(|r| r.visibility.call.is_channel());
@@ -199,7 +200,7 @@ impl Message {
         }
         let mut message = Message { content: None, reasoning: None, classification: classification.clone(), ..self.clone() };
         for call in &mut message.tool_calls {
-            call.arguments = serde_json::Value::Null;
+            call.arguments = Value::Null;
         }
         for result in &mut message.tool_results {
             result.content.clear();
@@ -355,6 +356,8 @@ pub(crate) mod tests {
     use super::*;
     use crate::tool::ToolVisibility;
     use uuid::Uuid;
+    use chrono::Duration;
+    use crate::confidentiality::Confidentiality;
 
     /// A message from a user with id `id`.
     pub(crate) fn make_message(id: MessageId) -> Message {
@@ -365,7 +368,7 @@ pub(crate) mod tests {
             role: MessageRole::User,
             content: Some("hello".to_string()),
             timestamp: Utc::now(),
-            ..Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT)
+            ..Message::new(Classification::CHANNEL_DEFAULT)
         }
     }
 
@@ -379,10 +382,10 @@ pub(crate) mod tests {
     }
 
     fn result(id: &str, visibility: ToolVisibility) -> ToolCallResult {
-        let started_at = chrono::Utc::now();
+        let started_at = Utc::now();
         ToolCallResult {
-            id: Some(id.to_string()), tool_name: "f".to_string(), content: "secret".to_string(), status: Default::default(), visibility, classification: crate::confidentiality::Classification::CHANNEL_DEFAULT,
-            started_at: Some(started_at), finished_at: Some(started_at + chrono::Duration::milliseconds(250)), answers: None,
+            id: Some(id.to_string()), tool_name: "f".to_string(), content: "secret".to_string(), status: Default::default(), visibility, classification: Classification::CHANNEL_DEFAULT,
+            started_at: Some(started_at), finished_at: Some(started_at + Duration::milliseconds(250)), answers: None,
         }
     }
 
@@ -415,14 +418,14 @@ pub(crate) mod tests {
         let ids: Vec<_> = published.tool_calls.iter().map(|c| c.id.clone().unwrap()).collect();
         assert_eq!(ids, ["1", "2", "4"], "the hidden call is gone");
         assert_eq!(published.tool_calls[0].arguments, message.tool_calls[0].arguments, "public as it is");
-        assert_eq!(published.tool_calls[1].arguments, serde_json::Value::Null, "call-only without arguments");
+        assert_eq!(published.tool_calls[1].arguments, Value::Null, "call-only without arguments");
         assert_eq!(published.tool_calls[2].arguments, message.tool_calls[3].arguments, "with its arguments where only its result is the owner's");
         assert_eq!(published.id, message.id, "the same message, for the context panel to find");
 
         use crate::question::{Addressee, Answers, Question, Questions};
         let answered = |result: ToolCallResult| {
             let questions = Questions { questions: vec![Question { header: "Name".to_string(), question: "Who?".to_string(), choices: Vec::new(), multi_select: false }], ask: vec![Addressee::Owner], sensitive: false };
-            ToolCallResult { answers: Some(Answers::declined(questions, crate::actor::ActorId::None, "alice".to_string())), ..result }
+            ToolCallResult { answers: Some(Answers::declined(questions, ActorId::None, "alice".to_string())), ..result }
         };
         let results = Message {
             role: MessageRole::Tool,
@@ -468,7 +471,7 @@ pub(crate) mod tests {
     #[test]
     fn of_a_message_withheld_only_which_tools_it_called_is_given() {
         use crate::tool::{ToolCall, ToolCallResult, ToolResultStatus};
-        let secret = Classification::general(crate::confidentiality::Confidentiality::Confidential);
+        let secret = Classification::general(Confidentiality::Confidential);
         let call = ToolCall { id: Some("1".to_string()), function_name: "read".to_string(), arguments: serde_json::json!({ "file": "plans" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let calling = Message { content: Some("let me look".to_string()), reasoning: Some("hm".to_string()), tool_calls: vec![call.clone()], ..Message::new(secret.clone()) };
         let result = ToolCallResult::of(&call, ToolResultStatus::Ok, "the plans".to_string(), secret.clone());
@@ -476,7 +479,7 @@ pub(crate) mod tests {
 
         let given = calling.names_only(&Classification::PUBLIC).expect("it called a tool");
         assert_eq!((given.content, given.reasoning, given.classification), (None, None, Classification::PUBLIC));
-        assert_eq!((given.tool_calls[0].function_name.as_str(), &given.tool_calls[0].arguments), ("read", &serde_json::Value::Null));
+        assert_eq!((given.tool_calls[0].function_name.as_str(), &given.tool_calls[0].arguments), ("read", &Value::Null));
         let given = answered.names_only(&Classification::PUBLIC).expect("a result");
         assert_eq!((given.tool_results[0].status, given.tool_results[0].content.as_str()), (ToolResultStatus::Ok, ""), "how it ended, not what it returned");
         assert_eq!(given.tool_results[0].classification, Classification::PUBLIC);
@@ -499,10 +502,10 @@ pub(crate) mod tests {
 
     #[test]
     fn a_message_is_modified_and_taken_back_as_it_stands() {
-        let turn = crate::work::TurnId::new();
+        let turn = TurnId::new();
         let said = Message { tool_calls: vec![call("1", ToolVisibility::SHOWN)], turn_id: Some(turn), ..make_message(id(1)) };
-        let public = crate::confidentiality::Classification::general(crate::confidentiality::Confidentiality::Public);
-        let when = said.timestamp + chrono::Duration::minutes(5);
+        let public = Classification::general(Confidentiality::Public);
+        let when = said.timestamp + Duration::minutes(5);
         let modified = Message { content: Some("hello, corrected".to_string()), classification: public.clone(), timestamp: when, tool_calls: Vec::new(), turn_id: None, ..said.clone() };
 
         let mut message = said.clone();
@@ -519,7 +522,7 @@ pub(crate) mod tests {
         assert!(!other.modify(&Message { id: id(2), ..modified.clone() }), "another message");
         assert_eq!(other.content, said.content, "left as it was");
 
-        let released = crate::confidentiality::Classification::PUBLIC;
+        let released = Classification::PUBLIC;
         let mut other = said.clone();
         assert!(other.reclassify(&released));
         assert_eq!((other.classification, other.modified), (released.clone(), None), "reclassified, not modified");

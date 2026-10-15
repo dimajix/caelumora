@@ -126,6 +126,7 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::question::Response;
+    use caelumora_runtime::agent::state::AgentStateHandle;
 
     #[test]
     fn its_arguments_are_its_questions_put_to_the_handles_named() {
@@ -157,7 +158,7 @@ mod tests {
     async fn its_result_is_the_answers_as_given() {
         let tool = AskUserToolProvider;
         let mut state = AgentChannelState::default();
-        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, caelumora_runtime::agent::state::AgentStateHandle::detached());
+        let mut turn = Turn::begun(AgentId::default(), String::new(), &mut state, AgentStateHandle::detached());
         let params = serde_json::json!({ "questions": [{ "header": "Name", "question": "Who?" }, { "header": "Ok", "question": "Go on?", "choices": [{ "label": "yes" }, { "label": "no" }] }], "ask": ["@alice"] });
         let questions = tool.questions(ASK_USER_TOOL_NAME, &params).unwrap().expect("it asks");
         let answers = Answers {

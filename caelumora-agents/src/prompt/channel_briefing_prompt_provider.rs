@@ -144,6 +144,7 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::config::AppConfig;
+    use chrono::Utc;
 
     #[test]
     fn a_place_is_described_by_its_summary_and_briefing() {
@@ -187,12 +188,12 @@ mod tests {
         let session_id = SessionId::new();
         let confidential = Classification::general(Confidentiality::Confidential);
         let channel = Channel::build(session_id, ActorId::None, Name::new("main").unwrap(), Default::default(), confidential.clone(), None, vec![Participant::Agent(agent.id)]);
-        let now = chrono::Utc::now();
+        let now = Utc::now();
         let session = Session {
             summary: Some(Summary::new("Release 2.0").unwrap()), briefing: None,
             approval_rules: Vec::new(),
             workspace: None,
-            id: session_id, name: caelumora_model::value::name::Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
+            id: session_id, name: Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
             deleted: None,
         };

@@ -1,6 +1,6 @@
 use crate::actor::{Actor, Answering};
 use crate::runtime::ActorRuntime;
-use crate::transport::{EventReceiver, EventSender};
+use crate::transport::{EventReceiver, EventSender, is_closed};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
@@ -329,7 +329,7 @@ impl Actor for ApproverActor {
                         Some(env) => {
                             if let Err(e) = self.handle_envelope(env, &*tx).await {
                                 // Its channel is gone: nothing left to decide for (issue 79).
-                                if crate::transport::is_closed(&e) {
+                                if is_closed(&e) {
                                     info!("ApproverActor {:?} ends: its channel is gone", self.id);
                                     break;
                                 }
@@ -346,7 +346,7 @@ impl Actor for ApproverActor {
                 }
                 _ = timeout_fut => {
                     if let Err(e) = self.handle_timeouts(&*tx).await {
-                        if crate::transport::is_closed(&e) {
+                        if is_closed(&e) {
                             info!("ApproverActor {:?} ends: its channel is gone", self.id);
                             break;
                         }
@@ -378,10 +378,10 @@ mod tests {
     use crate::transport::{InMemoryEventReceiver, InMemoryEventSender};
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::approval::ApproverId;
-    use caelumora_model::channel::{Channel, ChannelId, Participant};
+    use caelumora_model::channel::{Channel, ChannelId, Participant, moderation_components};
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{OwnershipPolicy, AccessPolicy};
+    use caelumora_model::security::{OwnershipPolicy, AccessPolicy, Grant, Subject};
     use caelumora_model::session::SessionId;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::tool::ToolCall;
@@ -389,9 +389,10 @@ mod tests {
     use serde_json::json;
     use std::any::Any;
     use tokio::sync::mpsc;
-    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::confidentiality::{ConfidentialityRules, Classification};
     use caelumora_model::config::AppConfig;
     use crate::testing::test_registry;
+    use std::time::Duration;
 
     /// The approver of a channel of users, under the ownership policy, run
     /// on its own: the channel is built, so that its users have their
@@ -450,8 +451,8 @@ mod tests {
             id: ChannelId::new(),
             session_id: SessionId::new(),
             name: Name::new("test").unwrap(),
-            components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
-            classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+            components: moderation_components(None, Some("broadcast_policy")),
+            classification: Classification::CHANNEL_DEFAULT,
             language: None,
             history_limits: Vec::new(),
             participants,
@@ -519,17 +520,17 @@ mod tests {
         }
 
         async fn next(&mut self) -> Envelope {
-            tokio::time::timeout(std::time::Duration::from_secs(2), self.output.recv()).await.expect("sent in time").expect("still running")
+            tokio::time::timeout(Duration::from_secs(2), self.output.recv()).await.expect("sent in time").expect("still running")
         }
 
         async fn nothing(&mut self) {
-            assert!(tokio::time::timeout(std::time::Duration::from_millis(100), self.output.recv()).await.is_err(), "nothing is decided");
+            assert!(tokio::time::timeout(Duration::from_millis(100), self.output.recv()).await.is_err(), "nothing is decided");
         }
     }
 
     /// The agent's attributes: owned by the first user, read by the others.
     fn shared(users: &[UserId]) -> SecurityAttributes {
-        users[1..].iter().fold(SecurityAttributes::owned_by(ActorId::User(users[0])), |a, u| a.granting(caelumora_model::security::Subject::Actor(ActorId::User(*u)), caelumora_model::security::Grant::Read))
+        users[1..].iter().fold(SecurityAttributes::owned_by(ActorId::User(users[0])), |a, u| a.granting(Subject::Actor(ActorId::User(*u)), Grant::Read))
     }
 
     #[tokio::test]

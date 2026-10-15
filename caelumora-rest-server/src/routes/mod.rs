@@ -1,4 +1,4 @@
-use crate::auth::{require_auth, require_stream_auth, AuthenticatedUser};
+use crate::auth::{require_auth, require_stream_auth, AuthenticatedUser, router};
 use crate::error::ApiError;
 use crate::plugin::RestPlugin;
 use caelumora_rest_api::channel::ChannelResponse;
@@ -16,6 +16,10 @@ use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::SessionLoop;
 use caelumora_runtime::view::{ChannelView, Viewer, Views};
 use std::sync::Arc;
+use anyhow::Error;
+use axum::body::Body;
+use axum::response::Response;
+use caelumora_runtime::terminal::ByteStream;
 
 mod agents;
 mod channels;
@@ -80,10 +84,10 @@ pub fn views(state: &Arc<AppState>, user: &AuthenticatedUser) -> Views {
 /// never sniffed - a file of a workspace or a plugin's content, such as an
 /// artifact's, is anybody's content, and HTML or SVG would otherwise run in
 /// the web UI's origin (issues 208, 253, 271) -, and not cached.
-pub fn attachment_response(size: u64, content: caelumora_runtime::terminal::ByteStream, name: &str) -> axum::response::Response {
+pub fn attachment_response(size: u64, content: ByteStream, name: &str) -> Response {
     use axum::http::{header, HeaderValue};
     use axum::response::IntoResponse;
-    let mut response = axum::body::Body::from_stream(content).into_response();
+    let mut response = Body::from_stream(content).into_response();
     let headers = response.headers_mut();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
     headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
@@ -107,7 +111,7 @@ fn attachment(name: &str) -> String {
 /// `code` - `invalid_rule` for an approval rule the place may not keep
 /// (issue 13) - and why, for what the place refused to keep; otherwise as
 /// the error answers itself.
-pub fn change_error(error: anyhow::Error, code: &'static str) -> ApiError {
+pub fn change_error(error: Error, code: &'static str) -> ApiError {
     match error.downcast_ref::<StoreError>() {
         Some(StoreError::Validation(reason)) => ApiError::new(StatusCode::BAD_REQUEST, code, reason.clone()),
         _ => error.into(),
@@ -211,7 +215,7 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
         .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&state.auth), require_stream_auth))
         .with_state(Arc::clone(&state));
 
-    let mut api = crate::auth::router(Arc::clone(&state.auth)).merge(protected).merge(streams);
+    let mut api = router(Arc::clone(&state.auth)).merge(protected).merge(streams);
     for plugin in plugins {
         let routes = plugin.routes(Arc::clone(&state))
             .route_layer(axum::middleware::from_fn_with_state(Arc::clone(&state.auth), require_auth));
@@ -240,6 +244,7 @@ pub(crate) mod tests {
     use caelumora_runtime::runtime::{RuntimeBuilder, RuntimeManager};
     use caelumora_runtime::session::SessionManager;
     use tower::ServiceExt;
+    use anyhow::Result;
 
     /// A plugin answering who asks.
     struct Hello;
@@ -249,7 +254,7 @@ pub(crate) mod tests {
             "hello"
         }
 
-        fn register(&self, _runtime: &mut RuntimeBuilder) -> anyhow::Result<()> {
+        fn register(&self, _runtime: &mut RuntimeBuilder) -> Result<()> {
             Ok(())
         }
     }

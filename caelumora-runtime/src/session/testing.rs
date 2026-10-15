@@ -19,17 +19,20 @@ use caelumora_model::session::Participant;
 use caelumora_model::user::{User, UserId};
 use caelumora_model::security::{Grant, Subject};
 use anyhow::Result;
-use caelumora_model::channel::Channel;
+use caelumora_model::channel::{Channel, moderation_components};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::actor::{ActorEvent, Envelope, Rejection};
-use caelumora_model::message::MessageId;
+use caelumora_model::message::{MessageId, Message};
 use tokio::sync::broadcast;
 use caelumora_model::config::AppConfig;
 use crate::testing::test_registry;
+use chrono::Utc;
+use crate::event::EventSubscription;
+use std::time::Duration;
 
 /// A store under the ownership policy, which learns who belongs to a
 /// group from that store (issue 23), and `rules` as the confidentiality
@@ -90,7 +93,7 @@ pub fn detached_actor_runtime() -> ActorRuntime {
 /// A session that holds nothing but its id `session_id`: what a channel
 /// outside a running session belongs to (`ChannelRuntime::outside_a_session`).
 pub fn bare_session(session_id: SessionId) -> Session {
-    let now = chrono::Utc::now();
+    let now = Utc::now();
     Session {
         summary: None, briefing: None,
         id: session_id,
@@ -113,7 +116,7 @@ pub fn bare_session(session_id: SessionId) -> Session {
 /// (issue 23), whom the test sets. It lists one channel, `main_channel`.
 pub fn make_session(name: &str, owner: ActorId) -> Session {
     let id = SessionId::new();
-    let now = chrono::Utc::now();
+    let now = Utc::now();
     Session {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
@@ -143,7 +146,7 @@ pub fn main_channel(session: &Session) -> Channel {
         id,
         session_id: session.id,
         name: Name::new("main").unwrap(),
-        components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
+        components: moderation_components(None, Some("broadcast_policy")),
         classification: Classification::CHANNEL_DEFAULT,
         language: None,
         history_limits: Vec::new(),
@@ -179,7 +182,7 @@ pub async fn persist(runtime: &Arc<RuntimeManager>, ctx: &SecurityContext, sessi
 }
 
 /// Drain every event currently buffered on the receiver.
-pub fn drain(rx: &mut crate::event::EventSubscription) -> Vec<GlobalEvent> {
+pub fn drain(rx: &mut EventSubscription) -> Vec<GlobalEvent> {
     let mut out = Vec::new();
     while let Some(event) = rx.try_recv() {
         out.push(event);
@@ -189,7 +192,7 @@ pub fn drain(rx: &mut crate::event::EventSubscription) -> Vec<GlobalEvent> {
 
 /// A running session owned by a user who takes part in it, with that
 /// user's context and a second user of the session.
-pub async fn running_session_of_a_user(manager: &SessionManager) -> (Arc<SessionLoop>, SecurityContext, caelumora_model::actor::ActorId) {
+pub async fn running_session_of_a_user(manager: &SessionManager) -> (Arc<SessionLoop>, SecurityContext, ActorId) {
     let (owner, other) = (user("owner"), user("other"));
     let (owner_id, other_id) = (ActorId::User(owner.id), ActorId::User(other.id));
     let mut session = make_session("with-users", owner_id);
@@ -201,14 +204,14 @@ pub async fn running_session_of_a_user(manager: &SessionManager) -> (Arc<Session
 
 pub use crate::testing::actor_runtime_in;
 
-pub fn spec(name: &str, participants: Vec<caelumora_model::actor::ActorId>) -> ChannelSpec {
+pub fn spec(name: &str, participants: Vec<ActorId>) -> ChannelSpec {
     ChannelSpec { name: name.to_string(), components: Default::default(), participants, classification: None, language: None, uses_workspace: None }
 }
 
 /// The message and the reason of the next `MessageRejected` `events`
 /// show: why the channel did not let in what their user sent (issue 304).
 pub async fn rejection(events: &mut broadcast::Receiver<Envelope>) -> (Option<MessageId>, Rejection) {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if let ActorEvent::MessageRejected { message, reason, .. } = events.recv().await.expect("the channel is running").event {
                 return (message, reason);
@@ -217,13 +220,13 @@ pub async fn rejection(events: &mut broadcast::Receiver<Envelope>) -> (Option<Me
     }).await.expect("the channel tells why it did not let it in")
 }
 
-pub async fn history_of(channel: &ChannelLoop, count: usize) -> Vec<caelumora_model::message::Message> {
+pub async fn history_of(channel: &ChannelLoop, count: usize) -> Vec<Message> {
     for _ in 0..100 {
         let history = channel.history().await;
         if history.len() >= count {
             return history;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("the channel's history never reached {count} messages");
 }

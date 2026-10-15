@@ -23,13 +23,16 @@ use std::sync::Arc;
 use caelumora_model::confidentiality::ConfidentialityRules;
 use caelumora_model::config::AppConfig;
 use crate::testing::test_registry;
+use chrono::Utc;
+use std::path::PathBuf;
+use tempfile::TempDir;
 
 /// The largest file the workspace takes.
 pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
 pub struct WithWorkspace {
     /// Where the storage keeps the workspace's files.
-    pub files: tempfile::TempDir,
+    pub files: TempDir,
     pub session: Arc<SessionLoop>,
     pub agent: AgentId,
     /// What the agent acts in: for the workspace's owner.
@@ -42,7 +45,7 @@ pub struct WithWorkspace {
 impl WithWorkspace {
 
     /// Where the workspace's files lie on the host.
-    pub fn dir(&self) -> std::path::PathBuf {
+    pub fn dir(&self) -> PathBuf {
         self.files.path().join(self.workspace.id.to_string())
     }
 }
@@ -72,7 +75,7 @@ pub async fn session_with_workspace() -> WithWorkspace {
     store.entity_stores().agents.create(&system, &agent).await.unwrap();
     let session_id = SessionId::new();
     let channel = Channel::build(session_id, ActorId::User(owner), Name::new("main").unwrap(), Default::default(), internal, None, vec![Participant::User(owner), Participant::Agent(agent.id)]);
-    let now = chrono::Utc::now();
+    let now = Utc::now();
     let session = Session {
         summary: None, briefing: None,
         approval_rules: Vec::new(),

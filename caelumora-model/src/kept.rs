@@ -7,6 +7,7 @@
 use crate::digest::Digest;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 
 /// Values by digest, each kept once. Stored as the map alone.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,7 +29,7 @@ impl<V> Kept<V> {
     /// Keeps what `value` makes under `digest`, unless something is kept
     /// there already: a digest names its value, so what is there is it.
     pub fn keep(&mut self, digest: Digest, value: impl FnOnce() -> V) {
-        if let std::collections::btree_map::Entry::Vacant(vacant) = self.values.entry(digest) {
+        if let Entry::Vacant(vacant) = self.values.entry(digest) {
             vacant.insert(value());
             self.pending.push(digest);
         }

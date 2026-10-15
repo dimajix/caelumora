@@ -64,10 +64,12 @@ impl SecretManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::security::AllowAllPolicy;
+    use std::collections::HashMap;
 
     #[derive(Debug)]
     struct MapSecretProvider {
-        entries: std::collections::HashMap<String, String>,
+        entries: HashMap<String, String>,
     }
 
     #[async_trait]
@@ -103,9 +105,9 @@ mod tests {
 
     #[tokio::test]
     async fn falls_through_to_later_provider() {
-        let mut first = std::collections::HashMap::new();
+        let mut first = HashMap::new();
         first.insert("OTHER".to_string(), "unused".to_string());
-        let mut second = std::collections::HashMap::new();
+        let mut second = HashMap::new();
         second.insert("KEY".to_string(), "value-from-second".to_string());
 
         let manager = SecretManager::new(
@@ -113,7 +115,7 @@ mod tests {
                 Arc::new(MapSecretProvider { entries: first }),
                 Arc::new(MapSecretProvider { entries: second }),
             ],
-            Arc::new(crate::security::AllowAllPolicy::new()),
+            Arc::new(AllowAllPolicy::new()),
         );
 
         let value = manager.resolve(&dummy_context(), "KEY").await.unwrap();
@@ -122,7 +124,7 @@ mod tests {
 
     #[tokio::test]
     async fn failing_provider_does_not_abort_the_chain() {
-        let mut entries = std::collections::HashMap::new();
+        let mut entries = HashMap::new();
         entries.insert("KEY".to_string(), "value".to_string());
 
         let manager = SecretManager::new(
@@ -130,7 +132,7 @@ mod tests {
                 Arc::new(FailingSecretProvider),
                 Arc::new(MapSecretProvider { entries }),
             ],
-            Arc::new(crate::security::AllowAllPolicy::new()),
+            Arc::new(AllowAllPolicy::new()),
         );
 
         let value = manager.resolve(&dummy_context(), "KEY").await.unwrap();
@@ -141,7 +143,7 @@ mod tests {
     async fn not_found_when_no_provider_has_it() {
         let manager = SecretManager::new(
             vec![Arc::new(MapSecretProvider { entries: Default::default() })],
-            Arc::new(crate::security::AllowAllPolicy::new()),
+            Arc::new(AllowAllPolicy::new()),
         );
 
         let err = manager.resolve(&dummy_context(), "MISSING").await.unwrap_err();
@@ -150,7 +152,7 @@ mod tests {
 
     #[tokio::test]
     async fn access_policy_denial_blocks_lookup() {
-        let mut entries = std::collections::HashMap::new();
+        let mut entries = HashMap::new();
         entries.insert("KEY".to_string(), "value".to_string());
 
         let manager = SecretManager::new(

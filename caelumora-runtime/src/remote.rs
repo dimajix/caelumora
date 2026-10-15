@@ -4,9 +4,11 @@
 //! Public for the component kinds outside the core, such as `a2a_agent`
 //! (issue 326).
 
+use reqwest::Error;
+
 /// The full chain of the causes of `error`, a failed request, without the
 /// URL that `reqwest` writes into its messages.
-pub fn describe_request_error(error: reqwest::Error) -> String {
+pub fn describe_request_error(error: Error) -> String {
     describe_chain(&error.without_url())
 }
 

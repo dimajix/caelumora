@@ -6,9 +6,10 @@
 //! space after its first character, so that the model reads nearly the same
 //! characters, but as text.
 
-use aho_corasick::{AhoCorasick, MatchKind};
+use aho_corasick::{AhoCorasick, MatchKind, BuildError};
 use std::borrow::Cow;
 use tracing::warn;
+use serde_json::Value;
 
 /// What breaks a control token: invisible, and part of no token's text.
 const BREAK: char = '\u{200B}';
@@ -28,7 +29,7 @@ impl ControlTokens {
     ///
     /// # Errors
     /// If the tokens cannot be searched for - too many of them.
-    pub fn new(tokens: impl IntoIterator<Item = String>) -> Result<Self, aho_corasick::BuildError> {
+    pub fn new(tokens: impl IntoIterator<Item = String>) -> Result<Self, BuildError> {
         let mut kept = Vec::new();
         let mut left_out = 0;
         for token in tokens {
@@ -99,11 +100,11 @@ impl ControlTokens {
     }
 
     /// Defuses every string in `value`, and every key of its objects.
-    pub fn defuse_json(&self, value: &mut serde_json::Value) {
+    pub fn defuse_json(&self, value: &mut Value) {
         match value {
-            serde_json::Value::String(text) => self.defuse_in_place(text),
-            serde_json::Value::Array(items) => items.iter_mut().for_each(|item| self.defuse_json(item)),
-            serde_json::Value::Object(map) => {
+            Value::String(text) => self.defuse_in_place(text),
+            Value::Array(items) => items.iter_mut().for_each(|item| self.defuse_json(item)),
+            Value::Object(map) => {
                 let entries = std::mem::take(map);
                 for (key, mut item) in entries {
                     self.defuse_json(&mut item);

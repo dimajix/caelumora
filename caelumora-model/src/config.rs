@@ -12,11 +12,16 @@ use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use serde::de::DeserializeOwned;
+use serde_json::{Map, Value};
+use serde_saphyr::Options;
+use std::io::Error;
+use std::net::SocketAddr;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("failed to read config file: {0}")]
-    Io(#[from] std::io::Error),
+    Io(#[from] Error),
     #[error("failed to parse config: {0}")]
     Parse(#[from] serde_saphyr::Error),
     #[error(transparent)]
@@ -80,15 +85,15 @@ pub struct BackendConfig {
     #[serde(rename = "type")]
     pub kind: String,
     #[serde(flatten)]
-    pub params: serde_json::Map<String, serde_json::Value>,
+    pub params: Map<String, Value>,
 }
 
 impl BackendConfig {
     /// The backend of the type `kind` with `params`, an object or nothing.
-    pub fn new(kind: &str, params: serde_json::Value) -> Self {
+    pub fn new(kind: &str, params: Value) -> Self {
         let params = match params {
-            serde_json::Value::Object(params) => params,
-            _ => serde_json::Map::new(),
+            Value::Object(params) => params,
+            _ => Map::new(),
         };
         Self { kind: kind.to_string(), params }
     }
@@ -108,7 +113,7 @@ impl Default for SecretsConfig {
         Self {
             providers: vec![
                 BackendConfig::new("file", serde_json::json!({ "path": "local/secrets.json" })),
-                BackendConfig::new("env", serde_json::Value::Null),
+                BackendConfig::new("env", Value::Null),
             ],
         }
     }
@@ -178,12 +183,12 @@ impl Default for AuthConfig {
 pub struct ServerConfig {
     /// Address and port, `127.0.0.1:3000` unless configured: reachable from
     /// this machine only, as long as `accept_any` may be enabled.
-    pub address: std::net::SocketAddr,
+    pub address: SocketAddr,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        Self { address: std::net::SocketAddr::from(([127, 0, 0, 1], 3000)) }
+        Self { address: SocketAddr::from(([127, 0, 0, 1], 3000)) }
     }
 }
 
@@ -259,7 +264,7 @@ pub struct AppConfig {
     /// The sections of the plugins, by name, as they were written: each
     /// read by the plugin that claims it (issue 323).
     #[serde(flatten)]
-    pub plugins: BTreeMap<String, serde_json::Value>,
+    pub plugins: BTreeMap<String, Value>,
 }
 
 /// The storages workspaces are made in (issue 253), each by the name a
@@ -323,11 +328,11 @@ impl Default for AppConfig {
 /// # Errors
 /// `ConfigError::Parse` if `yaml` is not a `T`; the error names the line and
 /// column, but quotes nothing of the input.
-pub fn parse_yaml<T: serde::de::DeserializeOwned>(yaml: &str) -> ConfigResult<T> {
+pub fn parse_yaml<T: DeserializeOwned>(yaml: &str) -> ConfigResult<T> {
     // By default the parser quotes the offending lines of the input in its
     // error, and a configuration may hold credentials. The location alone
     // is enough to find the mistake.
-    let mut options = serde_saphyr::Options::default();
+    let mut options = Options::default();
     options.with_snippet = false;
     options.strict_booleans = true;
     Ok(serde_saphyr::from_str_with_options(yaml, options)?)
@@ -496,7 +501,7 @@ secrets:
         let config = AppConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.secrets.providers, [
             BackendConfig::new("file", serde_json::json!({ "path": "local/secrets.json" })),
-            BackendConfig::new("env", serde_json::Value::Null),
+            BackendConfig::new("env", Value::Null),
         ]);
     }
 
@@ -508,7 +513,7 @@ users:
     - type: accept_any
 "#;
         let config = AppConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.users.providers, [BackendConfig::new("accept_any", serde_json::Value::Null)]);
+        assert_eq!(config.users.providers, [BackendConfig::new("accept_any", Value::Null)]);
     }
 
     #[test]
@@ -566,7 +571,7 @@ auth:
 
     #[test]
     fn the_commands_default_to_the_builtin_ones_and_can_be_switched_off() {
-        let expected = crate::command::default_commands().component_nodes.len();
+        let expected = default_commands().component_nodes.len();
         assert_eq!(AppConfig::default().commands.component_nodes.len(), expected);
         assert_eq!(AppConfig::from_yaml("persistence: {}").unwrap().commands.component_nodes.len(), expected);
 

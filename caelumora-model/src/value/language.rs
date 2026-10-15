@@ -164,6 +164,7 @@ impl Hash for Language {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     fn language(text: &str) -> Language {
         Language::new(text).expect("a language")
@@ -177,7 +178,7 @@ mod tests {
         assert_eq!(language("en_GB"), language("en-GB"), "an underscore is taken as a hyphen");
         assert_eq!(language("es-419"), language("es-419"), "a numeric region stays as it is");
         assert_ne!(language("de-CH"), language("de-AT"));
-        let set: std::collections::HashSet<Language> = [language("de-ch"), language("de-CH")].into_iter().collect();
+        let set: HashSet<Language> = [language("de-ch"), language("de-CH")].into_iter().collect();
         assert_eq!(set.len(), 1, "one language, one key");
     }
 

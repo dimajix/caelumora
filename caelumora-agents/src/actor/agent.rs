@@ -15,7 +15,7 @@ use crate::message::{EmitOutProcessor, PerceiveInProcessor};
 use caelumora_runtime::runtime::ActorRuntime;
 use crate::tool::{not_executed_result, ToolExecutor, ToolProvider};
 use caelumora_runtime::transport::{EventReceiver, EventSender};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context, Result, Error};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
 use caelumora_model::agent::{AgentChannelState, Personality, RetryRefused};
@@ -35,6 +35,7 @@ use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
 use tracing::{debug, info, warn, Instrument};
 use std::sync::Arc;
+use chrono::Utc;
 
 #[derive(Debug)]
 pub struct AgentActor {
@@ -342,7 +343,7 @@ impl AgentActor {
             }
         };
         answering.send(ActorEvent::RetryAccepted { target }, output).await?;
-        let at = chrono::Utc::now();
+        let at = Utc::now();
         for id in taken_back {
             let said = state.history.message(id).is_some();
             state.history.revoke(id, at);
@@ -360,7 +361,7 @@ impl AgentActor {
     /// users see what went wrong instead of a turn that never ends. An error
     /// before a turn began is logged only: there is no turn to end, nor a
     /// request to answer in.
-    async fn fail_turn(&self, state: &mut AgentChannelState, error: &anyhow::Error, output: &dyn EventSender) {
+    async fn fail_turn(&self, state: &mut AgentChannelState, error: &Error, output: &dyn EventSender) {
         let agent_name = self.body.agent.name();
         tracing::error!("Turn of agent {} {} failed: {:#}", self.id(), agent_name, error);
 
@@ -898,7 +899,7 @@ impl Actor for AgentActor {
 
             // Between turns the actor works on its state; a step of a turn
             // on the turn under way.
-            let result = async { Ok::<_, anyhow::Error>(match current_state {
+            let result = async { Ok::<_, Error>(match current_state {
                 // Carrying out a command is a part of waiting, and ends
                 // within it; found here, it was cut short.
                 ActorState::Idle | ActorState::Sleeping | ActorState::CarryingOutCommand => self.handle_waiting(&mut state, &mut rx, &mut given_up_for, &*output).await?,

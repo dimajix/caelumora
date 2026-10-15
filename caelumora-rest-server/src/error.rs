@@ -13,7 +13,7 @@
 //! or an entity, never file paths or secret values. Everything else gets a
 //! generic `detail`; the full error chain goes to the log only.
 
-use axum::extract::Request;
+use axum::extract::{FromRequest, FromRequestParts, Request};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
@@ -35,6 +35,9 @@ use caelumora_runtime::workspace::WorkspaceError;
 use serde::Serialize;
 use std::borrow::Cow;
 use uuid::Uuid;
+use anyhow::Error;
+use axum::extract::rejection::{JsonRejection, PathRejection};
+use tracing::Span;
 
 tokio::task_local! {
     static REQUEST_ID: Uuid;
@@ -48,7 +51,7 @@ pub const REQUEST_ID_HEADER: &str = "x-request-id";
 /// `x-request-id` header.
 pub async fn request_id(request: Request, next: Next) -> Response {
     let id = Uuid::new_v4();
-    tracing::Span::current().record("request_id", tracing::field::display(id));
+    Span::current().record("request_id", tracing::field::display(id));
     let mut response = REQUEST_ID.scope(id, next.run(request)).await;
     if let Ok(value) = HeaderValue::from_str(&id.to_string()) {
         response.headers_mut().insert(REQUEST_ID_HEADER, value);
@@ -108,7 +111,7 @@ impl ApiError {
     /// A server error caused by `error` while doing `action` (e.g. "loading
     /// the session"). Logs the full error chain; the response discloses only
     /// what `user_message` allows.
-    pub fn internal(code: impl Into<Cow<'static, str>>, action: &str, error: &anyhow::Error) -> Self {
+    pub fn internal(code: impl Into<Cow<'static, str>>, action: &str, error: &Error) -> Self {
         tracing::error!("{} failed: {:#}", action, error);
         let detail = match user_message(error) {
             Some(message) => format!("{} failed: {}", capitalize(action), message),
@@ -353,7 +356,7 @@ impl From<CommandError> for ApiError {
     }
 }
 
-impl From<anyhow::Error> for ApiError {
+impl From<Error> for ApiError {
     /// What an operation that answers `anyhow` failed with: an invalid
     /// value wherever in the chain it is; otherwise the outermost error of
     /// a type the core knows, as it answers itself; otherwise a name taken
@@ -362,7 +365,7 @@ impl From<anyhow::Error> for ApiError {
     /// the way - a personality missing while a session is loaded - is no
     /// answer to what the request named, and so a server error; whatever
     /// else is not known is one too.
-    fn from(error: anyhow::Error) -> Self {
+    fn from(error: Error) -> Self {
         if let Some(e) = error.chain().find_map(|e| e.downcast_ref::<ValueError>()) {
             return Self::invalid_value(e);
         }
@@ -416,7 +419,7 @@ impl IntoResponse for ApiError {
 
 /// `axum::Json`, but rejecting malformed bodies with a problem details
 /// document instead of plain text.
-#[derive(axum::extract::FromRequest)]
+#[derive(FromRequest)]
 #[from_request(via(axum::Json), rejection(ApiError))]
 pub struct Json<T>(pub T);
 
@@ -428,18 +431,18 @@ impl<T: Serialize> IntoResponse for Json<T> {
 
 /// `axum::extract::Path`, but rejecting malformed path parameters (e.g. an
 /// invalid UUID) with a problem details document.
-#[derive(axum::extract::FromRequestParts)]
+#[derive(FromRequestParts)]
 #[from_request(via(axum::extract::Path), rejection(ApiError))]
 pub struct Path<T>(pub T);
 
-impl From<axum::extract::rejection::JsonRejection> for ApiError {
-    fn from(rejection: axum::extract::rejection::JsonRejection) -> Self {
+impl From<JsonRejection> for ApiError {
+    fn from(rejection: JsonRejection) -> Self {
         Self::new(rejection.status(), "invalid_request_body", rejection.body_text())
     }
 }
 
-impl From<axum::extract::rejection::PathRejection> for ApiError {
-    fn from(rejection: axum::extract::rejection::PathRejection) -> Self {
+impl From<PathRejection> for ApiError {
+    fn from(rejection: PathRejection) -> Self {
         Self::new(rejection.status(), "invalid_path", rejection.body_text())
     }
 }
@@ -448,6 +451,7 @@ impl From<axum::extract::rejection::PathRejection> for ApiError {
 mod tests {
     use super::*;
     use caelumora_model::actor::ActorId;
+    use serde::Deserialize;
     use caelumora_model::agent::Agent;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::MessageId;
@@ -459,8 +463,12 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
     use caelumora_model::workspace::WorkspaceId;
+    use axum::Router;
+    use axum::http::Request;
+    use serde_json::Value;
+    use std::fmt;
 
-    async fn body_of(error: ApiError) -> (StatusCode, String, serde_json::Value) {
+    async fn body_of(error: ApiError) -> (StatusCode, String, Value) {
         let response = REQUEST_ID.scope(Uuid::nil(), async { error.into_response() }).await;
         let content_type = response.headers()[CONTENT_TYPE].to_str().unwrap().to_string();
         let status = response.status();
@@ -488,12 +496,12 @@ mod tests {
         use axum::routing::post;
         use tower::ServiceExt;
 
-        #[derive(serde::Deserialize)]
+        #[derive(Deserialize)]
         struct Payload { #[allow(dead_code)] name: String }
         async fn handler(Path(_id): Path<Uuid>, Json(_p): Json<Payload>) -> StatusCode { StatusCode::OK }
-        let app = axum::Router::new().route("/items/{id}", post(handler));
+        let app = Router::new().route("/items/{id}", post(handler));
 
-        let request = |uri: &str, body: &str| axum::http::Request::post(uri)
+        let request = |uri: &str, body: &str| Request::post(uri)
             .header(CONTENT_TYPE, "application/json")
             .body(Body::from(body.to_string()))
             .unwrap();
@@ -505,18 +513,18 @@ mod tests {
         let response = app.oneshot(request(&format!("/items/{}", Uuid::nil()), r#"{"nome":"x"}"#)).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         let bytes = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let json: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["code"], "invalid_request_body");
         assert!(json["detail"].as_str().unwrap().contains("name"), "the detail says what is wrong: {}", json["detail"]);
     }
 
     #[tokio::test]
     async fn internal_errors_disclose_only_user_facing_messages() {
-        let safe = anyhow::Error::new(StoreError::NotFound { entity: "personality", id: "p1".to_string() });
+        let safe = Error::new(StoreError::NotFound { entity: "personality", id: "p1".to_string() });
         let (_, _, json) = body_of(ApiError::internal("session_load_failed", "loading the session", &safe)).await;
         assert_eq!(json["detail"], "Loading the session failed: not found: personality p1");
 
-        let unsafe_error = anyhow::Error::new(StoreError::Backend("/srv/data/sessions: permission denied".to_string()));
+        let unsafe_error = Error::new(StoreError::Backend("/srv/data/sessions: permission denied".to_string()));
         let (status, _, json) = body_of(ApiError::internal("session_load_failed", "loading the session", &unsafe_error)).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         let detail = json["detail"].as_str().unwrap();
@@ -548,8 +556,8 @@ mod tests {
         // a context: found by the refusal it carries.
         #[derive(Debug)]
         struct PluginError(Refused);
-        impl std::fmt::Display for PluginError {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        impl fmt::Display for PluginError {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str("not yours")
             }
         }
@@ -558,17 +566,17 @@ mod tests {
                 Some(&self.0)
             }
         }
-        let inside = anyhow::Error::new(PluginError(refused("skill"))).context("deleting what lies in the session's scope");
+        let inside = Error::new(PluginError(refused("skill"))).context("deleting what lies in the session's scope");
         assert_eq!(answer(inside), (403, "skill_forbidden".to_string()));
-        assert_eq!(answer(anyhow::Error::new(StoreError::PermissionDenied(refused("session"))).context("renaming")), (403, "session_forbidden".to_string()));
+        assert_eq!(answer(Error::new(StoreError::PermissionDenied(refused("session"))).context("renaming")), (403, "session_forbidden".to_string()));
     }
 
     #[test]
     fn what_a_request_named_and_was_not_found_is_told_by_its_kind() {
         assert_eq!(answer(SessionError::NotFound(SessionId::new())), (404, "session_not_found".to_string()));
-        assert_eq!(answer(anyhow::Error::new(SessionError::TemplateNotFound(SessionTemplateId::new()))), (404, "template_not_found".to_string()));
+        assert_eq!(answer(Error::new(SessionError::TemplateNotFound(SessionTemplateId::new()))), (404, "template_not_found".to_string()));
         assert_eq!(answer(StoreError::NotFound { entity: "agent", id: "1".to_string() }), (404, "agent_not_found".to_string()), "as an operation passed it on");
-        let personality = anyhow::Error::new(StoreError::NotFound { entity: "personality", id: "p1".to_string() });
+        let personality = Error::new(StoreError::NotFound { entity: "personality", id: "p1".to_string() });
         assert_eq!(answer(personality), (500, "internal_error".to_string()), "met on the way, no answer to what was asked");
         assert_eq!(answer(anyhow::anyhow!("broken")), (500, "internal_error".to_string()));
     }
@@ -577,7 +585,7 @@ mod tests {
     fn the_core_s_errors_answer_with_status_and_code() {
         let (session, channel, someone) = (SessionId::new(), ChannelId::new(), ActorId::None);
         assert_eq!(answer(SessionError::ChannelNotFound { session, channel }), (404, "channel_not_found".to_string()));
-        assert_eq!(answer(anyhow::Error::new(StoreError::NameTaken { entity: "agent" }).context("renaming")), (409, "name_taken".to_string()), "of every kind, also below a context");
+        assert_eq!(answer(Error::new(StoreError::NameTaken { entity: "agent" }).context("renaming")), (409, "name_taken".to_string()), "of every kind, also below a context");
         let channel_error = |e: ChannelError| answer(e).1;
         assert_eq!(channel_error(ChannelError::AlreadyParticipant { participant: someone, channel }), "already_participant");
         assert_eq!(channel_error(ChannelError::StillLeaving { participant: someone, channel }), "still_leaving");
@@ -609,8 +617,8 @@ mod tests {
     fn a_text_that_does_not_fit_its_field_is_invalid_wherever_it_was_found_out() {
         let blank = || ValueError::Blank { field: "summary" };
         assert_eq!(answer(blank()), (400, "invalid_value".to_string()));
-        assert_eq!(answer(anyhow::Error::new(StoreError::from(blank()))), (400, "invalid_value".to_string()), "by a controller, too");
-        assert_eq!(ApiError::from(anyhow::Error::new(StoreError::from(blank()))).detail, "the summary must not consist of whitespace alone", "naming the field");
+        assert_eq!(answer(Error::new(StoreError::from(blank()))), (400, "invalid_value".to_string()), "by a controller, too");
+        assert_eq!(ApiError::from(Error::new(StoreError::from(blank()))).detail, "the summary must not consist of whitespace alone", "naming the field");
     }
 
     #[test]
@@ -622,7 +630,7 @@ mod tests {
         assert_eq!(answer(WorkspaceError::Store(StoreError::NameTaken { entity: "workspace" })), (409, "name_taken".to_string()), "a store error inside, though transparent");
         assert_eq!(answer(WorkspaceError::Store(StoreError::PermissionDenied(refused("workspace")))), (403, "workspace_forbidden".to_string()));
         assert_eq!(answer(WorkspaceError::ReadOnly { id, refused: refused("workspace") }), (403, "read_only".to_string()), "a command ended where the files are only read (issue 294)");
-        assert_eq!(answer(anyhow::Error::new(WorkspaceError::ReadOnly { id, refused: refused("workspace") })), (403, "read_only".to_string()), "by its type before by the refusal it carries");
+        assert_eq!(answer(Error::new(WorkspaceError::ReadOnly { id, refused: refused("workspace") })), (403, "read_only".to_string()), "by its type before by the refusal it carries");
         assert_eq!(answer(WorkspaceError::Terminal(TerminalError::TooLarge { limit: 1 })), (413, "file_too_large".to_string()));
         assert_eq!(answer(TerminalError::InvalidPath("../x".to_string())), (400, "invalid_path".to_string()));
         assert_eq!(answer(TerminalError::NotFound("a".to_string())), (404, "file_not_found".to_string()));

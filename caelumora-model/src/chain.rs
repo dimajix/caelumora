@@ -26,6 +26,7 @@
 use crate::digest::Digest;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeSet, HashMap};
+use serde::de::Error;
 
 /// An entry at its place in the chain: with the digest of the chain up to
 /// and including it, and the digest of the entry it follows.
@@ -337,7 +338,7 @@ impl<E: Serialize> Serialize for Chain<E> {
 
 impl<'de, E: Deserialize<'de>> Deserialize<'de> for Chain<E> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Chain::from_stored(Stored::deserialize(deserializer)?).map_err(|e| serde::de::Error::custom(format!("not a chain: {e}")))
+        Chain::from_stored(Stored::deserialize(deserializer)?).map_err(|e| Error::custom(format!("not a chain: {e}")))
     }
 }
 

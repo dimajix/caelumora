@@ -23,6 +23,7 @@ use caelumora_model::user::UserField;
 use crate::channel::ChannelError;
 use std::sync::Arc;
 use tracing::warn;
+use anyhow::Error;
 
 /// An agent's private notes in another channel of its session, as far as
 /// they may be read where it reads from (`SessionView::own_private_notes`):
@@ -56,7 +57,7 @@ pub const CANDIDATES: usize = 20;
 /// Why someone cannot be taken in, as `error` of `resolve_to_take_in` says it;
 /// `None` for an error that says nothing about them - a store that failed -,
 /// which a search does not show.
-fn refusal_of(error: &anyhow::Error) -> Option<CandidateRefusal> {
+fn refusal_of(error: &Error) -> Option<CandidateRefusal> {
     match (error.downcast_ref::<ChannelError>(), error.downcast_ref::<StoreError>()) {
         (Some(ChannelError::NotCleared { .. }), _) => Some(CandidateRefusal::NotCleared),
         (Some(ChannelError::OutOfScope { .. }), _) => Some(CandidateRefusal::OutOfScope),

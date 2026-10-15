@@ -32,10 +32,12 @@ use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::Arc;
+use crate::terminal::register_backends;
+use serde_json::Value;
 
 /// What makes a backend of `T`: given the name it is configured under - its
 /// position in a chain -, its parameters and the services made before it.
-type BackendFactory<T> = Box<dyn Fn(&str, &serde_json::Value, &Services) -> ComponentResult<Arc<T>> + Send + Sync>;
+type BackendFactory<T> = Box<dyn Fn(&str, &Value, &Services) -> ComponentResult<Arc<T>> + Send + Sync>;
 
 /// The factories of the backends of one service, by type.
 type Factories<T> = BTreeMap<String, BackendFactory<T>>;
@@ -66,7 +68,7 @@ impl Backends {
     /// file and of the environment, and `accept_any`.
     pub fn built_in() -> Self {
         let mut backends = Self::new();
-        crate::terminal::register_backends(&mut backends);
+        register_backends(&mut backends);
         backends.register::<dyn SecretProvider, _>("file", |_, params, _| {
             let config: FileSecretConfig = config_of_params(params)?;
             Ok(Arc::new(FileSecretProvider::new(config.path)))
@@ -101,7 +103,7 @@ impl Backends {
     pub fn register<T, F>(&mut self, kind: &str, factory: F)
     where
         T: ?Sized + 'static,
-        F: Fn(&str, &serde_json::Value, &Services) -> ComponentResult<Arc<T>> + Send + Sync + 'static,
+        F: Fn(&str, &Value, &Services) -> ComponentResult<Arc<T>> + Send + Sync + 'static,
     {
         let (_, factories) = self.factories.entry(TypeId::of::<T>())
             .or_insert_with(|| (TypeKey::of::<T>().name(), Box::new(Factories::<T>::new())));
@@ -140,7 +142,7 @@ impl Backends {
     fn make<T: ?Sized + 'static>(&self, backend: &str, name: &str, config: &BackendConfig, services: &Services) -> ComponentResult<Arc<T>> {
         let factories = self.factories.get(&TypeId::of::<T>()).and_then(|(_, factories)| factories.downcast_ref::<Factories<T>>());
         let made = match factories.and_then(|factories| factories.get(&config.kind)) {
-            Some(factory) => factory(name, &serde_json::Value::Object(config.params.clone()), services),
+            Some(factory) => factory(name, &Value::Object(config.params.clone()), services),
             None => {
                 let known: Vec<_> = factories.into_iter().flat_map(|factories| factories.keys().map(String::as_str)).collect();
                 Err(ComponentError::InvalidConfig(format!("no backend of this type is known; known are: {}", known.join(", "))))

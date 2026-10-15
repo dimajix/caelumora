@@ -2,12 +2,37 @@
 //! it is cancelled, removed or lowered.
 
 use super::*;
+use anyhow::Result;
+use caelumora_model::agent::{AgentChannelState, AgentId, RetryRefused};
+use caelumora_model::approval::{ApprovalRequest, ApprovalResponse};
+use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::context::ModelProfile;
+use caelumora_model::history::HistoryEntry;
+use caelumora_model::message::{MessageEvent, MessageRole};
+use caelumora_model::security::AllowAllPolicy;
+use caelumora_model::tool::{Tool, ToolResultStatus};
+use caelumora_model::turn::GivenUpReason;
+use caelumora_model::work::TurnId;
+use crate::components::create_plan_tool::CREATE_PLAN_TOOL_KIND;
+use crate::llm::{LLMClient, LLMError, LLMResult};
+use crate::message::testing::given_up_turns;
+use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
+use crate::tool::sleep_tool::SLEEP_TOOL_KIND;
+use crate::tool::stop_tool::STOP_TOOL_KIND;
+use futures::stream::BoxStream;
+use serde_json::Value;
+use std::collections::{HashSet, VecDeque};
+use std::sync::Mutex;
+use tokio::sync::Semaphore;
+use tokio::sync::broadcast::Receiver;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from_then_on() {
     let model = Arc::new(Gated {
-        answers: std::sync::Mutex::new(["first", "second"].into()),
-        gate: Arc::new(tokio::sync::Semaphore::new(0)),
+        answers: Mutex::new(["first", "second"].into()),
+        gate: Arc::new(Semaphore::new(0)),
         seen: Default::default(),
     });
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
@@ -18,7 +43,7 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
     }).await.expect("the agent asks its model about hello");
     let alice = channel.user_actor(alice_of(&context)).unwrap();
     let hello = channel.whole_history().await[0].id;
-    let until = |what: &'static str, done: Box<dyn Fn(&caelumora_model::agent::AgentChannelState) -> bool + Send>| {
+    let until = |what: &'static str, done: Box<dyn Fn(&AgentChannelState) -> bool + Send>| {
         let channel = Arc::clone(&channel);
         async move {
             tokio::time::timeout(Duration::from_secs(5), async {
@@ -74,8 +99,8 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
 #[tokio::test]
 async fn an_agent_asked_to_answer_again_takes_its_answer_back_and_answers_without_it() {
     let model = Arc::new(Gated {
-        answers: std::sync::Mutex::new(["first", "second"].into()),
-        gate: Arc::new(tokio::sync::Semaphore::new(1)),
+        answers: Mutex::new(["first", "second"].into()),
+        gate: Arc::new(Semaphore::new(1)),
         seen: Default::default(),
     });
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
@@ -101,8 +126,8 @@ async fn an_agent_asked_to_answer_again_takes_its_answer_back_and_answers_withou
 #[tokio::test]
 async fn an_agent_does_not_answer_again_once_more_was_said() {
     let model = Arc::new(Gated {
-        answers: std::sync::Mutex::new(["first", "second", "third"].into()),
-        gate: Arc::new(tokio::sync::Semaphore::new(2)),
+        answers: Mutex::new(["first", "second", "third"].into()),
+        gate: Arc::new(Semaphore::new(2)),
         seen: Default::default(),
     });
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
@@ -114,7 +139,7 @@ async fn an_agent_does_not_answer_again_once_more_was_said() {
     alice.request_retry(first.id).await.expect("asked");
     let ActorEvent::RetryRejected { target, reason } = shown_by(&mut events, agent, "RetryRejected").await else { unreachable!() };
     assert_eq!(target, RetryTarget::Message(first.id));
-    assert_eq!(reason, caelumora_model::agent::RetryRefused::NotLast);
+    assert_eq!(reason, RetryRefused::NotLast);
     assert!(channel.message_of(first.id).await.is_some_and(|m| m.revoked.is_none()), "nothing taken back");
     assert_eq!(model.seen.lock().unwrap().len(), 2, "and no model asked again");
     running.abort();
@@ -124,8 +149,8 @@ async fn an_agent_does_not_answer_again_once_more_was_said() {
 /// asking the model about "hello", its answers held back.
 async fn asking_a_gated_model(answers: &[&'static str]) -> (Stuck, Arc<Gated>) {
     let model = Arc::new(Gated {
-        answers: std::sync::Mutex::new(answers.iter().copied().collect()),
-        gate: Arc::new(tokio::sync::Semaphore::new(0)),
+        answers: Mutex::new(answers.iter().copied().collect()),
+        gate: Arc::new(Semaphore::new(0)),
         seen: Default::default(),
     });
     let stuck = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
@@ -148,7 +173,7 @@ async fn an_answer_under_way_asked_for_again_is_given_up_and_answered_anew() {
     let ActorEvent::ResponseStarted { turn_id: turn } = shown_by(&mut events, agent, "ResponseStarted").await else { unreachable!() };
     assert_eq!(channel.turn_of(ActorId::Agent(agent)), Some(turn), "the turn its start announced");
     let alice = channel.user_actor(alice_of(&context)).unwrap();
-    let error = |result: anyhow::Result<uuid::Uuid>| result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error");
+    let error = |result: Result<Uuid>| result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error");
     assert!(matches!(error(alice.request_retry_of_turn(ActorId::Agent(agent), TurnId::new()).await), ChannelError::TurnNotRetryable { .. }), "not another turn");
 
     alice.request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("asked");
@@ -217,7 +242,7 @@ async fn an_older_answer_asked_for_again_leaves_the_answer_under_way_alone() {
     // Judged against what stands, beside the request to answer "one
     // more": not its last answer any more.
     let ActorEvent::RetryRejected { target, reason } = shown_by(&mut events, agent, "RetryRejected").await else { unreachable!() };
-    assert_eq!((target, reason), (RetryTarget::Message(first.id), caelumora_model::agent::RetryRefused::NotLast));
+    assert_eq!((target, reason), (RetryTarget::Message(first.id), RetryRefused::NotLast));
     assert_eq!(said(answered(&mut events, agent).await), ["third"], "and the request is answered");
     assert!(channel.message_of(first.id).await.is_some_and(|m| m.revoked.is_none()), "nothing taken back");
     running.abort();
@@ -227,15 +252,15 @@ async fn an_older_answer_asked_for_again_leaves_the_answer_under_way_alone() {
 /// `gate` lets it, and remembers the contents each call was given.
 #[derive(Debug)]
 struct Gated {
-    answers: std::sync::Mutex<std::collections::VecDeque<&'static str>>,
-    gate: Arc<tokio::sync::Semaphore>,
-    seen: std::sync::Mutex<Vec<Vec<String>>>,
+    answers: Mutex<VecDeque<&'static str>>,
+    gate: Arc<Semaphore>,
+    seen: Mutex<Vec<Vec<String>>>,
 }
 
 #[async_trait::async_trait]
-impl crate::llm::LLMClient for Gated {
-    async fn chat_completion(&self, messages: &[Message], _: &[caelumora_model::tool::Tool])
-        -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
+impl LLMClient for Gated {
+    async fn chat_completion(&self, messages: &[Message], _: &[Tool])
+        -> BoxStream<'static, LLMResult<MessageEvent>>
     {
         self.seen.lock().unwrap().push(messages.iter().filter_map(|m| m.content.clone()).collect());
         let Some(answer) = self.answers.lock().unwrap().pop_front() else { return Box::pin(futures::stream::pending()) };
@@ -243,16 +268,16 @@ impl crate::llm::LLMClient for Gated {
         Box::pin(futures::stream::once(async move {
             gate.acquire().await.unwrap().forget();
             // An id of its own, as every model client gives its answers.
-            Ok(caelumora_model::message::MessageEvent::Complete(Message {
+            Ok(MessageEvent::Complete(Message {
                 id: MessageId::new(),
-                role: caelumora_model::message::MessageRole::Assistant,
+                role: MessageRole::Assistant,
                 content: Some(answer.to_string()),
                 ..Message::new(Classification::CHANNEL_DEFAULT)
             }))
         }))
     }
 
-    fn profile(&self) -> caelumora_model::context::ModelProfile {
+    fn profile(&self) -> ModelProfile {
         Default::default()
     }
 }
@@ -260,8 +285,8 @@ impl crate::llm::LLMClient for Gated {
 #[tokio::test]
 async fn what_a_user_says_during_a_turn_is_answered_after_it() {
     let model = Arc::new(Gated {
-        answers: std::sync::Mutex::new(["first", "second"].into()),
-        gate: Arc::new(tokio::sync::Semaphore::new(0)),
+        answers: Mutex::new(["first", "second"].into()),
+        gate: Arc::new(Semaphore::new(0)),
         seen: Default::default(),
     });
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
@@ -297,8 +322,8 @@ async fn what_a_user_says_during_a_turn_is_answered_after_it() {
 #[tokio::test]
 async fn an_agent_asked_several_times_during_a_turn_answers_once_after_it() {
     let model = Arc::new(Gated {
-        answers: std::sync::Mutex::new(["first", "second", "third"].into()),
-        gate: Arc::new(tokio::sync::Semaphore::new(0)),
+        answers: Mutex::new(["first", "second", "third"].into()),
+        gate: Arc::new(Semaphore::new(0)),
         seen: Default::default(),
     });
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
@@ -343,25 +368,23 @@ async fn an_agent_asked_several_times_during_a_turn_answers_once_after_it() {
 
 #[tokio::test]
 async fn a_sleeping_agent_woken_by_a_mention_answers_it() {
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::message::MessageRole;
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
     let answer = |text: &str, tool_calls| Message {
         role: MessageRole::Assistant,
         content: Some(text.to_string()),
         tool_calls,
-        ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        ..Message::new(Classification::CHANNEL_DEFAULT)
     };
     let stop = vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }];
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "stop".to_string(),
-        kind: crate::tool::stop_tool::STOP_TOOL_KIND.to_string(),
-        params: serde_json::Value::Null,
+        kind: STOP_TOOL_KIND.to_string(),
+        params: Value::Null,
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
-    let model = Scripted(std::sync::Mutex::new([answer("Good bye.", stop), answer("I am back.", Vec::new())].into()));
+    let model = Scripted(Mutex::new([answer("Good bye.", stop), answer("I am back.", Vec::new())].into()));
     let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent(Arc::new(model), components).await;
     settled(&helper, ActorState::Sleeping).await;
     let alice = alice_of(&context);
@@ -380,8 +403,6 @@ async fn a_sleeping_agent_woken_by_a_mention_answers_it() {
 
 #[tokio::test]
 async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::message::MessageRole;
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
     // One answer only: a second call of the model would never return.
@@ -389,17 +410,17 @@ async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
         role: MessageRole::Assistant,
         content: Some("Good bye.".to_string()),
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
-        ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        ..Message::new(Classification::CHANNEL_DEFAULT)
     };
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "stop".to_string(),
-        kind: crate::tool::stop_tool::STOP_TOOL_KIND.to_string(),
-        params: serde_json::Value::Null,
+        kind: STOP_TOOL_KIND.to_string(),
+        params: Value::Null,
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
     let Stuck { channel, agent, helper, running, .. } =
-        with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
+        with_an_agent(Arc::new(Scripted(Mutex::new([bye].into()))), components).await;
 
     // The turn ends with the call - the model is not asked again - and
     // the agent sleeps, as the tool asked; no turn is left behind.
@@ -415,24 +436,22 @@ async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
 /// which sends it no message, it tells them so too.
 #[tokio::test]
 async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::message::MessageRole;
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
     let bye = Message {
         role: MessageRole::Assistant,
         content: Some("Good bye.".to_string()),
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "stop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
-        ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        ..Message::new(Classification::CHANNEL_DEFAULT)
     };
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "stop".to_string(),
-        kind: crate::tool::stop_tool::STOP_TOOL_KIND.to_string(),
-        params: serde_json::Value::Null,
+        kind: STOP_TOOL_KIND.to_string(),
+        params: Value::Null,
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
-    let (channel, context, agent, alice) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
+    let (channel, context, agent, alice) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted(Mutex::new([bye].into()))), components).await;
     // What it sends, watched since before it ran.
     let mut events = channel.observe();
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
@@ -452,8 +471,6 @@ async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
 
 #[tokio::test]
 async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_answer() {
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::message::MessageRole;
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
     let said = |content: &str| Message { role: MessageRole::Assistant, content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
@@ -471,13 +488,13 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
     let script = [plan, said("first done"), said("second done"), said("all done")];
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "plan".to_string(),
-        kind: crate::components::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),
-        params: serde_json::Value::Null,
+        kind: CREATE_PLAN_TOOL_KIND.to_string(),
+        params: Value::Null,
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
     let Stuck { channel, agent, helper, mut events, running, .. } =
-        with_an_agent(Arc::new(Scripted(std::sync::Mutex::new(script.into()))), components).await;
+        with_an_agent(Arc::new(Scripted(Mutex::new(script.into()))), components).await;
 
     // The plan needs no approval: it runs at once.
     let mut seen = Vec::new();
@@ -517,20 +534,18 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
     ], "the plan's call and its result, the steps, the answer");
     // Each step begins before what it says (issue 263).
     let items: Vec<String> = channel.history_entries().await.into_iter().filter_map(|item| match item {
-        caelumora_model::history::HistoryEntry::Said { message, .. } if message.sender_id == ActorId::Agent(agent) && message.internal => message.content,
-        caelumora_model::history::HistoryEntry::PlanStepStarted { actor, step_index, total_steps, description, .. } if actor == ActorId::Agent(agent) => Some(format!("step {}/{total_steps}: {description}", step_index + 1)),
+        HistoryEntry::Said { message, .. } if message.sender_id == ActorId::Agent(agent) && message.internal => message.content,
+        HistoryEntry::PlanStepStarted { actor, step_index, total_steps, description, .. } if actor == ActorId::Agent(agent) => Some(format!("step {}/{total_steps}: {description}", step_index + 1)),
         _ => None,
     }).collect();
     assert_eq!(items, ["step 1/2: first", "first done", "step 2/2: second", "second done"]);
     let ended = channel.last_history_entry().await;
-    assert!(matches!(ended, Some(caelumora_model::history::HistoryEntry::TurnFinished { turn_id, .. }) if Some(turn_id) == history.last().and_then(|m| m.turn_id)), "{ended:?}");
+    assert!(matches!(ended, Some(HistoryEntry::TurnFinished { turn_id, .. }) if Some(turn_id) == history.last().and_then(|m| m.turn_id)), "{ended:?}");
     running.abort();
 }
 
 #[tokio::test]
 async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::message::MessageRole;
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
     // A plan: a call, its result, the steps' internal answers and the
@@ -550,13 +565,13 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
     let script = [plan, said("first done"), said("all done")];
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "plan".to_string(),
-        kind: crate::components::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),
-        params: serde_json::Value::Null,
+        kind: CREATE_PLAN_TOOL_KIND.to_string(),
+        params: Value::Null,
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
     let Stuck { channel, agent, helper, mut events, running, .. } =
-        with_an_agent(Arc::new(Scripted(std::sync::Mutex::new(script.into()))), components).await;
+        with_an_agent(Arc::new(Scripted(Mutex::new(script.into()))), components).await;
 
     let mut started = None;
     let mut shown = Vec::new();
@@ -577,7 +592,7 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
     settled(&helper, ActorState::Idle).await;
 
     let started = started.expect("the turn announced itself");
-    let ids: std::collections::HashSet<_> = said.iter().collect();
+    let ids: HashSet<_> = said.iter().collect();
     assert_eq!(ids.len(), said.len(), "every event of the turn is one of its own (issue 352)");
     assert_eq!(shown.len(), 4, "the call, its result, the step's answer and the final answer: {shown:?}");
     assert!(shown.iter().all(|turn| *turn == Some(started)), "each shown as the turn's: {shown:?}");
@@ -594,8 +609,6 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
 
 #[tokio::test]
 async fn a_turn_is_stored_with_the_step_that_comes_next() {
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::message::MessageRole;
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
     // The model calls a tool that needs no approval, and then never
@@ -603,17 +616,17 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
     let calculate = Message {
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
-        ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        ..Message::new(Classification::CHANNEL_DEFAULT)
     };
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "calculator".to_string(),
-        kind: crate::tool::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
-        params: serde_json::Value::Null,
+        kind: CALCULATOR_TOOL_KIND.to_string(),
+        params: Value::Null,
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
     let Stuck { channel, agent, running, .. } =
-        with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([calculate].into()))), components).await;
+        with_an_agent(Arc::new(Scripted(Mutex::new([calculate].into()))), components).await;
 
     // What a crash now would leave: `Planning`, with the tool's result
     // in the turn - so that a resume asks the model about the result
@@ -633,29 +646,29 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
 /// A model that fails where its script says `None`, and answers where
 /// it says `Some`; it waits for ever once the script is done.
 #[derive(Debug)]
-struct FailsWhere(std::sync::Mutex<std::collections::VecDeque<Option<Message>>>);
+struct FailsWhere(Mutex<VecDeque<Option<Message>>>);
 
 #[async_trait::async_trait]
-impl crate::llm::LLMClient for FailsWhere {
-    async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::Tool])
-        -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
+impl LLMClient for FailsWhere {
+    async fn chat_completion(&self, _: &[Message], _: &[Tool])
+        -> BoxStream<'static, LLMResult<MessageEvent>>
     {
         match self.0.lock().unwrap().pop_front() {
-            Some(Some(answer)) => Box::pin(futures::stream::iter([Ok(caelumora_model::message::MessageEvent::Complete(answer))])),
-            Some(None) => Box::pin(futures::stream::iter([Err(crate::llm::LLMError::Backend {
+            Some(Some(answer)) => Box::pin(futures::stream::iter([Ok(MessageEvent::Complete(answer))])),
+            Some(None) => Box::pin(futures::stream::iter([Err(LLMError::Backend {
                 endpoint: "test".to_string(), model: "test".to_string(), message: "gone".to_string(),
             })])),
             None => Box::pin(futures::stream::pending()),
         }
     }
 
-    fn profile(&self) -> caelumora_model::context::ModelProfile {
+    fn profile(&self) -> ModelProfile {
         Default::default()
     }
 }
 
 /// The turn the agent `agent` gives up next, by its `TurnGivenUp`.
-async fn given_up_turn(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: caelumora_model::agent::AgentId) -> TurnId {
+async fn given_up_turn(events: &mut Receiver<Envelope>, agent: AgentId) -> TurnId {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
@@ -667,10 +680,9 @@ async fn given_up_turn(events: &mut tokio::sync::broadcast::Receiver<Envelope>, 
 
 #[tokio::test]
 async fn a_turn_that_failed_is_answered_anew_on_request_and_stays() {
-    use caelumora_model::message::MessageRole;
     let answer = Message { role: MessageRole::Assistant, content: Some("second try".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
     let Stuck { channel, context, agent, mut events, running, .. } =
-        with_an_agent(Arc::new(FailsWhere(std::sync::Mutex::new([None, Some(answer)].into()))), Default::default()).await;
+        with_an_agent(Arc::new(FailsWhere(Mutex::new([None, Some(answer)].into()))), Default::default()).await;
     let failed = given_up_turn(&mut events, agent).await;
 
     let alice = channel.user_actor(alice_of(&context)).unwrap();
@@ -690,7 +702,7 @@ async fn a_turn_that_failed_is_answered_anew_on_request_and_stays() {
 #[tokio::test]
 async fn a_turn_given_up_is_not_asked_for_again_once_something_followed_it() {
     let Stuck { channel, context, agent, mut events, running, .. } =
-        with_an_agent(Arc::new(FailsWhere(std::sync::Mutex::new([None].into()))), Default::default()).await;
+        with_an_agent(Arc::new(FailsWhere(Mutex::new([None].into()))), Default::default()).await;
     let failed = given_up_turn(&mut events, agent).await;
     let alice = channel.user_actor(alice_of(&context)).unwrap();
     alice.send_message("are you there?".to_string(), None).await.unwrap();
@@ -707,32 +719,29 @@ async fn a_turn_given_up_is_not_asked_for_again_once_something_followed_it() {
 /// A model that gives the answers it was given, one per call, and then
 /// fails.
 #[derive(Debug)]
-struct FailsAfter(std::sync::Mutex<std::collections::VecDeque<Message>>);
+struct FailsAfter(Mutex<VecDeque<Message>>);
 
 #[async_trait::async_trait]
-impl crate::llm::LLMClient for FailsAfter {
-    async fn chat_completion(&self, _: &[Message], _: &[caelumora_model::tool::Tool])
-        -> futures::stream::BoxStream<'static, crate::llm::LLMResult<caelumora_model::message::MessageEvent>>
+impl LLMClient for FailsAfter {
+    async fn chat_completion(&self, _: &[Message], _: &[Tool])
+        -> BoxStream<'static, LLMResult<MessageEvent>>
     {
         match self.0.lock().unwrap().pop_front() {
-            Some(answer) => Box::pin(futures::stream::iter([Ok(caelumora_model::message::MessageEvent::Complete(answer))])),
-            None => Box::pin(futures::stream::iter([Err(crate::llm::LLMError::Backend {
+            Some(answer) => Box::pin(futures::stream::iter([Ok(MessageEvent::Complete(answer))])),
+            None => Box::pin(futures::stream::iter([Err(LLMError::Backend {
                 endpoint: "test".to_string(), model: "test".to_string(), message: "gone".to_string(),
             })])),
         }
     }
 
-    fn profile(&self) -> caelumora_model::context::ModelProfile {
+    fn profile(&self) -> ModelProfile {
         Default::default()
     }
 }
 
 #[tokio::test]
 async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_told() {
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::message::MessageRole;
     use caelumora_model::tool::{ToolCall, ToolVisibility};
-    use caelumora_model::turn::GivenUpReason;
 
     // The model calls a tool that needs no approval, and fails when
     // asked about its result.
@@ -740,17 +749,17 @@ async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_
         id: MessageId::new(),
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
-        ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        ..Message::new(Classification::CHANNEL_DEFAULT)
     };
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "calculator".to_string(),
-        kind: crate::tool::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
-        params: serde_json::Value::Null,
+        kind: CALCULATOR_TOOL_KIND.to_string(),
+        params: Value::Null,
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
     let Stuck { channel, context: _, agent, helper, mut events, running } =
-        with_an_agent(Arc::new(FailsAfter(std::sync::Mutex::new([calculate.clone()].into()))), components).await;
+        with_an_agent(Arc::new(FailsAfter(Mutex::new([calculate.clone()].into()))), components).await;
 
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -764,7 +773,7 @@ async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_
     // The turn's messages stay where they were said, followed by its end
     // (issue 258); what the model saw for them can still be told.
     let seen = AgentContextView::of_state(ActorId::Agent(agent), stored.clone());
-    let turns = crate::message::testing::given_up_turns(&stored);
+    let turns = given_up_turns(&stored);
     assert_eq!(turns.len(), 1);
     assert!(matches!(turns[0].1, GivenUpReason::Failed { .. }));
     let roles: Vec<_> = turns[0].2.iter().map(|m| m.role).collect();
@@ -783,26 +792,23 @@ async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_
 
 #[tokio::test]
 async fn an_agent_removed_during_a_turn_gives_it_up() {
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::message::MessageRole;
     use caelumora_model::tool::{ToolCall, ToolVisibility};
-    use caelumora_model::turn::GivenUpReason;
 
     // The model calls a tool, and never answers again.
     let calculate = Message {
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "calculate".to_string(), arguments: serde_json::json!({ "expression": "1+1" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
-        ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        ..Message::new(Classification::CHANNEL_DEFAULT)
     };
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "calculator".to_string(),
-        kind: crate::tool::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
-        params: serde_json::Value::Null,
+        kind: CALCULATOR_TOOL_KIND.to_string(),
+        params: Value::Null,
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
     let Stuck { channel, context, agent, running, .. } =
-        with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([calculate].into()))), components).await;
+        with_an_agent(Arc::new(Scripted(Mutex::new([calculate].into()))), components).await;
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
@@ -815,7 +821,7 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
 
     let turns = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let turns = crate::message::testing::given_up_turns(&channel.stored_agent_channel_state(agent).await.unwrap());
+            let turns = given_up_turns(&channel.stored_agent_channel_state(agent).await.unwrap());
             if !turns.is_empty() { break turns }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -826,10 +832,10 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
 
 /// What the model of the agent whose state is `stored` is given next:
 /// its transcript as it stands, resolved as a turn's context is.
-fn given_next(stored: &caelumora_model::agent::AgentChannelState, agent: caelumora_model::agent::AgentId) -> Vec<Message> {
+fn given_next(stored: &AgentChannelState, agent: AgentId) -> Vec<Message> {
     use caelumora_model::context::{ContextItem, ContextRef, ContextResolver};
     let reference = ContextRef { transcript: stored.transcript.digest(), ..ContextRef::default() };
-    ContextResolver::of(stored).resolve(&reference, caelumora_model::work::TurnId::new(), ActorId::Agent(agent)).expect("resolved").items.into_iter()
+    ContextResolver::of(stored).resolve(&reference, TurnId::new(), ActorId::Agent(agent)).expect("resolved").items.into_iter()
         .filter_map(|item| match item {
             ContextItem::Conversation { message } => Some(message),
             ContextItem::Prompt { .. } => None,
@@ -837,9 +843,7 @@ fn given_next(stored: &caelumora_model::agent::AgentChannelState, agent: caelumo
         .collect()
 }
 
-fn calculator() -> (Message, caelumora_model::component::ComponentConfig) {
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::message::MessageRole;
+fn calculator() -> (Message, ComponentConfig) {
     use caelumora_model::tool::{ToolCall, ToolVisibility};
     let calculate = Message {
         id: MessageId::new(),
@@ -849,8 +853,8 @@ fn calculator() -> (Message, caelumora_model::component::ComponentConfig) {
     };
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "calculator".to_string(),
-        kind: crate::tool::calculator_tool::CALCULATOR_TOOL_KIND.to_string(),
-        params: serde_json::Value::Null,
+        kind: CALCULATOR_TOOL_KIND.to_string(),
+        params: Value::Null,
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
@@ -860,13 +864,12 @@ fn calculator() -> (Message, caelumora_model::component::ComponentConfig) {
 #[tokio::test]
 async fn lowering_the_channel_gives_up_a_running_turn() {
     use caelumora_model::confidentiality::Confidentiality;
-    use caelumora_model::turn::GivenUpReason;
 
     // The model calls a tool, and then is asked about its result for
     // ever.
     let (calculate, components) = calculator();
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent_under(Arc::new(caelumora_model::security::AllowAllPolicy::new()), Arc::new(Scripted(std::sync::Mutex::new([calculate.clone()].into()))), components).await;
+        with_an_agent_under(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted(Mutex::new([calculate.clone()].into()))), components).await;
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
@@ -884,7 +887,7 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
     assert!(told.contains("lowered"), "{told}");
     settled(&helper, ActorState::Idle).await;
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
-    let turns = crate::message::testing::given_up_turns(&stored);
+    let turns = given_up_turns(&stored);
     assert_eq!(turns.len(), 1);
     assert_eq!(turns[0].1, GivenUpReason::Lowered { channel: public.clone() });
     // What it said before the lowering was held by the channel: it stays,
@@ -897,7 +900,7 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
     assert!(stored.transcript.messages().iter().any(|m| m.id == calculate.id), "the record keeps it");
     let given = given_next(&stored, agent);
     let call = given.iter().find(|m| m.id == calculate.id).expect("the call is given");
-    assert_eq!((call.tool_calls[0].function_name.as_str(), &call.tool_calls[0].arguments), ("calculate", &serde_json::Value::Null));
+    assert_eq!((call.tool_calls[0].function_name.as_str(), &call.tool_calls[0].arguments), ("calculate", &Value::Null));
     assert_eq!(call.classification, public);
     assert!(given.iter().flat_map(|m| &m.tool_results).all(|r| r.content.is_empty()), "nothing of what it returned");
     let told = given.last().and_then(|m| m.content.clone()).unwrap_or_default();
@@ -912,7 +915,7 @@ async fn lowering_the_channel_ends_a_turn_waiting_for_approval_at_once() {
     // Nobody approves the call.
     let (call, components) = a_call_needing_approval();
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent_under(Arc::new(caelumora_model::security::AllowAllPolicy::new()), Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
+        with_an_agent_under(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted(Mutex::new([call].into()))), components).await;
     settled(&helper, ActorState::WaitingForUser).await;
 
     channel.reclassify(&context, Classification::general(Confidentiality::Public)).await.expect("permitted");
@@ -925,7 +928,7 @@ async fn lowering_the_channel_ends_a_turn_waiting_for_approval_at_once() {
 #[tokio::test]
 async fn raising_the_channel_lets_a_running_turn_go_on() {
     use caelumora_model::confidentiality::Confidentiality;
-    let stuck = with_an_agent_under(Arc::new(caelumora_model::security::AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default()).await;
+    let stuck = with_an_agent_under(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default()).await;
     settled(&stuck.helper, ActorState::Planning).await;
 
     stuck.channel.reclassify(&stuck.context, Classification::general(Confidentiality::Confidential)).await.expect("permitted");
@@ -940,7 +943,7 @@ async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
 
     let (call, components) = a_call_needing_approval();
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
+        with_an_agent(Arc::new(Scripted(Mutex::new([call].into()))), components).await;
     settled(&helper, ActorState::WaitingForUser).await;
 
     channel.cancel(&context).await.expect("permitted");
@@ -968,14 +971,12 @@ async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let last = stored.transcript.messages().pop().expect("the turn was taken over");
     let answered: Vec<_> = last.tool_results.iter().map(|r| r.status).collect();
-    assert_eq!(answered, [caelumora_model::tool::ToolResultStatus::NotExecuted]);
+    assert_eq!(answered, [ToolResultStatus::NotExecuted]);
 }
 
 /// A call of `sleep` that needs approval, and the component that gives
 /// it, for an agent to wait for its approval.
-fn a_call_needing_approval() -> (Message, caelumora_model::component::ComponentConfig) {
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::message::MessageRole;
+fn a_call_needing_approval() -> (Message, ComponentConfig) {
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
     let call = Message {
@@ -985,7 +986,7 @@ fn a_call_needing_approval() -> (Message, caelumora_model::component::ComponentC
     };
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "sleep".to_string(),
-        kind: crate::tool::sleep_tool::SLEEP_TOOL_KIND.to_string(),
+        kind: SLEEP_TOOL_KIND.to_string(),
         params: serde_json::json!({ "requires_approval": true }),
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
@@ -999,7 +1000,7 @@ async fn a_rule_of_the_channel_asks_for_a_call_its_tool_would_run() {
 
     let (call, mut components) = a_call_needing_approval();
     components.component_nodes[0].params = serde_json::json!({ "requires_approval": false });
-    let built = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
+    let built = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted(Mutex::new([call].into()))), components).await;
     let ask = ApprovalRule::new(ToolMatcher { tool: "sleep".to_string(), arguments: Default::default() }, RuleDecision::Ask, Reach::Everywhere, None).unwrap();
     built.0.update_approval_rules(&SecurityContext::system(), vec![ask]).await.expect("the system may");
 
@@ -1011,7 +1012,7 @@ async fn a_rule_of_the_channel_asks_for_a_call_its_tool_would_run() {
 }
 
 /// The approval the approver asks the users for, from `events`.
-async fn approval_requested(events: &mut broadcast::Receiver<Envelope>) -> caelumora_model::approval::ApprovalRequest {
+async fn approval_requested(events: &mut broadcast::Receiver<Envelope>) -> ApprovalRequest {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
@@ -1026,12 +1027,11 @@ async fn approval_requested(events: &mut broadcast::Receiver<Envelope>) -> caelu
 
 #[tokio::test]
 async fn a_turn_waiting_for_approval_can_be_decided_after_a_restart() {
-    use caelumora_model::message::MessageRole;
 
     let (call, components) = a_call_needing_approval();
     let done = Message { role: MessageRole::Assistant, content: Some("Done.".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
     let Stuck { channel, agent, helper, mut events, running, .. } =
-        with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call, done].into()))), components).await;
+        with_an_agent(Arc::new(Scripted(Mutex::new([call, done].into()))), components).await;
     settled(&helper, ActorState::WaitingForUser).await;
     let asked = approval_requested(&mut events).await;
 
@@ -1054,7 +1054,7 @@ async fn a_turn_waiting_for_approval_can_be_decided_after_a_restart() {
     let asked_again = approval_requested(&mut events).await;
     assert_eq!(asked_again.id, asked.id);
     let alice = document.participants.iter().find_map(|p| match p { Participant::User(id) => Some(*id), _ => None }).expect("alice");
-    let response = caelumora_model::approval::ApprovalResponse::new(asked.id, agent);
+    let response = ApprovalResponse::new(asked.id, agent);
     restarted.user_actor(alice).unwrap().send_approval(response, true).await.unwrap();
     let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["Done."], "the call runs and the turn goes on");
@@ -1071,8 +1071,6 @@ async fn with_an_agent_in_a_long_tool() -> (Stuck, Arc<Scripted>) {
 /// An agent whose model calls a tool that sleeps a minute, once for
 /// each of `calls`, by their ids, and then answers "never given".
 async fn with_an_agent_in_long_tools(calls: &[&str]) -> (Stuck, Arc<Scripted>) {
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::message::MessageRole;
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
     let call = Message {
@@ -1084,13 +1082,13 @@ async fn with_an_agent_in_long_tools(calls: &[&str]) -> (Stuck, Arc<Scripted>) {
     };
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "sleep".to_string(),
-        kind: crate::tool::sleep_tool::SLEEP_TOOL_KIND.to_string(),
+        kind: SLEEP_TOOL_KIND.to_string(),
         params: serde_json::json!({ "seconds": 60 }),
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
     let unasked = Message { role: MessageRole::Assistant, content: Some("never given".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-    let model = Arc::new(Scripted(std::sync::Mutex::new([call, unasked].into())));
+    let model = Arc::new(Scripted(Mutex::new([call, unasked].into())));
     let stuck = with_an_agent(Arc::<Scripted>::clone(&model), components).await;
     settled(&stuck.helper, ActorState::ExecutingTools).await;
     (stuck, model)
@@ -1098,12 +1096,11 @@ async fn with_an_agent_in_long_tools(calls: &[&str]) -> (Stuck, Arc<Scripted>) {
 
 #[tokio::test]
 async fn a_turn_asked_for_again_while_it_waits_for_an_approval_withdraws_the_request() {
-    use caelumora_model::message::MessageRole;
 
     let (call, components) = a_call_needing_approval();
     let instead = Message { role: MessageRole::Assistant, content: Some("no wait needed".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call, instead].into()))), components).await;
+        with_an_agent(Arc::new(Scripted(Mutex::new([call, instead].into()))), components).await;
     let ActorEvent::ApprovalRequested(request) = shown_by(&mut events, agent, "ApprovalRequested").await else { unreachable!() };
     settled(&helper, ActorState::WaitingForUser).await;
 
@@ -1127,9 +1124,9 @@ async fn a_turn_asked_for_again_while_a_tool_runs_tells_the_next_one_of_the_call
     let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
     assert_eq!(said(answered(&mut events, agent).await), ["never given"], "the tool is interrupted, and the next turn answers");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    let given_up = crate::message::testing::given_up_turns(&state);
+    let given_up = given_up_turns(&state);
     assert_eq!(given_up.len(), 1, "the turn is kept as given up");
-    assert_eq!(given_up[0].1, caelumora_model::turn::GivenUpReason::Retried);
+    assert_eq!(given_up[0].1, GivenUpReason::Retried);
     assert_eq!(given_up[0].0, turn);
     assert!(given_up[0].2.iter().any(|m| m.tool_calls.iter().any(|c| c.function_name == "sleep")), "the call that ran stays");
     let told: Vec<_> = given_next(&state, agent).into_iter().filter_map(|m| m.content).filter(|c| c.contains("given up")).collect();
@@ -1141,7 +1138,6 @@ async fn a_turn_asked_for_again_while_a_tool_runs_tells_the_next_one_of_the_call
 
 #[tokio::test]
 async fn a_cancel_while_a_tool_runs_interrupts_the_tool_and_ends_the_turn() {
-    use caelumora_model::tool::ToolResultStatus;
 
     let (Stuck { channel, context, agent, helper, mut events, running }, model) = with_an_agent_in_a_long_tool().await;
 
@@ -1168,7 +1164,6 @@ async fn a_cancel_while_a_tool_runs_interrupts_the_tool_and_ends_the_turn() {
 
 #[tokio::test]
 async fn a_tool_call_interrupted_alone_is_answered_so_and_the_turn_goes_on() {
-    use caelumora_model::tool::ToolResultStatus;
 
     let (Stuck { channel, context, agent, mut events, running, .. }, model) = with_an_agent_in_long_tools(&["1", "2"]).await;
     let turn = channel.turn_of(ActorId::Agent(agent)).expect("under way");
@@ -1195,7 +1190,6 @@ async fn a_tool_call_interrupted_alone_is_answered_so_and_the_turn_goes_on() {
 
 #[tokio::test]
 async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call() {
-    use caelumora_model::turn::GivenUpReason;
 
     let (Stuck { channel, context, agent, running, .. }, _) = with_an_agent_in_a_long_tool().await;
 
@@ -1206,11 +1200,11 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
     let stored = tokio::time::timeout(STOP_GRACE, async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            if state.turn.is_none() && !crate::message::testing::given_up_turns(&state).is_empty() { break state }
+            if state.turn.is_none() && !given_up_turns(&state).is_empty() { break state }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the turn is given up before the grace runs out");
-    assert_eq!(crate::message::testing::given_up_turns(&stored)[0].1, GivenUpReason::Stopped);
+    assert_eq!(given_up_turns(&stored)[0].1, GivenUpReason::Stopped);
     let interrupted = stored.transcript.messages().iter().flat_map(|m| m.tool_results.clone())
         .find(|r| r.tool_name == "sleep").map(|r| r.content).unwrap_or_default();
     assert!(interrupted.contains("interrupted"), "the call that ran stays, with how it ended: {interrupted}");
@@ -1220,7 +1214,7 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
     let ended = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let last = channel.last_history_entry().await;
-            if let Some(caelumora_model::history::HistoryEntry::TurnGivenUp { actor, reason, .. }) = last { break (actor, reason) }
+            if let Some(HistoryEntry::TurnGivenUp { actor, reason, .. }) = last { break (actor, reason) }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the channel records the turn's end");
@@ -1231,11 +1225,10 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
 
 #[tokio::test]
 async fn an_agent_removed_while_waiting_for_approval_gives_up_its_turn() {
-    use caelumora_model::turn::GivenUpReason;
 
     let (call, components) = a_call_needing_approval();
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
+        with_an_agent(Arc::new(Scripted(Mutex::new([call].into()))), components).await;
     settled(&helper, ActorState::WaitingForUser).await;
 
     channel.remove_participant(&context, ActorId::Agent(agent)).await.expect("permitted");
@@ -1245,11 +1238,11 @@ async fn an_agent_removed_while_waiting_for_approval_gives_up_its_turn() {
     let stored = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            if state.turn.is_none() && !crate::message::testing::given_up_turns(&state).is_empty() { break state }
+            if state.turn.is_none() && !given_up_turns(&state).is_empty() { break state }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the turn is given up");
-    assert_eq!(crate::message::testing::given_up_turns(&stored)[0].1, GivenUpReason::Stopped);
+    assert_eq!(given_up_turns(&stored)[0].1, GivenUpReason::Stopped);
     // The request it waited for is withdrawn, as for any turn given up
     // (issue 262).
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -1264,26 +1257,24 @@ async fn an_agent_removed_while_waiting_for_approval_gives_up_its_turn() {
 #[tokio::test]
 async fn a_call_with_invalid_arguments_is_answered_without_asking_anyone() {
     use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::message::MessageRole;
-    use caelumora_model::tool::{ToolCall, ToolResultStatus, ToolVisibility};
+    use caelumora_model::tool::{ToolCall, ToolVisibility};
 
     // A rule asks for every `create_plan` (issue 13); this call's
     // arguments are no plan.
     let not_a_plan = Message {
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "create_plan".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
-        ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        ..Message::new(Classification::CHANNEL_DEFAULT)
     };
-    let answer = Message { role: MessageRole::Assistant, content: Some("Let me answer directly.".to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
+    let answer = Message { role: MessageRole::Assistant, content: Some("Let me answer directly.".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "plan".to_string(),
-        kind: crate::components::create_plan_tool::CREATE_PLAN_TOOL_KIND.to_string(),
-        params: serde_json::Value::Null,
+        kind: CREATE_PLAN_TOOL_KIND.to_string(),
+        params: Value::Null,
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
-    let built = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted(std::sync::Mutex::new([not_a_plan, answer].into()))), components).await;
+    let built = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted(Mutex::new([not_a_plan, answer].into()))), components).await;
     let ask = ApprovalRule::new(ToolMatcher { tool: "create_plan".to_string(), arguments: Default::default() }, RuleDecision::Ask, Reach::Everywhere, None).unwrap();
     built.0.update_approval_rules(&SecurityContext::system(), vec![ask]).await.expect("the system may");
     let Stuck { agent, helper, mut events, running, .. } = start(built).await;
@@ -1351,7 +1342,6 @@ async fn a_user_learns_that_a_turn_cancelled_before_it_said_anything_ended() {
 
 #[tokio::test]
 async fn a_removed_agent_gives_its_turn_up_says_so_and_leaves_an_idle_state_behind() {
-    use caelumora_model::turn::GivenUpReason;
 
     let Stuck { channel, context, agent, helper, mut events, running } = stuck_in_a_model_call().await;
 
@@ -1389,10 +1379,10 @@ async fn a_removed_agent_gives_its_turn_up_says_so_and_leaves_an_idle_state_behi
 
 #[tokio::test]
 async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_the_tool_traffic() {
-    use caelumora_model::message::{MessageId, MessageRole};
+    use caelumora_model::message::MessageId;
     use caelumora_model::tool::{ToolCall, ToolCallResult, ToolVisibility};
     let (channel, _, agent, _) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default()).await;
-    let other = ActorId::Agent(caelumora_model::agent::AgentId::new());
+    let other = ActorId::Agent(AgentId::new());
     let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
     let result = ToolCallResult::of(&call, Default::default(), "done".to_string(), Classification::CHANNEL_DEFAULT);
     // Another agent's answer, as the channel's history keeps it.
@@ -1413,12 +1403,12 @@ async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_th
 
 #[tokio::test]
 async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
-    use caelumora_model::message::{MessageId, MessageRole};
-    let components = caelumora_model::component::ComponentConfig { component_nodes: vec![caelumora_model::component::ComponentDescriptor::new("filter", "test_no_secrets")] };
+    use caelumora_model::message::MessageId;
+    let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("filter", "test_no_secrets")] };
     let (channel, context, agent, _) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), components).await;
     let said = |text: &str| Message {
         id: MessageId::new(), role: MessageRole::User, sender_id: context.initiator_id, content: Some(text.to_string()),
-        ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)
+        ..Message::new(Classification::CHANNEL_DEFAULT)
     };
     let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
 
@@ -1432,9 +1422,9 @@ async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
 
 #[tokio::test]
 async fn an_agent_keeps_all_it_was_offered_in_its_history_and_what_passes_its_processors_in_its_transcript() {
-    let hi = Message { role: caelumora_model::message::MessageRole::Assistant, content: Some("Hi.".to_string()), ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT) };
-    let components = caelumora_model::component::ComponentConfig { component_nodes: vec![caelumora_model::component::ComponentDescriptor::new("filter", "test_no_secrets")] };
-    let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent(Arc::new(Scripted(std::sync::Mutex::new([hi].into()))), components).await;
+    let hi = Message { role: MessageRole::Assistant, content: Some("Hi.".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+    let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("filter", "test_no_secrets")] };
+    let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent(Arc::new(Scripted(Mutex::new([hi].into()))), components).await;
     answered(&mut events, agent).await;
     settled(&helper, ActorState::Idle).await;
 
@@ -1456,7 +1446,6 @@ async fn an_agent_keeps_all_it_was_offered_in_its_history_and_what_passes_its_pr
 /// context full once that call is in - 910 of 1000 -, and then by
 /// `afterwards`, one answer a call.
 async fn with_a_full_context(afterwards: Vec<Message>) -> Stuck {
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
     let nap = ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({ "seconds": 0 }), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
@@ -1464,12 +1453,12 @@ async fn with_a_full_context(afterwards: Vec<Message>) -> Stuck {
     script.extend(afterwards);
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor {
         id: "sleep".to_string(),
-        kind: crate::tool::sleep_tool::SLEEP_TOOL_KIND.to_string(),
+        kind: SLEEP_TOOL_KIND.to_string(),
         params: serde_json::json!({ "requires_approval": false }),
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
-    let mut stuck = with_an_agent(Arc::new(Scripted(std::sync::Mutex::new(script.into()))), components).await;
+    let mut stuck = with_an_agent(Arc::new(Scripted(Mutex::new(script.into()))), components).await;
     answered(&mut stuck.events, stuck.agent).await;
     settled(&stuck.helper, ActorState::Idle).await;
     stuck.channel.user_actor(alice_of(&stuck.context)).unwrap().send_message("take a nap".to_string(), None).await.unwrap();
@@ -1484,7 +1473,6 @@ fn measured(prompt: u64, message: Message) -> Message {
 
 /// An answer of the model, `text`.
 fn model_says(text: &str) -> Message {
-    use caelumora_model::message::MessageRole;
     Message { id: MessageId::new(), role: MessageRole::Assistant, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
 }
 
@@ -1512,7 +1500,6 @@ async fn activities_until_the_turn_ends(events: &mut broadcast::Receiver<Envelop
 
 #[tokio::test]
 async fn an_agent_whose_context_fills_up_compacts_it_on_its_own_before_its_next_call() {
-    use caelumora_model::history::HistoryEntry;
 
     let Stuck { channel, agent, mut events, running, .. } =
         with_a_full_context(vec![measured(800, model_says("They greeted each other.")), measured(300, model_says("Done."))]).await;

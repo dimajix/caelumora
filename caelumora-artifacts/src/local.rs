@@ -10,7 +10,7 @@ use caelumora_runtime::backend::Backends;
 use caelumora_runtime::component::config_of_params;
 use caelumora_runtime::terminal::{write_whole, ByteStream, WriteFailure};
 use serde::Deserialize;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Error};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
@@ -55,7 +55,7 @@ impl LocalArtifactStorage {
 
 /// What a failure of the host's file system is, as an error says it: its
 /// kind, never the path.
-fn unavailable(error: std::io::Error) -> ArtifactError {
+fn unavailable(error: Error) -> ArtifactError {
     ArtifactError::Unavailable(error.kind().to_string())
 }
 
@@ -104,9 +104,10 @@ impl ArtifactStorage for LocalArtifactStorage {
 mod tests {
     use super::*;
     use futures::StreamExt;
+    use bytes::Bytes;
 
     fn stream(content: &'static [u8]) -> ByteStream {
-        Box::pin(futures::stream::iter([Ok(bytes::Bytes::from_static(content))]))
+        Box::pin(futures::stream::iter([Ok(Bytes::from_static(content))]))
     }
 
     async fn read(storage: &LocalArtifactStorage, artifact: ArtifactId, version: u32) -> Vec<u8> {

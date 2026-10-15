@@ -227,6 +227,8 @@ mod tests {
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::config::AppConfig;
     use caelumora_model::value::text::Introduction;
+    use chrono::Utc;
+    use uuid::Uuid;
 
     fn member(name: &str, person: bool, introduction: Option<&str>) -> Member {
         Member { id: ActorId::None, name: name.to_string(), handle: Some(name.to_lowercase()), person, introduction: introduction.map(str::to_string) }
@@ -307,15 +309,15 @@ mod tests {
         let jonathan = agent(&store, "Jonathan", &quiz_master).await;
         let sassy = agent(&store, "Sassy", &plain).await;
         let gone = Agent::new(ScopedName::new("Gone", Scope::GlobalScope).unwrap(), plain.id, ActorId::None);
-        let approver = Approver { id: ApproverId(uuid::Uuid::new_v4()), strategy: ApprovalStrategy::Any };
+        let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::Any };
 
         let participants = vec![Participant::User(kaya.id), Participant::Agent(jonathan.id), Participant::Approver(approver), Participant::Agent(sassy.id), Participant::Agent(gone.id), Participant::User(bob.id)];
-        let now = chrono::Utc::now();
+        let now = Utc::now();
         let session = Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
             workspace: None,
-            id: SessionId::new(), name: caelumora_model::value::name::Name::new("s").unwrap(), participants: participants.clone(), channels: vec![ChannelId::new()],
+            id: SessionId::new(), name: Name::new("s").unwrap(), participants: participants.clone(), channels: vec![ChannelId::new()],
             commands: Default::default(), privacy: Default::default(), created_at: now, updated_at: now, security_attributes: Default::default(),
             deleted: None,
         };

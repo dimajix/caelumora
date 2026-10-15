@@ -259,7 +259,7 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Agent;
     use caelumora_model::confidentiality::Classification;
-    use caelumora_model::security::SecurityContext;
+    use caelumora_model::security::{SecurityContext, Grant, Subject};
     use caelumora_model::scope::Scope;
     use caelumora_model::session::{ChannelId, SessionId};
     use std::sync::Arc;
@@ -268,16 +268,14 @@ mod tests {
     
     use crate::session::{ChannelSpec, SessionManager};
     use crate::session::testing::*;
+    use caelumora_model::channel::{Channel, HistoryAccess, Participant};
 
     #[tokio::test]
     async fn an_agent_is_cleared_only_as_far_as_its_owner_and_its_personality_are() {
         use crate::channel::ChannelError;
-        use caelumora_model::actor::ActorId;
-        use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
+        use caelumora_model::agent::{Personality, PersonalityId, PersonalityKind};
         use caelumora_model::confidentiality::{Clearance, Compartment, Compartments, ConfidentialityRules, Confidentiality};
         use caelumora_model::role::{RoleId, Roles};
-        use caelumora_model::value::name::ScopedName;
-        use caelumora_model::scope::Scope;
         use caelumora_model::user::{User, UserId};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
@@ -329,8 +327,8 @@ mod tests {
                 // A channel of only `participant` - and its approver, who is
                 // cleared for anything.
                 let ActorId::Agent(id) = participant else { unreachable!("agents only") };
-                let channel = caelumora_model::channel::Channel::build(SessionId::new(), alice_id, caelumora_model::value::name::Name::new("probe").unwrap(),
-                    Default::default(), classification, None, vec![caelumora_model::channel::Participant::Agent(id)]);
+                let channel = Channel::build(SessionId::new(), alice_id, Name::new("probe").unwrap(),
+                    Default::default(), classification, None, vec![Participant::Agent(id)]);
                 runtime.participation().require_admitted(&alice_ctx, &channel).await.is_ok()
             }
         };
@@ -345,15 +343,15 @@ mod tests {
 
         // The same question when a channel is created and when one is joined.
         let mut session = make_session("hers", alice_id);
-        session.security_attributes = session.security_attributes.clone().granting(caelumora_model::security::Subject::Actor(bob_id), caelumora_model::security::Grant::Read);
+        session.security_attributes = session.security_attributes.clone().granting(Subject::Actor(bob_id), Grant::Read);
         session.participants = users;
-        session.participants.extend([hers, limited].map(|a| match a { ActorId::Agent(id) => caelumora_model::channel::Participant::Agent(id), _ => unreachable!() }));
+        session.participants.extend([hers, limited].map(|a| match a { ActorId::Agent(id) => Participant::Agent(id), _ => unreachable!() }));
         let session = create(&manager, &alice_ctx, session).await.unwrap();
         let with = |name: &str, participants| ChannelSpec { classification: Some(hr.clone()), ..spec(name, participants) };
         let refused = session.create_channel(&alice_ctx, with("hr", vec![limited])).await.expect_err("limited below HR");
         assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { participant, .. }) if *participant == limited), "{refused}");
         let channel = session.create_channel(&alice_ctx, with("hr", vec![hers])).await.expect("cleared as alice");
-        let joining = channel.add_participant(&alice_ctx, limited, caelumora_model::channel::HistoryAccess::All).await.expect_err("nor may it join");
+        let joining = channel.add_participant(&alice_ctx, limited, HistoryAccess::All).await.expect_err("nor may it join");
         assert!(matches!(joining.downcast_ref::<ChannelError>(), Some(ChannelError::NotCleared { .. })), "{joining}");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
@@ -362,7 +360,6 @@ mod tests {
     async fn an_agent_takes_part_only_within_its_sessions_or_channels_scope() {
         use crate::channel::ChannelError;
         use caelumora_model::agent::{Personality, PersonalityId};
-        use caelumora_model::channel::{HistoryAccess, Participant};
 
         let runtime = test_runtime();
         let personalities = Arc::clone(&runtime.entity_stores().personalities);
@@ -386,7 +383,7 @@ mod tests {
             session.participants.push(Participant::Agent(agent.id));
         }
         // In the session, not in its channel: adding them there is refused below.
-        let main = caelumora_model::channel::Channel { participants: Vec::new(), ..main_channel(&session) };
+        let main = Channel { participants: Vec::new(), ..main_channel(&session) };
         let running = manager.create(&ctx, session, vec![main]).await.unwrap();
         let main = running.channel_named("main").unwrap();
 

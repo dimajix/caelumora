@@ -31,6 +31,12 @@ use crate::note::Note;
 use crate::privacy::PrivacyConfig;
 use crate::session::{ChannelId, SessionId};
 use crate::work::TurnId;
+use crate::command::Command;
+use crate::question::QuestionRequest;
+use crate::removal::Removal;
+use crate::security::{Grant, Subject};
+use crate::workspace::WorkspaceId;
+use serde::Serialize;
 
 bitflags::bitflags! {
     /// What a snapshot holds beyond what it always does, each detail in the
@@ -127,7 +133,7 @@ pub struct ChannelSnapshot {
     /// The session's workspace, if the channel uses it and the viewer may
     /// read it - reached by its own id, never through the channel (issue
     /// 23).
-    pub workspace_id: Option<crate::workspace::WorkspaceId>,
+    pub workspace_id: Option<WorkspaceId>,
     /// Whether the viewer may rename the channel and add or remove its
     /// participants (`UpdateChannel`, issue 46).
     pub can_change: bool,
@@ -196,7 +202,7 @@ pub struct MemberSnapshot {
     /// see (issue 269), read from the running channel - for completion and
     /// `/help`. Empty for any other member, and in a channel that does not
     /// run, where nothing could carry them out.
-    pub commands: Vec<crate::command::Command>,
+    pub commands: Vec<Command>,
     /// What an agent member's model calls in the channel used (issue 209),
     /// with `Detail::USAGE`; `None` also for a member whose calls report
     /// no tokens (an external agent, a user), before its first call, and if
@@ -213,10 +219,10 @@ pub struct MemberSnapshot {
     /// The questions an agent member's turn waits for the answers to (issue
     /// 165), for the same viewer - sensitive ones only if they are asked -
     /// with `Detail::APPROVALS`.
-    pub pending_questions: Vec<crate::question::QuestionRequest>,
+    pub pending_questions: Vec<QuestionRequest>,
     /// Who removed a former member and when (issue 164); `None` for one that
     /// takes part.
-    pub left: Option<crate::removal::Removal>,
+    pub left: Option<Removal>,
     /// Whether the viewer may delete this member - only ever an agent, its
     /// owner (`DeleteAgent`, issue 164).
     pub can_delete: bool,
@@ -248,7 +254,7 @@ pub struct MemberSnapshot {
 pub struct DeletedSnapshot<I> {
     pub id: I,
     pub name: String,
-    pub deleted: crate::removal::Removal,
+    pub deleted: Removal,
     /// Whether the viewer may restore it.
     pub can_restore: bool,
     /// Whether the viewer may remove it for good - never for a channel,
@@ -279,7 +285,7 @@ pub struct GroupSnapshot {
 /// workspaces, or a session's where they may use it in a channel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkspaceSnapshot {
-    pub id: crate::workspace::WorkspaceId,
+    pub id: WorkspaceId,
     pub name: String,
     /// Where it lies (issue 251): a session's scope, its owner's or the
     /// global one.
@@ -306,8 +312,8 @@ pub struct WorkspaceSnapshot {
 /// or a role's name - where that is known.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AccessSnapshot {
-    pub subject: crate::security::Subject,
-    pub grant: crate::security::Grant,
+    pub subject: Subject,
+    pub grant: Grant,
     pub name: Option<String>,
     /// For a group, where it lies (issue 286): the scope of the session or
     /// channel whose participants it is, or a team's.
@@ -331,7 +337,7 @@ pub struct CandidateSnapshot {
 
 /// Why someone cannot be taken into a session or channel (issue 221), as
 /// coarse as it is shown: never which clearance or role is missing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CandidateRefusal {
     /// Not cleared for the channel - a user, or an agent by its owner or

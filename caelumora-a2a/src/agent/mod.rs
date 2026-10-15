@@ -248,6 +248,10 @@ mod tests {
     use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::sync::Mutex;
+    use axum::http::header::CONTENT_TYPE;
+    use axum::response::Response;
+    use std::time::Instant;
+    use tokio::net::TcpListener;
 
     /// The one secret of the tests.
     #[derive(Debug)]
@@ -276,7 +280,7 @@ mod tests {
         Json(stub.lock().unwrap().card.clone())
     }
 
-    async fn rpc(State(stub): State<Shared>, headers: HeaderMap, Json(body): Json<Value>) -> axum::response::Response {
+    async fn rpc(State(stub): State<Shared>, headers: HeaderMap, Json(body): Json<Value>) -> Response {
         use axum::response::IntoResponse;
         let method = body["method"].as_str().unwrap_or_default().to_string();
         let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
@@ -294,7 +298,7 @@ mod tests {
             Some((true, Value::Null)) => std::future::pending().await,
             Some((true, Value::Array(results))) => {
                 let body: String = results.iter().map(|r| format!("data: {}\n\n", json!({ "jsonrpc": "2.0", "id": "1", "result": r }))).collect();
-                ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], body).into_response()
+                ([(CONTENT_TYPE, "text/event-stream")], body).into_response()
             }
             Some((_, answer)) => Json(answer).into_response(),
             None => Json(json!({ "jsonrpc": "2.0", "id": "1", "error": { "code": -32601, "message": "no such method" } })).into_response(),
@@ -304,7 +308,7 @@ mod tests {
     /// A stub agent whose card offers JSON-RPC of `version`, streaming or
     /// not, with `answers` by method; and the component that reaches it.
     async fn agent(version: &str, streaming: bool, answers: Vec<(&str, bool, Value)>) -> (A2aAgentComponent, Shared) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let stub: Shared = Arc::new(Mutex::new(Stub {
             card: json!({
@@ -395,7 +399,7 @@ mod tests {
     #[tokio::test]
     async fn a_streamed_request_its_server_never_answers_ends_after_the_timeout() {
         let (agent, _) = agent("1.0", true, vec![("SendStreamingMessage", true, Value::Null)]).await;
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let error = agent.send(&SecurityContext::default(), None, hello()).await.err().expect("no answer").to_string();
         assert!(error.contains("no answer within 2 s"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(10));

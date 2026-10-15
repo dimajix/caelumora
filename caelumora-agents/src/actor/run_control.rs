@@ -11,6 +11,7 @@ use std::future::pending;
 use std::sync::atomic::{AtomicU8, Ordering};
 use tokio::sync::{oneshot, Notify};
 use tokio_util::sync::CancellationToken;
+use std::sync::{Mutex, MutexGuard};
 
 /// What `cancel`, `retry` or `stop` asked of the run loop, which takes it
 /// after every step and alone decides what follows (issue 152). A stop wins
@@ -53,7 +54,7 @@ pub(crate) struct RunControl {
     /// instead of waiting for its next chunk, and so does waiting for an
     /// approval. `None` before the first turn. A `std` mutex, because
     /// `cancel` is synchronous. Every token is a child of `stopped`.
-    turn: std::sync::Mutex<(Option<TurnId>, CancellationToken)>,
+    turn: Mutex<(Option<TurnId>, CancellationToken)>,
     /// Cancelled by `stop`: the actor left the channel. A turn begun after
     /// it finds its token cancelled already; a run loop that waits for more
     /// than its input - an external agent following its open tasks - waits
@@ -67,7 +68,7 @@ pub(crate) struct RunControl {
     /// interrupts it goes. The run loop holds the other end while the call
     /// runs or waits to run, and drops it after: a call that ran can no
     /// longer be interrupted.
-    calls: std::sync::Mutex<HashMap<String, oneshot::Sender<String>>>,
+    calls: Mutex<HashMap<String, oneshot::Sender<String>>>,
 }
 
 impl RunControl {
@@ -79,10 +80,10 @@ impl RunControl {
             state: ProcessingStateHolder::new(state),
             announced: ProcessingStateHolder::new(state),
             woken: Notify::new(),
-            turn: std::sync::Mutex::new((turn, stopped.child_token())),
+            turn: Mutex::new((turn, stopped.child_token())),
             stopped,
             interrupt: AtomicU8::new(NO_INTERRUPT),
-            calls: std::sync::Mutex::new(HashMap::new()),
+            calls: Mutex::new(HashMap::new()),
         }
     }
 
@@ -144,7 +145,7 @@ impl RunControl {
         self.lock_turn().1.clone()
     }
 
-    fn lock_turn(&self) -> std::sync::MutexGuard<'_, (Option<TurnId>, CancellationToken)> {
+    fn lock_turn(&self) -> MutexGuard<'_, (Option<TurnId>, CancellationToken)> {
         self.turn.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
@@ -230,7 +231,7 @@ impl RunControl {
         interrupt.send(by).is_ok()
     }
 
-    fn lock_calls(&self) -> std::sync::MutexGuard<'_, HashMap<String, oneshot::Sender<String>>> {
+    fn lock_calls(&self) -> MutexGuard<'_, HashMap<String, oneshot::Sender<String>>> {
         self.calls.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
@@ -270,6 +271,7 @@ pub(crate) async fn interruption(turn: CancellationToken, by_user: Option<onesho
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn a_cancel_interrupts_only_a_turn_under_way() {
@@ -435,12 +437,12 @@ mod tests {
         let control = RunControl::new(ActorState::Sleeping, None);
         assert_eq!(control.unannounced(), None, "it starts at what it stood at");
         control.wakeup();
-        tokio::time::timeout(std::time::Duration::from_secs(1), control.woken()).await.expect("told, though nobody waited yet");
+        tokio::time::timeout(Duration::from_secs(1), control.woken()).await.expect("told, though nobody waited yet");
         assert_eq!(control.unannounced(), Some(ActorState::Idle));
         assert_eq!(control.unannounced(), None, "announced once");
 
         control.wakeup();
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(50), control.woken()).await.is_err(), "awake already: nothing to tell");
+        assert!(tokio::time::timeout(Duration::from_millis(50), control.woken()).await.is_err(), "awake already: nothing to tell");
         control.go_to(ActorState::Planning);
         control.go_to(ActorState::Idle);
         assert_eq!(control.unannounced(), None, "back where it was announced");

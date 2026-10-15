@@ -233,8 +233,9 @@ fn valid<T: Stored>(value: &T) -> StoreResult<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::Access;
     use crate::actor::ActorId;
-    use crate::security::{ActionType, SecurityAttributes, SecurityContext, AccessPolicy, Subject, Verb};
+    use crate::security::{ActionType, SecurityAttributes, SecurityContext, AccessPolicy, Subject, Verb, Grant};
     use crate::session::{Session, SessionId};
     use crate::store::{StoreError, Stored};
     use crate::store::query::{NoField, Query};
@@ -243,6 +244,8 @@ mod tests {
     use crate::value::name::Name;
     use std::sync::Arc;
     use crate::confidentiality::ConfidentialityRules;
+    use chrono::Utc;
+    use crate::role::RoleId;
 
     /// Owners do everything, whom the list names read, nobody acts for
     /// another.
@@ -272,14 +275,14 @@ mod tests {
             approval_rules: Vec::new(),
             workspace: None,
             id: SessionId::new(),
-            name: crate::value::name::Name::new("s").unwrap(),
+            name: Name::new("s").unwrap(),
             participants: Vec::new(),
             channels: Vec::new(),
             commands: Default::default(),
             privacy: Default::default(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            security_attributes: contributors.into_iter().fold(SecurityAttributes::owned_by(owner), |a, c| a.granting(crate::security::Subject::Actor(c), crate::security::Grant::Read)),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            security_attributes: contributors.into_iter().fold(SecurityAttributes::owned_by(owner), |a, c| a.granting(Subject::Actor(c), Grant::Read)),
             deleted: None,
         }
     }
@@ -294,7 +297,7 @@ mod tests {
         let sessions = [session(carol, Vec::new()), session(alice, Vec::new()), session(alice, Vec::new()), session(alice, Vec::new())];
         let keys: Vec<(String, usize)> = ["a", "b", "c", "d"].into_iter().map(String::from).zip(0..).collect();
         let mut loaded = Vec::new();
-        let page = super::Access::new(&OwnersAndContributors, &ConfidentialityRules::default(), &alice_ctx)
+        let page = Access::new(&OwnersAndContributors, &ConfidentialityRules::default(), &alice_ctx)
             .page(keys, &Query::<NoField>::all().limited(2), false, |n: usize| {
                 loaded.push(n);
                 std::future::ready(Ok(Some(sessions[n].clone())))
@@ -312,8 +315,8 @@ mod tests {
     /// list agree.
     #[tokio::test]
     async fn what_the_caller_is_not_cleared_for_does_not_exist_for_them() {
-        use crate::confidentiality::{Classification, Clearance, Compartments, Confidentiality, ConfidentialityRules};
-        use crate::role::{RoleId, Roles};
+        use crate::confidentiality::{Classification, Clearance, Compartments, Confidentiality};
+        use crate::role::Roles;
         use crate::scope::Scope;
         use crate::security::AllowAllPolicy;
         use crate::value::name::ScopedName;
@@ -425,7 +428,7 @@ mod tests {
         let alice_id = UserId::new();
         let alice_ctx = SecurityContext::new(ActorId::User(alice_id), Default::default(), Default::default());
         let (_, bob_ctx) = user();
-        let record = User { id: alice_id, username: Name::new("alice").unwrap(), email: String::new(), roles: vec![crate::role::RoleId::new()], deleted: None };
+        let record = User { id: alice_id, username: Name::new("alice").unwrap(), email: String::new(), roles: vec![RoleId::new()], deleted: None };
 
         let own = store.create(&alice_ctx, &record).await;
         assert!(matches!(own, Err(StoreError::PermissionDenied(_))), "nobody records themselves, got {own:?}");
@@ -435,7 +438,7 @@ mod tests {
         assert_eq!(store.find_by_name(&bob_ctx, &ScopedName::new("alice", Scope::GlobalScope).unwrap()).await.expect("and finds her by name").id, alice_id);
         assert_eq!(store.list(&bob_ctx, &Query::all()).await.map(|page| page.items).expect("and lists her").len(), 1);
 
-        let promoted = User { roles: vec![crate::role::RoleId::new()], ..record.clone() };
+        let promoted = User { roles: vec![RoleId::new()], ..record.clone() };
         for ctx in [&alice_ctx, &bob_ctx] {
             let update = store.update(ctx, &promoted).await;
             assert!(matches!(update, Err(StoreError::PermissionDenied(_))), "not even she changes her roles, got {update:?}");

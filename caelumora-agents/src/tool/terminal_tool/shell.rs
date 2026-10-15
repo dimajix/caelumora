@@ -21,6 +21,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
+use tokio::runtime::Handle;
 
 /// A shell command (issue 251): its `command` as a line of code, its
 /// `output` as a terminal shows it, and its exit code.
@@ -56,7 +57,7 @@ impl Drop for KillOnDrop {
         if !self.armed {
             return;
         }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
+        let Ok(runtime) = Handle::try_current() else { return };
         let (shell, id) = (Arc::clone(&self.shell), std::mem::take(&mut self.id));
         runtime.spawn(async move {
             match tokio::time::timeout(KILL_WITHIN, shell.kill(&id, 0)).await {
@@ -210,10 +211,11 @@ mod tests {
     use crate::testing::workspace_turn;
     use crate::tool::ToolProvider;
     use crate::tool::terminal_tool::tests::tool as terminal_tool;
+    use crate::tool::terminal_tool::TerminalTool;
     use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::agent::AgentChannelState;
 
-    fn the_tool(world: &WithWorkspace) -> super::super::TerminalTool {
+    fn the_tool(world: &WithWorkspace) -> TerminalTool {
         terminal_tool(world, json!({ "max_wait_secs": 10 }))
     }
 

@@ -20,6 +20,7 @@ use caelumora_model::workspace::WorkspaceId;
 use crate::agent::{AgentError, AgentManager};
 use crate::session::SessionLoop;
 use crate::workspace::{WorkspaceError, WorkspaceManager};
+use anyhow::Result;
 
 /// The users and approvers of `template` for the session `session_id` of
 /// `owner`, each with its name in the template, the users found in
@@ -30,7 +31,7 @@ use crate::workspace::{WorkspaceError, WorkspaceManager};
 /// A `TemplateError` if the template cannot be made into a session; a
 /// `StoreError` if a user it names does not exist, or the store refuses or
 /// fails.
-pub(crate) async fn resolve_participants(stores: &EntityStores, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<(Vec<(String, Participant)>, Vec<(String, ScopedName, PersonalityId)>)> {
+pub(crate) async fn resolve_participants(stores: &EntityStores, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> Result<(Vec<(String, Participant)>, Vec<(String, ScopedName, PersonalityId)>)> {
     let requests = template.participants.iter()
         .map(|p| p.request(session_id, owner).map(|request| (p.name().to_string(), request)))
         .collect::<TemplateResult<Vec<_>>>()?;
@@ -59,7 +60,7 @@ pub(crate) async fn resolve_participants(stores: &EntityStores, context: &Securi
 /// # Errors
 /// As `agent`, and as `SessionLoop::add_participant`; who took part before
 /// stays.
-pub(crate) async fn take_in_agents(store: &dyn EntityStore<Agent>, agents: &AgentManager, context: &SecurityContext, template: &SessionTemplate, session: &SessionLoop, named: Vec<(String, ScopedName, PersonalityId)>) -> anyhow::Result<()> {
+pub(crate) async fn take_in_agents(store: &dyn EntityStore<Agent>, agents: &AgentManager, context: &SecurityContext, template: &SessionTemplate, session: &SessionLoop, named: Vec<(String, ScopedName, PersonalityId)>) -> Result<()> {
     let channels = session.session().channels.clone();
     for (name, agent_name, personality_id) in named {
         let participant = ActorId::Agent(agent(store, agents, context, agent_name, personality_id).await?);
@@ -87,7 +88,7 @@ pub(crate) async fn take_in_agents(store: &dyn EntityStore<Agent>, agents: &Agen
 /// the personality lies in a session's or a channel's scope the agent would
 /// not, `StoreError::NameTaken` if the agent of `name` lies where `context`
 /// may not read it; whatever else the store reports.
-async fn agent(store: &dyn EntityStore<Agent>, agents: &AgentManager, context: &SecurityContext, name: ScopedName, personality_id: PersonalityId) -> anyhow::Result<AgentId> {
+async fn agent(store: &dyn EntityStore<Agent>, agents: &AgentManager, context: &SecurityContext, name: ScopedName, personality_id: PersonalityId) -> Result<AgentId> {
     if let Some(found) = existing_agent(store, context, &name, personality_id).await? {
         return Ok(found);
     }
@@ -109,7 +110,7 @@ async fn agent(store: &dyn EntityStore<Agent>, agents: &AgentManager, context: &
 /// whatever the store reports. Only "there is none" means "make one": a
 /// lookup that failed or was refused is an error, not a reason for a second
 /// agent of that name (issue 77).
-async fn existing_agent(store: &dyn EntityStore<Agent>, context: &SecurityContext, name: &ScopedName, personality_id: PersonalityId) -> anyhow::Result<Option<AgentId>> {
+async fn existing_agent(store: &dyn EntityStore<Agent>, context: &SecurityContext, name: &ScopedName, personality_id: PersonalityId) -> Result<Option<AgentId>> {
     match store.find_by_name(context, name).await.optional()? {
         Some(agent) if agent.personality_id == personality_id => Ok(Some(agent.id)),
         Some(_) => Err(TemplateError::AgentNameTaken(name.name.clone()).into()),
@@ -128,7 +129,7 @@ async fn existing_agent(store: &dyn EntityStore<Agent>, context: &SecurityContex
 /// another storage, `UnsupportedScope` for a group scope; a
 /// `WorkspaceError` of making it - `NameTaken` if the one of its name lies
 /// where `context` may not read it; whatever else the store reports.
-pub(crate) async fn resolve_workspace(workspaces: &WorkspaceManager, context: &SecurityContext, template: &WorkspaceTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<(WorkspaceId, bool)> {
+pub(crate) async fn resolve_workspace(workspaces: &WorkspaceManager, context: &SecurityContext, template: &WorkspaceTemplate, session_id: SessionId, owner: UserId) -> Result<(WorkspaceId, bool)> {
     let name = template.scoped_name(session_id, owner)?;
     if let Some(found) = existing_workspace(workspaces, context, &name, template).await? {
         return Ok((found, false));
@@ -150,7 +151,7 @@ pub(crate) async fn resolve_workspace(workspaces: &WorkspaceManager, context: &S
 /// # Errors
 /// `TemplateError::WorkspaceNameTaken` if it is in another storage;
 /// whatever the store reports - never "none" for a lookup that failed.
-async fn existing_workspace(workspaces: &WorkspaceManager, context: &SecurityContext, name: &ScopedName, template: &WorkspaceTemplate) -> anyhow::Result<Option<WorkspaceId>> {
+async fn existing_workspace(workspaces: &WorkspaceManager, context: &SecurityContext, name: &ScopedName, template: &WorkspaceTemplate) -> Result<Option<WorkspaceId>> {
     match workspaces.find_by_name(context, name).await.optional()? {
         Some(workspace) if workspace.storage == template.storage => Ok(Some(workspace.id)),
         Some(_) => Err(TemplateError::WorkspaceNameTaken(name.name.clone()).into()),
@@ -174,8 +175,10 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, SessionTemplateId, TemplateError};
     use caelumora_model::user::User;
-    use std::sync::Arc;
+    use std::sync::{Arc, OnceLock, Weak};
     use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::approval::ApprovalStrategy;
+    use std::sync::atomic::AtomicBool;
 
     /// Allows everything but listing agents.
     #[derive(Debug)]
@@ -231,7 +234,7 @@ mod tests {
     /// The participants of `template` as `create_from_template` finds them
     /// in `store` or makes them there: its users and approvers, then - once
     /// the session is stored, owned by `owner` - its agents (`agent`).
-    async fn resolve(store: &Arc<MemoryStore>, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<Vec<(String, Participant)>> {
+    async fn resolve(store: &Arc<MemoryStore>, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> Result<Vec<(String, Participant)>> {
         let access_policy: Arc<dyn AccessPolicy> = Arc::new(AllowAllPolicy::new());
         let events = Arc::new(EventBus::new(Arc::clone(&access_policy), Arc::new(ConfidentialityRules::default())));
         let agents = AgentManager::new(&store.entity_stores(), Arc::<MemoryStore>::clone(store), events, access_policy);
@@ -312,9 +315,9 @@ mod tests {
     /// (issue 250).
     #[derive(Debug, Default)]
     struct MadeMeanwhile {
-        store: std::sync::OnceLock<std::sync::Weak<MemoryStore>>,
-        personality: std::sync::OnceLock<Personality>,
-        made: std::sync::atomic::AtomicBool,
+        store: OnceLock<Weak<MemoryStore>>,
+        personality: OnceLock<Personality>,
+        made: AtomicBool,
     }
 
     #[async_trait::async_trait]
@@ -322,7 +325,7 @@ mod tests {
         async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
             use std::sync::atomic::Ordering;
             if matches!(action, ActionType::Entity { kind: Agent::KIND, verb: Verb::Create, .. }) && !self.made.swap(true, Ordering::SeqCst) {
-                let (Some(store), Some(personality)) = (self.store.get().and_then(std::sync::Weak::upgrade), self.personality.get()) else { return true };
+                let (Some(store), Some(personality)) = (self.store.get().and_then(Weak::upgrade), self.personality.get()) else { return true };
                 let other = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
                 store.entity_stores().agents.create(&SecurityContext::system(), &other).await.unwrap();
             }
@@ -388,7 +391,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let template = template(vec![
             ParticipantTemplate::User { name: "user".to_string() },
-            ParticipantTemplate::Approver { name: "approval".to_string(), strategy: caelumora_model::approval::ApprovalStrategy::Any },
+            ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::Any },
         ]);
 
         let missing = resolve(&store, &as_user(owner), &template, SessionId::new(), owner).await.expect_err("no such user");

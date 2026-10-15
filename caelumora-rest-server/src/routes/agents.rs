@@ -14,11 +14,12 @@ use axum::response::{IntoResponse, Response};
 use caelumora_model::agent::AgentId;
 use std::sync::Arc;
 use uuid::Uuid;
+use crate::routes::views;
 
 /// The agents the user may read - or, with `?deleted=true`, those they
 /// deleted and may read as such, the trash.
 pub async fn list_agents(State(state): State<Arc<AppState>>, Query(options): Query<ListOptions>, user: AuthenticatedUser) -> Result<Response, ApiError> {
-    let views = crate::routes::views(&state, &user);
+    let views = views(&state, &user);
     if options.deleted {
         let deleted = views.deleted_agents().await?;
         return Ok(Json(deleted.into_iter().map(DeletedResponse::from).collect::<Vec<_>>()).into_response());
@@ -43,7 +44,7 @@ pub async fn create_agent(State(state): State<Arc<AppState>>, user: Authenticate
 
 /// Agent `id`, with the channels it takes part in that the user may read.
 pub async fn get_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<Json<AgentResponse>, ApiError> {
-    let agent = crate::routes::views(&state, &user).agent(AgentId(id)).await?;
+    let agent = views(&state, &user).agent(AgentId(id)).await?;
     let channels = agent.channels().await?.into_iter().map(|channel| AgentChannelResponse {
         session_id: channel.session().id(),
         session_name: channel.session().name().to_string(),
@@ -95,14 +96,14 @@ pub async fn purge_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid
 /// The personalities the user may read - what they may make an agent of -,
 /// by name.
 pub async fn list_personalities(State(state): State<Arc<AppState>>, user: AuthenticatedUser) -> Result<Json<Vec<PersonalityResponse>>, ApiError> {
-    let personalities = crate::routes::views(&state, &user).personalities().await?;
+    let personalities = views(&state, &user).personalities().await?;
     Ok(Json(personalities.into_iter().map(PersonalityResponse::from).collect()))
 }
 
 /// Agent `id` as the list shows it to the user: what they may do with it
 /// is the views' to say.
 async fn readable(state: &Arc<AppState>, user: &AuthenticatedUser, id: AgentId) -> Result<AgentResponse, ApiError> {
-    let agent = crate::routes::views(state, user).agent(id).await?;
+    let agent = views(state, user).agent(id).await?;
     Ok(agent.snapshot().await?.into())
 }
 

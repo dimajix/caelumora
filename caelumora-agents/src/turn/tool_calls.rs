@@ -17,6 +17,8 @@ use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::question::{Answers, QuestionError, QuestionId, Response};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus};
 use std::mem;
+use chrono::Utc;
+use crate::tool::{abandoned_result, declined_result, denied_result, skipped_result, timed_out_result};
 
 /// The tool calls of the current step of a turn, of the agent the turn's
 /// context is sent by, called `agent_name` now.
@@ -74,8 +76,8 @@ impl<'t> ToolCalls<'t> {
                 ToolCallStatus::WaitingUser { id: question, questions }
             }
             (ApprovalStatus::Approved, None) => ToolCallStatus::Ready { answers: None },
-            (ApprovalStatus::Denied, _) => ToolCallStatus::Finished(ToolCallResult::of(&call.tool_call, ToolResultStatus::Denied, crate::tool::denied_result(), label)),
-            (ApprovalStatus::Timeout, _) => ToolCallStatus::Finished(ToolCallResult::of(&call.tool_call, ToolResultStatus::TimedOut, crate::tool::timed_out_result(), label)),
+            (ApprovalStatus::Denied, _) => ToolCallStatus::Finished(ToolCallResult::of(&call.tool_call, ToolResultStatus::Denied, denied_result(), label)),
+            (ApprovalStatus::Timeout, _) => ToolCallStatus::Finished(ToolCallResult::of(&call.tool_call, ToolResultStatus::TimedOut, timed_out_result(), label)),
         };
         Some(self.turn.pending_questions().into_iter()
             .filter(|request| Some(request.id) == asks)
@@ -114,7 +116,7 @@ impl<'t> ToolCalls<'t> {
         let call = self.asking(id, by)?;
         let ToolCallStatus::WaitingUser { questions, .. } = &call.status else { return Err(QuestionError::NotOpen) };
         let closed = ActorEvent::QuestionClosed { id, shown_to: questions.shown_to() };
-        let mut result = ToolCallResult::of(&call.tool_call, ToolResultStatus::Declined, crate::tool::declined_result(), label);
+        let mut result = ToolCallResult::of(&call.tool_call, ToolResultStatus::Declined, declined_result(), label);
         result.answers = Answers::declined(questions.clone(), by, by_name).record();
         call.status = ToolCallStatus::Finished(result);
         Ok(closed)
@@ -156,7 +158,7 @@ impl<'t> ToolCalls<'t> {
         // A fixed text of the runtime's: as the turn (issue 168).
         let label = self.turn.work.label();
         if let Some(call) = self.turn.tool_calls.get_mut(index) {
-            let result = ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, crate::tool::skipped_result(by), label);
+            let result = ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, skipped_result(by), label);
             finish(call, result);
         }
     }
@@ -173,7 +175,7 @@ impl<'t> ToolCalls<'t> {
         let mut abandoned = Vec::new();
         for call in self.turn.tool_calls.iter_mut().filter(|c| !c.is_finished()) {
             abandoned.push(call.clone());
-            let content = crate::tool::abandoned_result(because);
+            let content = abandoned_result(because);
             let result = ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, content, label.clone());
             finish(call, result);
         }
@@ -206,7 +208,7 @@ impl<'t> ToolCalls<'t> {
             role: MessageRole::Tool,
             tool_results,
             content: None,
-            timestamp: chrono::Utc::now(),
+            timestamp: Utc::now(),
             internal,
             turn_id: Some(self.turn.work.turn_id),
             ..Message::new(self.turn.work.label())
@@ -233,6 +235,7 @@ mod tests {
     use caelumora_model::question::{Addressee, Question, Questions};
     use caelumora_model::tool::ToolVisibility;
     use caelumora_model::user::UserId;
+    use caelumora_model::confidentiality::Classification;
 
     fn call(name: &str) -> ToolCall {
         ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() }
@@ -271,7 +274,7 @@ mod tests {
         // Waiting for one of them, there is no tool message yet.
         let to_run = view(&mut turn).to_run();
         assert_eq!(to_run.iter().map(|(_, c, _)| c.function_name.as_str()).collect::<Vec<_>>(), ["run"]);
-        view(&mut turn).record(to_run[0].0, ToolCallResult::of(&to_run[0].1, ToolResultStatus::Ok, "ran".to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT));
+        view(&mut turn).record(to_run[0].0, ToolCallResult::of(&to_run[0].1, ToolResultStatus::Ok, "ran".to_string(), Classification::CHANNEL_DEFAULT));
         assert!(view(&mut turn).collect(false).is_none(), "one call still waits");
 
         // A denial answers the other without running it.
@@ -323,7 +326,7 @@ mod tests {
         assert_eq!(view(&mut turn).to_run().len(), 1, "only the answered call");
 
         // The result of each keeps the record of its answers.
-        view(&mut turn).record(*index, ToolCallResult::of(run, ToolResultStatus::Ok, "ran".to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT));
+        view(&mut turn).record(*index, ToolCallResult::of(run, ToolResultStatus::Ok, "ran".to_string(), Classification::CHANNEL_DEFAULT));
         let result = |name: &str| turn.tool_calls.iter().find(|c| c.tool_call.function_name == name).and_then(|c| c.result()).cloned().expect("finished");
         assert_eq!(result("asking").answers.as_ref(), Some(answers), "what it ran with");
         let declined = result("approved");
@@ -342,7 +345,7 @@ mod tests {
         view(&mut turn).decline(declined.id, alice, "alice".to_string()).expect("declined");
         let to_run = view(&mut turn).to_run();
         let [(index, run, Some(_))] = to_run.as_slice() else { panic!("it runs with them: {to_run:?}") };
-        view(&mut turn).record(*index, ToolCallResult::of(run, ToolResultStatus::Ok, "ran".to_string(), caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT));
+        view(&mut turn).record(*index, ToolCallResult::of(run, ToolResultStatus::Ok, "ran".to_string(), Classification::CHANNEL_DEFAULT));
         assert!(turn.tool_calls.iter().all(|c| c.result().is_some_and(|r| r.answers.is_none())), "neither the answers nor who declined");
     }
 }

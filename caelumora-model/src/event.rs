@@ -6,6 +6,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use tracing::warn;
+use std::fmt::Debug;
 
 /// What happened, announced on the event bus - and, once there are several
 /// instances, between them (issue 122): it is read back as it is written.
@@ -160,7 +161,7 @@ fn value_of(kind: EntityKind, value: &impl Serialize) -> Value {
     })
 }
 
-pub trait EventPublisher: Send + Sync + std::fmt::Debug {
+pub trait EventPublisher: Send + Sync + Debug {
     /// Publishes `event` about an entity with these `attributes` - the
     /// session's, channel's, agent's, user's or workspace's the event is
     /// about (issue 39).

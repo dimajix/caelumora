@@ -15,7 +15,7 @@ use caelumora_runtime::remote::{describe_chain, describe_request_error};
 use futures::stream::{once, BoxStream};
 use futures::{Stream, StreamExt};
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
-use reqwest::{Client, Response};
+use reqwest::{Client, Response, Error};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use sse_stream::SseStream;
@@ -105,7 +105,7 @@ impl A2aClient {
             let response = answer.into_result(&self.shown())?.map_err(|error| self.rejected(error))?;
             return Ok(Box::pin(once(async move { Ok(response) })));
         }
-        let bytes = response.bytes_stream().map(|chunk| chunk.map_err(reqwest::Error::without_url));
+        let bytes = response.bytes_stream().map(|chunk| chunk.map_err(Error::without_url));
         Ok(Box::pin(responses_of(bytes, self.shown())))
     }
 
@@ -163,7 +163,7 @@ impl A2aClient {
             .map_err(|source| ExternalAgentError::Credential { endpoint: self.shown(), source })
     }
 
-    fn connection(&self, e: reqwest::Error) -> ExternalAgentError {
+    fn connection(&self, e: Error) -> ExternalAgentError {
         ExternalAgentError::Connection { endpoint: self.shown(), reason: describe_request_error(e) }
     }
 
@@ -256,6 +256,7 @@ mod tests {
     use futures::stream::iter;
     use caelumora_model::security::AllowAllPolicy;
     use serde_json::{json, Value};
+    use std::io::Error;
 
     fn client(url: &str) -> A2aClient {
         let endpoint: RemoteEndpoint = serde_json::from_value(json!({ "url": url })).unwrap();
@@ -268,7 +269,7 @@ mod tests {
     }
 
     /// `body` as the network may hand it over: each byte a chunk of its own.
-    fn bytewise(body: String) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static {
+    fn bytewise(body: String) -> impl Stream<Item = Result<Bytes, Error>> + Send + 'static {
         iter(body.into_bytes().into_iter().map(|b| Ok(Bytes::from(vec![b]))))
     }
 
@@ -302,7 +303,7 @@ mod tests {
         let working = event(json!({ "task": { "id": "t-1", "status": { "state": "TASK_STATE_WORKING" } } }));
         let broken = iter(vec![
             Ok(Bytes::from(working.clone())),
-            Err(std::io::Error::other("connection reset")),
+            Err(Error::other("connection reset")),
             Ok(Bytes::from(working.clone())),
         ]);
         let responses: Vec<_> = responses_of(broken, "agent".to_string()).collect().await;

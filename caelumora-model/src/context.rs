@@ -16,7 +16,7 @@
 //!   cannot diverge.
 
 use crate::actor::ActorId;
-use crate::agent::AgentChannelState;
+use crate::agent::{AgentChannelState, AgentId};
 use crate::chain::Node;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
@@ -32,6 +32,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
+use crate::channel::{ChannelId, HistoryStart};
+use crate::mention::handle_of;
+use crate::session::SessionId;
 
 /// A prompt part an agent's model was given besides the conversation - the
 /// system prompt, notes, ... (issue 47): the digest of its text, the role it
@@ -87,9 +90,9 @@ impl ContextItem {
 /// common.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnowledgeRef {
-    pub channel: crate::channel::ChannelId,
+    pub channel: ChannelId,
     /// The session of `channel`: whether it was read beyond the agent's own.
-    pub session: crate::session::SessionId,
+    pub session: SessionId,
     pub source: KnowledgeSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub classification: Option<Classification>,
@@ -100,23 +103,23 @@ pub struct KnowledgeRef {
 pub enum KnowledgeSource {
     /// The notes an agent published in the channel; the digest of its note
     /// chain, `None` while it had none.
-    Notes { agent: crate::agent::AgentId, digest: Option<Digest> },
+    Notes { agent: AgentId, digest: Option<Digest> },
     /// An agent's private notes in the channel (issue 51), read by that
     /// agent; the digest of its private note chain.
-    PrivateNotes { agent: crate::agent::AgentId, digest: Option<Digest> },
+    PrivateNotes { agent: AgentId, digest: Option<Digest> },
     /// The channel's history; the digest of it when it was read - up to
     /// where - and, for a reader who joined later with a limit, where their
     /// view began (issue 72). `None`: all of it.
     History {
         digest: Option<Digest>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        start: Option<crate::channel::HistoryStart>,
+        start: Option<HistoryStart>,
     },
     /// An agent's memory (issue 62), read by that agent; the digest of its
     /// memory chain. Recorded once for every channel the entries recalled
     /// were written in, so that knowledge from another session can be told
     /// (issue 134).
-    Memory { agent: crate::agent::AgentId, digest: Option<Digest> },
+    Memory { agent: AgentId, digest: Option<Digest> },
     /// An entity of whatever kind (issue 323), as its kind records what was
     /// read of it: the files of a workspace (issue 251), read through the
     /// channel it is used in, with the digest of a file's content as it
@@ -338,7 +341,7 @@ impl SenderStyle {
     /// How the sender called `name` in a message is marked.
     pub fn of(self, name: &str) -> String {
         match self {
-            Self::Handle => match crate::mention::handle_of(name) {
+            Self::Handle => match handle_of(name) {
                 handle if handle.is_empty() => name.to_string(),
                 handle => format!("@{handle}"),
             },
@@ -587,11 +590,15 @@ mod tests {
     use super::*;
     use crate::agent::AgentId;
     use crate::digest::prompt;
-    use crate::message::MessageId;
+    use crate::message::{MessageId, TokenUsage};
     use crate::turn::TurnState;
+    use crate::digest;
+    use crate::tool::Tool;
+    use crate::user::UserId;
+    use crate::work::Work;
 
     fn text(content: &str) -> Message {
-        Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT) }
+        Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
     }
 
     fn contents(items: &[ContextItem]) -> Vec<String> {
@@ -623,7 +630,7 @@ mod tests {
     fn the_messages_of_others_are_marked_with_their_sender_as_the_models_rule_says() {
         let agent = ActorId::Agent(AgentId::new());
         let said = |sender: ActorId, name: &str, role: MessageRole, content: &str| Message { sender_id: sender, sender_name: name.to_string(), role, ..text(content) };
-        let alice = ActorId::User(crate::user::UserId::new());
+        let alice = ActorId::User(UserId::new());
         let given = |format: SenderFormat, style: SenderStyle, message: Message| format.given(message, agent, style).content.unwrap_or_default();
 
         assert_eq!(given(SenderFormat::Prefix, SenderStyle::Handle, said(alice, "Alice Smith", MessageRole::User, "hi")), "@alice-smith: hi");
@@ -657,7 +664,7 @@ mod tests {
     #[test]
     fn a_context_is_resolved_with_the_senders_marked_as_its_profile_says() {
         let agent = ActorId::Agent(AgentId::new());
-        let alice = Message { sender_id: ActorId::User(crate::user::UserId::new()), sender_name: "Alice".to_string(), role: MessageRole::User, ..text("question") };
+        let alice = Message { sender_id: ActorId::User(UserId::new()), sender_name: "Alice".to_string(), role: MessageRole::User, ..text("question") };
         let mut state = AgentChannelState::default();
         state.transcript.push(alice.clone());
         state.transcript.push(Message { sender_id: agent, role: MessageRole::Assistant, ..text("answer") });
@@ -742,7 +749,7 @@ mod tests {
     /// A turn of `state` begun on its transcript as it stands.
     fn begin(state: &mut AgentChannelState, profile: ModelProfile) {
         let context = ContextRef { transcript: state.transcript.digest(), profile, ..ContextRef::default() };
-        let work = crate::work::Work { turn_id: TurnId::new(), context, ..Default::default() };
+        let work = Work { turn_id: TurnId::new(), context, ..Default::default() };
         state.turn = Some(TurnState { work, ..TurnState::default() });
     }
 
@@ -810,14 +817,14 @@ mod tests {
         state.transcript.push(call(ActorId::Agent(AgentId::new()), 5000, 500, Some(8192)));
         let before_given = state.transcript.digest();
         state.transcript.push(call(agent, 200, 20, Some(4096)));
-        state.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Stopped, at: chrono::Utc::now() });
+        state.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Stopped, at: Utc::now() });
         // A branch no longer active - as an external agent's earlier calls
         // are (`start_anew`) - counts as well.
         state.transcript.move_head(before_given.as_ref());
         begin(&mut state, ModelProfile::default());
         state.said(call(agent, 300, 30, None));
 
-        assert_eq!(state.usage(agent), Some(crate::message::TokenUsage {
+        assert_eq!(state.usage(agent), Some(TokenUsage {
             calls: 3,
             prompt_tokens: 600,
             completion_tokens: 60,
@@ -830,9 +837,9 @@ mod tests {
     fn the_tools_offered_are_resolved_from_their_set() {
         use crate::tool::ToolParameters;
         let mut state = AgentChannelState::default();
-        let echo = crate::tool::Tool { name: "echo".to_string(), description: "echoes".to_string(), parameters: ToolParameters::object([("text", ToolParameters::string("what"))], ["text"]), requires_approval: true, visibility: Default::default(), classification: None, presentation: Default::default() };
+        let echo = Tool { name: "echo".to_string(), description: "echoes".to_string(), parameters: ToolParameters::object([("text", ToolParameters::string("what"))], ["text"]), requires_approval: true, visibility: Default::default(), classification: None, presentation: Default::default() };
         let offered = vec![ToolSet::new("echo_tool", "echoes", vec![echo])];
-        let digest = crate::digest::tool_sets(&offered);
+        let digest = digest::tool_sets(&offered);
         state.offered_tools.keep(digest, || offered.clone());
 
         let resolver = ContextResolver::of(&state);
@@ -876,7 +883,7 @@ mod tests {
         let then = ContextRef { transcript: state.transcript.digest(), ..ContextRef::default() };
         state.prompts.keep(prompt("notes"), || "notes".to_string());
 
-        let at = chrono::Utc::now();
+        let at = Utc::now();
         state.transcript.modify(Message { content: Some("question, corrected".to_string()), timestamp: at, ..question.clone() });
         let aside = state.transcript.messages()[1].id;
         state.transcript.revoke(aside, at);

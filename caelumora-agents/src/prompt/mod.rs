@@ -23,6 +23,8 @@ use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::store::StoreError;
 use serde::Deserialize;
+use serde_json::Value;
+use std::fmt::Debug;
 
 /// Where a prompt part goes in the context (issue 47).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -46,7 +48,7 @@ impl PromptPosition {
     /// # Errors
     /// `ComponentError::InvalidConfig` if it is neither `start` nor
     /// `before_turn_input`.
-    pub fn of_params(params: &serde_json::Value) -> Result<Self, ComponentError> {
+    pub fn of_params(params: &Value) -> Result<Self, ComponentError> {
         match params.get("position") {
             None => Ok(Self::default()),
             Some(value) => serde_json::from_value(value.clone())
@@ -150,7 +152,7 @@ pub fn render_sections(title: &str, preamble: &str, sections: &[Section]) -> Str
 /// of every one of the agent's providers, by position, in the order of its
 /// configuration.
 #[async_trait]
-pub trait PromptProvider: Send + Sync + std::fmt::Debug {
+pub trait PromptProvider: Send + Sync + Debug {
     fn position(&self) -> PromptPosition {
         PromptPosition::Start
     }
@@ -188,7 +190,7 @@ pub(crate) async fn prompt_for(provider: &ComponentImpl<dyn PromptProvider>, wor
 /// Two would each answer for the whole, so a personality with two is
 /// refused.
 #[async_trait]
-pub trait ContextProvider: Send + Sync + std::fmt::Debug {
+pub trait ContextProvider: Send + Sync + Debug {
     /// The prompt parts for `work`, each where it goes, and the knowledge
     /// they hold.
     ///

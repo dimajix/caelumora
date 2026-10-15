@@ -57,7 +57,8 @@ impl AgentStateHandle {
     /// announced to nobody - for turns in tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn detached() -> Arc<Self> {
-        let state_store = Arc::new(caelumora_model::store::memory::MemoryStore::new());
+        use caelumora_model::store::memory::MemoryStore;
+        let state_store = Arc::new(MemoryStore::new());
         Arc::new(Self::new(AgentId::default(), AgentState::default(), state_store, Arc::new(()), SecurityAttributes::default()))
     }
 
@@ -140,6 +141,7 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::event::EntityChange;
     use caelumora_model::agent;
+    use std::sync::Mutex;
 
     fn remember(id: MemoryId, text: &str) -> (MemoryChange, MemoryOrigin) {
         (MemoryChange::Add { id, text: text.to_string(), classification: Classification::CHANNEL_DEFAULT }, MemoryOrigin::default())
@@ -183,7 +185,7 @@ mod tests {
     }
 
     #[derive(Debug, Default)]
-    struct Announced(std::sync::Mutex<Vec<GlobalEvent>>);
+    struct Announced(Mutex<Vec<GlobalEvent>>);
 
     impl EventPublisher for Announced {
         fn publish(&self, event: GlobalEvent, _attributes: SecurityAttributes) {

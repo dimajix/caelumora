@@ -110,7 +110,8 @@ impl ChannelRuntime {
     /// running - in tests: its session holds nothing but its id, and no
     /// rules, and has no loop.
     pub fn outside_a_session(runtime_manager: Arc<RuntimeManager>, command_executor: Arc<CommandExecutor<dyn ChannelCommandProvider>>, session_id: SessionId) -> Self {
-        let session = runtime_manager.controller_manager().new_session_controller(crate::session::testing::bare_session(session_id));
+        use crate::session::testing::bare_session;
+        let session = runtime_manager.controller_manager().new_session_controller(bare_session(session_id));
         Self::new(runtime_manager, command_executor, session, Weak::new())
     }
 

@@ -127,6 +127,8 @@ mod tests {
     use caelumora_model::digest::prompt;
     use caelumora_model::message::Message;
     use caelumora_model::message::MessageRole;
+    use caelumora_model::confidentiality::Confidentiality;
+    use caelumora_model::work::TurnId;
 
     #[test]
     fn a_turn_under_way_shows_what_it_said_with_what_it_was_produced_from() {
@@ -151,7 +153,7 @@ mod tests {
         let actor = ActorId::Agent(AgentId::new());
         let text = |t: &str| Message { id: MessageId::new(), role: MessageRole::User, content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         // What the agent produced, in a turn of its own.
-        let produced = |t: &str| Message { turn_id: Some(caelumora_model::work::TurnId::new()), ..text(t) };
+        let produced = |t: &str| Message { turn_id: Some(TurnId::new()), ..text(t) };
         let mut state = AgentChannelState::default();
         let question = text("question");
         state.transcript.push(question.clone());
@@ -188,7 +190,7 @@ mod tests {
         assert!(!view.in_transcript(dropped.id) && view.in_transcript(answer.id));
 
         // A prompt part is told with how it was classified (issue 170).
-        let confidential = Classification::general(caelumora_model::confidentiality::Confidentiality::Confidential);
+        let confidential = Classification::general(Confidentiality::Confidential);
         let system = PromptRef { text: prompt("system"), role: MessageRole::System, after: None, classification: Some(confidential.clone()) };
         state.prompts.keep(system.text, || "system".to_string());
         let told = produced("told");

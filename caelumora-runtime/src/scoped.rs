@@ -43,6 +43,7 @@ use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 use tracing::{info, warn};
+use anyhow::Result;
 
 /// A kind that may lie in a scope and goes with what holds it (issue 178):
 /// deleted, restored and purged with the session or channel whose scope it
@@ -114,7 +115,7 @@ impl ScopedEntities {
     /// `SessionError::ScopeNotEmpty` if something is left that `ctx` may
     /// not delete - what they may is deleted all the same -, or whatever
     /// the store reports; what was deleted before stays deleted.
-    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> anyhow::Result<()> {
+    pub(crate) async fn delete_lying_in(&self, ctx: &SecurityContext, holder: &Scope) -> Result<()> {
         let mut left = Vec::new();
         for member in &self.members {
             let count = member.delete_lying_in(ctx, holder).await?;

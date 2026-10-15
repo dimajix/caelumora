@@ -9,14 +9,14 @@ use crate::channel::ChannelLoop;
 use crate::command::{CommandError, CommandExecutor};
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use crate::session::testing::user;
-use anyhow::Result;
+use anyhow::{Result, Error};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::MessageId;
 use caelumora_model::store::StoreResult;
 use caelumora_model::work::TurnId;
-use caelumora_model::channel::{Channel, ChannelId, Participant};
+use caelumora_model::channel::{Channel, ChannelId, Participant, moderation_components};
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::message::Message;
 use caelumora_model::security::{AccessPolicy, ActionType, SecurityAttributes, SecurityContext};
@@ -27,6 +27,10 @@ use caelumora_model::value::name::{Name, ScopedName};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
+use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
+use caelumora_model::confidentiality::{Classification, Visibility};
+use tokio::sync::broadcast::Receiver;
+use tokio::task::JoinHandle;
 
 /// Decides by a rule over the action alone, to refuse one thing and
 /// allow the rest.
@@ -41,7 +45,7 @@ impl AccessPolicy for Policy {
 }
 
 /// The `CommandError` `error` is, which a test expects it to be.
-pub fn command_error(error: &anyhow::Error) -> &CommandError {
+pub fn command_error(error: &Error) -> &CommandError {
     error.downcast_ref().unwrap_or_else(|| panic!("expected a CommandError, got {error:#}"))
 }
 
@@ -55,7 +59,7 @@ pub struct Stuck {
     pub agent: AgentId,
     pub helper: Arc<dyn Actor>,
     pub events: broadcast::Receiver<Envelope>,
-    pub running: tokio::task::JoinHandle<Result<()>>,
+    pub running: JoinHandle<Result<()>>,
 }
 
 /// Alice and her agent `helper` of a personality with `components`,
@@ -67,7 +71,7 @@ pub async fn alice_and_an_agent(store: &MemoryStore, components: ComponentConfig
     let personality = Personality {
         description: None,
         introduction: None,
-        reasoning_visibility: caelumora_model::confidentiality::Visibility::Channel,
+        reasoning_visibility: Visibility::Channel,
         id: PersonalityId::new(),
         name: ScopedName::new("plain", Default::default()).unwrap(),
         kind: Default::default(),
@@ -95,14 +99,14 @@ pub async fn channel_of_alice_and(runtime: Arc<RuntimeManager>, alice: UserId, a
         id: ChannelId::new(),
         session_id: SessionId::new(),
         name: Name::new("main").unwrap(),
-        components: caelumora_model::channel::moderation_components(None, Some("broadcast_policy")),
+        components: moderation_components(None, Some("broadcast_policy")),
         participants: vec![
             Participant::User(alice),
             Participant::Agent(agent),
-            Participant::Approver(caelumora_model::approval::Approver { id: caelumora_model::approval::ApproverId::new(), strategy: caelumora_model::approval::ApprovalStrategy::Any }),
+            Participant::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any }),
         ],
         security_attributes: SecurityAttributes::default(),
-        classification: caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT,
+        classification: Classification::CHANNEL_DEFAULT,
         language: None,
         history_limits: Vec::new(),
         deleted: None,
@@ -132,7 +136,7 @@ pub async fn start((channel, context, agent, alice): (Arc<ChannelLoop>, Security
 }
 
 /// What `agent` answered next.
-pub async fn answered(events: &mut tokio::sync::broadcast::Receiver<Envelope>, agent: AgentId) -> Vec<Message> {
+pub async fn answered(events: &mut Receiver<Envelope>, agent: AgentId) -> Vec<Message> {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");

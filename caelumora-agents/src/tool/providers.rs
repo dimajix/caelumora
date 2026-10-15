@@ -94,8 +94,12 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::security::SecurityContext;
-    use caelumora_model::tool::Tool;
+    use caelumora_model::tool::{Tool, ToolParameters};
     use serde_json::{json, Value};
+    use caelumora_model::question::{Addressee, Question};
+    use caelumora_model::turn::TurnState;
+    use caelumora_model::work::Work;
+    use caelumora_runtime::agent::state::AgentStateHandle;
 
     #[derive(Debug)]
     struct MockToolProvider;
@@ -109,7 +113,7 @@ mod tests {
             vec![Tool {
                 name: "test_tool".to_string(),
                 description: "desc".to_string(),
-                parameters: caelumora_model::tool::ToolParameters::object(Vec::<(String, caelumora_model::tool::ToolParameters)>::new(), Vec::<String>::new()),
+                parameters: ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()),
                 requires_approval: false,
                 visibility: Default::default(),
                 classification: None,
@@ -130,14 +134,14 @@ mod tests {
     }
 
     fn agent_state() -> AgentChannelState {
-        AgentChannelState { turn: Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() }, ..Default::default() }), ..Default::default() }
+        AgentChannelState { turn: Some(TurnState { work: Work { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() }, ..Default::default() }), ..Default::default() }
     }
 
     #[tokio::test]
     async fn a_call_runs_with_the_tool_that_provides_it_and_an_unknown_one_is_reported() {
         let providers = ToolProviders::new(vec![component("tools")]).unwrap();
         let mut agent_channel_state = agent_state();
-        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, caelumora_runtime::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
+        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
 
         let output = providers.execute(&call("test_tool"), None, &mut context).await.unwrap();
         assert_eq!(output.value, json!({"result": "ok"}));
@@ -162,8 +166,8 @@ mod tests {
         }
         fn questions(&self, _name: &str, _params: &Value) -> ToolResult<Option<Questions>> {
             Ok(Some(Questions {
-                questions: vec![caelumora_model::question::Question { header: "Name".to_string(), question: "Who?".to_string(), choices: Vec::new(), multi_select: false }],
-                ask: vec![caelumora_model::question::Addressee::Owner],
+                questions: vec![Question { header: "Name".to_string(), question: "Who?".to_string(), choices: Vec::new(), multi_select: false }],
+                ask: vec![Addressee::Owner],
                 sensitive: false,
             }))
         }
@@ -178,7 +182,7 @@ mod tests {
         assert!(matches!(providers.questions(&call("does_not_exist")), Err(ToolError::UnknownTool(_))));
 
         let mut agent_channel_state = agent_state();
-        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, caelumora_runtime::agent::state::AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
+        let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way");
         let questions = providers.questions(&call("asking_tool")).unwrap().expect("it asks");
         let answers = Answers::declined(questions, ActorId::None, "alice".to_string());
         let output = providers.execute(&call("asking_tool"), Some(&answers), &mut context).await.unwrap();

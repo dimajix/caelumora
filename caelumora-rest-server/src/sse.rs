@@ -172,6 +172,7 @@ mod tests {
     use caelumora_model::security::SecurityContext;
     use caelumora_model::user::UserId;
     use chrono::Utc;
+    use tokio::time::Instant;
 
     fn user(expires_in: i64) -> AuthenticatedUser {
         let id = UserId::new();
@@ -210,7 +211,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_stream_ends_a_margin_early() {
-        let started = tokio::time::Instant::now();
+        let started = Instant::now();
         wire(&user(60), stream::pending()).await;
         assert_eq!(started.elapsed(), Duration::from_secs(55));
     }
@@ -249,7 +250,7 @@ mod tests {
         // Subtracting the margin would leave next to nothing here, and a
         // client reconnecting at once would do so over and over.
         for left in [10, 5, 2] {
-            let started = tokio::time::Instant::now();
+            let started = Instant::now();
             let body = wire(&user(left), stream::pending()).await;
 
             assert_eq!(started.elapsed(), Duration::from_secs(left as u64), "with {left}s left");
