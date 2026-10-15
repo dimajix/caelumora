@@ -77,3 +77,12 @@ what the caller may reach at all.
   store, the conditions of security would be a `WHERE` clause, so a wrapping store that filters
   after reading is no way, and the policy has to give a predicate that every store implements.
   Not needed before a database backend.
+- **2026-10-15** — Issue [295](295-access-as-a-query-condition.md), which asked for the same
+  change, was rejected as a duplicate of this one. Its considerations, discussed with the
+  maintainer on 2026-10-10, belong to this issue: the condition comes from the policy, `None`
+  where it does not restrict up front; it is evaluated per document over the security attributes,
+  written over a field type of their own rather than each kind's fields; clearances stay a check
+  afterwards. Two points there differ from the considerations above and are to be settled here:
+  295 keeps `check` per entity as a second safeguard with a test holding both forms together,
+  where this issue decides `check` by the same condition; and 295 resolves membership as a join in
+  the store, where this issue puts the principal's groups into the `SecurityContext`.
