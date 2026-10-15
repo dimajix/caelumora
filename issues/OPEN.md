@@ -109,6 +109,8 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [358](358-controllers-apply-their-events-each-on-its-own.md) | open | The controllers apply, store and announce their update events each on their own, `updated_at` moves on one path only, and the loops forward the updates with uneven logging. |
 | [365](365-security-manager-is-an-access-policy.md) | open | `SecurityManager` decides who may do what and manages nothing: it is the access policy beside `ConfidentialityPolicy`, under a name that means a lifecycle everywhere else. |
 | [366](366-runtime-rs-holds-four-types.md) | open | `runtime.rs` holds the runtime, how it is built, and what a channel and an actor are given of it, interleaved in one file of 847 lines. |
+| [367](367-prompt-module.md) | open | The prompt facets live in a flat `context.rs` and their components among the components of no facet in `component_impl/`, unlike every other facet with a module of its own. |
+| [368](368-component-module.md) | open | `component.rs` holds the registry, the container, the context of a factory and 550 lines of their tests in one file of 1541 lines. |
 
 ## Open architecture questions
 
