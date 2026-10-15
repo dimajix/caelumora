@@ -18,7 +18,7 @@
 //! (`channel_members_prompt_provider`).
 
 use crate::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::context::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
 use crate::agent::work::AgentWork;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;

@@ -11,7 +11,7 @@
 use crate::agent::turn::Turn;
 use crate::compaction::{Compaction, CompactionError, CompactionStrategy, GivenAgain, KnowledgeRestorer};
 use crate::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::context::titled;
+use crate::prompt::titled;
 use crate::llm::LLMClient;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;

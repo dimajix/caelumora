@@ -3,7 +3,7 @@
 
 use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::context::{ContextError, titled, Prompt, PromptProvider};
+use crate::prompt::{ContextError, titled, Prompt, PromptProvider};
 use crate::agent::work::AgentWork;
 use crate::tool::{arguments, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;

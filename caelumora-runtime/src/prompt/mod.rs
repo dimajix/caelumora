@@ -1,11 +1,21 @@
-//! The facets that build what an agent's model is given: a
+//! What an agent's model is given (issue 47): the facets that build it - a
 //! `ContextProvider` assembles it, `PromptProvider`s contribute prompt parts
-//! (issue 47). Their implementations are components of their own, e.g.
-//! `turn_context_provider` and `static_system_prompt_provider`. An agent
-//! has exactly one `ContextProvider` and any number of `PromptProvider`s
-//! (issue 98).
+//! -, what their components share, and the built-in components that provide
+//! them alone, one file per component kind. An agent has exactly one
+//! `ContextProvider` and any number of `PromptProvider`s (issue 98). A
+//! component that offers a prompt part along with another facet - tools,
+//! say - stays in `component_impl`.
 
-use crate::component::{ComponentError, ComponentImpl};
+pub mod channel_briefing_prompt_provider;
+pub mod channel_language_prompt_provider;
+pub mod channel_members_prompt_provider;
+pub mod external_context_provider;
+pub mod static_system_prompt_provider;
+pub mod tool_sets_prompt_provider;
+pub mod turn_context_provider;
+pub mod workspace_prompt_provider;
+
+use crate::component::{ComponentError, ComponentImpl, ComponentRegistry};
 use crate::agent::work::AgentWork;
 use crate::view::ViewError;
 use async_trait::async_trait;
@@ -205,6 +215,22 @@ pub enum ContextError {
     /// A prompt provider that fails closed failed with `cause`.
     #[error("component '{component}' failed")]
     Component { component: String, #[source] cause: Box<ContextError> },
+}
+
+/// Registers the component kinds of this directory with `registry`, and the
+/// `ContextProvider` as a facet of which an agent has exactly one, with its
+/// default kind (issue 99).
+pub fn register_all(registry: &mut ComponentRegistry) {
+    registry.single::<dyn ContextProvider>(Some(turn_context_provider::TURN_CONTEXT_PROVIDER_KIND));
+
+    channel_briefing_prompt_provider::register(registry);
+    channel_language_prompt_provider::register(registry);
+    channel_members_prompt_provider::register(registry);
+    external_context_provider::register(registry);
+    static_system_prompt_provider::register(registry);
+    tool_sets_prompt_provider::register(registry);
+    turn_context_provider::register(registry);
+    workspace_prompt_provider::register(registry);
 }
 
 #[cfg(test)]

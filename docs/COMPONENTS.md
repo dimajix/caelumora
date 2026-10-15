@@ -81,8 +81,8 @@ facet trait lives next to the code that uses it, not among the implementations.
 | `ToolProvider` | tools the model may call | `crate::tool` |
 | `ChannelCommandProvider` | user commands run on the channel | `crate::command` |
 | `AgentCommandProvider` | user commands an agent carries out itself, of agents and external agents alike | `crate::command` |
-| `PromptProvider` | prompt parts, of agents and external agents alike | `crate::context` |
-| `ContextProvider` | what the model is given | `crate::context` |
+| `PromptProvider` | prompt parts, of agents and external agents alike | `crate::prompt` |
+| `ContextProvider` | what the model is given | `crate::prompt` |
 | `LLMClient` | the language model the agent talks to | `crate::llm` |
 | `ExternalAgent` | the remote agent an external personality's agents are | `crate::external` |
 | `PerceiveInProcessor` | filtering of incoming messages, of agents and external agents alike | `crate::message` |
@@ -240,6 +240,7 @@ purpose. That module's `mod.rs` holds the facet trait - with what consumes it, s
 |---|---|
 | `tool/` | tool providers (`calculator_tool`, `terminal_tool`, ...) |
 | `command/` | command providers (`help_command`, `wakeup_command`, `nudge_command`) |
+| `prompt/` | prompt providers (`static_system_prompt_provider`, `channel_members_prompt_provider`, ...) and the context providers (`turn_context_provider`, `external_context_provider`), with what their parts share (`Prompt`, `Section`, `titled`) |
 | `llm/` | the facet through which an agent asks its model, the defusing of control tokens any kind may use, and no kind: each model provider is a plugin (`ollama_client` in `caelumora-ollama`) |
 | `moderator/` | the moderator and its responder policies |
 | `compaction/` | `/compact` (`compaction`, in `command.rs`, since a module cannot hold a file of its own name) and the compaction policies (`threshold_compaction_policy`) and strategies (`summary_compaction`) |
@@ -264,7 +265,7 @@ They follow one convention:
 *   **Parameters:** the turn is always the parameter `turn`.
 
 What components share lives beside the facet: `tool::text_argument` and `id_argument` for tool
-parameters, `context::render_sections` for a prompt part that lists entries, and `view::ViewError`,
+parameters, `prompt::render_sections` for a prompt part that lists entries, and `view::ViewError`,
 which a tool passes on with `?`.
 
 ## Plugins

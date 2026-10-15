@@ -15,7 +15,7 @@ use crate::agent::turn::Turn;
 use crate::agent::work::AgentWork;
 use crate::command::{AgentCommandProvider, CommandExecutor};
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
-use crate::context::ContextProvider;
+use crate::prompt::ContextProvider;
 use crate::controller::AgentController;
 use crate::message::PerceiveInProcessor;
 use crate::runtime::ActorRuntime;
@@ -269,7 +269,7 @@ impl AgentBody {
 #[cfg(test)]
 mod testing {
     use super::*;
-    use crate::component_impl::external_context_provider::ExternalContextProvider;
+    use crate::prompt::external_context_provider::ExternalContextProvider;
     use crate::runtime::ChannelRuntime;
     use crate::session::testing::test_runtime;
     use caelumora_model::agent::{Agent, PersonalityId};

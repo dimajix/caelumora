@@ -47,7 +47,7 @@ use caelumora_runtime::agent::work::AgentWork;
 use caelumora_runtime::command::{AgentCommandProvider, CommandError, CommandResult, ProvidesCommands};
 use caelumora_runtime::compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use caelumora_runtime::context::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
+use caelumora_runtime::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
 use caelumora_runtime::tool::{arguments, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_runtime::view::SessionView;
 use chrono::Utc;

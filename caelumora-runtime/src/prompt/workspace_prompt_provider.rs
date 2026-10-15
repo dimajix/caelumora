@@ -19,7 +19,7 @@
 //! that cannot be reached leaves the files out, not the turn.
 
 use crate::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
-use crate::context::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
 use crate::terminal::{TerminalError, WorkspacePath};
 use crate::view::WorkspaceView;
 use crate::agent::work::AgentWork;

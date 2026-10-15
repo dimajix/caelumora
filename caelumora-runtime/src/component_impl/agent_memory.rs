@@ -23,7 +23,7 @@ use crate::component_impl::notes::NOTE_PRESENTATION;
 use crate::agent::memory::AgentMemory;
 use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::context::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::prompt::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
 use crate::agent::work::AgentWork;
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;

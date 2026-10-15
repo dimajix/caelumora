@@ -3,7 +3,8 @@
 use super::*;
 use crate::actor::Actor;
 use crate::component::{ComponentImpl, ComponentKind, ComponentRegistry};
-use crate::context::ContextError;
+use crate::agent::work::AgentWork;
+use crate::prompt::{ContextError, Prompt, PromptProvider};
 use crate::message::ProcessingError;
 use crate::runtime::{ChannelRuntime, RuntimeManager};
 use crate::testing::test_registry;
@@ -421,9 +422,9 @@ impl crate::message::PerceiveInProcessor for NoSecrets {}
 struct Heard;
 
 #[async_trait::async_trait]
-impl crate::context::PromptProvider for Heard {
-    async fn get_prompt(&self, work: &crate::agent::work::AgentWork<'_>) -> Result<crate::context::Prompt, ContextError> {
-        Ok(crate::context::Prompt::from(format!("[Heard]\n{}", work.agent_channel_state().history.messages().len())))
+impl PromptProvider for Heard {
+    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
+        Ok(Prompt::from(format!("[Heard]\n{}", work.agent_channel_state().history.messages().len())))
     }
 }
 

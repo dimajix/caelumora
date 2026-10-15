@@ -1,6 +1,6 @@
 # 367 — The prompt facets live in `context.rs`, their components among the components of no facet
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -60,3 +60,17 @@ kept.
 - **2026-10-15** — Opened at the maintainer's request, under epic [349](349-core-review-epic.md),
   with the other moves of files ([364](364-managers-in-different-places.md),
   [366](366-runtime-rs-holds-four-types.md), [368](368-component-module.md)).
+- **2026-10-15** — Done, as considered; no behaviour changes.
+  - `context.rs` went to `prompt/mod.rs` (`git mv`), with a description of the module in place of
+    that of the two facets, the eight `pub mod`s and `register_all`, which registers the eight
+    kinds and the single `ContextProvider` with its default; `ComponentRegistry::built_in` calls it
+    after `component_impl`'s.
+  - The eight components went from `component_impl/` to `prompt/` (`git mv`), unchanged but for
+    their paths. `component_impl/` keeps `agent_memory`, `channel_history`, `create_plan_tool`,
+    `notes` and `private_notes`; its description names `prompt` among the facets' modules.
+  - `crate::context::…` is `crate::prompt::…` in the runtime, and `caelumora_runtime::context::…`
+    `caelumora_runtime::prompt::…` in `caelumora-skills`; the other plugins named only
+    `caelumora_model::context`, which stays. Where tests wrote the old path out
+    (`channel/tests`, `turn_context_provider`), the types are imported now.
+  - COMPONENTS.md has `prompt/` in its table of modules and `crate::prompt` in that of the facets;
+    PLUGINS.md and AGENT-TURN.md name `prompt::ContextError`, `prompt::titled`.

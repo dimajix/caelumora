@@ -10,7 +10,7 @@
 use crate::agent::AgentError;
 use crate::command::CommandError;
 use crate::component::ComponentError;
-use crate::context::ContextError;
+use crate::prompt::ContextError;
 use crate::message::ProcessingError;
 use crate::external::ExternalAgentError;
 use crate::llm::LLMError;

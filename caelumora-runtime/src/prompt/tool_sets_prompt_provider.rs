@@ -11,7 +11,7 @@
 //! available it contributes nothing.
 
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::context::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::prompt::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
 use crate::agent::work::AgentWork;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;

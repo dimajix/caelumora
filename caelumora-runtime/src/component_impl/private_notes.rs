@@ -25,7 +25,7 @@ use crate::component_impl::notes::NOTE_PRESENTATION;
 use crate::agent::notes::{AgentNotes, NoteKind};
 use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::context::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::prompt::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
 use crate::agent::work::AgentWork;
 use crate::view::PrivateNotesElsewhere;
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};

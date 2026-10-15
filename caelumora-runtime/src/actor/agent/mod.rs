@@ -7,7 +7,7 @@ use crate::agent::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use crate::command::AgentCommandProvider;
 use crate::compaction::{CompactionPolicy, CompactionStrategy};
 use crate::component::ComponentImpl;
-use crate::context::ContextProvider;
+use crate::prompt::ContextProvider;
 use crate::llm::LLMClient;
 use crate::logging::{agent_span, envelope_span};
 use crate::message::{EmitOutProcessor, PerceiveInProcessor};

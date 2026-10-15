@@ -25,7 +25,7 @@ use caelumora_runtime::agent::turn::Turn;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::command::AgentCommandProvider;
 use caelumora_runtime::compaction::KnowledgeRestorer;
-use caelumora_runtime::context::{PromptPosition, PromptProvider};
+use caelumora_runtime::prompt::{PromptPosition, PromptProvider};
 use caelumora_runtime::session::SessionLoop;
 use caelumora_runtime::testing::{asked_for, register_once, shown, World, STAFF};
 use caelumora_runtime::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};

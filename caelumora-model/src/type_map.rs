@@ -23,7 +23,7 @@ impl TypeKey {
         Self { id: TypeId::of::<T>(), name: short_name::<T> }
     }
 
-    /// The type's name without its path: `dyn crate::context::PromptProvider`
+    /// The type's name without its path: `dyn crate::prompt::PromptProvider`
     /// is `PromptProvider`.
     pub fn name(&self) -> &'static str {
         (self.name)()

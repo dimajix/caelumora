@@ -10,7 +10,7 @@
 //! the remote agent's user; positions mean nothing here.
 
 use crate::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
-use crate::context::{ContextError, ContextProvider, PromptProvider};
+use crate::prompt::{ContextError, ContextProvider, PromptProvider};
 use crate::agent::work::AgentWork;
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
@@ -68,8 +68,8 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::agent::state::AgentStateHandle;
-    use crate::component_impl::static_system_prompt_provider::StaticSystemPromptProvider;
-    use crate::context::PromptPosition;
+    use crate::prompt::static_system_prompt_provider::StaticSystemPromptProvider;
+    use crate::prompt::PromptPosition;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::component::ComponentFailPolicy;
     use caelumora_model::confidentiality::Classification;

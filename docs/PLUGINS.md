@@ -105,7 +105,7 @@ answers - deciding there what may be shown, what is a refusal and what is a fail
 
 *   a tool provider answers `ToolError`, an agent's command `CommandError`, a knowledge restorer
     `CompactionError`, an external agent `ExternalAgentError`;
-*   a prompt provider and a context provider answer `context::ContextError`, a message processor
+*   a prompt provider and a context provider answer `prompt::ContextError`, a message processor
     `message::ProcessingError` - each with `Failed`, a failure in words that may be shown, and the
     view's and the store's errors, judged as those are;
 *   a `ScopeMember` answers `StoreResult`; what lies behind an entity - a workspace's place, an

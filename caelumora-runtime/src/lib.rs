@@ -20,7 +20,7 @@ pub mod message;
 pub mod backend;
 pub mod component;
 pub mod component_impl;
-pub mod context;
+pub mod prompt;
 pub mod plugin;
 pub mod seed;
 pub mod view;

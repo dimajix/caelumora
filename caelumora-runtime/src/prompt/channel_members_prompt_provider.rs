@@ -17,7 +17,7 @@
 //! actor, so for each channel - and tells all of it again after a restart.
 
 use crate::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::context::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
 use crate::agent::work::AgentWork;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;

@@ -393,7 +393,7 @@ what it was handed. A part is never stored in the transcript, which stays a stab
 
 Every part the runtime writes has one form: a short title in brackets on a line of its own -
 `[Who is in this channel]`, `[Your private notes]` - then what needs explaining, then the content
-(`context::titled`). A part that says nothing is no part. The personality's own system prompt stays
+(`prompt::titled`). A part that says nothing is no part. The personality's own system prompt stays
 as written.
 
 ### The `ContextProvider`

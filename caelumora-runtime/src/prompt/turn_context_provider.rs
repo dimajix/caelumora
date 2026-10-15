@@ -6,7 +6,7 @@
 use crate::agent::work::AgentWork;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use crate::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
-use crate::context::{ContextError, ContextProvider, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, ContextProvider, PromptPosition, PromptProvider};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
@@ -103,7 +103,8 @@ mod tests {
     use crate::agent::state::AgentStateHandle;
     use crate::agent::turn::Turn;
     use caelumora_model::component::ComponentFailPolicy;
-    use crate::component_impl::static_system_prompt_provider::StaticSystemPromptProvider;
+    use crate::prompt::static_system_prompt_provider::StaticSystemPromptProvider;
+    use crate::prompt::Prompt;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageId};
@@ -136,7 +137,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PromptProvider for Unavailable {
-        async fn get_prompt(&self, _work: &crate::agent::work::AgentWork<'_>) -> Result<crate::context::Prompt, ContextError> {
+        async fn get_prompt(&self, _work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
             Err(ContextError::Failed("unavailable".to_string()))
         }
     }

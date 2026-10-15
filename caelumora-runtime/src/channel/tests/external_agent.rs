@@ -22,7 +22,8 @@ use crate::session::SessionManager;
 use crate::session::testing::*;
 use caelumora_model::confidentiality::ConfidentialityRules;
 use caelumora_model::config::AppConfig;
-use crate::component::ComponentRegistry;
+use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::prompt::PromptProvider;
 
 /// A running channel with alice and an external agent (issue 179) that
 /// `remote` stands in for, after alice said "hello". The remote agent is
@@ -110,10 +111,10 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
 /// Registers `Heard` as the kind `test_heard`.
 fn register_heard(registry: &mut ComponentRegistry) {
     registry.register(
-        crate::component::ComponentKind::new("test_heard").provides::<dyn crate::context::PromptProvider>(),
+        ComponentKind::new("test_heard").provides::<dyn PromptProvider>(),
         |_descriptor, _context| {
-            let mut facets = crate::component::ComponentFacets::empty();
-            facets.insert::<dyn crate::context::PromptProvider>(Arc::new(Heard));
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn PromptProvider>(Arc::new(Heard));
             Ok(facets)
         },
     );

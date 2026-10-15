@@ -13,7 +13,7 @@
 use crate::agent::notes::{AgentNotes, NoteKind};
 use crate::agent::turn::Turn;
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::context::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::prompt::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
 use crate::agent::work::AgentWork;
 use caelumora_model::question::Answers;
 use caelumora_model::snapshot::PublishedNotes;
