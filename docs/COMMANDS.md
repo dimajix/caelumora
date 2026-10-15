@@ -46,9 +46,9 @@ executor is generic over the facet: finding a command, refusing two of one name 
 policy are the same whoever runs the commands (`visible_by`, `admit`); only what a command is given
 to run with - the session, or an agent's turn - and which actions are asked of it are the facet's,
 said by the facet's owner: the channel's commands by the runtime (`ShowCommand`, `ExecuteCommand`),
-an agent's by the agents' logic (`caelumora_agent::command::AgentCommandAccess`, `ShowAgentCommand`,
-`ExecuteAgentCommand`, issue 370). It checks permissions itself: how a command runs is the
-command's business, and there is nothing about running commands to try out.
+an agent's by the agents' logic (`caelumora_agents::command::AgentCommandAccess`,
+`ShowAgentCommand`, `ExecuteAgentCommand`, issue 370). It checks permissions itself: how a command
+runs is the command's business, and there is nothing about running commands to try out.
 
 ### Seeing and running
 

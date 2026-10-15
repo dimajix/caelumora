@@ -17,7 +17,7 @@ use caelumora_model::store::query::Query;
 use caelumora_model::store::{StoreResultExt, Stored};
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::value::text::Description;
-use caelumora_agent::prompt::titled;
+use caelumora_agents::prompt::titled;
 use caelumora_runtime::view::Views;
 use std::sync::Arc;
 

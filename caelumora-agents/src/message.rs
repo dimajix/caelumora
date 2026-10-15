@@ -26,7 +26,7 @@ pub trait MessageProcessor: Send + Sync + std::fmt::Debug {
 
 /// Why a `MessageProcessor` cannot process what it was given (issue 336).
 /// A plugin's processor translates its own errors into it, deciding there
-/// what may be shown; `caelumora_runtime::error::user_message` judges each variant.
+/// what may be shown; `crate::error::user_message` judges each variant.
 #[derive(Debug, thiserror::Error)]
 pub enum ProcessingError {
     /// A failure in words that may be shown to users.

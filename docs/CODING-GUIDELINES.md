@@ -196,7 +196,7 @@ Errors carry what failed, and only what may be shown goes to users.
 
 What users may see is decided by whoever defines an error type, in one function each: the runtime's
 types in `caelumora_runtime::error::user_message`, the types of the agents' logic - the errors of
-its facets - in `caelumora_agent::error::user_message` (issue 370). Each looks through an error
+its facets - in `caelumora_agents::error::user_message` (issue 370). Each looks through an error
 chain for a domain error written to be read and returns its message; the agents' asks its own
 judgement first and the runtime's for the rest, in one walk (`error::user_message_with`), so that
 the outermost error that may be shown is shown. Anything else stays in the log.
@@ -312,11 +312,11 @@ that answered it.
     370). What such a module adds to a type for tests - `ChannelLoop::actor_of` - is named apart
     from the type's own API and widens nothing outside `test-support`. The tests of the actors in a
     running channel live in `channel/tests/` of the runtime, those of the agents in
-    `channel_tests/` of `caelumora-agent`.
+    `channel_tests/` of `caelumora-agents`.
 *   **Agents in the runtime's tests:** a test of what a channel, a session or the views do with an
     agent among their participants runs a scripted agent (`testing::ScriptedAgents`, issue 370),
     which begins, ends or hangs in its answers as told; a test of what an agent does runs the
-    agents' plugin, in `caelumora-agent`.
+    agents' plugin, in `caelumora-agents`.
 *   **Async tests:** use `#[tokio::test]` for tests involving async code.
 *   **Naming:** use descriptive names, e.g.
     `an_answer_is_its_whole_messages_and_what_was_being_written`.

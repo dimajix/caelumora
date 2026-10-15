@@ -201,7 +201,7 @@ pub trait ContextProvider: Send + Sync + std::fmt::Debug {
 /// Why what an agent's model is to be given cannot be had (issue 336):
 /// what a `ContextProvider` or a `PromptProvider` answers. A plugin's
 /// provider translates its own errors into it, deciding there what may be
-/// shown; `caelumora_runtime::error::user_message` judges each variant.
+/// shown; `crate::error::user_message` judges each variant.
 #[derive(Debug, thiserror::Error)]
 pub enum ContextError {
     /// A failure in words that may be shown to users.

@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 caelumora-model = { path = "../caelumora-model" }
 caelumora-runtime = { path = "../caelumora-runtime" }
-caelumora-agent = { path = "../caelumora-agent" }
+caelumora-agents = { path = "../caelumora-agents" }
 anyhow = "1.0"
 async-trait = "0.1"
 rmcp = { version = "3.4", features = ["client", "transport-streamable-http-client-reqwest"] }
@@ -17,7 +17,7 @@ tokio = { version = "1.53.1", features = ["time"] }
 tracing = "0.1.44"
 
 [dev-dependencies]
-caelumora-agent = { path = "../caelumora-agent", features = ["test-support"] }
+caelumora-agents = { path = "../caelumora-agents", features = ["test-support"] }
 tokio = { version = "1.53.1", features = ["full"] }
 rmcp = { version = "3.4", features = ["client", "transport-streamable-http-client-reqwest", "transport-streamable-http-server"] }
 axum = "0.8.9"

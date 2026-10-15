@@ -18,7 +18,7 @@ The project is a Rust workspace, with a web UI next to it:
     users and approvers, the kinds of agent registered with it (`AgentKinds`), components, the
     views, the event bus, the controllers that keep entities live, workspaces, and the store
     implementations. An actor reaches its channel through its `ActorRuntime` alone.
-*   **`caelumora-agent`** - what an agent does in a channel (issue 370): both kinds of agent - a
+*   **`caelumora-agents`** - what an agent does in a channel (issue 370): both kinds of agent - a
     model run here, or an agent that runs elsewhere -, the agent's cognitive cycle and its turn, and
     the facets its components serve (tools, prompt parts, the model, message stages, compaction,
     its commands) with their built-in kinds. It joins the runtime as a plugin, `AgentsPlugin`, an
@@ -80,7 +80,7 @@ crates. The first is `caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-li
 `caelumora-artifacts`, which depends on the core's workspaces; `caelumora-mcp`
 ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a` and `caelumora-ollama` are ones that bring a
 component kind alone, `caelumora-open-terminal` one that brings backends alone. The agents are a
-plugin too, an essential one (issue 370): `caelumora-agent` registers the kinds of agent, whose
+plugin too, an essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose
 actors the channel builds (`AgentKinds`), and the kinds of their components; without it, the
 program is a chat between users. The plugins whose components serve an agent's facets - tools,
 models, external agents - build on it. Where the core calls

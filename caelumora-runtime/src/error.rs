@@ -36,7 +36,7 @@ pub fn user_message(error: &anyhow::Error) -> Option<String> {
 /// or that may not be shown - then judged as the runtime judges it. One walk
 /// through the chain, so the outermost error that may be shown is shown,
 /// whoever knows its type: the agents' logic judges its own errors so
-/// (`caelumora_agent::error::user_message`, issue 370).
+/// (`caelumora_agents::error::user_message`, issue 370).
 pub fn user_message_with(error: &anyhow::Error, judge: impl Fn(&(dyn Error + 'static)) -> Option<String>) -> Option<String> {
     error.chain().find_map(|e| judge(e).or_else(|| judged(e)))
 }

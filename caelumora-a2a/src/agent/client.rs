@@ -10,7 +10,7 @@ use caelumora_model::remote::{redact_endpoint, RemoteEndpoint};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
 use caelumora_runtime::component::ComponentError;
-use caelumora_agent::external::{ExternalAgentError, ExternalAgentResult};
+use caelumora_agents::external::{ExternalAgentError, ExternalAgentResult};
 use caelumora_runtime::remote::{describe_chain, describe_request_error};
 use futures::stream::{once, BoxStream};
 use futures::{Stream, StreamExt};

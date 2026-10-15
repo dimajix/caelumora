@@ -394,3 +394,12 @@ crate reaches the environment through the doors named above and nothing else.
   - The documents (point 9) name the crate: ARCHITECTURE.md, README.md, AGENTS.md, SECURITY.md,
     PERMISSION-CHECKS.md, PLUGINS.md, COMPONENTS.md, COMMANDS.md, CODING-GUIDELINES.md.
   - Measured: 230 unit tests and 50 of the suite in the runtime, 258 and 47 in the agents' crate.
+- **2026-10-15** — After the move, at the maintainer's request and on their acceptance of the
+  proposals: `actor/agent/mod.rs` is `actor/agent.rs`, and `component_impl` is `components`
+  (COMPONENTS.md). The crate is `caelumora-agents`, plural like `caelumora-skills` and its
+  `AgentsPlugin`. `actor`, `memory` and `notes` are crate-internal: no other crate uses them, and
+  an agent's actor is reached only through the kinds the plugin registers. The facet modules stay
+  public, `message` among them, since a plugin may serve its stages. The runtime no longer
+  depends on `tokio-stream`, which it did not use. Three proposals of the same review are issues of
+  their own: [371](371-tool-executor-construction.md), [372](372-runtime-test-actors.md) and
+  [373](373-agent-test-worlds.md).

@@ -208,7 +208,7 @@ impl World {
     /// storage may lie beside the workspaces' (issue 328) -, and the
     /// component kinds `register` adds besides the built-in ones. It runs
     /// no agent unless a plugin brings them: the world of the agents'
-    /// tests is `caelumora_agent::testing::world_configured` (issue 370).
+    /// tests is `caelumora_agents::testing::world_configured` (issue 370).
     pub async fn configured(plugins: &[&dyn Plugin], sections: impl FnOnce(&Path) -> BTreeMap<String, Value>, register: impl FnOnce(&mut ComponentRegistry)) -> Self {
         let roles = Roles::new([(*STAFF, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
@@ -457,7 +457,7 @@ pub async fn shown(watch: &mut ChannelWatch, wanted: &str) -> ActorEvent {
 /// The component kinds the tests build with, resolving references to
 /// preconfigured components in `component_store`: the runtime's own
 /// (`ComponentRegistry::built_in`). Those of an agent and a model are the
-/// agents' tests' (`caelumora_agent::testing::test_registry`, issue 370).
+/// agents' tests' (`caelumora_agents::testing::test_registry`, issue 370).
 pub fn test_registry(component_store: Arc<dyn ComponentStore>) -> ComponentRegistry {
     ComponentRegistry::built_in(component_store)
 }

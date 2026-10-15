@@ -1,7 +1,7 @@
 //! The agents' part of the security suite (issues 198, 370): what agents do
 //! in someone's name - their tool calls, commands, readings and the answers
 //! of agents that run elsewhere - tested in the world of the runtime's suite
-//! with the agents' plugin (`caelumora_agent::testing`). As the runtime's
+//! with the agents' plugin (`caelumora_agents::testing`). As the runtime's
 //! part: users with different permissions doing different things, through
 //! the whole runtime - the stores checking with
 //! the ownership policy, the `SessionManager`, running channels and the
@@ -39,9 +39,9 @@ use caelumora_model::user::UserId;
 use caelumora_model::work::TurnId;
 use caelumora_runtime::channel::ChannelError;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, PRECONFIGURED_REF_KIND};
-use caelumora_agent::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
-use caelumora_agent::testing::{asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_once, Once, ONCE_MODEL_KIND};
-use caelumora_agent::testing as agent_testing;
+use caelumora_agents::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage};
+use caelumora_agents::testing::{asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_once, Once, ONCE_MODEL_KIND};
+use caelumora_agents::testing as agent_testing;
 use caelumora_runtime::testing::{asked_for, attributes, checks, denied, not_found, quiet, shown, workspace, World};
 use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
 use caelumora_runtime::view::{ChannelView, ViewError, Viewer};
@@ -517,9 +517,9 @@ async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<caelumora_run
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
-    let world = agent_testing::world_with_kinds(|registry| registry.register(ComponentKind::new("once").provides::<dyn caelumora_agent::llm::LLMClient>(), move |_, _| {
+    let world = agent_testing::world_with_kinds(|registry| registry.register(ComponentKind::new("once").provides::<dyn caelumora_agents::llm::LLMClient>(), move |_, _| {
         let mut facets = ComponentFacets::empty();
-        facets.insert::<dyn caelumora_agent::llm::LLMClient>(Arc::<Once>::clone(&model));
+        facets.insert::<dyn caelumora_agents::llm::LLMClient>(Arc::<Once>::clone(&model));
         Ok(facets)
     })).await;
     let asking = Personality {
@@ -527,7 +527,7 @@ async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<caelumora_run
             ComponentDescriptor::new("model", "once"),
             ComponentDescriptor {
                 params: serde_json::json!({ "requires_approval": true }),
-                ..ComponentDescriptor::new("sleep", caelumora_agent::tool::sleep_tool::SLEEP_TOOL_KIND)
+                ..ComponentDescriptor::new("sleep", caelumora_agents::tool::sleep_tool::SLEEP_TOOL_KIND)
             },
         ] },
         ..world.personality("asking", None, &[]).await
@@ -549,7 +549,7 @@ struct Asking {
 }
 
 #[async_trait]
-impl caelumora_agent::tool::ToolProvider for Asking {
+impl caelumora_agents::tool::ToolProvider for Asking {
     fn description(&self) -> String {
         "asks before it runs".to_string()
     }
@@ -564,10 +564,10 @@ impl caelumora_agent::tool::ToolProvider for Asking {
             presentation: Default::default(),
         }]
     }
-    async fn execute(&self, _: &str, _: &serde_json::Value, answers: Option<&caelumora_model::question::Answers>, _: &mut caelumora_agent::turn::Turn) -> caelumora_agent::tool::ToolResult<caelumora_agent::tool::ToolOutput> {
+    async fn execute(&self, _: &str, _: &serde_json::Value, answers: Option<&caelumora_model::question::Answers>, _: &mut caelumora_agents::turn::Turn) -> caelumora_agents::tool::ToolResult<caelumora_agents::tool::ToolOutput> {
         Ok(serde_json::json!({ "answered": answers.is_some() }).into())
     }
-    fn questions(&self, _: &str, _: &serde_json::Value) -> caelumora_agent::tool::ToolResult<Option<caelumora_model::question::Questions>> {
+    fn questions(&self, _: &str, _: &serde_json::Value) -> caelumora_agents::tool::ToolResult<Option<caelumora_model::question::Questions>> {
         use caelumora_model::question::{Question, Questions};
         Ok(Some(Questions {
             questions: vec![Question { header: "Name".to_string(), question: "Who are you?".to_string(), choices: Vec::new(), multi_select: false }],
@@ -598,14 +598,14 @@ async fn with_a_call_asking_whom(ask: Addressee, sensitive: bool, asker: fn(&Wor
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
     let world = agent_testing::world_with_kinds(|registry| {
-        registry.register(ComponentKind::new("once").provides::<dyn caelumora_agent::llm::LLMClient>(), move |_, _| {
+        registry.register(ComponentKind::new("once").provides::<dyn caelumora_agents::llm::LLMClient>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn caelumora_agent::llm::LLMClient>(Arc::<Once>::clone(&model));
+            facets.insert::<dyn caelumora_agents::llm::LLMClient>(Arc::<Once>::clone(&model));
             Ok(facets)
         });
-        registry.register(ComponentKind::new("asking").provides::<dyn caelumora_agent::tool::ToolProvider>(), move |_, _| {
+        registry.register(ComponentKind::new("asking").provides::<dyn caelumora_agents::tool::ToolProvider>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn caelumora_agent::tool::ToolProvider>(Arc::new(Asking { ask: ask.clone(), sensitive }));
+            facets.insert::<dyn caelumora_agents::tool::ToolProvider>(Arc::new(Asking { ask: ask.clone(), sensitive }));
             Ok(facets)
         });
     }).await;
@@ -893,7 +893,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
 struct Outward;
 
 #[async_trait]
-impl caelumora_agent::tool::ToolProvider for Outward {
+impl caelumora_agents::tool::ToolProvider for Outward {
     fn description(&self) -> String {
         "sends out".to_string()
     }
@@ -911,7 +911,7 @@ impl caelumora_agent::tool::ToolProvider for Outward {
     fn destination(&self) -> Option<Classification> {
         Some(Classification::PUBLIC)
     }
-    async fn execute(&self, _: &str, _: &serde_json::Value, _: Option<&caelumora_model::question::Answers>, _: &mut caelumora_agent::turn::Turn) -> caelumora_agent::tool::ToolResult<caelumora_agent::tool::ToolOutput> {
+    async fn execute(&self, _: &str, _: &serde_json::Value, _: Option<&caelumora_model::question::Answers>, _: &mut caelumora_agents::turn::Turn) -> caelumora_agents::tool::ToolResult<caelumora_agents::tool::ToolOutput> {
         panic!("a withheld tool is never run")
     }
 }
@@ -933,14 +933,14 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
     let world = agent_testing::world_with_kinds(|registry| {
-        registry.register(ComponentKind::new("once").provides::<dyn caelumora_agent::llm::LLMClient>(), move |_, _| {
+        registry.register(ComponentKind::new("once").provides::<dyn caelumora_agents::llm::LLMClient>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn caelumora_agent::llm::LLMClient>(Arc::<Once>::clone(&model));
+            facets.insert::<dyn caelumora_agents::llm::LLMClient>(Arc::<Once>::clone(&model));
             Ok(facets)
         });
-        registry.register(ComponentKind::new("outward").provides::<dyn caelumora_agent::tool::ToolProvider>(), |_, _| {
+        registry.register(ComponentKind::new("outward").provides::<dyn caelumora_agents::tool::ToolProvider>(), |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn caelumora_agent::tool::ToolProvider>(Arc::new(Outward));
+            facets.insert::<dyn caelumora_agents::tool::ToolProvider>(Arc::new(Outward));
             Ok(facets)
         });
     }).await;
@@ -1015,7 +1015,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
     let relaying = with("relaying", vec![ComponentDescriptor::new("model", "relaying")]).await;
     let calling = with("calling", vec![
         ComponentDescriptor::new("model", "calling"),
-        ComponentDescriptor::new("echo", caelumora_agent::tool::echo_tool::ECHO_TOOL_KIND),
+        ComponentDescriptor::new("echo", caelumora_agents::tool::echo_tool::ECHO_TOOL_KIND),
     ]).await;
     let relay = world.agent("relay", world.bob, &relaying).await;
     let doer = world.agent("doer", world.alice, &calling).await;
@@ -1053,7 +1053,7 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
     let reading = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "reading"),
-            ComponentDescriptor::new("history", caelumora_agent::components::channel_history::CHANNEL_HISTORY_KIND),
+            ComponentDescriptor::new("history", caelumora_agents::components::channel_history::CHANNEL_HISTORY_KIND),
         ] },
         ..world.personality("reading", None, &[]).await
     };
@@ -1571,7 +1571,7 @@ async fn removing_an_agent_needs_owning_the_channel() {
 /// leaves `made`, a file of the workspace.
 async fn asked_for_a_call_on_the_workspace(function: &str, arguments: serde_json::Value, present: &[&str], made: &str, owner: fn(&World) -> UserId) -> Vec<String> {
     let world = agent_testing::world_with_kinds(|registry| register_once(registry, ONCE_MODEL_KIND, calling(function, arguments))).await;
-    let kind = caelumora_agent::tool::terminal_tool::TERMINAL_TOOL_KIND;
+    let kind = caelumora_agents::tool::terminal_tool::TERMINAL_TOOL_KIND;
     asked_for_a_call(&world, kind, present, |_, place| place.join(made).is_file(), owner(&world)).await
 }
 
@@ -1744,8 +1744,8 @@ impl caelumora_runtime::command::ProvidesCommands for Commanded {
 }
 
 #[async_trait]
-impl caelumora_agent::command::AgentCommandProvider for Commanded {
-    async fn execute(&self, name: &str, _args: &str, turn: &mut caelumora_agent::turn::Turn<'_>) -> caelumora_runtime::command::CommandResult<caelumora_model::command::CommandOutput> {
+impl caelumora_agents::command::AgentCommandProvider for Commanded {
+    async fn execute(&self, name: &str, _args: &str, turn: &mut caelumora_agents::turn::Turn<'_>) -> caelumora_runtime::command::CommandResult<caelumora_model::command::CommandOutput> {
         self.0.lock().unwrap().push(turn.security_context().clone());
         Ok(caelumora_model::command::CommandOutput::private(format!("{name}: done")))
     }
@@ -1759,9 +1759,9 @@ async fn with_a_commanded_agent() -> (World, Arc<SessionLoop>, Arc<caelumora_run
     let world = agent_testing::world_with_kinds(|registry| {
         register_once(registry, "silent", caelumora_model::message::Message::new(Classification::PUBLIC));
         let seen = Arc::clone(&seen);
-        registry.register(ComponentKind::new("commanded").provides::<dyn caelumora_agent::command::AgentCommandProvider>(), move |_, _| {
+        registry.register(ComponentKind::new("commanded").provides::<dyn caelumora_agents::command::AgentCommandProvider>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn caelumora_agent::command::AgentCommandProvider>(Arc::new(Commanded(Arc::clone(&seen))));
+            facets.insert::<dyn caelumora_agents::command::AgentCommandProvider>(Arc::new(Commanded(Arc::clone(&seen))));
             Ok(facets)
         });
     }).await;
@@ -1845,7 +1845,7 @@ async fn only_an_agents_owner_compacts_its_context() {
     let compacting = Personality {
         components: ComponentConfig { component_nodes: vec![
             ComponentDescriptor::new("model", "silent"),
-            ComponentDescriptor::new("compaction", caelumora_agent::compaction::command::COMPACTION_KIND),
+            ComponentDescriptor::new("compaction", caelumora_agents::compaction::command::COMPACTION_KIND),
         ] },
         ..world.personality("compacting", None, &[]).await
     };

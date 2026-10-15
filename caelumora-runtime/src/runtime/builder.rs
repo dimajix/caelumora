@@ -256,7 +256,7 @@ impl RuntimeBuilder {
 
     /// The kinds of agent the program runs (issue 370), none to begin
     /// with, to register a plugin's with - the agents'
-    /// (`caelumora_agent::plugin::AgentsPlugin`).
+    /// (`caelumora_agents::plugin::AgentsPlugin`).
     pub fn agent_kinds(&mut self) -> &mut AgentKinds {
         &mut self.agent_kinds
     }

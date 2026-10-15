@@ -79,7 +79,7 @@ pub struct RuntimeManager {
 impl RuntimeManager {
     /// The runtime of the core with `plugins`: as `RuntimeBuilder` builds it
     /// from the same parts, with the core's backends. Without the agents'
-    /// plugin (`caelumora_agent::plugin::AgentsPlugin`, issue 370) it runs no
+    /// plugin (`caelumora_agents::plugin::AgentsPlugin`, issue 370) it runs no
     /// agent; the runtime's
     /// own tests run scripted ones (`testing::ScriptedAgents`).
     ///

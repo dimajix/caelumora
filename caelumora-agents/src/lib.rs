@@ -11,16 +11,16 @@
 //! of participant, and joins it as a plugin (`plugin::AgentsPlugin`) - an
 //! essential one: without it, the program is a chat between users.
 
-pub mod actor;
+pub(crate) mod actor;
 pub mod command;
 pub mod compaction;
 pub mod components;
 pub mod error;
 pub mod external;
 pub mod llm;
-pub mod memory;
+pub(crate) mod memory;
 pub mod message;
-pub mod notes;
+pub(crate) mod notes;
 pub mod plugin;
 pub mod prompt;
 pub mod tool;

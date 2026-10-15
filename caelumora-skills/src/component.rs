@@ -42,14 +42,14 @@ use caelumora_model::question::Answers;
 use caelumora_model::scope::Scope;
 use caelumora_model::store::{EntityKind, StoreError, Stored};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
-use caelumora_agent::turn::Turn;
-use caelumora_agent::work::AgentWork;
-use caelumora_agent::command::AgentCommandProvider;
+use caelumora_agents::turn::Turn;
+use caelumora_agents::work::AgentWork;
+use caelumora_agents::command::AgentCommandProvider;
 use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
-use caelumora_agent::compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
+use caelumora_agents::compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use caelumora_agent::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
-use caelumora_agent::tool::{arguments, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_agents::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
+use caelumora_agents::tool::{arguments, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_runtime::view::SessionView;
 use chrono::Utc;
 use serde::Deserialize;
@@ -489,7 +489,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_agent::error::user_message;
+    use caelumora_agents::error::user_message;
 
     #[test]
     fn what_the_catalogue_meets_reaches_the_owner_as_the_core_judges_it() {

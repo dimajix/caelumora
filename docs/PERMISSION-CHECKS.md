@@ -9,7 +9,7 @@ code, and brought up to date by issues [312](../issues/312-order-and-reach-not-e
 are in [SECURITY.md](SECURITY.md#where-permission-checks-go) and
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md); what each action is expected to ask is asserted by the
 security suite (`caelumora-runtime/tests/security_suite.rs`, issue 198; an agent's actions in
-`caelumora-agent/tests/security_suite.rs`, issue 370). A new action, or a change
+`caelumora-agents/tests/security_suite.rs`, issue 370). A new action, or a change
 to what one asks, changes this map as it changes the suite.
 
 ## The concepts

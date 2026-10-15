@@ -20,7 +20,7 @@ turn is in [AGENT-TURN.md](AGENT-TURN.md).
     The binaries hand the built-in registry to the `RuntimeManager`, which applies
     `component_defaults`; a test registers kinds of its own in it first
     (`caelumora_runtime::testing::test_registry`; the agents' tests
-    `caelumora_agent::testing::test_registry`, with a model that is not to be asked as the
+    `caelumora_agents::testing::test_registry`, with a model that is not to be asked as the
     default).
 *   **`ComponentContainer`** builds the components of a `ComponentConfig` for an owner - an agent,
     an external agent, a channel, a session's commands - and hands out the facets that owner
@@ -81,7 +81,7 @@ facet trait lives next to the code that uses it, not among the implementations.
 |---|---|---|
 | `ToolProvider` | tools the model may call | `crate::tool` |
 | `ChannelCommandProvider` | user commands run on the channel | `crate::command` |
-| `AgentCommandProvider` | user commands an agent carries out itself, of agents and external agents alike | `caelumora_agent::command` |
+| `AgentCommandProvider` | user commands an agent carries out itself, of agents and external agents alike | `caelumora_agents::command` |
 | `PromptProvider` | prompt parts, of agents and external agents alike | `crate::prompt` |
 | `ContextProvider` | what the model is given | `crate::prompt` |
 | `LLMClient` | the language model the agent talks to | `crate::llm` |
@@ -237,8 +237,8 @@ turn runs, a component calls it with the turn's, never with the context it was b
 The built-in components live **one file per component kind**, named after the kind
 (`calculator_tool.rs`, `notes.rs`, ...), in the module of the facet that is their purpose. Those of
 `command/` and `moderator/` are the runtime's own, in `caelumora-runtime/src/`
-(`ComponentRegistry::built_in`); the others are an agent's, in `caelumora-agent/src/`, registered
-by the agents' plugin (`caelumora_agent::plugin::register_components`, issue 370). That module's
+(`ComponentRegistry::built_in`); the others are an agent's, in `caelumora-agents/src/`, registered
+by the agents' plugin (`caelumora_agents::plugin::register_components`, issue 370). That module's
 `mod.rs` holds the facet trait - with what consumes it, such as the `ToolExecutor` - and
 `register_all`; its other files are the components:
 
