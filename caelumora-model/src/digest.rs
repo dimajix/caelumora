@@ -8,8 +8,8 @@
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
+use crate::history::HistoryEntry;
 use crate::message::{Message, MessageId};
-use crate::message_history::HistoryEntry;
 use crate::transcript::TranscriptEntry;
 use crate::turn::GivenUpReason;
 use crate::work::TurnId;

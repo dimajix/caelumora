@@ -187,7 +187,7 @@ are `/skill` (22) and `/compact` (16) - so it is pinned by tests with a test pro
   finds none.
 - **The model.** `caelumora_model::command`: `Command { name, description, usage }`,
   `CommandVisibility { Private, Channel }`, `CommandOutput { text, visibility }`, `parse_input`.
-  `HistoryEntry` (`message_history.rs`) records what happened in a channel: messages said, changed,
+  `HistoryEntry` (`history`) records what happened in a channel: messages said, changed,
   fitted, and every turn's end (`TurnFinished`, `TurnGivenUp`, `PlanStepStarted`).
 - **The precedent.** `RetryRequested { target, author }` is sent by `UserActor::send_retry` with a
   `WakeupRequested` ahead of it; admitted by `ChannelLoop` (`may_retry_message`, `author` an agent

@@ -1,7 +1,6 @@
 //! The tests of `ChannelLoop` itself, and the fixtures of every test of a running channel.
 
 use super::*;
-use caelumora_model::value::name::Name;
 use crate::actor::Actor;
 use crate::component::{ComponentImpl, ComponentKind, ComponentRegistry};
 use crate::context::ContextError;
@@ -13,30 +12,31 @@ use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
 use caelumora_model::channel::{Channel, ChannelId, Participant};
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::message_history::HistoryEntry;
-use caelumora_model::work::TurnId;
 use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext, SecurityManager};
 use caelumora_model::session::SessionId;
 use caelumora_model::user::UserId;
+use caelumora_model::value::name::Name;
+use caelumora_model::work::TurnId;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 
-use caelumora_model::value::name::ScopedName;
-use crate::command::CommandExecutor;
 use crate::command::help_command::HelpCommandProvider;
 use crate::command::wakeup_command::WakeupCommandProvider;
+use crate::command::CommandExecutor;
+use crate::llm::LLMClient;
+use caelumora_model::agent::AgentId;
 use caelumora_model::component::{ComponentConfig, ComponentFailPolicy};
+use caelumora_model::confidentiality::ConfidentialityRules;
+use caelumora_model::config::AppConfig;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::DummySecurityManager;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::user::User;
-use caelumora_model::confidentiality::ConfidentialityRules;
-use caelumora_model::config::AppConfig;
-use caelumora_model::agent::AgentId;
-use crate::llm::LLMClient;
+use caelumora_model::value::name::ScopedName;
 
 mod agent;
 mod commands;
@@ -264,7 +264,7 @@ async fn with_an_agent_under(security: Arc<dyn SecurityManager>, model: Arc<dyn 
 pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::scope::Scope;
-    
+
     let store = Arc::new(MemoryStore::new());
     let personality = Personality {
         description: None,

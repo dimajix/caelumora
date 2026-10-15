@@ -16,7 +16,7 @@ Ziel ist Vereinfachung, in vier Richtungen, die sich teils widersprechen:
 Gelesen wurden vollständig: `actor_impl/agent.rs`, `agent_turn.rs`,
 `tool_calls.rs`, `agent_notes.rs`, `agent_memory.rs`, `agent_state.rs`,
 `tool.rs` (der `GuardedToolExecutor`), `context.rs` (Runtime) sowie im
-Modell `agent.rs`, `chain.rs`, `transcript.rs`, `message_history.rs`,
+Modell `agent.rs`, `chain.rs`, `transcript.rs`, `history`,
 `message.rs`, `note.rs`, `memory.rs`, `context.rs`; dazu die Komponenten,
 die den `Turn` benutzen (`notes`, `private_notes`, `agent_memory`,
 `create_plan_tool`, `stop_tool`, `state_context_provider`,

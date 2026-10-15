@@ -1,33 +1,33 @@
 use crate::auth::AuthenticatedUser;
+use crate::error::ApiError;
+use crate::error::{Json, Path};
+use crate::state::AppState;
+use axum::response::sse::Event;
+use axum::response::{IntoResponse, Response, Sse};
+use axum::{extract::{Query, State}, http::StatusCode};
+use caelumora_model::actor::ActorId;
+use caelumora_model::agent::AgentId;
+use caelumora_model::approval::{ApprovalId, ApprovalResponse, ApprovalRule};
+use caelumora_model::channel::moderation_components;
+use caelumora_model::command::{Command, CommandVisibility};
+use caelumora_model::confidentiality::{Classification, LabelCauses};
+use caelumora_model::context::{ContextItem, KnowledgeRef, KnowledgeSource};
+use caelumora_model::history::HistoryEntry;
+use caelumora_model::message::{Message, MessageId};
+use caelumora_model::question::QuestionId;
+use caelumora_model::security::SecurityContext;
+use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::snapshot::Detail;
 use caelumora_rest_api::channel::{AddParticipantRequest, AnswerQuestionsRequest, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest, MessageRequest, PublishedNotesResponse, SendApprovalRequest, TurnRequest};
 use caelumora_rest_api::context::{AgentComponentsResponse, AgentToolsResponse, KnowledgeRefResponse, MessageContextResponse, SeenItemResponse};
 use caelumora_rest_api::history::{HistoryItemResponse, HistoryMessageResponse};
 use caelumora_rest_api::session::DescriptionRequest;
 use caelumora_rest_api::stream::StreamOptions;
 use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
-use crate::state::AppState;
-use axum::response::sse::Event;
-use axum::response::{IntoResponse, Response, Sse};
-use crate::error::ApiError;
-use axum::{extract::{Query, State}, http::StatusCode};
-use crate::error::{Json, Path};
-use caelumora_model::snapshot::Detail;
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::AgentId;
-use caelumora_model::message_history::HistoryEntry;
 use caelumora_runtime::actor::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
 use caelumora_runtime::view::{AgentContextView, ChannelView, MemberView, Reached, SessionView, Viewer};
-use caelumora_model::approval::{ApprovalId, ApprovalResponse, ApprovalRule};
-use caelumora_model::question::QuestionId;
-use caelumora_model::channel::moderation_components;
-use caelumora_model::command::{Command, CommandVisibility};
-use caelumora_model::confidentiality::{Classification, LabelCauses};
-use caelumora_model::context::{ContextItem, KnowledgeRef, KnowledgeSource};
-use caelumora_model::message::{Message, MessageId};
-use caelumora_model::security::SecurityContext;
-use caelumora_model::session::{ChannelId, SessionId};
 use futures::Stream;
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -687,11 +687,11 @@ pub async fn answer_questions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_runtime::channel::ChannelError;
-    use caelumora_runtime::view::{AgentContextError, ViewError};
-    use caelumora_runtime::command::CommandError;
     use caelumora_model::message::MessageId;
     use caelumora_model::security::Refused;
+    use caelumora_runtime::channel::ChannelError;
+    use caelumora_runtime::command::CommandError;
+    use caelumora_runtime::view::{AgentContextError, ViewError};
 
     fn history(count: usize) -> Vec<HistoryEntry> {
         (0..count).map(|i| HistoryEntry::Said { message: Message {

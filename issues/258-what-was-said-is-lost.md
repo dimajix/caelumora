@@ -222,7 +222,7 @@ keep or to better; what is fixed is where a responsibility lies and what each st
   `caelumora.transcript-turn-finished.v1` over previous and turn, and
   `caelumora.transcript-turn-given-up.v1` over previous, turn and reason - neither over `at`; the
   stale comment on "the reason and the count" goes.
-- `message_history.rs`: the same two variants of `HistoryEntry`, with schemes
+- `history`: the same two variants of `HistoryEntry`, with schemes
   `caelumora.history-turn-finished.v1` and `caelumora.history-turn-given-up.v1`; `fold` and
   `said` pass them over; `end_turn`; `items()` beside `messages()`, both of the active path as
   it stands - `items()` the entries with the changes folded into their messages, so `Said`,

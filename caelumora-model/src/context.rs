@@ -16,22 +16,22 @@
 //!   cannot diverge.
 
 use crate::actor::ActorId;
-use crate::confidentiality::Classification;
-use crate::store::{EntityKind, Stored};
-use uuid::Uuid;
 use crate::agent::AgentChannelState;
 use crate::chain::Node;
+use crate::confidentiality::Classification;
 use crate::digest::Digest;
+use crate::history::{HistoryEntry, MessageHistory};
 use crate::kept::Kept;
 use crate::message::{estimated_tokens, Message, MessageId, MessageRole};
-use crate::message_history::{HistoryEntry, MessageHistory};
+use crate::store::{EntityKind, Stored};
+use crate::tool::ToolSet;
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use crate::turn::GivenUpReason;
-use crate::tool::ToolSet;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 /// A prompt part an agent's model was given besides the conversation - the
 /// system prompt, notes, ... (issue 47): the digest of its text, the role it
@@ -586,9 +586,9 @@ fn given_up_notice(turn: TurnId, reason: &GivenUpReason, at: DateTime<Utc>) -> M
 mod tests {
     use super::*;
     use crate::agent::AgentId;
-    use crate::turn::TurnState;
     use crate::digest::prompt;
     use crate::message::MessageId;
+    use crate::turn::TurnState;
 
     fn text(content: &str) -> Message {
         Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(crate::confidentiality::Classification::CHANNEL_DEFAULT) }

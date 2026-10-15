@@ -1,10 +1,10 @@
 //! What part of a channel's history a participant sees.
 
+use super::ChannelLoop;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::HistoryStart;
+use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::Message;
-use caelumora_model::message_history::HistoryEntry;
-use super::ChannelLoop;
 
 /// The part of a channel's history a participant sees (issue 46), as
 /// `ChannelLoop::visible_history` gives it.

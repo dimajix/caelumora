@@ -40,29 +40,29 @@ pub use group::GroupView;
 pub use session::{PrivateNotesElsewhere, SessionView};
 pub use workspace::WorkspaceView;
 
-use caelumora_model::store::query::{Filter, Query};
+use crate::channel::ChannelLoop;
+use crate::component::ComponentRegistry;
+use crate::controller::ControllerManager;
 use crate::runtime::{ActorRuntime, RuntimeManager, Services};
 use crate::session::{Found, SessionLoop, SessionManager};
 use crate::tool::ToolError;
+use crate::workspace::WorkspaceManager;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions, Place};
+use caelumora_model::group::{Group, GroupField, GroupId};
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
+use caelumora_model::scope::Scope;
 use caelumora_model::security::{AccessQuestions, AclEntry, Refused, SecurityAttributes, SecurityContext, SecurityManager, Subject};
+use caelumora_model::session::Session;
 use caelumora_model::session::{ChannelId, SessionField, SessionId};
 use caelumora_model::snapshot::{AccessSnapshot, DeletedSnapshot, PersonalitySnapshot};
-use caelumora_model::workspace::WorkspaceId;
-use caelumora_model::group::{Group, GroupField, GroupId};
-use caelumora_model::scope::Scope;
-use crate::workspace::WorkspaceManager;
-use crate::channel::ChannelLoop;
-use crate::controller::ControllerManager;
+use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
-use crate::component::ComponentRegistry;
-use std::sync::Arc;
-use caelumora_model::session::Session;
 use caelumora_model::workspace::Workspace;
+use caelumora_model::workspace::WorkspaceId;
+use std::sync::Arc;
 
 /// Who navigates: in whose name every edge asks its question (issue 131),
 /// and - for an agent - from where.
@@ -827,28 +827,28 @@ impl std::fmt::Debug for ViewsFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel::ChannelLoop;
+    use crate::group::keep_participants;
+    use crate::runtime::RuntimeManager;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError};
-    use crate::channel::ChannelLoop;
+    use crate::testing::test_registry;
     use caelumora_model::actor::Rejection;
-    use caelumora_model::security::DummySecurityManager;
-    use caelumora_model::snapshot::Detail;
-    use caelumora_model::value::name::{Name, ScopedName};
-    use caelumora_model::value::text::{Briefing, Summary};
-    use crate::runtime::RuntimeManager;
     use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
     use caelumora_model::channel::{Channel, Participant};
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules, Visibility};
+    use caelumora_model::config::AppConfig;
     use caelumora_model::scope::Scope;
     use caelumora_model::secret::SecretManager;
+    use caelumora_model::security::DummySecurityManager;
     use caelumora_model::security::{Grant, SecurityAttributes, Subject};
-    use crate::group::keep_participants;
     use caelumora_model::session::Session;
+    use caelumora_model::snapshot::Detail;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
-    use caelumora_model::config::AppConfig;
-    use crate::testing::test_registry;
+    use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::value::text::Introduction;
+    use caelumora_model::value::text::{Briefing, Summary};
 
     fn as_user(id: UserId) -> Viewer {
         Viewer::new(SecurityContext::new(ActorId::User(id), Default::default(), Default::default()))
@@ -935,7 +935,7 @@ mod tests {
         let texts = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
         assert_eq!(texts(seen.transcript().messages()), ["later"], "what it is given next, not what it was given or answered");
         assert_eq!(seen.private_notes(), (Vec::new(), None), "an external agent writes none");
-        assert!(!seen.history().iter().any(|item| matches!(item, caelumora_model::message_history::HistoryEntry::TurnGivenUp { .. })));
+        assert!(!seen.history().iter().any(|item| matches!(item, caelumora_model::history::HistoryEntry::TurnGivenUp { .. })));
         let context = seen.context_of(answer.id).expect("what the call was given (issue 205)");
         assert_eq!(context.items.len(), 1, "the messages of the one call, no prompt parts");
         assert!(matches!(&context.items[0], caelumora_model::context::ContextItem::Conversation { message } if message.id == question.id));
@@ -1256,9 +1256,9 @@ mod tests {
 
     #[tokio::test]
     async fn an_agent_whose_personality_is_gone_keeps_its_name_and_its_state() {
-        use caelumora_model::note::{NoteId, NoteOrigin};
         use caelumora_model::ledger::Change;
         use caelumora_model::message::MessageId;
+        use caelumora_model::note::{NoteId, NoteOrigin};
         use caelumora_model::store::StateStore;
 
         let (store, manager) = owned_runtime(Default::default());
@@ -1293,9 +1293,9 @@ mod tests {
     async fn the_approvals_a_channel_waits_for_are_read_from_its_agents_turns() {
         use caelumora_model::actor::ActorState;
         use caelumora_model::agent::AgentChannelState;
-use caelumora_model::turn::TurnState;
         use caelumora_model::store::StateStore;
         use caelumora_model::tool::{ToolCall, ToolCallState};
+        use caelumora_model::turn::TurnState;
 
         let (store, manager) = owned_runtime(Default::default());
         let alice = user("alice");
@@ -1387,7 +1387,7 @@ use caelumora_model::turn::TurnState;
     #[tokio::test]
     async fn an_agent_reads_another_channel_as_a_whole_by_their_classifications_or_what_was_released_to_it() {
         use caelumora_model::channel::ChannelState;
-        use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules, Confidentiality};
+        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality, ConfidentialityRules};
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId};
         use caelumora_model::note::{NoteId, NoteOrigin};
@@ -1422,7 +1422,7 @@ use caelumora_model::turn::TurnState;
         let said = |t: &str, classification: &Classification| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(classification.clone()) };
         let mut state = ChannelState::new(secret.id);
         state.history.extend(vec![said("the plan", &secret.classification), said("the date", &public.classification)]);
-        let ended = caelumora_model::message_history::HistoryEntry::TurnGivenUp { turn_id: caelumora_model::work::TurnId::new(), actor: ActorId::Agent(helper.id), reason: caelumora_model::turn::GivenUpReason::Stopped, at: chrono::Utc::now() };
+        let ended = caelumora_model::history::HistoryEntry::TurnGivenUp { turn_id: caelumora_model::work::TurnId::new(), actor: ActorId::Agent(helper.id), reason: caelumora_model::turn::GivenUpReason::Stopped, at: chrono::Utc::now() };
         state.history.end_turn(ended);
         store.put_channel_state(secret.id, &mut state).await.unwrap();
         let mut agent_state = caelumora_model::agent::AgentChannelState::default();
@@ -1615,7 +1615,7 @@ use caelumora_model::turn::TurnState;
     #[tokio::test]
     async fn a_channel_reads_another_by_their_classification_not_by_who_takes_part() {
         use caelumora_model::actor::ActorId;
-        use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules, Confidentiality};
+        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality, ConfidentialityRules};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let (_, manager) = owned_runtime(ConfidentialityRules::new(compartments));
@@ -1697,8 +1697,7 @@ use caelumora_model::turn::TurnState;
     async fn a_released_message_is_read_where_its_channel_is_not() {
         use crate::view::ViewError;
         use caelumora_model::actor::ActorId;
-        use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules, Confidentiality};
-        
+        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality, ConfidentialityRules};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
         let (_, manager) = owned_runtime(ConfidentialityRules::new(compartments));
@@ -1762,7 +1761,6 @@ use caelumora_model::turn::TurnState;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         use caelumora_model::scope::Scope;
         use caelumora_model::snapshot::Detail;
-        
 
         let store = Arc::new(MemoryStore::new());
         let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));

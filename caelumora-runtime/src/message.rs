@@ -72,7 +72,7 @@ where
 pub(crate) mod testing {
     use super::*;
     use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::message_history::HistoryEntry;
+    use caelumora_model::history::HistoryEntry;
     use caelumora_model::turn::GivenUpReason;
     use caelumora_model::work::TurnId;
 
@@ -112,8 +112,8 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::testing::Without;
+    use super::*;
     use caelumora_model::confidentiality::Classification;
     use std::sync::Arc;
 

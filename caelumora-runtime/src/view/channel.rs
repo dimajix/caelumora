@@ -1,32 +1,32 @@
 //! A channel as its viewer reached it, and its members.
 
 use super::member::{member_state, AgentMember, MemberState};
+use super::ChannelReading;
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
 use crate::channel::{visible_part, ChannelLoop, VisibleHistory};
-use caelumora_model::message_history::HistoryEntry;
 use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
 use caelumora_model::actor::{ActorId, ActorState};
+use caelumora_model::agent::{AgentChannelState, PersonalityKind};
 use caelumora_model::approval::ApprovalRequest;
+use caelumora_model::channel::{Channel, ChannelState, Participant};
 use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
-use caelumora_model::channel::{Channel, ChannelState, Participant};
-use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::value::language::Language;
+use caelumora_model::confidentiality::Place;
 use caelumora_model::digest::Digest;
-use caelumora_model::agent::{AgentChannelState, PersonalityKind};
-use caelumora_model::value::name::Name;
+use caelumora_model::history::HistoryEntry;
 use caelumora_model::note::Note;
 use caelumora_model::removal::Removal;
-use caelumora_model::work::TurnId;
-use caelumora_model::confidentiality::Place;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement};
-use super::ChannelReading;
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{ChannelSnapshot, Detail, MemberSnapshot, PublishedNotes};
 use caelumora_model::store::{StoreError, StoreResultExt};
 use caelumora_model::tool::ToolSet;
+use caelumora_model::value::language::Language;
+use caelumora_model::value::name::Name;
+use caelumora_model::value::text::{Briefing, Summary};
+use caelumora_model::work::TurnId;
 use std::sync::Arc;
 use tracing::warn;
 

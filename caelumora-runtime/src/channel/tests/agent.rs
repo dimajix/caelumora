@@ -517,13 +517,13 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
     ], "the plan's call and its result, the steps, the answer");
     // Each step begins before what it says (issue 263).
     let items: Vec<String> = channel.state.lock().await.history.items().into_iter().filter_map(|item| match item {
-        caelumora_model::message_history::HistoryEntry::Said { message, .. } if message.sender_id == ActorId::Agent(agent) && message.internal => message.content,
-        caelumora_model::message_history::HistoryEntry::PlanStepStarted { actor, step_index, total_steps, description, .. } if actor == ActorId::Agent(agent) => Some(format!("step {}/{total_steps}: {description}", step_index + 1)),
+        caelumora_model::history::HistoryEntry::Said { message, .. } if message.sender_id == ActorId::Agent(agent) && message.internal => message.content,
+        caelumora_model::history::HistoryEntry::PlanStepStarted { actor, step_index, total_steps, description, .. } if actor == ActorId::Agent(agent) => Some(format!("step {}/{total_steps}: {description}", step_index + 1)),
         _ => None,
     }).collect();
     assert_eq!(items, ["step 1/2: first", "first done", "step 2/2: second", "second done"]);
     let ended = channel.state.lock().await.history.last().map(|n| n.entry.clone());
-    assert!(matches!(ended, Some(caelumora_model::message_history::HistoryEntry::TurnFinished { turn_id, .. }) if Some(turn_id) == history.last().and_then(|m| m.turn_id)), "{ended:?}");
+    assert!(matches!(ended, Some(caelumora_model::history::HistoryEntry::TurnFinished { turn_id, .. }) if Some(turn_id) == history.last().and_then(|m| m.turn_id)), "{ended:?}");
     running.abort();
 }
 
@@ -731,8 +731,8 @@ impl crate::llm::LLMClient for FailsAfter {
 async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_told() {
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::message::MessageRole;
-    use caelumora_model::turn::GivenUpReason;
     use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_model::turn::GivenUpReason;
 
     // The model calls a tool that needs no approval, and fails when
     // asked about its result.
@@ -785,8 +785,8 @@ async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_
 async fn an_agent_removed_during_a_turn_gives_it_up() {
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::message::MessageRole;
-    use caelumora_model::turn::GivenUpReason;
     use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_model::turn::GivenUpReason;
 
     // The model calls a tool, and never answers again.
     let calculate = Message {
@@ -1220,7 +1220,7 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
     let ended = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let last = channel.state.lock().await.history.last().map(|n| n.entry.clone());
-            if let Some(caelumora_model::message_history::HistoryEntry::TurnGivenUp { actor, reason, .. }) = last { break (actor, reason) }
+            if let Some(caelumora_model::history::HistoryEntry::TurnGivenUp { actor, reason, .. }) = last { break (actor, reason) }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the channel records the turn's end");
@@ -1266,7 +1266,7 @@ async fn a_call_with_invalid_arguments_is_answered_without_asking_anyone() {
     use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::message::MessageRole;
-    use caelumora_model::tool::{ToolCall, ToolVisibility, ToolResultStatus};
+    use caelumora_model::tool::{ToolCall, ToolResultStatus, ToolVisibility};
 
     // A rule asks for every `create_plan` (issue 13); this call's
     // arguments are no plan.
@@ -1512,7 +1512,7 @@ async fn activities_until_the_turn_ends(events: &mut broadcast::Receiver<Envelop
 
 #[tokio::test]
 async fn an_agent_whose_context_fills_up_compacts_it_on_its_own_before_its_next_call() {
-    use caelumora_model::message_history::HistoryEntry;
+    use caelumora_model::history::HistoryEntry;
 
     let Stuck { channel, agent, mut events, running, .. } =
         with_a_full_context(vec![measured(800, model_says("They greeted each other.")), measured(300, model_says("Done."))]).await;

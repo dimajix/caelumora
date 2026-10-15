@@ -2,8 +2,8 @@
 
 use caelumora_model::actor::ActorId;
 use caelumora_model::digest::Digest;
+use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::Message;
-use caelumora_model::message_history::HistoryEntry;
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::work::TurnId;
 use chrono::{DateTime, Utc};
@@ -66,9 +66,9 @@ pub struct HistoryMessageResponse {
 mod tests {
     use super::*;
     use caelumora_model::confidentiality::Classification;
-    
+
     use caelumora_model::user::UserId;
-    
+
 
     #[test]
     fn a_history_is_given_as_its_messages_and_how_turns_ended() {

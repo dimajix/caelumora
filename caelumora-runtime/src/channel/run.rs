@@ -1,6 +1,7 @@
 //! The run loop of a channel: starting and stopping its actors, admitting, routing, recording and
 //! appending to the history what they send.
 
+use super::{stopped, ActorChange, ChannelActor, ChannelLoop};
 use crate::actor::Answering;
 use crate::logging::envelope_span;
 use crate::transport::{EventSender, TransportError};
@@ -8,18 +9,17 @@ use crate::transport::{FilteringEventSender, InMemoryEventReceiver, InMemoryEven
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, Rejection, RetryTarget};
 use caelumora_model::confidentiality::ConfidentialityQuestions;
+use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::Message;
-use caelumora_model::message_history::HistoryEntry;
 use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext};
-use tracing::{debug, info, trace, warn, Instrument};
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
 use tokio::task::{AbortHandle, JoinSet};
 use tokio_util::task::TaskTracker;
-use super::{ActorChange, ChannelActor, ChannelLoop, stopped};
+use tracing::{debug, info, trace, warn, Instrument};
 
 /// The task of a running actor and its inbox. Owned by `run`, which keeps
 /// them apart from `ChannelLoop::actors`: that table says who takes part and
@@ -562,19 +562,19 @@ impl ChannelLoop {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::value::name::Name;
     use crate::actor::Actor;
     use crate::component::ComponentImpl;
     use crate::transport::EventSender;
     use crate::transport::InMemoryEventSender;
     use anyhow::Result;
     use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RetryTarget};
-    use caelumora_model::confidentiality::Classification;
     use caelumora_model::agent::AgentId;
+    use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageId, MessageRole};
-    use caelumora_model::work::TurnId;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::user::UserId;
+    use caelumora_model::value::name::Name;
+    use caelumora_model::work::TurnId;
     use std::collections::HashMap;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
@@ -582,10 +582,10 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio::task::JoinSet;
     use tokio_util::task::TaskTracker;
-    
+
+    use crate::channel::tests::*;
     use crate::channel::{ActorChange, ChannelError, Member};
     use caelumora_model::security::DummySecurityManager;
-    use crate::channel::tests::*;
 
     #[tokio::test]
     async fn a_users_own_message_is_shown_with_its_mentions_resolved() {

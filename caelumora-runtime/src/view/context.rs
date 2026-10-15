@@ -11,9 +11,9 @@ use caelumora_model::agent::AgentChannelState;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextResolver, ResolvedContext};
 use caelumora_model::digest::Digest;
+use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::MessageId;
 use caelumora_model::note::Note;
-use caelumora_model::message_history::HistoryEntry;
 use caelumora_model::transcript::Transcript;
 
 /// The state of an agent in a channel, reached by whom may read what the
@@ -111,10 +111,10 @@ pub enum AgentContextError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::message::Message;
     use caelumora_model::agent::AgentId;
     use caelumora_model::context::{ContextItem, ContextRef, PromptRef};
     use caelumora_model::digest::prompt;
+    use caelumora_model::message::Message;
     use caelumora_model::message::MessageRole;
 
     #[test]

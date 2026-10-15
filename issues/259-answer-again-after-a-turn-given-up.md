@@ -79,7 +79,7 @@ lives.
 ### C. The model (`caelumora-model`)
 
 - `turn.rs`: `GivenUpReason::may_be_answered_again(&self) -> bool` - `Failed` and `Lowered`.
-- `message_history.rs`: `turn_given_up_last(&self, author: ActorId) -> Option<(TurnId,
+- `history`: `turn_given_up_last(&self, author: ActorId) -> Option<(TurnId,
   GivenUpReason)>` - the last item of the active path, if it is a turn of `author` given up.
 - `agent.rs`: `answers_again_after(&self, turn: TurnId) -> Result<(), RetryRefused>`: the
   transcript's active path ends in `TurnGivenUp` of `turn` with a reason that may be answered

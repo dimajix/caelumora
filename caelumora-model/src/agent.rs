@@ -1,30 +1,30 @@
 use crate::actor::{ActorId, ActorState, EventContext};
+use crate::approval::ApprovalRequest;
+use crate::chain::Stored;
 use crate::component::ComponentConfig;
+use crate::confidentiality::Classification;
+use crate::context::{ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptRef};
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
-use crate::confidentiality::Classification;
-use crate::approval::ApprovalRequest;
-use crate::context::{ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptRef};
-use crate::chain::Stored;
+use crate::history::{HistoryEntry, MessageHistory};
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
-use crate::message::{Message, MessageId, MessageRole, TokenUsage};
 use crate::memory::{Memories, MemoryChain};
-use crate::message_history::{HistoryEntry, MessageHistory};
-use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
-use crate::turn::GivenUpReason;
-use crate::turn::{CommandRequest, TurnState};
-use crate::work::{TurnId, Work};
+use crate::message::{Message, MessageId, MessageRole, TokenUsage};
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
 use crate::removal::{Deletable, Removal};
 use crate::role::RoleId;
 use crate::scope::{ScopeField, Scoped};
-use crate::value::name::{Name, ScopedName};
-use crate::value::ValueError;
-use crate::value::text::{Description, Introduction};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::store::{self, EntityKind, Journaled, NoEntity};
 use crate::tool::{RecordedToolSets, Tool, ToolCallResult, ToolCallStatus, ToolResultStatus, ToolSet};
+use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
+use crate::turn::GivenUpReason;
+use crate::turn::{CommandRequest, TurnState};
+use crate::value::name::{Name, ScopedName};
+use crate::value::text::{Description, Introduction};
+use crate::value::ValueError;
+use crate::work::{TurnId, Work};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::warn;
@@ -908,10 +908,10 @@ pub(crate) mod tests {
     use crate::confidentiality::Confidentiality;
     use crate::context::{ContextResolver, KnowledgeSource};
     use crate::digest;
-    use crate::workspace::{Workspace, WorkspaceId};
-    use crate::tool::{ToolParameters, ToolVisibility};
     use crate::store::Stored;
+    use crate::tool::{ToolParameters, ToolVisibility};
     use crate::user::UserId;
+    use crate::workspace::{Workspace, WorkspaceId};
 
     #[test]
     fn a_resumed_turn_answers_unfinished_tool_calls_as_not_executed_instead_of_running_them() {
