@@ -86,6 +86,7 @@ published before anyone else can take it.
 | [293](293-store-queries.md) | done | A store list takes no condition and no limit: every narrowing is done by its caller after everything was read, and no database could take it over. |
 | [295](295-access-as-a-query-condition.md) | rejected | A list asks the policy entity by entity, so a database store cannot push access into its query and a full page may be followed by an empty one. |
 | [318](318-restore-returns-nothing.md) | done | A store's restore returns nothing, so every caller reads or rebuilds what it restored - under a permission the restore did not need - and the managers answer a restore differently. |
+| [376](376-histories-held-whole-in-memory.md) | open | A channel's history and an agent's history and transcript are held in memory and loaded whole, though they grow with the channel and almost only their recent end is used. |
 
 ## Sessions and channels
 
