@@ -61,7 +61,7 @@ constructors. Doing them in the wrong order means moving code twice.
    [368](368-component-module.md) and [367](367-prompt-module.md) - files moved, nothing renamed;
    before the renames, which then find the files where they belong.
 10. [365](365-security-manager-is-an-access-policy.md) - a rename across every crate, in a commit
-    of its own.
+    of its own; then [369](369-security-module.md), the file it renamed in moved into parts.
 11. [354](354-names-follow-several-schemes.md) - last, in a commit of its own: the renames touch the
     REST server and the tests, and every refactoring before changes which names there are.
 
@@ -93,3 +93,5 @@ order along the way.
   added at the maintainer's request, as steps 9 and 10, before 354; 364 taken up first.
 - **2026-10-15** — [367](367-prompt-module.md) and [368](368-component-module.md) added to step 9
   at the maintainer's request, with the other moves of files; 368 taken up after 364.
+- **2026-10-15** — [369](369-security-module.md) added to step 10 at the maintainer's request,
+  after 365, whose rename it builds on.

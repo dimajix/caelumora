@@ -1,6 +1,6 @@
 # 369 — `security.rs` holds the actions, the attributes, the context, the access policy and its implementations in one file
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -64,3 +64,15 @@ parts fit together.
   ([366](366-runtime-rs-holds-four-types.md), [367](367-prompt-module.md),
   [368](368-component-module.md)), after the rename of
   [365](365-security-manager-is-an-access-policy.md).
+- **2026-10-15** — Done, as considered; no behaviour changes.
+  - `security.rs` went to `security/ownership.rs` (`git mv`), which keeps the largest part:
+    `OwnershipPolicy` and the 13 tests of how it decides, with the memberships they set
+    (`Known`) and the plugin's kind they ask about.
+  - `action.rs`, `attributes.rs`, `context.rs` and `access.rs` hold what was considered;
+    `access.rs` has the tests of the questions and of `Enforcement::require`, `attributes.rs`
+    those of the access list and of `Subject`, `action.rs` that of `ActionType::describe`.
+  - What the tests share - `user`, `context`, `allows`, `shared` - is `security/testing.rs`,
+    `#[cfg(test)]`.
+  - `mod.rs` holds a description of the module, which it had none of, and the re-exports; every
+    path into it stays as it was. Nothing needed to be made visible beyond what it was.
+  - PERMISSION-CHECKS.md names `security/ownership.rs` for `OwnershipPolicy::check`.

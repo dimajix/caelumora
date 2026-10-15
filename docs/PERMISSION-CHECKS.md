@@ -24,7 +24,7 @@ Who may do what is decided by four concepts. Since issue 304 each has its own fu
 
 ## Which concept decides each action
 
-From `OwnershipPolicy::check` (`caelumora-model/src/security.rs`). The system principal
+From `OwnershipPolicy::check` (`caelumora-model/src/security/ownership.rs`). The system principal
 is allowed everything before any variant is looked at. "Principal" is the context's principal - a
 user themselves, an agent its owner -, "caller" the one acting - the agent itself. What is done with
 a stored entity is decided by the verb, never by the kind (issue

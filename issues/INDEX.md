@@ -443,7 +443,7 @@ published before anyone else can take it.
 | [366](366-runtime-rs-holds-four-types.md) | done | `runtime.rs` holds the runtime, how it is built, and what a channel and an actor are given of it, interleaved in one file of 847 lines. |
 | [367](367-prompt-module.md) | done | The prompt facets live in a flat `context.rs` and their components among the components of no facet in `component_impl/`, unlike every other facet with a module of its own. |
 | [368](368-component-module.md) | done | `component.rs` holds the registry, the container, the context of a factory and 550 lines of their tests in one file of 1541 lines. |
-| [369](369-security-module.md) | open | `security.rs` holds the actions, the attributes, the context, the access policy and its implementations, without a description, in one file of 1331 lines. |
+| [369](369-security-module.md) | done | `security.rs` holds the actions, the attributes, the context, the access policy and its implementations, without a description, in one file of 1331 lines. |
 
 ## Integrations
 
