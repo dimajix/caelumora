@@ -449,6 +449,7 @@ published before anyone else can take it.
 | [372](372-runtime-test-actors.md) | done | The runtime's tests implement `Actor` four times beside the scripted agent, each writing the trait out again for a test or two. |
 | [373](373-agent-test-worlds.md) | done | The agents' test world mirrors the four constructors of the runtime's `World`, each a shorthand for the next, so a new way to set up a world is added in eight places. |
 | [374](374-channel-controller-beside-the-actor-runtime.md) | open | Every actor is given its channel's controller as a parameter beside its `ActorRuntime`, its interface to that channel, so the two can disagree and every actor's constructor carries both. |
+| [375](375-test-runtimes-built-by-hand.md) | open | About twenty tests in four crates build a runtime by hand, writing out every service it is made of, so each change to what a runtime is built from changes them all. |
 
 ## Integrations
 
