@@ -17,14 +17,14 @@ Who may do what is decided by four concepts. Since issue 304 each has its own fu
 
 | No. | Concept | Decided by | Asked as |
 |---|---|---|---|
-| 1 | **Ownership and access lists**: who may read, use, change or delete a stored thing | the `SecurityManager`, from `SecurityAttributes` (`owner_id`, `acl` naming actors, roles and groups) and the context's principal; `OwnershipSecurityManager::granted` | `Get*`, `Create*`, `Update*`, `Delete*`, `Write*`, `UseSkill`, `ReadDeleted`, `Restore`, and the acts in a conversation (`CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion`) |
+| 1 | **Ownership and access lists**: who may read, use, change or delete a stored thing | the `AccessPolicy`, from `SecurityAttributes` (`owner_id`, `acl` naming actors, roles and groups) and the context's principal; `OwnershipPolicy::granted` | `Get*`, `Create*`, `Update*`, `Delete*`, `Write*`, `UseSkill`, `ReadDeleted`, `Restore`, and the acts in a conversation (`CancelChannel`, `WakeChannel`, `RetryMessage`, `AnswerQuestion`) |
 | 2 | **Flow and clearance**: whether information may go where the act takes it, and who is cleared for it | the `ConfidentialityPolicy` (`ConfidentialityRules`), from the roles in the context, the classifications and the places | `may_publish`, `may_copy_information`, `cleared_for`, and their `require_*` forms; `require_classifiable` is validation |
 | 3 | **Rules of particular actions**: what is neither ownership nor flow | a rule written into the policy for the variant: authorship, who answers for an agent, the system alone; or nothing, the action being a hook | `ModifyMessage`, `RevokeMessage`, `Reclassify`, `ApproveToolCall`, `ShowAgentCommand`, `ExecuteAgentCommand`, `ShowCommand`, `ExecuteCommand`, `Purge`; `CallTool`, `ReadSecret` |
 | 4 | **Reach**: whether a thing can be reached from where one stands | reading it (1) followed by the flow (2), one question (`confidentiality::may_reach`, issue 322): the store's for what is classified - `Get*` or `ReadDeleted`, then `cleared_for` (`Stored::classification`); for a channel read from a place `view::channel_reading` over a document read in S - `GetChannel`, then for a user the clearance, for an agent the copy into its place; for an artifact the store's, the views cutting the versions by their own lists (issue 316) | no action of its own; answered "not found" |
 
 ## Which concept decides each action
 
-From `OwnershipSecurityManager::check` (`caelumora-model/src/security.rs`). The system principal
+From `OwnershipPolicy::check` (`caelumora-model/src/security.rs`). The system principal
 is allowed everything before any variant is looked at. "Principal" is the context's principal - a
 user themselves, an agent its owner -, "caller" the one acting - the agent itself. What is done with
 a stored entity is decided by the verb, never by the kind (issue
@@ -51,7 +51,7 @@ Most variants are decided by the principal; `ModifyMessage`, `RevokeMessage` and
 message, note or memory entry by the caller - an agent is judged as itself for what it said.
 `Enforcement::require` logs a refusal with the principal either way, and hands the operation's
 error what was refused (`Refused`, see [SECURITY.md](SECURITY.md)). The flow is not the
-`SecurityManager`'s at all (issue 304, reversing 138).
+`AccessPolicy`'s at all (issue 304, reversing 138).
 
 ## The layers
 

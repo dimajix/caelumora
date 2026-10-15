@@ -254,12 +254,12 @@ mod tests {
     use super::super::wire::WireTaskState;
     use bytes::Bytes;
     use futures::stream::iter;
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
     use serde_json::{json, Value};
 
     fn client(url: &str) -> A2aClient {
         let endpoint: RemoteEndpoint = serde_json::from_value(json!({ "url": url })).unwrap();
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
         A2aClient::new("hermes".to_string(), endpoint, Duration::from_secs(1), secrets).unwrap()
     }
 

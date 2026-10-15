@@ -166,7 +166,7 @@ mod tests {
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::agent::Personality;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{ActionType, DummySecurityManager, SecurityAttributes, SecurityManager, Verb};
+    use caelumora_model::security::{ActionType, AllowAllPolicy, SecurityAttributes, AccessPolicy, Verb};
     use caelumora_model::session::Session;
     use caelumora_model::store::Stored;
     use crate::event::EventBus;
@@ -182,7 +182,7 @@ mod tests {
     struct NoAgentLookup;
 
     #[async_trait::async_trait]
-    impl SecurityManager for NoAgentLookup {
+    impl AccessPolicy for NoAgentLookup {
         async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
             !matches!(action, ActionType::List(Agent::KIND))
         }
@@ -232,9 +232,9 @@ mod tests {
     /// in `store` or makes them there: its users and approvers, then - once
     /// the session is stored, owned by `owner` - its agents (`agent`).
     async fn resolve(store: &Arc<MemoryStore>, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> anyhow::Result<Vec<(String, Participant)>> {
-        let security: Arc<dyn SecurityManager> = Arc::new(DummySecurityManager::new());
-        let events = Arc::new(EventBus::new(Arc::clone(&security), Arc::new(ConfidentialityRules::default())));
-        let agents = AgentManager::new(&store.entity_stores(), Arc::<MemoryStore>::clone(store), events, security);
+        let access_policy: Arc<dyn AccessPolicy> = Arc::new(AllowAllPolicy::new());
+        let events = Arc::new(EventBus::new(Arc::clone(&access_policy), Arc::new(ConfidentialityRules::default())));
+        let agents = AgentManager::new(&store.entity_stores(), Arc::<MemoryStore>::clone(store), events, access_policy);
         let (mut participants, named) = resolve_participants(&store.entity_stores(), context, template, session_id, owner).await?;
         let (system, sessions) = (SecurityContext::system(), store.entity_stores().sessions);
         if sessions.get(&system, session_id).await.is_err() {
@@ -318,7 +318,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl SecurityManager for MadeMeanwhile {
+    impl AccessPolicy for MadeMeanwhile {
         async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
             use std::sync::atomic::Ordering;
             if matches!(action, ActionType::Entity { kind: Agent::KIND, verb: Verb::Create, .. }) && !self.made.swap(true, Ordering::SeqCst) {
@@ -348,9 +348,9 @@ mod tests {
 
     #[tokio::test]
     async fn an_agent_the_caller_may_not_read_keeps_its_name() {
-        use caelumora_model::security::OwnershipSecurityManager;
+        use caelumora_model::security::OwnershipPolicy;
         let (owner, other) = (UserId::new(), UserId::new());
-        let (store, personality) = store_with_personality(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()))).await;
+        let (store, personality) = store_with_personality(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))).await;
         let system = SecurityContext::system();
         let plain = store.entity_stores().personalities.get(&system, personality).await.unwrap();
         store.entity_stores().agents.create(&system, &Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), plain.id, ActorId::User(other))).await.unwrap();

@@ -84,7 +84,7 @@ impl ArtifactViews for Views {
 
     async fn deleted_artifacts(&self) -> ArtifactResult<Vec<DeletedSnapshot<ArtifactId>>> {
         let artifacts = self.artifact_manager()?.store().list_deleted(self.context(), &Query::all()).await?.items;
-        let policy = self.security();
+        let access_policy = self.access_policy();
         let mut deleted = Vec::with_capacity(artifacts.len());
         for artifact in artifacts {
             let Some(removal) = artifact.deleted.clone() else { continue };
@@ -93,8 +93,8 @@ impl ArtifactViews for Views {
                 id: artifact.id,
                 name: artifact.name.to_string(),
                 deleted: removal,
-                can_restore: policy.may_restore(self.context(), Artifact::KIND, attributes).await,
-                can_purge: policy.may_purge(self.context(), Artifact::KIND, attributes).await,
+                can_restore: access_policy.may_restore(self.context(), Artifact::KIND, attributes).await,
+                can_purge: access_policy.may_purge(self.context(), Artifact::KIND, attributes).await,
             });
         }
         Ok(deleted)
@@ -158,7 +158,7 @@ async fn readable_by(views: &Views, mut artifact: Artifact) -> ArtifactView {
     let context = views.context();
     let mut readable = Vec::with_capacity(artifact.versions.len());
     for version in std::mem::take(&mut artifact.versions) {
-        if views.security().may_read_artifact(context, &artifact.version_attributes(&version)).await {
+        if views.access_policy().may_read_artifact(context, &artifact.version_attributes(&version)).await {
             readable.push(version);
         }
     }
@@ -216,9 +216,9 @@ impl ArtifactView {
 
     async fn snapshot_of(&self, publications: BTreeMap<u32, PublicationSnapshot>) -> ArtifactSnapshot {
         let context = self.views.context();
-        let security = self.views.security();
-        let can_change = security.may_change_artifact(context, &self.artifact.security_attributes).await;
-        let can_write = security.may_write_artifact(context, &self.artifact.security_attributes).await;
+        let access_policy = self.views.access_policy();
+        let can_change = access_policy.may_change_artifact(context, &self.artifact.security_attributes).await;
+        let can_write = access_policy.may_write_artifact(context, &self.artifact.security_attributes).await;
         let (mut access, mut version_access) = (Vec::new(), BTreeMap::new());
         if can_change {
             access = self.views.access_snapshots(&self.artifact.security_attributes.acl).await;

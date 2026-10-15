@@ -1,7 +1,7 @@
 pub mod env;
 pub mod file;
 
-use crate::security::{ActionType, Enforcement, Refused, SecurityContext, SecurityManager};
+use crate::security::{ActionType, Enforcement, Refused, SecurityContext, AccessPolicy};
 use async_trait::async_trait;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -32,19 +32,19 @@ pub trait SecretProvider: Debug + Sync + Send {
 #[derive(Debug)]
 pub struct SecretManager {
     providers: Vec<Arc<dyn SecretProvider>>,
-    security_manager: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
 }
 
 impl SecretManager {
-    pub fn new(providers: Vec<Arc<dyn SecretProvider>>, security_manager: Arc<dyn SecurityManager>) -> Self {
+    pub fn new(providers: Vec<Arc<dyn SecretProvider>>, access_policy: Arc<dyn AccessPolicy>) -> Self {
         Self {
             providers,
-            security_manager,
+            access_policy,
         }
     }
 
     pub async fn resolve(&self, context: &SecurityContext, key: &str) -> SecretResult<String> {
-        self.security_manager.require(context, ActionType::ReadSecret(key), |refused| SecretError::PermissionDenied { key: key.to_string(), refused }).await?;
+        self.access_policy.require(context, ActionType::ReadSecret(key), |refused| SecretError::PermissionDenied { key: key.to_string(), refused }).await?;
 
         for provider in &self.providers {
             match provider.get_secret(key).await {
@@ -88,10 +88,10 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct AlwaysDenySecurityManager;
+    struct DenyAllPolicy;
 
     #[async_trait]
-    impl SecurityManager for AlwaysDenySecurityManager {
+    impl AccessPolicy for DenyAllPolicy {
         async fn check(&self, _context: &SecurityContext, _action: ActionType<'_>) -> bool {
             false
         }
@@ -113,7 +113,7 @@ mod tests {
                 Arc::new(MapSecretProvider { entries: first }),
                 Arc::new(MapSecretProvider { entries: second }),
             ],
-            Arc::new(crate::security::DummySecurityManager::new()),
+            Arc::new(crate::security::AllowAllPolicy::new()),
         );
 
         let value = manager.resolve(&dummy_context(), "KEY").await.unwrap();
@@ -130,7 +130,7 @@ mod tests {
                 Arc::new(FailingSecretProvider),
                 Arc::new(MapSecretProvider { entries }),
             ],
-            Arc::new(crate::security::DummySecurityManager::new()),
+            Arc::new(crate::security::AllowAllPolicy::new()),
         );
 
         let value = manager.resolve(&dummy_context(), "KEY").await.unwrap();
@@ -141,7 +141,7 @@ mod tests {
     async fn not_found_when_no_provider_has_it() {
         let manager = SecretManager::new(
             vec![Arc::new(MapSecretProvider { entries: Default::default() })],
-            Arc::new(crate::security::DummySecurityManager::new()),
+            Arc::new(crate::security::AllowAllPolicy::new()),
         );
 
         let err = manager.resolve(&dummy_context(), "MISSING").await.unwrap_err();
@@ -149,13 +149,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn security_manager_denial_blocks_lookup() {
+    async fn access_policy_denial_blocks_lookup() {
         let mut entries = std::collections::HashMap::new();
         entries.insert("KEY".to_string(), "value".to_string());
 
         let manager = SecretManager::new(
             vec![Arc::new(MapSecretProvider { entries })],
-            Arc::new(AlwaysDenySecurityManager),
+            Arc::new(DenyAllPolicy),
         );
 
         let err = manager.resolve(&dummy_context(), "KEY").await.unwrap_err();

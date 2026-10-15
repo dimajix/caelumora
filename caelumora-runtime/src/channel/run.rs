@@ -277,24 +277,24 @@ impl ChannelLoop {
         match &event.event {
             ActorEvent::MessageModified(modified) => {
                 let mut message = self.message(modified.id).await.ok_or(Rejection::MessageNotFound)?;
-                self.security.require(context, ActionType::ModifyMessage { author: message.sender_id, channel: &channel }, forbidden).await?;
+                self.access_policy.require(context, ActionType::ModifyMessage { author: message.sender_id, channel: &channel }, forbidden).await?;
                 message.modify(modified).then_some(()).ok_or(Rejection::MessageUnchangeable)
             }
             ActorEvent::MessageRevoked { message, at } => {
                 let mut message = self.message(*message).await.ok_or(Rejection::MessageNotFound)?;
-                self.security.require(context, ActionType::RevokeMessage { author: message.sender_id, channel: &channel }, forbidden).await?;
+                self.access_policy.require(context, ActionType::RevokeMessage { author: message.sender_id, channel: &channel }, forbidden).await?;
                 message.revoke(*at).then_some(()).ok_or(Rejection::MessageUnchangeable)
             }
             ActorEvent::MessageReclassified { message, classification: new } => {
                 let mut said = self.message(*message).await.ok_or(Rejection::MessageNotFound)?;
                 let target = Reclassified::Message { author: said.sender_id, attributes: &channel };
-                self.security.require(context, ActionType::Reclassify(target), forbidden).await?;
+                self.access_policy.require(context, ActionType::Reclassify(target), forbidden).await?;
                 self.confidentiality.require_publish(context, new, &classification, || Rejection::ClassificationRefused)?;
                 said.reclassify(new).then_some(()).ok_or(Rejection::MessageUnchangeable)
             }
             ActorEvent::RetryRequested { target: RetryTarget::Message(message), author } => {
                 let message = self.message(*message).await.ok_or(Rejection::MessageNotFound)?;
-                self.security.require(context, ActionType::RetryMessage(&channel), forbidden).await?;
+                self.access_policy.require(context, ActionType::RetryMessage(&channel), forbidden).await?;
                 if message.revoked.is_some() {
                     return Err(Rejection::MessageUnchangeable);
                 }
@@ -303,15 +303,15 @@ impl ChannelLoop {
             // Whether the turn is still under way is decided as the request
             // is delivered, where the turn is ended (`route_event_impl`).
             ActorEvent::RetryRequested { target: RetryTarget::Turn(_), author } => {
-                self.security.require(context, ActionType::RetryMessage(&channel), forbidden).await?;
+                self.access_policy.require(context, ActionType::RetryMessage(&channel), forbidden).await?;
                 self.agent_actor(*author).is_some().then_some(()).ok_or(Rejection::Invalid)
             }
             ActorEvent::QuestionAnswered { .. } | ActorEvent::QuestionDeclined { .. } => {
-                self.security.require(context, ActionType::AnswerQuestion(&channel), forbidden).await
+                self.access_policy.require(context, ActionType::AnswerQuestion(&channel), forbidden).await
             }
             ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) if event.context.sender_id.as_user_id().is_some() => {
                 let agent = self.controllers.agent_attributes(response.agent_id).await.map_err(|_| Rejection::Invalid)?;
-                self.security.require(context, ActionType::ApproveToolCall { agent: &agent, channel: &channel }, forbidden).await
+                self.access_policy.require(context, ActionType::ApproveToolCall { agent: &agent, channel: &channel }, forbidden).await
             }
             ActorEvent::ApprovalGranted(_) | ActorEvent::ApprovalDenied(_) | ActorEvent::ApprovalTimedOut(_) => {
                 matches!(event.context.sender_id, ActorId::Approver(_)).then_some(()).ok_or(Rejection::Invalid)
@@ -585,12 +585,12 @@ mod tests {
 
     use crate::channel::tests::*;
     use crate::channel::{ActorChange, ChannelError, Member};
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
 
     #[tokio::test]
     async fn a_users_own_message_is_shown_with_its_mentions_resolved() {
         let (alice, bob) = (user("alice"), user("bob"));
-        let channel = channel_with(&[&alice, &bob], Arc::new(DummySecurityManager::new())).await;
+        let channel = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let mut following = actor.watch().events;
 
@@ -713,7 +713,7 @@ mod tests {
     #[tokio::test]
     async fn an_actor_cannot_speak_in_the_name_of_another() {
         let alice = user("alice");
-        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let talker = ActorId::Agent(caelumora_model::agent::AgentId::new());
         let her = ActorId::User(alice.id);
         let said = |sender: ActorId, caller: ActorId, author: ActorId, text: &str| {
@@ -748,7 +748,7 @@ mod tests {
     #[tokio::test]
     async fn what_is_recorded_of_a_turn_comes_from_an_agent_in_its_own_name() {
         let alice = user("alice");
-        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let agent = ActorId::Agent(caelumora_model::agent::AgentId::new());
         let her = ActorId::User(alice.id);
         let sent = |sender: ActorId, caller: ActorId, event: ActorEvent| Envelope::new(
@@ -808,9 +808,9 @@ mod tests {
     async fn a_channel_admits_only_what_may_flow_into_it_in_its_senders_name() {
         use caelumora_model::actor::EventContext;
         use caelumora_model::confidentiality::Confidentiality;
-        use caelumora_model::security::OwnershipSecurityManager;
+        use caelumora_model::security::OwnershipPolicy;
         let alice = user("alice");
-        let channel = channel_with(&[&alice], Arc::new(OwnershipSecurityManager::new())).await;
+        let channel = channel_with(&[&alice], Arc::new(OwnershipPolicy::new())).await;
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
         let from = |sender: ActorId, context: ActorId, classification: Classification| Envelope::new(
             SecurityContext::new(context, Default::default(), Default::default()),
@@ -838,9 +838,9 @@ mod tests {
     #[tokio::test]
     async fn a_change_to_a_message_enters_the_channel_only_from_its_author_as_it_stands() {
         use caelumora_model::actor::EventContext;
-        use caelumora_model::security::OwnershipSecurityManager;
+        use caelumora_model::security::OwnershipPolicy;
         let alice = user("alice");
-        let channel = channel_with(&[&alice], Arc::new(OwnershipSecurityManager::new())).await;
+        let channel = channel_with(&[&alice], Arc::new(OwnershipPolicy::new())).await;
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
         let from = |sender: ActorId, event| Envelope::new(
             SecurityContext::new(sender, Default::default(), Default::default()),
@@ -897,9 +897,9 @@ mod tests {
     #[tokio::test]
     async fn a_user_changes_only_their_own_message_and_learns_why_not() {
         use caelumora_model::actor::EventContext;
-        use caelumora_model::security::OwnershipSecurityManager;
+        use caelumora_model::security::OwnershipPolicy;
         let (alice, bob) = (user("alice"), user("bob"));
-        let channel = channel_with(&[&alice, &bob], Arc::new(OwnershipSecurityManager::new())).await;
+        let channel = channel_with(&[&alice, &bob], Arc::new(OwnershipPolicy::new())).await;
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let said = Message { id: MessageId::new(), sender_id: alice_id, role: caelumora_model::message::MessageRole::User, content: Some("helo".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let from = |sender: ActorId, event| Envelope::new(SecurityContext::new(sender, Default::default(), Default::default()), EventContext { sender_id: sender, ..EventContext::default() }, event);
@@ -1007,7 +1007,7 @@ mod tests {
     #[tokio::test]
     async fn nothing_of_a_removed_participant_enters_the_channel_once_its_task_has_ended() {
         let alice = user("alice");
-        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let mut events = channel.observe();
         let gone = ActorId::Agent(caelumora_model::agent::AgentId::new());
         let late = Envelope::new(SecurityContext::default(), EventContext::new(channel.session_id, channel.id, gone, "helper".to_string()), ActorEvent::TurnGivenUp { turn_id: caelumora_model::work::TurnId::new(), reason: caelumora_model::turn::GivenUpReason::Failed { message: "too late".to_string() } });
@@ -1027,7 +1027,7 @@ mod tests {
     #[tokio::test]
     async fn what_a_leaving_actor_sends_enters_the_channel_until_its_task_has_ended() {
         let alice = user("alice");
-        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let mut events = channel.observe();
         let going = ActorId::Agent(caelumora_model::agent::AgentId::new());
         let turn_id = caelumora_model::work::TurnId::new();
@@ -1044,7 +1044,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_removal_still_pending_is_announced_before_an_actor_starts_under_the_same_id() {
-        let (channel, context, agent, _) = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(NeverAnswers), Default::default()).await;
+        let (channel, context, agent, _) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default()).await;
         let mut events = channel.observe();
         let participant = ActorId::Agent(agent);
         let joined = channel.actors.load().get(&participant).cloned().expect("the agent takes part");

@@ -160,7 +160,7 @@ mod tests {
     use caelumora_model::remote::RemoteAuthConfig;
     use caelumora_model::secret::file::FileSecretProvider;
     use caelumora_model::secret::{SecretProvider, SecretResult};
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::workspace::CommandStatus;
     use caelumora_runtime::terminal::{ByteStream, DEFAULT_MAX_RUN_SECS};
     use futures::StreamExt;
@@ -180,7 +180,7 @@ mod tests {
                 Ok((key == "OPEN_TERMINAL_API_KEY").then(|| self.0.clone()))
             }
         }
-        Arc::new(SecretManager::new(vec![Arc::new(Fixed(key.to_string()))], Arc::new(DummySecurityManager::new())))
+        Arc::new(SecretManager::new(vec![Arc::new(Fixed(key.to_string()))], Arc::new(AllowAllPolicy::new())))
     }
 
     fn endpoint(url: &str) -> RemoteEndpoint {
@@ -374,7 +374,7 @@ mod tests {
     async fn against_a_real_instance() {
         let url = env::var("CAELUMORA_OPEN_TERMINAL_URL").expect("CAELUMORA_OPEN_TERMINAL_URL");
         let file = FileSecretProvider::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/secrets.json"));
-        let secrets = Arc::new(SecretManager::new(vec![Arc::new(file)], Arc::new(DummySecurityManager::new())));
+        let secrets = Arc::new(SecretManager::new(vec![Arc::new(file)], Arc::new(AllowAllPolicy::new())));
         let provider = SharedProvider::new(endpoint(&url), "/tmp/caelumora-workspaces", MAX_RUN, None, secrets).unwrap();
         let id = WorkspaceId::new();
         provider.create(id).await.unwrap();

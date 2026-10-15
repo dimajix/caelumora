@@ -579,7 +579,7 @@ pub(crate) async fn names_are_unique(stores: &EntityStores) {
 }
 
 /// A name is taken also by what the caller may not read (issue 250): the
-/// store must ask an `OwnershipSecurityManager`.
+/// store must ask an `OwnershipPolicy`.
 pub(crate) async fn names_are_unique_beyond_what_is_read(stores: &EntityStores) {
     let as_user = |id: UserId| SecurityContext::new(ActorId::User(id), Default::default(), Default::default());
     let (alice, bob) = (UserId::new(), UserId::new());

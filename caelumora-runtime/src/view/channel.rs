@@ -160,7 +160,7 @@ impl ChannelView {
     /// Whether the viewer may rename the channel and add or remove its
     /// participants (`UpdateChannel`, issue 46).
     pub async fn may_change(&self) -> bool {
-        self.views().security().may_change_channel(self.views().context(), &self.channel.security_attributes).await
+        self.views().access_policy().may_change_channel(self.views().context(), &self.channel.security_attributes).await
     }
 
     /// Its participants, in the order of the channel - but the deleted
@@ -479,7 +479,7 @@ impl MemberView {
     /// message (`ReadAgentContext`, issue 41) - only ever for agents.
     pub async fn may_read_context(&self) -> bool {
         match self.state.attributes() {
-            Some(attributes) => self.views().security().may_read_agent_context(self.views().context(), attributes).await,
+            Some(attributes) => self.views().access_policy().may_read_agent_context(self.views().context(), attributes).await,
             None => false,
         }
     }
@@ -488,7 +488,7 @@ impl MemberView {
     /// (`ReadAgentTools`, issue 194) - only ever for agents.
     pub async fn may_read_tools(&self) -> bool {
         match self.state.attributes() {
-            Some(attributes) => self.views().security().may_read_agent_tools(self.views().context(), attributes, &self.channel.channel.security_attributes).await,
+            Some(attributes) => self.views().access_policy().may_read_agent_tools(self.views().context(), attributes, &self.channel.channel.security_attributes).await,
             None => false,
         }
     }
@@ -497,7 +497,7 @@ impl MemberView {
     /// from (`ReadAgentComponents`, issue 270) - only ever for agents.
     pub async fn may_read_components(&self) -> bool {
         match self.state.attributes() {
-            Some(attributes) => self.views().security().may_read_agent_components(self.views().context(), attributes).await,
+            Some(attributes) => self.views().access_policy().may_read_agent_components(self.views().context(), attributes).await,
             None => false,
         }
     }
@@ -508,7 +508,7 @@ impl MemberView {
     /// else sees only that it waits.
     pub async fn may_approve(&self) -> bool {
         match self.state.attributes() {
-            Some(attributes) if !self.former => self.views().security().may_approve(self.views().context(), attributes, &self.channel.channel.security_attributes).await,
+            Some(attributes) if !self.former => self.views().access_policy().may_approve(self.views().context(), attributes, &self.channel.channel.security_attributes).await,
             _ => false,
         }
     }
@@ -525,7 +525,7 @@ impl MemberView {
         }
         match self.state.personality().await {
             Ok(Some(personality)) if personality.kind.can_retry() => {
-                self.views().security().may_retry_message(self.views().context(), &self.channel.channel.security_attributes).await
+                self.views().access_policy().may_retry_message(self.views().context(), &self.channel.channel.security_attributes).await
             }
             Ok(_) => false,
             Err(e) => {
@@ -540,7 +540,7 @@ impl MemberView {
     /// of either kind.
     pub async fn may_cancel(&self) -> bool {
         match self.state.agent() {
-            Some(_) if !self.former => self.views().security().may_cancel_channel(self.views().context(), &self.channel.channel.security_attributes).await,
+            Some(_) if !self.former => self.views().access_policy().may_cancel_channel(self.views().context(), &self.channel.channel.security_attributes).await,
             _ => false,
         }
     }
@@ -577,7 +577,7 @@ impl MemberView {
     pub async fn tool_sets(&self) -> ViewResult<Vec<ToolSet>> {
         let Some(attributes) = self.state.attributes() else { return Ok(Vec::new()) };
         let views = self.views();
-        views.security()
+        views.access_policy()
             .require(views.context(), ActionType::ReadAgentTools { agent: attributes, channel: &self.channel.channel.security_attributes }, |refused| ViewError::Forbidden { actor: self.id(), refused }).await?;
         if self.former {
             return Ok(Vec::new());
@@ -598,7 +598,7 @@ impl MemberView {
     pub async fn components(&self) -> ViewResult<ComponentConfig> {
         let Some(attributes) = self.state.attributes() else { return Ok(ComponentConfig::default()) };
         let views = self.views();
-        views.security()
+        views.access_policy()
             .require(views.context(), ActionType::ReadAgentComponents(attributes), |refused| ViewError::Forbidden { actor: self.id(), refused }).await?;
         if self.former {
             return Ok(ComponentConfig::default());
@@ -611,7 +611,7 @@ impl MemberView {
     /// its owner (`DeleteAgent`, issue 164).
     pub async fn may_delete(&self) -> bool {
         match (self.state.agent(), self.state.attributes()) {
-            (Some(_), Some(attributes)) => self.views().security().may_delete_agent(self.views().context(), attributes).await,
+            (Some(_), Some(attributes)) => self.views().access_policy().may_delete_agent(self.views().context(), attributes).await,
             _ => false,
         }
     }
@@ -686,7 +686,7 @@ impl MemberView {
         let no_context = || ViewError::NoContext { actor: self.id() };
         let attributes = self.state.attributes().ok_or_else(no_context)?;
         let views = self.views();
-        views.security()
+        views.access_policy()
             .require(views.context(), ActionType::ReadAgentContext(attributes), |refused| ViewError::Forbidden { actor: self.id(), refused }).await?;
         self.state.agent().ok_or_else(no_context)
     }

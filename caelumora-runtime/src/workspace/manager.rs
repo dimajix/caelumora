@@ -12,7 +12,7 @@ use caelumora_model::config::WorkspacesConfig;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use caelumora_model::session::Session;
 use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
@@ -30,7 +30,7 @@ pub struct WorkspaceManager {
     /// The sessions a workspace may be made in the scope of.
     sessions: Arc<dyn EntityStore<Session>>,
     events: Arc<EventBus>,
-    security: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     /// What may flow where, and who is cleared for what (issue 304).
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     /// The storages, by name, in which it makes and removes places; shared
@@ -53,8 +53,8 @@ impl WorkspaceManager {
     /// `storages`, by their names - the storages its configuration names,
     /// made as backends (issue 324) -, and of which a person may put files
     /// as large as `config` says.
-    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>, config: &WorkspacesConfig) -> Self {
-        Self { workspaces: Arc::clone(&stores.workspaces), sessions: Arc::clone(&stores.sessions), events, security, confidentiality, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()) }
+    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>, config: &WorkspacesConfig) -> Self {
+        Self { workspaces: Arc::clone(&stores.workspaces), sessions: Arc::clone(&stores.sessions), events, access_policy, confidentiality, storages, max_file_bytes: config.max_file_bytes, writing: Mutex::new(()) }
     }
 
     /// The largest file a person may put into a workspace.
@@ -100,7 +100,7 @@ impl WorkspaceManager {
         workspace.description = Description::optional(description)?;
         require_classification(self.confidentiality.as_ref(), ctx, storage, provider.as_ref(), &workspace.classification)?;
         if let Scope::SessionScope { session_id } = workspace.name.scope {
-            self.security.require(ctx, ActionType::create(Workspace::KIND, &workspace.security_attributes), StoreError::PermissionDenied).await?;
+            self.access_policy.require(ctx, ActionType::create(Workspace::KIND, &workspace.security_attributes), StoreError::PermissionDenied).await?;
             self.sessions.get(ctx, session_id).await?;
         }
 
@@ -170,7 +170,7 @@ impl WorkspaceManager {
     pub async fn purge(&self, ctx: &SecurityContext, id: WorkspaceId) -> WorkspaceResult<bool> {
         let _writing = self.writing.lock().await;
         let Some(workspace) = self.workspaces.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
-        self.security.require(ctx, ActionType::purge(Workspace::KIND, &workspace.security_attributes), StoreError::PermissionDenied).await?;
+        self.access_policy.require(ctx, ActionType::purge(Workspace::KIND, &workspace.security_attributes), StoreError::PermissionDenied).await?;
         self.provider(&workspace)?.remove(id).await?;
         let purged = self.workspaces.purge(ctx, id).await?;
         info!(workspace = %id, by = %ctx.caller_id, "Workspace purged");

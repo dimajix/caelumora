@@ -31,7 +31,7 @@ use caelumora_model::question::Answers;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::memory::{Memory, MemoryId};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
-use caelumora_model::security::SecurityManager;
+use caelumora_model::security::AccessPolicy;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde_json::Value;
 use std::sync::Arc;
@@ -47,7 +47,7 @@ pub struct AgentMemoryComponent {
     /// The policy that decides what may be recalled, asked in the context
     /// of the work it serves - the agent's, with its owner's rights (issues
     /// 131, 255).
-    security_manager: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     /// What may flow where (issue 304): what it recalls, how it reclassifies.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
 }
@@ -163,7 +163,7 @@ impl AgentMemoryComponent {
     async fn execute_reclassify(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
         let classification = classification_argument(params)?;
-        AgentMemory::reclassify(turn, id, classification.clone(), self.security_manager.as_ref(), self.confidentiality.as_ref()).await?;
+        AgentMemory::reclassify(turn, id, classification.clone(), self.access_policy.as_ref(), self.confidentiality.as_ref()).await?;
         Ok(serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }))
     }
 
@@ -215,10 +215,10 @@ fn render(recalled: &[Memory]) -> String {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(AGENT_MEMORY_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn SecurityManager>().uses::<dyn ConfidentialityPolicy>(),
+        ComponentKind::new(AGENT_MEMORY_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn AccessPolicy>().uses::<dyn ConfidentialityPolicy>(),
         |_descriptor, context| {
             let component = Arc::new(AgentMemoryComponent {
-                security_manager: Arc::clone(context.service::<dyn SecurityManager>()?),
+                access_policy: Arc::clone(context.service::<dyn AccessPolicy>()?),
                 confidentiality: Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
             });
             let mut facets = ComponentFacets::empty();
@@ -247,7 +247,7 @@ mod tests {
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{OwnershipSecurityManager, SecurityAttributes, SecurityContext};
+    use caelumora_model::security::{OwnershipPolicy, SecurityAttributes, SecurityContext};
     use caelumora_model::session::{ChannelId, Session, SessionId};
     use caelumora_model::store::StateStore;
     use caelumora_model::store::memory::MemoryStore;
@@ -268,7 +268,7 @@ mod tests {
         ((session, ChannelId::new()), Classification::general(level))
     }
 
-    /// The component of an agent, asking `policy`, and the agent's owner:
+    /// The component of an agent, asking `access_policy`, and the agent's owner:
     /// whom its turns act for (issue 255).
     struct Memory {
         component: AgentMemoryComponent,
@@ -291,16 +291,16 @@ mod tests {
         }
     }
 
-    /// The component of an agent owned by `owner`, asking `policy`, the
+    /// The component of an agent owned by `owner`, asking `access_policy`, the
     /// flow decided by the rules of no compartments.
-    fn component(policy: Arc<dyn SecurityManager>, owner: ActorId) -> Memory {
-        Memory { component: AgentMemoryComponent { security_manager: policy, confidentiality: Arc::new(ConfidentialityRules::default()) }, owner }
+    fn component(access_policy: Arc<dyn AccessPolicy>, owner: ActorId) -> Memory {
+        Memory { component: AgentMemoryComponent { access_policy, confidentiality: Arc::new(ConfidentialityRules::default()) }, owner }
     }
 
     /// The component of an agent owned by `owner`, the flow decided by
     /// `confidentiality` (issue 304).
     fn component_under(confidentiality: Arc<dyn ConfidentialityPolicy>, owner: ActorId) -> Memory {
-        Memory { component: AgentMemoryComponent { security_manager: Arc::new(OwnershipSecurityManager::new()), confidentiality }, owner }
+        Memory { component: AgentMemoryComponent { access_policy: Arc::new(OwnershipPolicy::new()), confidentiality }, owner }
     }
 
     async fn handle(agent: AgentId) -> Arc<AgentStateHandle> {
@@ -318,10 +318,10 @@ mod tests {
     }
 
     impl Sessions {
-        async fn under(policy: Arc<dyn SecurityManager>) -> Self {
+        async fn under(access_policy: Arc<dyn AccessPolicy>) -> Self {
             let store = Arc::new(MemoryStore::new());
-            let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
-            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(store)).unwrap());
+            let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
+            let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(store)).unwrap());
             Self { runtime, loops: HashMap::new() }
         }
 
@@ -411,10 +411,10 @@ mod tests {
     async fn what_is_remembered_is_recalled_wherever_its_origin_may_be_read() {
         let agent = AgentId::new();
         let handle = handle(agent).await;
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let memory = component(Arc::clone(&policy), ActorId::User(UserId::new()));
+        let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
+        let memory = component(Arc::clone(&access_policy), ActorId::User(UserId::new()));
         let (session, other_session) = (SessionId::new(), SessionId::new());
-        let mut sessions = Sessions::under(policy).await;
+        let mut sessions = Sessions::under(access_policy).await;
         sessions.add(session, SessionPrivacy::default()).await.add(other_session, SessionPrivacy::default()).await;
         let (team, public, elsewhere) = (channel(session, Confidentiality::Internal), channel(session, Confidentiality::Public), channel(other_session, Confidentiality::Internal));
 
@@ -455,10 +455,10 @@ mod tests {
     async fn an_entry_is_updated_only_where_it_is_recalled_and_stands_where_it_was_updated() {
         let agent = AgentId::new();
         let handle = handle(agent).await;
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let memory = component(Arc::clone(&policy), ActorId::User(UserId::new()));
+        let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
+        let memory = component(Arc::clone(&access_policy), ActorId::User(UserId::new()));
         let (session, other_session) = (SessionId::new(), SessionId::new());
-        let mut sessions = Sessions::under(policy).await;
+        let mut sessions = Sessions::under(access_policy).await;
         sessions.add(session, SessionPrivacy::default()).await.add(other_session, SessionPrivacy::default()).await;
         let (team, confidential, elsewhere) = (channel(session, Confidentiality::Internal), channel(session, Confidentiality::Confidential), channel(other_session, Confidentiality::Internal));
         remember(&memory, &sessions, &handle, agent, team.clone(), "Kaya likes tea.").await;
@@ -489,10 +489,10 @@ mod tests {
     async fn an_entry_remembered_and_forgotten_in_one_turn_is_gone_once_it_completes() {
         let agent = AgentId::new();
         let handle = handle(agent).await;
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let memory = component(Arc::clone(&policy), ActorId::User(UserId::new()));
+        let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
+        let memory = component(Arc::clone(&access_policy), ActorId::User(UserId::new()));
         let session = SessionId::new();
-        let mut sessions = Sessions::under(policy).await;
+        let mut sessions = Sessions::under(access_policy).await;
         sessions.add(session, SessionPrivacy::default()).await;
         let team = channel(session, Confidentiality::Internal);
 
@@ -512,7 +512,7 @@ mod tests {
     async fn a_turn_in_no_session_recalls_nothing_and_remembers_as_private() {
         let agent = AgentId::new();
         let handle = handle(agent).await;
-        let memory = component(Arc::new(OwnershipSecurityManager::new()), ActorId::User(UserId::new()));
+        let memory = component(Arc::new(OwnershipPolicy::new()), ActorId::User(UserId::new()));
         let at = channel(SessionId::new(), Confidentiality::Internal);
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at, agent);
@@ -547,7 +547,7 @@ mod tests {
         let (owner, stranger) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let policy: Arc<dyn ConfidentialityPolicy> = Arc::new(OnlyFor(Some(owner), Default::default()));
         let session = SessionId::new();
-        let mut sessions = Sessions::under(Arc::new(OwnershipSecurityManager::new())).await;
+        let mut sessions = Sessions::under(Arc::new(OwnershipPolicy::new())).await;
         sessions.add(session, SessionPrivacy::default()).await;
         // Public, so that the built-in rule would let every channel read it.
         let (origin, reader) = (channel(session, Confidentiality::Public), channel(session, Confidentiality::Internal));
@@ -565,10 +565,10 @@ mod tests {
     async fn what_a_turn_remembers_is_classified_as_what_it_has_seen() {
         let agent = AgentId::new();
         let handle = handle(agent).await;
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let memory = component(Arc::clone(&policy), ActorId::User(UserId::new()));
+        let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
+        let memory = component(Arc::clone(&access_policy), ActorId::User(UserId::new()));
         let session = SessionId::new();
-        let mut sessions = Sessions::under(policy).await;
+        let mut sessions = Sessions::under(access_policy).await;
         sessions.add(session, SessionPrivacy::default()).await;
         let (confidential, public) = (channel(session, Confidentiality::Confidential), channel(session, Confidentiality::Public));
 
@@ -605,7 +605,7 @@ mod tests {
         let compartments = Compartments::new([(Compartment::new("hr"), vec![]), (Compartment::new("finance"), vec![])]).unwrap();
         let memory = component_under(Arc::new(ConfidentialityRules::new(compartments)), ActorId::User(UserId::new()));
         let session = SessionId::new();
-        let mut sessions = Sessions::under(Arc::new(OwnershipSecurityManager::new())).await;
+        let mut sessions = Sessions::under(Arc::new(OwnershipPolicy::new())).await;
         sessions.add(session, SessionPrivacy::default()).await;
         let in_compartments = |names: &[&str]| -> At {
             ((session, ChannelId::new()), Classification::new(Confidentiality::Internal, names.iter().map(|n| Compartment::new(*n))).unwrap())
@@ -635,10 +635,10 @@ mod tests {
         let agent = AgentId::new();
         let handle = handle(agent).await;
         let (alice, bob) = (UserId::new(), UserId::new());
-        let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::new());
-        let memory = component(Arc::clone(&policy), ActorId::User(alice));
+        let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
+        let memory = component(Arc::clone(&access_policy), ActorId::User(alice));
         let (hers, other, bobs) = (SessionId::new(), SessionId::new(), SessionId::new());
-        let mut sessions = Sessions::under(policy).await;
+        let mut sessions = Sessions::under(access_policy).await;
         sessions.add(hers, session_of(PrivacyConfig::SameOwner, alice)).await
             .add(other, session_of(PrivacyConfig::Private, alice)).await
             .add(bobs, session_of(PrivacyConfig::Private, bob)).await;
@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn every_entry_acted_on_is_shown_as_a_note_to_the_owner_alone() {
-        let tools = AgentMemoryComponent { security_manager: Arc::new(OwnershipSecurityManager::new()), confidentiality: Arc::new(ConfidentialityRules::default()) }.tools();
+        let tools = AgentMemoryComponent { access_policy: Arc::new(OwnershipPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()) }.tools();
         assert!(tools.iter().all(|t| (t.presentation, t.visibility) == (NOTE_PRESENTATION, ToolVisibility::HIDDEN)));
     }
 }

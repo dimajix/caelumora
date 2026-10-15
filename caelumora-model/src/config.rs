@@ -4,7 +4,7 @@ use crate::confidentiality::{Compartments, ConfidentialityPolicy, Confidentialit
 use crate::role::Roles;
 use std::collections::BTreeMap;
 use crate::component::ComponentConfig;
-use crate::security::{DummySecurityManager, Memberships, OwnershipSecurityManager, SecurityManager};
+use crate::security::{AllowAllPolicy, Memberships, OwnershipPolicy, AccessPolicy};
 use crate::store::{StateStore, StoreBackend, StoreError};
 use crate::store::json::JsonFileStore;
 use crate::store::memory::MemoryStore;
@@ -49,11 +49,11 @@ pub enum PersistenceBackend {
 impl PersistenceBackend {
     /// Opens the store this backend describes. Both kinds of store serve
     /// as entity and as state store; the caller picks the face it needs.
-    fn open(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<StoreBackend> {
+    fn open(&self, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<StoreBackend> {
         Ok(match self {
-            Self::Memory => Arc::new(MemoryStore::with_policies(security_manager, confidentiality)).into(),
+            Self::Memory => Arc::new(MemoryStore::with_policies(access_policy, confidentiality)).into(),
             Self::Json { path, journal_floor } => {
-                let store = JsonFileStore::new(path, security_manager, confidentiality)?;
+                let store = JsonFileStore::new(path, access_policy, confidentiality)?;
                 Arc::new(match journal_floor {
                     Some(bytes) => store.with_journal_floor(*bytes),
                     None => store,
@@ -120,11 +120,11 @@ impl Default for SecretsConfig {
 pub enum SecurityConfig {
     /// Owners do everything with their entities, whom an access list grants
     /// it read and use them, what belongs to the system everybody uses
-    /// (`OwnershipSecurityManager`). The default: nothing is open unless a
+    /// (`OwnershipPolicy`). The default: nothing is open unless a
     /// deployment says so.
     #[default]
     Ownership,
-    /// Everything is allowed to everybody (`DummySecurityManager`) - for
+    /// Everything is allowed to everybody (`AllowAllPolicy`) - for
     /// tests and single-user development setups only.
     AllowAll,
 }
@@ -368,14 +368,14 @@ impl AppConfig {
         Ok(())
     }
 
-    /// The one `SecurityManager` of the process, as configured, learning
+    /// The one `AccessPolicy` of the process, as configured, learning
     /// who belongs to a group from `memberships` (issues 23, 286).
-    pub fn create_security_manager(&self, memberships: Arc<dyn Memberships>) -> Arc<dyn SecurityManager> {
+    pub fn create_access_policy(&self, memberships: Arc<dyn Memberships>) -> Arc<dyn AccessPolicy> {
         match self.security {
-            SecurityConfig::Ownership => Arc::new(OwnershipSecurityManager::with_memberships(memberships)),
+            SecurityConfig::Ownership => Arc::new(OwnershipPolicy::with_memberships(memberships)),
             SecurityConfig::AllowAll => {
                 tracing::warn!("Security policy 'allow_all' is configured: every user may do everything. Development only.");
-                Arc::new(DummySecurityManager::new())
+                Arc::new(AllowAllPolicy::new())
             }
         }
     }
@@ -396,16 +396,16 @@ impl AppConfig {
     ///
     /// # Errors
     /// `ConfigError::Store` if the store cannot be opened.
-    pub fn open_entity_store(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<StoreBackend> {
-        self.persistence.entity_store.open(security_manager, confidentiality)
+    pub fn open_entity_store(&self, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<StoreBackend> {
+        self.persistence.entity_store.open(access_policy, confidentiality)
     }
 
     /// The state store, as configured under `persistence.state_store`.
     ///
     /// # Errors
     /// `ConfigError::Store` if the store cannot be opened.
-    pub fn create_state_store(&self, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<Arc<dyn StateStore>> {
-        Ok(self.persistence.state_store.open(security_manager, confidentiality)?.state_store())
+    pub fn create_state_store(&self, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<Arc<dyn StateStore>> {
+        Ok(self.persistence.state_store.open(access_policy, confidentiality)?.state_store())
     }
 }
 

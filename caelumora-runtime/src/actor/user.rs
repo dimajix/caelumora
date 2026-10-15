@@ -13,7 +13,7 @@ use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::question::{QuestionError, QuestionId, QuestionRequest, Response};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext, SecurityManager};
+use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext, AccessPolicy};
 use caelumora_model::session::SessionId;
 use caelumora_model::value::name::Name;
 use crate::controller::{ChannelController, UserController};
@@ -40,7 +40,7 @@ pub struct UserActor {
     actor_runtime: ActorRuntime,
     /// What the user's rules answer with (issue 13): whether they may
     /// approve the calls of an agent in this channel is asked first.
-    security: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     channel: Arc<ChannelController>,
     // Envelopes built by `send_message` / `send_approval`, forwarded into the
     // channel by `run`.
@@ -82,7 +82,7 @@ impl UserActor {
             session_id: channel.session_id,
             channel_id: channel.id,
             user,
-            security: Arc::clone(actor_runtime.security_manager()),
+            access_policy: Arc::clone(actor_runtime.access_policy()),
             actor_runtime,
             channel: channel_controller,
             user_rx: Mutex::new(urx),
@@ -437,7 +437,7 @@ impl UserActor {
             }
         };
         let channel = self.channel.load().security_attributes.clone();
-        if !self.security.may_approve(&self.security_context(), &agent, &channel).await {
+        if !self.access_policy.may_approve(&self.security_context(), &agent, &channel).await {
             debug!(rule = %rule.id, "UserActor {} may not approve the calls of agent {}; its rule does not answer", self.id(), request.agent_id);
             return None;
         }
@@ -673,7 +673,7 @@ mod tests {
     use crate::command::CommandExecutor;
     use crate::runtime::{ChannelRuntime, RuntimeManager};
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{DummySecurityManager, SecurityAttributes};
+    use caelumora_model::security::{AllowAllPolicy, SecurityAttributes};
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::config::AppConfig;
@@ -683,10 +683,10 @@ mod tests {
     /// actor is used: the actor's runtime holds it weakly.
     async fn user_actor() -> (UserActor, Arc<ChannelLoop>) {
         let store = Arc::new(MemoryStore::new());
-        let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
         let session_id = SessionId::new();
-        let channel_runtime = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.security_manager()))), session_id);
+        let channel_runtime = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy()))), session_id);
         let channel = caelumora_model::channel::Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),

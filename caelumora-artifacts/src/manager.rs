@@ -27,7 +27,7 @@ use caelumora_model::digest::ContentDigest;
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AclEntry, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager, Subject, WRITE};
+use caelumora_model::security::{AclEntry, ActionType, Enforcement, SecurityAttributes, SecurityContext, AccessPolicy, Subject, WRITE};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
@@ -166,7 +166,7 @@ pub struct ArtifactManager {
     artifacts: Arc<dyn EntityStore<Artifact>>,
     groups: Arc<dyn EntityStore<Group>>,
     events: Arc<EventBus>,
-    security: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     /// What may flow where (issue 304): into a storage that keeps it.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     storages: BTreeMap<String, Arc<dyn ArtifactStorage>>,
@@ -194,9 +194,9 @@ impl ArtifactManager {
     /// `ComponentError::InvalidConfig` where `config` does not fit
     /// together.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(artifacts: Arc<dyn EntityStore<Artifact>>, groups: Arc<dyn EntityStore<Group>>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: BTreeMap<String, Arc<dyn ArtifactStorage>>, config: &ArtifactsConfig) -> ComponentResult<Self> {
+    pub fn new(artifacts: Arc<dyn EntityStore<Artifact>>, groups: Arc<dyn EntityStore<Group>>, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: BTreeMap<String, Arc<dyn ArtifactStorage>>, config: &ArtifactsConfig) -> ComponentResult<Self> {
         config.check().map_err(|why| ComponentError::InvalidConfig(format!("artifacts: {why}")))?;
-        Ok(Self { artifacts, groups, events, security, confidentiality, storages, publish_to: config.publish_to().map(String::from), max_bytes: config.max_bytes, writing: Mutex::new(()) })
+        Ok(Self { artifacts, groups, events, access_policy, confidentiality, storages, publish_to: config.publish_to().map(String::from), max_bytes: config.max_bytes, writing: Mutex::new(()) })
     }
 
     /// The store of artifacts, which the views read in the viewer's name.
@@ -246,7 +246,7 @@ impl ArtifactManager {
         let existing = self.artifacts.find_by_name(&SecurityContext::system(), &name).await.optional()?;
         let (id, number, storage_name) = match &existing {
             Some(artifact) => {
-                self.security.require(ctx, ActionType::custom(Artifact::KIND, &WRITE, &artifact.security_attributes), StoreError::PermissionDenied).await?;
+                self.access_policy.require(ctx, ActionType::custom(Artifact::KIND, &WRITE, &artifact.security_attributes), StoreError::PermissionDenied).await?;
                 if artifact.classification != *classification {
                     return Err(ArtifactError::ClassifiedOtherwise(artifact.name.name.to_string()));
                 }
@@ -254,7 +254,7 @@ impl ArtifactManager {
             }
             None => {
                 let attributes = SecurityAttributes::owned_by(ActorId::User(owner));
-                self.security.require(ctx, ActionType::create(Artifact::KIND, &attributes), StoreError::PermissionDenied).await?;
+                self.access_policy.require(ctx, ActionType::create(Artifact::KIND, &attributes), StoreError::PermissionDenied).await?;
                 (ArtifactId::new(), 1, self.publish_to.clone().ok_or(ArtifactError::NotConfigured)?)
             }
         };
@@ -472,7 +472,7 @@ impl ArtifactManager {
     pub async fn purge(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
         let _writing = self.writing.lock().await;
         let Some(artifact) = self.artifacts.get_deleted(ctx, id).await.optional()? else { return Ok(false) };
-        self.security.require(ctx, ActionType::purge(Artifact::KIND, &artifact.security_attributes), StoreError::PermissionDenied).await?;
+        self.access_policy.require(ctx, ActionType::purge(Artifact::KIND, &artifact.security_attributes), StoreError::PermissionDenied).await?;
         self.storage(&artifact.storage)?.remove(id).await?;
         let purged = self.artifacts.purge(ctx, id).await?;
         info!(artifact = %id, by = %ctx.caller_id, "Artifact purged");

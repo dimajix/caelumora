@@ -156,7 +156,7 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::PersonalityKind;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::security::{DummySecurityManager, SecurityContext};
+    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::Query;
@@ -188,11 +188,11 @@ mod tests {
     /// example seed names.
     fn runtime(store: &Arc<MemoryStore>) -> RuntimeManager {
         let config = AppConfig::load(example("config.yaml")).unwrap();
-        let security = Arc::new(DummySecurityManager::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
+        let access_policy = Arc::new(AllowAllPolicy::new());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
         let (rest_plugins, plugins) = (rest_plugins(), plugins());
         let plugins = all(&rest_plugins, &plugins);
-        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, config.create_confidentiality_policy(), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)), Backends::with_plugins(&plugins)).unwrap();
+        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, access_policy, config.create_confidentiality_policy(), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)), Backends::with_plugins(&plugins)).unwrap();
         for plugin in plugins {
             builder.plugin(plugin).unwrap();
         }
@@ -290,7 +290,7 @@ mod tests {
         let config = AppConfig::load(example("config.yaml")).unwrap();
         let (rest_plugins, plugins) = (rest_plugins(), plugins());
         let backends = Backends::with_plugins(&all(&rest_plugins, &plugins));
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
         let services = Services::empty().with(secrets);
         let storages = backends.make_named::<dyn TerminalProvider>("storage of workspaces", &config.workspaces.storage, &services).expect("every type is known");
         assert!(storages.contains_key("sandbox"), "the shared Open Terminal of the example");

@@ -349,7 +349,7 @@ mod tests {
     use std::time::Duration;
     use tokio_util::task::TaskTracker;
 
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
     use crate::channel::tests::*;
 
     use caelumora_model::value::name::Name;
@@ -381,7 +381,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_participant_is_added_again_only_once_its_old_actor_has_ended() {
-        let (channel, _, agent, _) = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(NeverAnswers), Default::default()).await;
+        let (channel, _, agent, _) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default()).await;
         let participant = ActorId::Agent(agent);
         assert!(channel.left(participant).await.is_ok(), "nothing to wait for: it never left");
 

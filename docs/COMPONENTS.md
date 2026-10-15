@@ -212,7 +212,7 @@ A container is built with a `ComponentContext`, which holds:
     credential - it reads in it. It does not keep it: what it asks later it asks in the context of
     the act it serves - a tool in its turn's, a moderator in the event's it routes -, one context
     per piece of work;
-*   the services of the runtime its kind declares it uses - the `SecurityManager` for the questions
+*   the services of the runtime its kind declares it uses - the `AccessPolicy` for the questions
     a component asks (`AccessQuestions`), the `SecretManager`, the `WorkspaceManager`, the
     manager a plugin provides (the `ArtifactManager`, say) - by type, not as fields of the context,
     so that a new service needs no new field and no component is given one it does not declare. They

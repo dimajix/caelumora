@@ -3,7 +3,7 @@
 //! and its main channel, and the views an actor of a running session navigates (issue 315).
 
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
-use caelumora_model::security::{OwnershipSecurityManager, SecurityManager};
+use caelumora_model::security::{OwnershipPolicy, AccessPolicy};
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::memory::MemoryStore;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::DummySecurityManager;
+use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::actor::{ActorEvent, Envelope, Rejection};
 use caelumora_model::message::MessageId;
 use tokio::sync::broadcast;
@@ -32,13 +32,13 @@ use crate::testing::test_registry;
 /// A store under the ownership policy, which learns who belongs to a
 /// group from that store (issue 23), and `rules` as the confidentiality
 /// policy beside it (issue 304).
-pub(crate) fn owned_store(rules: ConfidentialityRules) -> (Arc<dyn SecurityManager>, Arc<dyn ConfidentialityPolicy>, Arc<MemoryStore>) {
+pub(crate) fn owned_store(rules: ConfidentialityRules) -> (Arc<dyn AccessPolicy>, Arc<dyn ConfidentialityPolicy>, Arc<MemoryStore>) {
     let memberships = Arc::new(StoreMemberships::new());
-    let policy: Arc<dyn SecurityManager> = Arc::new(OwnershipSecurityManager::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
+    let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
     let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(rules);
-    let store = Arc::new(MemoryStore::with_policies(Arc::clone(&policy), Arc::clone(&confidentiality)));
+    let store = Arc::new(MemoryStore::with_policies(Arc::clone(&access_policy), Arc::clone(&confidentiality)));
     memberships.bind(&store.entity_stores().groups);
-    (policy, confidentiality, store)
+    (access_policy, confidentiality, store)
 }
 
 /// A user named `name`, not stored.
@@ -70,8 +70,8 @@ pub(crate) fn owned_runtime(rules: ConfidentialityRules) -> (Arc<MemoryStore>, A
 /// A runtime under no policy: everything is allowed.
 pub(crate) fn test_runtime() -> Arc<RuntimeManager> {
     let store = Arc::new(MemoryStore::new());
-    let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-    Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store))).unwrap())
+    let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
+    Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secret_manager, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store))).unwrap())
 }
 
 /// A session that holds nothing but its id `session_id`: what a channel

@@ -34,7 +34,7 @@ pub use manager::WorkspaceManager;
 
 use crate::terminal::{TerminalError, TerminalProvider};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
-use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityContext, SecurityManager, WRITE};
+use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityContext, AccessPolicy, WRITE};
 use caelumora_model::store::{StoreError, Stored};
 use caelumora_model::value::ValueError;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
@@ -108,6 +108,6 @@ pub(crate) fn require_classification(policy: &dyn ConfidentialityPolicy, ctx: &S
 ///
 /// # Errors
 /// `ReadOnly` if they may not.
-pub(crate) async fn require_write(security: &dyn SecurityManager, ctx: &SecurityContext, workspace: &Workspace) -> WorkspaceResult<()> {
-    security.require(ctx, ActionType::custom(Workspace::KIND, &WRITE, &workspace.security_attributes), |refused| WorkspaceError::ReadOnly { id: workspace.id, refused }).await
+pub(crate) async fn require_write(access_policy: &dyn AccessPolicy, ctx: &SecurityContext, workspace: &Workspace) -> WorkspaceResult<()> {
+    access_policy.require(ctx, ActionType::custom(Workspace::KIND, &WRITE, &workspace.security_attributes), |refused| WorkspaceError::ReadOnly { id: workspace.id, refused }).await
 }

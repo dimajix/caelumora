@@ -8,7 +8,7 @@ use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::ChannelId;
 use caelumora_model::session::SessionId;
-use caelumora_model::security::SecurityManager;
+use caelumora_model::security::AccessPolicy;
 use caelumora_model::store::StateStore;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use std::sync::{Arc, OnceLock, Weak};
@@ -84,7 +84,7 @@ impl ChannelRuntime {
 /// handing out the `RuntimeManager` behind it (issue 191), and `ChannelLoop::new` takes no service
 /// beside it.
 impl ChannelRuntime {
-    pub(crate) fn security_manager(&self) -> &Arc<dyn SecurityManager> { self.runtime_manager.security_manager() }
+    pub(crate) fn access_policy(&self) -> &Arc<dyn AccessPolicy> { self.runtime_manager.access_policy() }
 
     pub(crate) fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> { self.runtime_manager.confidentiality() }
 

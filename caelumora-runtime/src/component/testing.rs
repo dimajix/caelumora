@@ -2,7 +2,7 @@
 //! provide them, configurations and the context they are built with.
 
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
-use caelumora_model::security::{DummySecurityManager, SecurityContext, SecurityManager};
+use caelumora_model::security::{AllowAllPolicy, SecurityContext, AccessPolicy};
 use caelumora_model::session::SessionId;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::type_map::TypeKey;
@@ -22,7 +22,7 @@ pub(super) fn test_context() -> ComponentContext {
 }
 
 pub(super) fn context_with_session(session_id: SessionId) -> ComponentContext {
-    let services = Services::empty().with(Arc::new(DummySecurityManager::new()) as Arc<dyn SecurityManager>);
+    let services = Services::empty().with(Arc::new(AllowAllPolicy::new()) as Arc<dyn AccessPolicy>);
     ComponentContext::new(SecurityContext { session_id, ..SecurityContext::default() }, services)
 }
 

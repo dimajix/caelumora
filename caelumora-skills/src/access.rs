@@ -1,13 +1,13 @@
 //! Who may change and use a skill (issue 22): the pure questions about a
 //! skill, an extension of `AccessQuestions` (issue 323) - each translated
-//! into an action, decided by the policy alone. Every `SecurityManager` has
+//! into an action, decided by the policy alone. Every `AccessPolicy` has
 //! them by the blanket implementation, so that no policy answers them
 //! otherwise.
 
 use crate::skill::{Skill, USE};
 use async_trait::async_trait;
 use caelumora_model::store::Stored;
-use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext, AccessPolicy};
 
 #[async_trait]
 pub trait SkillAccess {
@@ -22,7 +22,7 @@ pub trait SkillAccess {
 }
 
 #[async_trait]
-impl<T: SecurityManager + ?Sized> SkillAccess for T {
+impl<T: AccessPolicy + ?Sized> SkillAccess for T {
     async fn may_change_skill(&self, context: &SecurityContext, skill: &SecurityAttributes) -> bool {
         self.check(context, ActionType::update(Skill::KIND, skill)).await
     }

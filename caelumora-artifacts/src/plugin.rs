@@ -35,7 +35,7 @@ impl Plugin for ArtifactsPlugin {
         let storages = runtime.make_named::<dyn ArtifactStorage>("storage of artifacts", &config.storage)?;
         let artifacts = runtime.entity_store::<Artifact>()?;
         let groups = Arc::clone(&runtime.entity_stores().groups);
-        let manager = ArtifactManager::new(artifacts, groups, Arc::clone(runtime.event_bus()), Arc::clone(runtime.security_manager()), Arc::clone(runtime.confidentiality()), storages, &config)?;
+        let manager = ArtifactManager::new(artifacts, groups, Arc::clone(runtime.event_bus()), Arc::clone(runtime.access_policy()), Arc::clone(runtime.confidentiality()), storages, &config)?;
         let manager = Arc::new(manager);
         runtime.provide(Arc::clone(&manager));
         runtime.scope_member(manager);

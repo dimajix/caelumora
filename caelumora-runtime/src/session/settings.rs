@@ -88,9 +88,9 @@ impl SessionLoop {
     /// whatever else storing reports.
     pub async fn set_workspace(&self, context: &SecurityContext, workspace: Option<WorkspaceId>, share: Option<Grant>) -> Result<()> {
         let session = self.session();
-        self.security.require(context, ActionType::update(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
+        self.access_policy.require(context, ActionType::update(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
         if let Some(id) = workspace {
-            require_attachable(self.runtime_manager.workspace_manager(), self.security.as_ref(), context, id, self.id).await?;
+            require_attachable(self.runtime_manager.workspace_manager(), self.access_policy.as_ref(), context, id, self.id).await?;
         }
         let held = self.attach_workspace(context, workspace).await?;
         if let (Some(controller), Some(grant)) = (held, share) {

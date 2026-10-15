@@ -10,12 +10,12 @@ use crate::testing::test_registry;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::Channel;
-use caelumora_model::security::{SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{SecurityAttributes, SecurityContext, AccessPolicy};
 use caelumora_model::session::{ChannelId, SessionId};
 use std::sync::Arc;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::DummySecurityManager;
+use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use crate::session::SessionManager;
@@ -67,8 +67,8 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
     store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
     store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
 
-    let security: Arc<dyn SecurityManager> = Arc::new(caelumora_model::security::DummySecurityManager::new());
-    let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
+    let access_policy: Arc<dyn AccessPolicy> = Arc::new(caelumora_model::security::AllowAllPolicy::new());
+    let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
     let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
     registry.register(
         crate::component::ComponentKind::new("test_remote").provides::<dyn crate::external::ExternalAgent>(),
@@ -81,7 +81,7 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
     register_no_secrets(&mut registry);
     register_heard(&mut registry);
     register_marking_command(&mut registry);
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
     let channel = Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
@@ -102,7 +102,7 @@ async fn external_channel(remote: Arc<crate::external::testing::ScriptedExternal
     if let Some(mut stored) = stored(agent_id) {
         runtime.state_store().put_agent_channel_state(agent_id, channel.id, &mut stored).await.unwrap();
     }
-    let executor = CommandExecutor::empty(Arc::clone(runtime.security_manager()));
+    let executor = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
     let session_id = channel.session_id;
     let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), session_id)).await?;
     Ok((channel, context, agent_id, alice.id))
@@ -1137,9 +1137,9 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
             Ok(facets)
         } },
     );
-    let policy = Arc::new(DummySecurityManager::new());
-    let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
+    let access_policy = Arc::new(AllowAllPolicy::new());
+    let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
     let manager = SessionManager::new(Arc::clone(&runtime));
     let system = SecurityContext::system();
 

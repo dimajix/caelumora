@@ -318,7 +318,7 @@ newcomer (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 Who takes part in a channel and whether they may is one question, owned by `Participation` (issue
 356), which the `RuntimeManager` holds once for the instance with the services it is asked with: the
-agents' store, the controllers, the `SecurityManager` and the `ConfidentialityPolicy`. It finds a
+agents' store, the controllers, the `AccessPolicy` and the `ConfidentialityPolicy`. It finds a
 participant's `Member` - what its actor is built from, and the place it takes part in - and answers
 whether it may run, join, lie where it may and is cleared for the channel. The session and channel
 loops and the `SessionManager` ask it alike: when a channel is created, restored or built, when
@@ -432,7 +432,7 @@ participants only where the user may (see [WEB-UI.md](WEB-UI.md)).
 
 ## Acting on the channel as a whole
 
-Cancelling and waking act on the channel as a whole. They ask the `SecurityManager` first, one
+Cancelling and waking act on the channel as a whole. They ask the `AccessPolicy` first, one
 decision for the whole channel rather than one per actor.
 
 ### Cancelling

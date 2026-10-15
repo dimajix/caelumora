@@ -9,7 +9,7 @@ use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityKind};
 use caelumora_model::approval::Approver;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::role::RoleId;
-use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext, SecurityManager, JOIN};
+use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext, AccessPolicy, JOIN};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored};
@@ -43,7 +43,7 @@ pub(crate) enum MemberKind {
 /// The question who takes part in a channel and whether they may, with the
 /// services it is asked with (issue 356): the store of the agents - whether
 /// one exists -, the controllers members are built from, the
-/// `SecurityManager` and the `ConfidentialityPolicy`. One for the instance,
+/// `AccessPolicy` and the `ConfidentialityPolicy`. One for the instance,
 /// held by the `RuntimeManager`, asked by the session and channel loops and
 /// the `SessionManager` alike - when a channel is created, restored or
 /// built, when someone joins or is added, when an agent comes back and when
@@ -52,13 +52,13 @@ pub(crate) enum MemberKind {
 pub(crate) struct Participation {
     agents: Arc<dyn EntityStore<Agent>>,
     controllers: Arc<ControllerManager>,
-    security: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
 }
 
 impl Participation {
-    pub(crate) fn new(agents: Arc<dyn EntityStore<Agent>>, controllers: Arc<ControllerManager>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
-        Self { agents, controllers, security, confidentiality }
+    pub(crate) fn new(agents: Arc<dyn EntityStore<Agent>>, controllers: Arc<ControllerManager>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+        Self { agents, controllers, access_policy, confidentiality }
     }
 
     /// `participant` of channel `channel_id` of session `session_id` - of
@@ -118,7 +118,7 @@ impl Participation {
     async fn require_runnable(&self, member: &Member) -> StoreResult<()> {
         match (&member.kind, member.context()) {
             (MemberKind::Agent(_, personality) | MemberKind::ExternalAgent(_, personality), Some(context)) =>
-                self.security.require(&context, ActionType::get(Personality::KIND, &personality.security_attributes), StoreError::PermissionDenied).await,
+                self.access_policy.require(&context, ActionType::get(Personality::KIND, &personality.security_attributes), StoreError::PermissionDenied).await,
             _ => Ok(()),
         }
     }
@@ -135,7 +135,7 @@ impl Participation {
     pub(crate) async fn require_joinable<E: Send>(&self, member: &Member, context: &SecurityContext, kind: EntityKind, attributes: &SecurityAttributes, refusal: impl FnOnce(Refused) -> E + Send) -> Result<(), E> {
         let join = ActionType::custom(kind, &JOIN, attributes);
         match member.context() {
-            Some(own) if own.owner_id == context.principal_id => self.security.require(&own, join, refusal).await,
+            Some(own) if own.owner_id == context.principal_id => self.access_policy.require(&own, join, refusal).await,
             _ => Err(refusal(join.refused())),
         }
     }

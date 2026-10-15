@@ -9,7 +9,7 @@ use caelumora_model::component::{ComponentConfig, ComponentDescriptor, Component
 use caelumora_model::confidentiality::{Classification, Confidentiality, ConfidentialityRules};
 use caelumora_model::config::AppConfig;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{DummySecurityManager, SecurityContext};
+use caelumora_model::security::{AllowAllPolicy, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::ComponentStore;
@@ -80,10 +80,10 @@ async fn start_test_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
 /// A runtime over `store` with the plugin of MCP servers, as the programs
 /// build theirs.
 fn runtime(store: &Arc<MemoryStore>) -> RuntimeManager {
-    let security = Arc::new(DummySecurityManager::new());
-    let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
+    let access_policy = Arc::new(AllowAllPolicy::new());
+    let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
     let backends = Backends::with_plugins(&[&McpPlugin]);
-    let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)), backends).unwrap();
+    let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)), backends).unwrap();
     builder.plugin(&McpPlugin).unwrap();
     builder.build().unwrap()
 }
@@ -128,7 +128,7 @@ fn detached_views() -> ViewsFactory {
         deleted: None,
     };
     let session_id = session.id;
-    let commands = Arc::new(CommandExecutor::empty(Arc::clone(runtime_manager.security_manager())));
+    let commands = Arc::new(CommandExecutor::empty(Arc::clone(runtime_manager.access_policy())));
     let session = runtime_manager.controller_manager().new_session_controller(session);
     let channel = ChannelRuntime::new(runtime_manager, commands, session, Weak::new());
     channel.new_actor_runtime(ActorId::None, session_id, ChannelId::new()).views()

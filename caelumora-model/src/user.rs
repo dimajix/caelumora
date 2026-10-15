@@ -320,14 +320,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_user_writes_their_own_profile_and_no_one_else_s() {
-        use crate::security::{OwnershipSecurityManager, SecurityContext};
+        use crate::security::{OwnershipPolicy, SecurityContext};
         use crate::session::SessionId;
         use crate::channel::ChannelId;
         use crate::store::StoreError;
         use crate::store::memory::MemoryStore;
         use std::sync::Arc;
 
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().user_profiles;
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().user_profiles;
         let (alice, bob) = (UserId::new(), UserId::new());
         let as_user = |id| SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default());
 

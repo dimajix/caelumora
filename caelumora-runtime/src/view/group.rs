@@ -36,7 +36,7 @@ impl GroupView {
     /// session or channel, which change by taking part.
     pub async fn may_change(&self) -> bool {
         !self.group.is_participants()
-            && self.views.security().may_change_group(self.views.context(), &self.group.security_attributes).await
+            && self.views.access_policy().may_change_group(self.views.context(), &self.group.security_attributes).await
     }
 
     /// The group as the viewer sees it; its members called by their names,

@@ -31,7 +31,7 @@ use caelumora_model::value::text::{Description, Introduction};
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::group::{Group, GroupId};
-use caelumora_model::security::{ActionType, Grant, OwnershipSecurityManager, Reclassified, SecurityAttributes, SecurityContext, SecurityManager, Subject};
+use caelumora_model::security::{ActionType, Grant, OwnershipPolicy, Reclassified, SecurityAttributes, SecurityContext, AccessPolicy, Subject};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::{ComponentStore, StoreError};
 use caelumora_model::store::memory::MemoryStore;
@@ -74,7 +74,7 @@ use caelumora_model::config::AppConfig;
 /// its own initiates itself (issue 341).
 #[derive(Debug)]
 pub struct Recorder {
-    policy: OwnershipSecurityManager,
+    access_policy: OwnershipPolicy,
     /// The flow decisions (issue 304), recorded in the same list, so that
     /// the order of an action's questions shows both.
     rules: ConfidentialityRules,
@@ -121,16 +121,16 @@ impl Recorder {
 }
 
 #[async_trait]
-impl SecurityManager for Recorder {
+impl AccessPolicy for Recorder {
     async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
-        let allowed = self.policy.check(context, action).await;
+        let allowed = self.access_policy.check(context, action).await;
         self.record(context, self.label(&action), allowed);
         allowed
     }
 }
 
 /// The flow decisions, recorded by the names the actions had before they
-/// left the `SecurityManager` (issue 304): `Publish`, `CopyInformation`,
+/// left the `AccessPolicy` (issue 304): `Publish`, `CopyInformation`,
 /// and `JoinChannel` with whom it clears.
 impl ConfidentialityPolicy for Recorder {
     fn may_publish(&self, context: &SecurityContext, classification: &Classification, into: &Classification) -> bool {
@@ -177,7 +177,7 @@ pub static STAFF: LazyLock<RoleId> = LazyLock::new(RoleId::new);
 /// The runtime with the ownership policy, and three users: alice and bob
 /// on the staff, carol a stranger to everything of theirs.
 pub struct World {
-    pub policy: Arc<Recorder>,
+    pub access_policy: Arc<Recorder>,
     pub store: Arc<MemoryStore>,
     pub runtime: Arc<RuntimeManager>,
     pub manager: Arc<SessionManager>,
@@ -217,24 +217,24 @@ impl World {
         // The policy learns who takes part where from the store it guards
         // (issue 23), bound once the store is made.
         let memberships = Arc::new(StoreMemberships::new());
-        let recorder = Arc::new(Recorder { policy: OwnershipSecurityManager::with_memberships(Arc::<StoreMemberships>::clone(&memberships)), rules, asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
-        let policy: Arc<dyn SecurityManager> = Arc::<Recorder>::clone(&recorder);
-        let store = Arc::new(MemoryStore::with_policies(Arc::clone(&policy), Arc::<Recorder>::clone(&recorder)));
+        let recorder = Arc::new(Recorder { access_policy: OwnershipPolicy::with_memberships(Arc::<StoreMemberships>::clone(&memberships)), rules, asked: Mutex::new(Vec::new()), names: Mutex::new(HashMap::new()) });
+        let access_policy: Arc<dyn AccessPolicy> = Arc::<Recorder>::clone(&recorder);
+        let store = Arc::new(MemoryStore::with_policies(Arc::clone(&access_policy), Arc::<Recorder>::clone(&recorder)));
         memberships.bind(&store.entity_stores().groups);
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&policy)));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
         let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
         register(&mut registry);
         let files = tempfile::tempdir().unwrap();
         let shell = BackendConfig::new("local", json!({ "root": files.path().join("shell"), "shell": true, "destination": { "level": "internal" } }));
         let workspaces = WorkspacesConfig { storage: [("main".to_string(), BackendConfig::new("local", json!({ "root": files.path() }))), ("shell".to_string(), shell)].into(), ..Default::default() };
         let config = AppConfig { workspaces, plugins: sections(files.path()), ..Default::default() };
-        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::<Recorder>::clone(&recorder), &config, registry, Backends::with_plugins(plugins)).unwrap();
+        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::<Recorder>::clone(&recorder), &config, registry, Backends::with_plugins(plugins)).unwrap();
         for plugin in plugins {
             builder.plugin(*plugin).unwrap();
         }
         let runtime = Arc::new(builder.build().unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
-        let mut world = Self { policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
+        let mut world = Self { access_policy: recorder, store, runtime, manager, alice: UserId::new(), bob: UserId::new(), carol: UserId::new(), files };
         world.alice = world.user("alice").await;
         world.bob = world.user("bob").await;
         world.carol = world.user("carol").await;
@@ -264,7 +264,7 @@ impl World {
     pub async fn user(&self, name: &str) -> UserId {
         let user = User { id: UserId::new(), username: Name::new(name).unwrap(), email: String::new(), roles: vec![*STAFF], deleted: None };
         self.runtime.entity_stores().users.create(&Self::system(), &user).await.unwrap();
-        self.policy.names.lock().unwrap().insert(ActorId::User(user.id), name.to_string());
+        self.access_policy.names.lock().unwrap().insert(ActorId::User(user.id), name.to_string());
         user.id
     }
 
@@ -282,14 +282,14 @@ impl World {
     /// What the policy was asked in someone's name while `action` ran, by
     /// the action or by the runtime on its own, in order.
     pub async fn recorded<T>(&self, action: impl Future<Output = T>) -> (T, Vec<String>) {
-        self.policy.asked.lock().unwrap().clear();
+        self.access_policy.asked.lock().unwrap().clear();
         let result = action.await;
-        let asked = std::mem::take(&mut *self.policy.asked.lock().unwrap());
+        let asked = std::mem::take(&mut *self.access_policy.asked.lock().unwrap());
         // Agents made by the action are recorded by their names, too.
         for agent in self.runtime.entity_stores().agents.list(&Self::system(), &Query::all()).await.map(|page| page.items).unwrap() {
-            self.policy.names.lock().unwrap().insert(ActorId::Agent(agent.id), agent.name.name.to_string());
+            self.access_policy.names.lock().unwrap().insert(ActorId::Agent(agent.id), agent.name.name.to_string());
         }
-        let names = self.policy.names.lock().unwrap().clone();
+        let names = self.access_policy.names.lock().unwrap().clone();
         let asked = asked.into_iter()
             .filter(|line| !line.starts_with("system:"))
             .map(|line| names.iter().fold(line, |line, (actor, name)| line.replace(&actor.to_string(), name)))
@@ -355,7 +355,7 @@ impl World {
     pub async fn agent(&self, name: &str, owner: UserId, personality: &Personality) -> AgentId {
         let agent = Agent::new(ScopedName::new(name, Scope::GlobalScope).unwrap(), personality.id, ActorId::User(owner));
         self.runtime.entity_stores().agents.create(&Self::system(), &agent).await.unwrap();
-        self.policy.names.lock().unwrap().insert(ActorId::Agent(agent.id), name.to_string());
+        self.access_policy.names.lock().unwrap().insert(ActorId::Agent(agent.id), name.to_string());
         agent.id
     }
 
@@ -581,8 +581,8 @@ pub fn register_once(registry: &mut ComponentRegistry, kind: &str, answer: Messa
 pub async fn asked_for(world: &World, line: &str) {
     timeout(Duration::from_secs(5), async {
         loop {
-            let names = world.policy.names.lock().unwrap().clone();
-            let asked = world.policy.asked.lock().unwrap().iter()
+            let names = world.access_policy.names.lock().unwrap().clone();
+            let asked = world.access_policy.asked.lock().unwrap().iter()
                 .map(|l| names.iter().fold(l.clone(), |l, (actor, name)| l.replace(&actor.to_string(), name)))
                 .any(|l| l == line);
             if asked {

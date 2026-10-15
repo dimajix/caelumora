@@ -11,7 +11,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{self, Channel, Participant};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_model::event::{Announcing, GlobalEvent};
-use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use crate::view::{Viewer, Views};
 #[cfg(any(test, feature = "test-support"))]
 use crate::view::ViewsFactory;
@@ -134,7 +134,7 @@ pub struct SessionLoop {
     runtime_manager: Arc<RuntimeManager>,
     /// The services it works with, taken from `runtime_manager` once (issue
     /// 229).
-    security: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     stores: EntityStores,
     controllers: Arc<ControllerManager>,
@@ -184,12 +184,12 @@ async fn purge_channel_document(stores: &EntityStores, channel_id: ChannelId) ->
 /// `WorkspaceError::NotFound` if there is no workspace they may read or
 /// are cleared for, `SessionError::WorkspaceOutOfScope`,
 /// `StoreError::PermissionDenied` if they may not share it.
-async fn require_attachable(workspaces: &WorkspaceManager, security: &dyn SecurityManager, context: &SecurityContext, id: WorkspaceId, session_id: SessionId) -> Result<()> {
+async fn require_attachable(workspaces: &WorkspaceManager, access_policy: &dyn AccessPolicy, context: &SecurityContext, id: WorkspaceId, session_id: SessionId) -> Result<()> {
     let shared = workspaces.reached(context, id).await?;
     if !shared.name.scope.admits(&Scope::SessionScope { session_id }) {
         return Err(SessionError::WorkspaceOutOfScope(id).into());
     }
-    security.require(context, ActionType::update(Workspace::KIND, &shared.security_attributes), StoreError::PermissionDenied).await?;
+    access_policy.require(context, ActionType::update(Workspace::KIND, &shared.security_attributes), StoreError::PermissionDenied).await?;
     Ok(())
 }
 
@@ -239,7 +239,7 @@ impl SessionLoop {
             id,
             session_controller,
             workspace: ArcSwapOption::new(workspace),
-            security: Arc::clone(runtime_manager.security_manager()),
+            access_policy: Arc::clone(runtime_manager.access_policy()),
             confidentiality: Arc::clone(runtime_manager.confidentiality()),
             stores: runtime_manager.entity_stores().clone(),
             controllers: Arc::clone(runtime_manager.controller_manager()),

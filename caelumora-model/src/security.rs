@@ -17,7 +17,7 @@ use crate::group::Group;
 use crate::session::Session;
 use crate::workspace::Workspace;
 
-/// Everything the `SecurityManager` is asked about.
+/// Everything the `AccessPolicy` is asked about.
 ///
 /// What is done with a stored entity is asked alike for every kind (issue
 /// 323): `Entity`, by the kind, a `Verb` and the entity's
@@ -562,15 +562,15 @@ impl SecurityContext {
 }
 
 #[async_trait]
-pub trait SecurityManager : Debug + Sync + Send {
+pub trait AccessPolicy : Debug + Sync + Send {
     async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool;
 }
 
 /// The pure questions "may they?" that are asked from outside an entity -
 /// by clients deciding what to offer, by readers deciding what to show -
 /// each with its name, in one place (issue 71). They only translate a
-/// question into an `ActionType`: the decision is `SecurityManager::check`'s
-/// alone, and since every `SecurityManager` gets them by the blanket
+/// question into an `ActionType`: the decision is `AccessPolicy::check`'s
+/// alone, and since every `AccessPolicy` gets them by the blanket
 /// implementation, no policy can answer them differently.
 ///
 /// Operations that check their permission as part of what they do (a
@@ -664,7 +664,7 @@ pub trait AccessQuestions {
 }
 
 #[async_trait]
-impl<T: SecurityManager + ?Sized> AccessQuestions for T {
+impl<T: AccessPolicy + ?Sized> AccessQuestions for T {
     async fn may_read_session(&self, context: &SecurityContext, session: &SecurityAttributes) -> bool {
         self.check(context, ActionType::get(Session::KIND, session)).await
     }
@@ -745,7 +745,7 @@ impl<T: SecurityManager + ?Sized> AccessQuestions for T {
 /// a refusal is detail of one operation, and some are routine, such as a
 /// store answering "not found" for what its caller may not see. Pure
 /// questions, which only decide what to offer, show or filter, are
-/// `AccessQuestions`. By blanket implementation on every `SecurityManager`,
+/// `AccessQuestions`. By blanket implementation on every `AccessPolicy`,
 /// like those.
 #[async_trait]
 pub trait Enforcement {
@@ -760,7 +760,7 @@ pub trait Enforcement {
 }
 
 #[async_trait]
-impl<T: SecurityManager + ?Sized> Enforcement for T {
+impl<T: AccessPolicy + ?Sized> Enforcement for T {
     async fn require<E, F>(&self, context: &SecurityContext, action: ActionType<'_>, refusal: F) -> Result<(), E>
     where
         E: Send,
@@ -779,16 +779,16 @@ impl<T: SecurityManager + ?Sized> Enforcement for T {
 /// may flow where is not its to decide (issue 304) - the
 /// `ConfidentialityPolicy` applies beside it all the same.
 #[derive(Debug, Default)]
-pub struct DummySecurityManager;
+pub struct AllowAllPolicy;
 
-impl DummySecurityManager {
+impl AllowAllPolicy {
     pub fn new() -> Self {
         Self
     }
 }
 
 #[async_trait]
-impl SecurityManager for DummySecurityManager {
+impl AccessPolicy for AllowAllPolicy {
     async fn check(&self, _context: &SecurityContext, _action: ActionType<'_>) -> bool {
         true
     }
@@ -831,17 +831,17 @@ impl SecurityManager for DummySecurityManager {
 /// it (issue 255). An agent is its owner's delegate: the owner checks the
 /// request where a call is admitted, and the asker lends it nothing.
 #[derive(Debug)]
-pub struct OwnershipSecurityManager {
+pub struct OwnershipPolicy {
     memberships: Arc<dyn Memberships>,
 }
 
-impl Default for OwnershipSecurityManager {
+impl Default for OwnershipPolicy {
     fn default() -> Self {
         Self { memberships: Arc::new(NoMemberships) }
     }
 }
 
-impl OwnershipSecurityManager {
+impl OwnershipPolicy {
     /// The policy knowing of no memberships.
     pub fn new() -> Self {
         Self::default()
@@ -905,7 +905,7 @@ impl OwnershipSecurityManager {
 }
 
 #[async_trait]
-impl SecurityManager for OwnershipSecurityManager {
+impl AccessPolicy for OwnershipPolicy {
     async fn check(&self, context: &SecurityContext, action: ActionType<'_>) -> bool {
         let me = context.principal_id;
         if me == ActorId::System {
@@ -996,7 +996,7 @@ mod tests {
     }
 
     async fn allows(actor: ActorId, action: ActionType<'_>) -> bool {
-        OwnershipSecurityManager::new().check(&context(actor), action).await
+        OwnershipPolicy::new().check(&context(actor), action).await
     }
 
     /// Owned by `owner`, read by `readers` (issue 23).
@@ -1017,8 +1017,8 @@ mod tests {
         }
     }
 
-    fn knowing(known: Known) -> OwnershipSecurityManager {
-        OwnershipSecurityManager::with_memberships(Arc::new(known))
+    fn knowing(known: Known) -> OwnershipPolicy {
+        OwnershipPolicy::with_memberships(Arc::new(known))
     }
 
     #[tokio::test]
@@ -1031,9 +1031,9 @@ mod tests {
         }
         let agent = ActorId::Agent(crate::agent::AgentId::new());
         let for_alice = context(alice).next(agent, alice, alice);
-        let policy = OwnershipSecurityManager::new();
-        assert!(policy.check(&for_alice, ActionType::RevokeMessage { author: agent, channel: &bobs }).await, "an agent its own, acting for alice");
-        assert!(!policy.check(&for_alice, ActionType::RevokeMessage { author: alice, channel: &bobs }).await, "but not alice's: who said it, not whom it acts for");
+        let access_policy = OwnershipPolicy::new();
+        assert!(access_policy.check(&for_alice, ActionType::RevokeMessage { author: agent, channel: &bobs }).await, "an agent its own, acting for alice");
+        assert!(!access_policy.check(&for_alice, ActionType::RevokeMessage { author: alice, channel: &bobs }).await, "but not alice's: who said it, not whom it acts for");
     }
 
     #[tokio::test]
@@ -1041,25 +1041,25 @@ mod tests {
         let (alice, bob) = (user(), user());
         let agent = ActorId::Agent(crate::agent::AgentId::new());
         let hers = SecurityAttributes::owned_by(alice);
-        let policy = OwnershipSecurityManager::new();
+        let access_policy = OwnershipPolicy::new();
         let asked_by_bob = context(bob).next(agent, alice, alice);
-        assert!(policy.check(&asked_by_bob, ActionType::get(Session::KIND, &hers)).await, "with alice's rights, whoever asked");
-        assert!(policy.check(&asked_by_bob, ActionType::update(Session::KIND, &hers)).await, "all of them");
+        assert!(access_policy.check(&asked_by_bob, ActionType::get(Session::KIND, &hers)).await, "with alice's rights, whoever asked");
+        assert!(access_policy.check(&asked_by_bob, ActionType::update(Session::KIND, &hers)).await, "all of them");
         let asked_by_alice = context(alice).next(agent, bob, bob);
-        assert!(!policy.check(&asked_by_alice, ActionType::get(Session::KIND, &hers)).await, "asking lends nothing, not even the owner's own rights to another's agent");
+        assert!(!access_policy.check(&asked_by_alice, ActionType::get(Session::KIND, &hers)).await, "asking lends nothing, not even the owner's own rights to another's agent");
     }
 
     #[tokio::test]
     async fn access_questions_ask_the_policy() {
         let (alice, bob) = (user(), user());
         let hers = shared(alice, &[bob]);
-        let policy = OwnershipSecurityManager::new();
-        assert!(policy.may_read_channel(&context(bob), &hers).await, "a participant reads the channel");
-        assert!(policy.may_change_channel(&context(alice), &hers).await, "the owner changes it");
-        assert!(!policy.may_change_channel(&context(bob), &hers).await, "a participant does not");
-        assert!(policy.may_change_session(&context(alice), &hers).await, "the owner changes a session");
-        assert!(!policy.may_change_session(&context(bob), &hers).await, "a participant does not");
-        assert!(!policy.may_read_agent_context(&context(bob), &hers).await, "what an agent saw is its owner's alone");
+        let access_policy = OwnershipPolicy::new();
+        assert!(access_policy.may_read_channel(&context(bob), &hers).await, "a participant reads the channel");
+        assert!(access_policy.may_change_channel(&context(alice), &hers).await, "the owner changes it");
+        assert!(!access_policy.may_change_channel(&context(bob), &hers).await, "a participant does not");
+        assert!(access_policy.may_change_session(&context(alice), &hers).await, "the owner changes a session");
+        assert!(!access_policy.may_change_session(&context(bob), &hers).await, "a participant does not");
+        assert!(!access_policy.may_read_agent_context(&context(bob), &hers).await, "what an agent saw is its owner's alone");
         assert!(allows(alice, ActionType::StopSession(&hers)).await, "the owner stops a session");
         assert!(!allows(bob, ActionType::StopSession(&hers)).await, "a participant does not");
 
@@ -1130,23 +1130,23 @@ mod tests {
         let (hers, his, member) = (ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()), ActorId::Agent(crate::agent::AgentId::new()));
         let place = GroupId::of_channel(ChannelId::new());
         let alices = SecurityAttributes::owned_by(alice).granting(Subject::Group(place), Grant::Read);
-        let policy = knowing(Known { members: vec![(member, place)] });
-        assert!(policy.check(&context(bob).next(hers, alice, alice), ActionType::get(Channel::KIND, &alices)).await, "her agent, whoever asked");
-        assert!(!policy.check(&context(bob).next(his, bob, bob), ActionType::get(Channel::KIND, &alices)).await, "not his: he may not read it");
-        assert!(policy.check(&context(bob).next(member, bob, bob), ActionType::get(Channel::KIND, &alices)).await, "but an agent taking part in it");
-        assert!(policy.check(&context(bob).next(member, bob, bob), ActionType::get(Session::KIND, &alices)).await, "so for every read");
-        assert!(!policy.check(&context(bob).next(member, bob, bob), ActionType::update(Channel::KIND, &alices)).await, "changing stays its owner's");
-        assert!(!policy.check(&context(bob).next(member, bob, bob), ActionType::CancelChannel(&alices)).await, "and so does acting on it");
+        let access_policy = knowing(Known { members: vec![(member, place)] });
+        assert!(access_policy.check(&context(bob).next(hers, alice, alice), ActionType::get(Channel::KIND, &alices)).await, "her agent, whoever asked");
+        assert!(!access_policy.check(&context(bob).next(his, bob, bob), ActionType::get(Channel::KIND, &alices)).await, "not his: he may not read it");
+        assert!(access_policy.check(&context(bob).next(member, bob, bob), ActionType::get(Channel::KIND, &alices)).await, "but an agent taking part in it");
+        assert!(access_policy.check(&context(bob).next(member, bob, bob), ActionType::get(Session::KIND, &alices)).await, "so for every read");
+        assert!(!access_policy.check(&context(bob).next(member, bob, bob), ActionType::update(Channel::KIND, &alices)).await, "changing stays its owner's");
+        assert!(!access_policy.check(&context(bob).next(member, bob, bob), ActionType::CancelChannel(&alices)).await, "and so does acting on it");
     }
 
     #[tokio::test]
     async fn a_channel_is_reclassified_by_its_owner_a_message_also_by_its_author() {
-        let policy = OwnershipSecurityManager::new();
+        let access_policy = OwnershipPolicy::new();
         let (owner, author, stranger) = (user(), user(), user());
         let attributes = shared(owner, &[author, stranger]);
         let may = |who, target| {
-            let policy = &policy;
-            async move { policy.check(&context(who), ActionType::Reclassify(target)).await }
+            let access_policy = &access_policy;
+            async move { access_policy.check(&context(who), ActionType::Reclassify(target)).await }
         };
         let channel_itself = Reclassified::Channel { attributes: &attributes };
         assert!(may(owner, channel_itself).await, "the owner reclassifies the channel");
@@ -1188,13 +1188,13 @@ mod tests {
         let (alice, bob, carol) = (user(), user(), user());
         let place = GroupId::new();
         let hers = SecurityAttributes::owned_by(alice).granting(Subject::Group(place), Grant::Read);
-        let policy = knowing(Known { members: vec![(bob, place)] });
+        let access_policy = knowing(Known { members: vec![(bob, place)] });
         let elsewhere = SecurityContext::new(bob, SessionId::new(), ChannelId::new());
-        assert!(policy.check(&elsewhere, ActionType::get(Session::KIND, &hers)).await, "a member, though he acts somewhere else");
-        assert!(!policy.check(&context(carol), ActionType::get(Session::KIND, &hers)).await, "not who is no member");
-        assert!(!policy.check(&context(bob), ActionType::update(Session::KIND, &hers)).await, "reading, not changing");
+        assert!(access_policy.check(&elsewhere, ActionType::get(Session::KIND, &hers)).await, "a member, though he acts somewhere else");
+        assert!(!access_policy.check(&context(carol), ActionType::get(Session::KIND, &hers)).await, "not who is no member");
+        assert!(!access_policy.check(&context(bob), ActionType::update(Session::KIND, &hers)).await, "reading, not changing");
         let other = SecurityAttributes::owned_by(alice).granting(Subject::Group(GroupId::new()), Grant::Read);
-        assert!(!policy.check(&context(bob), ActionType::get(Session::KIND, &other)).await, "a member of the group named, not of any");
+        assert!(!access_policy.check(&context(bob), ActionType::get(Session::KIND, &other)).await, "a member of the group named, not of any");
     }
 
     #[tokio::test]
@@ -1202,13 +1202,13 @@ mod tests {
         let (alice, bob, carol) = (user(), user(), user());
         let ActorId::User(alice_id) = alice else { unreachable!() };
         let team = Group::team(ScopedName::new("project", Scope::GlobalScope).unwrap(), alice_id);
-        let policy = knowing(Known { members: vec![(bob, team.id)] });
+        let access_policy = knowing(Known { members: vec![(bob, team.id)] });
         let theirs = &team.security_attributes;
-        assert!(policy.check(&context(alice), ActionType::get(Group::KIND, theirs)).await, "its owner");
-        assert!(policy.check(&context(bob), ActionType::get(Group::KIND, theirs)).await, "a member, by the group's own list");
-        assert!(!policy.check(&context(carol), ActionType::get(Group::KIND, theirs)).await, "not a stranger");
-        assert!(policy.check(&context(alice), ActionType::update(Group::KIND, theirs)).await && policy.check(&context(alice), ActionType::delete(Group::KIND, theirs)).await);
-        assert!(!policy.check(&context(bob), ActionType::update(Group::KIND, theirs)).await, "a member does not change it");
+        assert!(access_policy.check(&context(alice), ActionType::get(Group::KIND, theirs)).await, "its owner");
+        assert!(access_policy.check(&context(bob), ActionType::get(Group::KIND, theirs)).await, "a member, by the group's own list");
+        assert!(!access_policy.check(&context(carol), ActionType::get(Group::KIND, theirs)).await, "not a stranger");
+        assert!(access_policy.check(&context(alice), ActionType::update(Group::KIND, theirs)).await && access_policy.check(&context(alice), ActionType::delete(Group::KIND, theirs)).await);
+        assert!(!access_policy.check(&context(bob), ActionType::update(Group::KIND, theirs)).await, "a member does not change it");
     }
 
     #[tokio::test]
@@ -1219,14 +1219,14 @@ mod tests {
         let hers = SecurityAttributes::owned_by(alice).granting(Subject::Role(hr), Grant::Read);
         // Bob holds hr; his agent is limited to staff, so of his roles only
         // that counts for it - as its context says (issue 304).
-        let policy = OwnershipSecurityManager::new();
+        let access_policy = OwnershipPolicy::new();
         let his_context = context(bob).with_roles(vec![hr, staff], None);
         let his_agents = context(bob).next(agent, bob, bob).with_roles(vec![hr, staff], Some(vec![staff]));
-        assert!(policy.check(&his_context, ActionType::get(SKILL, &hers)).await, "who holds the role");
-        assert!(!policy.check(&his_agents, ActionType::get(SKILL, &hers)).await, "not his agent, limited below it");
-        assert!(!policy.check(&context(bob).next(agent, bob, bob), ActionType::get(SKILL, &hers)).await, "nor a context continued without roles: the initiator lends none");
+        assert!(access_policy.check(&his_context, ActionType::get(SKILL, &hers)).await, "who holds the role");
+        assert!(!access_policy.check(&his_agents, ActionType::get(SKILL, &hers)).await, "not his agent, limited below it");
+        assert!(!access_policy.check(&context(bob).next(agent, bob, bob), ActionType::get(SKILL, &hers)).await, "nor a context continued without roles: the initiator lends none");
         let his = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Read);
-        assert!(policy.check(&his_agents, ActionType::get(SKILL, &his)).await, "what he is granted as a person, his agent is too");
+        assert!(access_policy.check(&his_agents, ActionType::get(SKILL, &his)).await, "what he is granted as a person, his agent is too");
     }
 
     #[tokio::test]
@@ -1234,14 +1234,14 @@ mod tests {
         let (alice, bob) = (user(), user());
         assert!(Grant::Write.covers(Grant::Read) && Grant::Write.covers(Grant::Write));
         assert!(Grant::Read.covers(Grant::Read) && !Grant::Read.covers(Grant::Write));
-        let policy = OwnershipSecurityManager::new();
+        let access_policy = OwnershipPolicy::new();
         let hers = shared(alice, &[]);
-        assert!(policy.granted(&hers, Grant::Write, &context(alice), false).await, "the owner, without an entry");
+        assert!(access_policy.granted(&hers, Grant::Write, &context(alice), false).await, "the owner, without an entry");
         let readable = shared(alice, &[bob]);
-        assert!(policy.granted(&readable, Grant::Read, &context(bob), false).await);
-        assert!(!policy.granted(&readable, Grant::Write, &context(bob), false).await, "read, not write");
+        assert!(access_policy.granted(&readable, Grant::Read, &context(bob), false).await);
+        assert!(!access_policy.granted(&readable, Grant::Write, &context(bob), false).await, "read, not write");
         let writable = SecurityAttributes::owned_by(alice).granting(Subject::Actor(bob), Grant::Write);
-        assert!(policy.granted(&writable, Grant::Read, &context(bob), false).await, "who may write may read");
+        assert!(access_policy.granted(&writable, Grant::Read, &context(bob), false).await, "who may write may read");
     }
 
     #[tokio::test]
@@ -1290,11 +1290,11 @@ mod tests {
         let (owner, stranger) = (user(), user());
         let context = |actor| SecurityContext::new(actor, Default::default(), Default::default());
         let hers = SecurityAttributes::owned_by(owner);
-        let policy = OwnershipSecurityManager::new();
+        let access_policy = OwnershipPolicy::new();
 
-        assert_eq!(policy.require(&context(owner), ActionType::delete(Session::KIND, &hers), Denied).await, Ok(()));
+        assert_eq!(access_policy.require(&context(owner), ActionType::delete(Session::KIND, &hers), Denied).await, Ok(()));
         let refused = Refused { subject: "session", action: "DeleteSession".to_string() };
-        assert_eq!(policy.require(&context(stranger), ActionType::delete(Session::KIND, &hers), Denied).await, Err(Denied(refused)), "what was refused, named by its kind");
+        assert_eq!(access_policy.require(&context(stranger), ActionType::delete(Session::KIND, &hers), Denied).await, Err(Denied(refused)), "what was refused, named by its kind");
     }
 
     /// A subject as a query compares it (issue 293).
@@ -1323,7 +1323,7 @@ mod tests {
         let open = SecurityAttributes::owned_by(alice).granting(Subject::Everyone, Grant::Join);
         assert!(allows(carol, join(&open)).await, "an entry for everyone lets every user join");
         let agent = ActorId::Agent(crate::agent::AgentId::new());
-        assert!(OwnershipSecurityManager::new().check(&context(carol).next(agent, carol, carol), join(&open)).await, "an agent by its owner");
+        assert!(OwnershipPolicy::new().check(&context(carol).next(agent, carol, carol), join(&open)).await, "an agent by its owner");
         assert!(!allows(carol, ActionType::get(Session::KIND, &open)).await, "and reading it is another entry");
         assert!(allows(carol, ActionType::get(Session::KIND, &SecurityAttributes::owned_by(alice).granting(Subject::Everyone, Grant::Read))).await, "which may be for everyone, too");
     }

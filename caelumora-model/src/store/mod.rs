@@ -19,7 +19,7 @@ use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::removal::{Deletable, Removal};
 use crate::confidentiality::{Classification, ConfidentialityPolicy};
-use crate::security::{Refused, Secured, SecurityContext, SecurityManager};
+use crate::security::{Refused, Secured, SecurityContext, AccessPolicy};
 use crate::session::Session;
 use crate::template::SessionTemplate;
 use crate::user::{User, UserProfile};
@@ -62,9 +62,9 @@ pub enum StoreError {
 
 pub type StoreResult<T> = Result<T, StoreError>;
 
-/// The `SecurityManager` and the `ConfidentialityPolicy` every store of a
+/// The `AccessPolicy` and the `ConfidentialityPolicy` every store of a
 /// backend asks.
-pub(crate) type Policies = (Arc<dyn SecurityManager>, Arc<dyn ConfidentialityPolicy>);
+pub(crate) type Policies = (Arc<dyn AccessPolicy>, Arc<dyn ConfidentialityPolicy>);
 
 /// What a lookup answers when what it looks for may no longer exist
 /// (issue 192).
@@ -494,7 +494,7 @@ mod tests {
     use crate::security::{SecurityAttributes, SecurityContext};
     use crate::confidentiality::ConfidentialityRules;
     use crate::removal::Removal;
-    use crate::security::DummySecurityManager;
+    use crate::security::AllowAllPolicy;
     use crate::store::memory::MemoryStore;
     use std::sync::Arc;
     use uuid::Uuid;
@@ -631,7 +631,7 @@ mod tests {
         assert!(matches!(&refused, StoreError::Conflict(why) if why.contains("'group'")), "{refused}");
 
         let dir = tempfile::tempdir().unwrap();
-        let json = StoreBackend::from(Arc::new(JsonFileStore::new(dir.path(), Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())).unwrap()));
+        let json = StoreBackend::from(Arc::new(JsonFileStore::new(dir.path(), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap()));
         json.entity_store::<Note>().unwrap().create(&SecurityContext::system(), &note).await.unwrap();
         assert!(dir.path().join("entities/note").join(format!("{}.json", note.id)).is_file(), "kept under its name");
     }

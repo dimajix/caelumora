@@ -79,7 +79,7 @@ impl SessionLoop {
         let not_found = || SessionError::ChannelNotFound { session: self.id, channel: channel_id };
         let channel = self.channel_by_id(channel_id).ok_or_else(not_found)?;
         let at = Place { channel: channel_id, classification: channel.classification(), session: self.privacy() };
-        channel_reading(self.security.as_ref(), self.confidentiality.as_ref(), context, &channel.security_attributes(), &at, ChannelReader::Cleared).await
+        channel_reading(self.access_policy.as_ref(), self.confidentiality.as_ref(), context, &channel.security_attributes(), &at, ChannelReader::Cleared).await
             .ok_or_else(not_found)?;
         Ok(channel)
     }
@@ -147,7 +147,7 @@ impl SessionLoop {
         // Whether the actor may create it, before anything is asked of the
         // others in it (issues 198, 312): who may not learns nothing of their
         // clearance. The store asks again as it stores.
-        self.security
+        self.access_policy
             .require(context, ActionType::create(Channel::KIND, &channel.security_attributes), StoreError::PermissionDenied).await?;
         self.participation.require_admitted(context, &channel).await?;
         self.stores.channels.create(context, &channel).await?;
@@ -212,7 +212,7 @@ impl SessionLoop {
         let running = self.channel_for(context, channel_id).await?;
         // Not the guard itself: it would be held across the awaits below.
         let channel = Arc::clone(&running.channel());
-        self.security.require(context, ActionType::delete(Channel::KIND, &channel.security_attributes), StoreError::PermissionDenied).await?;
+        self.access_policy.require(context, ActionType::delete(Channel::KIND, &channel.security_attributes), StoreError::PermissionDenied).await?;
         let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         self.session_controller.remove_channel(context, channel_id).await?;
         // Marked before what lies in its scope, so that all of that is
@@ -275,7 +275,7 @@ impl SessionLoop {
             Some(channel) if channel.session_id == self.id => channel,
             _ => return Err(not_found().into()),
         };
-        self.security
+        self.access_policy
             .require(context, ActionType::restore(Channel::KIND, &channel.security_attributes), StoreError::PermissionDenied).await?;
         // As when it was created: its participants' clearance may have
         // changed while it was deleted.

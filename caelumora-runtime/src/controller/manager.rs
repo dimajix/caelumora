@@ -10,7 +10,7 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::event::EntityChange;
-use caelumora_model::security::{SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{SecurityAttributes, SecurityContext, AccessPolicy};
 use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::{EntityStores, StoreResult, StoreResultExt};
 use caelumora_model::user::{User, UserId, UserProfile};
@@ -47,7 +47,7 @@ pub struct ControllerManager {
     /// Who may do what, and what may flow where: a workspace's controller
     /// asks who may change its files, and of a new classification (issue
     /// 304).
-    security: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     /// The storages of workspaces, by name, shared with the
     /// `WorkspaceManager` and the `CommandReaper`: a workspace's controller
@@ -62,11 +62,11 @@ pub struct ControllerManager {
 }
 
 impl ControllerManager {
-    pub fn new(stores: EntityStores, event_bus: Arc<EventBus>, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>) -> Self {
+    pub fn new(stores: EntityStores, event_bus: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>) -> Self {
         Self {
             stores,
             event_bus,
-            security,
+            access_policy,
             confidentiality,
             storages,
             agents: Default::default(),
@@ -145,7 +145,7 @@ impl ControllerManager {
         }
         let workspace = self.stores.workspaces.get(&SecurityContext::system(), id).await?;
         let provider = self.storages.get(&workspace.storage).cloned();
-        let controller = Arc::new(WorkspaceController::new(workspace, provider, Arc::<EventBus>::clone(&self.event_bus), &self.stores, Arc::clone(&self.security), Arc::clone(&self.confidentiality)));
+        let controller = Arc::new(WorkspaceController::new(workspace, provider, Arc::<EventBus>::clone(&self.event_bus), &self.stores, Arc::clone(&self.access_policy), Arc::clone(&self.confidentiality)));
         remember(&mut workspaces, id, &controller);
         Ok(controller)
     }
@@ -248,7 +248,7 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::role::RoleId;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::store::StoreError;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::{User, UserUpdateEvent};
@@ -259,8 +259,8 @@ mod tests {
 
     fn manager() -> (Arc<MemoryStore>, Arc<EventBus>, ControllerManager) {
         let store = Arc::new(MemoryStore::new());
-        let bus = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())));
-        let manager = ControllerManager::new(store.entity_stores(), Arc::clone(&bus), Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), Default::default());
+        let bus = Arc::new(EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())));
+        let manager = ControllerManager::new(store.entity_stores(), Arc::clone(&bus), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), Default::default());
         (store, bus, manager)
     }
 

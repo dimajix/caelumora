@@ -8,7 +8,7 @@ use crate::agent::state::AgentStates;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::config::{AppConfig, BackendConfig};
 use caelumora_model::secret::{SecretManager, SecretProvider};
-use caelumora_model::security::SecurityManager;
+use caelumora_model::security::AccessPolicy;
 use caelumora_model::user_provider::{UserManager, UserProvider};
 use crate::backend::Backends;
 use caelumora_model::removal::Deletable;
@@ -41,7 +41,7 @@ pub struct RuntimeBuilder {
     entity_stores: EntityStores,
     secret_manager: Arc<SecretManager>,
     user_manager: Arc<UserManager>,
-    security_manager: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     component_registry: ComponentRegistry,
     component_defaults: ComponentConfig,
@@ -75,7 +75,7 @@ impl fmt::Debug for RuntimeBuilder {
 
 impl RuntimeBuilder {
     /// The builder of the runtime everything in a process shares, with the
-    /// core's services and managers made. `security_manager` is the one the
+    /// core's services and managers made. `access_policy` is the one the
     /// whole process was configured with: it decides tool calls and what may
     /// be done to a channel, so it must be the same instance the stores were
     /// built with, not a second one made up here; so is `confidentiality`,
@@ -103,7 +103,7 @@ impl RuntimeBuilder {
         state_store: Arc<dyn StateStore>,
         backend: impl Into<StoreBackend>,
         secret_manager: Arc<SecretManager>,
-        security_manager: Arc<dyn SecurityManager>,
+        access_policy: Arc<dyn AccessPolicy>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
         config: &AppConfig,
         component_registry: ComponentRegistry,
@@ -111,25 +111,25 @@ impl RuntimeBuilder {
     ) -> Result<Self> {
         let backend = backend.into();
         let entity_stores = backend.entity_stores()?;
-        let event_bus = Arc::new(EventBus::new(Arc::clone(&security_manager), Arc::clone(&confidentiality)));
+        let event_bus = Arc::new(EventBus::new(Arc::clone(&access_policy), Arc::clone(&confidentiality)));
         // What a backend may ask for: the policies, the secrets and, for a
         // user provider, the records of the users.
         let backend_services = Services::empty()
-            .with(Arc::clone(&security_manager))
+            .with(Arc::clone(&access_policy))
             .with(Arc::clone(&confidentiality))
             .with(Arc::clone(&secret_manager))
             .with(Arc::clone(&entity_stores.users));
         let storages = Arc::new(backends.make_named::<dyn TerminalProvider>("storage of workspaces", &config.workspaces.storage, &backend_services)?);
-        let controller_manager = Arc::new(ControllerManager::new(entity_stores.clone(), Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), Arc::clone(&storages)));
+        let controller_manager = Arc::new(ControllerManager::new(entity_stores.clone(), Arc::clone(&event_bus), Arc::clone(&access_policy), Arc::clone(&confidentiality), Arc::clone(&storages)));
         let agent_states = Arc::new(AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
         let command_reaper = CommandReaper::new(&entity_stores, &event_bus, Arc::clone(&controller_manager), Arc::clone(&storages))?;
-        let workspaces = Arc::new(WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager), Arc::clone(&confidentiality), storages, &config.workspaces));
+        let workspaces = Arc::new(WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&access_policy), Arc::clone(&confidentiality), storages, &config.workspaces));
         // Users are recorded and their changes announced on the event bus
         // (issue 306).
         let user_providers = backends.make_chain::<dyn UserProvider>("user provider", &config.users.providers, &backend_services)?;
         let user_manager = Arc::new(UserManager::new(user_providers, Arc::clone(&entity_stores.users), Arc::<EventBus>::clone(&event_bus)));
-        let groups = Arc::new(GroupManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&security_manager)));
-        let agents = Arc::new(AgentManager::new(&entity_stores, Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&security_manager)));
+        let groups = Arc::new(GroupManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&access_policy)));
+        let agents = Arc::new(AgentManager::new(&entity_stores, Arc::clone(&state_store), Arc::clone(&event_bus), Arc::clone(&access_policy)));
         let scope_members: Vec<Arc<dyn ScopeMember>> = vec![
             Arc::new(Unowned(Arc::clone(&entity_stores.personalities))),
             Arc::new(Unowned(Arc::clone(&entity_stores.session_templates))),
@@ -137,7 +137,7 @@ impl RuntimeBuilder {
             Arc::<WorkspaceManager>::clone(&workspaces),
         ];
         let services = Services::empty()
-            .with(Arc::clone(&security_manager))
+            .with(Arc::clone(&access_policy))
             .with(Arc::clone(&confidentiality))
             .with(Arc::clone(&secret_manager))
             .with(Arc::clone(&workspaces));
@@ -147,7 +147,7 @@ impl RuntimeBuilder {
             entity_stores,
             secret_manager,
             user_manager,
-            security_manager,
+            access_policy,
             confidentiality,
             component_registry,
             component_defaults: config.component_defaults.clone(),
@@ -186,16 +186,16 @@ impl RuntimeBuilder {
         // The policy is made before the store it guards, and bound to it
         // once it exists.
         let memberships = Arc::new(StoreMemberships::new());
-        let security_manager = config.create_security_manager(Arc::<StoreMemberships>::clone(&memberships));
+        let access_policy = config.create_access_policy(Arc::<StoreMemberships>::clone(&memberships));
         let confidentiality = config.create_confidentiality_policy();
-        let state_store = config.create_state_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
-        let backend = config.open_entity_store(Arc::clone(&security_manager), Arc::clone(&confidentiality))?;
+        let state_store = config.create_state_store(Arc::clone(&access_policy), Arc::clone(&confidentiality))?;
+        let backend = config.open_entity_store(Arc::clone(&access_policy), Arc::clone(&confidentiality))?;
         memberships.bind(&backend.entity_stores()?.groups);
-        let secret_services = Services::empty().with(Arc::clone(&security_manager)).with(Arc::clone(&confidentiality));
+        let secret_services = Services::empty().with(Arc::clone(&access_policy)).with(Arc::clone(&confidentiality));
         let secret_providers = backends.make_chain::<dyn SecretProvider>("secret provider", &config.secrets.providers, &secret_services)?;
-        let secret_manager = Arc::new(SecretManager::new(secret_providers, Arc::clone(&security_manager)));
+        let secret_manager = Arc::new(SecretManager::new(secret_providers, Arc::clone(&access_policy)));
         let registry = ComponentRegistry::built_in(backend.component_store());
-        let mut builder = Self::new(state_store, backend, secret_manager, security_manager, confidentiality, config, registry, backends)?;
+        let mut builder = Self::new(state_store, backend, secret_manager, access_policy, confidentiality, config, registry, backends)?;
         for plugin in plugins {
             builder.plugin(*plugin)?;
         }
@@ -229,8 +229,8 @@ impl RuntimeBuilder {
         &self.event_bus
     }
 
-    pub fn security_manager(&self) -> &Arc<dyn SecurityManager> {
-        &self.security_manager
+    pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
+        &self.access_policy
     }
 
     pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
@@ -320,9 +320,9 @@ impl RuntimeBuilder {
         }
         self.component_registry.set_defaults(&self.component_defaults)?;
         let scoped = Arc::new(ScopedEntities::new(self.scope_members));
-        let participation = Arc::new(Participation::new(Arc::clone(&self.entity_stores.agents), Arc::clone(&self.controller_manager), Arc::clone(&self.security_manager), Arc::clone(&self.confidentiality)));
+        let participation = Arc::new(Participation::new(Arc::clone(&self.entity_stores.agents), Arc::clone(&self.controller_manager), Arc::clone(&self.access_policy), Arc::clone(&self.confidentiality)));
         Ok(RuntimeManager {
-            security_manager: self.security_manager,
+            access_policy: self.access_policy,
             confidentiality: self.confidentiality,
             state_store: self.state_store,
             entity_stores: self.entity_stores,

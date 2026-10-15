@@ -98,7 +98,7 @@ impl AgentActor {
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
         let runtime = &body.runtime;
         let tool_executor = ToolExecutor::new(
-            Arc::clone(runtime.security_manager()),
+            Arc::clone(runtime.access_policy()),
             Arc::clone(runtime.confidentiality()),
             components.get_all::<dyn ToolProvider>(None)?,
             Arc::clone(runtime.approval_rules()),

@@ -48,7 +48,7 @@ mod tests {
     use caelumora_model::removal::{Deletable, Removal};
     use caelumora_model::secret::{SecretManager, SecretProvider, SecretResult};
     use crate::component::config_of_params;
-    use caelumora_model::security::{DummySecurityManager, Secured, SecurityAttributes, SecurityContext};
+    use caelumora_model::security::{AllowAllPolicy, Secured, SecurityAttributes, SecurityContext};
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::NoField;
     use caelumora_model::store::{EntityKind, EntityStore, EntityStoreFactory, NoEntity, StoreError, Stored};
@@ -212,9 +212,9 @@ mod tests {
     }
 
     fn builder(store: &Arc<MemoryStore>, config: &AppConfig) -> anyhow::Result<RuntimeBuilder> {
-        let security = Arc::new(DummySecurityManager::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&security)));
-        RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, security, Arc::new(ConfidentialityRules::default()), config, test_registry(Arc::<MemoryStore>::clone(store)), Backends::built_in())
+        let access_policy = Arc::new(AllowAllPolicy::new());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
+        RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), config, test_registry(Arc::<MemoryStore>::clone(store)), Backends::built_in())
     }
 
     fn built(config: &AppConfig, plugin: &dyn Plugin) -> anyhow::Result<RuntimeManager> {

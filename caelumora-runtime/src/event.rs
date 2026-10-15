@@ -2,7 +2,7 @@ use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::{may_reach, Classification, ConfidentialityPolicy};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
-use caelumora_model::security::{ActionType, Secured, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Secured, SecurityAttributes, SecurityContext, AccessPolicy};
 use caelumora_model::session::SessionId;
 use caelumora_model::user::{User, UserId, UserProfile};
 use dashmap::DashMap;
@@ -56,9 +56,9 @@ impl PublishedEvent {
     /// Whether `context` may read the part the event is about, besides the
     /// entity (issue 316): asked as reading the entity is, with the part's
     /// attributes. Nothing to ask of an event about the whole.
-    async fn part_readable(&self, security_manager: &dyn SecurityManager, context: &SecurityContext) -> bool {
+    async fn part_readable(&self, access_policy: &dyn AccessPolicy, context: &SecurityContext) -> bool {
         match &self.part {
-            Some(part) => security_manager.check(context, ActionType::get(self.event.kind, part)).await,
+            Some(part) => access_policy.check(context, ActionType::get(self.event.kind, part)).await,
             None => true,
         }
     }
@@ -85,7 +85,7 @@ pub struct EventBus {
     // order they were published.
     parties: Arc<Mutex<Vec<Party>>>,
     dispatcher: OnceLock<mpsc::UnboundedSender<PublishedEvent>>,
-    security_manager: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     /// Who is cleared for what a classified entity's events are about
     /// (issue 312).
     confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -158,20 +158,20 @@ impl EventPublisher for EventBus {
 
 impl EventBus {
     /// A bus whose `subscribe_as` subscriptions receive what
-    /// `security_manager` lets their context read and, of what is
+    /// `access_policy` lets their context read and, of what is
     /// classified, what `confidentiality` clears them for.
-    pub fn new(security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+    pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
         Self {
             subscribers: DashMap::new(),
             parties: Arc::new(Mutex::new(Vec::new())),
             dispatcher: OnceLock::new(),
-            security_manager,
+            access_policy,
             confidentiality,
         }
     }
 
     /// The events `context` may receive: those about entities it may read,
-    /// as the `SecurityManager` decides - the same decision the
+    /// as the `AccessPolicy` decides - the same decision the
     /// `EntityStore` makes for reading them (issue 39). Nothing else reaches
     /// the subscription, so other parties' events take no room in it.
     ///
@@ -189,7 +189,7 @@ impl EventBus {
     fn start_dispatcher(&self) -> mpsc::UnboundedSender<PublishedEvent> {
         let (tx, mut rx) = mpsc::unbounded_channel::<PublishedEvent>();
         let parties = Arc::clone(&self.parties);
-        let security_manager = Arc::clone(&self.security_manager);
+        let access_policy = Arc::clone(&self.access_policy);
         let confidentiality = Arc::clone(&self.confidentiality);
         tokio::spawn(async move {
             while let Some(published) = rx.recv().await {
@@ -203,8 +203,8 @@ impl EventBus {
                 for (context, tx) in current {
                     // Reached as the store reaches it: read, and cleared for
                     // what it is, or was (issues 312, 322).
-                    if !may_reach(security_manager.as_ref(), confidentiality.as_ref(), &context, published.read_action(), &published.classifications).await
-                        || !published.part_readable(security_manager.as_ref(), &context).await {
+                    if !may_reach(access_policy.as_ref(), confidentiality.as_ref(), &context, published.read_action(), &published.classifications).await
+                        || !published.part_readable(access_policy.as_ref(), &context).await {
                         continue;
                     }
                     // A send fails only when the subscription is gone.
@@ -332,7 +332,7 @@ impl EventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::security::{DummySecurityManager, OwnershipSecurityManager};
+    use caelumora_model::security::{AllowAllPolicy, OwnershipPolicy};
     use caelumora_model::actor::ActorId;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use std::time::Duration;
@@ -343,7 +343,7 @@ mod tests {
     use caelumora_model::workspace::{Workspace, WorkspaceId};
 
     fn bus() -> EventBus {
-        EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()))
+        EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()))
     }
 
     fn created() -> GlobalEvent {
@@ -433,7 +433,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_party_receives_what_it_may_read_and_nothing_else() {
-        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
         let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
         let mut alices = bus.subscribe_as(as_user(alice));
         let mut bobs = bus.subscribe_as(as_user(bob));
@@ -460,7 +460,7 @@ mod tests {
         struct ChannelsOnly;
 
         #[async_trait::async_trait]
-        impl SecurityManager for ChannelsOnly {
+        impl AccessPolicy for ChannelsOnly {
             async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
                 matches!(action, ActionType::Entity { kind: Channel::KIND, verb: Verb::Get, .. })
             }
@@ -486,7 +486,7 @@ mod tests {
         let staff = RoleId::new();
         let roles = Roles::new([(staff, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
-        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()), Arc::new(rules));
+        let bus = EventBus::new(Arc::new(OwnershipPolicy::new()), Arc::new(rules));
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut alices = bus.subscribe_as(as_user(alice).with_roles(vec![staff], None));
         let mut bobs = bus.subscribe_as(as_user(bob));
@@ -505,7 +505,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_profile_s_change_reaches_its_user_alone() {
-        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut alices = bus.subscribe_as(as_user(alice));
         let mut bobs = bus.subscribe_as(as_user(bob));
@@ -522,7 +522,7 @@ mod tests {
     /// 316) - reaches whoever may read both the entity and the part.
     #[tokio::test]
     async fn a_part_s_events_reach_whoever_reads_the_entity_and_the_part() {
-        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
         let (alice, bob, carol, dave) = (UserId::new(), UserId::new(), UserId::new(), UserId::new());
         let mut alices = bus.subscribe_as(as_user(alice));
         let mut bobs = bus.subscribe_as(as_user(bob));
@@ -542,7 +542,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_workspace_s_events_reach_whoever_may_use_it() {
-        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
         let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
         let mut alices = bus.subscribe_as(as_user(alice));
         let mut bobs = bus.subscribe_as(as_user(bob));
@@ -563,7 +563,7 @@ mod tests {
 
     #[tokio::test]
     async fn what_belongs_to_the_system_reaches_every_party() {
-        let bus = EventBus::new(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
         let mut someone = bus.subscribe_as(as_user(UserId::new()));
         bus.publish(GlobalEvent::created::<Session>(&SessionId::new()), SecurityAttributes::default());
         assert_eq!(drain(&mut someone).await.len(), 1);
@@ -571,7 +571,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_dropped_party_is_removed() {
-        let bus = EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()));
+        let bus = EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()));
         drop(bus.subscribe_as(as_user(UserId::new())));
         let mut kept = bus.subscribe_as(as_user(UserId::new()));
         bus.publish(GlobalEvent::created::<Session>(&SessionId::new()), SecurityAttributes::default());

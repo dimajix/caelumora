@@ -135,7 +135,7 @@ mod tests {
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::scope::Scope;
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{DummySecurityManager, SecurityContext};
+    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::session::{Session, SessionId};
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::confidentiality::ConfidentialityRules;
@@ -174,9 +174,9 @@ mod tests {
     #[tokio::test]
     async fn the_language_is_read_from_the_channel_at_every_turn() {
         let store = Arc::new(MemoryStore::new());
-        let policy = Arc::new(DummySecurityManager::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let access_policy = Arc::new(AllowAllPolicy::new());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
         let system = SecurityContext::system();
 
         let personality = Personality {

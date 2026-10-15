@@ -19,7 +19,7 @@ use crate::controller::{ChannelController, SessionController};
 use async_trait::async_trait;
 use caelumora_model::approval::{ApprovalRule, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
-use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use caelumora_model::question::{Answers, Questions};
 use crate::runtime::ChannelHandle;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus};
@@ -433,7 +433,7 @@ fn offered(call: &ToolCall, turn: &Turn<'_>) -> bool {
 /// call to a person for a decision of their own, whatever its tool says.
 #[derive(Debug)]
 pub struct ToolExecutor {
-    security_manager: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     /// What may flow where (issue 304): a result into the agent's context,
     /// the channel's content to a tool set's remote side.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
@@ -447,7 +447,7 @@ pub struct ToolExecutor {
 
 impl ToolExecutor {
     /// An executor for the tools of `providers`, in the order of the
-    /// configuration, guarded by `security_manager` and by the rules of the
+    /// configuration, guarded by `access_policy` and by the rules of the
     /// system (`system_rules`, `AppConfig::approvals`), of `session` and of
     /// `channel`, where the agent works - which, `running`, puts the
     /// questions of its calls to its users.
@@ -455,8 +455,8 @@ impl ToolExecutor {
     /// # Errors
     /// `ComponentError::InvalidConfig` if two providers have a tool of the
     /// same name (`ToolProviders::new`).
-    pub(crate) fn new(security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, providers: Vec<ComponentImpl<dyn ToolProvider>>, system_rules: Arc<[ApprovalRule]>, session: Arc<SessionController>, channel: Arc<ChannelController>, running: ChannelHandle) -> ComponentResult<Self> {
-        Ok(Self { security_manager, confidentiality, providers: ToolProviders::new(providers)?, system_rules, session, channel, running })
+    pub(crate) fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, providers: Vec<ComponentImpl<dyn ToolProvider>>, system_rules: Arc<[ApprovalRule]>, session: Arc<SessionController>, channel: Arc<ChannelController>, running: ChannelHandle) -> ComponentResult<Self> {
+        Ok(Self { access_policy, confidentiality, providers: ToolProviders::new(providers)?, system_rules, session, channel, running })
     }
 
     /// What `call` asks before it runs, as its tool says, checked and put to
@@ -574,8 +574,8 @@ impl ToolExecutor {
         }
         // The one question of the call's permission (issue 304, rule 4):
         // asked as it is admitted, not again when it runs.
-        if self.security_manager.require(turn.security_context(), ActionType::CallTool(call), |_| ()).await.is_err() {
-            info!("Tool call '{}' by agent {} forbidden by the security manager", call.function_name, agent);
+        if self.access_policy.require(turn.security_context(), ActionType::CallTool(call), |_| ()).await.is_err() {
+            info!("Tool call '{}' by agent {} forbidden by the access policy", call.function_name, agent);
             return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.label()));
         }
         let rule = self.place_rule(call);
@@ -668,7 +668,7 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
 
-    use caelumora_model::security::{DummySecurityManager, SecurityContext};
+    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::session::Session;
     use caelumora_model::tool::ToolResultStatus;
     use serde_json::json;
@@ -742,10 +742,10 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct DenyAllSecurityManager;
+    struct DenyAllPolicy;
 
     #[async_trait]
-    impl SecurityManager for DenyAllSecurityManager {
+    impl AccessPolicy for DenyAllPolicy {
         async fn check(&self, _context: &caelumora_model::security::SecurityContext, _action: ActionType<'_>) -> bool {
             false
         }
@@ -793,8 +793,8 @@ mod tests {
         assert!(timed_out_result().contains("ask the user whether to try again"));
     }
 
-    fn executor(security: Arc<dyn SecurityManager>) -> ToolExecutor {
-        guarded(security, true, Places::default())
+    fn executor(access_policy: Arc<dyn AccessPolicy>) -> ToolExecutor {
+        guarded(access_policy, true, Places::default())
     }
 
     /// The rules of the places an agent works in (issue 13).
@@ -806,21 +806,21 @@ mod tests {
     }
 
     /// The mock tools - each requiring approval if `requires_approval` -
-    /// guarded by `security` and the rules of `places`; the controllers of
+    /// guarded by `access_policy` and the rules of `places`; the controllers of
     /// the session and the channel are returned, for their rules to be
     /// changed.
-    fn guarded_in(security: Arc<dyn SecurityManager>, requires_approval: bool, places: Places) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
-        guarding(security, vec![("tools", Arc::new(MockToolProvider { requires_approval }))], places)
+    fn guarded_in(access_policy: Arc<dyn AccessPolicy>, requires_approval: bool, places: Places) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
+        guarding(access_policy, vec![("tools", Arc::new(MockToolProvider { requires_approval }))], places)
     }
 
     /// The tools of `providers`, by their component ids, guarded by
-    /// `security` and the rules of `places`.
-    fn guarding(security: Arc<dyn SecurityManager>, providers: Vec<(&str, Arc<dyn ToolProvider>)>, places: Places) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
-        guarding_under(security, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), providers, places)
+    /// `access_policy` and the rules of `places`.
+    fn guarding(access_policy: Arc<dyn AccessPolicy>, providers: Vec<(&str, Arc<dyn ToolProvider>)>, places: Places) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
+        guarding_under(access_policy, Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()), providers, places)
     }
 
     /// As `guarding`, the flow decided by `confidentiality` (issue 304).
-    fn guarding_under(security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>, providers: Vec<(&str, Arc<dyn ToolProvider>)>, places: Places) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
+    fn guarding_under(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, providers: Vec<(&str, Arc<dyn ToolProvider>)>, places: Places) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
         let providers = providers.into_iter().map(|(id, facet)| ComponentImpl { id: id.to_string(), fail_policy: Default::default(), facet }).collect();
         let store = Arc::new(caelumora_model::store::memory::MemoryStore::new());
         let session = crate::session::testing::bare_session(caelumora_model::session::SessionId::new());
@@ -828,12 +828,12 @@ mod tests {
         channel.approval_rules = places.channel;
         let session = Arc::new(SessionController::new(Session { approval_rules: places.session, ..session }, Arc::new(()), &store.entity_stores()));
         let channel = Arc::new(ChannelController::new(channel, Arc::new(()), &store.entity_stores()));
-        let executor = ToolExecutor::new(security, confidentiality, providers, places.system.into(), Arc::clone(&session), Arc::clone(&channel), Default::default()).unwrap();
+        let executor = ToolExecutor::new(access_policy, confidentiality, providers, places.system.into(), Arc::clone(&session), Arc::clone(&channel), Default::default()).unwrap();
         (executor, session, channel)
     }
 
-    fn guarded(security: Arc<dyn SecurityManager>, requires_approval: bool, places: Places) -> ToolExecutor {
-        guarded_in(security, requires_approval, places).0
+    fn guarded(access_policy: Arc<dyn AccessPolicy>, requires_approval: bool, places: Places) -> ToolExecutor {
+        guarded_in(access_policy, requires_approval, places).0
     }
 
     fn rule(tool: &str, decision: RuleDecision) -> ApprovalRule {
@@ -842,28 +842,28 @@ mod tests {
 
     #[tokio::test]
     async fn a_rule_of_a_place_denies_a_call_or_asks_for_it_explicitly() {
-        let security: Arc<dyn SecurityManager> = Arc::new(DummySecurityManager::new());
+        let access_policy: Arc<dyn AccessPolicy> = Arc::new(AllowAllPolicy::new());
         let admitted = |executor: ToolExecutor| async move {
             let mut agent_channel_state = agent_turn(&executor);
             let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
             executor.admit(&call("test_tool"), &turn).await
         };
 
-        let denied = admitted(guarded(Arc::clone(&security), false, Places { system: vec![rule("test_tool", RuleDecision::Deny)], ..Default::default() })).await;
+        let denied = admitted(guarded(Arc::clone(&access_policy), false, Places { system: vec![rule("test_tool", RuleDecision::Deny)], ..Default::default() })).await;
         assert!(matches!(denied, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result()), "the system's, as the policy refuses: {denied:?}");
-        let asked = admitted(guarded(Arc::clone(&security), false, Places { channel: vec![rule("test_tool", RuleDecision::Ask)], ..Default::default() })).await;
+        let asked = admitted(guarded(Arc::clone(&access_policy), false, Places { channel: vec![rule("test_tool", RuleDecision::Ask)], ..Default::default() })).await;
         assert!(matches!(asked, Admission::Ask { explicit: true, .. }), "the channel's, of a tool that would not ask: {asked:?}");
-        let both = admitted(guarded(Arc::clone(&security), false, Places { session: vec![rule("*", RuleDecision::Ask)], channel: vec![rule("test_tool", RuleDecision::Deny)], ..Default::default() })).await;
+        let both = admitted(guarded(Arc::clone(&access_policy), false, Places { session: vec![rule("*", RuleDecision::Ask)], channel: vec![rule("test_tool", RuleDecision::Deny)], ..Default::default() })).await;
         assert!(matches!(both, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden), "the strongest of all places: {both:?}");
-        let other = admitted(guarded(Arc::clone(&security), false, Places { session: vec![rule("hr_tool", RuleDecision::Deny)], ..Default::default() })).await;
+        let other = admitted(guarded(Arc::clone(&access_policy), false, Places { session: vec![rule("hr_tool", RuleDecision::Deny)], ..Default::default() })).await;
         assert!(matches!(other, Admission::Run), "a rule about another tool: {other:?}");
-        let default = admitted(guarded(security, true, Places::default())).await;
+        let default = admitted(guarded(access_policy, true, Places::default())).await;
         assert!(matches!(default, Admission::Ask { explicit: false, .. }), "the tool's own default is no rule: {default:?}");
     }
 
     #[tokio::test]
     async fn a_rule_that_denies_set_while_a_call_waits_refuses_it_when_run() {
-        let (executor, session, _channel) = guarded_in(Arc::new(DummySecurityManager::new()), true, Places::default());
+        let (executor, session, _channel) = guarded_in(Arc::new(AllowAllPolicy::new()), true, Places::default());
         let mut agent_channel_state = agent_turn(&executor);
         let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
         assert!(matches!(executor.admit(&call("test_tool"), &turn).await, Admission::Ask { .. }));
@@ -881,7 +881,7 @@ mod tests {
     /// it runs.
     #[tokio::test]
     async fn the_policy_is_checked_once_as_the_call_is_admitted() {
-        let executor = executor(Arc::new(DenyAllSecurityManager));
+        let executor = executor(Arc::new(DenyAllPolicy));
 
         let mut agent_channel_state = AgentChannelState::default();
         let agent_id = AgentId::new();
@@ -896,7 +896,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_call_is_asked_for_run_or_answered_at_once_as_it_can_succeed() {
-        let asking = executor(Arc::new(DummySecurityManager::new()));
+        let asking = executor(Arc::new(AllowAllPolicy::new()));
         let mut agent_channel_state = agent_turn(&asking);
         let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
         assert!(matches!(asking.admit(&call("test_tool"), &turn).await, Admission::Ask { description, explicit: false, .. } if description == "desc"), "its tool requires approval");
@@ -908,12 +908,12 @@ mod tests {
             other => panic!("an unknown tool is answered at once, got {other:?}"),
         }
 
-        let refusing = executor(Arc::new(DenyAllSecurityManager));
+        let refusing = executor(Arc::new(DenyAllPolicy));
         let mut agent_channel_state = agent_turn(&refusing);
         let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
         assert!(matches!(refusing.admit(&call("test_tool"), &turn).await, Admission::Answered(r) if r.status == ToolResultStatus::Forbidden), "first the policy");
 
-        let running = guarded(Arc::new(DummySecurityManager::new()), false, Places::default());
+        let running = guarded(Arc::new(AllowAllPolicy::new()), false, Places::default());
         let mut agent_channel_state = agent_turn(&running);
         let turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
         let admitted = running.admit(&call("test_tool"), &turn).await;
@@ -948,10 +948,10 @@ mod tests {
     #[tokio::test]
     async fn a_set_whose_remote_side_the_channel_may_not_flow_to_is_withheld_and_its_tools_not_called() {
         use caelumora_model::confidentiality::Confidentiality;
-        let security: Arc<dyn SecurityManager> = Arc::new(caelumora_model::security::OwnershipSecurityManager::new());
+        let access_policy: Arc<dyn AccessPolicy> = Arc::new(caelumora_model::security::OwnershipPolicy::new());
         let outward: Arc<dyn ToolProvider> = Arc::new(Outward { destination: Classification::general(Confidentiality::Internal) });
         let local: Arc<dyn ToolProvider> = Arc::new(MockToolProvider { requires_approval: false });
-        let (executor, _, _) = guarding(security, vec![("outward", outward), ("local", local)], Places::default());
+        let (executor, _, _) = guarding(access_policy, vec![("outward", outward), ("local", local)], Places::default());
         let agent = SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() };
 
         let internal = executor.tool_sets(&agent, &Classification::general(Confidentiality::Internal)).await;
@@ -993,7 +993,7 @@ mod tests {
 
     #[tokio::test]
     async fn only_an_agent_calls_tools() {
-        let executor = executor(Arc::new(DummySecurityManager::new()));
+        let executor = executor(Arc::new(AllowAllPolicy::new()));
         let mut agent_channel_state = AgentChannelState { turn: Some(caelumora_model::turn::TurnState { work: caelumora_model::work::Work { security_context: SecurityContext { caller_id: ActorId::User(caelumora_model::user::UserId::new()), ..SecurityContext::default() }, ..Default::default() }, tools: executor.providers.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() }), ..Default::default() };
         let mut context = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
 
@@ -1020,7 +1020,7 @@ mod tests {
         use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules};
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let tools: Arc<dyn ToolProvider> = Arc::new(MockToolProvider { requires_approval: true });
-        guarding_under(Arc::new(caelumora_model::security::DummySecurityManager::new()), Arc::new(ConfidentialityRules::new(compartments)), vec![("tools", tools)], Places::default()).0
+        guarding_under(Arc::new(caelumora_model::security::AllowAllPolicy::new()), Arc::new(ConfidentialityRules::new(compartments)), vec![("tools", tools)], Places::default()).0
     }
 
     #[tokio::test]
@@ -1046,7 +1046,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_call_still_running_when_its_turn_ends_is_interrupted_and_counts_as_run() {
-        let executor = executor(Arc::new(DummySecurityManager::new()));
+        let executor = executor(Arc::new(AllowAllPolicy::new()));
         let mut agent_channel_state = agent_turn(&executor);
         let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
         let ending = async {
@@ -1066,7 +1066,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_call_a_user_interrupts_tells_the_model_who_did_and_that_the_turn_goes_on() {
-        let executor = executor(Arc::new(DummySecurityManager::new()));
+        let executor = executor(Arc::new(AllowAllPolicy::new()));
         let mut agent_channel_state = agent_turn(&executor);
         let mut turn = Turn::of(AgentId::new(), "agent".to_string(), &mut agent_channel_state, crate::agent::state::AgentStateHandle::detached(), crate::view::ViewsFactory::detached()).expect("a turn is under way");
         let interrupting = async {

@@ -54,7 +54,7 @@ use caelumora_model::group::{Group, GroupField, GroupId};
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AccessQuestions, AclEntry, Refused, SecurityAttributes, SecurityContext, SecurityManager, Subject};
+use caelumora_model::security::{AccessQuestions, AclEntry, Refused, SecurityAttributes, SecurityContext, AccessPolicy, Subject};
 use caelumora_model::session::Session;
 use caelumora_model::session::{ChannelId, SessionField, SessionId};
 use caelumora_model::snapshot::{AccessSnapshot, DeletedSnapshot, PersonalitySnapshot};
@@ -186,13 +186,13 @@ impl RunningSessions for OwnSession {
 /// The root of the navigation: every session the viewer may read. Holds
 /// the services every edge uses, taken from the runtime once (issue 229).
 /// A plugin's views are an extension trait on it (issue 323), built from
-/// what it opens: the viewer's `context`, the `security` and
+/// what it opens: the viewer's `context`, the `access_policy` and
 /// `confidentiality` policies, the runtime's `service`s - among them the
 /// plugin's manager - and `channel_reading`.
 #[derive(Clone)]
 pub struct Views {
     services: Services,
-    security: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     stores: EntityStores,
     states: Arc<dyn StateStore>,
@@ -209,7 +209,7 @@ impl Views {
     pub(crate) fn new(runtime: &RuntimeManager, running: Arc<dyn RunningSessions>, viewer: Viewer) -> Self {
         Self {
             services: runtime.services().clone(),
-            security: Arc::clone(runtime.security_manager()),
+            access_policy: Arc::clone(runtime.access_policy()),
             confidentiality: Arc::clone(runtime.confidentiality()),
             stores: runtime.entity_stores().clone(),
             states: Arc::clone(runtime.state_store()),
@@ -237,8 +237,8 @@ impl Views {
     }
 
     /// The policy every edge asks, in the viewer's `context`.
-    pub fn security(&self) -> &Arc<dyn SecurityManager> {
-        &self.security
+    pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
+        &self.access_policy
     }
 
     /// What may flow where, and who is cleared for what (issue 304).
@@ -312,7 +312,7 @@ impl Views {
         let found = match self.running.running(id) {
             Some(session_loop) => {
                 let attributes = session_loop.session().security_attributes.clone();
-                if !self.security.may_read_session(self.viewer.context(), &attributes).await {
+                if !self.access_policy.may_read_session(self.viewer.context(), &attributes).await {
                     return Err(not_found());
                 }
                 Found::Running(session_loop)
@@ -354,7 +354,7 @@ impl Views {
         let deleted = self.stores.sessions.get_deleted(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::failed(e, format!("looking up session {id}")))?;
         Ok(match deleted {
-            Some(session) if self.security.may_read_session(self.viewer.context(), &session.security_attributes).await =>
+            Some(session) if self.access_policy.may_read_session(self.viewer.context(), &session.security_attributes).await =>
                 session.deleted.map_or(Reached::Never, Reached::Gone),
             _ => Reached::Never,
         })
@@ -427,7 +427,7 @@ impl Views {
     pub async fn deleted_agents(&self) -> ViewResult<Vec<DeletedSnapshot<AgentId>>> {
         let agents = self.stores.agents.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted agents"))?;
-        let policy = &self.security;
+        let access_policy = &self.access_policy;
         let mut deleted = Vec::with_capacity(agents.len());
         for agent in agents {
             let Some(removal) = agent.deleted.clone() else { continue };
@@ -436,8 +436,8 @@ impl Views {
                 id: agent.id,
                 name: agent.name.to_string(),
                 deleted: removal,
-                can_restore: policy.may_restore(self.viewer.context(), Agent::KIND, attributes).await,
-                can_purge: policy.may_purge(self.viewer.context(), Agent::KIND, attributes).await,
+                can_restore: access_policy.may_restore(self.viewer.context(), Agent::KIND, attributes).await,
+                can_purge: access_policy.may_purge(self.viewer.context(), Agent::KIND, attributes).await,
             });
         }
         Ok(deleted)
@@ -567,7 +567,7 @@ impl Views {
     pub async fn deleted_groups(&self) -> ViewResult<Vec<DeletedSnapshot<GroupId>>> {
         let groups = self.stores.groups.list_deleted(self.viewer.context(), &Query::filtered(Group::teams())).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted groups"))?;
-        let policy = &self.security;
+        let access_policy = &self.access_policy;
         let mut deleted = Vec::with_capacity(groups.len());
         for group in groups {
             let Some(removal) = group.deleted.clone() else { continue };
@@ -576,8 +576,8 @@ impl Views {
                 id: group.id,
                 name: group.name.to_string(),
                 deleted: removal,
-                can_restore: policy.may_restore(self.viewer.context(), Group::KIND, attributes).await,
-                can_purge: policy.may_purge(self.viewer.context(), Group::KIND, attributes).await,
+                can_restore: access_policy.may_restore(self.viewer.context(), Group::KIND, attributes).await,
+                can_purge: access_policy.may_purge(self.viewer.context(), Group::KIND, attributes).await,
             });
         }
         Ok(deleted)
@@ -591,7 +591,7 @@ impl Views {
     pub async fn deleted_workspaces(&self) -> ViewResult<Vec<DeletedSnapshot<WorkspaceId>>> {
         let workspaces = self.stores.workspaces.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted workspaces"))?;
-        let policy = &self.security;
+        let access_policy = &self.access_policy;
         let mut deleted = Vec::with_capacity(workspaces.len());
         for workspace in workspaces {
             let Some(removal) = workspace.deleted.clone() else { continue };
@@ -600,8 +600,8 @@ impl Views {
                 id: workspace.id,
                 name: workspace.name.to_string(),
                 deleted: removal,
-                can_restore: policy.may_restore(self.viewer.context(), Workspace::KIND, attributes).await,
-                can_purge: policy.may_purge(self.viewer.context(), Workspace::KIND, attributes).await,
+                can_restore: access_policy.may_restore(self.viewer.context(), Workspace::KIND, attributes).await,
+                can_purge: access_policy.may_purge(self.viewer.context(), Workspace::KIND, attributes).await,
             });
         }
         Ok(deleted)
@@ -615,7 +615,7 @@ impl Views {
     pub async fn deleted_sessions(&self) -> ViewResult<Vec<DeletedSnapshot<SessionId>>> {
         let sessions = self.stores.sessions.list_deleted(self.viewer.context(), &Query::all()).await.map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the deleted sessions"))?;
-        let policy = &self.security;
+        let access_policy = &self.access_policy;
         let mut deleted = Vec::with_capacity(sessions.len());
         for session in sessions {
             let Some(removal) = session.deleted.clone() else { continue };
@@ -624,8 +624,8 @@ impl Views {
                 id: session.id,
                 name: session.name.to_string(),
                 deleted: removal,
-                can_restore: policy.may_restore(self.viewer.context(), Session::KIND, attributes).await,
-                can_purge: policy.may_purge(self.viewer.context(), Session::KIND, attributes).await,
+                can_restore: access_policy.may_restore(self.viewer.context(), Session::KIND, attributes).await,
+                can_purge: access_policy.may_purge(self.viewer.context(), Session::KIND, attributes).await,
             });
         }
         Ok(deleted)
@@ -716,14 +716,14 @@ pub enum ChannelReader<'a> {
 
 /// How `context` may read the channel with `channel` attributes, which lies
 /// `at` its place (issues 133, 264, 296, 304): not at all if it may not read
-/// it (`GetChannel`, the `SecurityManager`'s). Beyond that, as the
+/// it (`GetChannel`, the `AccessPolicy`'s). Beyond that, as the
 /// `ConfidentialityPolicy` decides: an agent reading from its place reads it
 /// as a whole if what is there may be copied into that place, and entry by
 /// entry otherwise; a user reads it as a whole if they are cleared for its
 /// classification, and not at all otherwise. What the views reach a channel
 /// by, and what an operation in a channel asks before it acts there.
-pub async fn channel_reading(security: &dyn SecurityManager, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, channel: &SecurityAttributes, at: &Place, reader: ChannelReader<'_>) -> Option<ChannelReading> {
-    if !security.may_read_channel(context, channel).await {
+pub async fn channel_reading(access_policy: &dyn AccessPolicy, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, channel: &SecurityAttributes, at: &Place, reader: ChannelReader<'_>) -> Option<ChannelReading> {
+    if !access_policy.may_read_channel(context, channel).await {
         return None;
     }
     match reader {
@@ -782,7 +782,7 @@ impl ViewsFactory {
     #[cfg(test)]
     pub(crate) fn detached() -> Self {
         let runtime = crate::session::testing::test_runtime();
-        let commands = Arc::new(crate::command::CommandExecutor::empty(Arc::clone(runtime.security_manager())));
+        let commands = Arc::new(crate::command::CommandExecutor::empty(Arc::clone(runtime.access_policy())));
         let session_id = SessionId::new();
         let channel = crate::runtime::ChannelRuntime::outside_a_session(runtime, commands, session_id);
         Self::of_actor(channel.new_actor_runtime(ActorId::None, session_id, ChannelId::new()))
@@ -810,7 +810,7 @@ impl ViewsFactory {
         let from = Place { channel, classification, session: session_loop.privacy() };
         let views = session_loop.views(Viewer::from_place(context.clone(), from));
         let attributes = session_loop.session().security_attributes.clone();
-        if !views.security().may_read_session(context, &attributes).await {
+        if !views.access_policy().may_read_session(context, &attributes).await {
             tracing::debug!(session = %session_loop.id(), caller = %context.caller_id, "An agent may not read its own session");
             return None;
         }
@@ -840,7 +840,7 @@ mod tests {
     use caelumora_model::config::AppConfig;
     use caelumora_model::scope::Scope;
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::security::{Grant, SecurityAttributes, Subject};
     use caelumora_model::session::Session;
     use caelumora_model::snapshot::Detail;
@@ -1769,9 +1769,9 @@ mod tests {
             facets.insert::<dyn crate::llm::LLMClient>(Arc::new(Silent));
             Ok(facets)
         });
-        let policy = Arc::new(DummySecurityManager::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
+        let access_policy = Arc::new(AllowAllPolicy::new());
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
         let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
         let system = SecurityContext::system();
 

@@ -69,11 +69,11 @@ The reasons and details are in [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md)
     credentials never.
 *   REST handlers return `Result<_, crate::error::ApiError>`; never map an error to a bare status
     code. Keep the REST API compatible with `caelumora-web-ui`.
-*   A type takes the services it uses - the `SecurityManager`, the stores, the event bus - when it
+*   A type takes the services it uses - the `AccessPolicy`, the stores, the event bus - when it
     is made and keeps them as fields; it does not fetch them through the runtime at every use.
 *   A pure access question is a method of `AccessQuestions`, an operation checks its own permission
     with `Enforcement::require` - before it asks anything of others - and a frontend never asks the
-    `SecurityManager` itself (see [SECURITY.md](docs/SECURITY.md)). A plugin does the same through
+    `AccessPolicy` itself (see [SECURITY.md](docs/SECURITY.md)). A plugin does the same through
     extension traits of its own - its questions on `AccessQuestions`, its views on `Views` - and
     adds nothing about its kind to the core (see [PLUGINS.md](docs/PLUGINS.md)).
 *   A new action that acts in someone's name, or a change to what an action asks, comes with its

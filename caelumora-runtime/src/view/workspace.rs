@@ -60,14 +60,14 @@ impl WorkspaceView {
     /// Whether the viewer may change it, share it and attach it to a
     /// session (`UpdateWorkspace`): its owner.
     pub async fn may_change(&self) -> bool {
-        self.views.security().may_change_workspace(self.views.context(), &self.workspace.security_attributes).await
+        self.views.access_policy().may_change_workspace(self.views.context(), &self.workspace.security_attributes).await
     }
 
     /// Whether the viewer may change its files (`WriteWorkspace`, issue
     /// 23) - in a channel, besides, only as far as the channel lets them use
     /// it at all, which reaching it there asked.
     pub async fn may_write(&self) -> bool {
-        self.views.security().may_write_workspace(self.views.context(), &self.workspace.security_attributes).await
+        self.views.access_policy().may_write_workspace(self.views.context(), &self.workspace.security_attributes).await
     }
 
     pub async fn snapshot(&self) -> WorkspaceSnapshot {

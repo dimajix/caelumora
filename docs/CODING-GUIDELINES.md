@@ -105,7 +105,7 @@ A running object - `SessionLoop`, `ChannelLoop`, `ActorRuntime` - and the stored
 
 ### Services are held, not fetched
 
-A type takes the services it works with - the `SecurityManager`, the stores, the event bus, the
+A type takes the services it works with - the `AccessPolicy`, the stores, the event bus, the
 `ComponentRegistry` - when it is made, and keeps them as fields:
 
 *   **Constructor injection.** `new` takes the services, or takes them once from the runtime it is
@@ -124,9 +124,9 @@ A type takes the services it works with - the `SecurityManager`, the stores, the
 *   **Accessors lend.** An accessor returns `&Arc<dyn …>` or `&dyn …`; whoever keeps the service
     clones it, with `Arc::clone` (see below).
 *   **One step to ask.** A check reads as the question it is -
-    `views.security().may_approve(views.context(), …)` - not as a walk through the runtime. A type
-    that is asked often in someone's name holds that name with the services, as `Views` holds its
-    viewer.
+    `views.access_policy().may_approve(views.context(), …)` - not as a walk through the runtime. A
+    type that is asked often in someone's name holds that name with the services, as `Views` holds
+    its viewer.
 
 ### Cloning shared pointers
 
@@ -134,7 +134,7 @@ An `Arc` (or `Rc`) is cloned with `Arc::clone(&value)`, not `value.clone()`: the
 only a reference count goes up, where `.clone()` reads the same as a deep copy of a `Vec` or a
 `String` - the convention of the Rust book, and what clippy's `clone_on_ref_ptr` asks for, which the
 workspace turns on (`[workspace.lints.clippy]` in `Cargo.toml`). Where an
-accessor lends `&Arc<…>`, it is `Arc::clone(runtime.security_manager())`. A clone is made only
+accessor lends `&Arc<…>`, it is `Arc::clone(runtime.access_policy())`. A clone is made only
 where an owner is needed - a field, a task, a value moved elsewhere; a call that only uses the
 value borrows it. An `Arc<Concrete>` that becomes an `Arc<dyn Trait>` where it is passed names its
 type, `Arc::<MemoryStore>::clone(&store)`, since the type cannot be inferred from the place it goes.

@@ -5,7 +5,7 @@ use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::group::Group;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AccessQuestions, AclEntry, Grant, SecurityContext, SecurityManager, Subject};
+use caelumora_model::security::{AccessQuestions, AclEntry, Grant, SecurityContext, AccessPolicy, Subject};
 use caelumora_model::session::{Channel, Session};
 use caelumora_model::store::{EntityStore, EntityStores, StoreResult, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
@@ -50,7 +50,7 @@ pub struct WorkspaceController {
     workspaces: Arc<dyn EntityStore<Workspace>>,
     groups: Arc<dyn EntityStore<Group>>,
     /// Who may change its files (`WriteWorkspace`, issue 23).
-    security: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     /// What may flow where, and who is cleared for what (issue 304).
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     /// Held while the workspace is changed and stored, so that no change is
@@ -61,7 +61,7 @@ pub struct WorkspaceController {
 impl WorkspaceController {
     /// The live `workspace`, whose files lie in `provider`. Made by the
     /// `ControllerManager`, which keeps one per workspace.
-    pub(crate) fn new(workspace: Workspace, provider: Option<Arc<dyn TerminalProvider>>, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores, security: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+    pub(crate) fn new(workspace: Workspace, provider: Option<Arc<dyn TerminalProvider>>, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
         Self {
             id: workspace.id,
             workspace: ArcSwap::from_pointee(workspace),
@@ -69,7 +69,7 @@ impl WorkspaceController {
             event_publisher,
             workspaces: Arc::clone(&stores.workspaces),
             groups: Arc::clone(&stores.groups),
-            security,
+            access_policy,
             confidentiality,
             write_lock: tokio::sync::Mutex::new(()),
         }
@@ -102,7 +102,7 @@ impl WorkspaceController {
     pub async fn terminal(&self, ctx: &SecurityContext, need: Grant) -> WorkspaceResult<Arc<dyn Terminal>> {
         let workspace = self.reached(ctx).await?;
         if need == Grant::Write {
-            require_write(self.security.as_ref(), ctx, &workspace).await?;
+            require_write(self.access_policy.as_ref(), ctx, &workspace).await?;
         }
         Ok(self.provider(&workspace)?.terminal_for(self.id).await?)
     }
@@ -133,7 +133,7 @@ impl WorkspaceController {
             warn!(session = %session.id, workspace = %self.id, "A workspace of another session's scope is attached to a session");
             return Ok(None);
         }
-        if !self.security.may_read_workspace(ctx, &workspace.security_attributes).await {
+        if !self.access_policy.may_read_workspace(ctx, &workspace.security_attributes).await {
             return Ok(None);
         }
         let (inside, outside) = (&workspace.classification, &channel.classification);
@@ -180,7 +180,7 @@ impl WorkspaceController {
     /// may not change its files where `need` asks to, or what the store
     /// reports.
     pub(crate) async fn usable_in_channel(&self, ctx: &SecurityContext, session: &Session, channel: &Channel, need: Grant) -> WorkspaceResult<Workspace> {
-        if !self.security.may_read_session(ctx, &session.security_attributes).await {
+        if !self.access_policy.may_read_session(ctx, &session.security_attributes).await {
             return Err(WorkspaceError::NotUsableInChannel);
         }
         let at = Place { channel: channel.id, classification: channel.classification.clone(), session: SessionPrivacy::of(session) };
@@ -188,12 +188,12 @@ impl WorkspaceController {
             ActorId::Agent(_) => ChannelReader::From(&at),
             _ => ChannelReader::Cleared,
         };
-        if channel_reading(self.security.as_ref(), self.confidentiality.as_ref(), ctx, &channel.security_attributes, &at, reader).await.is_none() {
+        if channel_reading(self.access_policy.as_ref(), self.confidentiality.as_ref(), ctx, &channel.security_attributes, &at, reader).await.is_none() {
             return Err(WorkspaceError::NotUsableInChannel);
         }
         let workspace = self.usable_in(ctx, session, channel).await?.ok_or(WorkspaceError::NotUsableInChannel)?;
         if need == Grant::Write {
-            require_write(self.security.as_ref(), ctx, &workspace).await?;
+            require_write(self.access_policy.as_ref(), ctx, &workspace).await?;
         }
         Ok(workspace)
     }

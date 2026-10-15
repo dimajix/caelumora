@@ -284,9 +284,9 @@ mod testing {
             let runtime = test_runtime();
             let agent = Agent::new(ScopedName::new("agent", Scope::GlobalScope).unwrap_or_else(|e| panic!("{e}")), PersonalityId::new(), ActorId::None);
             let agent = Arc::new(AgentController::new(agent, None, Arc::new(()), runtime.entity_stores()));
-            let commands = CommandExecutor::empty(Arc::clone(runtime.security_manager()));
+            let commands = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
             let (session_id, channel_id) = (SessionId::new(), ChannelId::new());
-            let channel = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.security_manager()))), session_id);
+            let channel = ChannelRuntime::outside_a_session(Arc::clone(&runtime), Arc::new(CommandExecutor::empty(Arc::clone(runtime.access_policy()))), session_id);
             let actor_runtime = channel.new_actor_runtime(ActorId::Agent(agent.id()), session_id, channel_id);
             Self {
                 context: agent.security_context(session_id, channel_id, None),

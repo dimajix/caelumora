@@ -267,7 +267,7 @@ pub enum ToolResultStatus {
     Ok,
     /// A user declined the call.
     Denied,
-    /// The `SecurityManager` does not permit the call.
+    /// The `AccessPolicy` does not permit the call.
     Forbidden,
     /// No approval arrived in time.
     TimedOut,

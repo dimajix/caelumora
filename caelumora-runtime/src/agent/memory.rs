@@ -27,7 +27,7 @@ use caelumora_model::session::SessionId;
 use crate::view::Views;
 use tracing::warn;
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
-use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext, AccessPolicy};
 
 /// An agent's memory as a turn sees it: every function takes the turn.
 pub struct AgentMemory;
@@ -196,7 +196,7 @@ impl AgentMemory {
     /// # Errors
     /// `InvalidParameter` if there is no such entry here, `PermissionDenied`
     /// if the policy refuses.
-    pub async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, security: &dyn SecurityManager, confidentiality: &dyn ConfidentialityPolicy) -> ToolResult<()> {
+    pub async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, access_policy: &dyn AccessPolicy, confidentiality: &dyn ConfidentialityPolicy) -> ToolResult<()> {
         let here = turn.classification();
         if Self::find(turn, id, confidentiality).await.is_none() {
             return Err(ToolError::InvalidParameter(format!("there is no entry #{id} you remember here")));
@@ -204,7 +204,7 @@ impl AgentMemory {
         let refused = || ToolError::PermissionDenied(format!("reclassifying entry #{id} as {classification}"));
         let attributes = turn.work().channel_attributes();
         let action = ActionType::Reclassify(Reclassified::Memory { author: ActorId::Agent(turn.agent_id()), attributes: &attributes });
-        security.require(turn.security_context(), action, |_| refused()).await?;
+        access_policy.require(turn.security_context(), action, |_| refused()).await?;
         confidentiality.require_publish(turn.security_context(), &classification, &here, refused)?;
         let origin = Self::origin(turn).await;
         turn.stage_memory(MemoryChange::Reclassify { id, classification }, origin);

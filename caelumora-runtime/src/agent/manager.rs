@@ -22,7 +22,7 @@ use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::channel::Channel;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{ActionType, Enforcement, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use caelumora_model::session::Session;
 use caelumora_model::store::{EntityKind, EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
@@ -40,7 +40,7 @@ pub struct AgentManager {
     channels: Arc<dyn EntityStore<Channel>>,
     states: Arc<dyn StateStore>,
     events: Arc<EventBus>,
-    security: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
 }
 
 impl fmt::Debug for AgentManager {
@@ -50,7 +50,7 @@ impl fmt::Debug for AgentManager {
 }
 
 impl AgentManager {
-    pub(crate) fn new(stores: &EntityStores, states: Arc<dyn StateStore>, events: Arc<EventBus>, security: Arc<dyn SecurityManager>) -> Self {
+    pub(crate) fn new(stores: &EntityStores, states: Arc<dyn StateStore>, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>) -> Self {
         Self {
             agents: Arc::clone(&stores.agents),
             personalities: Arc::clone(&stores.personalities),
@@ -58,7 +58,7 @@ impl AgentManager {
             channels: Arc::clone(&stores.channels),
             states,
             events,
-            security,
+            access_policy,
         }
     }
 
@@ -84,7 +84,7 @@ impl AgentManager {
     /// agent of `name` lies in its scope already (issue 250).
     pub async fn create(&self, context: &SecurityContext, name: &str, scope: Scope, personality_id: PersonalityId) -> AgentResult<Agent> {
         let agent = Agent::new(ScopedName::new(name, scope)?, personality_id, context.principal_id);
-        self.security
+        self.access_policy
             .require(context, ActionType::create(Agent::KIND, &agent.security_attributes), StoreError::PermissionDenied).await?;
         self.require_holder(context, &agent.name.scope).await?;
         let personality = self.personalities.get(context, personality_id).await?;
@@ -137,7 +137,7 @@ impl AgentManager {
     /// it, or whatever else the store reports.
     pub async fn delete(&self, context: &SecurityContext, id: AgentId) -> AgentResult<bool> {
         let Some(agent) = self.agents.get(context, id).await.optional()? else { return Ok(false) };
-        self.security
+        self.access_policy
             .require(context, ActionType::delete(Agent::KIND, &agent.security_attributes), StoreError::PermissionDenied).await?;
         if !self.agents.delete(context, id).await? {
             return Ok(false);

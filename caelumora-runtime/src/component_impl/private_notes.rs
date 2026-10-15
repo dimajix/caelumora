@@ -34,7 +34,7 @@ use caelumora_model::question::Answers;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
-use caelumora_model::security::SecurityManager;
+use caelumora_model::security::AccessPolicy;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde_json::Value;
 use std::sync::Arc;
@@ -51,7 +51,7 @@ pub struct PrivateNotesComponent {
     /// The policy that decides whether a note may be reclassified, asked in
     /// the turn's context - the agent's, with its owner's rights (issues
     /// 131, 133, 255).
-    security_manager: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     /// What may flow where (issue 304): what it recalls, how it reclassifies.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
 }
@@ -161,7 +161,7 @@ impl PrivateNotesComponent {
     async fn execute_reclassify_private_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: NoteId = id_argument(params)?;
         let classification = classification_argument(params)?;
-        AgentNotes::reclassify(turn, NoteKind::Private, id, classification.clone(), self.security_manager.as_ref(), self.confidentiality.as_ref()).await?;
+        AgentNotes::reclassify(turn, NoteKind::Private, id, classification.clone(), self.access_policy.as_ref(), self.confidentiality.as_ref()).await?;
         Ok(serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }))
     }
 
@@ -229,10 +229,10 @@ fn render(own: &[Note], elsewhere: &[PrivateNotesElsewhere]) -> String {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(PRIVATE_NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn SecurityManager>().uses::<dyn ConfidentialityPolicy>(),
+        ComponentKind::new(PRIVATE_NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn AccessPolicy>().uses::<dyn ConfidentialityPolicy>(),
         |_descriptor, context| {
             let component = Arc::new(PrivateNotesComponent {
-                security_manager: Arc::clone(context.service::<dyn SecurityManager>()?),
+                access_policy: Arc::clone(context.service::<dyn AccessPolicy>()?),
                 confidentiality: Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
             });
             let mut facets = ComponentFacets::empty();
@@ -270,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
-        let tools = PrivateNotesComponent { security_manager: Arc::new(caelumora_model::security::DummySecurityManager::new()), confidentiality: Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()) };
+        let tools = PrivateNotesComponent { access_policy: Arc::new(caelumora_model::security::AllowAllPolicy::new()), confidentiality: Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()) };
         let mut turn = Turn::begun(AgentId::new(), "agent".to_string(), &mut state, crate::agent::state::AgentStateHandle::detached());
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
         let noted = tools.execute(WRITE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), None, &mut turn).await.unwrap();
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn every_private_note_acted_on_is_shown_as_a_note_to_the_owner_alone() {
-        let tools = PrivateNotesComponent { security_manager: Arc::new(caelumora_model::security::OwnershipSecurityManager::new()), confidentiality: Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()) }.tools();
+        let tools = PrivateNotesComponent { access_policy: Arc::new(caelumora_model::security::OwnershipPolicy::new()), confidentiality: Arc::new(caelumora_model::confidentiality::ConfidentialityRules::default()) }.tools();
         assert!(tools.iter().all(|t| (t.presentation, t.visibility) == (NOTE_PRESENTATION, ToolVisibility::HIDDEN)));
     }
 }

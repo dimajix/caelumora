@@ -20,7 +20,7 @@ use crate::channel::{ChannelLoop, ChannelMember};
 use crate::component::{ComponentError, ComponentImpl, ComponentRegistry, ComponentResult};
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, CommandVisibility};
-use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, Refused, SecurityAttributes, SecurityContext, AccessPolicy};
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -132,7 +132,7 @@ struct CommandEntry<P: ?Sized> {
 /// of one name and asking the policy are the same for every facet.
 #[derive(Debug)]
 pub struct CommandExecutor<P: ?Sized> {
-    security_manager: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     entries: Vec<CommandEntry<P>>,
 }
 
@@ -145,7 +145,7 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
     /// `ComponentError::InvalidConfig` if two of them provide the same name:
     /// that is a mistake in the configuration, and resolving it by order
     /// would silently hide one.
-    pub fn new(security_manager: Arc<dyn SecurityManager>, providers: Vec<ComponentImpl<P>>) -> ComponentResult<Self> {
+    pub fn new(access_policy: Arc<dyn AccessPolicy>, providers: Vec<ComponentImpl<P>>) -> ComponentResult<Self> {
         let mut entries: Vec<CommandEntry<P>> = Vec::new();
         for provider in providers {
             for command in provider.commands() {
@@ -158,12 +158,12 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
                 entries.push(CommandEntry { command, component: provider.id.clone(), provider: Arc::clone(&provider.facet) });
             }
         }
-        Ok(Self { security_manager, entries })
+        Ok(Self { access_policy, entries })
     }
 
     /// An executor without commands.
-    pub fn empty(security_manager: Arc<dyn SecurityManager>) -> Self {
-        Self { security_manager, entries: Vec::new() }
+    pub fn empty(access_policy: Arc<dyn AccessPolicy>) -> Self {
+        Self { access_policy, entries: Vec::new() }
     }
 
     /// Whether it has a command `name`, whoever may see it.
@@ -177,7 +177,7 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
     async fn visible_by<'c>(&'c self, issuer: &SecurityContext, show: impl Fn(&'c Command) -> ActionType<'c>) -> Vec<Command> {
         let mut visible = Vec::new();
         for entry in &self.entries {
-            if self.security_manager.check(issuer, show(&entry.command)).await {
+            if self.access_policy.check(issuer, show(&entry.command)).await {
                 visible.push(entry.command.clone());
             }
         }
@@ -203,8 +203,8 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
         let Some(entry) = entry else {
             return Err(CommandError::Unknown(name.to_string()));
         };
-        self.security_manager.require(issuer, show(&entry.command), |_| CommandError::Unknown(name.to_string())).await?;
-        self.security_manager.require(issuer, execute(&entry.command), |refused| CommandError::Forbidden { name: name.to_string(), refused }).await?;
+        self.access_policy.require(issuer, show(&entry.command), |_| CommandError::Unknown(name.to_string())).await?;
+        self.access_policy.require(issuer, execute(&entry.command), |refused| CommandError::Forbidden { name: name.to_string(), refused }).await?;
         Ok(entry)
     }
 }
@@ -335,7 +335,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use caelumora_model::component::ComponentFailPolicy;
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
 
     #[derive(Debug)]
     struct Named(&'static str);
@@ -359,13 +359,13 @@ mod tests {
 
     #[tokio::test]
     async fn two_components_with_the_same_command_are_a_configuration_error() {
-        let security = Arc::new(DummySecurityManager::new());
-        let error = CommandExecutor::new(Arc::<DummySecurityManager>::clone(&security), vec![provider("help", "help"), provider("my-help", "help")])
+        let access_policy = Arc::new(AllowAllPolicy::new());
+        let error = CommandExecutor::new(Arc::<AllowAllPolicy>::clone(&access_policy), vec![provider("help", "help"), provider("my-help", "help")])
             .expect_err("the second /help would be hidden by the first");
         let message = error.to_string();
         assert!(message.contains("/help") && message.contains("'help'") && message.contains("'my-help'"), "{message}");
 
-        let executor = CommandExecutor::new(security, vec![provider("wakeup", "wakeup"), provider("help", "help")]).unwrap();
+        let executor = CommandExecutor::new(access_policy, vec![provider("wakeup", "wakeup"), provider("help", "help")]).unwrap();
         let names: Vec<String> = executor.visible(&SecurityContext::default(), &SecurityAttributes::default()).await.into_iter().map(|c| c.name).collect();
         assert_eq!(names, vec!["help", "wakeup"], "sorted by name");
     }

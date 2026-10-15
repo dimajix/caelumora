@@ -11,7 +11,7 @@ use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::PersonalityId;
 use caelumora_model::user::UserId;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, SecurityManager, Subject, JOIN};
+use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, AccessPolicy, Subject, JOIN};
 use crate::view::{Viewer, Views};
 use caelumora_model::store::{EntityStores, StoreError, Stored};
 use tracing::{info, warn};
@@ -42,7 +42,7 @@ pub struct SessionManager {
     pub(super) runtime_manager: Arc<RuntimeManager>,
     /// The services it works with, taken from `runtime_manager` once (issue
     /// 229).
-    security: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     stores: EntityStores,
     events: Arc<EventBus>,
     /// Who may take part in the channels of a session it creates or
@@ -93,7 +93,7 @@ impl SessionManager {
             sessions: DashMap::new(),
             handles: DashMap::new(),
             starts: DashMap::new(),
-            security: Arc::clone(runtime_manager.security_manager()),
+            access_policy: Arc::clone(runtime_manager.access_policy()),
             stores: runtime_manager.entity_stores().clone(),
             events: Arc::clone(runtime_manager.event_bus()),
             participation: Arc::clone(runtime_manager.participation()),
@@ -144,7 +144,7 @@ impl SessionManager {
         match running {
             Some(session_loop) => {
                 let attributes = session_loop.session().security_attributes.clone();
-                self.security
+                self.access_policy
                     .require(context, ActionType::get(Session::KIND, &attributes), |_| SessionError::NotFound(id)).await?;
                 Ok(Found::Running(session_loop))
             }
@@ -183,11 +183,11 @@ impl SessionManager {
         // Its own verb before anything of others is asked or anything is
         // found or made for it (issue 312): who may not create the session
         // learns nothing of the agents, the workspace or anyone's clearance.
-        self.security.require(context, ActionType::create(Session::KIND, &Session::attributes_of(id, owner, &template.access)), StoreError::PermissionDenied).await?;
+        self.access_policy.require(context, ActionType::create(Session::KIND, &Session::attributes_of(id, owner, &template.access)), StoreError::PermissionDenied).await?;
         // One of the user's chosen is asked about before anything is made.
         let existing = match &workspace {
             Some(WorkspaceChoice::Existing { id: chosen, share }) => {
-                require_attachable(self.runtime_manager.workspace_manager(), self.security.as_ref(), context, *chosen, id).await?;
+                require_attachable(self.runtime_manager.workspace_manager(), self.access_policy.as_ref(), context, *chosen, id).await?;
                 Some((*chosen, *share))
             }
             _ => None,
@@ -264,7 +264,7 @@ impl SessionManager {
     /// would: asks to create it (`CreateSession`) before anything else.
     #[cfg(test)]
     pub(crate) async fn create_session(&self, context: &SecurityContext, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
-        self.security.require(context, ActionType::create(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
+        self.access_policy.require(context, ActionType::create(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
         self.establish(context, session, channels).await
     }
 
@@ -370,8 +370,8 @@ impl SessionManager {
         let not_found = || SessionError::NotFound(id);
         let system = SecurityContext::system();
         let attributes = self.find(&system, id).await.map_err(|_| not_found())?.attributes();
-        let reachable = self.security.check(context, ActionType::custom(Session::KIND, &JOIN, &attributes)).await
-            || self.security.may_read_session(context, &attributes).await;
+        let reachable = self.access_policy.check(context, ActionType::custom(Session::KIND, &JOIN, &attributes)).await
+            || self.access_policy.may_read_session(context, &attributes).await;
         if !reachable {
             return Err(not_found().into());
         }
@@ -397,7 +397,7 @@ impl SessionManager {
         let _starting = start.lock().await;
         let found = self.find(context, id).await?;
         let attributes = found.attributes();
-        self.security
+        self.access_policy
             .require(context, ActionType::StopSession(&attributes), StoreError::PermissionDenied).await?;
         Ok(matches!(found, Found::Running(_)) && self.stop_running(id).await.is_some())
     }
@@ -441,7 +441,7 @@ impl SessionManager {
         let start = self.start_lock(id);
         let _starting = start.lock().await;
         let session = self.find(context, id).await?.session();
-        self.security
+        self.access_policy
             .require(context, ActionType::delete(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
         // Captured before the runtime loop is torn down.
         // The events carry the attributes as they were: once deleted, the
@@ -609,7 +609,7 @@ mod tests {
     use std::sync::Arc;
     use caelumora_model::value::name::ScopedName;
     use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::store::memory::MemoryStore;
     use crate::session::{SessionError, SessionManager};
     use crate::session::testing::*;
@@ -979,8 +979,8 @@ mod tests {
         use caelumora_model::store::StateStore;
         let entities = Arc::new(MemoryStore::new());
         let states = Arc::new(MemoryStore::new());
-        let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&states), Arc::<MemoryStore>::clone(&entities), secret_manager, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&entities))).unwrap());
+        let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
+        let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&states), Arc::<MemoryStore>::clone(&entities), secret_manager, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&entities))).unwrap());
         let manager = SessionManager::new(runtime);
         let ctx = SecurityContext::default();
         let session = make_session("two-stores", ActorId::None);

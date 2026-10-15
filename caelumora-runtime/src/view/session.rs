@@ -124,7 +124,7 @@ impl SessionView {
     /// Whether the viewer may change the session - rename it, change its
     /// privacy (`UpdateSession`).
     pub async fn may_change(&self) -> bool {
-        self.views.security().may_change_session(self.views.context(), &self.session.security_attributes).await
+        self.views.access_policy().may_change_session(self.views.context(), &self.session.security_attributes).await
     }
 
     /// Whom the viewer could take into the session and, with `channel`,
@@ -242,7 +242,7 @@ impl SessionView {
             Some(from) => ChannelReader::From(from),
             None => ChannelReader::Cleared,
         };
-        channel_reading(self.views.security().as_ref(), self.views.confidentiality().as_ref(), self.views.context(), &channel.security_attributes, &at, reader).await
+        channel_reading(self.views.access_policy().as_ref(), self.views.confidentiality().as_ref(), self.views.context(), &channel.security_attributes, &at, reader).await
     }
 
     /// The document of channel `id`, if the session has it, with its loop
@@ -373,7 +373,7 @@ impl SessionView {
                 id: channel.id,
                 name: channel.name.to_string(),
                 deleted: removal,
-                can_restore: may_change && views.security().may_restore(context, Channel::KIND, &channel.security_attributes).await,
+                can_restore: may_change && views.access_policy().may_restore(context, Channel::KIND, &channel.security_attributes).await,
                 can_purge: false,
             });
         }

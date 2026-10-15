@@ -1,6 +1,6 @@
 # Security
 
-Who may do what in Caelumora: the `SecurityManager` and the policies it applies, ownership of stored
+Who may do what in Caelumora: the `AccessPolicy` and the policies it applies, ownership of stored
 entities, where permission checks belong in the code, and where users, logins and secrets come from.
 How far *information* may travel between channels is a separate question, answered by
 classifications in [CONFIDENTIALITY.md](CONFIDENTIALITY.md). The settings mentioned here are listed
@@ -20,7 +20,7 @@ Security is a context that travels with every operation, and explicit checks aga
     roles as they are now - and not looked up while the decision is made. A context continued for
     another caller (`SecurityContext::next`) carries no roles until whoever continues it gives
     them: the initiator lends none.
-*   **`SecurityManager`** authorizes actions: `check(context, action)`.
+*   **`AccessPolicy`** authorizes actions: `check(context, action)`.
 *   **`ActionType`** enumerates every securable action. An action on a stored entity carries the
     entity's `SecurityAttributes`, not the entity itself, and is asked alike for every kind
     (issue [323](../issues/323-kinds-enumerated-in-the-core.md)): `ActionType::Entity`, by the
@@ -58,7 +58,7 @@ Each is read for its own questions, and only for them:
 *   **The owner** for what the person responsible for the caller decides or bounds: the clearance
     (the context's roles are the owner's), the questions a tool puts to the agent's owner, and whose
     agent a user may take into a session (issue 221).
-*   **The principal** for rights: the policy (`OwnershipSecurityManager::check`), the store filters
+*   **The principal** for rights: the policy (`OwnershipPolicy::check`), the store filters
     and views, the owner of what is created, the credentials a call reaches with.
 *   **The initiator** for the record, and for whom a tool's questions for the initiator are put to
     (see [APPROVALS.md](APPROVALS.md)) - never for rights. It is the root of the chain: when a
@@ -80,7 +80,7 @@ classification, and from nothing else. Nothing is looked up while a decision is 
 an access list names. Three decisions are made apart, each by a function of its own, and an act
 passes only where every one it needs says yes:
 
-1.  **Security** - who may do what with the object: the `SecurityManager`, from the context, the
+1.  **Security** - who may do what with the object: the `AccessPolicy`, from the context, the
     verb and the attributes. Access lists name actors, roles and groups (see
     [Access lists](#access-lists)).
 2.  **Flow** - whether information may go where the act takes it, and who is cleared for it: the
@@ -94,17 +94,17 @@ passes only where every one it needs says yes:
 
 ### One manager per process
 
-One `SecurityManager` is built per process and handed to everything that checks - the stores, the
+One `AccessPolicy` is built per process and handed to everything that checks - the stores, the
 `SecretManager`, the `RuntimeManager` - as a constructor argument rather than built where it is
 needed, so that a deployment's policy cannot be silently replaced by a default in one corner of the
 runtime. The configuration's `security` section chooses the policy:
 
-*   `ownership` - the default, `OwnershipSecurityManager` (see below);
-*   `allow_all` - `DummySecurityManager`, which allows every action to everybody; for tests and
+*   `ownership` - the default, `OwnershipPolicy` (see below);
+*   `allow_all` - `AllowAllPolicy`, which allows every action to everybody; for tests and
     development only. The confidentiality rules apply beside it all the same.
 
 What may flow where, and who is cleared for what, is decided apart from it, by one
-`ConfidentialityPolicy` per process, handed to the runtime beside the `SecurityManager` (see
+`ConfidentialityPolicy` per process, handed to the runtime beside the `AccessPolicy` (see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#who-applies-the-rules)). The two are orthogonal: an act that
 moves information asks both, its own permission first.
 
@@ -172,7 +172,7 @@ list. This is the one place ownership and access are recorded; see [Access lists
 
 ### The ownership policy
 
-The `OwnershipSecurityManager` decides by those attributes and the context's principal - a user
+The `OwnershipPolicy` decides by those attributes and the context's principal - a user
 themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name-an-agent-acts)):
 
 *   The owner may do everything. Whom an entry grants `Read` may read and use - write into a
@@ -437,7 +437,7 @@ The flow is asked alike of the `ConfidentialityPolicy`, through `Confidentiality
 `may_*` to decide what to offer, the `require_*` for an act, answering a refusal with the act's own
 error and logging it alike.
 
-`AccessQuestions` is an extension trait on every `SecurityManager`. Each question gets a name and
+`AccessQuestions` is an extension trait on every `AccessPolicy`. Each question gets a name and
 one place, but only translates into an `ActionType`. The decision stays with `check`, so no policy
 can answer a question differently from the action.
 
@@ -448,7 +448,7 @@ An operation that checks its permission as part of what it does - `ChannelLoop::
 `AccessQuestions`, and none onto the entities.
 
 Such an operation checks with `Enforcement::require(context, action, refusal)`, another extension
-trait on every `SecurityManager`. It answers a refusal with the operation's own error and logs every
+trait on every `AccessPolicy`. It answers a refusal with the operation's own error and logs every
 refusal alike, at `debug!`, naming the action and what identifies its object, never content such as
 a tool call's arguments. `refusal` is handed what was refused, a `Refused` (`ActionType::refused`:
 what the action is about - the kind of an entity, or `context`, `agent`, `command`, … for the core's
@@ -517,7 +517,7 @@ in the same world, taken as a dev-dependency with that feature, and follow the s
 
 ### Filters
 
-`SecurityManager::check` is called directly only by `AccessQuestions`, by `Enforcement` and by
+`AccessPolicy::check` is called directly only by `AccessQuestions`, by `Enforcement` and by
 filters: a store filtering a list, the event bus choosing whom an event reaches, the commands a user
 is shown.
 
@@ -564,7 +564,7 @@ A node answers with a **snapshot** (`caelumora_model::snapshot`) for a client th
 with flags such as `can_change` and `can_read_context` decided for the viewer. What else it holds
 the caller chooses as `Detail` flags, combined freely, so that what reads every agent's state is
 paid only where it is shown. A detail that cannot be read is left out, and the rest is answered. The
-REST server only maps snapshots to responses and asks the `SecurityManager` nothing. A frontend
+REST server only maps snapshots to responses and asks the `AccessPolicy` nothing. A frontend
 never asks the access questions itself.
 
 A node is data the viewer was allowed to reach; it decides nothing, and it does nothing: a view is
@@ -626,7 +626,7 @@ JSON key/value file, re-read on every lookup so that secrets can rotate without 
 process environment; the `secrets` section sets the chain, each provider a backend that a plugin may
 add (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)).
 
-Every lookup is checked with the `SecurityManager` (`ReadSecret`) before any provider is consulted.
+Every lookup is checked with the `AccessPolicy` (`ReadSecret`) before any provider is consulted.
 The ownership policy allows every one: a secret is a key and a value, with no owner and no access
 list to decide by. So whoever writes a component that names a secret decides which credential it
 uses and where it is sent. Until secrets have an owner

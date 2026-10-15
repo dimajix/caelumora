@@ -13,7 +13,7 @@ use std::sync::Arc;
 /// that knows the user answers it.
 ///
 /// Unlike `SecretManager`, lookups are not gated through the
-/// `SecurityManager`: authentication is what produces the `SecurityContext`
+/// `AccessPolicy`: authentication is what produces the `SecurityContext`
 /// such a check would need.
 ///
 /// It is the one writer of user records (issue 306), which belong to the

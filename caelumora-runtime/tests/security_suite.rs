@@ -2048,7 +2048,7 @@ async fn opening_a_session_needs_reading_it() {
     let session = world.shared_session(&[], &[]).await;
     for (user, answer) in [(world.alice, "yes"), (world.bob, "yes"), (world.carol, "no")] {
         let (_, asked) = world.asked(world.manager.open_session(&World::as_user(user), session.id())).await;
-        let name = world.policy.name(ActorId::User(user));
+        let name = world.access_policy.name(ActorId::User(user));
         assert_eq!(asked, checks(&[&format!("{name}: GetSession(alice's) {answer}")]));
     }
     world.manager.stop_session(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -2689,7 +2689,7 @@ async fn a_command_runs_on_only_while_some_member_could_start_it_in_its_channel(
     // Asked again at a change, of the members in turn: alice may.
     let (_, asked) = world.recorded(async {
         workspace(&world, docs.id).await.update_description(&alice, Some("Drafts")).await.unwrap();
-        while !world.policy.asked.lock().unwrap().iter().any(|line| line.contains("WriteWorkspace")) {
+        while !world.access_policy.asked.lock().unwrap().iter().any(|line| line.contains("WriteWorkspace")) {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }).await;

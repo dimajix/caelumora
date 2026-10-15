@@ -50,7 +50,7 @@ the kind of entity it lies in, `Stored::Within` - a channel in a `Session`, ever
 core in `NoEntity` -, by which its events name where it lies (issue 335, see
 [EVENTS.md](EVENTS.md#the-form-of-an-event)); and, if its kind is `Scoped`, the name that is unique
 in its scope (`Stored::unique_name`). The stores take all of it from the type they read and write:
-what is asked of the `SecurityManager` (`ActionType::get(T::KIND, …)`), the name in errors, logs and
+what is asked of the `AccessPolicy` (`ActionType::get(T::KIND, …)`), the name in errors, logs and
 the JSON store's directory, and which names to keep unique. A stored type can be copied and
 serialized (`Stored` requires it), which is all a backend needs to keep it. A new kind is added
 without a change to the stores or to `EntityKind`.
@@ -165,7 +165,7 @@ operations of its own, each with a permission of its own:
 For what is classified - a channel, a workspace, a skill, an artifact -, every operation also asks
 whether the caller is cleared for it, the deleted alike (issue 322, see
 [SECURITY.md](SECURITY.md#how-stores-check)): the store is given a `ConfidentialityPolicy` beside
-its `SecurityManager`.
+its `AccessPolicy`.
 
 Purging only what is still marked keeps a purge from removing what was restored meanwhile. Restoring
 and purging a session are serialised by the `SessionManager`, under the lock it also deletes and

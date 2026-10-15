@@ -31,12 +31,12 @@ impl SessionLoop {
     pub async fn add_participant(&self, context: &SecurityContext, participant: ActorId, into: Option<(ChannelId, HistoryAccess)>) -> Result<()> {
         let session = self.session();
         if into.is_none() || !session.participants.iter().any(|p| p.actor_id() == participant) {
-            self.security.require(context, ActionType::update(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
+            self.access_policy.require(context, ActionType::update(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
         }
         let channel = match into {
             Some((id, history)) => {
                 let channel = self.channel_for(context, id).await?;
-                self.security.require(context, ActionType::update(Channel::KIND, &channel.security_attributes()), StoreError::PermissionDenied).await?;
+                self.access_policy.require(context, ActionType::update(Channel::KIND, &channel.security_attributes()), StoreError::PermissionDenied).await?;
                 Some((channel, history))
             }
             None => None,

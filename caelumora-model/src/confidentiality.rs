@@ -8,7 +8,7 @@
 //! classifications involved alone - not by who takes part in a channel at
 //! the moment, so that a decision stays the same when someone joins or
 //! leaves. The decisions are a `ConfidentialityPolicy`'s, apart from who may
-//! do what (`SecurityManager`) and asked beside it (issue 304);
+//! do what (`AccessPolicy`) and asked beside it (issue 304);
 //! `ConfidentialityRules` is the one Caelumora applies.
 //!
 //! Whether anyone but an actor's owner sees something at all is a separate
@@ -18,7 +18,7 @@ use crate::actor::ActorId;
 use crate::message::Message;
 use crate::privacy::SessionPrivacy;
 use crate::role::{RoleId, Roles};
-use crate::security::{ActionType, SecurityContext, SecurityManager};
+use crate::security::{ActionType, SecurityContext, AccessPolicy};
 use crate::session::ChannelId;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -439,7 +439,7 @@ pub struct Place {
 
 /// The flow decisions (issues 133, 304): whether information may go where
 /// an act takes it, and whether someone is cleared for it - apart from who
-/// may do what, which is the `SecurityManager`'s, and asked beside it, after
+/// may do what, which is the `AccessPolicy`'s, and asked beside it, after
 /// the act's own permission. Each is decided from the context, the
 /// classifications and the places it is given alone; nothing is looked up
 /// while it is made. `ConfidentialityRules` is the policy Caelumora applies;
@@ -469,8 +469,8 @@ pub trait ConfidentialityPolicy: fmt::Debug + Send + Sync {
 }
 
 /// The questions asked of a `ConfidentialityPolicy`, each with its name and
-/// in one place, as `AccessQuestions` and `Enforcement` are of a
-/// `SecurityManager`: the `may_*` to decide what to offer, the `require_*`
+/// in one place, as `AccessQuestions` and `Enforcement` are of an
+/// `AccessPolicy`: the `may_*` to decide what to offer, the `require_*`
 /// for an act, answering a refusal with the act's own error and logging it
 /// alike (issue 304).
 pub trait ConfidentialityQuestions {
@@ -555,14 +555,14 @@ impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
 
 /// Whether `context` reaches what `read` is asked of and is classified as
 /// `classifications` says (concept 4 of the permission checks, issue 322):
-/// it may read it (`security`), and, where it is classified, is cleared
+/// it may read it (`access_policy`), and, where it is classified, is cleared
 /// for one of them (`confidentiality`) - one, the entity's; two as it is
 /// reclassified, the one it had and the one it has. The question the store
 /// asks of what it lists and the event bus of whom an event reaches, so
 /// that both reach alike. A question, for filtering: an operation reads
 /// through the store, which enforces it.
-pub async fn may_reach(security: &dyn SecurityManager, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, read: ActionType<'_>, classifications: &[Classification]) -> bool {
-    security.check(context, read).await
+pub async fn may_reach(access_policy: &dyn AccessPolicy, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, read: ActionType<'_>, classifications: &[Classification]) -> bool {
+    access_policy.check(context, read).await
         && (classifications.is_empty() || classifications.iter().any(|classification| confidentiality.cleared_for(context, classification)))
 }
 

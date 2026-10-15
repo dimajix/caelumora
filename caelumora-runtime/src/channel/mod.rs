@@ -21,7 +21,7 @@ use caelumora_model::mention::MentionDirectory;
 use caelumora_model::question::{QuestionError, QuestionId};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::work::TurnId;
-use caelumora_model::security::{ActionType, Enforcement, Grant, Refused, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, Enforcement, Grant, Refused, SecurityAttributes, SecurityContext, AccessPolicy};
 use caelumora_model::session::{Session, SessionId};
 use caelumora_model::workspace::Workspace;
 use crate::terminal::{Shell, Terminal};
@@ -73,7 +73,7 @@ pub struct ChannelMember {
 /// the messages are meant for users (see `crate::error::user_message`).
 #[derive(Debug, thiserror::Error)]
 pub enum ChannelError {
-    /// The `SecurityManager` refused the action. Deliberately silent about
+    /// The `AccessPolicy` refused the action. Deliberately silent about
     /// which rule refused it and about what the caller would have to be
     /// instead - like a refused tool call (issue 15).
     #[error("{action} channel {channel} is not permitted")]
@@ -205,7 +205,7 @@ pub struct ChannelLoop {
     /// What builds the runtimes of its actors.
     runtime: ChannelRuntime,
     /// The services it works with, taken from `runtime` once (issue 229).
-    security: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     controllers: Arc<ControllerManager>,
     participation: Arc<Participation>,
@@ -288,7 +288,7 @@ impl ChannelLoop {
             id,
             session_id,
             channel: channel_controller,
-            security: Arc::clone(runtime.security_manager()),
+            access_policy: Arc::clone(runtime.access_policy()),
             confidentiality: Arc::clone(runtime.confidentiality()),
             controllers: Arc::clone(runtime.controller_manager()),
             participation: Arc::clone(runtime.participation()),
@@ -454,7 +454,7 @@ impl ChannelLoop {
     async fn require(&self, context: &SecurityContext, action: impl FnOnce(&SecurityAttributes) -> ActionType<'_>, what: &'static str) -> Result<()> {
         let attributes = self.security_attributes();
         let channel = self.id;
-        Ok(self.security.require(context, action(&attributes), |refused| ChannelError::Forbidden { action: what, channel, refused }).await?)
+        Ok(self.access_policy.require(context, action(&attributes), |refused| ChannelError::Forbidden { action: what, channel, refused }).await?)
     }
 
     /// The classification of the channel's contents (issue 133).

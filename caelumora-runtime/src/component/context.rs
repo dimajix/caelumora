@@ -64,7 +64,7 @@ impl ComponentContext {
         Self { security_context, services, needs: Vec::new(), building: None }
     }
 
-    /// The service `T` of the runtime - the policy (`dyn SecurityManager`),
+    /// The service `T` of the runtime - the policy (`dyn AccessPolicy`),
     /// the secrets (`SecretManager`), the workspaces (`WorkspaceManager`) -,
     /// for a component whose kind declares it uses it.
     ///
@@ -118,7 +118,7 @@ mod tests {
     use super::*;
     use crate::component::testing::*;
     use crate::component::{ComponentContainer, ComponentKind, ComponentRegistry};
-    use caelumora_model::security::SecurityManager;
+    use caelumora_model::security::AccessPolicy;
     use caelumora_model::store::memory::MemoryStore;
     use std::sync::Mutex;
 
@@ -154,12 +154,12 @@ mod tests {
         #[tokio::test]
         async fn a_component_is_given_the_services_its_kind_uses_alone() {
             let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
-            registry.register(ComponentKind::new("seeing").provides::<dyn Named>().uses::<dyn SecurityManager>(), |node, context| {
-                context.service::<dyn SecurityManager>()?;
+            registry.register(ComponentKind::new("seeing").provides::<dyn Named>().uses::<dyn AccessPolicy>(), |node, context| {
+                context.service::<dyn AccessPolicy>()?;
                 Ok(named(&node.id))
             });
             registry.register(ComponentKind::new("blind").provides::<dyn Named>(), |node, context| {
-                context.service::<dyn SecurityManager>()?;
+                context.service::<dyn AccessPolicy>()?;
                 Ok(named(&node.id))
             });
             let registry = Arc::new(registry);
@@ -167,7 +167,7 @@ mod tests {
             ComponentContainer::from_config(&config(&[("seeing", "seeing")]), ASKED, &registry, &test_context()).await.expect("given what it uses");
             let error = ComponentContainer::from_config(&config(&[("blind", "blind")]), ASKED, &registry, &test_context())
                 .await.expect_err("not what it does not declare");
-            assert!(causes(&error).iter().any(|e| matches!(e, ComponentError::NoService("SecurityManager"))), "{error}");
+            assert!(causes(&error).iter().any(|e| matches!(e, ComponentError::NoService("AccessPolicy"))), "{error}");
         }
 
         /// A component may ask for the facets its kind needs and no other, an

@@ -91,7 +91,7 @@ impl SkillViews for Views {
 
     async fn deleted_skills(&self) -> SkillResult<Vec<DeletedSnapshot<SkillId>>> {
         let skills = self.skill_manager()?.store().list_deleted(self.context(), &Query::all()).await?.items;
-        let policy = self.security();
+        let access_policy = self.access_policy();
         let mut deleted = Vec::with_capacity(skills.len());
         for skill in skills {
             let Some(removal) = skill.deleted.clone() else { continue };
@@ -100,8 +100,8 @@ impl SkillViews for Views {
                 id: skill.id,
                 name: skill.name.to_string(),
                 deleted: removal,
-                can_restore: policy.may_restore(self.context(), Skill::KIND, attributes).await,
-                can_purge: policy.may_purge(self.context(), Skill::KIND, attributes).await,
+                can_restore: access_policy.may_restore(self.context(), Skill::KIND, attributes).await,
+                can_purge: access_policy.may_purge(self.context(), Skill::KIND, attributes).await,
             });
         }
         Ok(deleted)
@@ -117,7 +117,7 @@ impl SkillViews for Views {
         let skills = self.skill_manager()?.store().list(context, &seen).await?.items;
         let mut usable = Vec::with_capacity(skills.len());
         for skill in skills {
-            if self.security().may_use_skill(context, &skill.security_attributes).await
+            if self.access_policy().may_use_skill(context, &skill.security_attributes).await
                 && self.confidentiality().may_publish(context, &skill.classification, &place.classification)
             {
                 usable.push(skill);
@@ -195,7 +195,7 @@ impl SkillView {
     /// Whether the viewer may change it and delete it (`UpdateSkill`): its
     /// owner.
     pub async fn may_change(&self) -> bool {
-        self.views.security().may_change_skill(self.views.context(), &self.skill.security_attributes).await
+        self.views.access_policy().may_change_skill(self.views.context(), &self.skill.security_attributes).await
     }
 
     pub async fn snapshot(&self) -> SkillSnapshot {

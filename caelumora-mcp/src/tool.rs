@@ -365,7 +365,7 @@ mod tests {
     use super::*;
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::remote::RemoteAuthConfig;
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
     use serde_json::json;
 
     #[tokio::test]
@@ -432,7 +432,7 @@ mod tests {
             cached_tools: vec![],
             instructions: None,
             unavailable: None,
-            secret_manager: Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new()))),
+            secret_manager: Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new()))),
         };
 
         let stripped = provider.strip_prefix("github-mcp__search").unwrap();

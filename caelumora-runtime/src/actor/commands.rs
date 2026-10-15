@@ -35,7 +35,7 @@ impl AgentBody {
                 )));
             }
         }
-        CommandExecutor::new(Arc::clone(runtime.security_manager()), providers)
+        CommandExecutor::new(Arc::clone(runtime.access_policy()), providers)
     }
 
     /// The commands `issuer` may see of the agent in its channel, sorted by

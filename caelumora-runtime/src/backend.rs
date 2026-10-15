@@ -161,7 +161,7 @@ mod tests {
     use super::*;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::role::{RoleId, Roles};
-    use caelumora_model::security::{DummySecurityManager, SecurityContext};
+    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user_provider::{Credential, UserManager};
@@ -224,7 +224,7 @@ mod tests {
         std::env::set_var("CAELUMORA_TEST_BACKEND_ENV", "from-env");
         let configs = [BackendConfig::new("file", json!({ "path": file })), BackendConfig::new("env", json!(null))];
         let providers = Backends::built_in().make_chain::<dyn SecretProvider>("secret provider", &configs, &Services::empty()).unwrap();
-        let secrets = SecretManager::new(providers, Arc::new(DummySecurityManager::new()));
+        let secrets = SecretManager::new(providers, Arc::new(AllowAllPolicy::new()));
         let context = SecurityContext::default();
         assert_eq!(secrets.resolve(&context, "CAELUMORA_TEST_BACKEND_FILE").await.unwrap(), "from-file");
         assert_eq!(secrets.resolve(&context, "CAELUMORA_TEST_BACKEND_ENV").await.unwrap(), "from-env");

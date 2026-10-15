@@ -15,7 +15,7 @@ impl ChannelLoop {
     /// to respond - until it is woken again, usually by the next message.
     ///
     /// # Errors
-    /// `ChannelError::Forbidden` if the `SecurityManager` refuses
+    /// `ChannelError::Forbidden` if the `AccessPolicy` refuses
     /// `CancelChannel`; the channel is then untouched. Deliberately one
     /// decision for the whole channel: a per-actor one could leave half of it
     /// cancelled (issue 30).
@@ -40,7 +40,7 @@ impl ChannelLoop {
     /// were asleep.
     ///
     /// # Errors
-    /// `ChannelError::Forbidden` if the `SecurityManager` refuses
+    /// `ChannelError::Forbidden` if the `AccessPolicy` refuses
     /// `WakeChannel`.
     pub async fn wakeup(&self, context: &SecurityContext) -> Result<Vec<String>> {
         self.require(context, |attributes| ActionType::WakeChannel(attributes), "waking the agents of").await?;
@@ -61,7 +61,7 @@ impl ChannelLoop {
     /// over with reaches everyone as any answer does.
     ///
     /// # Errors
-    /// `ChannelError::Forbidden` if the `SecurityManager` refuses
+    /// `ChannelError::Forbidden` if the `AccessPolicy` refuses
     /// `CancelChannel`, before anything of the actor is looked at;
     /// `NotAParticipant` if `actor` is not in this channel.
     pub async fn cancel_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<()> {
@@ -79,7 +79,7 @@ impl ChannelLoop {
     /// `cancel_actor`: who may end a turn may end a part of it.
     ///
     /// # Errors
-    /// `ChannelError::Forbidden` if the `SecurityManager` refuses
+    /// `ChannelError::Forbidden` if the `AccessPolicy` refuses
     /// `CancelChannel`, before anything of the actor is looked at;
     /// `NotAParticipant` if `actor` is not in this channel;
     /// `ToolCallNotRunning` if the call neither runs nor waits to run in
@@ -100,7 +100,7 @@ impl ChannelLoop {
     /// permission. Returns whether it was asleep.
     ///
     /// # Errors
-    /// `ChannelError::Forbidden` if the `SecurityManager` refuses
+    /// `ChannelError::Forbidden` if the `AccessPolicy` refuses
     /// `WakeChannel`; `NotAParticipant` if `actor` is not in this channel.
     pub async fn wakeup_actor(&self, context: &SecurityContext, actor: ActorId) -> Result<bool> {
         self.require(context, |attributes| ActionType::WakeChannel(attributes), "waking the agents of").await?;
@@ -148,11 +148,11 @@ impl ChannelLoop {
 #[cfg(test)]
 mod tests {
     use caelumora_model::actor::ActorId;
-    use caelumora_model::security::{ActionType, SecurityContext, SecurityManager};
+    use caelumora_model::security::{ActionType, SecurityContext, AccessPolicy};
     use std::sync::Arc;
     use std::time::Duration;
     
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
     use crate::channel::tests::*;
 
     /// Refuses everything, to see that a refusal reaches the caller.
@@ -160,14 +160,14 @@ mod tests {
     struct DenyAll;
 
     #[async_trait::async_trait]
-    impl SecurityManager for DenyAll {
+    impl AccessPolicy for DenyAll {
         async fn check(&self, _context: &SecurityContext, _action: ActionType<'_>) -> bool {
             false
         }
     }
 
     #[tokio::test]
-    async fn cancelling_and_waking_deliberately_ask_the_security_manager() {
+    async fn cancelling_and_waking_deliberately_ask_the_access_policy() {
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let refused = channel_with(&[&alice], Arc::new(DenyAll)).await;
@@ -187,7 +187,7 @@ mod tests {
         // it follows from an action that was permitted.
         refused.wake_for_delivery();
 
-        let allowed = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+        let allowed = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         allowed.cancel(&context).await.expect("permitted");
         allowed.wakeup(&context).await.expect("permitted");
     }
@@ -197,7 +197,7 @@ mod tests {
     #[tokio::test]
     async fn a_stopped_channel_refuses_what_a_user_sends() {
         let alice = user("alice");
-        let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let actor = channel.user_actor(alice.id).unwrap();
         let mut said = channel.observe();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });

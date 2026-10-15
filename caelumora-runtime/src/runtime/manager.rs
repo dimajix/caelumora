@@ -11,7 +11,7 @@ use crate::agent::state::AgentStates;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::config::AppConfig;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::SecurityManager;
+use caelumora_model::security::AccessPolicy;
 use caelumora_model::user_provider::UserManager;
 use crate::backend::Backends;
 use caelumora_model::session::Session;
@@ -31,9 +31,9 @@ use super::{RuntimeBuilder, Services};
 
 #[derive(Debug)]
 pub struct RuntimeManager {
-    pub(super) security_manager: Arc<dyn SecurityManager>,
+    pub(super) access_policy: Arc<dyn AccessPolicy>,
     /// What may flow where, and who is cleared for what (issue 304): asked
-    /// beside the `SecurityManager`, never by it.
+    /// beside the `AccessPolicy`, never by it.
     pub(super) confidentiality: Arc<dyn ConfidentialityPolicy>,
     pub(super) state_store: Arc<dyn StateStore>,
     pub(super) entity_stores: EntityStores,
@@ -81,12 +81,12 @@ impl RuntimeManager {
         state_store: Arc<dyn StateStore>,
         backend: impl Into<StoreBackend>,
         secret_manager: Arc<SecretManager>,
-        security_manager: Arc<dyn SecurityManager>,
+        access_policy: Arc<dyn AccessPolicy>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
         config: &AppConfig,
         component_registry: ComponentRegistry,
     ) -> Result<Self> {
-        RuntimeBuilder::new(state_store, backend, secret_manager, security_manager, confidentiality, config, component_registry, Backends::built_in())?.build()
+        RuntimeBuilder::new(state_store, backend, secret_manager, access_policy, confidentiality, config, component_registry, Backends::built_in())?.build()
     }
 
     /// Puts what the seed files `paths` hold into the stores (issue 105):
@@ -117,14 +117,14 @@ impl RuntimeManager {
             let container = ComponentContainer::from_config(config, &[TypeKey::of::<dyn ChannelCommandProvider>()], &self.component_registry, &context).await?;
             providers.extend(container.get_all::<dyn ChannelCommandProvider>(None)?);
         }
-        Ok(CommandExecutor::new(Arc::clone(self.security_manager()), providers)?)
+        Ok(CommandExecutor::new(Arc::clone(self.access_policy()), providers)?)
     }
 
     pub fn event_bus(&self) -> &Arc<EventBus> {
         &self.event_bus
     }
 
-    pub fn security_manager(&self) -> &Arc<dyn SecurityManager> { &self.security_manager }
+    pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> { &self.access_policy }
 
     /// What may flow where, and who is cleared for what (issue 304).
     pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> { &self.confidentiality }
@@ -203,7 +203,7 @@ impl RuntimeManager {
 mod tests {
     use super::*;
     use crate::testing::test_registry;
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::confidentiality::ConfidentialityRules;
 
@@ -211,9 +211,9 @@ mod tests {
     fn the_configuration_may_replace_the_context_provider_but_only_with_one() {
         let manager = |defaults: serde_json::Value| {
             let store = Arc::new(MemoryStore::new());
-            let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
+            let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
             let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
-            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, test_registry(Arc::<MemoryStore>::clone(&store)))
+            RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, test_registry(Arc::<MemoryStore>::clone(&store)))
         };
         // As in `examples/config.yaml`.
         assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());

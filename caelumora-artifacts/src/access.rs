@@ -1,13 +1,13 @@
 //! Who may change, read and add to an artifact (issues 271, 23): the pure
 //! questions about an artifact, an extension of `AccessQuestions` (issue
 //! 323) - each translated into an action, decided by the policy alone.
-//! Every `SecurityManager` has them by the blanket implementation, so that
+//! Every `AccessPolicy` has them by the blanket implementation, so that
 //! no policy answers them otherwise.
 
 use crate::artifact::Artifact;
 use async_trait::async_trait;
 use caelumora_model::store::Stored;
-use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext, SecurityManager, WRITE};
+use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext, AccessPolicy, WRITE};
 
 #[async_trait]
 pub trait ArtifactAccess {
@@ -26,7 +26,7 @@ pub trait ArtifactAccess {
 }
 
 #[async_trait]
-impl<T: SecurityManager + ?Sized> ArtifactAccess for T {
+impl<T: AccessPolicy + ?Sized> ArtifactAccess for T {
     async fn may_change_artifact(&self, context: &SecurityContext, artifact: &SecurityAttributes) -> bool {
         self.check(context, ActionType::update(Artifact::KIND, artifact)).await
     }

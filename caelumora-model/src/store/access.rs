@@ -1,6 +1,6 @@
 //! The access checks every `EntityStore` makes (issue 11).
 //!
-//! The decision is the `SecurityManager`'s; a store only asks, and asks the
+//! The decision is the `AccessPolicy`'s; a store only asks, and asks the
 //! same way for every entity kind:
 //!
 //! - **Reading** asks with the stored attributes. An entity the caller may
@@ -38,7 +38,7 @@
 use std::future::Future;
 use crate::store::query::{self, Cursor, Field, Page, Query};
 use crate::confidentiality::{may_reach, ConfidentialityPolicy, ConfidentialityQuestions};
-use crate::security::{ActionType, Enforcement, Refused, SecurityContext, SecurityManager};
+use crate::security::{ActionType, Enforcement, Refused, SecurityContext, AccessPolicy};
 use crate::store::{StoreError, StoreResult, Stored};
 
 
@@ -47,20 +47,20 @@ use crate::store::{StoreError, StoreResult, Stored};
 // 93), and a store implements the five operations once for all kinds.
 
 pub(crate) struct Access<'a> {
-    manager: &'a dyn SecurityManager,
+    access_policy: &'a dyn AccessPolicy,
     confidentiality: &'a dyn ConfidentialityPolicy,
     ctx: &'a SecurityContext,
 }
 
 impl<'a> Access<'a> {
-    pub(crate) fn new(manager: &'a dyn SecurityManager, confidentiality: &'a dyn ConfidentialityPolicy, ctx: &'a SecurityContext) -> Self {
-        Self { manager, confidentiality, ctx }
+    pub(crate) fn new(access_policy: &'a dyn AccessPolicy, confidentiality: &'a dyn ConfidentialityPolicy, ctx: &'a SecurityContext) -> Self {
+        Self { access_policy, confidentiality, ctx }
     }
 
     /// `action`, or the error `refusal` makes of what was refused if the
     /// caller may not.
     async fn require<E: Send>(&self, action: ActionType<'_>, refusal: impl FnOnce(Refused) -> E + Send) -> Result<(), E> {
-        self.manager.require(self.ctx, action, refusal).await
+        self.access_policy.require(self.ctx, action, refusal).await
     }
 
     /// Nothing if the caller is cleared for how `value` is classified
@@ -75,7 +75,7 @@ impl<'a> Access<'a> {
 
     /// An action that concerns no single entity, such as listing.
     pub(crate) async fn allow(&self, action: ActionType<'_>) -> StoreResult<()> {
-        self.manager.require(self.ctx, action, StoreError::PermissionDenied).await
+        self.access_policy.require(self.ctx, action, StoreError::PermissionDenied).await
     }
 
     /// `found`, if it exists and the caller may read it; not found otherwise.
@@ -126,7 +126,7 @@ impl<'a> Access<'a> {
     /// with how it is classified.
     async fn reachable<T: Stored>(&self, value: &T, read: ActionType<'_>) -> bool {
         let classifications = value.classification().map_or(&[][..], std::slice::from_ref);
-        may_reach(self.manager, self.confidentiality, self.ctx, read, classifications).await
+        may_reach(self.access_policy, self.confidentiality, self.ctx, read, classifications).await
     }
 
     /// Whether the caller may create `value`.
@@ -234,7 +234,7 @@ fn valid<T: Stored>(value: &T) -> StoreResult<()> {
 #[cfg(test)]
 mod tests {
     use crate::actor::ActorId;
-    use crate::security::{ActionType, SecurityAttributes, SecurityContext, SecurityManager, Subject, Verb};
+    use crate::security::{ActionType, SecurityAttributes, SecurityContext, AccessPolicy, Subject, Verb};
     use crate::session::{Session, SessionId};
     use crate::store::{StoreError, Stored};
     use crate::store::query::{NoField, Query};
@@ -250,7 +250,7 @@ mod tests {
     struct OwnersAndContributors;
 
     #[async_trait::async_trait]
-    impl SecurityManager for OwnersAndContributors {
+    impl AccessPolicy for OwnersAndContributors {
         async fn check(&self, ctx: &SecurityContext, action: ActionType<'_>) -> bool {
             let me = ctx.principal_id;
             match action {
@@ -315,13 +315,13 @@ mod tests {
         use crate::confidentiality::{Classification, Clearance, Compartments, Confidentiality, ConfidentialityRules};
         use crate::role::{RoleId, Roles};
         use crate::scope::Scope;
-        use crate::security::DummySecurityManager;
+        use crate::security::AllowAllPolicy;
         use crate::value::name::ScopedName;
         use crate::workspace::Workspace;
         let staff = RoleId::new();
         let roles = Roles::new([(staff, "staff".to_string(), vec![Clearance { level: Confidentiality::Internal, compartment: None }])]).unwrap();
         let rules = ConfidentialityRules::new(Compartments::new([]).unwrap()).with_roles(roles);
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(DummySecurityManager::new()), Arc::new(rules))).entity_stores().workspaces;
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(AllowAllPolicy::new()), Arc::new(rules))).entity_stores().workspaces;
         let owner = UserId::new();
         let cleared = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default()).with_roles(vec![staff], None);
         let uncleared = SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
@@ -381,8 +381,8 @@ mod tests {
 
     #[tokio::test]
     async fn what_was_deleted_is_the_owners_to_read_and_restore_and_the_systems_to_purge() {
-        use crate::security::OwnershipSecurityManager;
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().sessions;
+        use crate::security::OwnershipPolicy;
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().sessions;
         let (alice, alice_ctx) = user();
         let (bob, bob_ctx) = user();
         let hers = session(alice, vec![bob]);
@@ -415,12 +415,12 @@ mod tests {
 
     #[tokio::test]
     async fn users_are_read_by_everybody_and_changed_by_the_system_alone() {
-        use crate::security::OwnershipSecurityManager;
+        use crate::security::OwnershipPolicy;
         use crate::scope::Scope;
         use crate::user::User;
         use crate::value::name::ScopedName;
 
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().users;
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().users;
         let system = SecurityContext::system();
         let alice_id = UserId::new();
         let alice_ctx = SecurityContext::new(ActorId::User(alice_id), Default::default(), Default::default());

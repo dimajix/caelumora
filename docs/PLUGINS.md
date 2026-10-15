@@ -50,7 +50,8 @@ asks the services it is given - the policies, the `SecretManager`, the store of 
     one that no plugin claims is an error, so that a misspelt section is found.
 
 Its views are an extension trait on `Views`, built from what `Views` opens: the viewer's `context`,
-the `security` and `confidentiality` policies, its manager as a `service`, and `channel_reading`.
+the `access_policy` and `confidentiality` policies, its manager as a `service`, and
+`channel_reading`.
 What a channel's view lists of its kind - the artifacts published in it, say - is an extension trait
 on `ChannelView`, which opens its `views` and how its viewer reads it (`reading`): whether the
 viewer reads the channel stays the channel's to decide (issue 328).

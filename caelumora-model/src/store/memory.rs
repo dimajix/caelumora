@@ -3,7 +3,7 @@ use crate::channel::{ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use crate::removal::{Deletable, Removal};
-use crate::security::{ActionType, DummySecurityManager, SecurityContext, SecurityManager};
+use crate::security::{ActionType, AllowAllPolicy, SecurityContext, AccessPolicy};
 use crate::store::access::{name_free, Access};
 use crate::store::query::{self, Filter, NoField, Page, Query};
 use crate::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, Journaled, Policies, StateStore, StoreError, StoreResult, Stored};
@@ -33,7 +33,7 @@ pub struct MemoryStore {
 
 impl Default for MemoryStore {
     fn default() -> Self {
-        Self::with_policies(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()))
+        Self::with_policies(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()))
     }
 }
 
@@ -43,12 +43,12 @@ impl MemoryStore {
         Self::default()
     }
 
-    /// A store that asks `security_manager` about every access to an
+    /// A store that asks `access_policy` about every access to an
     /// entity, and `confidentiality` whether the caller is cleared for what
     /// is reached by clearance.
-    pub fn with_policies(security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
+    pub fn with_policies(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
         info!("Creating memory store");
-        let policies = (security_manager, confidentiality);
+        let policies = (access_policy, confidentiality);
         Self {
             components: MemoryEntityStore::new(&policies),
             policies,
@@ -102,7 +102,7 @@ where
 /// The entities of one kind in memory (issue 323), checked as every kind is
 /// (`store::access`).
 pub struct MemoryEntityStore<T: Stored> {
-    security_manager: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     /// Who is cleared for what is reached by clearance (issue 322).
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     entities: RwLock<HashMap<T::Id, T>>,
@@ -115,14 +115,14 @@ impl<T: Stored> Debug for MemoryEntityStore<T> {
 }
 
 impl<T: Stored> MemoryEntityStore<T> {
-    /// An empty store that asks the `SecurityManager` and the
+    /// An empty store that asks the `AccessPolicy` and the
     /// `ConfidentialityPolicy` of `policies`.
     fn new(policies: &Policies) -> Self {
-        Self { security_manager: Arc::clone(&policies.0), confidentiality: Arc::clone(&policies.1), entities: Default::default() }
+        Self { access_policy: Arc::clone(&policies.0), confidentiality: Arc::clone(&policies.1), entities: Default::default() }
     }
 
     fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
-        Access::new(self.security_manager.as_ref(), self.confidentiality.as_ref(), ctx)
+        Access::new(self.access_policy.as_ref(), self.confidentiality.as_ref(), ctx)
     }
 
     fn stored(&self, id: &T::Id) -> Option<T> {
@@ -328,7 +328,7 @@ mod tests {
     use crate::store::suite;
     use crate::user::UserId;
     use crate::confidentiality::ConfidentialityRules;
-    use crate::security::OwnershipSecurityManager;
+    use crate::security::OwnershipPolicy;
 
     #[tokio::test]
     async fn behaves_as_an_entity_store() {
@@ -350,9 +350,9 @@ mod tests {
         use crate::actor::ActorId;
         use crate::confidentiality::Classification;
         use crate::scope::Scope;
-        use crate::security::OwnershipSecurityManager;
+        use crate::security::OwnershipPolicy;
         use crate::workspace::Workspace;
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().workspaces;
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()))).entity_stores().workspaces;
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut hers = Vec::new();
         for (index, owner) in [alice, bob, bob, alice, bob, alice].into_iter().enumerate() {
@@ -400,7 +400,7 @@ mod tests {
     #[tokio::test]
     async fn keeps_names_unique() {
         suite::names_are_unique(&Arc::new(MemoryStore::new()).entity_stores()).await;
-        let owners = MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default()));
+        let owners = MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()));
         suite::names_are_unique_beyond_what_is_read(&Arc::new(owners).entity_stores()).await;
     }
 }

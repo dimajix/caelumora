@@ -9,7 +9,7 @@ use crate::command::CommandError;
 struct Policy(fn(ActionType<'_>) -> bool);
 
 #[async_trait::async_trait]
-impl SecurityManager for Policy {
+impl AccessPolicy for Policy {
     async fn check(&self, _context: &SecurityContext, action: ActionType<'_>) -> bool {
         (self.0)(action)
     }
@@ -51,7 +51,7 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
 #[tokio::test]
 async fn wakeup_is_announced_to_the_channel_in_the_issuers_name() {
     let alice = user("alice");
-    let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+    let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
     let actor = channel.user_actor(alice.id).unwrap();
     let mut events = channel.observe();
     let mut following = actor.watch().events;
@@ -94,7 +94,7 @@ async fn wakeup_reports_refusals_and_unknown_agents() {
     let error = actor.execute_command("wakeup", "").await.expect_err("running it is refused");
     assert!(matches!(command_error(&error), CommandError::Forbidden { .. }), "visible but not runnable: {error}");
 
-    let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+    let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
     let actor = channel.user_actor(alice.id).unwrap();
     let error = actor.execute_command("wakeup", "@nobody").await.expect_err("no such agent");
     assert!(matches!(command_error(&error), CommandError::InvalidArguments { .. }), "{error}");
@@ -124,11 +124,11 @@ async fn wakeup_wakes_the_agent_named_and_refuses_an_ambiguous_name() {
 /// out `/mark`, idle after it answered alice's "hello" - or asleep, if
 /// it said good-bye.
 async fn with_a_marking_agent(asleep: bool) -> Stuck {
-    with_a_marking_agent_under(Arc::new(DummySecurityManager::new()), asleep).await
+    with_a_marking_agent_under(Arc::new(AllowAllPolicy::new()), asleep).await
 }
 
-/// `with_a_marking_agent`, under `security`.
-async fn with_a_marking_agent_under(security: Arc<dyn SecurityManager>, asleep: bool) -> Stuck {
+/// `with_a_marking_agent`, under `access_policy`.
+async fn with_a_marking_agent_under(access_policy: Arc<dyn AccessPolicy>, asleep: bool) -> Stuck {
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::message::MessageRole;
     use caelumora_model::tool::{ToolCall, ToolVisibility};
@@ -143,7 +143,7 @@ async fn with_a_marking_agent_under(security: Arc<dyn SecurityManager>, asleep: 
         ComponentDescriptor::new("marking", "test_marking"),
         ComponentDescriptor::new("stop", crate::tool::stop_tool::STOP_TOOL_KIND),
     ] };
-    let mut stuck = with_an_agent_under(security, Arc::new(Scripted(std::sync::Mutex::new([hi].into()))), components).await;
+    let mut stuck = with_an_agent_under(access_policy, Arc::new(Scripted(std::sync::Mutex::new([hi].into()))), components).await;
     answered(&mut stuck.events, stuck.agent).await;
     settled(&stuck.helper, if asleep { ActorState::Sleeping } else { ActorState::Idle }).await;
     stuck
@@ -274,7 +274,7 @@ async fn a_sleeping_agent_carries_out_a_command_and_sleeps_on() {
 async fn nudge(channel: &ChannelLoop, alice: UserId, args: &str) -> crate::command::CommandResult<caelumora_model::command::CommandOutput> {
     use crate::command::ChannelCommandProvider;
     use crate::command::nudge_command::NudgeCommandProvider;
-    let executor = CommandExecutor::empty(Arc::new(DummySecurityManager::new()));
+    let executor = CommandExecutor::empty(Arc::new(AllowAllPolicy::new()));
     let issuer = channel.user_actor(alice).expect("alice takes part");
     let context = crate::command::CommandContext { issuer: &issuer, channel, executor: &executor };
     NudgeCommandProvider.execute("nudge", args, &context).await
@@ -370,7 +370,7 @@ async fn only_someone_else_in_the_channel_is_nudged() {
 #[tokio::test]
 async fn a_nudged_user_is_shown_who_asks_them_to_respond() {
     let (alice, bob) = (user("alice"), user("bob"));
-    let channel = channel_with(&[&alice, &bob], Arc::new(DummySecurityManager::new())).await;
+    let channel = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
     let mut his = channel.user_actor(bob.id).unwrap().watch().events;
 
@@ -390,7 +390,7 @@ async fn help_lists_the_commands_of_the_agents_with_their_handles() {
     let Stuck { channel, context, running, .. } = with_a_marking_agent(false).await;
     // This channel's session has no commands of its own: `/help` is run
     // as it would be among them.
-    let executor = CommandExecutor::empty(Arc::new(DummySecurityManager::new()));
+    let executor = CommandExecutor::empty(Arc::new(AllowAllPolicy::new()));
     let issuer = channel.user_actor(alice_of(&context)).expect("alice takes part");
     let help = crate::command::CommandContext { issuer: &issuer, channel: &channel, executor: &executor };
 

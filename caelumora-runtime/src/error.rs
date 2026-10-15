@@ -115,7 +115,7 @@ fn store_message(error: &StoreError) -> Option<String> {
     }
 }
 
-/// What the `SecurityManager` refused, if `error` is a refusal - which a
+/// What the `AccessPolicy` refused, if `error` is a refusal - which a
 /// caller answers with "not allowed", not with "something broke". Found
 /// wherever in its chain it is (issue 323): every error that ends in a
 /// refusal carries it as its source.
@@ -123,7 +123,7 @@ pub fn refusal(error: &anyhow::Error) -> Option<&Refused> {
     error.chain().find_map(|e| e.downcast_ref::<Refused>())
 }
 
-/// Whether `error` is a refusal by the `SecurityManager`.
+/// Whether `error` is a refusal by the `AccessPolicy`.
 pub fn is_forbidden(error: &anyhow::Error) -> bool {
     refusal(error).is_some()
 }

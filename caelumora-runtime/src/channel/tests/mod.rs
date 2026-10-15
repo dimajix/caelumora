@@ -15,7 +15,7 @@ use caelumora_model::channel::{Channel, ChannelId, Participant};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext, SecurityManager};
+use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext, AccessPolicy};
 use caelumora_model::session::SessionId;
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::Name;
@@ -34,7 +34,7 @@ use caelumora_model::component::{ComponentConfig, ComponentFailPolicy};
 use caelumora_model::confidentiality::ConfidentialityRules;
 use caelumora_model::config::AppConfig;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::DummySecurityManager;
+use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::user::User;
 use caelumora_model::value::name::ScopedName;
@@ -48,26 +48,26 @@ pub(super) use crate::session::testing::user;
 
 /// A channel of `users`, who are recorded in the store its actors are
 /// read from.
-pub(super) async fn channel_with(users: &[&User], security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
+pub(super) async fn channel_with(users: &[&User], access_policy: Arc<dyn AccessPolicy>) -> Arc<ChannelLoop> {
     let store = Arc::new(MemoryStore::new());
     let mut participants = Vec::new();
     for user in users {
         store.entity_stores().users.create(&SecurityContext::system(), user).await.unwrap();
         participants.push(Participant::User(user.id));
     }
-    channel_of(store, participants, security).await
+    channel_of(store, participants, access_policy).await
 }
 
 /// A channel of `participants`, whose actors are read from `store`.
-async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>) -> Arc<ChannelLoop> {
+async fn channel_of(store: Arc<MemoryStore>, participants: Vec<Participant>, access_policy: Arc<dyn AccessPolicy>) -> Arc<ChannelLoop> {
     let registry = test_registry(Arc::<MemoryStore>::clone(&store));
-    channel_built(store, participants, security, registry, caelumora_model::channel::moderation_components(None, Some("broadcast_policy"))).await
+    channel_built(store, participants, access_policy, registry, caelumora_model::channel::moderation_components(None, Some("broadcast_policy"))).await
 }
 
 /// A channel of `participants` with `components`, built by `registry`.
-async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, security: Arc<dyn SecurityManager>, registry: ComponentRegistry, components: ComponentConfig) -> Arc<ChannelLoop> {
-    let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
+async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, access_policy: Arc<dyn AccessPolicy>, registry: ComponentRegistry, components: ComponentConfig) -> Arc<ChannelLoop> {
+    let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig::default(), registry).unwrap());
     let channel = Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
@@ -86,7 +86,7 @@ async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, 
     };
     let builtin = |id: &str, facet: Arc<dyn crate::command::ChannelCommandProvider>| ComponentImpl { id: id.to_string(), fail_policy: ComponentFailPolicy::FailOpen, facet };
     let executor = CommandExecutor::new(
-        Arc::clone(runtime.security_manager()),
+        Arc::clone(runtime.access_policy()),
         vec![builtin("help", Arc::new(HelpCommandProvider)), builtin("wakeup", Arc::new(WakeupCommandProvider))],
     ).unwrap();
     let session_id = channel.session_id;
@@ -103,7 +103,7 @@ async fn a_participant_that_no_longer_exists_is_left_out() {
     let channel = channel_of(
         store,
         vec![Participant::User(alice.id), Participant::User(gone_user), Participant::Agent(gone_agent)],
-        Arc::new(DummySecurityManager::new()),
+        Arc::new(AllowAllPolicy::new()),
     ).await;
 
     assert!(channel.user_actor(alice.id).is_some(), "the others take part");
@@ -115,7 +115,7 @@ async fn a_participant_that_no_longer_exists_is_left_out() {
 async fn every_user_has_their_own_actor_and_a_stranger_has_none() {
     let alice = user("alice");
     let bob = user("bob");
-    let channel = channel_with(&[&alice, &bob], Arc::new(DummySecurityManager::new())).await;
+    let channel = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
 
     for participant in [&alice, &bob] {
         let actor = channel.user_actor(participant.id).expect("a participant has an actor");
@@ -156,7 +156,7 @@ pub(super) async fn channel_moderated_by(users: &[&User], moderator: Arc<dyn cra
         Ok(facets)
     });
     let components = caelumora_model::channel::moderation_components(Some("test_moderator"), None);
-    channel_built(store, participants, Arc::new(DummySecurityManager::new()), registry, components).await
+    channel_built(store, participants, Arc::new(AllowAllPolicy::new()), registry, components).await
 }
 
 /// An agent asleep that only tells whether it was woken or cancelled.
@@ -195,7 +195,7 @@ fn sleeper_named(name: &'static str) -> Arc<Sleeper> {
 /// who they are does not matter to finding them.
 pub(super) async fn channel_with_sleepers(names: &[&'static str]) -> (Arc<ChannelLoop>, UserId, Vec<Arc<Sleeper>>) {
     let alice = user("alice");
-    let channel = channel_with(&[&alice], Arc::new(DummySecurityManager::new())).await;
+    let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
     let sleepers: Vec<_> = names.iter().map(|name| sleeper_named(name)).collect();
     for sleeper in &sleepers {
         channel.adopt(Arc::<Sleeper>::clone(sleeper), Member::approver(channel.session_id, channel.id)).await;
@@ -252,17 +252,17 @@ pub(super) async fn stuck_in_a_model_call() -> Stuck {
 /// A running channel with alice and an agent that talks to `model` and
 /// has `components`, after alice said "hello".
 async fn with_an_agent(model: Arc<dyn LLMClient>, components: ComponentConfig) -> Stuck {
-    with_an_agent_under(Arc::new(DummySecurityManager::new()), model, components).await
+    with_an_agent_under(Arc::new(AllowAllPolicy::new()), model, components).await
 }
 
-/// `with_an_agent`, under `security`.
-async fn with_an_agent_under(security: Arc<dyn SecurityManager>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> Stuck {
-    start(agent_channel(security, model, components).await).await
+/// `with_an_agent`, under `access_policy`.
+async fn with_an_agent_under(access_policy: Arc<dyn AccessPolicy>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> Stuck {
+    start(agent_channel(access_policy, model, components).await).await
 }
 
 /// A channel of alice and an agent that talks to `model` and has
-/// `components`, under `security`, built but not running.
-pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
+/// `components`, under `access_policy`, built but not running.
+pub(super) async fn agent_channel(access_policy: Arc<dyn AccessPolicy>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::scope::Scope;
 
@@ -287,7 +287,7 @@ pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc
     store.entity_stores().users.create(&SecurityContext::system(), &alice).await.unwrap();
     store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
 
-    let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&security)));
+    let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&access_policy)));
     // The model is a component (issue 130): the stand-in is registered as
     // a kind of its own and made every agent's default.
     let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
@@ -311,7 +311,7 @@ pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc
             fail_policy: Default::default(),
         }],
     };
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, security, Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, registry).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig { component_defaults: defaults, ..Default::default() }, registry).unwrap());
     let channel = Channel {
         summary: None, briefing: None,
         approval_rules: Vec::new(),
@@ -334,7 +334,7 @@ pub(super) async fn agent_channel(security: Arc<dyn SecurityManager>, model: Arc
     };
     // Stored, so that leaving it can be stored too.
     runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
-    let executor = CommandExecutor::empty(Arc::clone(runtime.security_manager()));
+    let executor = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
     let session_id = channel.session_id;
     let channel = ChannelLoop::new(channel, ChannelRuntime::outside_a_session(runtime, Arc::new(executor), session_id)).await.unwrap();
     (channel, context, agent_id, alice.id)

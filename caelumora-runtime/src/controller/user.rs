@@ -175,7 +175,7 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::role::RoleId;
     use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::security::OwnershipSecurityManager;
+    use caelumora_model::security::OwnershipPolicy;
     use std::sync::Mutex;
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
     use caelumora_model::security::SecurityAttributes;
@@ -204,7 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_profile_is_stored_first_then_taken_over_and_announced() {
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default())));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())));
         let announced = Arc::new(Announced::default());
         let user = alice();
         let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), store.entity_stores().user_profiles);
@@ -236,7 +236,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_profile_changes_nothing() {
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default())));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())));
         let announced = Arc::new(Announced::default());
         let user = alice();
         let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), store.entity_stores().user_profiles);
@@ -256,7 +256,7 @@ mod tests {
     #[tokio::test]
     async fn a_rule_is_added_and_taken_back_by_the_user_alone() {
         use caelumora_model::approval::{Reach, RuleDecision, ToolMatcher};
-        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default())));
+        let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())));
         let user = alice();
         let controller = UserController::new(user.clone(), None, Arc::new(()), store.entity_stores().user_profiles);
         let hers = as_user(user.id);

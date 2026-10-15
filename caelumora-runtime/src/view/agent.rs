@@ -28,12 +28,12 @@ impl AgentView {
 
     /// Whether the viewer may rename it (`UpdateAgent`).
     pub async fn may_change(&self) -> bool {
-        self.views.security().may_change_agent(self.views.context(), &self.agent.security_attributes).await
+        self.views.access_policy().may_change_agent(self.views.context(), &self.agent.security_attributes).await
     }
 
     /// Whether the viewer may delete it (`DeleteAgent`).
     pub async fn may_delete(&self) -> bool {
-        self.views.security().may_delete_agent(self.views.context(), &self.agent.security_attributes).await
+        self.views.access_policy().may_delete_agent(self.views.context(), &self.agent.security_attributes).await
     }
 
     /// The channels it takes part in - resting in them included - that the

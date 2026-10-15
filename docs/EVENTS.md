@@ -105,7 +105,7 @@ reclassification, with both classifications, and a leave, which reaches whoever 
 ### Subscribing as someone
 
 `subscribe_as(context)` receives the events about the entities `context` may read. It asks the
-`SecurityManager` the same question the `EntityStore` asks for reading them. The events of a
+`AccessPolicy` the same question the `EntityStore` asks for reading them. The events of a
 channel - its creation, change, start and stop, who joins and leaves it, an agent's state in it - go
 by the channel's attributes and are asked as reading the channel. A user's record is everybody's to
 read, their profile only theirs, so an update of a `user_profile`, which carries the profile,

@@ -188,7 +188,7 @@ impl EventPublisher for () {
 /// caller's. What is announced otherwise says why: a reclassification to
 /// who reached the entity as it was, too (issue 312), a leave to whoever
 /// left besides (issue 23). By blanket implementation on every
-/// `EventPublisher`, like `Enforcement` on every `SecurityManager`.
+/// `EventPublisher`, like `Enforcement` on every `AccessPolicy`.
 pub trait Announcing {
     /// Publishes `event` about `entity` with its attributes and, if its kind
     /// is classified, its classification.

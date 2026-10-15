@@ -101,7 +101,7 @@ Lowering it - a lower level, a compartment added to the audience, or none left -
 holds to a wider circle; raising it retracts nothing already read. The circle is one of
 classification: a release adds no readers to the channel it is in - an agent reads a released entry
 of another channel only where it may read that channel (see [Reading another
-channel](#reading-another-channel)). Who may reclassify is the `SecurityManager`'s: the ownership
+channel](#reading-another-channel)). Who may reclassify is the `AccessPolicy`'s: the ownership
 policy allows a channel's owner to reclassify the channel and every message in it, and a message's
 author their own message. To what is the flow's: a message never above its channel, and only with
 configured compartments.
@@ -455,7 +455,7 @@ sees private notes in the context panel, which is theirs alone.
 
 The rules of this document - the flow rule, a session's consent to being read from beyond it, which
 compartments may be given, the clearances of the configured roles - are decided by a
-`ConfidentialityPolicy`, apart from who may do what, which is the `SecurityManager`'s.
+`ConfidentialityPolicy`, apart from who may do what, which is the `AccessPolicy`'s.
 `ConfidentialityRules`, built from the `compartments` and `roles` sections of the configuration, is
 the one Caelumora applies. It decides from the context, the classifications and the places alone:
 
@@ -466,7 +466,7 @@ the one Caelumora applies. It decides from the context, the classifications and 
 *   and it names the configured compartments, by which a classification is valid at all
     (`require_classifiable`) - validation, not a permission.
 
-An act that moves information asks its own permission of the `SecurityManager` and the flow; in
+An act that moves information asks its own permission of the `AccessPolicy` and the flow; in
 which order is [SECURITY.md](SECURITY.md#operations-that-check-themselves)'s - the flow of the
 actor's own request may come first, since it tells them nothing of others. The two are orthogonal: a
 superuser who may act against both would need a hook in both, which is accepted. A policy outside

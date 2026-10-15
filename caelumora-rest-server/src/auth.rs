@@ -434,7 +434,7 @@ pub fn router(auth: Arc<Auth>) -> Router {
 mod tests {
     use super::*;
     use axum::body::Body;
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
     use caelumora_runtime::event::EventBus;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user_provider::UserProvider;
@@ -455,8 +455,8 @@ mod tests {
     /// Auth asking `providers`, the users recorded in `store` (issue 306).
     fn auth(store: Arc<MemoryStore>, providers: Vec<Arc<dyn UserProvider>>) -> Arc<Auth> {
         let stores = store.entity_stores();
-        let events = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())));
-        let controllers = Arc::new(ControllerManager::new(stores.clone(), Arc::<EventBus>::clone(&events), Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), Default::default()));
+        let events = Arc::new(EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())));
+        let controllers = Arc::new(ControllerManager::new(stores.clone(), Arc::<EventBus>::clone(&events), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), Default::default()));
         Arc::new(Auth { tokens: tokens(), users: Arc::new(UserManager::new(providers, Arc::clone(&stores.users), events)), controllers })
     }
 

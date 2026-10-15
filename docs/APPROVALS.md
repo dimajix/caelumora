@@ -117,7 +117,7 @@ clicked.
 
 ### Who may approve
 
-Who may approve a call is the `SecurityManager`'s to decide, and the channel enforces it as it
+Who may approve a call is the `AccessPolicy`'s to decide, and the channel enforces it as it
 admits an answer (issue 312): `ApproveToolCall` carries the attributes of the agent the answer
 names, loaded, never taken from the answer or the request, and of the channel. The ownership policy
 grants it the agent's owner and whom the agent's access list lets read it, who are responsible for
@@ -138,7 +138,7 @@ it also in someone else's channel; for an agent of the system, the channel's own
 Before a call is registered, the `ToolExecutor` decides how it is admitted (`ToolExecutor::admit`):
 answered at once, put to a user, or run as it is. The actor only records what the executor decided.
 
-*   **Policy.** A call the `SecurityManager` does not permit is refused before any approval is
+*   **Policy.** A call the `AccessPolicy` does not permit is refused before any approval is
     requested, so users are not asked about calls that would be refused anyway. It is the one place
     the policy is asked about the call.
 *   **Validity.** A call that cannot run - arguments its tool rejects, a tool that does not exist -

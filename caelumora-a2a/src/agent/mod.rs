@@ -243,7 +243,7 @@ mod tests {
     use axum::routing::{get, post};
     use axum::{Json, Router};
     use caelumora_model::secret::{SecretProvider, SecretResult};
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
     use futures::StreamExt;
     use serde_json::{json, Value};
     use std::collections::HashMap;
@@ -322,7 +322,7 @@ mod tests {
 
     async fn component(url: &str) -> A2aAgentComponent {
         let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": url, "auth": { "type": "bearer", "secret": "HERMES_TOKEN" }, "timeout_secs": 2 } })).unwrap();
-        let secrets = Arc::new(SecretManager::new(vec![Arc::new(Token)], Arc::new(DummySecurityManager::new())));
+        let secrets = Arc::new(SecretManager::new(vec![Arc::new(Token)], Arc::new(AllowAllPolicy::new())));
         A2aAgentComponent::build("hermes".to_string(), config, secrets, &SecurityContext::default()).await.unwrap()
     }
 

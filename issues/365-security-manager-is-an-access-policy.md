@@ -1,6 +1,6 @@
 # 365 — `SecurityManager` manages nothing: it is the access policy
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 ## The problem
@@ -57,3 +57,16 @@ naming schemes.
 - **2026-10-15** — Opened at the maintainer's request, under epic [349](349-core-review-epic.md):
   next to [354](354-names-follow-several-schemes.md), the other rename across the code, each in a
   commit of its own.
+- **2026-10-15** — Done, as considered; a rename only, no behaviour changes.
+  - `SecurityManager` is `AccessPolicy`, `OwnershipSecurityManager` `OwnershipPolicy`,
+    `DummySecurityManager` `AllowAllPolicy`; `security_manager` is `access_policy` in fields,
+    parameters and accessors, `create_security_manager` `create_access_policy`. The two policies
+    the tests made that refuse everything (`DenyAllSecurityManager` in `tool`,
+    `AlwaysDenySecurityManager` in `secret`) are both `DenyAllPolicy`, beside `AllowAllPolicy`.
+  - At the maintainer's request, every field, parameter and variable that holds it is
+    `access_policy`, whatever it was named - `security`, `policy`, `Access::manager` in the
+    model's stores -, and so is the accessor `Views::security`.
+  - The documents, AGENTS.md among them, name the `AccessPolicy`; the issues keep the name they
+    were written with.
+  - The configuration (`security: ownership`) is unchanged; no stored data and no configuration
+    file has to be changed.

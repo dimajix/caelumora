@@ -3,7 +3,7 @@ use crate::channel::{ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::confidentiality::ConfidentialityPolicy;
 use crate::removal::{Deletable, Removal};
-use crate::security::{ActionType, SecurityManager};
+use crate::security::{ActionType, AccessPolicy};
 use crate::store::access::{name_free, Access};
 use crate::store::query::{Field, Filter, NoField, Page, Query};
 use crate::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, Journaled, Policies, StateStore, StoreError, StoreResult, Stored};
@@ -47,13 +47,13 @@ pub struct JsonFileStore {
 }
 
 impl JsonFileStore {
-    /// A store of the files under `root` that asks `security_manager` about
+    /// A store of the files under `root` that asks `access_policy` about
     /// every access to an entity, and `confidentiality` whether the caller
     /// is cleared for what is reached by clearance.
-    pub fn new(root: impl Into<PathBuf>, security_manager: Arc<dyn SecurityManager>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> StoreResult<Self> {
+    pub fn new(root: impl Into<PathBuf>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> StoreResult<Self> {
         let root = root.into();
         info!("Creating JSON file store at {:?}", root);
-        let policies = (security_manager, confidentiality);
+        let policies = (access_policy, confidentiality);
         let store = Self {
             journal_floor: DEFAULT_JOURNAL_FLOOR,
             components: JsonEntityStore::new(&root, &policies)?,
@@ -332,7 +332,7 @@ impl EntityStoreFactory for JsonFileStore {
 /// and checks the others of the kind.
 pub struct JsonEntityStore<T> {
     dir: PathBuf,
-    security_manager: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     /// Who is cleared for what is reached by clearance (issue 322).
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     /// Held by the writes that may take a name, so that no two take one:
@@ -349,18 +349,18 @@ impl<T: Stored> Debug for JsonEntityStore<T> {
 
 impl<T: Stored> JsonEntityStore<T> {
     /// The store of the kind's documents under `root`, asking the
-    /// `SecurityManager` and the `ConfidentialityPolicy` of `policies`.
+    /// `AccessPolicy` and the `ConfidentialityPolicy` of `policies`.
     ///
     /// # Errors
     /// If its directory cannot be made.
     fn new(root: &Path, policies: &Policies) -> StoreResult<Self> {
         let dir = root.join("entities").join(T::KIND.name());
         fs::create_dir_all(&dir).map_err(to_backend_error)?;
-        Ok(Self { dir, security_manager: Arc::clone(&policies.0), confidentiality: Arc::clone(&policies.1), names: Mutex::new(()), kind: PhantomData })
+        Ok(Self { dir, access_policy: Arc::clone(&policies.0), confidentiality: Arc::clone(&policies.1), names: Mutex::new(()), kind: PhantomData })
     }
 
     fn access<'a>(&'a self, ctx: &'a SecurityContext) -> Access<'a> {
-        Access::new(self.security_manager.as_ref(), self.confidentiality.as_ref(), ctx)
+        Access::new(self.access_policy.as_ref(), self.confidentiality.as_ref(), ctx)
     }
 
     /// Where the document of `id` is.
@@ -629,10 +629,10 @@ mod tests {
     use tempfile::tempdir;
     use uuid::Uuid;
     use crate::confidentiality::ConfidentialityRules;
-    use crate::security::{DummySecurityManager, OwnershipSecurityManager};
+    use crate::security::{AllowAllPolicy, OwnershipPolicy};
 
     fn store(dir: &std::path::Path) -> JsonFileStore {
-        JsonFileStore::new(dir, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())).unwrap()
+        JsonFileStore::new(dir, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap()
     }
 
     /// The store of the kind `T` in the files of `store`, with what only it
@@ -678,7 +678,7 @@ mod tests {
         let dir = tempdir().unwrap();
         suite::names_are_unique(&Arc::new(store(dir.path())).entity_stores().unwrap()).await;
         let dir = tempdir().unwrap();
-        let owners = JsonFileStore::new(dir.path(), Arc::new(OwnershipSecurityManager::new()), Arc::new(ConfidentialityRules::default())).unwrap();
+        let owners = JsonFileStore::new(dir.path(), Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap();
         suite::names_are_unique_beyond_what_is_read(&Arc::new(owners).entity_stores().unwrap()).await;
     }
 
@@ -774,8 +774,8 @@ mod tests {
         use crate::channel::{Channel, ChannelId};
 
         let dir = tempdir().unwrap();
-        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
-        let store = JsonFileStore::new(dir.path(), security_manager, Arc::new(ConfidentialityRules::default())).unwrap();
+        let access_policy = Arc::new(crate::security::AllowAllPolicy::new());
+        let store = JsonFileStore::new(dir.path(), access_policy, Arc::new(ConfidentialityRules::default())).unwrap();
         let sessions = of_kind::<Session>(&store);
         let ctx = SecurityContext::default();
 
@@ -846,8 +846,8 @@ mod tests {
     #[tokio::test]
     async fn list_sessions_skips_corrupted_files() {
         let dir = tempdir().unwrap();
-        let security_manager = Arc::new(crate::security::DummySecurityManager::new());
-        let store = JsonFileStore::new(dir.path(), security_manager, Arc::new(ConfidentialityRules::default())).unwrap();
+        let access_policy = Arc::new(crate::security::AllowAllPolicy::new());
+        let store = JsonFileStore::new(dir.path(), access_policy, Arc::new(ConfidentialityRules::default())).unwrap();
         let sessions = of_kind::<Session>(&store);
         let ctx = SecurityContext::default();
 
@@ -993,7 +993,7 @@ mod tests {
         let lines = std::fs::read_to_string(&journal).unwrap();
 
         // As if the crash came after the snapshot and before the journal was emptied.
-        let folding = JsonFileStore::new(dir.path(), Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())).unwrap().with_journal_floor(0);
+        let folding = JsonFileStore::new(dir.path(), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap().with_journal_floor(0);
         folding.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         assert!(!journal.exists());
         std::fs::write(&journal, &lines).unwrap();

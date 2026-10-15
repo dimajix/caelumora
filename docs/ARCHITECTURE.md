@@ -305,7 +305,7 @@ What changes an entity is split by what it changes:
 
 Two questions are kept apart:
 
-*   **Who may do what** is decided by one `SecurityManager` per process, asked with an `ActionType`
+*   **Who may do what** is decided by one `AccessPolicy` per process, asked with an `ActionType`
     and the `SecurityAttributes` (owner and access list) of the entity concerned. The default policy
     is ownership: owners do everything, whom the access list grants it read and use - a user, a
     role, or a group: a team users make, or the participants of a session or channel, which follow
@@ -359,7 +359,7 @@ The design repeats a few decisions; new code follows them.
 *   [WEB-UI.md](WEB-UI.md) - the browser frontend: how it talks to the server and what it shows.
 *   [STORAGE.md](STORAGE.md) - entity and state store, controllers, several instances.
 *   [WORKSPACE.md](WORKSPACE.md) - workspaces, their storages and the commands run in them.
-*   [SECURITY.md](SECURITY.md) - the security manager, ownership, views, users, authentication,
+*   [SECURITY.md](SECURITY.md) - the access policy, ownership, views, users, authentication,
     secrets.
 *   [CONFIDENTIALITY.md](CONFIDENTIALITY.md) - classifications, compartments and the flow rule, what
     only an owner sees, and what is still open.

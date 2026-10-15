@@ -14,7 +14,7 @@ use crate::agent::state::AgentStateHandle;
 use crate::event::{EventSubscription, SubscriptionTopic};
 use crate::view::ViewsFactory;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{SecurityContext, SecurityManager};
+use caelumora_model::security::{SecurityContext, AccessPolicy};
 use caelumora_model::session::Session;
 use caelumora_model::store::StoreResult;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
@@ -44,7 +44,7 @@ impl ActorRuntime {
         self.actor
     }
 
-    pub fn security_manager(&self) -> &Arc<dyn SecurityManager> { self.runtime.runtime_manager.security_manager() }
+    pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> { self.runtime.runtime_manager.access_policy() }
 
     pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> { self.runtime.runtime_manager.confidentiality() }
 
@@ -163,7 +163,7 @@ mod tests {
     use super::*;
     use crate::runtime::RuntimeManager;
     use crate::testing::test_registry;
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::config::AppConfig;
     use caelumora_model::user::UserId;
@@ -171,9 +171,9 @@ mod tests {
 
     fn channel_runtime() -> ChannelRuntime {
         let store = Arc::new(MemoryStore::new());
-        let secrets = Arc::new(SecretManager::new(vec![], Arc::new(DummySecurityManager::new())));
-        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
-        let commands = Arc::new(CommandExecutor::empty(Arc::clone(manager.security_manager())));
+        let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
+        let manager = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), &AppConfig::default(), test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
+        let commands = Arc::new(CommandExecutor::empty(Arc::clone(manager.access_policy())));
         ChannelRuntime::outside_a_session(manager, commands, SessionId::new())
     }
 

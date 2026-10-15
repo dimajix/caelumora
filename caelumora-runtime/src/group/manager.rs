@@ -9,7 +9,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityContext, SecurityManager, Subject};
+use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityContext, AccessPolicy, Subject};
 use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::user::{User, UserId};
 use caelumora_model::value::name::ScopedName;
@@ -26,7 +26,7 @@ pub struct GroupManager {
     users: Arc<dyn EntityStore<User>>,
     groups: Arc<dyn EntityStore<Group>>,
     /// Asked where the manager asks before the store does (issue 312).
-    security: Arc<dyn SecurityManager>,
+    access_policy: Arc<dyn AccessPolicy>,
     events: Arc<EventBus>,
     /// Held by every write of a document, so that none is lost to another.
     writing: Mutex<()>,
@@ -39,8 +39,8 @@ impl fmt::Debug for GroupManager {
 }
 
 impl GroupManager {
-    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, security: Arc<dyn SecurityManager>) -> Self {
-        Self { users: Arc::clone(&stores.users), groups: Arc::clone(&stores.groups), security, events, writing: Mutex::new(()) }
+    pub(crate) fn new(stores: &EntityStores, events: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>) -> Self {
+        Self { users: Arc::clone(&stores.users), groups: Arc::clone(&stores.groups), access_policy, events, writing: Mutex::new(()) }
     }
 
     /// Makes a team of the user `ctx` acts for, of `name` in `scope` - the
@@ -104,7 +104,7 @@ impl GroupManager {
             GroupUpdateEvent::MembersChanged => {}
         }
         if let Some(members) = members {
-            self.security.require(ctx, ActionType::update(Group::KIND, &group.security_attributes), StoreError::PermissionDenied).await?;
+            self.access_policy.require(ctx, ActionType::update(Group::KIND, &group.security_attributes), StoreError::PermissionDenied).await?;
             let system = SecurityContext::system();
             let mut actors = Vec::with_capacity(members.len());
             for user in members {

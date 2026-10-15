@@ -14,7 +14,7 @@ use serde_json::json;
 use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
 use caelumora_model::scope::Scope;
 use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{DummySecurityManager, SecurityContext};
+use caelumora_model::security::{AllowAllPolicy, SecurityContext};
 use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::user::UserId;
@@ -56,13 +56,13 @@ impl WithWorkspace {
 
 pub(crate) async fn session_with_workspace() -> WithWorkspace {
     let store = Arc::new(MemoryStore::new());
-    let policy = Arc::new(DummySecurityManager::new());
-    let secrets = Arc::new(SecretManager::new(vec![], Arc::<DummySecurityManager>::clone(&policy)));
+    let access_policy = Arc::new(AllowAllPolicy::new());
+    let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
     let files = tempfile::tempdir().unwrap();
     let internal = Classification::general(Confidentiality::Internal);
     let storage = BackendConfig::new("local", json!({ "root": files.path(), "shell": true, "destination": { "level": "internal" } }));
     let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into(), max_file_bytes: MAX_FILE_BYTES };
-    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, policy, Arc::new(ConfidentialityRules::default()), &AppConfig { workspaces, ..Default::default() }, test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
+    let runtime = Arc::new(RuntimeManager::new(Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store), secrets, access_policy, Arc::new(ConfidentialityRules::default()), &AppConfig { workspaces, ..Default::default() }, test_registry(Arc::<MemoryStore>::clone(&store))).unwrap());
     let system = SecurityContext::system();
 
     let owner = UserId::new();

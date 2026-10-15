@@ -78,7 +78,7 @@ A handler translates; it does not decide. Every handler derives its `SecurityCon
 *   **It reads through the views.** What a client lists and offers - sessions, channels, members,
     `can_change`, `can_read_context` - a handler reaches through the runtime's views as the user and
     answers with their snapshots, which `caelumora-rest-api` maps to responses. The server asks the
-    `SecurityManager` nothing itself. See [SECURITY.md](SECURITY.md#views).
+    `AccessPolicy` nothing itself. See [SECURITY.md](SECURITY.md#views).
 
 ## Endpoints
 

@@ -432,7 +432,7 @@ async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
-    let (channel, context, agent, alice) = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
+    let (channel, context, agent, alice) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted(std::sync::Mutex::new([bye].into()))), components).await;
     // What it sends, watched since before it ran.
     let mut events = channel.observe();
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
@@ -866,7 +866,7 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
     // ever.
     let (calculate, components) = calculator();
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent_under(Arc::new(caelumora_model::security::DummySecurityManager::new()), Arc::new(Scripted(std::sync::Mutex::new([calculate.clone()].into()))), components).await;
+        with_an_agent_under(Arc::new(caelumora_model::security::AllowAllPolicy::new()), Arc::new(Scripted(std::sync::Mutex::new([calculate.clone()].into()))), components).await;
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.state_store.get_agent_channel_state(agent, channel.id).await.unwrap();
@@ -912,7 +912,7 @@ async fn lowering_the_channel_ends_a_turn_waiting_for_approval_at_once() {
     // Nobody approves the call.
     let (call, components) = a_call_needing_approval();
     let Stuck { channel, context, agent, helper, mut events, running } =
-        with_an_agent_under(Arc::new(caelumora_model::security::DummySecurityManager::new()), Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
+        with_an_agent_under(Arc::new(caelumora_model::security::AllowAllPolicy::new()), Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
     settled(&helper, ActorState::WaitingForUser).await;
 
     channel.reclassify(&context, Classification::general(Confidentiality::Public)).await.expect("permitted");
@@ -925,7 +925,7 @@ async fn lowering_the_channel_ends_a_turn_waiting_for_approval_at_once() {
 #[tokio::test]
 async fn raising_the_channel_lets_a_running_turn_go_on() {
     use caelumora_model::confidentiality::Confidentiality;
-    let stuck = with_an_agent_under(Arc::new(caelumora_model::security::DummySecurityManager::new()), Arc::new(NeverAnswers), Default::default()).await;
+    let stuck = with_an_agent_under(Arc::new(caelumora_model::security::AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default()).await;
     settled(&stuck.helper, ActorState::Planning).await;
 
     stuck.channel.reclassify(&stuck.context, Classification::general(Confidentiality::Confidential)).await.expect("permitted");
@@ -999,7 +999,7 @@ async fn a_rule_of_the_channel_asks_for_a_call_its_tool_would_run() {
 
     let (call, mut components) = a_call_needing_approval();
     components.component_nodes[0].params = serde_json::json!({ "requires_approval": false });
-    let built = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
+    let built = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted(std::sync::Mutex::new([call].into()))), components).await;
     let ask = ApprovalRule::new(ToolMatcher { tool: "sleep".to_string(), arguments: Default::default() }, RuleDecision::Ask, Reach::Everywhere, None).unwrap();
     built.0.update_approval_rules(&SecurityContext::system(), vec![ask]).await.expect("the system may");
 
@@ -1283,7 +1283,7 @@ async fn a_call_with_invalid_arguments_is_answered_without_asking_anyone() {
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
-    let built = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(Scripted(std::sync::Mutex::new([not_a_plan, answer].into()))), components).await;
+    let built = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted(std::sync::Mutex::new([not_a_plan, answer].into()))), components).await;
     let ask = ApprovalRule::new(ToolMatcher { tool: "create_plan".to_string(), arguments: Default::default() }, RuleDecision::Ask, Reach::Everywhere, None).unwrap();
     built.0.update_approval_rules(&SecurityContext::system(), vec![ask]).await.expect("the system may");
     let Stuck { agent, helper, mut events, running, .. } = start(built).await;
@@ -1391,7 +1391,7 @@ async fn a_removed_agent_gives_its_turn_up_says_so_and_leaves_an_idle_state_behi
 async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_the_tool_traffic() {
     use caelumora_model::message::{MessageId, MessageRole};
     use caelumora_model::tool::{ToolCall, ToolCallResult, ToolVisibility};
-    let (channel, _, agent, _) = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(NeverAnswers), Default::default()).await;
+    let (channel, _, agent, _) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default()).await;
     let other = ActorId::Agent(caelumora_model::agent::AgentId::new());
     let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
     let result = ToolCallResult::of(&call, Default::default(), "done".to_string(), Classification::CHANNEL_DEFAULT);
@@ -1415,7 +1415,7 @@ async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_th
 async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
     use caelumora_model::message::{MessageId, MessageRole};
     let components = caelumora_model::component::ComponentConfig { component_nodes: vec![caelumora_model::component::ComponentDescriptor::new("filter", "test_no_secrets")] };
-    let (channel, context, agent, _) = agent_channel(Arc::new(DummySecurityManager::new()), Arc::new(NeverAnswers), components).await;
+    let (channel, context, agent, _) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), components).await;
     let said = |text: &str| Message {
         id: MessageId::new(), role: MessageRole::User, sender_id: context.initiator_id, content: Some(text.to_string()),
         ..Message::new(caelumora_model::confidentiality::Classification::CHANNEL_DEFAULT)

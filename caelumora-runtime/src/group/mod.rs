@@ -191,7 +191,7 @@ mod tests {
     use caelumora_model::store::EntityStores;
     use caelumora_model::value::name::ScopedName;
     use std::sync::Arc;
-    use caelumora_model::security::DummySecurityManager;
+    use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::json::JsonFileStore;
     use caelumora_model::store::memory::MemoryStore;
@@ -288,8 +288,8 @@ mod tests {
     async fn the_participants_go_and_come_back_all_or_none() {
         let stores = MemoryStore::new().entity_stores();
         let failing = Arc::new(Failing { inner: Arc::clone(&stores.groups), passing: AtomicUsize::new(usize::MAX) });
-        let events = Arc::new(EventBus::new(Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())));
-        let manager = GroupManager::new(&EntityStores { groups: Arc::<Failing>::clone(&failing), ..stores.clone() }, events, Arc::new(DummySecurityManager::new()));
+        let events = Arc::new(EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())));
+        let manager = GroupManager::new(&EntityStores { groups: Arc::<Failing>::clone(&failing), ..stores.clone() }, events, Arc::new(AllowAllPolicy::new()));
         let system = SecurityContext::system();
         let owner = UserId::new();
         let session_id = SessionId::new();
@@ -324,7 +324,7 @@ mod tests {
     #[tokio::test]
     async fn only_the_entries_naming_a_group_known_to_be_gone_are_dropped() {
         let dir = tempfile::tempdir().unwrap();
-        let groups = JsonFileStore::new(dir.path(), Arc::new(DummySecurityManager::new()), Arc::new(ConfidentialityRules::default())).unwrap().entity_stores().unwrap().groups;
+        let groups = JsonFileStore::new(dir.path(), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())).unwrap().entity_stores().unwrap().groups;
         let system = SecurityContext::system();
         let owner = UserId::new();
         let team = |name: &str| Group::team(ScopedName::new(name, Scope::UserScope { user_id: owner }).unwrap(), owner);

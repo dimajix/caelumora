@@ -125,7 +125,7 @@ The crate `caelumora-skills` holds all of it, in layers by feature (issue 323, c
 features the entity, its body, digest and snapshot (`skill`) and the wire types (`api`), which a
 client reads; `runtime` adds the `SkillManager` (`manager`), the views as an extension trait on the
 runtime's `Views` (`view::SkillViews`), the questions of who may change and use a skill as an
-extension trait on the `SecurityManager` (`access::SkillAccess`), the `skills` component
+extension trait on the `AccessPolicy` (`access::SkillAccess`), the `skills` component
 (`component`) and `SkillsPlugin` (`plugin`), which joins them to the runtime; `server` adds the
 routes and how a `SkillError` is answered (`routes`). Its tests run in the world of the security
 suite (`tests/skills.rs`). `caelumora-app` lists the plugin with its routes, `caelumora-tui` with

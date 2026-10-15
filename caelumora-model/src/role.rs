@@ -4,7 +4,7 @@
 //! its id (`RoleId`): a user's roles, a personality's limiting roles, an
 //! entry of an access list. What is written by hand - the user providers'
 //! configuration, a seed - names it by its name, resolved when it is
-//! loaded; the `SecurityManager` translates both ways.
+//! loaded; the `AccessPolicy` translates both ways.
 
 use crate::confidentiality::{Clearance, Clearances, Compartment, Compartments};
 use serde::Deserialize;
