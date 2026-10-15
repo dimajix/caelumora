@@ -80,7 +80,7 @@ facet trait lives next to the code that uses it, not among the implementations.
 |---|---|---|
 | `ToolProvider` | tools the model may call | `crate::tool` |
 | `ChannelCommandProvider` | user commands run on the channel | `crate::command` |
-| `AgentCommandProvider` | user commands an agent carries out itself, of agents and external agents alike | `crate::command` |
+| `AgentCommandProvider` | user commands an agent carries out itself, of agents and external agents alike | `crate::agent_command` |
 | `PromptProvider` | prompt parts, of agents and external agents alike | `crate::prompt` |
 | `ContextProvider` | what the model is given | `crate::prompt` |
 | `LLMClient` | the language model the agent talks to | `crate::llm` |

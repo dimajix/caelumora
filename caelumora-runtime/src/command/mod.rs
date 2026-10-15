@@ -15,7 +15,6 @@ pub mod nudge_command;
 pub mod wakeup_command;
 
 use crate::actor::user::UserActor;
-use crate::agent::turn::Turn;
 use crate::channel::{ChannelLoop, ChannelMember};
 use crate::component::{ComponentError, ComponentImpl, ComponentRegistry, ComponentResult};
 use async_trait::async_trait;
@@ -98,32 +97,32 @@ pub trait ChannelCommandProvider: ProvidesCommands {
     async fn execute(&self, name: &str, args: &str, context: &CommandContext<'_>) -> CommandResult<CommandOutput>;
 }
 
-/// A component facet contributing commands an agent carries out itself
-/// (issue 269) - `/skill`, `/compact` -, of agents run here and elsewhere
-/// alike: given the turn the agent carries the command out in, as a tool is
-/// given the turn it is called in. What the command changes it stages on
-/// the turn, which is taken over when the command succeeded and dropped
-/// when it did not. Whom it was asked by is the turn's initiator.
-#[async_trait]
-pub trait AgentCommandProvider: ProvidesCommands {
-    /// Carries out the command `name` with `args`, the rest of the input
-    /// line after the name and the agent's handle, which the command parses
-    /// itself.
-    ///
-    /// # Errors
-    /// As `ChannelCommandProvider::execute`.
-    async fn execute(&self, name: &str, args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput>;
-}
-
+/// A command of a set, with the component that provides it and the facet
+/// that carries it out - what `CommandExecutor::admit` hands out once the
+/// command may be run, and only then.
 #[derive(Debug)]
-struct CommandEntry<P: ?Sized> {
+pub struct CommandEntry<P: ?Sized> {
     command: Command,
     component: String,
     provider: Arc<P>,
 }
 
+impl<P: ?Sized> CommandEntry<P> {
+    /// The command.
+    pub fn command(&self) -> &Command {
+        &self.command
+    }
+
+    /// The facet that carries it out - to be called once the command was
+    /// admitted (`CommandExecutor::admit`).
+    pub fn provider(&self) -> &Arc<P> {
+        &self.provider
+    }
+}
+
 /// Finds and runs the commands of one set - the session's, from the global
-/// ones and the session's own - with the permission checks for seeing and
+/// ones and the session's own; an agent's (`agent_command`, issue 370) -
+/// with the permission checks for seeing and
 /// running them, as the `ToolExecutor` does for an agent's tools. Like it,
 /// it is no component: how a command runs is the command's own business,
 /// and there is nothing about running them to try out. Generic over the
@@ -173,8 +172,10 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
 
     /// The commands `issuer` may see - those `show` of them is granted -,
     /// sorted by name: the order components are built in follows their
-    /// dependencies, not the configuration, so it is no order to show.
-    async fn visible_by<'c>(&'c self, issuer: &SecurityContext, show: impl Fn(&'c Command) -> ActionType<'c>) -> Vec<Command> {
+    /// dependencies, not the configuration, so it is no order to show. What
+    /// `show` asks is the facet's: each facet's owner says how its commands
+    /// are seen (`ShowCommand` for the channel's, issue 370).
+    pub async fn visible_by<'c>(&'c self, issuer: &SecurityContext, show: impl Fn(&'c Command) -> ActionType<'c>) -> Vec<Command> {
         let mut visible = Vec::new();
         for entry in &self.entries {
             if self.access_policy.check(issuer, show(&entry.command)).await {
@@ -188,8 +189,12 @@ impl<P: ?Sized + ProvidesCommands> CommandExecutor<P> {
     /// The command `name`, if `issuer` may run it: `Empty` for an empty
     /// name; `Unknown` if there is no such command or `show` of it is not
     /// granted them - one they may not see is unknown to them, not refused;
-    /// `Forbidden` if `execute` of it is not.
-    async fn admit<'c>(
+    /// `Forbidden` if `execute` of it is not. As `visible_by`, what is asked
+    /// is the facet's owner's to say.
+    ///
+    /// # Errors
+    /// As above.
+    pub async fn admit<'c>(
         &'c self,
         name: &str,
         issuer: &SecurityContext,
@@ -235,57 +240,6 @@ impl CommandExecutor<dyn ChannelCommandProvider> {
             |command| ActionType::ExecuteCommand { command, channel: &channel },
         ).await?;
         entry.provider.execute(name, args, context).await
-    }
-}
-
-/// The commands of an agent (issue 269): seen and asked for by
-/// `ShowAgentCommand` and `ExecuteAgentCommand`, with the agent's
-/// attributes and those of the channel it is asked in.
-impl CommandExecutor<dyn AgentCommandProvider> {
-    /// The commands `issuer` may see of the agent with `agent` attributes in
-    /// the channel with `channel` attributes, sorted by name.
-    pub async fn visible(&self, issuer: &SecurityContext, agent: &SecurityAttributes, channel: &SecurityAttributes) -> Vec<Command> {
-        self.visible_by(issuer, |command| ActionType::ShowAgentCommand { command, agent, channel }).await
-    }
-
-    /// The command `name`, if `issuer` - who asked, in the context the
-    /// request came with - may ask the agent with `agent` attributes for it
-    /// in the channel with `channel` attributes: ready to be carried out,
-    /// and only so.
-    ///
-    /// # Errors
-    /// `CommandError::Empty` for an empty name; `Unknown` if the agent has
-    /// no such command or the issuer may not see it; `Forbidden` if they
-    /// may see but not ask for it.
-    pub async fn admitted<'c>(&'c self, name: &str, issuer: &SecurityContext, agent: &'c SecurityAttributes, channel: &'c SecurityAttributes) -> CommandResult<AdmittedCommand<'c>> {
-        let entry = self.admit(
-            name,
-            issuer,
-            |command| ActionType::ShowAgentCommand { command, agent, channel },
-            |command| ActionType::ExecuteAgentCommand { command, agent, channel },
-        ).await?;
-        Ok(AdmittedCommand(entry))
-    }
-}
-
-/// A command of an agent its issuer may ask for (`CommandExecutor::admitted`):
-/// what it is, and carrying it out - which can only be done once it was
-/// admitted, so that the agent can tell the issuer it began in between
-/// (issue 299).
-#[derive(Debug)]
-pub struct AdmittedCommand<'c>(&'c CommandEntry<dyn AgentCommandProvider>);
-
-impl AdmittedCommand<'_> {
-    pub fn command(&self) -> &Command {
-        &self.0.command
-    }
-
-    /// Carries the command out with `args` in `turn`.
-    ///
-    /// # Errors
-    /// Whatever the command reports.
-    pub async fn execute(self, args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
-        self.0.provider.execute(&self.0.command.name, args, turn).await
     }
 }
 

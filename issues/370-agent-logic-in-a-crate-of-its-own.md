@@ -314,3 +314,35 @@ crate reaches the environment through the doors named above and nothing else.
   replaces the context provider - to the tests of `agent_plugin.rs`. Since then, the runtime's
   tests that fail without the agents' plugin are those of the modules that move alone. The
   security suite, which builds its world with the agents' plugin, is sorted in step 2 (point 8).
+- **2026-10-15** — Step 1, point 6, first part: what the runtime still took from the agents'
+  logic. Measured: three places of its code, and fixtures of its tests. The fixtures - the shared
+  ones of `channel/tests/mod.rs`, `testing/mod.rs` (`World::turn`, the model not to be asked, the
+  agents' plugin in the world), `workspace/testing.rs` (`WithWorkspace::turn`) and a test of
+  `session/channels.rs` that names the echo tool - are split in step 2, with the tests (points 7
+  and 8). The code:
+  - `command/mod.rs` held `AgentCommandProvider`, which carries a command out in a `Turn`, and
+    the executor's inherent `impl CommandExecutor<dyn AgentCommandProvider>`, which no other
+    crate could write. The executor stays generic in the runtime, its two steps public
+    (`visible_by`, `admit`, and the `CommandEntry` it admits); the facet, `AdmittedCommand` and
+    what is asked of an agent's commands moved to `agent_command.rs`, the latter as the extension
+    trait `AgentCommandAccess` - as a plugin adds its questions to `AccessQuestions`.
+  - `view/mod.rs` held `From<ViewError> for ToolError`; it is the tool module's now.
+  - `remote.rs`, put among what moves in the table above, stays: the component container of the
+    runtime describes errors with it (`describe_chain`), and the plugins that talk HTTP use it
+    whatever they serve.
+- **2026-10-15** — Step 1, point 6, second part: what the agents' logic takes from the runtime.
+  Measured by the compiler, not guessed: in a throwaway copy of the repository, the modules that
+  move were cut into a crate `caelumora-agent` by a script, and every item it could not reach
+  was made public there and noted, until it built. One more inherent `impl` on a type of the
+  runtime came up first - `ComponentImpl<dyn PromptProvider>::prompt_for` -, now a function of
+  the prompt module, as `apply_stage_processors` is of the message stages. Then the doors were:
+  - `Answering` - its two fields and `to`, `continuing`, `own`, `send`, `send_all` -, public,
+    so that the actors of a kind of agent build their envelopes where every envelope is built
+    (issue 352);
+  - `Views::privacy_of`, public, which an agent's memory asks;
+  - `reject_retries` and `retry_target` of `actor/mod.rs`, which the runtime itself never used:
+    not opened but moved to the agents' side, `AgentBody::reject_retries` - every caller passed
+    the body's id, name and context - and `body::retry_target`.
+  A fresh copy with these changes builds the agents' crate without a further door, and the
+  runtime without anything left unused. Step 1 is done; what remains for step 2 is the move
+  itself - the script is the start of it - and the tests and fixtures named in the entry above.

@@ -5,7 +5,8 @@
 
 use super::body::AgentBody;
 use super::Answering;
-use crate::command::{AgentCommandProvider, CommandError, CommandExecutor};
+use crate::agent_command::{AgentCommandAccess, AgentCommandProvider};
+use crate::command::{CommandError, CommandExecutor};
 use crate::component::{ComponentContainer, ComponentError, ComponentResult};
 use crate::runtime::ActorRuntime;
 use crate::transport::EventSender;

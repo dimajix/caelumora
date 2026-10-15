@@ -44,7 +44,6 @@ use crate::component::ComponentRegistry;
 use crate::controller::ControllerManager;
 use crate::runtime::{RuntimeManager, Services};
 use crate::session::{Found, SessionLoop, SessionManager};
-use crate::tool::ToolError;
 use crate::workspace::WorkspaceManager;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
@@ -146,19 +145,6 @@ impl ViewError {
 }
 
 pub type ViewResult<T> = std::result::Result<T, ViewError>;
-
-/// What a model is told when a tool of its agent could not follow an edge:
-/// what cannot be reached is the model's to correct; a failure is the
-/// tool's.
-impl From<ViewError> for ToolError {
-    fn from(error: ViewError) -> Self {
-        match error {
-            ViewError::Forbidden { .. } => ToolError::PermissionDenied(error.to_string()),
-            ViewError::Failed(_) => ToolError::ExecutionFailed(error.to_string()),
-            _ => ToolError::InvalidParameter(error.to_string()),
-        }
-    }
-}
 
 /// Where the running sessions are: a root of views reaches a session
 /// through its loop if it runs. The `SessionManager` knows them all; an
@@ -688,7 +674,7 @@ impl Views {
     ///
     /// # Errors
     /// `Failed` if it cannot be looked up.
-    pub(crate) async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>> {
+    pub async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>> {
         let session = self.stores.sessions.get(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::failed(e, format!("looking up session {id}")))?;
         Ok(session.as_ref().map(SessionPrivacy::of))

@@ -13,7 +13,8 @@ use super::Answering;
 use crate::agent::state::AgentStateHandle;
 use crate::agent::turn::Turn;
 use crate::agent::work::AgentWork;
-use crate::command::{AgentCommandProvider, CommandExecutor};
+use crate::agent_command::AgentCommandProvider;
+use crate::command::CommandExecutor;
 use crate::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::prompt::ContextProvider;
 use crate::controller::AgentController;
@@ -21,8 +22,8 @@ use crate::message::PerceiveInProcessor;
 use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{Context, Result};
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
-use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
+use caelumora_model::agent::{AgentChannelState, AgentId, Personality, RetryRefused};
 use caelumora_model::channel::Channel;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
@@ -259,6 +260,32 @@ impl AgentBody {
     }
 }
 
+
+impl AgentBody {
+    /// Tells whoever asked each of `retries` that the agent does not answer
+    /// again, for `reason` (issue 234) - in the contexts of each request,
+    /// as an answer to it, in the agent's name and with its rights. One that
+    /// cannot be sent is logged.
+    pub(super) async fn reject_retries(&self, retries: Vec<Envelope>, reason: RetryRefused, output: &dyn EventSender) {
+        let (own, name, acting) = (self.id(), self.name(), self.security_context());
+        for retry in retries {
+            let Some(target) = retry_target(&retry) else { continue };
+            let rejected = ActorEvent::RetryRejected { target, reason };
+            if let Err(e) = Answering::to(&retry, own, name.to_string(), &acting).send(rejected, output).await {
+                warn!("Agent {} cannot reject a request to answer again: {:#}", own, e);
+            }
+        }
+    }
+}
+
+/// What the request to answer again in `retry` is about (issue 235);
+/// `None` for any other event.
+pub(super) fn retry_target(retry: &Envelope) -> Option<RetryTarget> {
+    match retry.event {
+        ActorEvent::RetryRequested { target, .. } => Some(target),
+        _ => None,
+    }
+}
 
 #[cfg(test)]
 mod testing {

@@ -1,5 +1,6 @@
 //! The tests of `ChannelLoop` itself, and the fixtures of every test of a running channel.
 
+use crate::agent_command::AgentCommandProvider;
 use crate::agent_plugin::AgentsPlugin;
 use super::*;
 use crate::actor::Actor;
@@ -540,7 +541,7 @@ impl crate::command::ProvidesCommands for Marking {
 }
 
 #[async_trait::async_trait]
-impl crate::command::AgentCommandProvider for Marking {
+impl AgentCommandProvider for Marking {
     async fn execute(&self, _name: &str, args: &str, turn: &mut crate::agent::turn::Turn<'_>) -> crate::command::CommandResult<caelumora_model::command::CommandOutput> {
         crate::agent::notes::AgentNotes::note(turn, crate::agent::notes::NoteKind::Public, format!("marked {args}"));
         if args == "fail" {
@@ -552,10 +553,10 @@ impl crate::command::AgentCommandProvider for Marking {
 
 fn register_marking_command(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new("test_marking").provides::<dyn crate::command::AgentCommandProvider>(),
+        ComponentKind::new("test_marking").provides::<dyn AgentCommandProvider>(),
         |_descriptor, _context| {
             let mut facets = crate::component::ComponentFacets::empty();
-            facets.insert::<dyn crate::command::AgentCommandProvider>(Arc::new(Marking));
+            facets.insert::<dyn AgentCommandProvider>(Arc::new(Marking));
             Ok(facets)
         },
     );

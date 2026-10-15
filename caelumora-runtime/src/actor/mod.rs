@@ -23,8 +23,7 @@ use tracing::warn;
 
 use crate::transport::{EventReceiver, EventSender};
 pub use kinds::AgentKinds;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
-use caelumora_model::agent::RetryRefused;
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
@@ -153,11 +152,14 @@ pub trait Actor: Any + Debug + Send + Sync {
 /// answers or of the task it speaks of, for the approver those of the call
 /// it decides. Every envelope the runtime sends is built here (issue 352):
 /// whose name it carries and what it continues is what the channel checks
-/// at the door (`OriginEventSender`, the admission).
+/// at the door (`OriginEventSender`, the admission). Public with what the
+/// actors of a kind of agent build their envelopes with (`to`,
+/// `continuing`, `own`, `send`, `send_all`), so that they build them here
+/// too, wherever they are built (issue 370).
 #[derive(Debug, Clone)]
-pub(crate) struct Answering {
-    pub(crate) event_context: EventContext,
-    pub(crate) security_context: SecurityContext,
+pub struct Answering {
+    pub event_context: EventContext,
+    pub security_context: SecurityContext,
 }
 
 impl Answering {
@@ -166,7 +168,7 @@ impl Answering {
     /// gives it - an agent's owner, with their roles as they are now and its
     /// limit (issues 255, 304, 341). The request's initiator stays the
     /// initiator - the root of the chain - and lends nothing.
-    pub(crate) fn to(request: &Envelope, id: ActorId, name: impl Into<String>, own: &SecurityContext) -> Self {
+    pub fn to(request: &Envelope, id: ActorId, name: impl Into<String>, own: &SecurityContext) -> Self {
         let security_context = request.security.next(id, own.owner_id, own.principal_id).with_roles(own.roles.clone(), own.limiting_roles.clone());
         Self { event_context: request.context.next(id, name), security_context }
     }
@@ -175,14 +177,14 @@ impl Answering {
     /// in the actor's name as `to` continued it then: what comes of it,
     /// later too, is said in them, and stays in the span and the chain of
     /// the request (issue 45).
-    pub(crate) fn continuing(work: &Work) -> Self {
+    pub fn continuing(work: &Work) -> Self {
         Self { event_context: work.event_context.clone(), security_context: work.security_context.clone() }
     }
 
     /// The contexts of the actor `id`, called `name`, speaking of itself
     /// rather than answering - nobody asked: those of its channel, in its
     /// own `security` context.
-    pub(crate) fn own(id: ActorId, name: impl Into<String>, security: &SecurityContext) -> Self {
+    pub fn own(id: ActorId, name: impl Into<String>, security: &SecurityContext) -> Self {
         Self { event_context: EventContext::new(security.session_id, security.channel_id, id, name), security_context: security.clone() }
     }
 
@@ -225,7 +227,7 @@ impl Answering {
     /// Sends `event` as the actor publishes it: without what only its
     /// owner sees (issues 54, 133); an event with nothing left to show is
     /// not sent.
-    pub(crate) async fn send(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
+    pub async fn send(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
         let Some(event) = event.published() else { return Ok(()) };
         output.send(self.envelope(event)).await
             .context(format!("actor {} failed to send an event", self.event_context.sender_id))
@@ -233,7 +235,7 @@ impl Answering {
 
     /// Sends `events` in turn: one that cannot be sent is logged, and the
     /// rest are sent still.
-    pub(crate) async fn send_all(&self, events: Vec<ActorEvent>, output: &dyn EventSender) {
+    pub async fn send_all(&self, events: Vec<ActorEvent>, output: &dyn EventSender) {
         for event in events {
             if let Err(e) = self.send(event, output).await {
                 warn!("{:#}", e);
@@ -242,28 +244,6 @@ impl Answering {
     }
 }
 
-/// Tells whoever asked each of `retries` that the agent `own`, called
-/// `name` and acting with the rights of its context `acting`, does not
-/// answer again, for `reason` (issue 234) - in the contexts of each request,
-/// as an answer to it. One that cannot be sent is logged.
-async fn reject_retries(retries: Vec<Envelope>, reason: RetryRefused, own: ActorId, name: &str, acting: &SecurityContext, output: &dyn EventSender) {
-    for retry in retries {
-        let Some(target) = retry_target(&retry) else { continue };
-        let rejected = ActorEvent::RetryRejected { target, reason };
-        if let Err(e) = Answering::to(&retry, own, name.to_string(), acting).send(rejected, output).await {
-            warn!("Agent {} cannot reject a request to answer again: {:#}", own, e);
-        }
-    }
-}
-
-/// What the request to answer again in `retry` is about (issue 235);
-/// `None` for any other event.
-fn retry_target(retry: &Envelope) -> Option<RetryTarget> {
-    match retry.event {
-        ActorEvent::RetryRequested { target, .. } => Some(target),
-        _ => None,
-    }
-}
 
 
 #[cfg(test)]

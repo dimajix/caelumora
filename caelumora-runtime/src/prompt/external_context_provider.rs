@@ -10,7 +10,7 @@
 //! the remote agent's user; positions mean nothing here.
 
 use crate::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, ContextProvider, PromptProvider};
+use crate::prompt::{prompt_for, ContextError, ContextProvider, PromptProvider};
 use crate::agent::work::AgentWork;
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
@@ -32,7 +32,7 @@ impl ContextProvider for ExternalContextProvider {
         let mut parts = Vec::new();
         let mut knowledge = Vec::new();
         for provider in &self.prompt_providers {
-            let Some(contribution) = provider.prompt_for(work).await? else { continue };
+            let Some(contribution) = prompt_for(provider, work).await? else { continue };
             let text = contribution.text.trim();
             if text.is_empty() {
                 continue;

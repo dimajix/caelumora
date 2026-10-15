@@ -4,7 +4,8 @@
 //! tells the channel what it did.
 
 use crate::agent::turn::Turn;
-use crate::command::{AgentCommandProvider, CommandError, CommandResult, ProvidesCommands};
+use crate::agent_command::AgentCommandProvider;
+use crate::command::{CommandError, CommandResult, ProvidesCommands};
 use crate::compaction::CompactionStrategy;
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use async_trait::async_trait;

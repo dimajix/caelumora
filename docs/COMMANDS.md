@@ -43,9 +43,12 @@ Both are built once per session, in the name of its owner
 session's channels - the counterpart of an agent's `ToolExecutor`, which likewise receives ready
 providers and is no component. Two commands of one name keep the session from starting. The
 executor is generic over the facet: finding a command, refusing two of one name and asking the
-policy are the same whoever runs the commands; only what a command is given to run with - the
-session, or an agent's turn - is the facet's. It checks permissions itself: how a command runs is
-the command's business, and there is nothing about running commands to try out.
+policy are the same whoever runs the commands (`visible_by`, `admit`); only what a command is given
+to run with - the session, or an agent's turn - and which actions are asked of it are the facet's,
+said by the facet's owner: the channel's commands by the runtime (`ShowCommand`, `ExecuteCommand`),
+an agent's by the agents' logic (`agent_command::AgentCommandAccess`, `ShowAgentCommand`,
+`ExecuteAgentCommand`, issue 370). It checks permissions itself: how a command runs is the
+command's business, and there is nothing about running commands to try out.
 
 ### Seeing and running
 

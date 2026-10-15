@@ -3216,7 +3216,7 @@ impl caelumora_runtime::command::ProvidesCommands for Commanded {
 }
 
 #[async_trait]
-impl caelumora_runtime::command::AgentCommandProvider for Commanded {
+impl caelumora_runtime::agent_command::AgentCommandProvider for Commanded {
     async fn execute(&self, name: &str, _args: &str, turn: &mut caelumora_runtime::agent::turn::Turn<'_>) -> caelumora_runtime::command::CommandResult<caelumora_model::command::CommandOutput> {
         self.0.lock().unwrap().push(turn.security_context().clone());
         Ok(caelumora_model::command::CommandOutput::private(format!("{name}: done")))
@@ -3231,9 +3231,9 @@ async fn with_a_commanded_agent() -> (World, Arc<SessionLoop>, Arc<caelumora_run
     let world = World::with_kinds(|registry| {
         register_once(registry, "silent", caelumora_model::message::Message::new(Classification::PUBLIC));
         let seen = Arc::clone(&seen);
-        registry.register(ComponentKind::new("commanded").provides::<dyn caelumora_runtime::command::AgentCommandProvider>(), move |_, _| {
+        registry.register(ComponentKind::new("commanded").provides::<dyn caelumora_runtime::agent_command::AgentCommandProvider>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn caelumora_runtime::command::AgentCommandProvider>(Arc::new(Commanded(Arc::clone(&seen))));
+            facets.insert::<dyn caelumora_runtime::agent_command::AgentCommandProvider>(Arc::new(Commanded(Arc::clone(&seen))));
             Ok(facets)
         });
     }).await;

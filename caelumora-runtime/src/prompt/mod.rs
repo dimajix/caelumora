@@ -162,17 +162,18 @@ pub trait PromptProvider: Send + Sync + std::fmt::Debug {
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError>;
 }
 
-impl ComponentImpl<dyn PromptProvider> {
-    /// The part of this prompt provider for `work`, as its fail policy
-    /// says: `None` if it failed and fails open.
-    ///
-    /// # Errors
-    /// `ContextError::Component`, naming the component, if it failed and
-    /// fails closed.
-    pub(crate) async fn prompt_for(&self, work: &AgentWork<'_>) -> Result<Option<Prompt>, ContextError> {
-        self.apply_fail_policy(self.get_prompt(work).await)
-            .map_err(|cause| ContextError::Component { component: self.id.clone(), cause: Box::new(cause) })
-    }
+/// The part of the prompt provider `provider` for `work`, as its fail
+/// policy says: `None` if it failed and fails open. A function of the
+/// prompt module rather than a method of `ComponentImpl`, whose methods are
+/// the component registry's alone (issue 370), as `apply_stage_processors`
+/// is the message stages'.
+///
+/// # Errors
+/// `ContextError::Component`, naming the component, if it failed and
+/// fails closed.
+pub(crate) async fn prompt_for(provider: &ComponentImpl<dyn PromptProvider>, work: &AgentWork<'_>) -> Result<Option<Prompt>, ContextError> {
+    provider.apply_fail_policy(provider.get_prompt(work).await)
+        .map_err(|cause| ContextError::Component { component: provider.id.clone(), cause: Box::new(cause) })
 }
 
 /// Assembles what the model of an agent is given besides the conversation,

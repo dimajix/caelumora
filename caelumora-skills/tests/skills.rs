@@ -23,7 +23,7 @@ use caelumora_model::value::text::Description;
 use caelumora_runtime::actor::user::ChannelWatch;
 use caelumora_runtime::agent::turn::Turn;
 use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::command::AgentCommandProvider;
+use caelumora_runtime::agent_command::AgentCommandProvider;
 use caelumora_runtime::compaction::KnowledgeRestorer;
 use caelumora_runtime::prompt::{PromptPosition, PromptProvider};
 use caelumora_runtime::session::SessionLoop;

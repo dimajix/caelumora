@@ -1,11 +1,11 @@
 use super::body::AgentBody;
-use super::{reject_retries, retry_target};
+use super::body::retry_target;
 use crate::agent_error::failure_message;
 use crate::message::apply_stage_processors;
 use crate::actor::{Actor, Answering};
 use super::run_control::{interruption, Interrupt};
 use crate::agent::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
-use crate::command::AgentCommandProvider;
+use crate::agent_command::AgentCommandProvider;
 use crate::compaction::{CompactionPolicy, CompactionStrategy};
 use crate::component::ComponentImpl;
 use crate::prompt::ContextProvider;
@@ -279,7 +279,7 @@ impl AgentActor {
         let of_given_up = given_up_for.map(RetryTarget::Turn);
         let judged = retries.iter().rposition(|retry| retry_target(retry) == of_given_up).or(retries.len().checked_sub(1));
         let judged = judged.map(|at| retries.remove(at));
-        reject_retries(retries, RetryRefused::AskedAgain, self.id(), &self.body.agent.name(), &self.body.security_context(), output).await;
+        self.body.reject_retries(retries, RetryRefused::AskedAgain, output).await;
         let mut accepted = None;
         if let Some(retry) = judged {
             let span = envelope_span(&retry.context, retry.event.kind());

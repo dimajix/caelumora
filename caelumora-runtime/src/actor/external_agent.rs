@@ -26,10 +26,9 @@
 //! when the channel was lowered since.
 
 use super::body::AgentBody;
-use super::reject_retries;
 use crate::agent_error::failure_message;
 use crate::actor::{Actor, Answering};
-use crate::command::AgentCommandProvider;
+use crate::agent_command::AgentCommandProvider;
 use crate::component::ComponentImpl;
 use crate::prompt::external_context_provider::EXTERNAL_CONTEXT_PROVIDER_KIND;
 use crate::prompt::ContextProvider;
@@ -42,7 +41,7 @@ use crate::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
-use caelumora_model::agent::Personality;
+use caelumora_model::agent::{Personality, RetryRefused};
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -214,7 +213,7 @@ impl ExternalAgentActor {
         let taken = self.body.hear(state, received, rx, output).await;
         let (request, retries) = (taken.request, taken.retries);
         self.body.store(state).await;
-        reject_retries(retries, caelumora_model::agent::RetryRefused::Elsewhere, self.id(), self.name().as_str(), &self.body.security_context(), output).await;
+        self.body.reject_retries(retries, RetryRefused::Elsewhere, output).await;
         request
     }
 

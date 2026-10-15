@@ -6,7 +6,7 @@
 use crate::agent::work::AgentWork;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use crate::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, ContextProvider, PromptPosition, PromptProvider};
+use crate::prompt::{prompt_for, ContextError, ContextProvider, PromptPosition, PromptProvider};
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
@@ -31,7 +31,7 @@ impl ContextProvider for TurnContextProvider {
         let mut before_input = Vec::new();
         let mut knowledge = Vec::new();
         for provider in &self.prompt_providers {
-            let Some(contribution) = provider.prompt_for(work).await? else { continue };
+            let Some(contribution) = prompt_for(provider, work).await? else { continue };
             let text = contribution.text.trim();
             if text.is_empty() {
                 continue;

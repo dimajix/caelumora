@@ -22,6 +22,7 @@ use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use caelumora_model::question::{Answers, Questions};
 use crate::runtime::ActorRuntime;
+use crate::view::ViewError;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -45,6 +46,19 @@ pub enum ToolError {
 }
 
 pub type ToolResult<T> = Result<T, ToolError>;
+
+/// What a model is told when a tool of its agent could not follow an edge
+/// of the views: what cannot be reached is the model's to correct; a
+/// failure is the tool's.
+impl From<ViewError> for ToolError {
+    fn from(error: ViewError) -> Self {
+        match error {
+            ViewError::Forbidden { .. } => ToolError::PermissionDenied(error.to_string()),
+            ViewError::Failed(_) => ToolError::ExecutionFailed(error.to_string()),
+            _ => ToolError::InvalidParameter(error.to_string()),
+        }
+    }
+}
 
 /// What a tool gives back (issue 133): its value and, if the tool
 /// classifies it - by its input, by what it read, by the source it drew
