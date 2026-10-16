@@ -18,7 +18,6 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::digest::Digest;
-use caelumora_model::history::{HistoryEntry, History};
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::store::EntityKind;
 use caelumora_model::transcript::{as_they_stand, TranscriptEntry};
@@ -26,7 +25,7 @@ use caelumora_model::turn::GivenUpReason;
 use caelumora_model::work::TurnId;
 use futures::StreamExt;
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use uuid::Uuid;
 use chrono::Utc;
@@ -131,32 +130,16 @@ fn kept_whole<'a>(entries: impl Iterator<Item = &'a TranscriptEntry>) -> HashSet
 }
 
 /// What was given in `entries`, each once, in the order it was first
-/// given: each given (`TranscriptEntry::Given`), and each a turn read -
-/// recorded as knowledge with what it said afterwards (`load_skill`, say),
-/// as `read` holds it by message.
-fn given_in(entries: &[Entry], read: &HashMap<MessageId, Vec<Given>>) -> Vec<Given> {
+/// given (`TranscriptEntry::Given`): a skill a user gave and one the model
+/// loaded alike (issue 389).
+fn given_in(entries: &[Entry]) -> Vec<Given> {
     let mut given = Vec::new();
-    for (_, gives, message) in entries {
-        let read = message.as_ref().and_then(|m| read.get(&m.id)).into_iter().flatten();
-        for what in gives.iter().chain(read) {
-            if !given.contains(what) {
-                given.push(*what);
-            }
+    for what in entries.iter().filter_map(|(_, gives, _)| gives.as_ref()) {
+        if !given.contains(what) {
+            given.push(*what);
         }
     }
     given
-}
-
-/// What each message of `history` was produced after reading, by message:
-/// the entities its context records as knowledge.
-fn given_read(history: &History) -> HashMap<MessageId, Vec<Given>> {
-    history.all_entries()
-        .filter_map(|node| match &node.entry {
-            HistoryEntry::Said { message, context: Some(context) } => Some((message.id, context.knowledge.iter().filter_map(|k| given(&k.source)).collect::<Vec<_>>())),
-            _ => None,
-        })
-        .filter(|(_, given)| !given.is_empty())
-        .collect()
 }
 
 impl SummaryCompaction {
@@ -242,7 +225,7 @@ impl CompactionStrategy for SummaryCompaction {
         let path: Vec<Entry> = as_they_stand(turn.agent_channel_state().transcript.entries())
             .map(|(node, message)| {
                 let gives = match &node.entry {
-                    TranscriptEntry::Given { source, .. } => given(source),
+                    TranscriptEntry::Given { source: Some(source), .. } => given(source),
                     _ => None,
                 };
                 (node.digest, gives, message)
@@ -259,9 +242,8 @@ impl CompactionStrategy for SummaryCompaction {
         let keep_from = kept.first().map(|(digest, _, _)| *digest);
 
         // What is still there as it was given is not given twice.
-        let read = given_read(&turn.agent_channel_state().history);
-        let still_there = given_in(kept, &read);
-        let wanted: Vec<Given> = given_in(summarised, &read).into_iter().filter(|g| !still_there.contains(g)).collect();
+        let still_there = given_in(kept);
+        let wanted: Vec<Given> = given_in(summarised).into_iter().filter(|g| !still_there.contains(g)).collect();
         let (restored, lost) = self.give_again(turn, &wanted).await?;
 
         let (text, answer) = self.summarise(turn, *last_summarised).await?;
@@ -484,7 +466,7 @@ mod tests {
         let u1 = heard("u1");
         state.perceive(vec![u1.clone()], vec![u1]);
         let mut turn = workspace_turn(world, state);
-        turn.give(Message { content: Some(GIVEN.to_string()), ..Message::new(Classification::general(Confidentiality::Internal)) }, knowledge(world, skill));
+        turn.give(Message { content: Some(GIVEN.to_string()), ..Message::new(Classification::general(Confidentiality::Internal)) }, Some(knowledge(world, skill)));
         drop(turn);
         let given = state.turn.take().unwrap().work.turn_id;
         state.finish_turn(given, ActorId::Agent(world.agent), Vec::new(), Vec::new(), None);
@@ -519,7 +501,7 @@ mod tests {
 
         let now: Vec<_> = state.transcript.messages().into_iter().map(|m| m.content.unwrap_or_default()).collect();
         assert_eq!(now, ["[Summary of the conversation so far]\nThey want release notes.\n", "[Skill: release-notes]\n1. Collect.\n", "u2"]);
-        assert!(matches!(state.transcript.entries().nth(1).map(|n| &n.entry), Some(TranscriptEntry::Given { source, .. }) if source.about::<Workspace>().is_some_and(|(s, _)| s == skill)), "the skill as given");
+        assert!(matches!(state.transcript.entries().nth(1).map(|n| &n.entry), Some(TranscriptEntry::Given { source: Some(source), .. }) if source.about::<Workspace>().is_some_and(|(s, _)| s == skill)), "the skill as given");
         assert!(state.transcript.prefix(&before).is_some(), "what it saw before stays");
         let replacement = state.transcript.messages();
         let under_way = state.turn.as_ref().map(|t| t.work.turn_id);
@@ -593,6 +575,58 @@ mod tests {
         let summary = &state.transcript.messages()[0];
         assert_eq!(summary.turn_id, Some(under_way), "it holds what the turn read: the turn's (issue 284)");
         assert_eq!(summary.classification, label, "as the turn writes");
+    }
+
+    /// Issue 389: a skill the turn under way loaded in the part summarised
+    /// is given again, though a later message of the turn is kept - it is
+    /// found where its text stands, not in what the turn read since.
+    #[tokio::test]
+    async fn a_skill_loaded_in_the_part_summarised_is_given_again_though_its_turn_goes_on() {
+        let world = session_with_workspace().await;
+        let mut state = AgentChannelState::default();
+        let u1 = Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
+        state.perceive(vec![u1.clone()], vec![u1]);
+        let skill = WorkspaceId::new();
+        let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep: 0.1, restorers: vec![Arc::new(Restorer(Some(skill)))] };
+        let mut turn = workspace_turn(&world, &mut state);
+        let said = |content: &str, role| Message { sender_id: ActorId::Agent(world.agent), role, content: Some(content.repeat(40)), ..Message::new(Classification::PUBLIC) };
+        turn.push_message(said("a", MessageRole::Assistant));
+        turn.push_message(said("r", MessageRole::Tool));
+        // Loaded by the call of `a`: given after its result.
+        turn.give(Message { content: Some(GIVEN.to_string()), ..Message::new(Classification::general(Confidentiality::Internal)) }, Some(knowledge(&world, skill)));
+        turn.push_message(said("b", MessageRole::Assistant));
+        turn.push_message(said("s", MessageRole::Tool));
+        let compaction = strategy.compact(&mut turn).await.expect("compacted");
+        drop(turn);
+
+        assert_eq!(compaction.map(|c| (c.replaced, c.kept, c.given_again)), Some((4, 2, vec!["workspace release-notes".to_string()])), "its text was summarised: given again");
+        let now: Vec<_> = state.transcript.messages().into_iter().map(|m| m.content.unwrap_or_default()).collect();
+        assert_eq!(now[1], GIVEN, "after the summary");
+    }
+
+    /// What was given without being knowledge - an earlier summary, say -
+    /// is summarised with the rest: nobody gives it again (issue 389).
+    #[tokio::test]
+    async fn what_was_given_without_being_knowledge_is_summarised() {
+        let world = session_with_workspace().await;
+        let mut state = AgentChannelState::default();
+        let u1 = Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
+        state.perceive(vec![u1.clone()], vec![u1]);
+        let model = Arc::new(Summariser::default());
+        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: 0.1, restorers: vec![Arc::new(Restorer(None))] };
+        let mut turn = workspace_turn(&world, &mut state);
+        turn.give(Message { content: Some("read this".repeat(40)), ..Message::new(Classification::PUBLIC) }, None);
+        let said = |content: &str, role| Message { sender_id: ActorId::Agent(world.agent), role, content: Some(content.repeat(40)), ..Message::new(Classification::PUBLIC) };
+        turn.push_message(said("a", MessageRole::Assistant));
+        turn.push_message(said("r", MessageRole::Tool));
+        turn.push_message(said("b", MessageRole::Assistant));
+        turn.push_message(said("s", MessageRole::Tool));
+        let compaction = strategy.compact(&mut turn).await.expect("compacted");
+        drop(turn);
+
+        assert_eq!(compaction.map(|c| (c.given_again, c.lost)), Some((Vec::new(), 0)), "nothing to give again, nothing lost");
+        let asked = model.0.lock().unwrap().pop().expect("its model was asked");
+        assert!(asked.iter().any(|m| m.content.as_deref().is_some_and(|c| c.starts_with("read this"))), "it was summarised");
     }
 
     #[test]

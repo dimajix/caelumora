@@ -153,11 +153,15 @@ Either way the turn hands back the contexts it had as an `Answering`, which send
 with the publication the turn had and withdraws the approval requests of the calls it abandoned. An
 external agent publishes its answers through the same `Answering`.
 
-**A message given** to the agent to read - a skill a member loaded for it - is recorded by
-`Turn::give`: into the transcript as a `Given` entry, which keeps what knowledge it is - of an
-entity, `KnowledgeSource::Entity { kind, id, digest }` (issue 323) -; into the history without a
-context, since the agent did not produce it. It is not published, the turn has seen it, and its
-digest is that of the message, since the model is given the same.
+**A message given** to the agent to read - a skill a member or the model loaded, the summary of a
+compaction - is recorded by `Turn::give`: into the transcript as a `Given` entry, which keeps what
+knowledge it is, if it is knowledge - of an entity, `KnowledgeSource::Entity { kind, id, digest }`
+(issue 323) - and none for a summary (issue 389); into the history without a context, since the
+agent did not produce it. It is not published, the turn has seen it, and its digest is that of the
+message, since the model is given the same. A tool gives what it gives while it runs, but nothing
+may stand between the calls of a step and their results, which the models refuse: while the calls
+run, what is given is put aside with the turn (`TurnState::given_after_step`) and written right
+after the step's tool message.
 
 ### A command turn
 
@@ -291,8 +295,6 @@ reads the history. What reads it in memory is informational, reads from the end,
 window:
 
 *   what a turn said (`History::said_in_turn`), its answer, read from where the turn began;
-*   what the messages a compaction replaces were produced after reading - the one reader that
-    still builds the model's input from the history, to be moved to the transcript (issue 389);
 *   which of the messages a request to answer again takes back were said, to announce them;
 *   its last message, whether its last turn was given up, and the digest an entry pushed again is
     found by.
@@ -409,8 +411,9 @@ All of this relies on nothing ever being removed from the transcript. A compacti
 old one but does not continue it:
 
 *   **A branch of its own.** The transcript begins anew from the root with what replaces the older
-    messages - a summary, what is given again - and then copies of the entries kept, as they
-    stand. Every copy gets a digest of its own, since what precedes it is another.
+    messages - a summary, what is given again, each a `Given` entry, the summary without a source -
+    and then copies of the entries kept, as they stand. Every copy gets a digest of its own, since
+    what precedes it is another.
 *   **The old branch stays**, in the store. Every reference recorded before resolves to what it
     did; the resolver does not know there was a compaction.
 *   **Prompt parts are carried over.** A part the turn placed after an entry kept follows its
@@ -457,9 +460,10 @@ since its call was given the transcript alone.
 
 What the agent had been given in the part summarised and is not still there in the part kept is
 given again after the summary, as it is now, by the component that gave it: a `KnowledgeRestorer`
-(issue 323), a facet that names its kind and answers, of the entities of that kind recorded as
-given - as `KnowledgeSource::Entity`, in a `Given` entry or as what a turn read -, which it gives
-again and as what text. The `skills` component gives the skills the agent may still load there
+(issue 323), a facet that names its kind and answers, of the entities of that kind given - each
+a `Given` entry of the transcript whose source is a `KnowledgeSource::Entity` (issue 389) -, which
+it gives again and as what text. What was given without a source - an earlier summary - is
+summarised with the rest. The `skills` component gives the skills the agent may still load there
 ([SKILLS.md](SKILLS.md)); what no component gives again - a workspace's files - is not, and the
 strategy knows no kind itself. `/compact` tells the channel what was given again, by kind and name,
 and how much could no longer be given.

@@ -25,13 +25,14 @@ use crate::digest;
 pub enum TranscriptEntry {
     /// A message the model was given, or produced.
     Message(Message),
-    /// A message the agent was given to read in a turn (issue 16) - not
-    /// said by it, not heard from another -, and what it is: a skill loaded
-    /// for it (issue 22). Given to the model as the message is; `source`
+    /// A message the agent was given to read (issue 16) - not said by it,
+    /// not heard from another -, and what it is, if it is knowledge: a
+    /// skill loaded for it (issue 22), say; the summary of a compaction is
+    /// none (issue 389). Given to the model as the message is; `source`
     /// says what it was given, so that what the agent knows can be told
     /// from the transcript - a compaction gives a skill again. `source` is
     /// not covered by the digest: the model is given the message alone.
-    Given { message: Message, source: KnowledgeSource },
+    Given { message: Message, source: Option<KnowledgeSource> },
     /// The message `message.id`, before it on the path, is given as
     /// `message` from here on (issue 234, `Message::modify`).
     Modified { message: Message },
@@ -156,9 +157,10 @@ impl Chain<TranscriptEntry> {
         self.push_with(entry, digest::transcript_chain);
     }
 
-    /// Appends `msg`, given to read as `source` (issue 16), and returns the
-    /// digest of the transcript before it.
-    pub fn give(&mut self, msg: Message, source: KnowledgeSource) -> Option<Digest> {
+    /// Appends `msg`, given to read - as `source`, if it is knowledge
+    /// (issues 16, 389) -, and returns the digest of the transcript before
+    /// it.
+    pub fn give(&mut self, msg: Message, source: Option<KnowledgeSource>) -> Option<Digest> {
         self.push_with(TranscriptEntry::Given { message: msg, source }, digest::transcript_chain)
     }
 
@@ -305,13 +307,13 @@ mod tests {
         let (mut given, mut said) = (Transcript::default(), Transcript::default());
         given.push(make_message(id(1)));
         said.push(make_message(id(1)));
-        given.give(make_message(id(2)), source);
+        given.give(make_message(id(2)), Some(source));
         said.push(make_message(id(2)));
         assert_eq!(given.digest(), said.digest(), "the model is given the same");
         assert_eq!(given.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(2)]);
         assert_eq!(known(given.all_entries(), id(2)).map(|m| m.id), Some(id(2)));
         let entry = &given.last().unwrap().entry;
-        assert!(matches!(entry, TranscriptEntry::Given { source: s, .. } if *s == source), "and keeps what it is");
+        assert!(matches!(entry, TranscriptEntry::Given { source: Some(s), .. } if *s == source), "and keeps what it is");
         assert_eq!(entry.classification(), Some(&make_message(id(2)).classification));
     }
 

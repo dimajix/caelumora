@@ -1,6 +1,6 @@
 # 389 — A compaction reads from the history what it gives the model again
 
-**Status:** open
+**Status:** done
 **Area:** Context and knowledge
 
 ## The problem
@@ -196,3 +196,16 @@ Stored data: agent states and transcripts are to be deleted - `TurnState` gains 
   `create_plan` stays as it is. How a `Given` is treated in a compaction is part of this issue,
   and so is the decision whether the summary is a `Given` without a source.
 - **2026-10-16** — Decided: the summary of a compaction is a `Given` without a source.
+- **2026-10-16** — Done as planned. A test showed the flaw first: a skill loaded by tool in the
+  part summarised was not given again once a later message of its turn was kept. `Given` takes an
+  optional source; `Transcript::give`, `AgentChannelState::given` and `Turn::give` take an
+  optional `KnowledgeRef`. While the calls of a step run, what is given waits in
+  `TurnState::given_after_step` and is written after the step's tool message, also after one
+  answering abandoned calls. `load_skill` gives the skill's text and answers with its name and id,
+  classified as the skill, as `list_skills` names it. `compact` gives every message of the
+  replacement as `Given`, the summary without a source. `SummaryCompaction` finds what was given in
+  the `Given` entries alone; `given_read` is gone, and with it the last place that built the
+  model's input from the history. Checked: the web UI never showed a loaded skill's text and reads
+  `name`, `skill_id` and `status` from the result; a turn given up as `Lowered` gives a message
+  given in it no more, as it gave the text of the result no more; a step's results are one tool
+  message. Stored agent states and transcripts are to be deleted.

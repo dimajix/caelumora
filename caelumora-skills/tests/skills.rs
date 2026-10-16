@@ -8,7 +8,7 @@ use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::confidentiality::{Classification, Confidentiality, Place};
-use caelumora_model::context::KnowledgeRef;
+use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::privacy::SessionPrivacy;
@@ -17,6 +17,7 @@ use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext, Subj
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::query::Query;
 use caelumora_model::store::{EntityStore, EntityStoreFactory, StateStore};
+use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::tool::{ToolCall, ToolVisibility};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
@@ -98,11 +99,15 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
 
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     let loaded = call(&component, &mut turn, LOAD_SKILL_TOOL_NAME, serde_json::json!({ "name": "release-notes" })).await.unwrap();
-    assert_eq!(loaded.value, Value::String("[Skill: release-notes]\n1. Collect.\n2. Group.\n".to_string()), "the text, under its title");
-    assert_eq!(loaded.classification, Some(internal));
+    assert_eq!(loaded.value, serde_json::json!({ "status": "loaded", "name": "release-notes", "skill_id": made.id }), "the result only names it");
+    assert_eq!(loaded.classification, Some(internal.clone()), "classified as the skill, as the catalogue names it");
     drop(turn);
     let read = state.turn.as_ref().unwrap().work.context.knowledge.clone();
-    assert!(matches!(read.as_slice(), [KnowledgeRef { source, .. }] if source.about::<Skill>() == Some((made.id, Some(skill::digest("1. Collect.\n2. Group."))))), "{read:?}");
+    let as_read = |source: &KnowledgeSource| source.about::<Skill>() == Some((made.id, Some(skill::digest("1. Collect.\n2. Group."))));
+    assert!(matches!(read.as_slice(), [KnowledgeRef { source, .. }] if as_read(source)), "{read:?}");
+    let given = state.transcript.last().map(|node| &node.entry);
+    assert!(matches!(given, Some(TranscriptEntry::Given { message, source: Some(source) }) if as_read(source) && message.content.as_deref() == Some("[Skill: release-notes]\n1. Collect.\n2. Group.\n") && message.classification == internal),
+        "its text given to read, under its title, as what it is (issue 389): {given:?}");
 
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     let absent = call(&component, &mut turn, LOAD_SKILL_TOOL_NAME, serde_json::json!({ "name": "nothing" })).await;

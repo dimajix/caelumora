@@ -121,6 +121,11 @@ Every call ends with a result the model can act on.
 A call that ran records when it started and ended, around the tool's own run, so that a client can
 show the duration.
 
+A tool may give the agent something to read besides its result (`Turn::give`) - a skill it loaded,
+say, with the knowledge it is. It is written after the results of the step, since nothing may stand
+between the calls and their results (see
+[AGENT-TURN.md](AGENT-TURN.md#beginning-and-ending-a-turn)).
+
 ## MCP servers
 
 An `mcp_tool` component exposes the tools of a remote MCP server, reached over the Streamable HTTP

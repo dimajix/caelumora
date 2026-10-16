@@ -14,6 +14,8 @@ use crate::note::NoteChange;
 use crate::plan::PlanState;
 use crate::tool::{ToolCallState, ToolCallStatus};
 use crate::confidentiality::Classification;
+use crate::context::KnowledgeRef;
+use crate::message::Message;
 use crate::work::Work;
 use serde::{Deserialize, Serialize};
 
@@ -85,6 +87,11 @@ pub struct TurnState {
     pub private_notes: Vec<NoteChange>,
     /// The tool calls of the current step, with their approvals and results.
     pub tool_calls: Vec<ToolCallState>,
+    /// What the turn was given to read while the calls of its step ran
+    /// (issue 389), each with the knowledge it is, if it is knowledge:
+    /// written after the step's tool message (`AgentChannelState::said`),
+    /// since nothing may stand between calls and their results.
+    pub given_after_step: Vec<(Message, Option<KnowledgeRef>)>,
     /// The plan in progress, if any.
     pub plan: Option<PlanState>,
     /// Set by a tool (the stop tool): the turn ends with this tool step, and
