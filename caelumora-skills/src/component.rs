@@ -234,7 +234,9 @@ impl ToolProvider for SkillsComponent {
                     .to_string(),
                 parameters: ToolParameters::object([("name", ToolParameters::string("The name of the skill"))], ["name"]),
                 requires_approval: false,
-                visibility: ToolVisibility::WITHOUT_RESULT,
+                // Its result names the skill; its text is given to the agent,
+                // never published (issue 389).
+                visibility: ToolVisibility::SHOWN,
                 classification: None,
                 presentation: SKILL_PRESENTATION,
             },

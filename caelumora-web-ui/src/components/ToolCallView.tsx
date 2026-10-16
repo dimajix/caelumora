@@ -741,8 +741,8 @@ const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, r
 /**
  * A skill loaded, written or changed (issue 281): its name - linked to its page where the result
  * names the skill and the chat can open it -, what it is for and its text, rendered as Markdown,
- * where the arguments hold them. A loaded skill's text, the result, is never shown: it is the
- * agent's to follow.
+ * where the arguments hold them. A loaded skill's text is not in the result, which names the skill:
+ * it is given to the agent to follow, never published (issue 389).
  */
 const SkillToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onSelectPage}) => {
   if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Skill not shown</span>;
