@@ -58,6 +58,13 @@ impl<V> Kept<V> {
         self.pending.clear();
     }
 
+    /// Lets go of the values that are stored and not `wanted` (issue 383):
+    /// what is still to be stored stays, whatever is wanted.
+    pub fn keep_only(&mut self, wanted: impl Fn(&Digest) -> bool) {
+        let pending = &self.pending;
+        self.values.retain(|digest, _| wanted(digest) || pending.contains(digest));
+    }
+
     /// The values a store read, each under its digest, with nothing
     /// pending: they are stored.
     pub fn stored(values: impl IntoIterator<Item = (Digest, V)>) -> Self {
@@ -80,6 +87,13 @@ mod tests {
         kept.keep(prompt("b"), || "b".to_string());
         assert_eq!(kept.len(), 2);
         assert_eq!(kept.changes(), [(prompt("b"), "b".to_string())], "once, and only what is new");
+
+        kept.keep_only(|_| false);
+        assert_eq!(kept.changes(), [(prompt("b"), "b".to_string())], "what is to be stored stays");
+        assert!(kept.get(&prompt("a")).is_none(), "what is stored and not wanted goes");
+        kept.mark_stored();
+        kept.keep_only(|digest| *digest == prompt("b"));
+        assert_eq!(kept.len(), 1, "what is wanted stays");
 
         let stored = Kept::stored([(prompt("b"), "b".to_string())]);
         assert_eq!(stored.get(&prompt("b")).map(String::as_str), Some("b"));

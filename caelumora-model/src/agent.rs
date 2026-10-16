@@ -26,7 +26,7 @@ use crate::value::text::{Description, Introduction};
 use crate::value::ValueError;
 use crate::work::{TurnId, Work};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::warn;
 use uuid::Uuid;
 use chrono::Utc;
@@ -377,7 +377,10 @@ impl AgentChannelState {
     /// compacted its context keeps all of it. The transcript from the root
     /// of its active branch on: every reader in memory reads that branch
     /// alone, and what lies before is read from the store
-    /// (`TranscriptStore`); right after it began anew, nothing.
+    /// (`TranscriptStore`); right after it began anew, nothing. Of the
+    /// prompt texts and the tool sets those the turn under way names
+    /// (issue 383): its calls read them, and between turns nothing does;
+    /// what an older message's context names is read from the store.
     pub fn keep_window(&mut self) {
         let compacted = self.history.all_entries().rev().find(|node| matches!(node.entry, HistoryEntry::Compacted { .. })).map(|node| node.seq);
         if let Some(compacted) = compacted {
@@ -387,6 +390,11 @@ impl AgentChannelState {
         let root = self.transcript.entries().next().map_or(self.transcript.end(), |node| node.seq);
         self.transcript.keep_from(root);
         self.transcript_from = self.transcript.base();
+        let context = self.turn.as_ref().map(|turn| &turn.work.context);
+        let named: HashSet<Digest> = context.into_iter().flat_map(|context| context.prompts.iter().map(|prompt| prompt.text)).collect();
+        let offered = context.and_then(|context| context.tools);
+        self.prompts.keep_only(|digest| named.contains(digest));
+        self.offered_tools.keep_only(|digest| offered == Some(*digest));
     }
 
     /// Makes a loaded state fit to run from (issue 75). A state stored
@@ -1432,6 +1440,29 @@ pub(crate) mod tests {
         state.transcript.mark_stored();
         state.keep_window();
         assert_eq!((state.transcript.base(), state.transcript.len()), (5, 0), "right after it began anew, nothing");
+    }
+
+    #[test]
+    fn an_agent_keeps_the_texts_and_tools_its_turn_under_way_names() {
+        let mut state = AgentChannelState::default();
+        let earlier = state.keep_prompt(MessageRole::System, "earlier".to_string(), None, None);
+        let sets = vec![ToolSet::new("calc", "calculates", Vec::new())];
+        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, sets, ModelProfile::default());
+        let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
+        state.turn.as_mut().unwrap().work.context.prompts.push(system.clone());
+        let offer = state.turn.as_ref().unwrap().work.context.tools.expect("an offer");
+        state.keep_window();
+        assert_eq!((state.prompts.len(), state.offered_tools.len()), (2, 1), "nothing goes before it is stored");
+
+        state.prompts.mark_stored();
+        state.offered_tools.mark_stored();
+        state.keep_window();
+        assert!(state.prompts.get(&earlier.text).is_none(), "what no turn under way names is the store's");
+        assert!(state.prompts.get(&system.text).is_some() && state.offered_tools.get(&offer).is_some(), "what it names stays");
+
+        state.turn = None;
+        state.keep_window();
+        assert!(state.prompts.is_empty() && state.offered_tools.is_empty(), "between turns, nothing");
     }
 
     #[test]
