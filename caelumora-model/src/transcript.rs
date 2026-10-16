@@ -110,11 +110,13 @@ where
 }
 
 /// The message `id` as `nodes` - a transcript's, in the order they were
-/// added - hold it, on whichever branch: as it was first recorded, with
-/// every change of it since, in the order they were. `None` if they do not
-/// hold it. What a receiver given a branch holding it knows of it (issue
-/// 236), read by a store, which holds every branch (`TranscriptStore::message`,
-/// issue 380).
+/// added: of every branch, or of one path - hold it: as it was first
+/// recorded, with every change of it since, in the order they were, and
+/// nothing else cloned. `None` if they do not hold it. On every branch,
+/// what a receiver given a branch holding it knows of it (issue 236), read
+/// by a store, which holds every branch (`TranscriptStore::message`, issue
+/// 380); on the active path, what a change of it is checked against
+/// (`Transcript::standing`).
 pub(crate) fn known<'a>(mut nodes: impl Iterator<Item = &'a Node<TranscriptEntry>>, id: MessageId) -> Option<Message> {
     let mut message = nodes.by_ref().find_map(|node| node.entry.message().filter(|m| m.id == id)).cloned()?;
     nodes.filter(|node| node.entry.changed() == Some(id)).for_each(|node| node.entry.apply_to(&mut message));
@@ -220,7 +222,7 @@ impl Chain<TranscriptEntry> {
     /// The message `id` of the active path as it stands, `None` if it is
     /// not on it or was taken back.
     fn standing(&self, id: MessageId) -> Option<Message> {
-        as_they_stand(self.entries()).find_map(|(_, m)| m.filter(|m| m.id == id))
+        known(self.entries(), id).filter(|message| message.revoked.is_none())
     }
 }
 

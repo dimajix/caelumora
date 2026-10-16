@@ -1,6 +1,6 @@
 # 396 — One message as it stands is read three ways, two of them by folding everything after it
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 Part of [391](391-history-and-transcript-review-epic.md).
@@ -54,3 +54,11 @@ that said it, clone the message, apply `fold_into` of every later entry. `Transc
 
 - **2026-10-16** — Opened from the review of the history and the transcript
   ([391](391-history-and-transcript-review-epic.md)).
+- **2026-10-16** — Done. `History::message` clones the message where it was said and folds every
+  later entry into it (`HistoryEntry::fold_into`, which changes it only if it names it or fits the
+  channel); `Transcript::standing` is `known` over the active path, without a message taken back.
+  Both chains read one message the same way now, and `fold` and `as_they_stand` are left to ranges
+  and whole paths. What *Why it matters* says of the cost was put too strongly: the readers run on a
+  change of a message and on answering again, which are rare, over a window of a few hundred
+  entries. The gain is one way of reading a message instead of three, not time. No stored data
+  changes.

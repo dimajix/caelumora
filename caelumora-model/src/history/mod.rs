@@ -193,11 +193,17 @@ impl Chain<HistoryEntry> {
     }
 
     /// The message `id` as it stands - on whichever branch - or `None` if
-    /// it was never said here. Folded from where it was said on, not from
-    /// the start.
+    /// it was never said here: as it was said, with every entry recorded
+    /// after it folded into it (`HistoryEntry::fold_into`), which only
+    /// changes it if it names it or fits the channel. Read from where it
+    /// was said on, not from the start, and nothing but it is cloned.
     pub fn message(&self, id: MessageId) -> Option<Message> {
         let said = self.all_entries().rev().find(|node| node.entry.said().is_some_and(|m| m.id == id))?;
-        fold(self.from(said.seq)).into_iter().next().map(|(_, message)| message)
+        let mut message = said.entry.said()?.clone();
+        for node in self.from(said.seq + 1) {
+            node.entry.fold_into(&mut message);
+        }
+        Some(message)
     }
 
     /// The id of the last message said on the active path,
