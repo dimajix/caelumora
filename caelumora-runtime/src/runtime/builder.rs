@@ -14,6 +14,7 @@ use caelumora_model::user_provider::{UserManager, UserProvider};
 use crate::backend::Backends;
 use caelumora_model::removal::Deletable;
 use caelumora_model::store::history::HistoryStore;
+use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::{EntityStore, EntityStoreFactory, EntityStores, StateStore, StoreBackend, StoreResult};
 use crate::plugin::Plugin;
@@ -42,6 +43,7 @@ pub struct RuntimeBuilder {
     backend: StoreBackend,
     state_store: Arc<dyn StateStore>,
     history_store: Arc<dyn HistoryStore>,
+    transcript_store: Arc<dyn TranscriptStore>,
     entity_stores: EntityStores,
     secret_manager: Arc<SecretManager>,
     user_manager: Arc<UserManager>,
@@ -119,6 +121,7 @@ impl RuntimeBuilder {
         let states = states.into();
         let state_store = states.state_store();
         let history_store = states.history_store();
+        let transcript_store = states.transcript_store();
         let entity_stores = backend.entity_stores()?;
         let event_bus = Arc::new(EventBus::new(Arc::clone(&access_policy), Arc::clone(&confidentiality)));
         // What a backend may ask for: the policies, the secrets and, for a
@@ -154,6 +157,7 @@ impl RuntimeBuilder {
             backend,
             state_store,
             history_store,
+            transcript_store,
             entity_stores,
             secret_manager,
             user_manager,
@@ -343,6 +347,7 @@ impl RuntimeBuilder {
             confidentiality: self.confidentiality,
             state_store: self.state_store,
             history_store: self.history_store,
+            transcript_store: self.transcript_store,
             entity_stores: self.entity_stores,
             component_store: self.backend.component_store(),
             secret_manager: self.secret_manager,

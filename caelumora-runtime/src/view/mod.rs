@@ -51,6 +51,7 @@ use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQue
 use caelumora_model::group::{Group, GroupField, GroupId};
 use caelumora_model::message::MessageId;
 use caelumora_model::store::history::HistoryStore;
+use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
@@ -191,6 +192,9 @@ pub struct Views {
     states: Arc<dyn StateStore>,
     /// Where every history is read, in pages (issue 379).
     histories: Arc<dyn HistoryStore>,
+    /// Where what an agent was given on an older branch of its transcript
+    /// is read (issue 380).
+    transcripts: Arc<dyn TranscriptStore>,
     components: Arc<ComponentRegistry>,
     workspaces: Arc<WorkspaceManager>,
     /// Where a session's workspace is asked whether it may be used in a
@@ -209,6 +213,7 @@ impl Views {
             stores: runtime.entity_stores().clone(),
             states: Arc::clone(runtime.state_store()),
             histories: Arc::clone(runtime.history_store()),
+            transcripts: Arc::clone(runtime.transcript_store()),
             components: Arc::clone(runtime.component_registry()),
             workspaces: Arc::clone(runtime.workspace_manager()),
             controllers: Arc::clone(runtime.controller_manager()),
@@ -259,6 +264,10 @@ impl Views {
 
     pub(crate) fn histories(&self) -> &Arc<dyn HistoryStore> {
         &self.histories
+    }
+
+    pub(crate) fn transcripts(&self) -> &Arc<dyn TranscriptStore> {
+        &self.transcripts
     }
 
     pub(crate) fn components(&self) -> &ComponentRegistry {

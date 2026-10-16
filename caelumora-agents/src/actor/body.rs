@@ -31,14 +31,23 @@ use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
 use caelumora_model::work::Work;
+use futures::future::BoxFuture;
+use std::future::ready;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::warn;
 
 
 /// What an agent's actor does with a change of a message its transcript
-/// did not take (issue 236; `AgentBody::take_in`).
-pub(super) type HandOver = fn(&mut AgentChannelState, TranscriptEntry);
+/// did not take (issue 236; `AgentBody::take_in`), given its runtime to read
+/// what lies beyond what its state holds (issue 380).
+pub(super) type HandOver = for<'a> fn(&'a ActorRuntime, &'a mut AgentChannelState, TranscriptEntry) -> BoxFuture<'a, ()>;
+
+/// Hands over nothing: what an agent run here does, which gives its
+/// transcript nowhere else.
+fn hand_over_nothing<'a>(_: &'a ActorRuntime, _: &'a mut AgentChannelState, _: TranscriptEntry) -> BoxFuture<'a, ()> {
+    Box::pin(ready(()))
+}
 
 /// The body of one agent in one channel (issue 355): the agent, in whose
 /// name it acts there, its components that hear and frame what it is
@@ -131,7 +140,7 @@ impl AgentBody {
             context,
             perceive_in_processors,
             context_provider,
-            hand_over: |_, _| {},
+            hand_over: hand_over_nothing,
             commands,
             profile: ModelProfile::default(),
             agent_state,
@@ -316,7 +325,7 @@ mod testing {
                 runtime: actor_runtime,
                 perceive_in_processors: processors,
                 context_provider: ComponentImpl { id: "context".to_string(), fail_policy: Default::default(), facet: Arc::new(ExternalContextProvider { prompt_providers: Vec::new() }) },
-                hand_over: |_, _| {},
+                hand_over: hand_over_nothing,
                 commands,
                 profile: ModelProfile::default(),
                 agent_state: AgentStateHandle::detached(),

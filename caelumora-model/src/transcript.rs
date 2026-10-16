@@ -244,7 +244,7 @@ impl TranscriptEntry {
     }
 
     /// The message it modifies, takes back or reclassifies, if it does.
-    fn changed(&self) -> Option<MessageId> {
+    pub fn changed(&self) -> Option<MessageId> {
         match self {
             TranscriptEntry::Modified { message } => Some(message.id),
             TranscriptEntry::Revoked { message, .. } | TranscriptEntry::Reclassified { message, .. } => Some(*message),

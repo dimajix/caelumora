@@ -7,7 +7,8 @@
 //! it (issue 205).
 
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::AgentChannelState;
+use caelumora_model::agent::{AgentChannelState, AgentId};
+use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextResolver, ResolvedContext};
 use caelumora_model::digest::Digest;
@@ -15,22 +16,25 @@ use caelumora_model::history::HistoryPage;
 use caelumora_model::message::MessageId;
 use caelumora_model::note::Note;
 use caelumora_model::store::history::{every, HistoryKey, HistoryStore};
+use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::store::StoreError;
 use caelumora_model::transcript::Transcript;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 /// The state of an agent in a channel, reached by whom may read what the
 /// agent saw: from the store, where it is written after every step - the
 /// running loop holds the in-memory state for as long as it runs. Its
-/// history is read from the store in pages (issue 379), not from the part of
-/// it the state holds.
+/// history is read from the store in pages (issue 379), and what lies on its
+/// transcript beyond the active branch from the store too (issue 380), not
+/// from the part of them the state holds.
 #[derive(Debug, Clone)]
 pub struct AgentContextView {
-    actor: ActorId,
+    agent: AgentId,
+    channel: ChannelId,
     state: AgentChannelState,
     histories: Arc<dyn HistoryStore>,
-    /// The agent's history in the channel.
-    history: HistoryKey,
+    transcripts: Arc<dyn TranscriptStore>,
 }
 
 /// What the tests of the agents' logic build a view with (issue 370).
@@ -43,31 +47,34 @@ impl AgentContextView {
     /// # Panics
     /// If `actor` is no agent.
     pub async fn of_state(actor: ActorId, mut state: AgentChannelState) -> Self {
-        use caelumora_model::channel::ChannelId;
         use caelumora_model::store::memory::MemoryStore;
         use caelumora_model::store::StateStore;
         let ActorId::Agent(agent) = actor else { panic!("{actor} is no agent") };
         let store = Arc::new(MemoryStore::new());
         let channel = ChannelId::default();
         store.put_agent_channel_state(agent, channel, &mut state).await.expect("a state is kept in memory");
-        Self::of(actor, state, store, HistoryKey::Agent(agent, channel))
+        Self::of(agent, channel, state, Arc::<MemoryStore>::clone(&store), store)
     }
 }
 
 impl AgentContextView {
-    pub(crate) fn of(actor: ActorId, state: AgentChannelState, histories: Arc<dyn HistoryStore>, history: HistoryKey) -> Self {
-        Self { actor, state, histories, history }
+    pub(crate) fn of(agent: AgentId, channel: ChannelId, state: AgentChannelState, histories: Arc<dyn HistoryStore>, transcripts: Arc<dyn TranscriptStore>) -> Self {
+        Self { agent, channel, state, histories, transcripts }
     }
 
     /// The agent whose state this is.
     pub fn actor(&self) -> ActorId {
-        self.actor
+        ActorId::Agent(self.agent)
     }
 
-    /// What the agent is given of the conversation: what its model is
-    /// given (issue 50), with the turns it gave up as branches (issue 145);
-    /// of an external agent, what the remote agent is given with the next
-    /// call, with what each call before gave it as a branch (issue 205).
+    /// The agent's history in the channel.
+    fn history(&self) -> HistoryKey {
+        HistoryKey::Agent(self.agent, self.channel)
+    }
+
+    /// What the agent is given of the conversation as its state holds it:
+    /// what its model is given next (issue 50); of an external agent, what
+    /// the remote agent is given with the next call (issue 205).
     pub fn transcript(&self) -> &Transcript {
         &self.state.transcript
     }
@@ -83,17 +90,25 @@ impl AgentContextView {
     /// messages the remote agent was given in the call that produced it,
     /// and nothing else: it keeps what it was given before itself, and its
     /// prompts and tools are its own (issue 205). What it was produced from
-    /// is read from the message's item in the agent's history.
+    /// is read from the message's item in the agent's history, the path of
+    /// the transcript it names from the store, on whichever branch it lies
+    /// (issue 380).
     ///
     /// # Errors
     /// `NotRecorded` if the agent did not produce the message, or what it
     /// saw is not known here; `Unavailable` if what was recorded cannot be
-    /// resolved any more; `Failed` if the history cannot be read.
+    /// resolved any more; `Failed` if the history or the transcript cannot
+    /// be read.
     pub async fn context_of(&self, message: MessageId) -> Result<ResolvedContext, AgentContextError> {
-        let said = self.histories.said(self.history, message).await.map_err(|source| self.failed(message, source))?;
+        let said = self.histories.said(self.history(), message).await.map_err(|source| self.failed(message, source))?;
         let (reference, turn) = said.as_ref().and_then(|(_, item)| item.context())
-            .ok_or(AgentContextError::NotRecorded { actor: self.actor, message })?;
-        ContextResolver::of(&self.state).resolve(reference, turn, self.actor).ok_or(AgentContextError::Unavailable { actor: self.actor, message })
+            .ok_or(AgentContextError::NotRecorded { actor: self.actor(), message })?;
+        let unavailable = || AgentContextError::Unavailable { actor: self.actor(), message };
+        let path = match reference.transcript {
+            Some(digest) => self.transcripts.path(self.agent, self.channel, digest).await.map_err(|source| self.failed(message, source))?.ok_or_else(unavailable)?,
+            None => Vec::new(),
+        };
+        ContextResolver::on_path(&self.state, &path).resolve(reference, turn, self.actor()).ok_or_else(unavailable)
     }
 
     /// The classification of the message `message` the agent produced, as
@@ -104,7 +119,7 @@ impl AgentContextView {
     /// # Errors
     /// `Failed` if the history cannot be read.
     pub async fn classification_of(&self, message: MessageId) -> Result<Option<Classification>, AgentContextError> {
-        let said = self.histories.said(self.history, message).await.map_err(|source| self.failed(message, source))?;
+        let said = self.histories.said(self.history(), message).await.map_err(|source| self.failed(message, source))?;
         Ok(said.and_then(|(_, item)| item.said().map(|m| m.classification.clone())))
     }
 
@@ -118,24 +133,27 @@ impl AgentContextView {
     /// # Errors
     /// `Failed` if the history cannot be read.
     pub async fn history_page(&self, before: Option<u64>, limit: usize) -> Result<HistoryPage, AgentContextError> {
-        self.histories.page(self.history, 0, before, limit, &every).await
-            .map_err(|source| AgentContextError::Failed { actor: self.actor, message: None, source })
+        self.histories.page(self.history(), 0, before, limit, &every).await
+            .map_err(|source| AgentContextError::Failed { actor: self.actor(), message: None, source })
     }
 
-    /// That the history could not be read for `message`.
+    /// That the history or the transcript could not be read for `message`.
     fn failed(&self, message: MessageId, source: StoreError) -> AgentContextError {
-        AgentContextError::Failed { actor: self.actor, message: Some(message), source }
+        AgentContextError::Failed { actor: self.actor(), message: Some(message), source }
     }
 
-    /// Whether the message `message` the agent heard was passed on to its
-    /// transcript, on whichever branch - not if its perceive processors
-    /// dropped it (issue 196). One they changed keeps its id and counts as
-    /// passed on. Looked for from the end backwards, where the messages of a
-    /// page of the history usually are. Whether what the agent saw when it
-    /// produced a message can be shown its item says
-    /// (`HistoryEntry::context`).
-    pub fn in_transcript(&self, message: MessageId) -> bool {
-        self.state.transcript.all_entries().rev().any(|n| n.entry.message().is_some_and(|m| m.id == message))
+    /// Which of the messages `messages` the agent heard were passed on to
+    /// its transcript, on whichever branch - not one its perceive processors
+    /// dropped (issue 196). One they changed keeps its id and counts as
+    /// passed on. Asked of the store once for a page of the history (issue
+    /// 380). Whether what the agent saw when it produced a message can be
+    /// shown its item says (`HistoryEntry::context`).
+    ///
+    /// # Errors
+    /// `Failed` if the transcript cannot be read.
+    pub async fn in_transcript(&self, messages: &[MessageId]) -> Result<HashSet<MessageId>, AgentContextError> {
+        self.transcripts.given(self.agent, self.channel, messages).await
+            .map_err(|source| AgentContextError::Failed { actor: self.actor(), message: None, source })
     }
 
 }
@@ -148,7 +166,8 @@ pub enum AgentContextError {
     NotRecorded { actor: ActorId, message: MessageId },
     #[error("The context of message {message} by {actor} is no longer available")]
     Unavailable { actor: ActorId, message: MessageId },
-    /// The agent's history could not be read; the cause is in the log.
+    /// The agent's history or transcript could not be read; the cause is in
+    /// the log.
     #[error("Reading what {actor} saw failed")]
     Failed { actor: ActorId, message: Option<MessageId>, #[source] source: StoreError },
 }
@@ -184,7 +203,7 @@ mod tests {
         let view = AgentContextView::of_state(actor, state).await;
         let items = history(&view).await;
         assert!(items.iter().any(|item| matches!(item, HistoryEntry::Said { message, .. } if message.id == step.id)), "in its history as it was said");
-        assert!(items.iter().any(|item| item.context_of(step.id).is_some()) && view.in_transcript(step.id));
+        assert!(items.iter().any(|item| item.context_of(step.id).is_some()) && view.in_transcript(&[step.id]).await.expect("read").contains(&step.id));
         let seen = view.context_of(step.id).await.expect("what it was produced from is recorded");
         assert!(seen.items.iter().any(|item| matches!(item, ContextItem::Conversation { message } if message.id == question.id)), "the question it answered");
     }
@@ -221,7 +240,7 @@ mod tests {
         assert_eq!(said(items.clone()), vec![question.id, answer.id], "all it heard and said (issue 207)");
         let has_context = |id| items.iter().any(|item| item.context_of(id).is_some());
         assert!(has_context(answer.id) && !has_context(question.id));
-        assert!(view.in_transcript(question.id));
+        assert!(view.in_transcript(&[question.id]).await.expect("read").contains(&question.id));
 
         // What the perceive processors dropped stays in the history only.
         let mut heard_only = state.clone();
@@ -229,7 +248,7 @@ mod tests {
         heard_only.perceive(vec![dropped.clone()], Vec::new());
         let view = AgentContextView::of_state(actor, heard_only).await;
         assert!(said(history(&view).await).contains(&dropped.id));
-        assert!(!view.in_transcript(dropped.id) && view.in_transcript(answer.id));
+        assert_eq!(view.in_transcript(&[dropped.id, answer.id]).await.expect("read"), HashSet::from([answer.id]), "once for all asked");
 
         // A prompt part is told with how it was classified (issue 170).
         let confidential = Classification::general(Confidentiality::Confidential);
@@ -246,5 +265,38 @@ mod tests {
         state.history.push(lost.clone(), Some(ContextRef { transcript: before, prompts: vec![gone], tools: None, knowledge: Vec::new(), profile: Default::default() }));
         let view = AgentContextView::of_state(actor, state).await;
         assert!(matches!(view.context_of(lost.id).await, Err(AgentContextError::Unavailable { .. })));
+    }
+
+    #[tokio::test]
+    async fn the_context_of_a_message_on_a_branch_the_state_does_not_hold_is_read_from_the_store() {
+        use caelumora_model::store::memory::MemoryStore;
+        use caelumora_model::store::StateStore;
+        let agent = AgentId::new();
+        let channel = ChannelId::new();
+        let text = |t: &str| Message { id: MessageId::new(), role: MessageRole::User, content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let mut state = AgentChannelState::default();
+        let question = text("question");
+        state.transcript.push(question.clone());
+        state.history.extend(vec![question.clone()]);
+        let answer = Message { turn_id: Some(TurnId::new()), ..text("answer") };
+        let before = state.transcript.push(answer.clone());
+        state.history.push(answer.clone(), Some(ContextRef { transcript: before, ..ContextRef::default() }));
+        // A branch begun anew, which the state holds alone.
+        state.transcript_from = state.transcript.end();
+        state.transcript.start_anew();
+        state.transcript.push(text("later"));
+        let store = Arc::new(MemoryStore::new());
+        store.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
+        let held = store.get_agent_channel_state(agent, channel).await.expect("get");
+        assert!(held.transcript.prefix(&before.expect("a digest")).is_none(), "not held");
+
+        let view = AgentContextView::of(agent, channel, held, Arc::<MemoryStore>::clone(&store), store);
+        let seen = view.context_of(answer.id).await.expect("read from the store");
+        let ids: Vec<MessageId> = seen.items.iter().filter_map(|item| match item {
+            ContextItem::Conversation { message } => Some(message.id),
+            ContextItem::Prompt { .. } => None,
+        }).collect();
+        assert_eq!(ids, vec![question.id]);
+        assert_eq!(view.in_transcript(&[question.id]).await.expect("read"), HashSet::from([question.id]), "on whichever branch");
     }
 }

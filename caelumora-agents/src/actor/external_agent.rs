@@ -56,6 +56,7 @@ use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::value::name::Name;
 use chrono::{Utc, DateTime};
+use futures::future::BoxFuture;
 use futures::stream::{BoxStream, SelectAll};
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
@@ -696,7 +697,25 @@ impl Answer {
 /// the message as it stands then. Nothing for a message never given or
 /// taken back where it was given, or while the remote agent keeps no
 /// conversation: then it is given everything anew.
-fn tell(state: &mut AgentChannelState, change: TranscriptEntry) {
+///
+/// What the remote agent was given of the message is read from the store
+/// (`ActorRuntime::transcript_message`, issue 380): it lies on a branch
+/// before the active one, which the actor does not hold, and every branch
+/// given is stored before the next change is taken in. A store that cannot
+/// be read is logged, and nothing is told.
+fn tell<'a>(runtime: &'a ActorRuntime, state: &'a mut AgentChannelState, change: TranscriptEntry) -> BoxFuture<'a, ()> {
+    Box::pin(async move {
+        let Some(id) = change.changed().filter(|_| state.remote.conversation.is_some()) else { return };
+        match runtime.transcript_message(id).await {
+            Ok(was) => give_notice(state, change, was),
+            Err(e) => warn!("External agent cannot read message {} as it was given, to tell of its change: {:#}", id, e),
+        }
+    })
+}
+
+/// Tells the remote agent of `state` of `change` (`tell`), which it was
+/// given the message of as `was` - `None`: never.
+fn give_notice(state: &mut AgentChannelState, change: TranscriptEntry, was: Option<Message>) {
     if state.remote.conversation.is_none() {
         return;
     }
@@ -705,7 +724,7 @@ fn tell(state: &mut AgentChannelState, change: TranscriptEntry) {
         TranscriptEntry::Revoked { message, at } => (message, None, at),
         _ => return,
     };
-    let Some(was) = state.transcript.message(id).filter(|was| was.revoked.is_none()) else { return };
+    let Some(was) = was.filter(|was| was.revoked.is_none()) else { return };
     let mut told = notice(&was, now.as_ref(), at);
     match state.transcript.messages().into_iter().find(|m| m.notice_of == Some(id)) {
         Some(pending) => {
@@ -886,6 +905,12 @@ mod tests {
         let at = Utc::now();
         let modified = |text: &str| TranscriptEntry::Modified { message: Message { content: Some(text.to_string()), timestamp: at, ..first.clone() } };
         let told = |state: &AgentChannelState| state.transcript.messages().into_iter().map(|m| (m.notice_of, m.content.unwrap_or_default())).collect::<Vec<_>>();
+        // What `tell` reads from the store, read here from the whole
+        // transcript, which the state holds.
+        let tell = |state: &mut AgentChannelState, change: TranscriptEntry| {
+            let was = change.changed().and_then(|id| state.transcript.message(id));
+            give_notice(state, change, was);
+        };
         let mut state = AgentChannelState::default();
         state.transcript.extend(vec![first.clone(), second.clone()]);
         state.transcript.start_anew();
