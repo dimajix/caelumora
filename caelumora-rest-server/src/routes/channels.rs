@@ -12,7 +12,6 @@ use caelumora_model::channel::moderation_components;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::confidentiality::{Classification, LabelCauses};
 use caelumora_model::context::{ContextItem, KnowledgeRef, KnowledgeSource};
-use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::question::QuestionId;
 use caelumora_model::security::SecurityContext;
@@ -20,14 +19,14 @@ use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::Detail;
 use caelumora_rest_api::channel::{AddParticipantRequest, AnswerQuestionsRequest, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest, MessageRequest, PublishedNotesResponse, SendApprovalRequest, TurnRequest};
 use caelumora_rest_api::context::{AgentComponentsResponse, AgentToolsResponse, KnowledgeRefResponse, MessageContextResponse, SeenItemResponse};
-use caelumora_rest_api::history::{HistoryItemResponse, HistoryMessageResponse};
+use caelumora_rest_api::history::{HistoryMessageResponse, HistoryPageResponse, HistoryQuery};
 use caelumora_rest_api::session::DescriptionRequest;
 use caelumora_rest_api::stream::StreamOptions;
 use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use caelumora_runtime::actor::user::UserActor;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
-use caelumora_runtime::view::{AgentContextView, ChannelView, MemberView, Reached, SessionView, Viewer};
+use caelumora_runtime::view::{ChannelView, MemberView, Reached, SessionView, Viewer};
 use futures::Stream;
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -115,25 +114,34 @@ pub async fn get_channel(
 
 /// How many items of its history a snapshot carries: the end of the
 /// conversation, which is what a client needs to show it. Everything older
-/// is fetched over REST (`GET .../history`), which `has_more` tells the
-/// client to do.
+/// is fetched over REST (`GET .../history`), from the snapshot's `earlier`
+/// on.
 const SNAPSHOT_ITEMS: usize = 20;
 
-/// The history of the channel, as the user may see it (issue 46): its
-/// messages and how turns ended (issue 258), oldest first.
+/// A page of the history of the channel, as the user may see it (issues 46,
+/// 218): its messages and how turns ended (issue 258), oldest first - the
+/// last ones, or those before `?before=`.
 pub async fn get_channel_history(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
+    Query(query): Query<HistoryQuery>,
     user: AuthenticatedUser,
-) -> Result<Json<Vec<HistoryItemResponse<Message>>>, ApiError> {
+) -> Result<Json<HistoryPageResponse<Message>>, ApiError> {
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let history = channel.history().await?;
-    Ok(Json(items(history.items)))
+    let page = channel.history_page(query.before, query.limit()).await?;
+    Ok(Json(HistoryPageResponse::of(page, |message, _| message)))
 }
 
-/// The items of a history as the API gives them.
-fn items(history: Vec<HistoryEntry>) -> Vec<HistoryItemResponse<Message>> {
-    history.into_iter().filter_map(|entry| HistoryItemResponse::of(entry, |message| message)).collect()
+/// The message `mid` of the channel as it stands (issue 218), if the user
+/// sees it in the history - what a client reads back after a change of it
+/// was not let in.
+pub async fn get_message(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<Json<Message>, ApiError> {
+    let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    Ok(Json(channel.message(MessageId(mid)).await?))
 }
 
 /// The notes every agent of the channel published (issue 17) - what a
@@ -167,24 +175,16 @@ async fn channel_snapshot(state: &AppState, channel: &ChannelLoop, viewer: &Secu
             return None;
         }
     };
-    let history = match view.history().await {
-        Ok(history) => history,
+    let page = match view.history_page(None, SNAPSHOT_ITEMS).await {
+        Ok(page) => page,
         Err(e) => {
             tracing::warn!("Cannot read the history of channel {} for its snapshot: {:#}", channel.id(), e);
             return None;
         }
     };
-    let (recent, has_more) = recent_items(history.items);
     // The conversation can be shown without what of it cannot be read.
     let channel = view.snapshot(Detail::MEMBERS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS | Detail::BRIEFING).await;
-    Some(ChannelSnapshot::of(channel, items(recent), has_more))
-}
-
-/// The end of a history, and whether it was cut.
-fn recent_items(history: Vec<HistoryEntry>) -> (Vec<HistoryEntry>, bool) {
-    let has_more = history.len() > SNAPSHOT_ITEMS;
-    let start = history.len().saturating_sub(SNAPSHOT_ITEMS);
-    (history.into_iter().skip(start).collect(), has_more)
+    Some(ChannelSnapshot::of(channel, HistoryPageResponse::of(page, |message, _| message)))
 }
 
 /// Follows a channel live (issue 104): only as one of its participants,
@@ -604,26 +604,20 @@ async fn knowledge_response(session: &SessionView, knowledge: &KnowledgeRef, cau
     }
 }
 
-/// `message` of the agent whose context `view` is, as its history shows it.
-fn history_message(view: &AgentContextView, message: Message) -> HistoryMessageResponse {
-    HistoryMessageResponse { has_context: view.has_context(message.id), in_transcript: view.in_transcript(message.id), message }
-}
-
-/// All that was offered to actor `aid` in the channel and what it said
-/// itself (issue 207), and how its turns ended (issue 258), oldest first,
-/// for whoever may read what it saw. Not paged: like the channel's history,
-/// it is returned whole.
+/// A page of all that was offered to actor `aid` in the channel and what it
+/// said itself (issues 207, 218), and how its turns ended (issue 258),
+/// oldest first - the last ones, or those before `?before=` -, for whoever
+/// may read what it saw.
 pub async fn agent_history(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    Query(query): Query<HistoryQuery>,
     user: AuthenticatedUser,
-) -> Result<Json<Vec<HistoryItemResponse<HistoryMessageResponse>>>, ApiError> {
+) -> Result<Json<HistoryPageResponse<HistoryMessageResponse>>, ApiError> {
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let view = member_of(&channel, aid).await?.context().await?;
-    let history = view.history().into_iter()
-        .filter_map(|entry| HistoryItemResponse::of(entry, |message| history_message(&view, message)))
-        .collect();
-    Ok(Json(history))
+    let page = view.history_page(query.before, query.limit());
+    Ok(Json(HistoryPageResponse::of(page, |message, has_context| HistoryMessageResponse { has_context, in_transcript: view.in_transcript(message.id), message })))
 }
 
 /// The tools actor `aid` has now in the channel (issue 194), for whoever
@@ -696,44 +690,6 @@ mod tests {
     use caelumora_runtime::command::CommandError;
     use caelumora_runtime::view::{AgentContextError, ViewError};
     use anyhow::Error;
-
-    fn history(count: usize) -> Vec<HistoryEntry> {
-        (0..count).map(|i| HistoryEntry::Said { message: Message {
-            id: MessageId::new(),
-            content: Some(format!("message {i}")),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        }, context: None }).collect()
-    }
-
-    /// The contents of the messages of `items`.
-    fn contents(items: &[HistoryEntry]) -> Vec<String> {
-        items.iter().filter_map(|item| match item {
-            HistoryEntry::Said { message, .. } => message.content.clone(),
-            _ => None,
-        }).collect()
-    }
-
-    #[test]
-    fn a_snapshot_carries_the_end_of_the_history() {
-        let (items, has_more) = recent_items(history(SNAPSHOT_ITEMS + 5));
-
-        assert_eq!(items.len(), SNAPSHOT_ITEMS);
-        assert!(has_more, "the client has to fetch the older ones over REST");
-        let said = contents(&items);
-        assert_eq!(said.first().map(String::as_str), Some("message 5"));
-        assert_eq!(said.last().map(String::as_str), Some(&format!("message {}", SNAPSHOT_ITEMS + 4)[..]));
-    }
-
-    #[test]
-    fn a_short_history_is_complete() {
-        let (items, has_more) = recent_items(history(3));
-        assert_eq!(items.len(), 3);
-        assert!(!has_more);
-
-        let (items, has_more) = recent_items(Vec::new());
-        assert!(items.is_empty());
-        assert!(!has_more);
-    }
 
     #[test]
     fn a_command_that_does_not_run_is_answered_with_what_the_user_did() {

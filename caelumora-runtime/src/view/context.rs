@@ -11,7 +11,7 @@ use caelumora_model::agent::AgentChannelState;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextResolver, ResolvedContext};
 use caelumora_model::digest::Digest;
-use caelumora_model::history::HistoryEntry;
+use caelumora_model::history::{HistoryEntry, HistoryPage};
 use caelumora_model::message::MessageId;
 use caelumora_model::note::Note;
 use caelumora_model::transcript::Transcript;
@@ -93,18 +93,23 @@ impl AgentContextView {
         self.state.history.items()
     }
 
-    /// Whether the agent produced the message `message` and what it saw
-    /// then is recorded - whether `context_of` can tell it.
-    pub fn has_context(&self, message: MessageId) -> bool {
-        self.state.history.all_entries().any(|e| e.entry.context_of(message).is_some())
+    /// A page of `history` (issue 218): the last `limit` items before the
+    /// position `before` - the last ones without it -, and where the page
+    /// before it ends.
+    pub fn history_page(&self, before: Option<u64>, limit: usize) -> HistoryPage {
+        let history = &self.state.history;
+        history.items_before(before.unwrap_or(history.end()), history.base(), limit, |_| true)
     }
 
     /// Whether the message `message` the agent heard was passed on to its
     /// transcript, on whichever branch - not if its perceive processors
     /// dropped it (issue 196). One they changed keeps its id and counts as
-    /// passed on.
+    /// passed on. Looked for from the end backwards, where the messages of a
+    /// page of the history usually are. Whether what the agent saw when it
+    /// produced a message can be shown its item says
+    /// (`HistoryEntry::context`).
     pub fn in_transcript(&self, message: MessageId) -> bool {
-        self.state.transcript.all_entries().any(|n| n.entry.message().is_some_and(|m| m.id == message))
+        self.state.transcript.all_entries().rev().any(|n| n.entry.message().is_some_and(|m| m.id == message))
     }
 
 }
@@ -143,7 +148,7 @@ mod tests {
         // Before the turn ended (issue 260).
         let view = AgentContextView::of(actor, state);
         assert!(view.history().iter().any(|item| matches!(item, HistoryEntry::Said { message, .. } if message.id == step.id)), "in its history as it was said");
-        assert!(view.has_context(step.id) && view.in_transcript(step.id));
+        assert!(view.history().iter().any(|item| item.context_of(step.id).is_some()) && view.in_transcript(step.id));
         let seen = view.context_of(step.id).expect("what it was produced from is recorded");
         assert!(seen.items.iter().any(|item| matches!(item, ContextItem::Conversation { message } if message.id == question.id)), "the question it answered");
     }
@@ -178,7 +183,8 @@ mod tests {
         }).collect::<Vec<MessageId>>();
         let heard = said(view.history());
         assert_eq!(heard, vec![question.id, answer.id], "all it heard and said (issue 207)");
-        assert!(view.has_context(answer.id) && !view.has_context(question.id));
+        let has_context = |id| view.history().iter().any(|item| item.context_of(id).is_some());
+        assert!(has_context(answer.id) && !has_context(question.id));
         assert!(view.in_transcript(question.id));
 
         // What the perceive processors dropped stays in the history only.

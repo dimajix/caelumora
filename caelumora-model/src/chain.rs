@@ -133,6 +133,17 @@ impl<E> Chain<E> {
         self.path.iter().map(|&i| &self.nodes[i])
     }
 
+    /// The entries of the active path before the position `seq`, from the
+    /// root - in a suffix, from the first of them it holds: what lies on the
+    /// path before a page that begins at `seq`, read backwards from there.
+    pub fn entries_before(&self, seq: u64) -> impl DoubleEndedIterator<Item = &Node<E>> + ExactSizeIterator {
+        let end = self.index_of(seq).unwrap_or(0);
+        // An entry follows the one before it on the path, so the path's
+        // positions in `nodes` ascend.
+        let cut = self.path.partition_point(|&i| i < end);
+        self.path[..cut].iter().map(|&i| &self.nodes[i])
+    }
+
     /// Every entry it holds, of every branch, in the order they were added.
     pub fn all_entries(&self) -> impl DoubleEndedIterator<Item = &Node<E>> + ExactSizeIterator {
         self.nodes.iter()
@@ -160,14 +171,6 @@ impl<E> Chain<E> {
     pub fn from(&self, seq: u64) -> impl DoubleEndedIterator<Item = &Node<E>> + ExactSizeIterator {
         let start = self.index_of(seq).unwrap_or(self.nodes.len());
         self.nodes[start..].iter()
-    }
-
-    /// The last `limit` entries before the position `seq`, of every branch,
-    /// in the order they were added: a page that ends where `seq` begins, as
-    /// far as it holds it - none before `base`.
-    pub fn before(&self, seq: u64, limit: usize) -> impl DoubleEndedIterator<Item = &Node<E>> + ExactSizeIterator {
-        let end = self.index_of(seq).unwrap_or(0);
-        self.nodes[end.saturating_sub(limit)..end].iter()
     }
 
     /// The position of the entry with the digest `digest`, on whichever
@@ -664,10 +667,11 @@ mod tests {
         assert_eq!(labels(chain.from(1)), ["b", "c", "d"]);
         assert_eq!(labels(chain.from(4)), Vec::<String>::new(), "nothing from the end on");
         assert_eq!(labels(chain.from(u64::MAX)), Vec::<String>::new());
-        assert_eq!(labels(chain.before(4, 2)), ["c", "d"], "the last page");
-        assert_eq!(labels(chain.before(2, 2)), ["a", "b"], "the page before it");
-        assert_eq!(labels(chain.before(1, 5)), ["a"], "as many as there are");
-        assert_eq!(labels(chain.before(u64::MAX, 1)), ["d"]);
+        assert_eq!(labels(chain.entries_before(4)), ["a", "c"], "the active path");
+        assert_eq!(labels(chain.entries_before(2)), ["a"], "before a position on it");
+        assert_eq!(labels(chain.entries_before(1)), ["a"], "before a position on another branch");
+        assert_eq!(labels(chain.entries_before(0)), Vec::<String>::new());
+        assert_eq!(labels(chain.entries_before(u64::MAX)), ["a", "c"]);
 
         let loaded = stored(&chain);
         assert_eq!(loaded.all_entries().map(|n| n.seq).collect::<Vec<_>>(), [0, 1, 2, 3], "kept as they were");
@@ -700,9 +704,9 @@ mod tests {
         assert_eq!(labels(part.entries()), ["c", "e"], "the active path from the first entry it holds");
         assert_eq!(part.len(), 2);
         assert_eq!(labels(part.from(3)), labels(chain.from(3)));
-        assert_eq!(labels(part.before(5, 2)), labels(chain.before(5, 2)));
-        assert_eq!(labels(part.before(3, 5)), ["c"], "as far as it holds");
-        assert!(part.from(1).next().is_none() && part.before(1, 5).next().is_none() && part.at(1).is_none(), "nothing before its base");
+        assert_eq!(labels(part.entries_before(5)), ["c", "e"]);
+        assert_eq!(labels(part.entries_before(3)), ["c"], "as far as it holds");
+        assert!(part.from(1).next().is_none() && part.entries_before(1).next().is_none() && part.at(1).is_none(), "nothing before its base");
         assert_eq!(part.at(2).map(|n| n.entry.as_str()), Some("c"));
         assert_eq!(part.seq_of(&after_c), Some(2));
         assert!(part.prefix(&after_a).is_none() && part.seq_of(&after_a).is_none(), "an older entry is not found");

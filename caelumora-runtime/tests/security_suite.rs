@@ -192,6 +192,60 @@ async fn the_owner_changes_and_ends_the_session() {
     assert!(not_found(&world.manager.open(&alice, session.id()).await.expect_err("gone")));
 }
 
+/// S4: a channel's history is read in pages, and a message of it by its id
+/// (issue 218), as far as the reader's view of it goes: bob, taken into a
+/// channel after something was said in it, reads from there on - in pages
+/// as whole, and not the message before by its id; carol, a stranger, does
+/// not reach the channel. Asked as reaching the channel is.
+#[tokio::test]
+async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_goes() {
+    use caelumora_model::actor::ActorEvent;
+    use caelumora_model::history::HistoryEntry;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let alice = World::as_user(world.alice);
+    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.unwrap();
+    let hers = side.user_actor(world.alice).unwrap();
+    let mut watch = hers.watch();
+    let mut say = async |text: &str| {
+        hers.send_message(text.to_string(), None).await.expect("sent");
+        let ActorEvent::CompleteMessageGenerated(said) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
+        // Shown as it is let in, recorded right after.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !side.visible_history(ActorId::User(world.alice)).await.messages().iter().any(|m| m.id == said.id) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("in the history");
+        said.id
+    };
+    let before = say("before bob").await;
+    side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::None).await.expect("without what was said");
+    let after = say("after bob").await;
+
+    let reach = |user| {
+        let manager = &world.manager;
+        let (session, channel) = (session.id(), side.id());
+        async move { manager.views(Viewer::new(World::as_user(user))).session(session).await?.channel(channel).await }
+    };
+    let texts = |items: &[HistoryEntry]| items.iter().filter_map(HistoryEntry::said).filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+    let theirs = reach(world.alice).await.unwrap();
+    let page = theirs.history_page(None, 1).await.unwrap();
+    assert_eq!(texts(&page.items), ["after bob"]);
+    assert_eq!(texts(&theirs.history_page(page.earlier, 1).await.unwrap().items), ["before bob"], "alice reads it all, page by page");
+
+    let (his, asked) = world.asked(async {
+        let view = reach(world.bob).await.expect("he takes part");
+        (view.history_page(None, 10).await.unwrap(), view.message(before).await, view.message(after).await)
+    }).await;
+    assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes"]), "reaching the channel, cleared for it; reading in it asks nothing more");
+    let (page, refused, read) = his;
+    assert_eq!((texts(&page.items), page.earlier), (vec!["after bob".to_string()], None), "bob from where he was taken in");
+    assert!(matches!(refused, Err(ViewError::MessageNotFound { .. })), "not what was said before");
+    assert_eq!(read.expect("what he sees").id, after);
+    assert!(matches!(reach(world.carol).await, Err(ViewError::SessionNotFound(_))), "carol finds nothing of it");
+    world.manager.stop(&alice, session.id()).await.unwrap();
+}
+
 // --- Taking someone into a session (issue 221) ------------------------------
 
 /// Whoever may change the session takes a user into it and into a channel

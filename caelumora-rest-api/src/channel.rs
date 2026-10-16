@@ -1,7 +1,7 @@
 //! Channels and what is done in them: making and changing one, its members, messages,
 //! approvals, answers to questions and commands.
 
-use crate::history::HistoryItemResponse;
+use crate::history::{HistoryItemResponse, HistoryPageResponse};
 use crate::session::{ParticipantKind, UNKNOWN};
 use caelumora_model::snapshot;
 use caelumora_model::actor::{ActorId, ActorState};
@@ -22,14 +22,15 @@ use caelumora_model::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// The state of a channel when a stream connects: its members and the end of
-/// its history, as items - messages and how turns ended (issue 258). Older
-/// ones are fetched over REST - `has_more` says there are some.
+/// The state of a channel when a stream connects: its members and the last
+/// page of its history, as items - messages and how turns ended (issue 258).
+/// Older ones are fetched over REST, from `earlier` on (issue 218) - `null`
+/// if there are none.
 #[derive(Debug, Serialize)]
 pub struct ChannelSnapshot {
     pub channel: ChannelResponse,
     pub items: Vec<HistoryItemResponse<Message>>,
-    pub has_more: bool,
+    pub earlier: Option<u64>,
     /// The notes every agent of the channel published (issue 17); a change
     /// is announced as the channel's `agent_state_changed` on the event
     /// stream, and
@@ -48,8 +49,8 @@ pub struct ChannelSnapshot {
 impl ChannelSnapshot {
     /// The snapshot of a channel's stream: `channel`, whose agent members
     /// carry their notes and pending approvals - listed beside the channel,
-    /// as the API has them - and the end of its history.
-    pub fn of(mut channel: snapshot::ChannelSnapshot, items: Vec<HistoryItemResponse<Message>>, has_more: bool) -> Self {
+    /// as the API has them - and the last page of its history.
+    pub fn of(mut channel: snapshot::ChannelSnapshot, history: HistoryPageResponse<Message>) -> Self {
         let mut notes = Vec::new();
         let (mut pending_approvals, mut pending_questions) = (Vec::new(), Vec::new());
         for member in &mut channel.members {
@@ -60,7 +61,7 @@ impl ChannelSnapshot {
             pending_approvals.append(&mut member.pending_approvals);
             pending_questions.append(&mut member.pending_questions);
         }
-        Self { channel: channel.into(), items, has_more, notes, pending_approvals, pending_questions }
+        Self { channel: channel.into(), items: history.items, earlier: history.earlier, notes, pending_approvals, pending_questions }
     }
 }
 
@@ -436,7 +437,7 @@ mod tests {
             former_members: Vec::new(),
         };
 
-        let json = serde_json::to_value(ChannelSnapshot::of(channel, Vec::new(), false)).unwrap();
+        let json = serde_json::to_value(ChannelSnapshot::of(channel, HistoryPageResponse { items: Vec::new(), earlier: None })).unwrap();
 
         assert_eq!(json["notes"].as_array().map(Vec::len), Some(1), "one entry per agent");
         assert_eq!(json["notes"][0]["name"], "Helper");

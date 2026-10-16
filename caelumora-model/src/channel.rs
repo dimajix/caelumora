@@ -192,6 +192,16 @@ impl HistoryStart {
             None => Vec::new(),
         }
     }
+
+    /// The position in `history` - a channel's - from which on it is
+    /// visible from here (issue 218): `None` if the message it begins at is
+    /// not there, rather than more than was granted.
+    pub fn position_in(&self, history: &History) -> Option<u64> {
+        match *self {
+            HistoryStart::From(id) => history.position_of(id),
+            HistoryStart::After(id) => history.position_of(id).map(|at| at + 1),
+        }
+    }
 }
 
 /// The view of the history granted to one participant.
@@ -322,6 +332,12 @@ impl Channel {
     pub fn describe(&mut self, summary: Option<&str>, briefing: Option<&str>) -> Result<(), ValueError> {
         (self.summary, self.briefing) = (Summary::optional(summary)?, Briefing::optional(briefing)?);
         Ok(())
+    }
+
+    /// Where `participant`'s view of the history begins (issue 46); `None`:
+    /// all of it.
+    pub fn history_start_of(&self, participant: ActorId) -> Option<HistoryStart> {
+        self.history_limits.iter().find(|l| l.participant == participant).map(|l| l.start)
     }
 }
 

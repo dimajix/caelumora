@@ -733,7 +733,7 @@ impl AgentChannelState {
     /// was produced from, and in which turn, what `ContextResolver::resolve`
     /// takes; `None` if this agent did not produce it.
     pub fn recorded_context_of(&self, id: MessageId) -> Option<(ContextRef, TurnId)> {
-        self.history.all_entries().find_map(|e| e.entry.context_of(id)).map(|(context, turn)| (context.clone(), turn))
+        self.history.all_entries().rev().find_map(|e| e.entry.context_of(id)).map(|(context, turn)| (context.clone(), turn))
     }
 
     /// The approvals its turn waits for (issue 172); none without a turn.

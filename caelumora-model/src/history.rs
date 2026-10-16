@@ -116,6 +116,18 @@ pub fn fold<'a>(nodes: impl IntoIterator<Item = &'a Node<HistoryEntry>>) -> Vec<
     messages
 }
 
+/// A page of a history's items (issue 218): the last ones before a
+/// position, as `items` gives them, and where the page before it ends.
+#[derive(Debug, Clone, Default)]
+pub struct HistoryPage {
+    /// The items, oldest first.
+    pub items: Vec<HistoryEntry>,
+    /// The position of the oldest of `items`: what the page before this one
+    /// is read before (`History::items_before`); `None` if there is no older
+    /// item to be had.
+    pub earlier: Option<u64>,
+}
+
 impl Chain<HistoryEntry> {
     /// The messages of the active path as they stand.
     pub fn messages(&self) -> Vec<Message> {
@@ -134,14 +146,40 @@ impl Chain<HistoryEntry> {
     /// a message is in the message, a fitting in every message.
     pub fn items(&self) -> Vec<HistoryEntry> {
         let mut folded = self.folded();
-        self.entries()
-            .filter_map(|node| match &node.entry {
-                HistoryEntry::Said { context, .. } => folded.remove(&node.seq)
-                    .map(|message| HistoryEntry::Said { message, context: context.clone() }),
-                turn @ (HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }) => Some(turn.clone()),
-                HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
-            })
-            .collect()
+        self.entries().filter_map(|node| item(node, &mut folded)).collect()
+    }
+
+    /// A page of `items` (issue 218): the last `limit` items of the active
+    /// path before the position `before` and from the position `from` on -
+    /// where a participant's view begins -, of those `keep` keeps, as they
+    /// stand. Read backwards from `before`, and folded from the first item of
+    /// the page to the end: what is read grows with how far back the page
+    /// is, not with the history. At least one item is asked for.
+    pub fn items_before(&self, before: u64, from: u64, limit: usize, keep: impl Fn(&HistoryEntry) -> bool) -> HistoryPage {
+        let limit = limit.max(1);
+        // One more than the page, to tell whether an older one is kept; as
+        // many again while too few of them are.
+        let mut wanted = limit + 1;
+        loop {
+            let candidates: Vec<&Node<HistoryEntry>> = self.entries_before(before).rev()
+                .take_while(|node| node.seq >= from)
+                .filter(|node| node.entry.is_item())
+                .take(wanted)
+                .collect();
+            let Some(oldest) = candidates.last() else { return HistoryPage::default() };
+            let mut folded: HashMap<u64, Message> = fold(self.from(oldest.seq)).into_iter().map(|(node, message)| (node.seq, message)).collect();
+            let mut kept: Vec<(u64, HistoryEntry)> = candidates.iter().rev()
+                .filter_map(|node| Some((node.seq, item(node, &mut folded)?)))
+                .filter(|(_, item)| keep(item))
+                .collect();
+            if kept.len() > limit || candidates.len() < wanted {
+                let older = kept.len().saturating_sub(limit);
+                let page = kept.split_off(older);
+                let earlier = page.first().filter(|_| older > 0).map(|(seq, _)| *seq);
+                return HistoryPage { items: page.into_iter().map(|(_, item)| item).collect(), earlier };
+            }
+            wanted = wanted.saturating_mul(2);
+        }
     }
 
     /// What the turn `turn_id` of `actor` said, as it stands, in the order
@@ -217,8 +255,14 @@ impl Chain<HistoryEntry> {
     /// it was never said here. Folded from where it was said on, not from
     /// the start.
     pub fn message(&self, id: MessageId) -> Option<Message> {
-        let said = self.all_entries().rev().find(|node| node.entry.said().is_some_and(|m| m.id == id))?;
-        fold(self.from(said.seq)).into_iter().next().map(|(_, message)| message)
+        fold(self.from(self.position_of(id)?)).into_iter().next().map(|(_, message)| message)
+    }
+
+    /// The position of the entry that said the message `id` - on whichever
+    /// branch -, or `None` if it was never said here. Found from the end
+    /// backwards.
+    pub fn position_of(&self, id: MessageId) -> Option<u64> {
+        self.all_entries().rev().find(|node| node.entry.said().is_some_and(|m| m.id == id)).map(|node| node.seq)
     }
 
     /// The messages of every branch as they stand, by the position of the
@@ -343,7 +387,30 @@ impl Chain<HistoryEntry> {
     }
 }
 
+/// `node` as an item of its history (`History::items`): the message it says
+/// as `folded` holds it - taken from there -, with what it was produced from;
+/// any other item as it is; `None` for a change, which is in the message it
+/// changes.
+fn item(node: &Node<HistoryEntry>, folded: &mut HashMap<u64, Message>) -> Option<HistoryEntry> {
+    match &node.entry {
+        HistoryEntry::Said { context, .. } => folded.remove(&node.seq).map(|message| HistoryEntry::Said { message, context: context.clone() }),
+        entry => entry.is_item().then(|| entry.clone()),
+    }
+}
+
 impl HistoryEntry {
+    /// Whether it is an item of its history (`History::items`) - a message
+    /// said, the start of a plan's step, a command carried out, an activity
+    /// ended, a compaction, a turn's end - rather than a change of what was
+    /// said before.
+    fn is_item(&self) -> bool {
+        match self {
+            HistoryEntry::Said { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
+            | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => true,
+            HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => false,
+        }
+    }
+
     /// The message, if this is one said.
     pub fn said(&self) -> Option<&Message> {
         match self {
@@ -391,8 +458,15 @@ impl HistoryEntry {
     /// What message `id` was produced from, and in which turn (issue 241),
     /// if this is it and both are known.
     pub fn context_of(&self, id: MessageId) -> Option<(&ContextRef, TurnId)> {
+        self.context().filter(|_| self.said().is_some_and(|message| message.id == id))
+    }
+
+    /// What the message it says was produced from, and in which turn, if
+    /// this is one said and both are known: whether what its author saw can
+    /// be shown (issue 207).
+    pub fn context(&self) -> Option<(&ContextRef, TurnId)> {
         match self {
-            HistoryEntry::Said { message, context } if message.id == id => Some((context.as_ref()?, message.turn_id?)),
+            HistoryEntry::Said { message, context } => Some((context.as_ref()?, message.turn_id?)),
             _ => None,
         }
     }
@@ -446,6 +520,53 @@ mod tests {
         assert_eq!(kinds, ["said changed".to_string(), "step first true".to_string(), text(2), "finished true".to_string(), text(3), "given up true".to_string()],
             "in the order they happened, the change folded into its message, the fitting in every one");
         assert_eq!(history.messages().len(), 3, "the messages alone, as before");
+    }
+
+    #[test]
+    fn its_items_are_read_in_pages_from_the_end_as_they_stand() {
+        let at = Utc::now();
+        let turn = TurnId::new();
+        let mut history = History::default();
+        for n in 1..=5 {
+            history.push(make_message(id(n)), None);
+        }
+        history.end_turn(HistoryEntry::TurnFinished { turn_id: turn, actor: ActorId::default(), at });
+        history.push(make_message(id(6)), None);
+        history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
+        assert!(history.revoke(id(5), at));
+        let label = |item: &HistoryEntry| match item {
+            HistoryEntry::Said { message, .. } if message.revoked.is_some() => format!("{} revoked", message.id.0.as_u128()),
+            HistoryEntry::Said { message, .. } => format!("{} {}", message.id.0.as_u128(), message.content.clone().unwrap_or_default()),
+            _ => "finished".to_string(),
+        };
+        let labels = |page: &HistoryPage| page.items.iter().map(label).collect::<Vec<_>>();
+
+        let mut pages = Vec::new();
+        let mut before = history.end();
+        loop {
+            let page = history.items_before(before, 0, 3, |_| true);
+            pages.push(labels(&page));
+            match page.earlier {
+                Some(earlier) => before = earlier,
+                None => break,
+            }
+        }
+        assert_eq!(pages.len(), 3, "seven items, three to a page: {pages:?}");
+        assert_eq!(pages[0], ["5 revoked".to_string(), "finished".to_string(), label(&history.items()[6])], "the end first, as it stands");
+        assert_eq!(pages[2], ["1 changed"], "a change at the end is in a message of the first page");
+        assert_eq!(pages.iter().rev().flatten().cloned().collect::<Vec<_>>(), history.items().iter().map(label).collect::<Vec<_>>(), "together, the items");
+
+        let from = history.position_of(id(3)).unwrap();
+        let visible = history.items_before(history.end(), from, 10, |_| true);
+        assert_eq!(visible.items.len(), 5, "from where a view begins");
+        assert_eq!(visible.earlier, None, "and nothing before it");
+
+        let odd = |item: &HistoryEntry| item.said().is_some_and(|m| m.id.0.as_u128() % 2 == 1);
+        let kept = history.items_before(history.end(), 0, 2, odd);
+        assert_eq!(labels(&kept), ["3 ".to_string() + &make_message(id(3)).content.unwrap_or_default(), "5 revoked".to_string()], "a page of those kept, full");
+        let rest = history.items_before(kept.earlier.unwrap(), 0, 2, odd);
+        assert_eq!((labels(&rest), rest.earlier), (vec!["1 changed".to_string()], None), "and nothing older that is kept");
+        assert!(history.items_before(0, 0, 5, |_| true).items.is_empty(), "nothing before the start");
     }
 
     #[test]

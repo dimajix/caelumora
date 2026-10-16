@@ -54,7 +54,7 @@ pub mod testing;
 mod tests;
 
 pub use history::VisibleHistory;
-pub(crate) use history::visible_part;
+pub(crate) use history::{visible_message, visible_page, visible_part};
 pub(crate) use participation::{ResolvedParticipant, ResolvedKind, Participation};
 
 /// A participant of a channel, with the handle it is `@`-mentioned by.

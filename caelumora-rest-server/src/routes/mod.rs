@@ -180,7 +180,7 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
         .route("/sessions/{id}/channels/{cid}/commands/{command_id}/kill", post(workspaces::kill_command))
         .route(
             "/sessions/{id}/channels/{cid}/messages/{mid}",
-            axum::routing::put(channels::modify_message).delete(channels::revoke_message),
+            get(channels::get_message).put(channels::modify_message).delete(channels::revoke_message),
         )
         .route("/sessions/{id}/channels/{cid}/messages/{mid}/classification", axum::routing::put(channels::reclassify_message))
         .route("/sessions/{id}/channels/{cid}/messages/{mid}/retry", post(channels::retry_message))

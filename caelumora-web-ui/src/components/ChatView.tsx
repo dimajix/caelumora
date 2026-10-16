@@ -43,6 +43,7 @@ import type {
   Command,
   Compartment,
   Envelope,
+  HistoryPage,
   Message,
   PublishedNotes,
   QuestionRequest,
@@ -321,9 +322,24 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // This user's own rules (issue 13) - for the brave mode, shown while it
   // lasts; they follow the global stream.
   const [myRules, setMyRules] = useState<ApprovalRule[]>([]);
-  // The snapshot holds the end of the history; older messages on request.
-  const [hasMore, setHasMore] = useState(false);
+  // The snapshot holds the last page of the history; the pages before it on
+  // request, read before `earlier` (issue 218) - `null` once there are none.
+  const [earlier, setEarlier] = useState<number | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  /**
+   * Shows `page`, the last page of the history, in place of what is shown,
+   * as a snapshot would (issue 218): the pages before it that were loaded
+   * are let go, and what arrived after it was read is kept.
+   */
+  const showLastPage = (page: HistoryPage<Message>, nameOf: (actor: ActorId) => string | undefined) => {
+    const data = chatMessages(page.items, nameOf);
+    const known = new Set(data.flatMap(m => m.id ? [m.id] : []));
+    const read = data[data.length - 1]?.timestamp;
+    setMessages(prev => [...data, ...prev.filter(m => m.id && !known.has(m.id) && read && m.timestamp && m.timestamp > read)]);
+    setEarlier(page.earlier);
+  };
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // `@`-completion: the caret position the suggestions were computed for, the
@@ -501,11 +517,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       const reclassified = reclassifiedChannel(event);
       if (!reclassified || reclassified.channelId !== channelId) return;
       setChannel(prev => prev && {...prev, classification: reclassified.classification});
-      api.getHistory(sessionId, channelId)
-        .then(items => {
-          const now = new Map(items.flatMap(item => 'said' in item ? [[item.said.id, item.said.classification]] : []));
-          setMessages(prev => prev.map(m => (m.id && now.get(m.id)) ? {...m, classification: now.get(m.id)} : m));
-        })
+      // Its last page anew, as a snapshot would show it (issue 218).
+      Promise.all([api.getChannel(sessionId, channelId), api.getHistory(sessionId, channelId)])
+        .then(([found, page]) => showLastPage(page, nameIn(found)))
         .catch(error => reportError('Failed to load the messages', error));
     });
   }, [sessionId, channelId]);
@@ -672,7 +686,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         setNotes(snapshot.notes ?? []);
         setPendingApprovals(snapshot.pending_approvals ?? []);
         setPendingQuestions(snapshot.pending_questions ?? []);
-        setHasMore(snapshot.has_more);
+        setEarlier(snapshot.earlier);
         // The answers under way as the snapshot found them (issue 240): what
         // streamed before is not kept, what follows streams in.
         setAnswers(snapshot.channel.members.flatMap(m => m.turn_under_way
@@ -811,11 +825,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             setMessages(prev => prev.map(m => m.id === message ? {...m, rejected: reason} : m));
           } else {
             if (message && ['MessageModified', 'MessageRevoked', 'MessageReclassified'].includes(rejected)) {
-              api.getHistory(sessionId, channelId)
-                .then(history => {
-                  const standing = history.flatMap(item => 'said' in item && item.said.id === message ? [item.said] : [])[0];
-                  if (standing) setMessages(prev => prev.map(m => m.id === message ? standing : m));
-                })
+              api.getMessage(sessionId, channelId, message)
+                .then(standing => setMessages(prev => prev.map(m => m.id === message ? standing : m)))
                 .catch(error => reportError('Failed to read the message back', error));
             }
             const notice: Message = {
@@ -975,7 +986,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       let cancelled = false;
       // With the channel as it is now, which names whose turns ended.
       Promise.all([api.getChannel(sessionId, channelId), api.getHistory(sessionId, channelId)])
-        .then(([found, items]) => { if (!cancelled) setMessages(chatMessages(items, nameIn(found))); })
+        .then(([found, page]) => { if (!cancelled) showLastPage(page, nameIn(found)); })
         .catch(error => reportError('Failed to load the messages', error));
       return () => { cancelled = true; };
     }
@@ -997,17 +1008,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     saveDraft(channelId, inputText);
   }, [channelId, inputText]);
 
-  /** Replaces the snapshot's tail with the channel's full history. */
-  const loadFullHistory = async () => {
+  /** Puts the page of the history before those shown in front of them. */
+  const loadEarlier = async () => {
+    if (earlier === null) return;
     setIsLoadingHistory(true);
     try {
-      const data = chatMessages(await api.getHistory(sessionId, channelId), nameIn(channel));
+      const page = await api.getHistory(sessionId, channelId, earlier);
+      const data = chatMessages(page.items, nameIn(channel));
       setMessages(prev => {
-        // Keep anything that arrived after the history was read.
         const known = new Set(data.map(m => m.id));
         return [...data, ...prev.filter(m => !m.id || !known.has(m.id))];
       });
-      setHasMore(false);
+      setEarlier(page.earlier);
     } catch (error) {
       reportError('Failed to load earlier messages', error);
     } finally {
@@ -1571,10 +1583,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     <div className="flex-1 flex overflow-hidden bg-gray-50 dark:bg-gray-800">
       <div className="flex-1 flex flex-col min-w-0">
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {hasMore && (
+          {earlier !== null && (
             <div className="text-center">
               <button
-                onClick={loadFullHistory}
+                onClick={loadEarlier}
                 disabled={isLoadingHistory}
                 className="text-xs px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
               >

@@ -84,3 +84,8 @@ rebuilt from the chain at any time, and the store suite checks that it equals th
 - **2026-10-16** — Opened from the discussion on 376, as part of the epic
   [378](378-resource-management-epic.md): the history's half of 376, with the derived store the
   maintainer proposed.
+- **2026-10-16** — [218](218-paged-histories.md) pages both histories by the chain position
+  (`seq`) of a page's oldest item, while the chains are whole; the maintainer decided that this
+  issue switches pages to the item number `n` once the derived store addresses items by it. The
+  position is handed to clients as `earlier` and passed back as `?before=` without their computing
+  with it, so the REST API keeps its shape; `History::items_before` and its callers change.
