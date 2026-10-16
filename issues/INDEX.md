@@ -90,6 +90,7 @@ published before anyone else can take it.
 | [379](379-history-stored-as-it-stands.md) | done | A page of a channel's or an agent's history costs folding the whole chain, however far back and however small the page is, though the history is read almost only in pages. |
 | [380](380-transcript-window.md) | done | An agent's transcript holds every branch it ever had in memory, though only the active branch is given to the model and an old branch is read for the context of an old message alone. |
 | [383](383-prompt-texts-and-tool-sets-kept-per-turn.md) | open | Every prompt text and tool set an agent was ever given in a channel is held in memory for the record, though only the current turn's and an old context's are read. |
+| [387](387-agent-history-window-without-compaction.md) | open | An agent that never compacts its context - every external agent - holds its whole history in a channel in memory, since the window of its history begins at its last compaction. |
 
 ## Sessions and channels
 
