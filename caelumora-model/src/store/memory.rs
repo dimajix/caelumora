@@ -1,10 +1,14 @@
 use crate::agent::{AgentChannelState, AgentId, AgentState};
+use crate::chain::{Chain, Node, Stored as StoredChain};
 use crate::channel::{ChannelId, ChannelState};
+use crate::history::{History, HistoryEntry, HistoryPage};
+use crate::message::MessageId;
 use crate::component::StoredComponents;
 use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use crate::removal::{Deletable, Removal};
 use crate::security::{ActionType, AllowAllPolicy, SecurityContext, AccessPolicy};
 use crate::store::access::{name_free, Access};
+use crate::store::history::{page_of, HistoryKey, HistoryStore, Keep, StandingItems};
 use crate::store::query::{self, Filter, NoField, Page, Query};
 use crate::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, Journaled, Policies, StateStore, StoreError, StoreResult, Stored};
 use crate::type_map::TypeMap;
@@ -19,7 +23,9 @@ use tracing::info;
 
 /// Every kind's entities, the preconfigured components and the runtime
 /// state, in memory: a store per kind (`MemoryEntityStore`, issue 323),
-/// opened when it is first asked for, and maps for the states.
+/// opened when it is first asked for, and maps for the states - their
+/// documents, and their histories apart, each whole with its items as they
+/// stand (issue 379).
 #[derive(Debug)]
 pub struct MemoryStore {
     policies: Policies,
@@ -29,6 +35,15 @@ pub struct MemoryStore {
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
+    histories: RwLock<HashMap<HistoryKey, KeptHistory>>,
+}
+
+/// A history as the memory store keeps it: its chain whole, and the items
+/// derived from it.
+#[derive(Debug, Default)]
+struct KeptHistory {
+    chain: History,
+    items: StandingItems,
 }
 
 impl Default for MemoryStore {
@@ -56,7 +71,45 @@ impl MemoryStore {
             agent_states: Default::default(),
             agent_channel_states: Default::default(),
             channel_states: Default::default(),
+            histories: Default::default(),
         }
+    }
+
+    /// Appends what `history`, the history `key` names as a state holds it,
+    /// added since it was last stored, derives the items of it, and marks it
+    /// stored.
+    fn append_history(&self, key: HistoryKey, history: &mut History) -> StoreResult<()> {
+        let Some(changes) = history.changes() else { return Ok(()) };
+        write_lock(&self.histories, |all| {
+            let kept = all.entry(key).or_default();
+            let end = kept.chain.end();
+            kept.chain.apply(changes).map_err(|e| StoreError::Backend(format!("what {key} added does not fit: {e}")))?;
+            for node in kept.chain.from(end) {
+                kept.items.take(node);
+            }
+            Ok::<_, StoreError>(())
+        })?;
+        history.mark_stored();
+        Ok(())
+    }
+
+    /// The history `key` names from the position `from` on, as a holder
+    /// keeps it; empty if none is kept.
+    fn load_history(&self, key: HistoryKey, from: u64) -> StoreResult<History> {
+        read_lock(&self.histories, |all| {
+            let Some(kept) = all.get(&key) else { return Ok(History::default()) };
+            Chain::suffix(from, StoredChain { entries: kept.chain.from(from).cloned().collect(), head: kept.chain.digest() })
+                .map_err(|e| StoreError::Backend(format!("{key} cannot be read from position {from}: {e}")))
+        })
+    }
+
+    /// `state`'s document - what is stored of it but its history - as a
+    /// copy without the history, which is kept apart.
+    fn document<T: Clone>(state: &mut T, history: impl Fn(&mut T) -> &mut History) -> T {
+        let held = std::mem::take(history(state));
+        let document = state.clone();
+        *history(state) = held;
+        document
     }
 
     /// The stores of the core's entities, one per kind (issue 323).
@@ -276,13 +329,17 @@ impl ComponentStore for MemoryStore {
 #[async_trait]
 impl StateStore for MemoryStore {
     async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState> {
-        Ok(read_lock(&self.agent_channel_states, |v| v.get(&(agent_id, channel_id)).cloned()).unwrap_or_default())
+        let mut state = read_lock(&self.agent_channel_states, |v| v.get(&(agent_id, channel_id)).cloned()).unwrap_or_default();
+        state.history = self.load_history(HistoryKey::Agent(agent_id, channel_id), state.window_from)?;
+        Ok(state)
     }
 
     async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
+        self.append_history(HistoryKey::Agent(agent_id, channel_id), &mut state.history)?;
         // Marked first: the copy kept is the state as stored, with nothing pending.
         state.mark_stored();
-        write_lock(&self.agent_channel_states, |v| v.insert((agent_id, channel_id), state.clone()));
+        let document = Self::document(state, |s| &mut s.history);
+        write_lock(&self.agent_channel_states, |v| v.insert((agent_id, channel_id), document));
         Ok(())
     }
 
@@ -298,28 +355,61 @@ impl StateStore for MemoryStore {
     }
 
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
-        read_lock(&self.channel_states, |v| v.get(&channel_id).cloned()).ok_or_else(|| StoreError::NotFound { entity: "channel_state", id: channel_id.to_string() })
+        let mut state = read_lock(&self.channel_states, |v| v.get(&channel_id).cloned()).ok_or_else(|| StoreError::NotFound { entity: "channel_state", id: channel_id.to_string() })?;
+        state.history = self.load_history(HistoryKey::Channel(channel_id), state.window_from)?;
+        Ok(state)
     }
 
     async fn put_channel_state(&self, channel_id: ChannelId, state: &mut ChannelState) -> StoreResult<()> {
+        self.append_history(HistoryKey::Channel(channel_id), &mut state.history)?;
         // Marked first: the copy kept is the state as stored, with nothing pending.
         state.mark_stored();
-        write_lock(&self.channel_states, |v| v.insert(channel_id, state.clone()));
+        let document = Self::document(state, |s| &mut s.history);
+        write_lock(&self.channel_states, |v| v.insert(channel_id, document));
         Ok(())
     }
 
     async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()> {
         write_lock(&self.channel_states, |v| v.remove(&channel_id));
         write_lock(&self.agent_channel_states, |v| v.retain(|(_, cid), _| *cid != channel_id));
+        write_lock(&self.histories, |v| v.retain(|key, _| !key.in_channel(channel_id)));
         Ok(())
     }
 
     async fn delete_agent_state(&self, agent_id: AgentId) -> StoreResult<()> {
         write_lock(&self.agent_states, |v| v.remove(&agent_id));
         write_lock(&self.agent_channel_states, |v| v.retain(|(aid, _), _| *aid != agent_id));
+        write_lock(&self.histories, |v| v.retain(|key, _| !key.of_agent(agent_id)));
         Ok(())
     }
 
+}
+
+#[async_trait]
+impl HistoryStore for MemoryStore {
+    async fn page(&self, key: HistoryKey, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
+        Ok(read_lock(&self.histories, |all| match all.get(&key) {
+            Some(kept) => page_of(kept.items.newest_before(before.unwrap_or(u64::MAX)).cloned(), from, limit, keep, kept.chain.digest()),
+            None => HistoryPage::default(),
+        }))
+    }
+
+    async fn said(&self, key: HistoryKey, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>> {
+        Ok(read_lock(&self.histories, |all| all.get(&key).and_then(|kept| kept.items.said(id))))
+    }
+
+    async fn entries(&self, key: HistoryKey, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>> {
+        Ok(read_lock(&self.histories, |all| all.get(&key).map(|kept| kept.chain.from(from).cloned().collect()).unwrap_or_default()))
+    }
+
+    async fn rebuild(&self, key: HistoryKey) -> StoreResult<()> {
+        write_lock(&self.histories, |all| {
+            if let Some(kept) = all.get_mut(&key) {
+                kept.items = StandingItems::of(kept.chain.all_entries());
+            }
+        });
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -385,6 +475,12 @@ mod tests {
     #[tokio::test]
     async fn behaves_as_a_state_store() {
         suite::state_store_behaves(&MemoryStore::new()).await;
+    }
+
+    #[tokio::test]
+    async fn keeps_the_histories_of_the_states() {
+        let store = MemoryStore::new();
+        suite::history_store_behaves(&store, &store).await;
     }
 
     #[tokio::test]

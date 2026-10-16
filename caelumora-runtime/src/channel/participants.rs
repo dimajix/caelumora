@@ -3,7 +3,6 @@
 
 use caelumora_model::value::name::Name;
 use anyhow::Result;
-use chrono::Utc;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::Participant;
@@ -82,8 +81,7 @@ impl ChannelLoop {
         };
         self.participation.require_admissible(&resolved, context, &self.classification())?;
 
-        let messages = self.history().await;
-        let start = history.start_in(&messages, Utc::now());
+        let start = self.history_start(history).await?;
         self.channel.add_participant(&storing, found.clone(), start).await?;
 
         if let Err(error) = self.start_participant(resolved).await {
@@ -193,7 +191,9 @@ impl ChannelLoop {
     async fn start_participant(&self, resolved: ResolvedParticipant) -> Result<()> {
         self.left(resolved.actor_id()).await?;
         let actor = self.create_actor(&resolved).await?;
-        actor.catch_up(self.visible_history(resolved.actor_id()).await.messages()).await?;
+        if let Some(from) = self.visible_from(resolved.actor_id()).await? {
+            actor.catch_up(from).await?;
+        }
         let adopted = self.adopt(Arc::from(actor), resolved).await;
         let _ = self.changes_tx.send(ActorChange::Start(adopted));
         Ok(())
@@ -471,14 +471,12 @@ mod tests {
         assert!(channel.members().iter().any(|m| m.id == other), "a member now");
         let other_user = match other { ActorId::User(id) => id, _ => unreachable!() };
         assert!(channel.user_actor(other_user).is_some(), "with an actor of their own");
-        let visible: Vec<_> = channel.visible_history(other).await.messages().into_iter().map(|m| m.content).collect();
+        let visible: Vec<_> = channel.visible_messages(other).await.into_iter().map(|m| m.content).collect();
         assert_eq!(visible, vec![Some("three".to_string())], "the last message and no more");
-        assert_eq!(channel.visible_history(ctx.initiator_id).await.messages().len(), before.len(), "the others still see everything");
+        assert_eq!(channel.visible_messages(ctx.initiator_id).await.len(), before.len(), "the others still see everything");
         // What a reader records as read says from where (issue 72).
-        let (limited, full) = (channel.visible_history(other).await, channel.visible_history(ctx.initiator_id).await);
-        assert_eq!(limited.start, Some(HistoryStart::From(before[2].id)), "from the last message");
-        assert_eq!(full.start, None, "all of it");
-        assert_eq!(limited.digest, full.digest, "up to where is the same for both");
+        assert_eq!(channel.history_start_of(other), Some(HistoryStart::From(before[2].id)), "from the last message");
+        assert_eq!(channel.history_start_of(ctx.initiator_id), None, "all of it");
         let stored = runtime.entity_stores().channels.get(&ctx, channel.id()).await.unwrap();
         assert!(stored.participants.iter().any(|p| p.actor_id() == other), "stored, not only in memory");
         assert_eq!(stored.history_limits.len(), 1, "with the limit");
@@ -489,7 +487,7 @@ mod tests {
         // What is written after joining is visible.
         writer.send_message("four".to_string(), None).await.unwrap();
         history_of(&channel, 4).await;
-        assert_eq!(channel.visible_history(other).await.messages().len(), 2);
+        assert_eq!(channel.visible_messages(other).await.len(), 2);
 
         let refusal = |error: Error| error.downcast::<ChannelError>().expect("a ChannelError");
         let again = channel.add_participant(&ctx, other, HistoryAccess::All).await.expect_err("already in");

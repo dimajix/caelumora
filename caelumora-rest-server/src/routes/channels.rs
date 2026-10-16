@@ -532,9 +532,9 @@ pub async fn message_context(
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let member = member_of(&channel, aid).await?;
     let view = member.context().await?;
-    let seen = view.context_of(MessageId(mid))?;
+    let seen = view.context_of(MessageId(mid)).await?;
     // What set the message's label, of the parts classified (issue 170).
-    let label = view.classification_of(MessageId(mid)).unwrap_or_default();
+    let label = view.classification_of(MessageId(mid)).await?.unwrap_or_default();
     let mut classified: Vec<&Classification> = seen.reference.knowledge.iter().filter_map(|k| k.classification.as_ref()).collect();
     for item in &seen.items {
         match item {
@@ -616,7 +616,7 @@ pub async fn agent_history(
 ) -> Result<Json<HistoryPageResponse<HistoryMessageResponse>>, ApiError> {
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let view = member_of(&channel, aid).await?.context().await?;
-    let page = view.history_page(query.before, query.limit());
+    let page = view.history_page(query.before, query.limit()).await?;
     Ok(Json(HistoryPageResponse::of(page, |message, has_context| HistoryMessageResponse { has_context, in_transcript: view.in_transcript(message.id), message })))
 }
 

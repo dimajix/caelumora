@@ -193,3 +193,10 @@ the history would hear everything. Delivering stays; what changes is where the q
   of the history, only an entry by position, and reduces nothing held in memory. It waits for
   [379](379-history-stored-as-it-stands.md), whose store contract has to say how a history entry
   and the deliveries it causes are stored together once the history has a store of its own.
+- **2026-10-16** — [379](379-history-stored-as-it-stands.md) is done. Its contract answers the
+  question the plan above waited for: the put of a `ChannelState` writes the history's new entries
+  and then the document - in Postgres in one transaction, in the JSON store in that order, with what
+  a crash leaves past the head not there - so the inboxes, as part of the document, are stored with
+  the entry that caused their deliveries. The channel holds only a window of its history, so
+  `ChannelState::envelope_of` reads an entry before the window from the `HistoryStore`
+  (`entries`).

@@ -40,7 +40,7 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{ActionType, AllowAllPolicy, Grant, OwnershipPolicy, Reclassified, SecurityAttributes, SecurityContext, AccessPolicy, Subject};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::store::{ComponentStore, StateStore, StoreError};
+use caelumora_model::store::{ComponentStore, StoreBackend, StoreError};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
@@ -179,8 +179,9 @@ pub struct TestRuntime<'a> {
     /// What the entities are kept in and, unless `state_store` is another,
     /// the agents' states: a new, empty store.
     pub store: Arc<MemoryStore>,
-    /// What the agents' states are kept in, if not in `store`.
-    pub state_store: Option<Arc<dyn StateStore>>,
+    /// What the agents' states and the histories are kept in, if not in
+    /// `store`.
+    pub state_store: Option<StoreBackend>,
     /// Allows everything.
     pub access_policy: Arc<dyn AccessPolicy>,
     /// The default rules.
@@ -221,7 +222,7 @@ impl TestRuntime<'_> {
     /// # Errors
     /// As `RuntimeManager::new`.
     pub fn try_build(self) -> Result<RuntimeManager> {
-        let state_store = self.state_store.unwrap_or_else(|| Arc::<MemoryStore>::clone(&self.store));
+        let state_store = self.state_store.unwrap_or_else(|| StoreBackend::from(Arc::<MemoryStore>::clone(&self.store)));
         let registry = self.registry.unwrap_or_else(|| test_registry(Arc::<MemoryStore>::clone(&self.store)));
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&self.access_policy)));
         RuntimeManager::new(state_store, self.store, secrets, self.access_policy, self.confidentiality, &self.config, registry, &self.plugins)

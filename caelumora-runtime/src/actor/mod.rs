@@ -21,7 +21,6 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventCon
 use caelumora_model::channel::ChannelId;
 use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
-use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
 use caelumora_model::tool::ToolSet;
@@ -53,15 +52,16 @@ pub trait Actor: Any + Debug + Send + Sync {
     ) -> Result<()>;
 
     /// Takes in what it missed of the channel when it joins (issue 190):
-    /// `visible` is the part of the channel's history it may see. An actor
-    /// that keeps what it hears keeps of it what it does not have yet, as if
-    /// it had heard it - for one that joins again, what was said after the
-    /// last message it has. Called once, before it runs; one that keeps
-    /// nothing has nothing to do.
+    /// `from` is the position in the channel's history where the part it
+    /// may see begins, read from the store (issue 379). An actor that keeps
+    /// what it hears keeps of it what it does not have yet, as if it had
+    /// heard it - for one that joins again, what was said after the last
+    /// message it has. Called once, before it runs; one that keeps nothing
+    /// has nothing to do.
     ///
     /// # Errors
-    /// If what it keeps cannot be read or stored.
-    async fn catch_up(&self, _visible: Vec<Message>) -> Result<()> {
+    /// If what it keeps, or the channel's history, cannot be read or stored.
+    async fn catch_up(&self, _from: u64) -> Result<()> {
         Ok(())
     }
 

@@ -15,7 +15,7 @@ use crate::turn::GivenUpReason;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use crate::digest;
 
 /// What happened in a `History`; its node carries the digest of the
@@ -116,16 +116,24 @@ pub fn fold<'a>(nodes: impl IntoIterator<Item = &'a Node<HistoryEntry>>) -> Vec<
     messages
 }
 
-/// A page of a history's items (issue 218): the last ones before a
-/// position, as `items` gives them, and where the page before it ends.
+/// How many entries of a history its holder keeps in memory at least (issue
+/// 379): the rest is read from the store.
+pub const WINDOW: u64 = 200;
+
+/// A page of a history's items (issues 218, 379): the last ones before a
+/// position, as `items` gives them, where the page before it ends, and which
+/// history it was read from.
 #[derive(Debug, Clone, Default)]
 pub struct HistoryPage {
     /// The items, oldest first.
     pub items: Vec<HistoryEntry>,
     /// The position of the oldest of `items`: what the page before this one
-    /// is read before (`History::items_before`); `None` if there is no older
+    /// is read before (`HistoryStore::page`); `None` if there is no older
     /// item to be had.
     pub earlier: Option<u64>,
+    /// The digest of the history when the page was read: up to where it was
+    /// read.
+    pub digest: Option<Digest>,
 }
 
 impl Chain<HistoryEntry> {
@@ -147,39 +155,6 @@ impl Chain<HistoryEntry> {
     pub fn items(&self) -> Vec<HistoryEntry> {
         let mut folded = self.folded();
         self.entries().filter_map(|node| item(node, &mut folded)).collect()
-    }
-
-    /// A page of `items` (issue 218): the last `limit` items of the active
-    /// path before the position `before` and from the position `from` on -
-    /// where a participant's view begins -, of those `keep` keeps, as they
-    /// stand. Read backwards from `before`, and folded from the first item of
-    /// the page to the end: what is read grows with how far back the page
-    /// is, not with the history. At least one item is asked for.
-    pub fn items_before(&self, before: u64, from: u64, limit: usize, keep: impl Fn(&HistoryEntry) -> bool) -> HistoryPage {
-        let limit = limit.max(1);
-        // One more than the page, to tell whether an older one is kept; as
-        // many again while too few of them are.
-        let mut wanted = limit + 1;
-        loop {
-            let candidates: Vec<&Node<HistoryEntry>> = self.entries_before(before).rev()
-                .take_while(|node| node.seq >= from)
-                .filter(|node| node.entry.is_item())
-                .take(wanted)
-                .collect();
-            let Some(oldest) = candidates.last() else { return HistoryPage::default() };
-            let mut folded: HashMap<u64, Message> = fold(self.from(oldest.seq)).into_iter().map(|(node, message)| (node.seq, message)).collect();
-            let mut kept: Vec<(u64, HistoryEntry)> = candidates.iter().rev()
-                .filter_map(|node| Some((node.seq, item(node, &mut folded)?)))
-                .filter(|(_, item)| keep(item))
-                .collect();
-            if kept.len() > limit || candidates.len() < wanted {
-                let older = kept.len().saturating_sub(limit);
-                let page = kept.split_off(older);
-                let earlier = page.first().filter(|_| older > 0).map(|(seq, _)| *seq);
-                return HistoryPage { items: page.into_iter().map(|(_, item)| item).collect(), earlier };
-            }
-            wanted = wanted.saturating_mul(2);
-        }
     }
 
     /// What the turn `turn_id` of `actor` said, as it stands, in the order
@@ -255,33 +230,14 @@ impl Chain<HistoryEntry> {
     /// it was never said here. Folded from where it was said on, not from
     /// the start.
     pub fn message(&self, id: MessageId) -> Option<Message> {
-        fold(self.from(self.position_of(id)?)).into_iter().next().map(|(_, message)| message)
-    }
-
-    /// The position of the entry that said the message `id` - on whichever
-    /// branch -, or `None` if it was never said here. Found from the end
-    /// backwards.
-    pub fn position_of(&self, id: MessageId) -> Option<u64> {
-        self.all_entries().rev().find(|node| node.entry.said().is_some_and(|m| m.id == id)).map(|node| node.seq)
+        let said = self.all_entries().rev().find(|node| node.entry.said().is_some_and(|m| m.id == id))?;
+        fold(self.from(said.seq)).into_iter().next().map(|(_, message)| message)
     }
 
     /// The messages of every branch as they stand, by the position of the
     /// entry that said each.
     fn folded(&self) -> HashMap<u64, Message> {
         fold(self.all_entries()).into_iter().map(|(node, message)| (node.seq, message)).collect()
-    }
-
-    /// The messages of `visible` after the last of them the history has,
-    /// and not in it - on any branch: what an actor that joins missed (issue
-    /// 190), for one that joins again what was said while it was away. A
-    /// history is only ever appended to, so older messages that a wider
-    /// history grants on rejoining would land after the actor's own later
-    /// answers; they are left out, and the history stays in the order things
-    /// were said.
-    pub fn missing_from(&self, visible: Vec<Message>) -> Vec<Message> {
-        let known: HashSet<MessageId> = self.all_entries().filter_map(|n| n.entry.said()).map(|m| m.id).collect();
-        let after = visible.iter().rposition(|m| known.contains(&m.id)).map_or(0, |last| last + 1);
-        visible.into_iter().skip(after).filter(|m| !known.contains(&m.id)).collect()
     }
 
     /// The id of the last message said on the active path,
@@ -306,9 +262,10 @@ impl Chain<HistoryEntry> {
     /// Records that message `id` - on whichever branch - is classified
     /// `classification` from now on (issue 133). `false`, and nothing is
     /// recorded, if there is no such message or it was taken back
-    /// (`Message::reclassify`).
+    /// (`Message::reclassify`); one before what it holds is recorded
+    /// (`is_changed`).
     pub fn reclassify(&mut self, id: MessageId, classification: Classification) -> bool {
-        if !self.message(id).is_some_and(|mut m| m.reclassify(&classification)) {
+        if !self.is_changed(id, |m| m.reclassify(&classification)) {
             return false;
         }
         self.record(HistoryEntry::Reclassified { message: id, classification });
@@ -318,9 +275,10 @@ impl Chain<HistoryEntry> {
     /// Records that the message `modified.id` - on whichever branch -
     /// reads as `modified` from now on (issue 234). `false`, and nothing is
     /// recorded, if there is no such message or it cannot be modified so as
-    /// it stands (`Message::modify`): taken back, or by another sender.
+    /// it stands (`Message::modify`): taken back, or by another sender; one
+    /// before what it holds is recorded (`is_changed`).
     pub fn modify(&mut self, modified: Message) -> bool {
-        if !self.message(modified.id).is_some_and(|mut m| m.modify(&modified)) {
+        if !self.is_changed(modified.id, |m| m.modify(&modified)) {
             return false;
         }
         self.record(HistoryEntry::Modified { message: modified });
@@ -329,13 +287,27 @@ impl Chain<HistoryEntry> {
 
     /// Records that the message `id` - on whichever branch - was taken back
     /// at `at` (issue 234). `false`, and nothing is recorded, if there is no
-    /// such message or it was taken back already.
+    /// such message or it was taken back already; one before what it holds
+    /// is recorded (`is_changed`).
     pub fn revoke(&mut self, id: MessageId, at: DateTime<Utc>) -> bool {
-        if !self.message(id).is_some_and(|mut m| m.revoke(at)) {
+        if !self.is_changed(id, |m| m.revoke(at)) {
             return false;
         }
         self.record(HistoryEntry::Revoked { message: id, at });
         true
+    }
+
+    /// Whether what `change` does to the message `id` is a change to
+    /// record: whether it changes the message as it stands, if it holds
+    /// it. Held from a position on (issue 379), it may not hold a message
+    /// said before: the change is recorded then, and the store applies it to
+    /// the message if it holds it - a change of a message it never held
+    /// changes nothing there either.
+    fn is_changed(&self, id: MessageId, change: impl FnOnce(&mut Message) -> bool) -> bool {
+        match self.message(id) {
+            Some(mut standing) => change(&mut standing),
+            None => self.base() > 0,
+        }
     }
 
     /// Records that the channel is classified `channel` now, which every
@@ -403,7 +375,7 @@ impl HistoryEntry {
     /// said, the start of a plan's step, a command carried out, an activity
     /// ended, a compaction, a turn's end - rather than a change of what was
     /// said before.
-    fn is_item(&self) -> bool {
+    pub(crate) fn is_item(&self) -> bool {
         match self {
             HistoryEntry::Said { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => true,
@@ -446,7 +418,7 @@ impl HistoryEntry {
     }
 
     /// The message it modifies, takes back or reclassifies, if it does.
-    fn changed(&self) -> Option<MessageId> {
+    pub(crate) fn changed(&self) -> Option<MessageId> {
         match self {
             HistoryEntry::Modified { message } => Some(message.id),
             HistoryEntry::Revoked { message, .. } | HistoryEntry::Reclassified { message, .. } => Some(*message),
@@ -523,50 +495,16 @@ mod tests {
     }
 
     #[test]
-    fn its_items_are_read_in_pages_from_the_end_as_they_stand() {
-        let at = Utc::now();
-        let turn = TurnId::new();
+    fn a_change_of_a_message_before_what_is_held_is_recorded_for_the_store() {
         let mut history = History::default();
-        for n in 1..=5 {
-            history.push(make_message(id(n)), None);
-        }
-        history.end_turn(HistoryEntry::TurnFinished { turn_id: turn, actor: ActorId::default(), at });
-        history.push(make_message(id(6)), None);
-        history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
-        assert!(history.revoke(id(5), at));
-        let label = |item: &HistoryEntry| match item {
-            HistoryEntry::Said { message, .. } if message.revoked.is_some() => format!("{} revoked", message.id.0.as_u128()),
-            HistoryEntry::Said { message, .. } => format!("{} {}", message.id.0.as_u128(), message.content.clone().unwrap_or_default()),
-            _ => "finished".to_string(),
-        };
-        let labels = |page: &HistoryPage| page.items.iter().map(label).collect::<Vec<_>>();
-
-        let mut pages = Vec::new();
-        let mut before = history.end();
-        loop {
-            let page = history.items_before(before, 0, 3, |_| true);
-            pages.push(labels(&page));
-            match page.earlier {
-                Some(earlier) => before = earlier,
-                None => break,
-            }
-        }
-        assert_eq!(pages.len(), 3, "seven items, three to a page: {pages:?}");
-        assert_eq!(pages[0], ["5 revoked".to_string(), "finished".to_string(), label(&history.items()[6])], "the end first, as it stands");
-        assert_eq!(pages[2], ["1 changed"], "a change at the end is in a message of the first page");
-        assert_eq!(pages.iter().rev().flatten().cloned().collect::<Vec<_>>(), history.items().iter().map(label).collect::<Vec<_>>(), "together, the items");
-
-        let from = history.position_of(id(3)).unwrap();
-        let visible = history.items_before(history.end(), from, 10, |_| true);
-        assert_eq!(visible.items.len(), 5, "from where a view begins");
-        assert_eq!(visible.earlier, None, "and nothing before it");
-
-        let odd = |item: &HistoryEntry| item.said().is_some_and(|m| m.id.0.as_u128() % 2 == 1);
-        let kept = history.items_before(history.end(), 0, 2, odd);
-        assert_eq!(labels(&kept), ["3 ".to_string() + &make_message(id(3)).content.unwrap_or_default(), "5 revoked".to_string()], "a page of those kept, full");
-        let rest = history.items_before(kept.earlier.unwrap(), 0, 2, odd);
-        assert_eq!((labels(&rest), rest.earlier), (vec!["1 changed".to_string()], None), "and nothing older that is kept");
-        assert!(history.items_before(0, 0, 5, |_| true).items.is_empty(), "nothing before the start");
+        history.extend(vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
+        assert!(!history.revoke(id(9), Utc::now()), "a message it never held, whole");
+        history.mark_stored();
+        history.keep_from(2);
+        assert!(history.revoke(id(1), Utc::now()), "before what it holds: recorded, the store applies it");
+        assert!(history.modify(Message { content: Some("changed".to_string()), ..make_message(id(3)) }), "one it holds as before");
+        assert!(history.revoke(id(3), Utc::now()) && !history.revoke(id(3), Utc::now()), "and taken back once");
+        assert_eq!(history.end(), 6);
     }
 
     #[test]
@@ -680,19 +618,6 @@ mod tests {
         assert!(!fitted.fold_into(&mut message), "fits already");
         assert!(HistoryEntry::Revoked { message: id(1), at }.fold_into(&mut message));
         assert!(!HistoryEntry::Revoked { message: id(1), at }.fold_into(&mut message), "taken back already");
-    }
-
-    #[test]
-    fn what_was_missed_is_what_came_after_the_last_message_kept_and_nothing_older() {
-        let ids = |messages: Vec<Message>| messages.into_iter().map(|m| m.id).collect::<Vec<_>>();
-        let (one, two, three, four) = (make_message(id(1)), make_message(id(2)), make_message(id(3)), make_message(id(4)));
-        let mut history = History::default();
-        assert_eq!(ids(history.missing_from(vec![three.clone()])), [id(3)], "joined seeing the last message only");
-        history.extend(vec![three.clone()]);
-        // Rejoined with all of it: "four" was missed, "one" and "two" are
-        // older than what it has and would come after it.
-        assert_eq!(ids(history.missing_from(vec![one, two, three.clone(), four])), [id(4)], "in the order things were said");
-        assert!(history.missing_from(vec![three]).is_empty(), "nothing new");
     }
 
     #[test]

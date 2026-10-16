@@ -792,8 +792,8 @@ impl Actor for ExternalAgentActor {
 
     /// Takes in what it missed as what it hears (issues 190, 196, 206); the
     /// remote agent is given it when it is next asked.
-    async fn catch_up(&self, visible: Vec<Message>) -> Result<()> {
-        self.body.catch_up(visible).await
+    async fn catch_up(&self, from: u64) -> Result<()> {
+        self.body.catch_up(from).await
     }
 
     async fn run(&self, mut rx: Box<dyn EventReceiver>, output: Box<dyn EventSender>) -> Result<()> {

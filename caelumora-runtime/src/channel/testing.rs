@@ -8,15 +8,17 @@ use crate::actor::Actor;
 use crate::channel::ChannelLoop;
 use crate::command::CommandError;
 use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
+use crate::view::AgentContextView;
 use crate::session::testing::{bare_session, user};
 use anyhow::{Result, Error};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::MessageId;
+use caelumora_model::store::history::{every, HistoryKey};
 use caelumora_model::store::StoreResult;
 use caelumora_model::work::TurnId;
-use caelumora_model::channel::{Channel, ChannelId, Participant, moderation_components};
+use caelumora_model::channel::{Channel, ChannelId, HistoryStart, Participant, moderation_components};
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::message::Message;
 use caelumora_model::security::{AccessPolicy, ActionType, SecurityAttributes, SecurityContext};
@@ -164,9 +166,37 @@ impl ChannelLoop {
         self.actor(actor)
     }
 
+    /// The messages of the history it holds in memory, as they stand: what
+    /// a test of the channel looks at.
+    pub(crate) async fn history(&self) -> Vec<Message> {
+        self.state.lock().await.history.messages()
+    }
+
     /// The whole history, whoever may see it (`ChannelLoop::history`).
     pub async fn whole_history(&self) -> Vec<Message> {
         self.history().await
+    }
+
+    /// Records `messages` as said in the channel - in its history, stored -
+    /// without routing them: what an actor that joins finds there
+    /// (`Actor::catch_up`).
+    pub async fn record_said(&self, messages: Vec<Message>) {
+        let mut state = self.state.lock().await;
+        state.history.extend(messages);
+        self.state_store.put_channel_state(self.id, &mut state).await.expect("the history is stored");
+    }
+
+    /// The messages `participant` sees of the history, read from the store
+    /// from where its view begins, as a view reads them (issue 379).
+    pub async fn visible_messages(&self, participant: ActorId) -> Vec<Message> {
+        let Some(from) = self.visible_from(participant).await.expect("the history is read") else { return Vec::new() };
+        let page = self.history_store.page(HistoryKey::Channel(self.id), from, None, 10_000, &every).await.expect("the history is read");
+        page.items.iter().filter_map(HistoryEntry::said).cloned().collect()
+    }
+
+    /// Where `participant`'s view of the history begins (`Channel::history_start_of`).
+    pub fn history_start_of(&self, participant: ActorId) -> Option<HistoryStart> {
+        self.channel.load().history_start_of(participant)
     }
 
     /// The entries of the whole history, its messages folded as they stand.
@@ -202,6 +232,13 @@ impl ChannelLoop {
     /// Whatever the `StateStore` reports.
     pub async fn stored_agent_channel_state(&self, agent: AgentId) -> StoreResult<AgentChannelState> {
         self.state_store.get_agent_channel_state(agent, self.id).await
+    }
+
+    /// What `agent` saw in the channel, as a viewer who may read it is shown
+    /// it: its state and its history as stored (`AgentContextView`).
+    pub async fn agent_context(&self, agent: AgentId) -> AgentContextView {
+        let state = self.stored_agent_channel_state(agent).await.expect("the state is read");
+        AgentContextView::of(ActorId::Agent(agent), state, Arc::clone(&self.history_store), HistoryKey::Agent(agent, self.id))
     }
 
     /// The runtime of this channel built again, as after a restart

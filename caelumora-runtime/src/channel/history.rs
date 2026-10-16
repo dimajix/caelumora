@@ -1,90 +1,84 @@
-//! What part of a channel's history a participant sees.
+//! What part of a channel's history a participant sees, read from the store
+//! (issues 46, 379): a view begins at a position, and the history is read in
+//! pages from its end only as far back as is needed.
 
 use super::ChannelLoop;
 use caelumora_model::actor::ActorId;
-use caelumora_model::channel::HistoryStart;
-use caelumora_model::history::{History, HistoryEntry, HistoryPage};
+use caelumora_model::channel::{ChannelId, HistoryAccess, HistoryStart};
+use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::digest::Digest;
+use caelumora_model::store::history::{HistoryKey, HistoryStore};
+use caelumora_model::store::StoreResult;
+use chrono::{DateTime, Utc};
+use tracing::warn;
 
-/// The part of a channel's history a participant sees (issue 46), as
-/// `ChannelLoop::visible_history` gives it.
-#[derive(Debug, Clone)]
-pub struct VisibleHistory {
-    /// What they see, from `start` on: the messages said, each as it
-    /// stands, and how turns ended (`History::items`, issue 258).
-    pub items: Vec<HistoryEntry>,
-    /// The digest of the channel's history at the time: up to where it was
-    /// read. It names the whole chain, so it is recorded with `start`.
-    pub digest: Option<Digest>,
-    /// Where their view begins - from where it was read; `None`: all of it.
-    pub start: Option<HistoryStart>,
+/// How many items a page holds that is read to find something in a history
+/// rather than to show it.
+const READ_PAGE: usize = 200;
+
+/// The position from which on the history of `channel` is seen from `start`:
+/// its beginning if there is none; `None` if the message it begins at is not
+/// there, so that nothing is seen rather than more than was granted.
+///
+/// # Errors
+/// If the store cannot be read.
+pub(crate) async fn visible_from(histories: &dyn HistoryStore, channel: ChannelId, start: Option<HistoryStart>) -> StoreResult<Option<u64>> {
+    let Some(start) = start else { return Ok(Some(0)) };
+    Ok(histories.said(HistoryKey::Channel(channel), start.message()).await?.map(|(at, _)| start.from(at)))
 }
 
-impl VisibleHistory {
-    /// The messages of it alone, for what reads only what was said.
-    pub fn messages(&self) -> Vec<Message> {
-        self.items.iter().filter_map(HistoryEntry::said).cloned().collect()
+/// Where the view of the history of `channel` begins for a participant
+/// granted `access` now (`HistoryAccess::start_in`): its messages read from
+/// the end, newest first, only as far back as the grant reaches.
+///
+/// # Errors
+/// If the store cannot be read.
+async fn start_of(histories: &dyn HistoryStore, channel: ChannelId, access: HistoryAccess, now: DateTime<Utc>) -> StoreResult<Option<HistoryStart>> {
+    let said = |item: &HistoryEntry| item.said().is_some();
+    let mut newest: Vec<Message> = Vec::new();
+    let mut before = None;
+    while !access.read_enough(&newest, now) {
+        let page = histories.page(HistoryKey::Channel(channel), 0, before, READ_PAGE, &said).await?;
+        newest.extend(page.items.iter().rev().filter_map(HistoryEntry::said).cloned());
+        match page.earlier {
+            Some(earlier) => before = Some(earlier),
+            None => break,
+        }
     }
-}
-
-/// `history` as seen from `start`: all of it if there is none.
-pub(crate) fn visible_part(start: Option<HistoryStart>, history: Vec<HistoryEntry>) -> Vec<HistoryEntry> {
-    match start {
-        Some(start) => start.visible(history),
-        None => history,
-    }
-}
-
-/// A page of `history` as seen from `start` (issue 218): the last `limit`
-/// items before the position `before` - the last ones without it - that
-/// `keep` keeps, none before where the view begins.
-pub(crate) fn visible_page(history: &History, start: Option<HistoryStart>, before: Option<u64>, limit: usize, keep: impl Fn(&HistoryEntry) -> bool) -> HistoryPage {
-    let Some(from) = visible_from(history, start) else { return HistoryPage::default() };
-    history.items_before(before.unwrap_or(history.end()), from, limit, keep)
-}
-
-/// The message `id` of `history` as it stands, if it is seen from `start`.
-pub(crate) fn visible_message(history: &History, start: Option<HistoryStart>, id: MessageId) -> Option<Message> {
-    let from = visible_from(history, start)?;
-    history.position_of(id).filter(|at| *at >= from)?;
-    history.message(id)
-}
-
-/// The position from which on `history` is seen from `start`; `None` if
-/// nothing of it is.
-fn visible_from(history: &History, start: Option<HistoryStart>) -> Option<u64> {
-    match start {
-        Some(start) => start.position_in(history),
-        None => Some(history.base()),
-    }
+    Ok(access.start_in(&newest, now))
 }
 
 impl ChannelLoop {
-    /// The part of the history `participant` may see (issue 46): all of it,
-    /// unless they joined later with a limit - with what a reader records as
-    /// read (issue 72). Where the limits are applied - here, for agents
-    /// reading the channel and for the transcript of an agent that joins,
-    /// and in `visible_page` and `visible_message`, for users over REST.
-    pub async fn visible_history(&self, participant: ActorId) -> VisibleHistory {
-        let (history, digest) = {
-            let state = self.state.lock().await;
-            (state.history.items(), state.history.digest())
-        };
-        let start = self.channel.load().history_start_of(participant);
-        VisibleHistory { items: visible_part(start, history), digest, start }
+    /// The message `id` of the history as it stands, or `None` if it was
+    /// never said here - read from the store, where the history is as it is
+    /// in memory: what the checks before a change ask (issue 379). A store
+    /// that cannot be read is logged, and the message is not found.
+    pub(crate) async fn message(&self, id: MessageId) -> Option<Message> {
+        match self.history_store.said(HistoryKey::Channel(self.id), id).await {
+            Ok(said) => said.and_then(|(_, item)| item.said().cloned()),
+            Err(e) => {
+                warn!("Cannot read message {} of channel {}: {}", id, self.id, e);
+                None
+            }
+        }
     }
 
-    /// A page of the history as `participant` sees it (issue 218,
-    /// `visible_page`).
-    pub async fn visible_page(&self, participant: ActorId, before: Option<u64>, limit: usize, keep: impl Fn(&HistoryEntry) -> bool) -> HistoryPage {
-        let start = self.channel.load().history_start_of(participant);
-        visible_page(&self.state.lock().await.history, start, before, limit, keep)
+    /// Where the view of the history begins for a participant granted
+    /// `access` now (`start_of`).
+    ///
+    /// # Errors
+    /// If the store cannot be read.
+    pub(crate) async fn history_start(&self, access: HistoryAccess) -> StoreResult<Option<HistoryStart>> {
+        start_of(self.history_store.as_ref(), self.id, access, Utc::now()).await
     }
 
-    /// The message `id` as it stands, if `participant` sees it.
-    pub async fn visible_message(&self, participant: ActorId, id: MessageId) -> Option<Message> {
-        let start = self.channel.load().history_start_of(participant);
-        visible_message(&self.state.lock().await.history, start, id)
+    /// The position from which on `participant` sees the history - where
+    /// what it missed is caught up from when it joins (issue 190); `None` if
+    /// it sees nothing of it.
+    ///
+    /// # Errors
+    /// If the store cannot be read.
+    pub(crate) async fn visible_from(&self, participant: ActorId) -> StoreResult<Option<u64>> {
+        visible_from(self.history_store.as_ref(), self.id, self.channel.load().history_start_of(participant)).await
     }
 }

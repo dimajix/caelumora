@@ -11,6 +11,7 @@ use caelumora_runtime::transport::EventReceiver;
 use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::AgentChannelState;
+use caelumora_model::history::fold;
 use caelumora_model::message::Message;
 use caelumora_model::transcript::TranscriptEntry;
 use tracing::{debug, trace, warn, Instrument};
@@ -150,21 +151,39 @@ impl AgentBody {
     }
 
     /// Takes in what an actor of an agent missed of its channel as what it
-    /// hears (issues 190, 196, 206): of `visible`, what its history does not
-    /// have yet, through `perceive`, and stores its state with it. The one way
-    /// in that does not pass the channel's routing, so the agent's own messages
-    /// are left out here: they are in its history already, unless its state was
-    /// lost, and then they are not what it heard. Called once, before its actor
-    /// runs.
+    /// hears (issues 190, 196, 206): the messages said in the channel from
+    /// the position `from` on - where the part of the channel's history it
+    /// may see begins - and after the last message its history has that the
+    /// channel's has, as they stand, through `perceive`, and stores its state
+    /// with them. Read from the store (issue 379): the agent's history from
+    /// its end backwards until a message of it is found in the channel's,
+    /// then the channel's entries after it. The one way in that does not
+    /// pass the channel's routing, so the agent's own messages are left out
+    /// here: they are in its history already, unless its state was lost, and
+    /// then they are not what it heard. Older messages that a wider view
+    /// grants on joining again would land after its own later answers; they
+    /// are left out, and its history stays in the order things were said.
+    /// Called once, before its actor runs.
     ///
     /// # Errors
-    /// If its state cannot be stored.
-    pub(super) async fn catch_up(&self, visible: Vec<Message>) -> Result<()> {
+    /// If the channel's history cannot be read, or its state not be stored.
+    pub(super) async fn catch_up(&self, from: u64) -> Result<()> {
         let mut state = self.state.lock().await;
         let own = self.id();
+        let mut after = from;
+        for message in state.history.all_entries().rev().filter_map(|node| node.entry.said()) {
+            if let Some(at) = self.runtime.channel_position_of(message.id).await? {
+                after = after.max(at + 1);
+                break;
+            }
+        }
+        let entries = self.runtime.channel_entries(after).await?;
         // As it would have heard them (`Message::is_heard`, issue 258): the
         // steps of a plan and tool messages are kept in the channel, not heard.
-        let missed: Vec<Message> = state.history.missing_from(visible).into_iter().filter(|m| m.sender_id != own && m.is_heard()).collect();
+        let missed: Vec<Message> = fold(&entries).into_iter()
+            .map(|(_, message)| message)
+            .filter(|m| m.sender_id != own && m.is_heard())
+            .collect();
         if missed.is_empty() {
             return Ok(());
         }

@@ -70,3 +70,6 @@ limit.
   message.
 - **2026-10-16** — Done: both histories are returned in pages and the web UI loads older ones on
   request; REST-SERVER.md and WEB-UI.md say so. Merged into `main`.
+- **2026-10-16** — [379](379-history-stored-as-it-stands.md) kept the chain position (`seq`) as the
+  address of a page: with the derived items addressed by it, a page costs the page, and the item
+  number `n` decided on above was not built. The REST API is as this issue left it.

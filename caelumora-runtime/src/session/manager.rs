@@ -615,6 +615,7 @@ mod tests {
     use std::sync::Arc;
     use caelumora_model::value::name::ScopedName;
     use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::store::StoreBackend;
     use crate::session::{SessionError, SessionManager};
     use crate::session::testing::*;
     use caelumora_model::event::EntityChange;
@@ -981,7 +982,7 @@ mod tests {
         use caelumora_model::store::StateStore;
         let entities = Arc::new(MemoryStore::new());
         let states = Arc::new(MemoryStore::new());
-        let runtime = TestRuntime { store: Arc::clone(&entities), state_store: Some(Arc::<MemoryStore>::clone(&states)), ..Default::default() }.build();
+        let runtime = TestRuntime { store: Arc::clone(&entities), state_store: Some(StoreBackend::from(Arc::<MemoryStore>::clone(&states))), ..Default::default() }.build();
         let manager = SessionManager::new(runtime);
         let ctx = SecurityContext::default();
         let session = make_session("two-stores", ActorId::None);

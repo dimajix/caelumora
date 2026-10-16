@@ -145,9 +145,11 @@ async fn an_external_agent_that_joins_keeps_what_it_may_see_and_on_joining_again
             .history.messages().into_iter().map(|m| m.content.unwrap()).collect::<Vec<_>>()
     };
 
-    actor.catch_up(vec![two.clone()]).await.unwrap();
+    channel.record_said(vec![one, two]).await;
+    actor.catch_up(1).await.unwrap();
     assert_eq!(kept().await, ["two"], "what it may see");
-    actor.catch_up(vec![one, two, own, three]).await.unwrap();
+    channel.record_said(vec![own, three]).await;
+    actor.catch_up(0).await.unwrap();
     assert_eq!(kept().await, ["two", "three"], "what it missed, and nothing older nor its own");
 }
 
@@ -214,10 +216,10 @@ fn task(id: &str) -> TaskId {
 }
 
 /// What the remote agent was given in the call `answer` came of: the
-/// context recorded with it in the `state` of `agent` (issue 205).
-fn given_for(state: &AgentChannelState, agent: AgentId, answer: &Message) -> Vec<String> {
-    let seen = AgentContextView::of_state(ActorId::Agent(agent), state.clone());
-    seen.context_of(answer.id).expect("recorded with the answer").items.into_iter()
+/// context recorded with it in the state of `agent` in `channel` (issue 205).
+async fn given_for(channel: &ChannelLoop, agent: AgentId, answer: &Message) -> Vec<String> {
+    let seen = channel.agent_context(agent).await;
+    seen.context_of(answer.id).await.expect("recorded with the answer").items.into_iter()
         .filter_map(|item| match item {
             ContextItem::Conversation { message } => message.content,
             ContextItem::Prompt { .. } => None,
@@ -273,8 +275,8 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
     assert_eq!(given, vec!["hello", "How are you?"], "what the remote agent was given, as received");
     assert!(state.transcript.messages().is_empty(), "all of it sent: nothing to give next");
     // The context of each answer is what was given in its call (issue 205).
-    assert_eq!(given_for(&state, agent, &first[0]), ["@alice: hello"], "as it was given, marked");
-    assert_eq!(given_for(&state, agent, &second[0]), ["@alice: How are you?"], "not what it was given before");
+    assert_eq!(given_for(&channel, agent, &first[0]).await, ["@alice: hello"], "as it was given, marked");
+    assert_eq!(given_for(&channel, agent, &second[0]).await, ["@alice: How are you?"], "not what it was given before");
     running.abort();
 }
 
@@ -309,7 +311,7 @@ async fn an_external_agent_tells_its_remote_agent_of_a_message_it_was_given_that
     assert_eq!(sent[1].1.said, vec![said("@alice: [changed an earlier message \"hello\"; it now reads:] hello, corrected"), said("@alice: And?")], "told before what was said since");
     assert_eq!(sent[2].1.said, vec![said("@alice: [took back an earlier message \"And?\"; it no longer stands.]"), said("@alice: Well?")]);
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert_eq!(given_for(&state, agent, &second[0]), ["@alice: [changed an earlier message \"hello\"; it now reads:] hello, corrected", "@alice: And?"], "what its answer was given, word for word");
+    assert_eq!(given_for(&channel, agent, &second[0]).await, ["@alice: [changed an earlier message \"hello\"; it now reads:] hello, corrected", "@alice: And?"], "what its answer was given, word for word");
     assert!(state.history.messages().iter().all(|m| m.notice_of.is_none()), "a notice is never in the history");
     running.abort();
 }
@@ -523,9 +525,8 @@ async fn an_external_agent_is_given_its_prompt_parts_first_and_again_only_when_t
     assert_eq!(sent[1].1.prompts, ["[Heard]\n3"], "again only what changed");
 
     // What it was given is the context of its answer (issue 205).
-    let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    let seen = AgentContextView::of_state(ActorId::Agent(agent), state);
-    let items = seen.context_of(first[0].id).expect("recorded with the answer").items;
+    let seen = channel.agent_context(agent).await;
+    let items = seen.context_of(first[0].id).await.expect("recorded with the answer").items;
     let given_prompts: Vec<_> = items.iter().filter_map(|item| match item {
         ContextItem::Prompt { text, .. } => Some(text.as_str()),
         _ => None,
@@ -698,8 +699,8 @@ async fn an_external_agent_that_asked_back_is_answered_within_the_same_task() {
     assert_eq!(remote.sent.lock().unwrap()[1].1.answers, Some(task("t-1")), "the reply continues the task that asked");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "and it ended");
-    assert_eq!(given_for(&state, agent, &question[0]), ["hello"], "the question back came of the first call");
-    assert_eq!(given_for(&state, agent, &answer[0]), ["Bonn"], "the answer of the call that answered it (issue 205)");
+    assert_eq!(given_for(&channel, agent, &question[0]).await, ["hello"], "the question back came of the first call");
+    assert_eq!(given_for(&channel, agent, &answer[0]).await, ["Bonn"], "the answer of the call that answered it (issue 205)");
     running.abort();
 }
 
@@ -732,8 +733,7 @@ async fn a_task_taken_up_again_is_done_as_the_call_that_took_it_up_though_the_re
     assert!(request.1.is_empty(), "the answer broke off: the task goes on");
     assert_eq!(said.1[0].content.as_deref(), Some("Sunny in Bonn."));
     assert_eq!(said.0.span_id, request.0.span_id, "in the span of the request that took it up, not the first one");
-    let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert_eq!(given_for(&state, agent, &said.1[0]), ["Bonn"], "with what the call that took it up was given");
+    assert_eq!(given_for(&channel, agent, &said.1[0]).await, ["Bonn"], "with what the call that took it up was given");
     running.abort();
 }
 
@@ -774,7 +774,7 @@ async fn an_open_task_whose_answer_broke_off_is_followed_and_its_end_said_unaske
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "the task ended");
     assert_eq!(state.history.messages().last().and_then(|m| m.content.clone()).as_deref(), Some("Here it is."), "kept as said");
-    assert_eq!(given_for(&state, agent, &said[0]), ["hello"], "with what the call that began the task was given (issue 205)");
+    assert_eq!(given_for(&channel, agent, &said[0]).await, ["hello"], "with what the call that began the task was given (issue 205)");
     running.abort();
 }
 

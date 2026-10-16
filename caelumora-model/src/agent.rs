@@ -6,7 +6,7 @@ use crate::confidentiality::{Classification, Visibility};
 use crate::context::{ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptRef};
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
-use crate::history::{HistoryEntry, History};
+use crate::history::{HistoryEntry, History, WINDOW};
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
 use crate::memory::{Memories, MemoryChain};
@@ -310,8 +310,15 @@ pub struct AgentChannelState {
     pub processing_state: ActorState,
     /// The conversation of the channel as the agent keeps it - all that was
     /// offered to it (issue 196) - each of its own messages with what it was
-    /// produced from (issue 06).
+    /// produced from (issue 06). From `window_from` on, as a store loads it:
+    /// not part of the state's document, but a chain a store keeps apart
+    /// (issue 379), written with the state and read on its own
+    /// (`HistoryStore`).
+    #[serde(skip)]
     pub history: History,
+    /// The position from which on the agent keeps its history in memory; a
+    /// store loads the history from there.
+    pub window_from: u64,
     /// What the agent's model is given of the conversation: its own
     /// messages in full, internal steps included, and what others said
     /// (issue 50). Of an external agent, what the remote agent was given,
@@ -349,6 +356,21 @@ pub struct AgentChannelState {
 }
 
 impl AgentChannelState {
+    /// Lets go of what its history holds before its window once it is
+    /// stored, and records where the window begins, to be stored with the
+    /// next put (issue 379): from its last compaction on (issue 16) - the
+    /// branch its transcript gives the model began there, and what it reads
+    /// of its history in memory, a turn and what a branch produced, lies
+    /// after it -, and at least the last `WINDOW` entries. An agent that
+    /// never compacted its context keeps all of it, as its transcript does.
+    pub fn keep_window(&mut self) {
+        let compacted = self.history.all_entries().rev().find(|node| matches!(node.entry, HistoryEntry::Compacted { .. })).map(|node| node.seq);
+        if let Some(compacted) = compacted {
+            self.history.keep_from(compacted.min(self.history.end().saturating_sub(WINDOW)));
+        }
+        self.window_from = self.history.base();
+    }
+
     /// Makes a loaded state fit to run from (issue 75). A state stored
     /// between two steps of a turn is a turn to resume - the server
     /// stopped or crashed in the middle of it - stored with the step that
@@ -813,13 +835,12 @@ pub enum RetryRefused {
 /// 193): a variant per part of the state. A change of the agent's *state* -
 /// what it heard, said, noted - as against an update of the agent itself.
 /// The growing parts record what was added, the small ones are recorded
-/// whole.
+/// whole. The history is a chain a store keeps apart (issue 379).
 // A record is made once per store; its size in memory does not matter.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentChannelStateChange {
-    History(Stored<HistoryEntry>),
     Transcript(Stored<TranscriptEntry>),
     Notes(Stored<LedgerEntry<Notes>>),
     PrivateNotes(Stored<LedgerEntry<Notes>>),
@@ -841,6 +862,8 @@ pub enum AgentChannelStateChange {
     /// What an external agent keeps of the remote side, whole: small, and
     /// bounded by its open tasks.
     Remote(RemoteState),
+    /// From where the history is held, whole.
+    WindowFrom(u64),
 }
 
 /// The tool sets of one offer as they were recorded (`RecordedToolSets`).
@@ -858,7 +881,6 @@ impl Journaled for AgentChannelState {
 
     fn changes(&self) -> Vec<Self::Change> {
         let mut changes: Vec<Self::Change> = Vec::new();
-        changes.extend(self.history.changes().map(AgentChannelStateChange::History));
         changes.extend(self.transcript.changes().map(AgentChannelStateChange::Transcript));
         changes.extend(self.notes.changes().map(AgentChannelStateChange::Notes));
         changes.extend(self.private_notes.changes().map(AgentChannelStateChange::PrivateNotes));
@@ -868,11 +890,12 @@ impl Journaled for AgentChannelState {
         changes.push(AgentChannelStateChange::Turn(self.turn.clone()));
         changes.push(AgentChannelStateChange::Used(self.used));
         changes.push(AgentChannelStateChange::Remote(self.remote.clone()));
+        changes.push(AgentChannelStateChange::WindowFrom(self.window_from));
         changes
     }
 
+    /// The history is marked stored by the store that wrote it.
     fn mark_stored(&mut self) {
-        self.history.mark_stored();
         self.transcript.mark_stored();
         self.notes.mark_stored();
         self.private_notes.mark_stored();
@@ -882,7 +905,6 @@ impl Journaled for AgentChannelState {
 
     fn apply(&mut self, change: Self::Change) -> Result<(), String> {
         match change {
-            AgentChannelStateChange::History(change) => self.history.apply(change)?,
             AgentChannelStateChange::Transcript(change) => self.transcript.apply(change)?,
             AgentChannelStateChange::Notes(change) => self.notes.apply(change)?,
             AgentChannelStateChange::PrivateNotes(change) => self.private_notes.apply(change)?,
@@ -892,6 +914,7 @@ impl Journaled for AgentChannelState {
             AgentChannelStateChange::Turn(turn) => self.turn = turn,
             AgentChannelStateChange::Used(used) => self.used = used,
             AgentChannelStateChange::Remote(remote) => self.remote = remote,
+            AgentChannelStateChange::WindowFrom(from) => self.window_from = from,
         }
         Ok(())
     }
@@ -1365,6 +1388,27 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_agent_keeps_its_history_from_its_last_compaction_and_at_least_the_last_entries() {
+        use crate::message::tests::{id, make_message};
+        let mut state = AgentChannelState::default();
+        state.history.extend((1..=300).map(|n| make_message(id(n))).collect());
+        state.history.mark_stored();
+        state.keep_window();
+        assert_eq!(state.history.base(), 0, "never compacted: all of it, as its transcript");
+        let compacted = |state: &mut AgentChannelState| state.history.record_compaction(HistoryEntry::Compacted { turn_id: TurnId::new(), actor: ActorId::default(), from: digest::prompt("before"), to: digest::prompt("after"), at: Utc::now() });
+        compacted(&mut state);
+        state.history.extend((301..=310).map(|n| make_message(id(n))).collect());
+        state.history.mark_stored();
+        state.keep_window();
+        assert_eq!((state.history.base(), state.window_from), (111, 111), "at least the last entries, the compaction among them");
+        compacted(&mut state);
+        state.history.extend((311..=600).map(|n| make_message(id(n))).collect());
+        state.history.mark_stored();
+        state.keep_window();
+        assert_eq!(state.history.base(), 311, "from the last compaction on, more than the last entries");
+    }
+
+    #[test]
     fn what_changed_in_an_agents_channel_state_replays_onto_what_was_stored() {
         use crate::message::tests::{id, make_message};
         let mut state = AgentChannelState::default();
@@ -1384,7 +1428,6 @@ pub(crate) mod tests {
 
         let changes = state.changes();
         let parts: Vec<&str> = changes.iter().map(|c| match c {
-            AgentChannelStateChange::History(_) => "history",
             AgentChannelStateChange::Transcript(_) => "transcript",
             AgentChannelStateChange::Notes(_) => "notes",
             AgentChannelStateChange::PrivateNotes(_) => "private_notes",
@@ -1394,14 +1437,15 @@ pub(crate) mod tests {
             AgentChannelStateChange::Turn(_) => "turn",
             AgentChannelStateChange::Used(_) => "used",
             AgentChannelStateChange::Remote(_) => "remote",
+            AgentChannelStateChange::WindowFrom(_) => "window_from",
         }).collect();
-        assert_eq!(parts, ["history", "transcript", "notes", "private_notes", "prompt", "offered_tools", "processing_state", "turn", "used", "remote"], "what was added, then the small parts whole");
+        assert_eq!(parts, ["transcript", "notes", "private_notes", "prompt", "offered_tools", "processing_state", "turn", "used", "remote", "window_from"], "what was added, then the small parts whole; the history is the store's to write");
         replayed(&state, &mut copy);
         assert_eq!(copy.used, state.used, "the running total with them");
 
         state.mark_stored();
         state.turn = None;
-        assert_eq!(state.changes().len(), 4, "between turns a step is the small parts alone");
+        assert_eq!(state.changes().len(), 5, "between turns a step is the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.turn.is_none());
     }
@@ -1475,12 +1519,12 @@ pub(crate) mod tests {
         let remote = &mut state.remote;
         remote.conversation = Some(ConversationId("c-1".to_string()));
         remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), work: None });
-        assert_eq!(state.changes().len(), 2 + 4, "the history's, the transcript's, the small parts");
+        assert_eq!(state.changes().len(), 1 + 5, "the transcript's and the small parts; the history is the store's");
         replayed(&state, &mut copy);
 
         state.mark_stored();
         state.remote.open_tasks.clear();
-        assert_eq!(state.changes().len(), 4, "the small parts alone");
+        assert_eq!(state.changes().len(), 5, "the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.remote.open_tasks.is_empty());
     }

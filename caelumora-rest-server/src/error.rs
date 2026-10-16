@@ -207,6 +207,7 @@ impl From<AgentContextError> for ApiError {
         match error {
             AgentContextError::NotRecorded { .. } => Self::not_found("context_not_recorded", detail),
             AgentContextError::Unavailable { .. } => Self::not_found("context_unavailable", detail),
+            failed @ AgentContextError::Failed { .. } => Self::internal("context_failed", "reading what an agent saw", &Error::new(failed)),
         }
     }
 }

@@ -212,7 +212,7 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
         let ActorEvent::CompleteMessageGenerated(said) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
         // Shown as it is let in, recorded right after.
         tokio::time::timeout(Duration::from_secs(5), async {
-            while !side.visible_history(ActorId::User(world.alice)).await.messages().iter().any(|m| m.id == said.id) {
+            while !side.visible_messages(ActorId::User(world.alice)).await.iter().any(|m| m.id == said.id) {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("in the history");

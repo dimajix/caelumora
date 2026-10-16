@@ -18,6 +18,7 @@ use caelumora_model::user_provider::UserManager;
 use crate::backend::Backends;
 use caelumora_model::session::Session;
 use caelumora_model::store::{ComponentStore, EntityStores, StateStore, StoreBackend};
+use caelumora_model::store::history::HistoryStore;
 use caelumora_model::type_map::TypeKey;
 use crate::seed::{self, SeedSection};
 use std::collections::BTreeMap;
@@ -38,6 +39,8 @@ pub struct RuntimeManager {
     /// beside the `AccessPolicy`, never by it.
     pub(super) confidentiality: Arc<dyn ConfidentialityPolicy>,
     pub(super) state_store: Arc<dyn StateStore>,
+    /// The read side of the histories the states hold (issue 379).
+    pub(super) history_store: Arc<dyn HistoryStore>,
     pub(super) entity_stores: EntityStores,
     /// The preconfigured components, which the seed puts in.
     pub(super) component_store: Arc<dyn ComponentStore>,
@@ -88,7 +91,7 @@ impl RuntimeManager {
     /// `RuntimeBuilder::build`.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        state_store: Arc<dyn StateStore>,
+        states: impl Into<StoreBackend>,
         backend: impl Into<StoreBackend>,
         secret_manager: Arc<SecretManager>,
         access_policy: Arc<dyn AccessPolicy>,
@@ -97,7 +100,7 @@ impl RuntimeManager {
         component_registry: ComponentRegistry,
         plugins: &[&dyn Plugin],
     ) -> Result<Self> {
-        let mut builder = RuntimeBuilder::new(state_store, backend, secret_manager, access_policy, confidentiality, config, component_registry, Backends::with_plugins(plugins))?;
+        let mut builder = RuntimeBuilder::new(states, backend, secret_manager, access_policy, confidentiality, config, component_registry, Backends::with_plugins(plugins))?;
         for plugin in plugins {
             builder.plugin(*plugin)?;
         }
@@ -145,6 +148,9 @@ impl RuntimeManager {
     pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> { &self.confidentiality }
 
     pub fn state_store(&self) -> &Arc<dyn StateStore> { &self.state_store }
+
+    /// The read side of the histories the states hold (issue 379).
+    pub fn history_store(&self) -> &Arc<dyn HistoryStore> { &self.history_store }
 
     /// The stores of the entities, one per kind (issue 323).
     pub fn entity_stores(&self) -> &EntityStores { &self.entity_stores }

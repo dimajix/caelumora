@@ -772,13 +772,13 @@ async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_
 
     // The turn's messages stay where they were said, followed by its end
     // (issue 258); what the model saw for them can still be told.
-    let seen = AgentContextView::of_state(ActorId::Agent(agent), stored.clone());
+    let seen = channel.agent_context(agent).await;
     let turns = given_up_turns(&stored);
     assert_eq!(turns.len(), 1);
     assert!(matches!(turns[0].1, GivenUpReason::Failed { .. }));
     let roles: Vec<_> = turns[0].2.iter().map(|m| m.role).collect();
     assert_eq!(roles, [MessageRole::Assistant, MessageRole::Tool], "the call and its result");
-    assert!(seen.context_of(calculate.id).is_ok(), "the call's context is resolved");
+    assert!(seen.context_of(calculate.id).await.is_ok(), "the call's context is resolved");
     assert!(stored.transcript.messages().iter().any(|m| m.id == calculate.id), "in the transcript");
     assert!(stored.history.messages().iter().any(|m| m.id == calculate.id), "and in the agent's history");
 
@@ -1390,7 +1390,8 @@ async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_th
     let tool = Message { id: MessageId::new(), sender_id: other, role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result], ..Message::new(Classification::CHANNEL_DEFAULT) };
     let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
 
-    actor.catch_up(vec![answer.clone(), tool.clone()]).await.unwrap();
+    channel.record_said(vec![answer.clone(), tool.clone()]).await;
+    actor.catch_up(0).await.unwrap();
 
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     let heard = state.transcript.messages();
@@ -1412,7 +1413,8 @@ async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
     };
     let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
 
-    actor.catch_up(vec![said("hello"), said("the secret is 42")]).await.unwrap();
+    channel.record_said(vec![said("hello"), said("the secret is 42")]).await;
+    actor.catch_up(0).await.unwrap();
 
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
     let state = channel.stored_agent_channel_state(agent).await.unwrap();

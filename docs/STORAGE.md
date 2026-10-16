@@ -2,10 +2,11 @@
 
 Caelumora keeps two kinds of data apart: long-lived **entities** - definitions and identities - in
 the entity stores, one `EntityStore<T>` per kind, and frequently changing runtime **state** in the
-`StateStore`; preconfigured components have a `ComponentStore` of their own. This document
-describes the stores, who writes what, and the controllers that hold the entities of a running
-session live. How access to stored entities is checked is in [SECURITY.md](SECURITY.md); which
-stores are used is configured in [CONFIGURATION.md](CONFIGURATION.md).
+`StateStore`, with the histories the states hold read through the `HistoryStore`; preconfigured
+components have a `ComponentStore` of their own. This document describes the stores, who writes
+what, and the controllers that hold the entities of a running session live. How access to stored
+entities is checked is in [SECURITY.md](SECURITY.md); which stores are used is configured in
+[CONFIGURATION.md](CONFIGURATION.md).
 
 ## The entity store
 
@@ -188,7 +189,7 @@ it is.
 
 The `StateStore` (in `caelumora-model`) stores the runtime state of channels and agents:
 
-*   **`ChannelState`**: the channel's history.
+*   **`ChannelState`**: the channel's history (see [Histories](#histories)).
 *   **`AgentChannelState`**: an agent in one channel, of either kind - processing state, history,
     transcript, notes, prompt texts, and the turn under way (see [AGENT-TURN.md](AGENT-TURN.md)).
     An external agent keeps instead what it keeps of the remote side: the remote conversation and
@@ -226,6 +227,48 @@ journal emptied. So the bytes written over a state's life are a small multiple o
 instead of growing with its square. What a crash leaves is read as it is: a torn last line is
 dropped, and a journal that survived its snapshot replays onto it without effect.
 
+### Histories
+
+A channel's history and an agent's history in a channel (`History`, a chain of `HistoryEntry`) grow
+with the channel, without a bound, and are read almost only in pages. They are kept apart from their
+state's document (issue 379):
+
+*   **The chain is the truth.** It is only appended to, and a change of a message is an entry after
+    it. A store keeps the chain whole, under the history's `HistoryKey` - a channel's, or an agent's
+    in a channel -, written by the put of the state that holds it: first the entries added since it
+    was last stored, then the document.
+*   **The items are derived.** Beside the chain the store keeps the items as they stand - every
+    message with every change since folded into it by the one rule of folding
+    (`HistoryEntry::fold_into`), the marks of turns, steps, commands, activities and compactions -
+    each at the position of the entry that added it (`StandingItems`). They are derived entry by
+    entry as the chain grows and rebuilt from it at any time (`HistoryStore::rebuild`); the store
+    suite checks that they equal the chain folded.
+*   **The read side is the `HistoryStore`**, handed out by the `StoreBackend` beside the
+    `StateStore`: a page of items before a position, of those a filter keeps, with the digest it was
+    read from; the item that said a message, with what it was produced from; the chain from a
+    position. Whatever reads a history without holding it reads there, whether the channel runs or
+    not: the views - a page over REST, a message, where a participant's view begins, what an agent
+    saw -, the checks before a change, an actor catching up when it joins, the tool that reads
+    another channel. A page is addressed by the position (`seq`) of its oldest item; a client passes
+    it back without computing with it.
+*   **The holder keeps a window.** The channel loop and an agent's actor hold their history from
+    `window_from` on, a small part of the document: the channel the last `WINDOW` (200) entries, an
+    agent from its last compaction on and at least the last 200. After every put they let go of what
+    lies before (`keep_window`, `Chain::keep_from`), and a state is loaded from there. What a holder
+    reads in memory reads from the end and stays within its window (see
+    [AGENT-TURN.md](AGENT-TURN.md#what-is-held-in-memory)); a change of a message before the window
+    is recorded, and the store applies it.
+*   **The `JsonFileStore`** keeps a history in `<key>.history/` beside its state's snapshot: the
+    chain in segments of 256 positions (`chain-<from>.json`), the items likewise
+    (`items-<from>.json`), and `head.json` - the head, where the chain ends and up to where the
+    items are derived -, written after the chain and again after the items. Entries a crash left
+    past the head's end are not there; items behind the chain are derived anew when the history is
+    next loaded or appended to. A message is found by scanning the items backwards, and a fitting
+    rewrites every items segment: slow where a database has indexes. In Postgres
+    ([04](../issues/04-postgres-state-store.md)) a history is the tables `history_entries(key, seq,
+    parent, digest, entry)` and `history_items(key, seq, message_id, item)` beside the documents,
+    written in one transaction with them.
+
 ### The agent state has one owner per process
 
 An agent may run in several channels and sessions at once, each with its own actor. Every one of
@@ -259,10 +302,10 @@ for the other's.
 
 ### Deleting state
 
-Deleting a session or a channel keeps its state, hidden with it; purging removes the state too. The
-entity store and the state store may be different stores, so a purge deletes the state explicitly -
-a channel's with that of every agent in it, an agent's own with its state in every channel. It is
-never a side effect of the `EntityStore`.
+Deleting a session or a channel keeps its state, hidden with it; purging removes the state too, with
+its histories. The entity store and the state store may be different stores, so a purge deletes the
+state explicitly - a channel's with that of every agent in it, an agent's own with its state in
+every channel. It is never a side effect of the `EntityStore`.
 
 ## Controllers
 

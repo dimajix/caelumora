@@ -87,3 +87,7 @@ order along the way.
   range reads and reduces nothing held in memory. Its plan is recorded on 223 and waits for 379,
   whose store contract decides how a history entry and the deliveries it causes are stored
   together. Step 2 of the order is 218 alone.
+- **2026-10-16** — 379 done: a page of a history is read from the store in the cost of the page,
+  and the channel loop and an agent's actor hold a window of their history. Its store contract - the
+  put of a state writes the chain and the document, the `HistoryStore` is the read side - is what
+  380 builds the `TranscriptStore` alike to.

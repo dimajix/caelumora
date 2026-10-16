@@ -262,6 +262,28 @@ message as it stands; a reclassification is not told, since it knows no labels. 
 nothing in its wording asks the remote agent to disregard something, which a filter of the remote
 side may take for an injection. An agent run here tells nobody.
 
+### What is held in memory
+
+An agent's actor holds its history only from its window on: from its last compaction on, and at
+least the last 200 entries; the store holds all of it (see [STORAGE.md](STORAGE.md#histories), issue
+379). What the agent reads of its history in memory reads from the end, and lies in the window as
+long as a turn and a branch of its transcript do:
+
+*   what a turn said (`History::said_in_turn`), read from where the turn began - after the
+    compaction before it, or within the last 200 entries;
+*   what a branch of its transcript produced (`History::produced_on_branch`, for the tokens used),
+    read back to the compaction that began the branch;
+*   what the messages a compaction replaces were produced after reading;
+*   the messages a request to answer again takes back, its last turn's;
+*   its last message, whether its last turn was given up, and the digest an entry pushed again is
+    found by.
+
+A change of a message before the window is recorded all the same, and the store applies it to the
+message. What reads further back - what the agent saw when it produced an old message, a page of its
+history - reads the store, through the views. Catching up when it joins looks for the last message
+it holds that the channel's history has, within the window; finding none, it takes in what it may
+see from where its view begins.
+
 ### What is recorded
 
 Every message a turn says is recorded in the history with the `ContextRef` it was produced from: the
@@ -511,12 +533,14 @@ of them produced it.
 *   `MemberView::context()` asks `ReadAgentContext`. Under the ownership policy only the agent's
     owner may, since a context holds more than the conversation: the system prompt, internal steps,
     tool results. It reads the agent's stored state, the same for both kinds of agent.
-*   `context_of(message_id)` resolves what the message was produced from. For an external agent it
-    is what its remote agent was given in the call that produced it, without prompt parts or tools,
-    which are the remote agent's own.
-*   `history()` is all that was offered to the agent and what it said, as the messages stand now -
-    which may differ from what the channel shows, for an agent that joined late or was asleep. It
-    tells which messages reached the transcript: not those the perceive processors dropped.
+*   `context_of(message_id)` resolves what the message was produced from, as the message's item in
+    the agent's history records it, read from the store. For an external agent it is what its
+    remote agent was given in the call that produced it, without prompt parts or tools, which are
+    the remote agent's own.
+*   `history_page(before, limit)` is a page of all that was offered to the agent and what it said,
+    as the messages stand now - which may differ from what the channel shows, for an agent that
+    joined late or was asleep -, read from the store. `in_transcript` tells which messages reached
+    the transcript: not those the perceive processors dropped.
 
 REST exposes it as `GET …/actors/{aid}/messages/{mid}/context` (see
 [REST-SERVER.md](REST-SERVER.md)), the web UI in its context panel (see

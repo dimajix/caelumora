@@ -1,4 +1,5 @@
 pub(crate) mod access;
+pub mod history;
 pub mod json;
 pub mod memberships;
 pub mod memory;
@@ -29,6 +30,7 @@ use chrono::{DateTime, Utc};
 use crate::workspace::Workspace;
 use crate::group::Group;
 use crate::intern::intern;
+use crate::store::history::HistoryStore;
 use crate::store::json::JsonFileStore;
 use crate::store::memory::MemoryStore;
 use crate::store::query::{Field, NoField, Page, Query};
@@ -420,6 +422,15 @@ impl StoreBackend {
 
     /// The store of the states.
     pub fn state_store(&self) -> Arc<dyn StateStore> {
+        match &self.store {
+            Backend::Memory(store) => Arc::<MemoryStore>::clone(store),
+            Backend::Json(store) => Arc::<JsonFileStore>::clone(store),
+        }
+    }
+
+    /// The read side of the histories the states hold (issue 379), kept
+    /// where the states are.
+    pub fn history_store(&self) -> Arc<dyn HistoryStore> {
         match &self.store {
             Backend::Memory(store) => Arc::<MemoryStore>::clone(store),
             Backend::Json(store) => Arc::<JsonFileStore>::clone(store),

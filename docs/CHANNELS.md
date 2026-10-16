@@ -386,13 +386,15 @@ scope goes with that session or channel (see [Sessions](#sessions)).
 
 Whoever adds a participant decides how much of the history so far they may see: all (the default),
 none, the last n messages or the last n days (`HistoryAccess`). It is fixed at once as the message
-the participant's history starts at, so "the last three days" does not move day by day. The channel
-and its views apply it wherever the history is read for a participant: over REST, in the snapshot,
-for `read_history` (see [MEMORY.md](MEMORY.md)) and for what a joining actor is given.
+the participant's history starts at, so "the last three days" does not move day by day; to fix it,
+the history is read back from its end only as far as the grant reaches. The channel and its views
+apply it wherever the history is read for a participant - from the store, as the position where
+their view begins (issue 379): over REST, in the snapshot, for `read_history` (see
+[MEMORY.md](MEMORY.md)) and for what a joining actor is given.
 
-*   A **joining actor** is given the visible part and takes it in as what it hears: an agent keeps
-    all of it in its history and what passes its perceive processors in its transcript. Users and
-    approvers keep nothing.
+*   A **joining actor** is given the position where its view begins and takes in what was said
+    from there as what it hears, read from the store: an agent keeps all of it in its history and
+    what passes its perceive processors in its transcript. Users and approvers keep nothing.
 *   A **rejoining actor** keeps only what was said after the last message it has. The history is
     only ever appended to, so older messages that a wider grant makes visible would land after the
     agent's own later answers; the agent reaches them through `read_history`, and what it keeps
