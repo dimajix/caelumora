@@ -147,7 +147,8 @@ notes and histories, and the agent's own private notes of the other channels.
     was released, are the same error, so channels cannot be probed.
 *   **Tools.** `read_notes(channel?)` in `notes` reads the notes of another channel, or without a
     channel of every channel readable as a whole. `read_history(channel, last?, query?)` in
-    `channel_history` reads another channel's conversation.
+    `channel_history` reads another channel's conversation: the last messages, or those containing
+    a text, read from the store back from the end only as far as they lie (issue 379).
 
 ## Recording what was read
 

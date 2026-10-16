@@ -264,8 +264,8 @@ before `?before=`, the last ones without it, as `{"items": […], "earlier": …
 position in the history of the oldest item of the page, what the page before it is read with
 (`?before=`), and `null` once there is none; a client passes it on and computes nothing with it. A
 page holds no item from before where the reader's view of the history begins, and its messages stand
-as they do now, with every change made since. Paging saves what is sent and shown; the server still
-reads the history whole while it holds it in memory (issue 379).
+as they do now, with every change made since. A page is read from the store in the cost of the page
+(issue 379, see [STORAGE.md](STORAGE.md#histories)).
 
 ### Who follows a channel
 

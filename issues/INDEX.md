@@ -87,7 +87,7 @@ published before anyone else can take it.
 | [295](295-access-as-a-query-condition.md) | rejected | A list asks the policy entity by entity, so a database store cannot push access into its query and a full page may be followed by an empty one. |
 | [318](318-restore-returns-nothing.md) | done | A store's restore returns nothing, so every caller reads or rebuilds what it restored - under a permission the restore did not need - and the managers answer a restore differently. |
 | [376](376-histories-held-whole-in-memory.md) | done | A channel's history and an agent's history and transcript are held in memory and loaded whole, though they grow with the channel and almost only their recent end is used. |
-| [379](379-history-stored-as-it-stands.md) | in progress | A page of a channel's or an agent's history costs folding the whole chain, however far back and however small the page is, though the history is read almost only in pages. |
+| [379](379-history-stored-as-it-stands.md) | done | A page of a channel's or an agent's history costs folding the whole chain, however far back and however small the page is, though the history is read almost only in pages. |
 | [380](380-transcript-window.md) | open | An agent's transcript holds every branch it ever had in memory, though only the active branch is given to the model and an old branch is read for the context of an old message alone. |
 | [383](383-prompt-texts-and-tool-sets-kept-per-turn.md) | open | Every prompt text and tool set an agent was ever given in a channel is held in memory for the record, though only the current turn's and an old context's are read. |
 

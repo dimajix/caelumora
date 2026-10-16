@@ -71,3 +71,8 @@ from the history ([379](379-history-stored-as-it-stands.md)): no pages, no deriv
 
 - **2026-10-16** — Opened from the discussion on 376, as part of the epic
   [378](378-resource-management-epic.md): the transcript's half of 376.
+- **2026-10-16** — [379](379-history-stored-as-it-stands.md) is done, and sets what this issue
+  builds alike: the chain is kept apart from the state's document and written by its put
+  (`#[serde(skip)]`, `window_from`), the read side is a trait of its own beside the `StateStore`,
+  handed out by the `StoreBackend`, and the holder lets go of what lies before its window after a
+  put (`Chain::keep_from`). The transcript's window is its active branch.

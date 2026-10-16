@@ -281,7 +281,9 @@ Two stores, configured separately:
     the backend opens for any kind - and, beside it, the **`ComponentStore`** the preconfigured
     components that personalities and templates refer to;
 *   the **`StateStore`** keeps what changes while a session runs - the channel's history, each
-    agent's state in each channel, and each agent's own state.
+    agent's state in each channel, and each agent's own state -, and the **`HistoryStore`** reads
+    the histories the states hold, in pages, without loading a state (see
+    [STORAGE.md](STORAGE.md#histories)).
 
 Every document and every kind of state has exactly **one writer**, which changes it under a lock,
 stores it and only then announces the change. For an entity, that is its manager or its controller,

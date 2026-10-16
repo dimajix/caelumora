@@ -1,6 +1,6 @@
 # 379 — A history is read by folding its whole chain
 
-**Status:** in progress
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -212,3 +212,13 @@ transaction and the indexes, with tables `history_entries(key, seq, parent, dige
   alone - the item number `n` decided on with 218 is not built -, and the holder keeps a window of
   200 entries, an agent from its last compaction on. Implementation to begin on the maintainer's
   word.
+- **2026-10-16** — Done, in the steps of the plan. Deviations from it: the `HistoryStore` answers
+  `said(key, id)` - the item that said a message, with what it was produced from - where the plan
+  had `message`, so that what an agent saw is read from the store too; a page takes a filter
+  (`keep`), so that a page of what was released to a viewer is full, and carries the digest it was
+  read from; the JSON store keeps a history in `<key>.history/` beside the state's snapshot rather
+  than a directory per state. Found on the way: a history held from a position on recorded no
+  change of a message before it, since it checked the change against what it held; it records one
+  now, and the store applies it. The runtime takes the store of the states as a `StoreBackend`, so
+  that the `StateStore` and the `HistoryStore` are the same store. Every stored state is to be
+  deleted.
