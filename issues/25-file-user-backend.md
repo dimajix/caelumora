@@ -155,4 +155,7 @@ unreadable one should deny rather than fall through.
   - Not decided yet, still open here: who owns the `User` record in general (the accept-any provider
     simply uses the store), and the file backend. Nothing uses the `UserManager` yet; that starts
     with [10](10-user-authentication.md).
-
+- **2026-10-16** — The empty crates `caelumora-client-api` and `caelumora-local-client` were
+  removed: of the local paths, only the TUI is left to obtain its identity through the providers.
+  Without it, its user has no roles, and since clearances are checked it reaches no channel above
+  `public` - with `examples/config.yaml` it does not start ("… is not cleared for channel …").

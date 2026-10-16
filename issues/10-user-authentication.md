@@ -158,3 +158,6 @@ without it treats every authenticated user as the same channel participant.
   kept itself logged in without anyone looking at it. Event streams therefore authenticate through
   `require_stream_auth`, which verifies the token but never renews. "Alive while a visible tab
   renews it" stands, and now holds for streams as well.
+- **2026-10-16** — The empty crates `caelumora-client-api` and `caelumora-local-client` were
+  removed. What *Done when* says of the local client lapses with it; the TUI is the one in-process
+  frontend left that fabricates its `SecurityContext`.

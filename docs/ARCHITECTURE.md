@@ -59,8 +59,7 @@ The project is a Rust workspace, with a web UI next to it:
 *   **`caelumora-tui`** - a terminal frontend that runs the runtime in its own process.
 *   **`caelumora-logging`** - the setup of the log the two programs share: it installs the
     `tracing` subscriber from `AppConfig::logging`. The libraries only emit records (issue 330).
-*   **`caelumora-client-api`**, **`caelumora-local-client`**, **`caelumora-rest-client`** - reserved
-    for a client interface and its in-process and REST implementations; empty so far.
+*   **`caelumora-rest-client`** - reserved for a client of the REST interface; empty so far.
 
 ## Plugins
 

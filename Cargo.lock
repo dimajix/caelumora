@@ -423,26 +423,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "caelumora-client-api"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "caelumora-local-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
 name = "caelumora-logging"
 version = "0.1.0"
 dependencies = [
