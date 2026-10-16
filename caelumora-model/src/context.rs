@@ -13,14 +13,15 @@
 //! - The [`ContextResolver`] resolves a reference against the transcript
 //!   and the prompt texts - for the next model call as for a message produced
 //!   earlier. What the model was given and what is told as given therefore
-//!   cannot diverge.
+//!   cannot diverge. It reads the transcript alone: the history is the
+//!   record of what was said and what it was produced from, and is never
+//!   read to build what the model is given (issue 387).
 
 use crate::actor::ActorId;
 use crate::agent::{AgentChannelState, AgentId};
 use crate::chain::Node;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
-use crate::history::History;
 use crate::kept::Kept;
 use crate::message::{estimated_tokens, Message, MessageId, MessageRole};
 use crate::store::{EntityKind, Stored};
@@ -30,7 +31,7 @@ use crate::turn::GivenUpReason;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use uuid::Uuid;
 use crate::channel::{ChannelId, HistoryStart};
 use crate::mention::handle_of;
@@ -409,9 +410,6 @@ pub struct ContextResolver<'a> {
     transcript: TranscriptSource<'a>,
     prompts: &'a Kept<String>,
     offered_tools: &'a Kept<Vec<ToolSet>>,
-    /// What the agent said, each with the context it was produced from:
-    /// which of its messages a call measured (`token_positions`).
-    history: &'a History,
 }
 
 /// What a `ContextResolver` reads the transcript a reference names from
@@ -444,7 +442,7 @@ impl<'a> ContextResolver<'a> {
     /// holds it: what the next call of its model and how full its context
     /// is are resolved against - the head of its active branch.
     pub fn of(state: &'a AgentChannelState) -> Self {
-        Self { transcript: TranscriptSource::Held(&state.transcript), prompts: &state.prompts, offered_tools: &state.offered_tools, history: &state.history }
+        Self { transcript: TranscriptSource::Held(&state.transcript), prompts: &state.prompts, offered_tools: &state.offered_tools }
     }
 
     /// The resolver over what was loaded from the store for an older
@@ -452,9 +450,9 @@ impl<'a> ContextResolver<'a> {
     /// hold, and name texts it no longer holds -: the path `path` of its
     /// transcript (`TranscriptStore::path`, issue 380), the `prompts` and
     /// the `offered_tools` it names (`TranscriptStore::named_by`, issue
-    /// 383); the history of `state`.
-    pub fn on_path(state: &'a AgentChannelState, path: &'a [Node<TranscriptEntry>], prompts: &'a Kept<String>, offered_tools: &'a Kept<Vec<ToolSet>>) -> Self {
-        Self { transcript: TranscriptSource::Path(path), prompts, offered_tools, history: &state.history }
+    /// 383).
+    pub fn on_path(path: &'a [Node<TranscriptEntry>], prompts: &'a Kept<String>, offered_tools: &'a Kept<Vec<ToolSet>>) -> Self {
+        Self { transcript: TranscriptSource::Path(path), prompts, offered_tools }
     }
 
     /// What the model of `agent` is given, or was given, for the message
@@ -483,33 +481,26 @@ impl<'a> ContextResolver<'a> {
     /// many in all; and whether a call of its model measured any of it.
     /// `None` as for `resolve`.
     ///
-    /// Measured before a message of the model of `agent` made on that path,
-    /// as its recorded context shows by naming the entry before it - which a
-    /// copy kept through a compaction does not, nor what replaced older
-    /// messages: its call's `prompt_tokens`, which count everything the call
-    /// was given before it, the system prompt as well. Such a message was
-    /// made on the path's branch, so only what the agent produced since the
-    /// compaction that began the branch is read of the history
-    /// (`History::produced_on_branch`, issue 376). Elsewhere estimated
+    /// Measured before a message of the model of `agent` added where it
+    /// stands - after the compaction that began the path's branch
+    /// (`TranscriptEntry::Compacted`, issue 387), whose copies and summary
+    /// carry the measures of calls made on another branch: its call's
+    /// `prompt_tokens`, which count everything the call was given before it,
+    /// the system prompt as well. Read from the transcript alone: what is
+    /// given to the model is built from it, never from the history.
+    /// Elsewhere estimated
     /// (`ContextItem::estimated_tokens`) from what the model is given of
     /// each entry, as `resolve` gives it, a message's reasoning only where
     /// its rule gives it back: on from each measured position, back from
     /// the first; from nothing if none is.
     pub fn token_positions(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Option<(Vec<u64>, bool)> {
         let (leading, entries) = self.given_path(reference, turn, agent)?;
-        let on_path: HashSet<Digest> = entries.iter().map(|(node, _)| node.digest).collect();
-        // The last said of a message id, as it is read backwards.
-        let mut produced_after: HashMap<MessageId, Option<Digest>> = HashMap::new();
-        for (id, after) in self.history.produced_on_branch(agent, |digest| on_path.contains(digest)) {
-            produced_after.entry(id).or_insert(after);
-        }
         let size = |items: &[ContextItem]| items.iter().map(ContextItem::estimated_tokens).sum::<u64>();
-        let mut previous = None;
-        let measured: Vec<Option<u64>> = entries.iter()
-            .map(|(node, _)| {
-                let made_here = node.entry.message().filter(|m| produced_after.get(&m.id) == Some(&previous)).and_then(|m| m.prompt_tokens);
-                previous = Some(node.digest);
-                made_here
+        let added_from = entries.iter().rposition(|(node, _)| matches!(node.entry, TranscriptEntry::Compacted { .. })).map_or(0, |at| at + 1);
+        let measured: Vec<Option<u64>> = entries.iter().enumerate()
+            .map(|(at, (node, _))| match &node.entry {
+                TranscriptEntry::Message(message) if at >= added_from && message.sender_id == agent => message.prompt_tokens,
+                _ => None,
             })
             .collect();
         let mut positions = vec![size(&leading); entries.len() + 1];
@@ -773,12 +764,19 @@ mod tests {
         let kept_from = state.transcript.entries().find(|n| n.entry.message().is_some_and(|m| m.id == first.id)).map(|n| n.digest);
         let summary = Message { sender_id: agent, prompt_tokens: Some(500), completion_tokens: Some(8), ..text("summary") };
         state.compact(agent, vec![(summary, None)], kept_from).expect("compacted");
-        assert_eq!(measure(&state), (vec![0, 2, 103, 113], false), "neither the summary's call nor the copy measure the new branch");
+        assert_eq!(measure(&state), (vec![0, 2, 103, 113, 113], false), "neither the summary's call nor the copy measure the new branch, and where the compaction's part ends gives nothing");
 
         state.said(call(60, "done"));
         let (positions, measured) = measure(&state);
         assert!(measured, "a call on the new branch measures it");
-        assert_eq!(positions[3..], [60, 161], "before it as it measured, then it as the model is given it");
+        assert_eq!(positions[4..], [60, 161], "before it as it measured, then it as the model is given it");
+
+        let mut others = AgentChannelState::default();
+        others.transcript.push(text("hello"));
+        begin(&mut others, ModelProfile::default());
+        others.transcript.push(Message { sender_id: ActorId::Agent(AgentId::new()), ..call(70, "theirs") });
+        others.turn.as_mut().unwrap().work.context.transcript = others.transcript.digest();
+        assert!(!measure(&others).1, "a call of another agent's model does not measure this one's context");
     }
 
     /// A turn of `state` begun on its transcript as it stands.

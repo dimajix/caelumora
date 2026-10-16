@@ -200,3 +200,8 @@ the history would hear everything. Delivering stays; what changes is where the q
   the entry that caused their deliveries. The channel holds only a window of its history, so
   `ChannelState::envelope_of` reads an entry before the window from the `HistoryStore`
   (`entries`).
+- **2026-10-16** — From [387](387-agent-history-window-without-compaction.md): an agent's actor
+  finds where to take in what it missed when it joins (`catch_up`) by the last message of its
+  history the channel has, though the history is informational and never to decide what reaches
+  its transcript. The position up to which an actor has heard its channel, which this issue needs,
+  would answer that as well; `catch_up` is to read it once it exists.

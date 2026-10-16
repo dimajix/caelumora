@@ -243,7 +243,7 @@ mod tests {
         let started = turn.advance_plan(1);
 
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Step(1));
-        assert!(turn.messages().is_empty(), "the instruction is no message of the turn");
+        assert!(turn.agent_channel_state().transcript.messages().iter().all(|m| m.turn_id != Some(turn.turn_id())), "the instruction is no message of the turn");
         let (role, text) = given(&turn).pop().expect("the instruction is given to the model");
         assert_eq!(role, MessageRole::User, "a system message in the middle, given as a user message");
         assert!(text.contains("second"));
@@ -381,7 +381,8 @@ mod tests {
         turn.compact(vec![(message("summary"), None)], at_first).expect("compacted");
         assert_eq!(given(&turn).len(), 6, "nothing of the plan was replaced, so it is not named again: {:?}", given(&turn));
 
-        let kept_from = turn.agent_channel_state().transcript.digest();
+        // From its last message: the head is where the compaction's part ends.
+        let kept_from = turn.agent_channel_state().transcript.entries().rev().find(|node| node.entry.message().is_some()).map(|node| node.digest);
         turn.compact(vec![(message("summary again"), None)], kept_from).expect("compacted");
         let texts: Vec<String> = given(&turn).into_iter().map(|(_, text)| text).collect();
         assert_eq!(texts.len(), 3, "the summary, the plan named again, what was kept: {texts:?}");

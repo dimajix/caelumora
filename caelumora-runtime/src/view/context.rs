@@ -110,7 +110,7 @@ impl AgentContextView {
             None => Vec::new(),
         };
         let (prompts, offered_tools) = self.transcripts.named_by(self.agent, self.channel, reference).await.map_err(|source| self.failed(message, source))?;
-        ContextResolver::on_path(&self.state, &path, &prompts, &offered_tools).resolve(reference, turn, self.actor()).ok_or_else(unavailable)
+        ContextResolver::on_path(&path, &prompts, &offered_tools).resolve(reference, turn, self.actor()).ok_or_else(unavailable)
     }
 
     /// The classification of the message `message` the agent produced, as

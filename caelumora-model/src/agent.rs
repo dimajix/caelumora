@@ -370,11 +370,12 @@ impl AgentChannelState {
     /// windows once they are stored, and records where the windows begin,
     /// to be stored with the next put (issues 379, 380).
     ///
-    /// The history from its last compaction on (issue 16) - the branch its
-    /// transcript gives the model began there, and what it reads of its
-    /// history in memory, a turn and what a branch produced, lies after it
-    /// -, and at least the last `WINDOW` entries; an agent that never
-    /// compacted its context keeps all of it. The transcript from the root
+    /// The history from the first message of the turn under way on - what
+    /// the turn said is its answer (`History::said_in_turn`) - and at least
+    /// the last `WINDOW` entries, whatever the agent compacted: the history
+    /// is the record of what was said, and nothing that builds what the
+    /// model is given reads it (issue 387); what reads it in memory reads
+    /// the turn under way and its end. The transcript from the root
     /// of its active branch on: every reader in memory reads that branch
     /// alone, and what lies before is read from the store
     /// (`TranscriptStore`); right after it began anew, nothing. Of the
@@ -382,10 +383,10 @@ impl AgentChannelState {
     /// (issue 383): its calls read them, and between turns nothing does;
     /// what an older message's context names is read from the store.
     pub fn keep_window(&mut self) {
-        let compacted = self.history.all_entries().rev().find(|node| matches!(node.entry, HistoryEntry::Compacted { .. })).map(|node| node.seq);
-        if let Some(compacted) = compacted {
-            self.history.keep_from(compacted.min(self.history.end().saturating_sub(WINDOW)));
-        }
+        let last = self.history.end().saturating_sub(WINDOW);
+        let turn = self.turn.as_ref().map(|turn| turn.work.turn_id);
+        let began = turn.and_then(|turn| self.history.all_entries().find(|node| node.entry.said().is_some_and(|m| m.turn_id == Some(turn))).map(|node| node.seq));
+        self.history.keep_from(began.map_or(last, |began| began.min(last)));
         self.history_from = self.history.base();
         let root = self.transcript.entries().next().map_or(self.transcript.end(), |node| node.seq);
         self.transcript.keep_from(root);
@@ -507,16 +508,19 @@ impl AgentChannelState {
     /// for the older messages: a summary, the skills given again, each
     /// with the knowledge it is, if it is one - and after it the entries
     /// of the active path from `keep_from` on - `None`: none - as they
-    /// stand. The turn's context moves to the new head, and the history
-    /// records the compaction (`HistoryEntry::Compacted`), then the
-    /// replacement as messages the agent was given. Returns the heads of
-    /// the transcript before and after.
+    /// stand, and after them where the compaction's part of the branch ends
+    /// (`TranscriptEntry::Compacted`, issue 387). The turn's context moves
+    /// to the new head, and the history records the compaction
+    /// (`HistoryEntry::Compacted`), then the replacement as messages the
+    /// agent was given. Returns the heads of the transcript before and
+    /// after.
     ///
     /// Nothing is removed: the old branch stays, and every reference
     /// recorded before resolves to what it did. Of the entries kept, a
     /// message is copied as it stands - a change of it is in it, one taken
-    /// back is left out - and a turn's end as it is; every copy gets a
-    /// digest of its own, since what comes before it is another. The
+    /// back is left out - and a turn's end as it is, an earlier
+    /// compaction's end not at all; every copy gets a digest of its own,
+    /// since what comes before it is another. The
     /// replacement is seen by the turn; whose it is (`Message::turn_id`)
     /// is the caller's to say (issue 284). The
     /// prompt parts the turn placed after an entry are carried over (issue
@@ -582,6 +586,7 @@ impl AgentChannelState {
             }
             moved.insert(old, self.transcript.digest());
         }
+        self.transcript.push_entry(TranscriptEntry::Compacted { at: Utc::now() });
         let to = self.transcript.digest()?;
         self.history.record_compaction(HistoryEntry::Compacted { turn_id, actor, from, to, at: Utc::now() });
         for message in given {
@@ -631,7 +636,9 @@ impl AgentChannelState {
                     }
                     taken_back.push(step.id);
                 }
-                (TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }, _) => return Err(RetryRefused::NotLast),
+                // Anything else since, a compaction too: the message may be
+                // in a summary already (issue 387).
+                (TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } | TranscriptEntry::Compacted { .. }, _) => return Err(RetryRefused::NotLast),
             }
         }
         Ok(taken_back)
@@ -1235,10 +1242,11 @@ pub(crate) mod tests {
             TranscriptEntry::Message(m) => format!("said {}", m.content.clone().unwrap_or_default()),
             TranscriptEntry::Given { message, .. } => format!("given {}", message.content.clone().unwrap_or_default()),
             TranscriptEntry::TurnFinished { turn_id, .. } => format!("finished {}", *turn_id == first),
+            TranscriptEntry::Compacted { .. } => "compacted".to_string(),
             other => format!("{other:?}"),
         }).collect();
-        assert_eq!(entries, ["said [Summary] they greeted", "given [Skill: steps]", "said hi", "finished true", "said again!"],
-            "the replacement, then what was kept as it stands - the change in it, the message taken back left out");
+        assert_eq!(entries, ["said [Summary] they greeted", "given [Skill: steps]", "said hi", "finished true", "said again!", "compacted"],
+            "the replacement, then what was kept as it stands - the change in it, the message taken back left out -, then where the compaction's part ends (issue 387)");
         let turn_under_way = &state.turn.as_ref().unwrap().work;
         assert_eq!(turn_under_way.context.transcript, Some(to), "what the turn says next is produced from the new branch");
         assert_eq!(turn_under_way.context.knowledge, [knowledge], "the skill given again is knowledge of the turn");
@@ -1252,6 +1260,12 @@ pub(crate) mod tests {
         assert_eq!(followed, [summary.id, skill.id], "then what replaced the older messages, as given");
         let usage = state.usage(agent).expect("calls were made");
         assert_eq!((usage.calls, usage.prompt_tokens), (2, 150), "the answer kept counts once");
+
+        let again = state.transcript.entries().find(|n| n.entry.message().is_some_and(|m| m.content.as_deref() == Some("again!"))).map(|n| n.digest);
+        state.compact(agent, Vec::new(), again).expect("compacted again");
+        let ends = state.transcript.entries().filter(|n| matches!(n.entry, TranscriptEntry::Compacted { .. })).count();
+        assert_eq!(ends, 1, "an earlier compaction's end is not kept: the copies before it are the new one's");
+        assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::Compacted { .. })));
     }
 
     #[test]
@@ -1399,24 +1413,32 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_agent_keeps_its_history_from_its_last_compaction_and_at_least_the_last_entries() {
+    fn an_agent_keeps_its_history_from_its_turn_under_way_and_at_least_the_last_entries() {
         use crate::message::tests::{id, make_message};
         let mut state = AgentChannelState::default();
         state.history.extend((1..=300).map(|n| make_message(id(n))).collect());
         state.history.mark_stored();
         state.keep_window();
-        assert_eq!(state.history.base(), 0, "never compacted: all of it, as its transcript");
-        let compacted = |state: &mut AgentChannelState| state.history.record_compaction(HistoryEntry::Compacted { turn_id: TurnId::new(), actor: ActorId::default(), from: digest::prompt("before"), to: digest::prompt("after"), at: Utc::now() });
-        compacted(&mut state);
-        state.history.extend((301..=310).map(|n| make_message(id(n))).collect());
+        assert_eq!((state.history.base(), state.history_from), (100, 100), "never compacted: the last entries alone (issue 387)");
+        state.history.record_compaction(HistoryEntry::Compacted { turn_id: TurnId::new(), actor: ActorId::default(), from: digest::prompt("before"), to: digest::prompt("after"), at: Utc::now() });
+        state.history.extend((301..=600).map(|n| make_message(id(n))).collect());
         state.history.mark_stored();
         state.keep_window();
-        assert_eq!((state.history.base(), state.history_from), (111, 111), "at least the last entries, the compaction among them");
-        compacted(&mut state);
-        state.history.extend((311..=600).map(|n| make_message(id(n))).collect());
+        assert_eq!(state.history.base(), 401, "a compaction does not keep what came after it");
+
+        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, Vec::new(), ModelProfile::default());
+        let turn = state.turn.as_ref().unwrap().work.turn_id;
+        let first = Message { turn_id: Some(turn), ..make_message(id(601)) };
+        state.history.push(first.clone(), Some(ContextRef::default()));
+        state.history.extend((602..=900).map(|n| make_message(id(n))).collect());
         state.history.mark_stored();
         state.keep_window();
-        assert_eq!(state.history.base(), 311, "from the last compaction on, more than the last entries");
+        assert_eq!(state.history.base(), 601, "from the first message of the turn under way, more than the last entries");
+        assert_eq!(state.history.said_in_turn(ActorId::default(), turn).iter().map(|m| m.id).collect::<Vec<_>>(), [first.id], "what the turn said");
+
+        state.turn = None;
+        state.keep_window();
+        assert_eq!(state.history.base(), 701, "between turns, the last entries");
     }
 
     #[test]
@@ -1618,6 +1640,9 @@ pub(crate) mod tests {
         let mut given_up = state.clone();
         given_up.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: turn, reason: GivenUpReason::Left, at: Utc::now() });
         assert_eq!(given_up.retried(first.id, agent), Err(RetryRefused::NotLast), "a turn given up");
+        let mut compacted = state.clone();
+        compacted.transcript.push_entry(TranscriptEntry::Compacted { at: Utc::now() });
+        assert_eq!(compacted.retried(first.id, agent), Err(RetryRefused::NotLast), "a compaction since, which may have summarised it (issue 387)");
 
         // What its turn did after it is taken back with it - not a step of
         // a later turn, nor a call that ran.

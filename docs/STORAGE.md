@@ -254,8 +254,10 @@ state's document (issue 379):
     another channel. A page is addressed by the position (`seq`) of its oldest item; a client passes
     it back without computing with it.
 *   **The holder keeps a window.** The channel loop and an agent's actor hold their history from
-    `history_from` on, a small part of the document: the channel the last `WINDOW` (200) entries, an
-    agent from its last compaction on and at least the last 200. After every put they let go of what
+    `history_from` on, a small part of the document: the last `WINDOW` (200) entries, and an agent
+    besides everything from the first message of its turn under way on, whatever it compacted - an
+    agent's history is informational, nothing that builds its model's input reads it (issue 387).
+    After every put they let go of what
     lies before (`keep_window`, `Chain::keep_from`), and a state is loaded from there. What a holder
     reads in memory reads from the end and stays within its window (see
     [AGENT-TURN.md](AGENT-TURN.md#what-is-held-in-memory)); a change of a message before the window

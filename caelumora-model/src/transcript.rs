@@ -1,6 +1,7 @@
 //! An agent's transcript (issue 50): the chain of messages its context is
 //! built from, their modifications and revocations (issue 234) and how each
-//! of its turns ended (issues 145, 258), as what happened (issue 197).
+//! of its turns ended (issues 145, 258) and where a compaction's part of a
+//! branch ends (issue 387), as what happened (issue 197).
 
 use crate::chain::{Chain, Node};
 use crate::confidentiality::Classification;
@@ -48,6 +49,12 @@ pub enum TranscriptEntry {
     /// 258): its messages, before it, stay where they are - what it said
     /// is not unsaid.
     TurnGivenUp { turn_id: TurnId, reason: GivenUpReason, at: DateTime<Utc> },
+    /// The context was compacted at `at` (issues 16, 387): what comes
+    /// before it on its branch - the replacement and the entries kept - was
+    /// written by the compaction, what comes after was added where it
+    /// stands. A message before it carries the measure of a call made on
+    /// another branch (`Message::prompt_tokens`). Gives the model nothing.
+    Compacted { at: DateTime<Utc> },
 }
 
 /// An agent's transcript (issue 50): the sequence of messages its context is
@@ -215,7 +222,7 @@ impl TranscriptEntry {
         match self {
             TranscriptEntry::Message(message) | TranscriptEntry::Given { message, .. } => Some(message),
             TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. }
-            | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } => None,
+            | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } | TranscriptEntry::Compacted { .. } => None,
         }
     }
 
@@ -223,7 +230,8 @@ impl TranscriptEntry {
     pub fn ended_turn(&self) -> Option<TurnId> {
         match self {
             TranscriptEntry::TurnFinished { turn_id, .. } | TranscriptEntry::TurnGivenUp { turn_id, .. } => Some(*turn_id),
-            TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. } => None,
+            TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. }
+            | TranscriptEntry::Compacted { .. } => None,
         }
     }
 
@@ -234,7 +242,7 @@ impl TranscriptEntry {
         match self {
             TranscriptEntry::Message(message) | TranscriptEntry::Given { message, .. } | TranscriptEntry::Modified { message } => Some(&message.classification),
             TranscriptEntry::Reclassified { classification, .. } => Some(classification),
-            TranscriptEntry::Revoked { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } => None,
+            TranscriptEntry::Revoked { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } | TranscriptEntry::Compacted { .. } => None,
         }
     }
 
@@ -243,7 +251,8 @@ impl TranscriptEntry {
         match self {
             TranscriptEntry::Modified { message } => Some(message.id),
             TranscriptEntry::Revoked { message, .. } | TranscriptEntry::Reclassified { message, .. } => Some(*message),
-            TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } => None,
+            TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }
+            | TranscriptEntry::Compacted { .. } => None,
         }
     }
 
@@ -259,7 +268,8 @@ impl TranscriptEntry {
             TranscriptEntry::Reclassified { classification, .. } => {
                 message.reclassify(classification);
             }
-            TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } => {}
+            TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }
+            | TranscriptEntry::Compacted { .. } => {}
         }
     }
 }
