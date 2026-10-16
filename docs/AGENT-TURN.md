@@ -219,6 +219,9 @@ A chain is a tree with a head:
 *   A digest recorded earlier finds its entry on any branch, so a reference into a branch no longer
     active still resolves.
 *   An entry appended with the digest of one already there is that entry: the head moves to it.
+*   Every entry has a *position*, the order it was added in across every branch, beside its
+    digest: the digest names what the chain held up to it, the position where it is. A range of
+    the chain - the entries after a position, a page before one - is read by positions.
 *   An external agent's transcript starts anew with every call, since the remote agent keeps what
     it was given: every call before is a branch from the root.
 

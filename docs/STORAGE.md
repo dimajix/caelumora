@@ -206,7 +206,8 @@ against an update of the entity.
 *   A growing part records what was added: a chain tells the nodes added since it was last stored
     and its head, the same form the whole chain is stored in (see
     [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)); what is kept once by digest tells the
-    digests added.
+    digests added. Each node carries its position, and a node is merged only at the position it
+    has, or at the one after the last if it is new.
 *   A small part - the processing state, the turn under way, an external agent's open tasks - is
     recorded whole: it is changed in place and bounded by one turn or one exchange.
 
