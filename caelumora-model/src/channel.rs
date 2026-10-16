@@ -1,7 +1,6 @@
 use crate::actor::ActorId;
 use crate::agent::AgentId;
 use crate::approval::{ApprovalRule, ApprovalStrategy, Approver, ApproverId};
-use crate::chain::Stored;
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
 use crate::group::GroupId;
@@ -12,7 +11,7 @@ use crate::scope::{Scope, Scoped};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::{Session, SessionId};
 use crate::store::query::Field;
-use crate::store::{self, EntityKind, Journaled, Updatable};
+use crate::store::{EntityKind, Journaled, Stored, Updatable};
 use crate::user::UserId;
 use crate::value::language::Language;
 use crate::value::name::{Name, ScopedName};
@@ -211,8 +210,7 @@ pub struct HistoryLimit {
     pub start: HistoryStart,
 }
 
-// `store::Stored`, beside the `chain::Stored` of the channel's history.
-impl store::Stored for Channel {
+impl Stored for Channel {
     const KIND: EntityKind = EntityKind::new("channel");
     type Id = ChannelId;
     type Within = Session;
@@ -350,10 +348,19 @@ pub struct FormerParticipant {
     pub left: Removal,
 }
 
+/// What a channel holds while it runs: its history, and from where it holds
+/// it. Its document - what `Journaled` writes - is the small part alone; the
+/// history is a chain a store keeps apart (issue 379), written with the state
+/// and read on its own (`HistoryStore`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelState {
     pub channel_id: ChannelId,
+    /// The channel's history, from `window_from` on: as a store loads it.
+    #[serde(skip)]
     pub history: History,
+    /// The position from which on the channel keeps its history in memory;
+    /// a store loads the history from there.
+    pub window_from: u64,
 }
 
 impl ChannelState {
@@ -361,33 +368,36 @@ impl ChannelState {
         Self {
             channel_id,
             history: History::default(),
+            window_from: 0,
         }
     }
 }
 
 /// A change to a [`ChannelState`] since it was last stored (issue 193). The
-/// channel's id is what the state is stored under, not a part that changes.
+/// channel's id is what the state is stored under, not a part that changes;
+/// its history is a chain a store keeps apart (issue 379).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelStateChange {
-    History(Stored<HistoryEntry>),
+    /// From where the history is held, whole.
+    WindowFrom(u64),
 }
 
 impl Journaled for ChannelState {
     type Change = ChannelStateChange;
 
     fn changes(&self) -> Vec<Self::Change> {
-        self.history.changes().map(ChannelStateChange::History).into_iter().collect()
+        vec![ChannelStateChange::WindowFrom(self.window_from)]
     }
 
-    fn mark_stored(&mut self) {
-        self.history.mark_stored();
-    }
+    /// The history is marked stored by the store that wrote it.
+    fn mark_stored(&mut self) {}
 
     fn apply(&mut self, change: Self::Change) -> Result<(), String> {
         match change {
-            ChannelStateChange::History(change) => self.history.apply(change),
+            ChannelStateChange::WindowFrom(from) => self.window_from = from,
         }
+        Ok(())
     }
 }
 
@@ -419,7 +429,6 @@ impl Participant {
 mod tests {
     use super::*;
     use crate::agent::tests::{replayed, stored};
-    use crate::confidentiality::Confidentiality;
     use crate::message::tests::{id, make_message};
 
     /// Five messages, one a day, the last one `now`.
@@ -499,16 +508,16 @@ mod tests {
     }
 
     #[test]
-    fn what_changed_in_a_channels_state_replays_onto_what_was_stored() {
+    fn a_channels_state_journals_its_small_part_and_leaves_its_history_to_the_store() {
         let mut state = ChannelState::new(ChannelId::new());
         state.history.extend(vec![make_message(id(1))]);
         let mut copy = stored(&mut state);
-        assert!(state.changes().is_empty());
+        assert!(copy.history.is_empty(), "the history is not in the document");
+        assert!(state.history.changes().is_some(), "and is marked stored by the store that writes it");
 
-        state.history.extend(vec![make_message(id(2))]);
-        state.history.reclassify(id(1), Classification::general(Confidentiality::Public));
-        assert_eq!(state.changes().len(), 1, "what the history records, as one");
+        state.window_from = 1;
+        assert_eq!(state.changes().len(), 1, "the small part, whole");
         replayed(&state, &mut copy);
-        assert_eq!(copy.channel_id, state.channel_id);
+        assert_eq!((copy.channel_id, copy.window_from), (state.channel_id, 1));
     }
 }

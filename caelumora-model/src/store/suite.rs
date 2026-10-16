@@ -17,6 +17,8 @@ use crate::scope::{Scoped, Scope};
 use crate::security::{AclEntry, Secured, SecurityAttributes, SecurityContext};
 use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityKind, EntityStore, EntityStores, Journaled, NoEntity, StateStore, StoreError, Stored};
+use crate::store::history::{HistoryKey, HistoryStore};
+use crate::history::{History, HistoryEntry};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
 use crate::removal::{Deletable, Removal};
 use crate::user::{User, UserId, UserProfile};
@@ -656,6 +658,105 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
     store.get_channel_state(other_channel).await.expect("other channels keep theirs");
     store.delete_channel_state(channel).await.expect("nothing left to delete is no error");
 }
+/// A history's item as a test compares it: its message's id and how it
+/// stands, or what else it is.
+fn standing(item: &HistoryEntry) -> String {
+    match item.said() {
+        Some(message) => format!("{} {:?} {:?} {:?}", message.id, message.content, message.revoked.is_some(), message.classification),
+        None => format!("{item:?}"),
+    }
+}
+
+/// Every page of `key` from `from` on, read backwards from the end and put
+/// together, oldest first.
+async fn all_pages(histories: &dyn HistoryStore, key: HistoryKey, from: u64, limit: usize) -> Vec<String> {
+    let mut pages = Vec::new();
+    let mut before = None;
+    loop {
+        let page = histories.page(key, from, before, limit).await.expect("a page");
+        assert!(page.items.len() <= limit, "no more than asked for");
+        pages.push(page.items.iter().map(standing).collect::<Vec<_>>());
+        match page.earlier {
+            Some(earlier) => before = Some(earlier),
+            None => break,
+        }
+    }
+    pages.into_iter().rev().flatten().collect()
+}
+
+/// The histories a store keeps with the states (issue 379): written by the
+/// puts, read as they stand, in pages, by message, by position; the items
+/// derived from the chain, after changes, after a fitting, after a rebuild;
+/// loaded from where a state holds its history; deleted with the states.
+/// More entries than a segment of the JSON store holds.
+pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &dyn HistoryStore) {
+    use crate::message::tests::{id, make_message};
+    use crate::confidentiality::Confidentiality;
+    let (channel, agent) = (ChannelId::new(), AgentId::new());
+    let key = HistoryKey::Channel(channel);
+    assert!(histories.page(key, 0, None, 10).await.unwrap().items.is_empty(), "no history yet");
+    assert!(histories.message(key, id(1)).await.unwrap().is_none());
+
+    let mut state = ChannelState::new(channel);
+    for n in 1..=300 {
+        state.history.push(make_message(id(n)), None);
+    }
+    states.put_channel_state(channel, &mut state).await.expect("put");
+    assert!(state.history.changes().is_none(), "the history is marked stored");
+    for n in 301..=600 {
+        state.history.push(make_message(id(n)), None);
+    }
+    state.history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
+    assert!(state.history.revoke(id(300), Utc::now()));
+    state.history.fit_into(&Classification::general(Confidentiality::Public));
+    assert!(state.history.reclassify(id(599), Classification::general(Confidentiality::Public)));
+    states.put_channel_state(channel, &mut state).await.expect("put what changed");
+    let expected: Vec<String> = state.history.items().iter().map(standing).collect();
+
+    assert_eq!(all_pages(histories, key, 0, 70).await, expected, "the items as they stand, page by page");
+    let last = histories.page(key, 0, None, 3).await.unwrap();
+    assert_eq!((last.items.iter().map(standing).collect::<Vec<_>>(), last.earlier), (expected[597..].to_vec(), Some(597)));
+    let from_middle = all_pages(histories, key, 250, 100).await;
+    assert_eq!(from_middle, expected[250..].to_vec(), "none before where a view begins");
+    let (at, first) = histories.message(key, id(1)).await.unwrap().expect("said");
+    assert_eq!((at, first.content.as_deref()), (0, Some("changed")), "as it stands, where it was said");
+    assert!(histories.message(key, id(300)).await.unwrap().is_some_and(|(_, m)| m.revoked.is_some()));
+    let entries = histories.entries(key, 598).await.unwrap();
+    assert_eq!(entries.iter().map(|node| node.seq).collect::<Vec<_>>(), state.history.from(598).map(|node| node.seq).collect::<Vec<_>>(), "the chain itself from a position on");
+    assert!(histories.entries(key, 10_000).await.unwrap().is_empty());
+
+    histories.rebuild(key).await.expect("rebuild");
+    assert_eq!(all_pages(histories, key, 0, 200).await, expected, "the items derived anew are the same");
+
+    let loaded = states.get_channel_state(channel).await.expect("get");
+    assert_eq!((loaded.history.digest(), loaded.history.end(), loaded.history.base()), (state.history.digest(), state.history.end(), 0), "the history comes back whole");
+    state.window_from = 590;
+    states.put_channel_state(channel, &mut state).await.expect("put where the window begins");
+    let loaded = states.get_channel_state(channel).await.expect("get");
+    assert_eq!((loaded.history.base(), loaded.history.end(), loaded.history.digest()), (590, state.history.end(), state.history.digest()), "from where the state holds it");
+    let mut going_on = loaded;
+    going_on.history.push(make_message(id(601)), None);
+    states.put_channel_state(channel, &mut going_on).await.expect("appended to what was loaded in part");
+    assert_eq!(histories.message(key, id(601)).await.unwrap().map(|(at, _)| at), Some(state.history.end()));
+
+    let mut agents = AgentChannelState::default();
+    agents.history.push(make_message(id(1)), None);
+    states.put_agent_channel_state(agent, channel, &mut agents).await.expect("put");
+    let agents_key = HistoryKey::Agent(agent, channel);
+    assert_eq!(all_pages(histories, agents_key, 0, 10).await.len(), 1, "an agent's history apart from its channel's");
+    assert_eq!(states.get_agent_channel_state(agent, channel).await.unwrap().history.digest(), agents.history.digest());
+
+    states.delete_channel_state(channel).await.expect("delete");
+    assert!(histories.page(key, 0, None, 10).await.unwrap().items.is_empty(), "the channel's history is gone with its state");
+    assert!(histories.page(agents_key, 0, None, 10).await.unwrap().items.is_empty(), "and its agents'");
+    states.put_agent_channel_state(agent, channel, &mut AgentChannelState { history: History::default(), ..agents.clone() }).await.expect("put");
+    let mut again = AgentChannelState::default();
+    again.history.push(make_message(id(2)), None);
+    states.put_agent_channel_state(agent, ChannelId::new(), &mut again).await.expect("put");
+    states.delete_agent_state(agent).await.expect("delete");
+    assert!(histories.page(agents_key, 0, None, 10).await.unwrap().items.is_empty(), "an agent's histories go with it");
+}
+
 /// `value` marked deleted, as only deleting may.
 fn marked<T: Deletable>(mut value: T) -> T {
     value.set_deleted(Some(Removal::now(ActorId::System)));

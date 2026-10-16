@@ -5,6 +5,7 @@ use crate::confidentiality::ConfidentialityPolicy;
 use crate::removal::{Deletable, Removal};
 use crate::security::{ActionType, AccessPolicy};
 use crate::store::access::{name_free, Access};
+use crate::store::history::HistoryKey;
 use crate::store::query::{Field, Filter, NoField, Page, Query};
 use crate::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, Journaled, Policies, StateStore, StoreError, StoreResult, Stored};
 use crate::type_map::TypeMap;
@@ -22,6 +23,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, MutexGuard};
 use tracing::{debug, info, warn};
 
+mod histories;
+
 /// A journal is folded into its snapshot once it is at least as large as
 /// the snapshot, and at least this large (issue 193): small states are not
 /// written whole at every other put. `journal_floor` of the configuration.
@@ -35,7 +38,8 @@ pub const DEFAULT_JOURNAL_FLOOR: u64 = 64 * 1024;
 /// once the journal is at least as large as the snapshot and
 /// `journal_floor`. What a crash leaves is read as it is: a torn last line
 /// is dropped, and a journal that survived its snapshot replays onto it
-/// without effect, since replaying is idempotent.
+/// without effect, since replaying is idempotent. A state's history is kept
+/// apart, in segments beside the snapshot (`histories`, issue 379).
 #[derive(Debug)]
 pub struct JsonFileStore {
     root: PathBuf,
@@ -566,10 +570,15 @@ impl StateStore for JsonFileStore {
     async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState> {
         let path = self.agent_channel_state_path(agent_id, channel_id);
         debug!("Reading agent channel state from {}", path.display());
-        Ok(load_state(&path).await?.unwrap_or_default())
+        let mut state: AgentChannelState = load_state(&path).await?.unwrap_or_default();
+        state.history = self.load_history(HistoryKey::Agent(agent_id, channel_id), state.window_from).await?;
+        Ok(state)
     }
 
+    /// The history first, then the document, which says from where the
+    /// history is loaded.
     async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
+        self.append_history(HistoryKey::Agent(agent_id, channel_id), &mut state.history).await?;
         self.store_state(&self.agent_channel_state_path(agent_id, channel_id), state).await
     }
 
@@ -586,13 +595,17 @@ impl StateStore for JsonFileStore {
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
         let path = self.channel_state_path(channel_id);
         debug!("Reading channel state from {}", path.display());
-        load_state(&path).await?.ok_or(StoreError::NotFound {
+        let mut state: ChannelState = load_state(&path).await?.ok_or(StoreError::NotFound {
             entity: "channel_state",
             id: channel_id.to_string(),
-        })
+        })?;
+        state.history = self.load_history(HistoryKey::Channel(channel_id), state.window_from).await?;
+        Ok(state)
     }
 
+    /// The history first, then the document, as for an agent's.
     async fn put_channel_state(&self, channel_id: ChannelId, state: &mut ChannelState) -> StoreResult<()> {
+        self.append_history(HistoryKey::Channel(channel_id), &mut state.history).await?;
         self.store_state(&self.channel_state_path(channel_id), state).await
     }
 
@@ -601,6 +614,7 @@ impl StateStore for JsonFileStore {
         let path = self.channel_state_path(channel_id);
         delete_if_exists(&path).await?;
         delete_if_exists(&journal_path(&path)).await?;
+        delete_dir_if_exists(&self.history_dir(HistoryKey::Channel(channel_id))).await?;
         delete_dir_if_exists(&self.agent_channel_state_dir(channel_id)).await?;
         Ok(())
     }
@@ -618,6 +632,7 @@ impl StateStore for JsonFileStore {
             let path = channel.path().join(format!("{agent_id}.json"));
             delete_if_exists(&path).await?;
             delete_if_exists(&journal_path(&path)).await?;
+            delete_dir_if_exists(&path.with_extension("history")).await?;
         }
         Ok(())
     }
@@ -663,6 +678,13 @@ mod tests {
     async fn behaves_as_a_state_store() {
         let dir = tempdir().unwrap();
         suite::state_store_behaves(&store(dir.path())).await;
+    }
+
+    #[tokio::test]
+    async fn keeps_the_histories_of_the_states() {
+        let dir = tempdir().unwrap();
+        let store = store(dir.path());
+        suite::history_store_behaves(&store, &store).await;
     }
 
     #[tokio::test]
@@ -1015,6 +1037,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn items_behind_their_chain_and_entries_past_its_head_are_what_a_crash_leaves() {
+        use crate::store::history::HistoryStore;
+        let dir = tempdir().unwrap();
+        let store = store(dir.path());
+        let channel = ChannelId::new();
+        let key = HistoryKey::Channel(channel);
+        let mut state = ChannelState::new(channel);
+        state.history.extend(vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
+        store.put_channel_state(channel, &mut state).await.unwrap();
+        let history = store.history_dir(key);
+        let read = |file: &str| serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(history.join(file)).unwrap()).unwrap();
+        let write = |file: &str, value: &serde_json::Value| std::fs::write(history.join(file), value.to_string()).unwrap();
+
+        // As if the crash came after the chain and its head, before the items.
+        let mut items = read("items-0.json");
+        items.as_array_mut().unwrap().truncate(1);
+        write("items-0.json", &items);
+        let mut head = read("head.json");
+        head["items_end"] = serde_json::json!(1);
+        write("head.json", &head);
+        let loaded = store.get_channel_state(channel).await.unwrap();
+        assert_eq!(loaded.history.end(), 3);
+        assert_eq!(store.page(key, 0, None, 10).await.unwrap().items.len(), 3, "the items are derived anew from the chain");
+        assert_eq!(read("head.json")["items_end"], serde_json::json!(3));
+
+        // As if the crash came after the chain, before its head.
+        let mut chain = read("chain-0.json");
+        let mut past = chain[2].clone();
+        past["seq"] = serde_json::json!(3);
+        chain.as_array_mut().unwrap().push(past);
+        write("chain-0.json", &chain);
+        let mut loaded = store.get_channel_state(channel).await.unwrap();
+        assert_eq!(loaded.history.end(), 3, "what lies past the head is not there");
+        loaded.history.push(make_message(id(4)), None);
+        store.put_channel_state(channel, &mut loaded).await.unwrap();
+        assert_eq!(store.message(key, id(4)).await.unwrap().map(|(at, _)| at), Some(3), "and the next entry takes its place");
+        assert_eq!(store.get_channel_state(channel).await.unwrap().history.digest(), loaded.history.digest());
+    }
+
+    #[tokio::test]
     async fn deleting_a_channels_state_removes_its_journal_too() {
         let dir = tempdir().unwrap();
         let store = store(dir.path());
@@ -1025,7 +1087,9 @@ mod tests {
         store.put_channel_state(channel, &mut state).await.unwrap();
         let journal = journal_path(&store.channel_state_path(channel));
         assert!(journal.exists());
+        assert!(store.history_dir(HistoryKey::Channel(channel)).exists());
         store.delete_channel_state(channel).await.unwrap();
         assert!(!journal.exists() && !store.channel_state_path(channel).exists());
+        assert!(!store.history_dir(HistoryKey::Channel(channel)).exists(), "and its history");
     }
 }

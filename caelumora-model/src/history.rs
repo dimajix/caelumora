@@ -403,7 +403,7 @@ impl HistoryEntry {
     /// said, the start of a plan's step, a command carried out, an activity
     /// ended, a compaction, a turn's end - rather than a change of what was
     /// said before.
-    fn is_item(&self) -> bool {
+    pub(crate) fn is_item(&self) -> bool {
         match self {
             HistoryEntry::Said { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => true,
@@ -446,7 +446,7 @@ impl HistoryEntry {
     }
 
     /// The message it modifies, takes back or reclassifies, if it does.
-    fn changed(&self) -> Option<MessageId> {
+    pub(crate) fn changed(&self) -> Option<MessageId> {
         match self {
             HistoryEntry::Modified { message } => Some(message.id),
             HistoryEntry::Revoked { message, .. } | HistoryEntry::Reclassified { message, .. } => Some(*message),
