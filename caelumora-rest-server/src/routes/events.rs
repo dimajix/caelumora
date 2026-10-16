@@ -23,12 +23,13 @@ pub async fn global_events(
     // the same policy as reading it through the store.
     let receiver = state.runtime_manager.event_bus().subscribe_as(user.security_context()).into_receiver();
     let reader = user.clone();
+    let shutdown = state.shutdown.clone();
     let snapshot = move || {
         let (state, user) = (Arc::clone(&state), reader.clone());
         async move { global_snapshot(&state, &user).await }
     };
     // Open until the token that authenticated it expires (issue 33).
-    Sse::new(stream(&user, options.snapshot, receiver, "the global stream".to_string(), snapshot).await)
+    Sse::new(stream(&user, &shutdown, options.snapshot, receiver, "the global stream".to_string(), snapshot).await)
 }
 
 /// Every session the user may read, with the channels they may read, as the

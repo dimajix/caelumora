@@ -146,5 +146,7 @@ A command nobody ends is ended by the runtime:
 
 The list of commands lives in memory, so what a restart leaves running is named, not closed:
 `open_terminal_docker` stops at start what an earlier run left; a command of an earlier run in an
-`open_terminal_shared` instance ends only at `max_run_secs`; one of the `local` shell is not bounded
-at all. A command that leaves its process group escapes the time bound of an Open Terminal instance.
+`open_terminal_shared` instance ends only at `max_run_secs`; one of the `local` shell is ended as
+the process shuts down in order (`TerminalProvider::shutdown`, issue 297), and is not bounded at
+all if it does not - after SIGKILL, a crash or the OOM killer. A command that leaves its process
+group escapes the time bound of an Open Terminal instance.

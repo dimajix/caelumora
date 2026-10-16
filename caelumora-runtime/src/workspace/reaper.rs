@@ -22,6 +22,7 @@ use caelumora_model::session::{Channel, ChannelId, Session};
 use caelumora_model::store::{EntityStore, EntityStores, Stored, StoreResultExt};
 use caelumora_model::user::User;
 use caelumora_model::workspace::Workspace;
+use futures::future::join_all;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, OnceLock, Weak};
@@ -97,6 +98,13 @@ impl CommandReaper {
             let ending = provider.commands().into_iter().filter(|(_, scope, _)| scopes.contains(scope)).collect();
             end_commands(provider.as_ref(), ending, "its session stopped").await;
         }
+    }
+
+    /// Ends, as the process ends, what the storages ran that does not
+    /// outlive it (issue 297): each storage decides what that is
+    /// (`TerminalProvider::shutdown`).
+    pub(crate) async fn shutdown(&self) {
+        join_all(self.storages.values().map(|provider| provider.shutdown())).await;
     }
 
     /// Ends every command of the storages that nobody may run any longer
@@ -254,6 +262,14 @@ mod tests {
         w.runtime.entity_stores().channels.update(&SecurityContext::system(), &channel).await.unwrap();
         reaper.end_unusable_commands().await;
         assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed, "nobody left who could");
+    }
+
+    #[tokio::test]
+    async fn a_shutdown_ends_the_commands_that_would_outlive_the_process() {
+        let w = session_with_workspace().await;
+        let (shell, id) = running(&w).await;
+        w.runtime.command_reaper().shutdown().await;
+        assert_eq!(shell.output(&id, 0, Duration::ZERO).await.unwrap().status, CommandStatus::Killed, "a `local` shell's, whose process nothing would know of after a restart (issue 297)");
     }
 
     #[tokio::test]

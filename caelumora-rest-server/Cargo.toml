@@ -10,6 +10,7 @@ caelumora-rest-api = { path = "../caelumora-rest-api" }
 axum = { version = "0.8.9", features = ["macros"] }
 tokio = { version = "1.0", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }

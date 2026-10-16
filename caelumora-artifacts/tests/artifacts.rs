@@ -217,7 +217,7 @@ fn api_of(world: &World) -> Router {
         users: Arc::new(UserManager::new(vec![Arc::new(provider)], users, Arc::<EventBus>::clone(world.runtime.event_bus()))),
         controllers: Arc::clone(world.runtime.controller_manager()),
     });
-    let state = Arc::new(AppState { auth, runtime_manager: Arc::clone(&world.runtime), session_manager: Arc::clone(&world.manager), compartments: Default::default() });
+    let state = Arc::new(AppState { auth, runtime_manager: Arc::clone(&world.runtime), session_manager: Arc::clone(&world.manager), compartments: Default::default(), shutdown: Default::default() });
     let plugins: [Box<dyn RestPlugin>; 1] = [Box::new(ArtifactsPlugin)];
     api(state, &plugins)
 }

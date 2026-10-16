@@ -277,7 +277,7 @@ pub(crate) mod tests {
             controllers: Arc::clone(runtime.controller_manager()),
         });
         let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
-        Arc::new(AppState { auth, runtime_manager: runtime, session_manager, compartments: Default::default() })
+        Arc::new(AppState { auth, runtime_manager: runtime, session_manager, compartments: Default::default(), shutdown: Default::default() })
     }
 
     /// The cookie `api` answers `username` logging in with.

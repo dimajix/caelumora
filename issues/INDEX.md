@@ -60,7 +60,7 @@ published before anyone else can take it.
 | [122](122-several-instances.md) | open | The server cannot run in several instances: everything live is in one process, and nothing keeps agents and users in step between processes. |
 | [130](130-llm-configuration.md) | done | The language model is configured through environment variables, not in the configuration file like everything else. |
 | [209](209-token-usage.md) | done | The tokens of each model call are recorded per message but summed up nowhere, and the model's context size is unknown, so nobody sees how full an agent's context is. |
-| [297](297-orderly-shutdown.md) | open | Caelumora ends without an orderly shutdown: a signal ends turns mid-step, breaks off streams and leaves the `local` shell's commands running. |
+| [297](297-orderly-shutdown.md) | done | Caelumora ends without an orderly shutdown: a signal ends turns mid-step, breaks off streams and leaves the `local` shell's commands running. |
 | [307](307-load-and-performance-tests.md) | open | Nothing measures how Caelumora behaves under load, so its bottlenecks are guessed at, and a real model would hide them behind its own latency. |
 | [336](336-errors-of-a-plugin-shown-as-a-failure.md) | done | The core turns an error into what a person is told by the error types it knows, so what a plugin's error says is shown as a failure wherever it travels inside an `anyhow`. |
 

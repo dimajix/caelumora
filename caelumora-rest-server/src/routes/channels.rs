@@ -35,6 +35,7 @@ use uuid::Uuid;
 use crate::routes::{change_error, channel_of, channel_view, ensure_session, open_channel, views};
 use crate::sse::{bounded_by_token, data_event, named_event};
 use tokio::sync::broadcast::error::RecvError;
+use tokio_util::sync::CancellationToken;
 use tracing::Span;
 
 /// The channels of the session the user may read - or, with
@@ -207,7 +208,8 @@ pub async fn join_channel(
     let (session_id, channel_id) = (SessionId(id), ChannelId(cid));
     let channel = channel_of(&state, &user, session_id, channel_id).await?;
     let watch = channel.user_follow().ok_or_else(|| not_a_participant(channel_id))?;
-    let follower = ChannelFollower { state, user: user.clone(), session_id, channel_id, watch, with_snapshot: options.snapshot };
+    let shutdown = state.shutdown.clone();
+    let follower = ChannelFollower { state, user: user.clone(), session_id, channel_id, watch, with_snapshot: options.snapshot, shutdown };
     // Read after the watch began, so that nothing is lost in between; what
     // is in both, clients drop by message id.
     let first = if follower.with_snapshot { follower.snapshot().await } else { None };
@@ -224,13 +226,23 @@ struct ChannelFollower {
     channel_id: ChannelId,
     watch: ChannelWatch,
     with_snapshot: bool,
+    /// Cancelled as the server shuts down (issue 297).
+    shutdown: CancellationToken,
 }
 
 impl ChannelFollower {
     /// The next event of the stream and the follower after it; `None` once
-    /// the user no longer follows the channel.
+    /// the user no longer follows the channel, or the server shuts down -
+    /// after what the user's actor showed before, the end of its run among
+    /// it, so that the stream ends with the channel's state as it stopped
+    /// (issue 297).
     async fn next(mut self) -> Option<(Result<Event, Infallible>, Self)> {
-        let event = match self.watch.next().await {
+        let shown = tokio::select! {
+            biased;
+            shown = self.watch.next() => shown,
+            () = self.shutdown.cancelled() => return None,
+        };
+        let event = match shown {
             Ok(Shown::Envelope(envelope)) => data_event(&envelope),
             Ok(Shown::Started) => self.anew("started").await?,
             Ok(Shown::Ended) => self.anew("stopped").await?,
@@ -861,6 +873,28 @@ mod tests {
         state.session_manager.delete(&SecurityContext::system(), session).await.unwrap();
         let ended = tokio::time::timeout(Duration::from_secs(5), async { while stream.next().await.is_some() {} }).await;
         assert!(ended.is_ok(), "the stream of a deleted channel ends: {read}");
+    }
+
+    /// Issue 297: as the server shuts down, a channel's stream ends - after
+    /// the channel's state as it stopped, which the client is left with.
+    #[tokio::test]
+    async fn a_stream_ends_at_a_shutdown_with_the_channels_state_as_it_stopped() {
+        let state = state();
+        let (api, cookie, session, channel) = stopped_session_of_alice(&state).await;
+        state.session_manager.open(&SecurityContext::system(), session).await.unwrap();
+        let mut stream = follow(&api, &cookie, session, channel, true).await;
+        let mut read = String::new();
+        read_until(&mut stream, &mut read, |read| read.contains("event: snapshot")).await;
+
+        state.session_manager.shutdown().await;
+        state.shutdown.cancel();
+        let ended = tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(chunk) = stream.next().await {
+                read.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
+            }
+        }).await;
+        assert!(ended.is_ok(), "the stream ends: {read}");
+        assert_eq!(read.matches("event: snapshot").count(), 2, "with the state as the channel stopped: {read}");
     }
 
     /// Issue 386: a client without snapshots is told that the channel

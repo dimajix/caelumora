@@ -3,6 +3,7 @@ use caelumora_model::confidentiality::Compartments;
 use caelumora_runtime::runtime::RuntimeManager;
 use caelumora_runtime::session::SessionManager;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 /// What the handlers share. The stores are the `RuntimeManager`'s - one
 /// place to get them from.
@@ -14,4 +15,7 @@ pub struct AppState {
     /// The configured compartments (issue 133), which a client offers for
     /// classifying a channel.
     pub compartments: Arc<Compartments>,
+    /// Cancelled as the server shuts down (issue 297): every stream ends
+    /// with it, so that the connections it holds close.
+    pub shutdown: CancellationToken,
 }

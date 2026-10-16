@@ -30,7 +30,11 @@ use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use anyhow::Result;
 use axum::http::Request;
+use std::future::IntoFuture;
+use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio::signal::unix::{signal, SignalKind};
+use tokio_util::sync::CancellationToken;
 use tracing::field::Empty;
 
 #[cfg(feature = "web-ui")]
@@ -79,11 +83,13 @@ async fn main() -> Result<()> {
 
     runtime_manager.seed(&config.seed).await?;
 
+    let shutdown = CancellationToken::new();
     let state = Arc::new(AppState {
         auth,
         runtime_manager,
-        session_manager,
+        session_manager: Arc::clone(&session_manager),
         compartments: Arc::new(config.compartments.clone()),
+        shutdown: shutdown.clone(),
     });
 
     // One span per request. `request_id` is filled in by `error::request_id`,
@@ -106,9 +112,56 @@ async fn main() -> Result<()> {
 
     let listener = TcpListener::bind(config.server.address).await?;
     tracing::info!("Caelumora listening on {}", listener.local_addr()?);
-    axum::serve(listener, app).await?;
-
+    let serving = axum::serve(listener, app).with_graceful_shutdown(shutdown_on_signal(session_manager, shutdown.clone()));
+    tokio::select! {
+        served = serving.into_future() => served?,
+        () = async { shutdown.cancelled().await; tokio::time::sleep(CONNECTIONS_CLOSE).await } => {
+            tracing::warn!("Requests were still under way {:?} after the shutdown; they end with the process", CONNECTIONS_CLOSE);
+        }
+    }
+    tracing::info!("Caelumora has ended");
     Ok(())
+}
+
+/// How long the requests under way are waited for once the sessions are
+/// shut down and the streams ended (issue 297).
+const CONNECTIONS_CLOSE: Duration = Duration::from_secs(1);
+
+/// Waits for SIGINT or SIGTERM, then shuts down in order (issue 297): the
+/// sessions are stopped, their actors keeping what they are in the middle
+/// of, and the `local` shell's commands ended, within `SHUTDOWN_BOUND` -
+/// meanwhile requests are still answered, a start of a session refused;
+/// then `shutdown` ends every stream, and the server takes no new request.
+async fn shutdown_on_signal(session_manager: Arc<SessionManager>, shutdown: CancellationToken) {
+    signalled().await;
+    tracing::info!("Caelumora is shutting down");
+    session_manager.shutdown().await;
+    shutdown.cancel();
+}
+
+/// Completes on SIGINT or SIGTERM - or never, should neither be caught.
+async fn signalled() {
+    let terminated = async {
+        match signal(SignalKind::terminate()) {
+            Ok(mut terminated) => {
+                terminated.recv().await;
+            }
+            Err(e) => {
+                tracing::warn!("SIGTERM cannot be caught, and ends Caelumora without a shutdown: {e}");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    let interrupted = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::warn!("SIGINT cannot be caught, and ends Caelumora without a shutdown: {e}");
+            std::future::pending::<()>().await;
+        }
+    };
+    tokio::select! {
+        () = terminated => {}
+        () = interrupted => {}
+    }
 }
 
 /// The plugins of the program that serve routes (issue 323), which it

@@ -37,6 +37,7 @@ use std::path::PathBuf;
 use tokio::sync::broadcast::error::RecvError;
 use std::sync::Arc;
 use std::thread;
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use anyhow::Result;
@@ -155,8 +156,15 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
         .collect();
 
     println!("--- Chat Session Started (Type 'exit' or 'quit' to stop) ---");
+    // A signal ends the loop as `exit` does, so that the session is shut
+    // down in order (issue 297).
+    let mut signalled = std::pin::pin!(signalled());
     loop {
         tokio::select! {
+            () = &mut signalled => {
+                println!("\r--- Ending ---");
+                break;
+            }
             received = receiver.recv() => {
                 let maybe_envelope = match received {
                     Ok(envelope) => Some(envelope),
@@ -545,11 +553,33 @@ async fn main() -> Result<()> {
     let unknown = || "preconfigured".to_string();
     println!("Moderator: {}, responders: {}", view.moderator().unwrap_or_else(unknown), view.responder_policy().unwrap_or_else(unknown));
 
-    // Start the interactive loop
-    run_repl(channel, owner).await?;
-    session_manager.stop(&security, session_id).await?;
+    // Start the interactive loop; however it ends, the session is shut
+    // down in order (issue 297): its actors keep what they are in the
+    // middle of, and only what does not outlive the process ends with it.
+    let ran = run_repl(channel, owner).await;
+    session_manager.shutdown().await;
+    ran
+}
 
-    Ok(())
+/// Completes on SIGINT, SIGTERM or SIGHUP - the terminal closed -, or
+/// never, should none of them be caught.
+async fn signalled() {
+    let caught = |kind: SignalKind| async move {
+        match signal(kind) {
+            Ok(mut caught) => {
+                caught.recv().await;
+            }
+            Err(e) => {
+                tracing::warn!("A signal cannot be caught, and ends the program without a shutdown: {e}");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    tokio::select! {
+        () = caught(SignalKind::interrupt()) => {}
+        () = caught(SignalKind::terminate()) => {}
+        () = caught(SignalKind::hangup()) => {}
+    }
 }
 
 #[cfg(test)]

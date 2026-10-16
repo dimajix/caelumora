@@ -1,6 +1,6 @@
 # 297 — Caelumora ends without an orderly shutdown
 
-**Status:** open
+**Status:** done
 **Area:** Observability and operations
 
 ## The problem
@@ -59,3 +59,20 @@ session stopped by hand ends that way.
   shutdown, which is worth having for the actors and the streams in the first place.
 - **2026-10-16** — Since [386](386-actor-state-after-a-stop.md), following a channel does not start
   its session; whether the server resumes what ran at a shutdown is added to the considerations.
+- **2026-10-16** — Decided with the maintainer and done.
+  - `SessionManager::shutdown` refuses every start from then on (`SessionError::ShuttingDown`,
+    `503 shutting_down`), stops every running session as `stop` does, all at once, and has each
+    storage end what does not outlive the process (`TerminalProvider::shutdown`: the `local` shell
+    ends its commands, Open Terminal keeps them) - within `SHUTDOWN_BOUND`, a constant of eight
+    seconds. Ending the commands per channel moved from `stop_running` to `stop` and `delete`.
+  - The server catches SIGINT and SIGTERM, shuts the sessions down, then ends every stream through
+    `AppState::shutdown` and waits a second for the requests under way. A channel's stream ends
+    after what the user's actor showed before, so its client keeps the channel's state as it
+    stopped. Clients are not told why; `EventSource` retries until the server is back.
+  - The TUI already stopped its session at `exit`, `quit` and Ctrl-C - the description overstated
+    that; it now ends the same way on SIGINT, SIGTERM and SIGHUP, and shuts down instead of
+    stopping, so that its Open Terminal commands run on as the server's do.
+  - Tried against the running server - SIGTERM while an agent planned: done in 0.2 s, the agent
+    stopped, not given up, the channel's stream ended after the stop's snapshot - and the TUI under
+    a pseudo-terminal with SIGTERM and SIGHUP.
+  - Resuming what a shutdown interrupted is [388](388-resume-interrupted-work-after-a-restart.md).

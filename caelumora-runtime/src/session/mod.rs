@@ -90,6 +90,10 @@ pub enum SessionError {
     /// left - not which, since they need not be the caller's to read.
     #[error("The {} is not deleted: {} of what lies in its scope may not be deleted by you", shown_holder(.holder), shown_left(.left))]
     ScopeNotEmpty { holder: Scope, left: Vec<(EntityKind, usize)> },
+    /// The sessions are shut down as the process ends (issue 297): none is
+    /// started any more.
+    #[error("Caelumora is shutting down: no session is started")]
+    ShuttingDown,
 }
 
 /// The session or channel whose scope `holder` is, as an error names it.
