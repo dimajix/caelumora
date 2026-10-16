@@ -337,3 +337,7 @@ independent of each other and of 6.
   since the compaction that began the branch it resolves (`History::produced_on_branch`), not from
   every message of the history. Told which branch by the digests of the path, rather than taking the
   latest compaction, so that it holds for a reference to any branch.
+- **2026-10-16** — Step 5 done: what steps 1 to 4 changed is in STORAGE.md (positions, the small
+  parts) and AGENT-TURN.md (positions, the running total of tokens, how a range of the history is
+  read as it stands), each written with its step; AGENT-TURN.md also says now that a change in the
+  history applies on every branch, and that a reader goes back only as far as it has to.

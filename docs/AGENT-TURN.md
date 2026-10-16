@@ -214,8 +214,8 @@ A chain is a tree with a head:
 *   Appending makes the new entry the head; moving the head back leaves what followed as a branch
     no longer active. Nothing is removed, and nothing changes an entry once added.
 *   What the chain says is its *active path*, root to head: the conversation as it stands. What
-    must consider every branch - looking up a message by id, the next number of a note - reads all
-    entries.
+    must consider every branch - looking up a message by id, the next number of a note - reads the
+    entries of every branch, and only as far back as it has to.
 *   A digest recorded earlier finds its entry on any branch, so a reference into a branch no longer
     active still resolves.
 *   An entry appended with the digest of one already there is that entry: the head moves to it.
@@ -247,8 +247,13 @@ nothing. What stands is read by one rule, kept with the message (`Message::modif
     A turn begun afterwards has seen the message as it stands, so a message released no longer
     raises the label of what follows.
 
-A change applies only within the path that holds it, so a reference taken before the change
-resolves to the message as the model saw it then, and one taken after to what stands.
+In the transcript, a change applies only within the path that holds it, so a reference taken
+before the change resolves to the message as the model saw it then, and one taken after to what
+stands. In the history, a change applies to the message on whichever branch, as a change made in the
+channel does. Either way a change comes after what it changes, so the messages of a range of the
+chain that runs to its end are read as they stand from that range alone: what asks for one message,
+or for what a turn said, reads from where the message was said or the turn began, not from the start
+(`HistoryEntry::fold_into` is the history's rule, `history::fold` reads a range by it).
 
 An external agent's remote agent was given the message on a branch where the change is not recorded,
 so the external agent tells it instead: it appends a *notice* to its transcript, in the name and
