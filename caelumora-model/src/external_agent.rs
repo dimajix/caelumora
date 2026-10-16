@@ -5,6 +5,7 @@
 //! `AgentChannelState`, as for every agent (issue 206) - and the handles of
 //! the protocol that tie the next exchange to the last one (`RemoteState`).
 
+use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::work::Work;
 use chrono::{DateTime, Utc};
@@ -84,13 +85,19 @@ pub struct RemoteState {
     /// from. A part is given again only when it changed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub given_prompts: BTreeMap<String, Digest>,
+    /// Every classification it was given in this channel, each once: of
+    /// every message and every change of one it was given (issue 236), in
+    /// any of its conversations. Recorded as it is given, so that what it
+    /// was given before need not be read again (issue 376).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub given_classifications: Vec<Classification>,
 }
 
 impl RemoteState {
     /// Whether nothing is kept: so for an agent run here, and an external
     /// one before it was first asked.
     pub fn is_empty(&self) -> bool {
-        self.conversation.is_none() && self.open_tasks.is_empty() && self.given_prompts.is_empty()
+        self.conversation.is_none() && self.open_tasks.is_empty() && self.given_prompts.is_empty() && self.given_classifications.is_empty()
     }
 
     /// Records that the remote agent keeps its conversation as
@@ -113,6 +120,14 @@ impl RemoteState {
     /// text of `digest`.
     pub fn give(&mut self, source: String, digest: Digest) {
         self.given_prompts.insert(source, digest);
+    }
+
+    /// Records that the remote agent was given what is classified
+    /// `classification`.
+    pub fn give_classified(&mut self, classification: &Classification) {
+        if !self.given_classifications.contains(classification) {
+            self.given_classifications.push(classification.clone());
+        }
     }
 
     /// The task that asked back, if any: the next message to the remote

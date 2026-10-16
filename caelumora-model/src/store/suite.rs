@@ -624,6 +624,13 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
     assert_eq!(stored.remote, talking.remote, "the stored state comes back");
     assert_eq!(serde_json::to_value(talking.changes()).expect("json"), serde_json::to_value(stored.changes()).expect("json"), "what was put is marked stored: nothing pending beyond what a loaded state has");
     assert_eq!((stored.history.digest(), stored.transcript.digest()), (talking.history.digest(), talking.transcript.digest()), "with its history and its transcript");
+    // Stored in a second put, as what changed since the first (issue 376).
+    talking.history.extend(vec![Message { content: Some("and more".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }]);
+    store.put_agent_channel_state(remote_agent, channel, &mut talking).await.expect("put agent channel state");
+    let stored = store.get_agent_channel_state(remote_agent, channel).await.expect("get");
+    let positions = |state: &AgentChannelState| state.history.all_entries().map(|node| (node.seq, node.digest)).collect::<Vec<_>>();
+    assert_eq!(positions(&stored), positions(&talking), "every entry where it was added");
+    assert_eq!(stored.history.end(), 3);
 
     store.put_agent_state(agent, &mut AgentState::default()).await.expect("put agent state");
     store.get_agent_state(agent).await.expect("get agent state");

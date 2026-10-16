@@ -12,7 +12,7 @@ use caelumora_model::digest::Digest;
 #[derive(Debug, Clone)]
 pub struct VisibleHistory {
     /// What they see, from `start` on: the messages said, each as it
-    /// stands, and how turns ended (`MessageHistory::items`, issue 258).
+    /// stands, and how turns ended (`History::items`, issue 258).
     pub items: Vec<HistoryEntry>,
     /// The digest of the channel's history at the time: up to where it was
     /// read. It names the whole chain, so it is recorded with `start`.

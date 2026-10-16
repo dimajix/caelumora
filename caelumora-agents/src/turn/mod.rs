@@ -238,7 +238,7 @@ impl<'a> Turn<'a> {
     /// history holds them, whatever a compaction left of them in the
     /// transcript (issue 284).
     pub fn messages(&self) -> Vec<Message> {
-        self.agent_channel_state.history.said_in_turn(self.turn_id())
+        self.agent_channel_state.history.said_in_turn(ActorId::Agent(self.agent_id), self.turn_id())
     }
 
     /// Gives the agent `message` to read in this turn (issue 22) - a skill a

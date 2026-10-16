@@ -40,7 +40,7 @@ impl Turn<'_> {
     ///   history, where each message went as it was said with what it was
     ///   produced from (`push_message`, issue 260) - not from the
     ///   transcript, of which a compaction may have summarised a part
-    ///   (`MessageHistory::said_in_turn`, issue 284);
+    ///   (`History::said_in_turn`, issue 284);
     /// - records its end, `TurnFinished`;
     /// - applies the changes staged to its state in this channel, anchored at
     ///   the turn's last message in the history;
@@ -61,7 +61,7 @@ impl Turn<'_> {
         let turn_id = turn.work.turn_id;
         // What it said is in the history already (issue 260), whatever a
         // compaction left of it in the transcript (issue 284).
-        let final_messages = self.agent_channel_state.history.said_in_turn(turn_id).into_iter().filter(|m| !m.internal).collect();
+        let final_messages = self.agent_channel_state.history.said_in_turn(ActorId::Agent(self.agent_id), turn_id).into_iter().filter(|m| !m.internal).collect();
         // Every part is used up exactly once.
         let TurnState { memory, notes, private_notes, command, .. } = turn;
         let channel_state_changed = self.agent_channel_state.finish_turn(turn_id, ActorId::Agent(self.agent_id), notes, private_notes, command);

@@ -78,7 +78,7 @@ impl ChannelLoop {
     /// classification checked as one that can be given at all, then stored
     /// (`UpdateChannel`) and announced. Lowering it releases what is in it:
     /// every message is fitted into the new classification
-    /// (`MessageHistory::fit_into`), since the agents in the channel carry
+    /// (`History::fit_into`), since the agents in the channel carry
     /// what they know into what they write next. Raising it changes nothing
     /// already written.
     ///
@@ -112,11 +112,9 @@ impl ChannelLoop {
             self.cancel_actors();
         }
         let mut state = self.state.lock().await;
-        let fitted = state.history.fit_into(&classification);
-        if fitted > 0 {
-            self.state_store.put_channel_state(self.id, &mut state).await?;
-        }
-        info!(channel = %self.id, %classification, fitted, lowered, by = %context.caller_id, "Channel reclassified");
+        state.history.fit_into(&classification);
+        self.state_store.put_channel_state(self.id, &mut state).await?;
+        info!(channel = %self.id, %classification, lowered, by = %context.caller_id, "Channel reclassified");
         Ok(())
     }
 }

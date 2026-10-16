@@ -634,7 +634,7 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
     let stored = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            let has_result = state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty()));
+            let has_result = state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(ActorId::Agent(agent), t.work.turn_id).iter().any(|m| !m.tool_results.is_empty()));
             if has_result && state.processing_state == ActorState::Planning { break state }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -812,7 +812,7 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            if state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty())) { break }
+            if state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(ActorId::Agent(agent), t.work.turn_id).iter().any(|m| !m.tool_results.is_empty())) { break }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the tool ran");
@@ -873,7 +873,7 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            if state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(t.work.turn_id).iter().any(|m| !m.tool_results.is_empty())) { break }
+            if state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(ActorId::Agent(agent), t.work.turn_id).iter().any(|m| !m.tool_results.is_empty())) { break }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the tool ran");

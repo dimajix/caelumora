@@ -20,7 +20,7 @@ use crate::agent::{AgentChannelState, AgentId};
 use crate::chain::Node;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
-use crate::history::{HistoryEntry, History};
+use crate::history::History;
 use crate::kept::Kept;
 use crate::message::{estimated_tokens, Message, MessageId, MessageRole};
 use crate::store::{EntityKind, Stored};
@@ -30,7 +30,7 @@ use crate::turn::GivenUpReason;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 use crate::channel::{ChannelId, HistoryStart};
 use crate::mention::handle_of;
@@ -455,19 +455,22 @@ impl<'a> ContextResolver<'a> {
     /// as its recorded context shows by naming the entry before it - which a
     /// copy kept through a compaction does not, nor what replaced older
     /// messages: its call's `prompt_tokens`, which count everything the call
-    /// was given before it, the system prompt as well. Elsewhere estimated
+    /// was given before it, the system prompt as well. Such a message was
+    /// made on the path's branch, so only what the agent produced since the
+    /// compaction that began the branch is read of the history
+    /// (`History::produced_on_branch`, issue 376). Elsewhere estimated
     /// (`ContextItem::estimated_tokens`) from what the model is given of
     /// each entry, as `resolve` gives it, a message's reasoning only where
     /// its rule gives it back: on from each measured position, back from
     /// the first; from nothing if none is.
     pub fn token_positions(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Option<(Vec<u64>, bool)> {
-        let produced_after: HashMap<MessageId, Option<Digest>> = self.history.all_entries()
-            .filter_map(|node| match &node.entry {
-                HistoryEntry::Said { message, context: Some(context) } if message.sender_id == agent => Some((message.id, context.transcript)),
-                _ => None,
-            })
-            .collect();
         let (leading, entries) = self.given_path(reference, turn, agent)?;
+        let on_path: HashSet<Digest> = entries.iter().map(|(node, _)| node.digest).collect();
+        // The last said of a message id, as it is read backwards.
+        let mut produced_after: HashMap<MessageId, Option<Digest>> = HashMap::new();
+        for (id, after) in self.history.produced_on_branch(agent, |digest| on_path.contains(digest)) {
+            produced_after.entry(id).or_insert(after);
+        }
         let size = |items: &[ContextItem]| items.iter().map(ContextItem::estimated_tokens).sum::<u64>();
         let mut previous = None;
         let measured: Vec<Option<u64>> = entries.iter()
@@ -813,10 +816,13 @@ mod tests {
         let mut state = AgentChannelState::default();
         assert_eq!(state.usage(agent), None, "no call yet");
 
-        state.transcript.push(call(agent, 100, 10, Some(4096)));
-        state.transcript.push(call(ActorId::Agent(AgentId::new()), 5000, 500, Some(8192)));
+        begin(&mut state, ModelProfile::default());
+        state.said(call(agent, 100, 10, Some(4096)));
+        // Heard: it carries its sender's tokens.
+        let heard = call(ActorId::Agent(AgentId::new()), 5000, 500, Some(8192));
+        state.perceive(vec![heard.clone()], vec![heard]);
         let before_given = state.transcript.digest();
-        state.transcript.push(call(agent, 200, 20, Some(4096)));
+        state.said(call(agent, 200, 20, Some(4096)));
         state.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Stopped, at: Utc::now() });
         // A branch no longer active - as an external agent's earlier calls
         // are (`start_anew`) - counts as well.

@@ -214,11 +214,14 @@ A chain is a tree with a head:
 *   Appending makes the new entry the head; moving the head back leaves what followed as a branch
     no longer active. Nothing is removed, and nothing changes an entry once added.
 *   What the chain says is its *active path*, root to head: the conversation as it stands. What
-    must consider every branch - looking up a message by id, the next number of a note - reads all
-    entries.
+    must consider every branch - looking up a message by id, the next number of a note - reads the
+    entries of every branch, and only as far back as it has to.
 *   A digest recorded earlier finds its entry on any branch, so a reference into a branch no longer
     active still resolves.
 *   An entry appended with the digest of one already there is that entry: the head moves to it.
+*   Every entry has a *position*, the order it was added in across every branch, beside its
+    digest: the digest names what the chain held up to it, the position where it is. A range of
+    the chain - the entries after a position, a page before one - is read by positions.
 *   An external agent's transcript starts anew with every call, since the remote agent keeps what
     it was given: every call before is a branch from the root.
 
@@ -244,8 +247,13 @@ nothing. What stands is read by one rule, kept with the message (`Message::modif
     A turn begun afterwards has seen the message as it stands, so a message released no longer
     raises the label of what follows.
 
-A change applies only within the path that holds it, so a reference taken before the change
-resolves to the message as the model saw it then, and one taken after to what stands.
+In the transcript, a change applies only within the path that holds it, so a reference taken
+before the change resolves to the message as the model saw it then, and one taken after to what
+stands. In the history, a change applies to the message on whichever branch, as a change made in the
+channel does. Either way a change comes after what it changes, so the messages of a range of the
+chain that runs to its end are read as they stand from that range alone: what asks for one message,
+or for what a turn said, reads from where the message was said or the turn began, not from the start
+(`HistoryEntry::fold_into` is the history's rule, `history::fold` reads a range by it).
 
 An external agent's remote agent was given the message on a branch where the change is not recorded,
 so the external agent tells it instead: it appends a *notice* to its transcript, in the name and
@@ -314,9 +322,11 @@ models believe it. Nothing with consequences may rest on whom the model believes
 ### Tokens used
 
 Every message the model produces carries the tokens of its call and the size of the context the call
-had. What an agent used in a channel is summed from its transcript when it is read
-(`AgentChannelState::usage`), not kept as a counter: its own messages, on every branch, the turn
-under way included. Two groups mean different things:
+had. What an agent used in a channel is a running total kept with its state, counted as each of its
+calls' messages is recorded - said in a turn, or written as a summary in a compaction - so that a
+call is counted once, on whichever branch, the turn under way's included; it is not summed over the
+transcript, whose older branches need not be at hand (`AgentChannelState::usage`). Two groups mean
+different things:
 
 *   **context** - the tokens the model is given next against its context size
     (`TokenUsage::context_tokens`): how full it is. The `ContextResolver` measures it, as it
@@ -348,7 +358,7 @@ old one but does not continue it:
     turn's input as well as the step of a plan. A plan whose instructions were replaced is named
     again where its current step stood: its steps, which are done and which is under way, then the
     instruction (`Turn::compact`).
-*   **The turn's answer is what it said**, read from the history (`MessageHistory::said_in_turn`),
+*   **The turn's answer is what it said**, read from the history (`History::said_in_turn`),
     not from the transcript, of which a part may have been summarised.
 *   **Where it came from** is recorded in the history (`HistoryEntry::Compacted`), in no digest of
     the transcript: two identical contexts get the same digest however they came about.

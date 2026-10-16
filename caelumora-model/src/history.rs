@@ -6,7 +6,7 @@
 //! 197).
 
 use crate::actor::ActorId;
-use crate::chain::Chain;
+use crate::chain::{Chain, Node};
 use crate::confidentiality::Classification;
 use crate::context::ContextRef;
 use crate::digest::Digest;
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use crate::digest;
 
-/// What happened in a `MessageHistory`; its node carries the digest of the
+/// What happened in a `History`; its node carries the digest of the
 /// history up to and including it.
 // Nearly every entry is a message said: boxing it would cost an allocation
 // per message and save nothing.
@@ -81,15 +81,46 @@ pub enum HistoryEntry {
 /// records is read from start to end into the messages as they stand: a
 /// reclassification, a modification or a revocation applies to a message on
 /// any branch, as a change made in the channel does, so it is folded over
-/// every branch in the order things happened. A message taken back stays, without what it
-/// said (`Message::revoked`), so that whatever names it by id finds it.
+/// every branch in the order things happened (`fold`). A message taken back
+/// stays, without what it said (`Message::revoked`), so that whatever names
+/// it by id finds it.
 pub type History = Chain<HistoryEntry>;
+
+/// The messages `nodes` say - a range of a history, in the order its
+/// entries were added - each with the node that said it, as they stand
+/// after every later node of the range (`HistoryEntry::fold_into`), in the
+/// order they were said. A change always comes after what it changes, so a
+/// range that goes on to the end of its history gives every message in it
+/// as it stands; a change of a message before the range is left out.
+pub fn fold<'a>(nodes: impl IntoIterator<Item = &'a Node<HistoryEntry>>) -> Vec<(&'a Node<HistoryEntry>, Message)> {
+    let mut messages: Vec<(&Node<HistoryEntry>, Message)> = Vec::new();
+    let mut at: HashMap<MessageId, usize> = HashMap::new();
+    for node in nodes {
+        match &node.entry {
+            HistoryEntry::Said { message, .. } => {
+                at.insert(message.id, messages.len());
+                messages.push((node, message.clone()));
+            }
+            HistoryEntry::Fitted { .. } => {
+                for (_, message) in &mut messages {
+                    node.entry.fold_into(message);
+                }
+            }
+            entry => {
+                if let Some(&i) = entry.changed().and_then(|id| at.get(&id)) {
+                    entry.fold_into(&mut messages[i].1);
+                }
+            }
+        }
+    }
+    messages
+}
 
 impl Chain<HistoryEntry> {
     /// The messages of the active path as they stand.
     pub fn messages(&self) -> Vec<Message> {
-        let active: HashSet<MessageId> = self.entries().filter_map(|n| n.entry.said()).map(|m| m.id).collect();
-        self.fold().into_iter().filter(|m| active.contains(&m.id)).collect()
+        let mut folded = self.folded();
+        self.entries().filter_map(|node| folded.remove(&node.seq)).collect()
     }
 
     /// The history of the active path as it stands, in the order it
@@ -102,10 +133,10 @@ impl Chain<HistoryEntry> {
     /// No other entry occurs: what changes
     /// a message is in the message, a fitting in every message.
     pub fn items(&self) -> Vec<HistoryEntry> {
-        let mut folded: HashMap<Digest, Message> = self.fold_nodes().into_iter().collect();
+        let mut folded = self.folded();
         self.entries()
             .filter_map(|node| match &node.entry {
-                HistoryEntry::Said { context, .. } => folded.remove(&node.digest)
+                HistoryEntry::Said { context, .. } => folded.remove(&node.seq)
                     .map(|message| HistoryEntry::Said { message, context: context.clone() }),
                 turn @ (HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }) => Some(turn.clone()),
                 HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
@@ -113,20 +144,63 @@ impl Chain<HistoryEntry> {
             .collect()
     }
 
-    /// What the turn `turn_id` said, as it stands, in the order it was said
-    /// (issue 284): its messages recorded with the context they were
-    /// produced from - not what it was given, nor what replaced older
+    /// What the turn `turn_id` of `actor` said, as it stands, in the order
+    /// it was said (issue 284): its messages recorded with the context they
+    /// were produced from - not what it was given, nor what replaced older
     /// messages in a compaction -, on every branch, none taken back. Its
     /// answer, whatever a compaction left of it in the transcript.
-    pub fn said_in_turn(&self, turn_id: TurnId) -> Vec<Message> {
-        let produced: HashSet<Digest> = self.all_entries()
-            .filter(|node| matches!(&node.entry, HistoryEntry::Said { message, context: Some(_) } if message.turn_id == Some(turn_id)))
-            .map(|node| node.digest)
-            .collect();
-        self.fold_nodes().into_iter()
-            .filter(|(digest, message)| produced.contains(digest) && message.revoked.is_none())
+    ///
+    /// Read from where the turn began (`turn_began`) to the end, not from
+    /// the start: what is read grows with how long ago the turn was.
+    pub fn said_in_turn(&self, actor: ActorId, turn_id: TurnId) -> Vec<Message> {
+        let Some(began) = self.turn_began(actor, turn_id) else { return Vec::new() };
+        fold(self.from(began)).into_iter()
+            .filter(|(node, message)| matches!(&node.entry, HistoryEntry::Said { context: Some(_), .. }) && message.turn_id == Some(turn_id) && message.revoked.is_none())
             .map(|(_, message)| message)
             .collect()
+    }
+
+    /// The position from which on everything the turn `turn_id` of `actor`
+    /// recorded lies: after the end of the turn of `actor` before it, `0` if
+    /// none came before. An actor is in one turn at a time, and a turn
+    /// answered again is a new turn (issue 259), so nothing of the turn lies
+    /// before that end. Read from the end backwards, up to the turn and the
+    /// end before it; `None` if the turn recorded nothing - neither a message
+    /// nor its end.
+    fn turn_began(&self, actor: ActorId, turn_id: TurnId) -> Option<u64> {
+        let mut reached = false;
+        for node in self.all_entries().rev() {
+            match &node.entry {
+                HistoryEntry::TurnFinished { turn_id: ended, actor: of, .. } | HistoryEntry::TurnGivenUp { turn_id: ended, actor: of, .. } if *of == actor => {
+                    if *ended == turn_id {
+                        reached = true;
+                    } else if reached {
+                        return Some(node.seq + 1);
+                    }
+                }
+                HistoryEntry::Said { message, .. } if message.turn_id == Some(turn_id) => reached = true,
+                _ => {}
+            }
+        }
+        reached.then_some(0)
+    }
+
+    /// What `agent` produced on a branch of its transcript, read from the end
+    /// backwards: each of its messages recorded with the context it was
+    /// produced from, with the transcript entry it was produced after - up to
+    /// the compaction of `agent` that began the branch (issue 16), the
+    /// `Compacted` entry whose new head `on_branch` says is on it; from the
+    /// start if no compaction did. Every message produced on the branch is
+    /// recorded after that entry, so it is all of them, and what was
+    /// produced on later branches besides, whose contexts name entries the
+    /// branch does not hold (issue 376).
+    pub fn produced_on_branch<'a>(&'a self, agent: ActorId, on_branch: impl Fn(&Digest) -> bool + 'a) -> impl Iterator<Item = (MessageId, Option<Digest>)> + 'a {
+        self.all_entries().rev()
+            .take_while(move |node| !matches!(&node.entry, HistoryEntry::Compacted { actor, to, .. } if *actor == agent && on_branch(to)))
+            .filter_map(move |node| match &node.entry {
+                HistoryEntry::Said { message, context: Some(context) } if message.sender_id == agent => Some((message.id, context.transcript)),
+                _ => None,
+            })
     }
 
     /// The turn of `author` given up, and why, if its end is the last thing
@@ -140,60 +214,17 @@ impl Chain<HistoryEntry> {
     }
 
     /// The message `id` as it stands - on whichever branch - or `None` if
-    /// it was never said here.
+    /// it was never said here. Folded from where it was said on, not from
+    /// the start.
     pub fn message(&self, id: MessageId) -> Option<Message> {
-        self.fold().into_iter().find(|m| m.id == id)
+        let said = self.all_entries().rev().find(|node| node.entry.said().is_some_and(|m| m.id == id))?;
+        fold(self.from(said.seq)).into_iter().next().map(|(_, message)| message)
     }
 
-    /// The messages of every branch as they stand, in the order they were
-    /// said: every message said, with every reclassification, modification
-    /// and revocation since applied to it.
-    fn fold(&self) -> Vec<Message> {
-        self.fold_nodes().into_iter().map(|(_, message)| message).collect()
-    }
-
-    /// `fold`, each message with the digest of the node that said it.
-    fn fold_nodes(&self) -> Vec<(Digest, Message)> {
-        let mut messages: Vec<(Digest, Message)> = Vec::new();
-        let mut at: HashMap<MessageId, usize> = HashMap::new();
-        for node in self.all_entries() {
-            match &node.entry {
-                HistoryEntry::Said { message, .. } => {
-                    at.insert(message.id, messages.len());
-                    messages.push((node.digest, message.clone()));
-                }
-                HistoryEntry::Reclassified { message, classification } => {
-                    if let Some(&i) = at.get(message) {
-                        messages[i].1.reclassify(classification);
-                    }
-                }
-                HistoryEntry::Modified { message } => {
-                    if let Some(&i) = at.get(&message.id) {
-                        messages[i].1.modify(message);
-                    }
-                }
-                HistoryEntry::Revoked { message, at: when } => {
-                    if let Some(&i) = at.get(message) {
-                        messages[i].1.revoke(*when);
-                    }
-                }
-                HistoryEntry::Fitted { channel } => {
-                    for (_, message) in &mut messages {
-                        message.classification = message.classification.fitted_into(channel);
-                    }
-                }
-                HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => {}
-            }
-        }
-        messages
-    }
-
-    /// The messages of the active path as they stand that came after the
-    /// message `last` - all of them if `last` is `None` or not on it.
-    pub fn messages_after(&self, last: Option<MessageId>) -> Vec<Message> {
-        let messages = self.messages();
-        let after = last.and_then(|last| messages.iter().position(|m| m.id == last)).map_or(0, |at| at + 1);
-        messages.into_iter().skip(after).collect()
+    /// The messages of every branch as they stand, by the position of the
+    /// entry that said each.
+    fn folded(&self) -> HashMap<u64, Message> {
+        fold(self.all_entries()).into_iter().map(|(node, message)| (node.seq, message)).collect()
     }
 
     /// The messages of `visible` after the last of them the history has,
@@ -266,11 +297,10 @@ impl Chain<HistoryEntry> {
     /// Records that the channel is classified `channel` now, which every
     /// message said so far - on every branch: all of them were said in the
     /// channel - fits into from now on (`Classification::fitted_into`).
-    /// Returns how many messages that changes.
-    pub fn fit_into(&mut self, channel: &Classification) -> usize {
-        let changed = self.fold().iter().filter(|m| m.classification.fitted_into(channel) != m.classification).count();
+    /// Recorded whether or not it changes a message: telling which would
+    /// fold the whole history.
+    pub fn fit_into(&mut self, channel: &Classification) {
         self.record(HistoryEntry::Fitted { channel: channel.clone() });
-        changed
     }
 
     /// Records how a turn ended (issue 258): `TurnFinished` or
@@ -321,6 +351,40 @@ impl HistoryEntry {
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
             | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => None,
+        }
+    }
+
+    /// Applies what it changes to `standing`, a message said before it as it
+    /// stands, and says whether that changed it: a modification, a
+    /// revocation or a reclassification of that message
+    /// (`Message::modify`, `revoke`, `reclassify`), and a fitting of the
+    /// channel's, which applies to every message before it
+    /// (`Classification::fitted_into`). Every other entry changes nothing.
+    /// The one rule by which what stands is read from a history.
+    pub fn fold_into(&self, standing: &mut Message) -> bool {
+        match self {
+            HistoryEntry::Modified { message } if message.id == standing.id => standing.modify(message),
+            HistoryEntry::Revoked { message, at } if *message == standing.id => standing.revoke(*at),
+            HistoryEntry::Reclassified { message, classification } if *message == standing.id => standing.reclassify(classification),
+            HistoryEntry::Fitted { channel } => {
+                let fitted = standing.classification.fitted_into(channel);
+                let changed = fitted != standing.classification;
+                standing.classification = fitted;
+                changed
+            }
+            HistoryEntry::Said { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. }
+            | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
+            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => false,
+        }
+    }
+
+    /// The message it modifies, takes back or reclassifies, if it does.
+    fn changed(&self) -> Option<MessageId> {
+        match self {
+            HistoryEntry::Modified { message } => Some(message.id),
+            HistoryEntry::Revoked { message, .. } | HistoryEntry::Reclassified { message, .. } => Some(*message),
+            HistoryEntry::Said { .. } | HistoryEntry::Fitted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
+            | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => None,
         }
     }
 
@@ -399,8 +463,102 @@ mod tests {
         history.modify(Message { content: Some("changed".to_string()), ..of_turn(2) });
         assert!(history.revoke(id(4), Utc::now()));
 
-        let said: Vec<(MessageId, Option<String>)> = history.said_in_turn(turn).into_iter().map(|m| (m.id, m.content)).collect();
+        let said: Vec<(MessageId, Option<String>)> = history.said_in_turn(ActorId::default(), turn).into_iter().map(|m| (m.id, m.content)).collect();
         assert_eq!(said, [(id(2), Some("changed".to_string())), (id(6), make_message(id(6)).content)], "its own, as they stand, none taken back");
+    }
+
+    #[test]
+    fn what_a_turn_said_is_read_from_the_end_of_its_actors_turn_before() {
+        let (agent, other) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()));
+        let (before, turn, theirs) = (TurnId::new(), TurnId::new(), TurnId::new());
+        let at = Utc::now();
+        let said = |turn: TurnId, n: u128| Message { turn_id: Some(turn), ..make_message(id(n)) };
+        let ended = |turn_id, actor| HistoryEntry::TurnFinished { turn_id, actor, at };
+        let mut history = History::default();
+        history.push(said(before, 1), Some(ContextRef::default()));
+        history.end_turn(ended(before, agent));
+        let began = history.end();
+        assert!(history.said_in_turn(agent, turn).is_empty(), "nothing said yet");
+
+        history.push(said(turn, 2), Some(ContextRef::default()));
+        history.push(said(theirs, 3), Some(ContextRef::default()));
+        // Another actor's turn ends in between: no end of this actor's.
+        history.end_turn(ended(theirs, other));
+        history.push(said(turn, 4), Some(ContextRef::default()));
+        assert_eq!(history.turn_began(agent, turn), Some(began), "after the end of its turn before");
+        assert_eq!(history.said_in_turn(agent, turn).iter().map(|m| m.id).collect::<Vec<_>>(), [id(2), id(4)], "past the other actor's turn end");
+
+        history.end_turn(ended(turn, agent));
+        history.push(said(TurnId::new(), 5), Some(ContextRef::default()));
+        history.end_turn(ended(TurnId::new(), agent));
+        assert!(history.revoke(id(2), at), "changed after later turns");
+        assert_eq!(history.said_in_turn(agent, turn).iter().map(|m| m.id).collect::<Vec<_>>(), [id(4)], "an older turn, as it stands");
+        assert_eq!(history.said_in_turn(agent, before).iter().map(|m| m.id).collect::<Vec<_>>(), [id(1)], "the first, from the start");
+    }
+
+    #[test]
+    fn what_an_agent_produced_on_a_branch_is_read_back_to_the_compaction_that_began_it() {
+        let (agent, other) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()));
+        let turn = TurnId::new();
+        let at = Utc::now();
+        let after = |label: &str| Some(digest::prompt(label));
+        let produced = |sender, n: u128, label: &str| (Message { sender_id: sender, ..make_message(id(n)) }, Some(ContextRef { transcript: after(label), ..ContextRef::default() }));
+        let compacted = |actor, to: &str| HistoryEntry::Compacted { turn_id: turn, actor, from: digest::prompt("before"), to: digest::prompt(to), at };
+        let mut history = History::default();
+        let (message, context) = produced(agent, 1, "root");
+        history.push(message, context);
+        history.record_compaction(compacted(agent, "first"));
+        let (message, context) = produced(agent, 2, "first");
+        history.push(message, context);
+        history.push(make_message(id(3)), None);
+        // Another agent's compaction, and what it produced: not this agent's.
+        history.record_compaction(compacted(other, "theirs"));
+        let (message, context) = produced(other, 4, "theirs");
+        history.push(message, context);
+        history.record_compaction(compacted(agent, "second"));
+        let (message, context) = produced(agent, 5, "second");
+        history.push(message, context);
+
+        let on = |branch: &'static str| history.produced_on_branch(agent, move |digest| *digest == digest::prompt(branch)).collect::<Vec<_>>();
+        assert_eq!(on("second"), [(id(5), after("second"))], "the current branch, from its compaction on");
+        assert_eq!(on("first"), [(id(5), after("second")), (id(2), after("first"))], "an earlier one, and what came after it");
+        assert_eq!(on("elsewhere").len(), 3, "from the start if no compaction began it");
+    }
+
+    #[test]
+    fn a_range_folded_gives_its_messages_as_the_whole_history_does() {
+        let public = Classification::general(Confidentiality::Public);
+        let mut history = History::default();
+        history.extend(vec![make_message(id(1)), make_message(id(2))]);
+        let from = history.end();
+        history.extend(vec![make_message(id(3)), make_message(id(4))]);
+        history.modify(Message { content: Some("changed".to_string()), ..make_message(id(3)) });
+        history.revoke(id(1), Utc::now());
+        history.fit_into(&public);
+        history.reclassify(id(4), Classification::general(Confidentiality::Internal));
+
+        let whole: Vec<Message> = fold(history.all_entries()).into_iter().map(|(_, m)| m).collect();
+        let range: Vec<(u64, Message)> = fold(history.from(from)).into_iter().map(|(node, m)| (node.seq, m)).collect();
+        assert_eq!(range.iter().map(|(seq, _)| *seq).collect::<Vec<_>>(), [2, 3], "the messages of the range, where they were said");
+        assert_eq!(serde_json::to_value(range.into_iter().map(|(_, m)| m).collect::<Vec<_>>()).unwrap(), serde_json::to_value(&whole[2..]).unwrap(), "as they stand");
+        assert_eq!(history.message(id(3)).and_then(|m| m.content).as_deref(), Some("changed"));
+        assert_eq!(history.message(id(3)).map(|m| m.classification), Some(public), "fitted after it");
+        assert!(history.message(id(1)).is_some_and(|m| m.revoked.is_some()));
+    }
+
+    #[test]
+    fn an_entry_folds_into_the_message_it_changes_and_says_whether_it_did() {
+        let at = Utc::now();
+        let mut message = make_message(id(1));
+        assert!(!HistoryEntry::Revoked { message: id(2), at }.fold_into(&mut message), "another message");
+        assert!(!HistoryEntry::Said { message: make_message(id(1)), context: None }.fold_into(&mut message), "says, changes nothing");
+        assert!(HistoryEntry::Modified { message: Message { content: Some("changed".to_string()), ..make_message(id(1)) } }.fold_into(&mut message));
+        assert_eq!(message.content.as_deref(), Some("changed"));
+        let fitted = HistoryEntry::Fitted { channel: Classification::general(Confidentiality::Public) };
+        assert!(fitted.fold_into(&mut message), "lowered to the channel's");
+        assert!(!fitted.fold_into(&mut message), "fits already");
+        assert!(HistoryEntry::Revoked { message: id(1), at }.fold_into(&mut message));
+        assert!(!HistoryEntry::Revoked { message: id(1), at }.fold_into(&mut message), "taken back already");
     }
 
     #[test]
@@ -414,17 +572,6 @@ mod tests {
         // older than what it has and would come after it.
         assert_eq!(ids(history.missing_from(vec![one, two, three.clone(), four])), [id(4)], "in the order things were said");
         assert!(history.missing_from(vec![three]).is_empty(), "nothing new");
-    }
-
-    #[test]
-    fn what_came_after_a_message_is_the_rest_of_the_active_path() {
-        let ids = |messages: Vec<Message>| messages.into_iter().map(|m| m.id).collect::<Vec<_>>();
-        let mut history = History::default();
-        history.extend(vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
-        assert_eq!(ids(history.messages_after(Some(id(1)))), [id(2), id(3)]);
-        assert_eq!(ids(history.messages_after(Some(id(3)))), Vec::<MessageId>::new(), "nothing after the last");
-        assert_eq!(ids(history.messages_after(None)), [id(1), id(2), id(3)], "all, if nothing came before");
-        assert_eq!(ids(history.messages_after(Some(id(9)))), [id(1), id(2), id(3)], "all, if it is not on the path");
     }
 
     #[test]
@@ -466,8 +613,10 @@ mod tests {
         assert_eq!(history.message(id(2)).map(|m| m.classification), Some(public.clone()), "read as it stands, on whichever branch");
         assert_eq!(history.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(3)], "the active path says what was said");
 
-        assert_eq!(history.fit_into(&public), 2, "the two still internal");
-        assert_eq!(history.fit_into(&public), 0, "nothing left to fit, recorded all the same");
+        let entries = history.all_entries().len();
+        history.fit_into(&public);
+        history.fit_into(&public);
+        assert_eq!(history.all_entries().len(), entries + 2, "recorded, also when nothing is left to fit");
         assert!(history.messages().iter().chain(history.message(id(2)).iter()).all(|m| m.classification == public));
         assert_eq!(history.last_message_id(), id(3), "the last message said, not the last entry");
 

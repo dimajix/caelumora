@@ -26,7 +26,7 @@ use crate::value::text::{Description, Introduction};
 use crate::value::ValueError;
 use crate::work::{TurnId, Work};
 use serde::{Deserialize, Serialize, Deserializer};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use tracing::warn;
 use uuid::Uuid;
 use chrono::Utc;
@@ -335,6 +335,13 @@ pub struct AgentChannelState {
     /// The turn under way, `None` between turns (issue 85). Stored with the
     /// rest, so that a turn cut off by a crash is resumed (issue 75).
     pub turn: Option<TurnState>,
+    /// What the agent's model calls in this channel used (issue 209), each
+    /// counted once, as the message it produced is recorded - said, or
+    /// replacing older messages in a compaction (`TokenUsage::counted`) -
+    /// rather than summed over the transcript (issue 376). `None` while no
+    /// call reported its tokens; an external agent's never do. Read through
+    /// `usage`, which adds how full the context is now.
+    pub used: Option<TokenUsage>,
     /// What an external agent keeps of the remote side (issue 179), empty
     /// for an agent run here.
     #[serde(default, skip_serializing_if = "RemoteState::is_empty")]
@@ -409,6 +416,7 @@ impl AgentChannelState {
     /// turn's end. Between turns, which says nothing, it is recorded as
     /// heard would be, without a context.
     pub fn said(&mut self, mut message: Message) {
+        self.used = TokenUsage::counted(self.used, &message);
         let Some(turn) = self.turn.as_mut() else {
             tracing::warn!("A message was said by an agent without a turn under way");
             self.transcript.push(message.clone());
@@ -500,6 +508,10 @@ impl AgentChannelState {
             if let Some(turn) = self.turn.as_mut() {
                 turn.work.see_message(&message);
             }
+            // A summary written by the agent's model is a call of it.
+            if message.sender_id == actor {
+                self.used = TokenUsage::counted(self.used, &message);
+            }
             match knowledge {
                 Some(knowledge) => {
                     self.transcript.give(message.clone(), knowledge.source);
@@ -575,6 +587,21 @@ impl AgentChannelState {
             }
         }
         Ok(taken_back)
+    }
+
+    /// Every classification the remote agent of an external agent was
+    /// given in this channel (issue 236), with those of what it is given
+    /// now: every entry of the transcript's active branch that records
+    /// something of a message, recorded as given
+    /// (`RemoteState::give_classified`). Every branch before was the active
+    /// one when its call was made - the transcript starts anew with each
+    /// (`Transcript::start_anew`) -, so what it was given before is recorded
+    /// already, and only the active branch is read (issue 376).
+    pub fn classifications_given(&mut self) -> &[Classification] {
+        for classification in self.transcript.entries().filter_map(|node| node.entry.classification()) {
+            self.remote.give_classified(classification);
+        }
+        &self.remote.given_classifications
     }
 
     /// Keeps the text of a prompt part the agent was given once by digest
@@ -721,17 +748,14 @@ impl AgentChannelState {
     }
 
     /// What the model calls of `agent` - whose state this is - used in the
-    /// channel (issue 209): summed over its own messages - the others' in
-    /// the transcript carry their senders' tokens - on every branch, since
-    /// their calls were made, the turn under way's included.
-    /// A message kept through a compaction (issue 16) is in the transcript
-    /// twice, once on each branch, but its call was made once: it counts
-    /// where it was first recorded. How full the context is now,
-    /// `context_tokens`, is read from what the model is given next
-    /// (`next_context_tokens`, issue 284).
+    /// channel (issue 209): every call made, on every branch, the turn under
+    /// way's included, as counted when its message was recorded (`used`). A
+    /// message kept through a compaction (issue 16) is in the transcript
+    /// twice, but its call was made once and is counted once. How full the
+    /// context is now, `context_tokens`, is read from what the model is
+    /// given next (`next_context_tokens`, issue 284).
     pub fn usage(&self, agent: ActorId) -> Option<TokenUsage> {
-        let mut counted = HashSet::new();
-        let usage = TokenUsage::of(self.transcript.all_entries().filter_map(|node| node.entry.message()).filter(|m| m.sender_id == agent && counted.insert(m.id)))?;
+        let usage = self.used?;
         let context_tokens = self.next_context_tokens(agent).unwrap_or(usage.context_tokens);
         Some(TokenUsage { context_tokens, ..usage })
     }
@@ -812,6 +836,8 @@ pub enum AgentChannelStateChange {
     /// The turn under way, whole: it is changed in place at every step
     /// (`prepare_resume`, the turn's own methods), and bounded by one turn.
     Turn(Option<TurnState>),
+    /// What the agent's calls used, whole: a running total.
+    Used(Option<TokenUsage>),
     /// What an external agent keeps of the remote side, whole: small, and
     /// bounded by its open tasks.
     Remote(RemoteState),
@@ -840,6 +866,7 @@ impl Journaled for AgentChannelState {
         changes.extend(self.offered_tools.changes().into_iter().map(|(digest, tools)| AgentChannelStateChange::OfferedTools { digest, tools }));
         changes.push(AgentChannelStateChange::ProcessingState(self.processing_state));
         changes.push(AgentChannelStateChange::Turn(self.turn.clone()));
+        changes.push(AgentChannelStateChange::Used(self.used));
         changes.push(AgentChannelStateChange::Remote(self.remote.clone()));
         changes
     }
@@ -863,6 +890,7 @@ impl Journaled for AgentChannelState {
             AgentChannelStateChange::OfferedTools { digest, tools } => self.offered_tools.apply(digest, tools),
             AgentChannelStateChange::ProcessingState(state) => self.processing_state = state,
             AgentChannelStateChange::Turn(turn) => self.turn = turn,
+            AgentChannelStateChange::Used(used) => self.used = used,
             AgentChannelStateChange::Remote(remote) => self.remote = remote,
         }
         Ok(())
@@ -1352,6 +1380,7 @@ pub(crate) mod tests {
         state.offered_tools.keep(digest::tool_sets(&[]), Vec::new);
         state.processing_state = ActorState::WaitingForUser;
         state.turn = Some(TurnState { model_calls: 3, ..TurnState::default() });
+        state.used = TokenUsage::counted(None, &Message { prompt_tokens: Some(5), ..make_message(id(2)) });
 
         let changes = state.changes();
         let parts: Vec<&str> = changes.iter().map(|c| match c {
@@ -1363,14 +1392,16 @@ pub(crate) mod tests {
             AgentChannelStateChange::OfferedTools { .. } => "offered_tools",
             AgentChannelStateChange::ProcessingState(_) => "processing_state",
             AgentChannelStateChange::Turn(_) => "turn",
+            AgentChannelStateChange::Used(_) => "used",
             AgentChannelStateChange::Remote(_) => "remote",
         }).collect();
-        assert_eq!(parts, ["history", "transcript", "notes", "private_notes", "prompt", "offered_tools", "processing_state", "turn", "remote"], "what was added, then the small parts whole");
+        assert_eq!(parts, ["history", "transcript", "notes", "private_notes", "prompt", "offered_tools", "processing_state", "turn", "used", "remote"], "what was added, then the small parts whole");
         replayed(&state, &mut copy);
+        assert_eq!(copy.used, state.used, "the running total with them");
 
         state.mark_stored();
         state.turn = None;
-        assert_eq!(state.changes().len(), 3, "between turns a step is the small parts alone");
+        assert_eq!(state.changes().len(), 4, "between turns a step is the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.turn.is_none());
     }
@@ -1413,6 +1444,24 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_classifications_given_to_a_remote_agent_are_kept_across_its_calls() {
+        use crate::message::tests::{id, make_message};
+        let classified = |n, level| Message { classification: Classification::general(level), ..make_message(id(n)) };
+        let mut state = AgentChannelState::default();
+        state.transcript.extend(vec![classified(1, Confidentiality::Confidential), classified(2, Confidentiality::Internal)]);
+        assert_eq!(state.classifications_given().len(), 2, "what it is given now");
+        // The call is made: the transcript starts anew.
+        state.transcript.start_anew();
+        state.transcript.extend(vec![classified(3, Confidentiality::Internal)]);
+        state.transcript.reclassify(id(3), Classification::PUBLIC);
+
+        let given = state.classifications_given().to_vec();
+        let expected = [Classification::general(Confidentiality::Confidential), Classification::general(Confidentiality::Internal), Classification::PUBLIC];
+        assert_eq!(given, expected, "of the call before as well, each once, and of a change");
+        assert_eq!(state.classifications_given().len(), 3, "asked again, nothing added");
+    }
+
+    #[test]
     fn what_changed_in_an_external_agents_state_replays_onto_what_was_stored() {
         use crate::external_agent::{ConversationId, OpenTask, OpenTaskState, TaskId};
         use crate::message::tests::{id, make_message};
@@ -1426,12 +1475,12 @@ pub(crate) mod tests {
         let remote = &mut state.remote;
         remote.conversation = Some(ConversationId("c-1".to_string()));
         remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), work: None });
-        assert_eq!(state.changes().len(), 2 + 3, "the history's, the transcript's, the small parts");
+        assert_eq!(state.changes().len(), 2 + 4, "the history's, the transcript's, the small parts");
         replayed(&state, &mut copy);
 
         state.mark_stored();
         state.remote.open_tasks.clear();
-        assert_eq!(state.changes().len(), 3, "the small parts alone");
+        assert_eq!(state.changes().len(), 4, "the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.remote.open_tasks.is_empty());
     }
