@@ -287,7 +287,7 @@ pub fn estimated_tokens(bytes: usize) -> u64 {
 
 /// What an agent's model calls used (issue 209), summed from the messages
 /// they produced, each of which carries the tokens of its call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
     /// How many calls reported their tokens.
     pub calls: u64,
@@ -302,28 +302,27 @@ pub struct TokenUsage {
     pub context_size: Option<u64>,
     /// How many tokens the context holds now (issue 284): what the calls on
     /// it measured and what was added since, estimated - after a compaction
-    /// no longer the last call's (`AgentChannelState::usage`). Of
-    /// `TokenUsage::of` alone, the last call's prompt and answer.
+    /// no longer the last call's (`AgentChannelState::usage`). As counted
+    /// (`TokenUsage::counted`), the last call's prompt and answer.
     pub context_tokens: u64,
 }
 
 impl TokenUsage {
-    /// The usage of the calls that produced `messages`, in the order they
-    /// were produced; `None` if none of them reported its tokens.
-    pub fn of<'a>(messages: impl IntoIterator<Item = &'a Message>) -> Option<Self> {
-        messages.into_iter()
-            .filter(|m| m.prompt_tokens.is_some() || m.completion_tokens.is_some())
-            .fold(None, |usage: Option<Self>, m| {
-                let (prompt, completion) = (m.prompt_tokens.unwrap_or(0), m.completion_tokens.unwrap_or(0));
-                let usage = usage.unwrap_or(Self { calls: 0, prompt_tokens: 0, completion_tokens: 0, context_size: None, context_tokens: 0 });
-                Some(Self {
-                    calls: usage.calls + 1,
-                    prompt_tokens: usage.prompt_tokens + prompt,
-                    completion_tokens: usage.completion_tokens + completion,
-                    context_size: m.context_size,
-                    context_tokens: prompt + completion,
-                })
-            })
+    /// `usage` with the call that produced `message` counted, if it reported
+    /// its tokens; `usage` as it is otherwise. `None`: nothing counted yet.
+    pub fn counted(usage: Option<Self>, message: &Message) -> Option<Self> {
+        if message.prompt_tokens.is_none() && message.completion_tokens.is_none() {
+            return usage;
+        }
+        let (prompt, completion) = (message.prompt_tokens.unwrap_or(0), message.completion_tokens.unwrap_or(0));
+        let usage = usage.unwrap_or(Self { calls: 0, prompt_tokens: 0, completion_tokens: 0, context_size: None, context_tokens: 0 });
+        Some(Self {
+            calls: usage.calls + 1,
+            prompt_tokens: usage.prompt_tokens + prompt,
+            completion_tokens: usage.completion_tokens + completion,
+            context_size: message.context_size,
+            context_tokens: prompt + completion,
+        })
     }
 }
 

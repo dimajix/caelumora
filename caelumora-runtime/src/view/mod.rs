@@ -1281,7 +1281,7 @@ mod tests {
             context_size: Some(8192),
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
-        let mut state = AgentChannelState::default();
+        let mut state = AgentChannelState { used: TokenUsage::counted(None, &answer), ..AgentChannelState::default() };
         state.transcript.push(answer);
         state.notes.push(Change::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }, NoteOrigin::default(), MessageId::default());
         let mut turn = TurnState::default();

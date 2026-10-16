@@ -813,10 +813,13 @@ mod tests {
         let mut state = AgentChannelState::default();
         assert_eq!(state.usage(agent), None, "no call yet");
 
-        state.transcript.push(call(agent, 100, 10, Some(4096)));
-        state.transcript.push(call(ActorId::Agent(AgentId::new()), 5000, 500, Some(8192)));
+        begin(&mut state, ModelProfile::default());
+        state.said(call(agent, 100, 10, Some(4096)));
+        // Heard: it carries its sender's tokens.
+        let heard = call(ActorId::Agent(AgentId::new()), 5000, 500, Some(8192));
+        state.perceive(vec![heard.clone()], vec![heard]);
         let before_given = state.transcript.digest();
-        state.transcript.push(call(agent, 200, 20, Some(4096)));
+        state.said(call(agent, 200, 20, Some(4096)));
         state.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Stopped, at: Utc::now() });
         // A branch no longer active - as an external agent's earlier calls
         // are (`start_anew`) - counts as well.

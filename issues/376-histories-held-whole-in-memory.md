@@ -187,23 +187,29 @@ Two values are summed over every entry of the transcript today and would read wh
 holds. Both become fields that are kept as the entry is added - recorded, like the other small
 parts, whole in `changes()` - and read from there:
 
-- **`AgentChannelState::usage: Option<TokenUsage>`**, the total of every call the agent's model
+- **`AgentChannelState::used: Option<TokenUsage>`**, the total of every call the agent's model
   reported in this channel: `calls`, `prompt_tokens`, `completion_tokens` added up, `context_size`
-  that of the last message that reported one, as `TokenUsage::of` builds it. Added to in
-  `AgentChannelState::said` when the message said carries tokens - the one place a message of the
-  agent's own enters the transcript for the first time; the copies a compaction makes
-  (`push_entry`) do not pass it, so a message is counted once, as today. `usage(agent)` returns the
-  field with `context_tokens` from `next_context_tokens`, as today, and loses its argument: the
-  field is this agent's. `None` stays "unknown": an external agent's calls report no tokens. A new
-  variant `AgentChannelStateChange::Usage(Option<TokenUsage>)`.
-- **`RemoteState::seen: Option<Classification>`**, the join of every classification the remote
-  side was ever given - every message and every change of one on every branch (issue 236). Joined
-  in `ExternalAgentActor` where it is summed today, before the call, over the active branch alone:
-  `state.remote.see(classification)` for each entry of `transcript.entries()` with one. Every entry
-  of an external agent's transcript is on the active branch at the time of exactly one call - the
-  branch starts anew after each - so the join over the branches at the calls is the join over all
-  entries. `work.see(&seen)` then. `RemoteState` is recorded whole already (`Remote(RemoteState)`),
-  so nothing changes in `changes()`; `is_empty` takes the field into account.
+  that of the last message that reported one, counted by `TokenUsage::counted`, which replaces
+  `TokenUsage::of`. Added to in `AgentChannelState::said` when the message said carries tokens,
+  and in `AgentChannelState::compact` for a replacement message of the agent's own - the summary,
+  written by a call of its model, which today's sum counts as well. The copies a compaction makes
+  (`push_entry`) pass neither, so a message is counted once, as today. Named `used`, not `usage`:
+  `usage(agent)` stays the reader, returns the field with `context_tokens` from
+  `next_context_tokens`, as today, and keeps its argument, which the resolver needs for that.
+  `None` stays "unknown": an external agent's calls report no tokens. A new variant
+  `AgentChannelStateChange::Used(Option<TokenUsage>)`.
+- **`RemoteState::given_classifications: Vec<Classification>`**, every classification the remote
+  side was ever given, each once - of every message and every change of one on every branch
+  (issue 236). A list rather than their join: a join of classifications without a compartment in
+  common has none, which would need a third state, and `Work::see` of each gives what it gives
+  today. `AgentChannelState::classifications_given` records those of the transcript's active
+  branch into it (`RemoteState::give_classified`) and returns all of them; `ExternalAgentActor`
+  calls it before each call, where it summed over every entry, and sees each. Every entry of an
+  external agent's transcript is on the active branch at the time of exactly one call - the branch
+  starts anew after each, and nothing is added between the reading and `start_anew` - so what is
+  recorded over the calls is every entry's. `RemoteState` is recorded whole already
+  (`Remote(RemoteState)`), so nothing changes in `changes()`; `is_empty` takes the field into
+  account.
 
 ### 5. The resolver reads one branch of the history
 
@@ -315,3 +321,12 @@ independent of each other and of 6.
   message or turn began rather than from the start. `fold` gives each message with its node, not
   its position alone. `fit_into` records without counting, and the channel stores whenever it
   records; `messages_after`, which nothing called, is gone.
+- **2026-10-16** — Step 3 done: what the agent's calls used is a running total in its state
+  (`AgentChannelState::used`), counted as each message is said or a summary written, and what an
+  external agent's remote side was given a list of classifications in `RemoteState`, recorded
+  before each call. Neither is summed over the transcript any more. Every stored state is to be
+  deleted.
+- **2026-10-16** — Noticed on the way, not part of this issue: `caelumora-runtime` does not build
+  without the feature `test-support`, since the import of `SessionPrivacy` in `session/mod.rs` is
+  limited to tests while `SessionLoop::privacy` is not. Tests and clippy with `--all-targets` turn
+  the feature on and do not show it.

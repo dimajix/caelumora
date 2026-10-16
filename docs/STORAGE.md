@@ -208,8 +208,11 @@ against an update of the entity.
     [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)); what is kept once by digest tells the
     digests added. Each node carries its position, and a node is merged only at the position it
     has, or at the one after the last if it is new.
-*   A small part - the processing state, the turn under way, an external agent's open tasks - is
-    recorded whole: it is changed in place and bounded by one turn or one exchange.
+*   A small part - the processing state, the turn under way, the tokens the agent's calls used, an
+    external agent's open tasks and the classifications it was given - is recorded whole: it is
+    changed in place and bounded by one turn, one exchange, or the labels in use. What would be
+    summed over a whole chain is kept as such a part instead, so that a chain is never read whole
+    for it.
 
 Replaying is idempotent, and nothing replayed is a change to store again. Every reference between
 parts is a digest or an id, resolved when read and never while replaying, so the order across parts

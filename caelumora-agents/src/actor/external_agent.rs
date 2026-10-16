@@ -279,10 +279,10 @@ impl ExternalAgentActor {
             return Ok(Ending::Failed(format!("its answers are classified {brought}, which may not be published in this channel ({})", work.classification)));
         }
         work.see(&brought);
-        // All it was ever given: the calls before, each a branch of the
-        // transcript, and what it is given now - every message, and every
-        // change of one, as it may have used either version (issue 236).
-        state.transcript.all_entries().filter_map(|e| e.entry.classification()).for_each(|c| work.see(c));
+        // All it was ever given: in the calls before, and what it is given
+        // now - every message, and every change of one, as it may have used
+        // either version (issue 236).
+        state.classifications_given().iter().for_each(|c| work.see(c));
         let given = state.transcript.messages();
         // A task that asked back before the channel was lowered is not
         // taken up: it is cancelled, and the request begins a new one.

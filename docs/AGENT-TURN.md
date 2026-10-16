@@ -317,9 +317,11 @@ models believe it. Nothing with consequences may rest on whom the model believes
 ### Tokens used
 
 Every message the model produces carries the tokens of its call and the size of the context the call
-had. What an agent used in a channel is summed from its transcript when it is read
-(`AgentChannelState::usage`), not kept as a counter: its own messages, on every branch, the turn
-under way included. Two groups mean different things:
+had. What an agent used in a channel is a running total kept with its state, counted as each of its
+calls' messages is recorded - said in a turn, or written as a summary in a compaction - so that a
+call is counted once, on whichever branch, the turn under way's included; it is not summed over the
+transcript, whose older branches need not be at hand (`AgentChannelState::usage`). Two groups mean
+different things:
 
 *   **context** - the tokens the model is given next against its context size
     (`TokenUsage::context_tokens`): how full it is. The `ContextResolver` measures it, as it
