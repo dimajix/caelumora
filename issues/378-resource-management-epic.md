@@ -20,11 +20,10 @@ that reduce what is held, and their order.
   it, and nothing bounds it today; the agents are meant for long-running channels.
 - Starting a channel or an actor reads its whole past, so a restart of a long-lived server is slow
   in proportion to how much it did.
-- The issues interlock: paging a history ([218](218-paged-histories.md)) and catching up what an
-  inbox dropped ([223](223-full-inbox-drops-events.md)) both need stable positions in a history and
-  reads by range, which [379](379-history-stored-as-it-stands.md) provides; unloading a channel
-  ([381](381-inactive-channels-held-in-memory.md)) is pointless while loading it again reads its
-  whole past.
+- The issues interlock: paging a history ([218](218-paged-histories.md)) needs stable positions
+  in a history and reads by range, which [379](379-history-stored-as-it-stands.md) provides;
+  unloading a channel ([381](381-inactive-channels-held-in-memory.md)) is pointless while loading
+  it again reads its whole past.
 
 ## The frame
 
@@ -53,8 +52,8 @@ Decided with the maintainer on 2026-10-16, after weighing options on 376:
    rest without a change of behaviour: a stable position per entry, reads by range on `Chain`, the
    sums over whole chains turned into small parts of the state, every reader that needs only the
    end or one entry taken off `all_entries()`.
-2. [218](218-paged-histories.md) and [223](223-full-inbox-drops-events.md) on the positions and
-   ranges of step 1, while the chains are still whole.
+2. [218](218-paged-histories.md) on the positions and ranges of step 1, while the chains are
+   still whole.
 3. [379](379-history-stored-as-it-stands.md) - the `HistoryStore` with the derived store of items;
    an architecture decision on its contract first.
 4. [380](380-transcript-window.md) - the `TranscriptStore` and the window over the active branch.
@@ -82,3 +81,9 @@ order along the way.
 
 - **2026-10-16** — Created at the maintainer's request, from the discussion of options on 376: the
   frame above was decided there, 376 narrowed to the preparatory step, 379 to 383 opened.
+- **2026-10-16** — 218 done. [223](223-full-inbox-drops-events.md) left the epic: catching up
+  from the history, which put it here, was rejected - the moderator decides who hears what - and
+  the inbox is to be persisted instead, with [385](385-inbox-lost-on-restart.md); that needs no
+  range reads and reduces nothing held in memory. Its plan is recorded on 223 and waits for 379,
+  whose store contract decides how a history entry and the deliveries it causes are stored
+  together. Step 2 of the order is 218 alone.

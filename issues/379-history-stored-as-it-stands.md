@@ -68,6 +68,12 @@ rebuilt from the chain at any time, and the store suite checks that it equals th
   position.
 - **The agent's history** is the same type and gets the same store, under the agent's key; its
   REST endpoint is paged like the channel's (218).
+- **An entry and what it causes, stored together.** [223](223-full-inbox-drops-events.md) is to
+  put an actor's inbox into the channel's state and store a history entry and the deliveries it
+  causes in one write, so that a crash cannot keep the one without the others. With the history
+  in a store of its own, that is a write across the `HistoryStore` and the `StateStore`: the
+  contract has to say how - one transaction where the backend has one, or an order of writes with
+  a repair on loading - before 223 is built on it.
 
 ## Done when
 
