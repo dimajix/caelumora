@@ -376,6 +376,7 @@ published before anyone else can take it.
 | [192](192-issue-179-small-duplicates.md) | done | Small duplicates were left from issue 179 in the member views, the reader's place, "not found means none" and `unheard`. |
 | [313](313-docs-too-detailed.md) | done | The documents in `docs/` have about 130,000 tokens, mostly code retold - variants, fields, call orders - and inline issue history, so the concepts and rules are hard to find and every change has a second place to update. |
 | [349](349-core-review-epic.md) | done | Epic for the review of agents, sessions and channels of 2026-10-14: the bracket around issues 350–361 and their recommended order. |
+| [391](391-history-and-transcript-review-epic.md) | open | Epic for the review of the history and the transcript of 2026-10-16: the bracket around issues 392–398 and their recommended order. |
 | [378](378-resource-management-epic.md) | open | Epic for resource management: the bracket around 376, 379–383 and 218, which reduce what the server holds in memory, and their recommended order. |
 
 ## Code structure
@@ -465,6 +466,13 @@ published before anyone else can take it.
 | [373](373-agent-test-worlds.md) | done | The agents' test world mirrors the four constructors of the runtime's `World`, each a shorthand for the next, so a new way to set up a world is added in eight places. |
 | [374](374-channel-controller-beside-the-actor-runtime.md) | done | Every actor is given its channel's controller as a parameter beside its `ActorRuntime`, its interface to that channel, so the two can disagree and every actor's constructor carries both. |
 | [375](375-test-runtimes-built-by-hand.md) | done | About twenty tests in four crates build a runtime by hand, writing out every service it is made of, so each change to what a runtime is built from changes them all. |
+| [392](392-history-readers-without-callers.md) | open | `History::messages`, `items` and `recorded_context_of` read a history held in memory, which nothing in production does any more, and two comments of the agent's run loop describe a history that keeps only final messages. |
+| [393](393-history-record-wrappers.md) | open | `History` records a turn's end, a plan step, a command, an activity and a compaction through five methods that each only assert the variant of the entry they are handed. |
+| [394](394-chain-branch-memory.md) | open | `Chain` remembers the branch last taken from every entry and the stores take in nodes changed in their place, for a switch between branches that nothing makes since 08 was rejected. |
+| [395](395-message-change-applied-twice.md) | open | `HistoryEntry` and `TranscriptEntry` apply a modification, revocation or reclassification to a message, and digest it, by two copies of one rule. |
+| [396](396-three-ways-to-read-a-message-as-it-stands.md) | open | One message as it stands is read by three functions, two of which fold everything said after it or given before it. |
+| [397](397-agent-channel-state-follows-the-transcript.md) | open | Four methods of `AgentChannelState` move the turn's context after the transcript's head each for itself, and `compact` checks for a turn four times. |
+| [398](398-given-means-four-things.md) | open | Around the transcript "given" names a message given to read, which messages the transcript holds, and the directory of the prompt texts and tool sets. |
 
 ## Integrations
 
