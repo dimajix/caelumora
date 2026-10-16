@@ -101,9 +101,12 @@ where
     })
 }
 
-/// The message `id` as `nodes` hold it: as it was first recorded, with
+/// The message `id` as `nodes` - a transcript's, in the order they were
+/// added - hold it, on whichever branch: as it was first recorded, with
 /// every change of it since, in the order they were. `None` if they do not
-/// hold it.
+/// hold it. What a receiver given a branch holding it knows of it (issue
+/// 236), read by a store, which holds every branch (`TranscriptStore::message`,
+/// issue 380).
 pub(crate) fn known<'a>(mut nodes: impl Iterator<Item = &'a Node<TranscriptEntry>>, id: MessageId) -> Option<Message> {
     let mut message = nodes.by_ref().find_map(|node| node.entry.message().filter(|m| m.id == id)).cloned()?;
     nodes.filter(|node| node.entry.changed() == Some(id)).for_each(|node| node.entry.apply_to(&mut message));
@@ -190,14 +193,6 @@ impl Chain<TranscriptEntry> {
         }
         self.push_with(TranscriptEntry::Reclassified { message: id, classification }, digest::transcript_chain);
         true
-    }
-
-    /// The message `id` as the transcript holds it, on whichever branch:
-    /// as it was first recorded, with every change of it recorded since.
-    /// `None` if it holds none. What a receiver given a branch holding it
-    /// knows of it (issue 236), where `messages` gives only the active path.
-    pub fn message(&self, id: MessageId) -> Option<Message> {
-        known(self.all_entries(), id)
     }
 
     /// The message `id` of the active path as it stands, `None` if it is
@@ -304,7 +299,7 @@ mod tests {
         said.push(make_message(id(2)));
         assert_eq!(given.digest(), said.digest(), "the model is given the same");
         assert_eq!(given.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(2)]);
-        assert_eq!(given.message(id(2)).map(|m| m.id), Some(id(2)));
+        assert_eq!(known(given.all_entries(), id(2)).map(|m| m.id), Some(id(2)));
         let entry = &given.last().unwrap().entry;
         assert!(matches!(entry, TranscriptEntry::Given { source: s, .. } if *s == source), "and keeps what it is");
         assert_eq!(entry.classification(), Some(&make_message(id(2)).classification));
@@ -516,10 +511,10 @@ mod tests {
         transcript.start_anew();
         transcript.push(make_message(id(3)));
 
-        assert_eq!(transcript.message(id(1)).and_then(|m| m.content).as_deref(), Some("corrected"), "off the active path, with its change");
-        assert!(transcript.message(id(2)).is_some_and(|m| m.revoked.is_some()), "taken back");
-        assert_eq!(transcript.message(id(3)).map(|m| m.id), Some(id(3)), "on the active path");
-        assert!(transcript.message(id(9)).is_none(), "never held");
+        assert_eq!(known(transcript.all_entries(), id(1)).and_then(|m| m.content).as_deref(), Some("corrected"), "off the active path, with its change");
+        assert!(known(transcript.all_entries(), id(2)).is_some_and(|m| m.revoked.is_some()), "taken back");
+        assert_eq!(known(transcript.all_entries(), id(3)).map(|m| m.id), Some(id(3)), "on the active path");
+        assert!(known(transcript.all_entries(), id(9)).is_none(), "never held");
     }
 
     #[test]
