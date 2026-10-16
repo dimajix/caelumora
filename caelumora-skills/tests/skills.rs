@@ -174,7 +174,7 @@ fn load_skill_shows_the_channel_which_skill_it_loaded_not_what_it_gave() {
     use caelumora_skills::component::{SKILL_LIST_PRESENTATION, SKILL_PRESENTATION};
     let tools = component().tools();
     let load = tools.iter().find(|t| t.name == LOAD_SKILL_TOOL_NAME).unwrap();
-    assert_eq!(load.visibility, ToolVisibility::WITHOUT_RESULT);
+    assert_eq!(load.visibility, ToolVisibility::SHOWN, "its result names the skill; its text is given to the agent, not published (issue 389)");
     let skills: Vec<_> = tools.iter().filter(|t| t.presentation == SKILL_PRESENTATION).map(|t| t.name.as_str()).collect();
     assert_eq!(skills, [LOAD_SKILL_TOOL_NAME, CREATE_SKILL_TOOL_NAME, UPDATE_SKILL_TOOL_NAME], "shown as a skill");
     let list = tools.iter().find(|t| t.name == LIST_SKILLS_TOOL_NAME).unwrap();
