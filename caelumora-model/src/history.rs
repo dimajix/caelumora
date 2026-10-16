@@ -185,6 +185,24 @@ impl Chain<HistoryEntry> {
         reached.then_some(0)
     }
 
+    /// What `agent` produced on a branch of its transcript, read from the end
+    /// backwards: each of its messages recorded with the context it was
+    /// produced from, with the transcript entry it was produced after - up to
+    /// the compaction of `agent` that began the branch (issue 16), the
+    /// `Compacted` entry whose new head `on_branch` says is on it; from the
+    /// start if no compaction did. Every message produced on the branch is
+    /// recorded after that entry, so it is all of them, and what was
+    /// produced on later branches besides, whose contexts name entries the
+    /// branch does not hold (issue 376).
+    pub fn produced_on_branch<'a>(&'a self, agent: ActorId, on_branch: impl Fn(&Digest) -> bool + 'a) -> impl Iterator<Item = (MessageId, Option<Digest>)> + 'a {
+        self.all_entries().rev()
+            .take_while(move |node| !matches!(&node.entry, HistoryEntry::Compacted { actor, to, .. } if *actor == agent && on_branch(to)))
+            .filter_map(move |node| match &node.entry {
+                HistoryEntry::Said { message, context: Some(context) } if message.sender_id == agent => Some((message.id, context.transcript)),
+                _ => None,
+            })
+    }
+
     /// The turn of `author` given up, and why, if its end is the last thing
     /// on the active path (issue 259): what may be asked for anew as long as
     /// nothing followed it.
@@ -476,6 +494,35 @@ mod tests {
         assert!(history.revoke(id(2), at), "changed after later turns");
         assert_eq!(history.said_in_turn(agent, turn).iter().map(|m| m.id).collect::<Vec<_>>(), [id(4)], "an older turn, as it stands");
         assert_eq!(history.said_in_turn(agent, before).iter().map(|m| m.id).collect::<Vec<_>>(), [id(1)], "the first, from the start");
+    }
+
+    #[test]
+    fn what_an_agent_produced_on_a_branch_is_read_back_to_the_compaction_that_began_it() {
+        let (agent, other) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()));
+        let turn = TurnId::new();
+        let at = Utc::now();
+        let after = |label: &str| Some(digest::prompt(label));
+        let produced = |sender, n: u128, label: &str| (Message { sender_id: sender, ..make_message(id(n)) }, Some(ContextRef { transcript: after(label), ..ContextRef::default() }));
+        let compacted = |actor, to: &str| HistoryEntry::Compacted { turn_id: turn, actor, from: digest::prompt("before"), to: digest::prompt(to), at };
+        let mut history = History::default();
+        let (message, context) = produced(agent, 1, "root");
+        history.push(message, context);
+        history.record_compaction(compacted(agent, "first"));
+        let (message, context) = produced(agent, 2, "first");
+        history.push(message, context);
+        history.push(make_message(id(3)), None);
+        // Another agent's compaction, and what it produced: not this agent's.
+        history.record_compaction(compacted(other, "theirs"));
+        let (message, context) = produced(other, 4, "theirs");
+        history.push(message, context);
+        history.record_compaction(compacted(agent, "second"));
+        let (message, context) = produced(agent, 5, "second");
+        history.push(message, context);
+
+        let on = |branch: &'static str| history.produced_on_branch(agent, move |digest| *digest == digest::prompt(branch)).collect::<Vec<_>>();
+        assert_eq!(on("second"), [(id(5), after("second"))], "the current branch, from its compaction on");
+        assert_eq!(on("first"), [(id(5), after("second")), (id(2), after("first"))], "an earlier one, and what came after it");
+        assert_eq!(on("elsewhere").len(), 3, "from the start if no compaction began it");
     }
 
     #[test]

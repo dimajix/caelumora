@@ -217,20 +217,23 @@ parts, whole in `changes()` - and read from there:
 the agent's was produced after - from every `Said` entry of the agent's history. It uses it only
 for messages on the path it resolves that carry `prompt_tokens`, which a copy made by a compaction
 never matches ("which a copy kept through a compaction does not"): only messages produced on the
-current branch, all said after the `Compacted` entry that began it. `History` offers
+path's branch, all said after the `Compacted` entry that began it. `History` offers
 
 ```rust
-/// What the agent `agent` produced on the current branch of its transcript, each message with
-/// the transcript entry it was produced after: the `Said` entries with a context from the end
-/// back to the latest `Compacted` entry, which began the branch (issue 16).
-pub fn produced_on_branch(&self, agent: ActorId) -> impl Iterator<Item = (MessageId, Option<Digest>)> + '_
+/// What `agent` produced on a branch of its transcript, read from the end backwards, each message
+/// with the transcript entry it was produced after - up to the `Compacted` entry of `agent` whose
+/// new head `on_branch` says is on the branch, which began it; from the start if none did.
+pub fn produced_on_branch<'a>(&'a self, agent: ActorId, on_branch: impl Fn(&Digest) -> bool + 'a) -> impl Iterator<Item = (MessageId, Option<Digest>)> + 'a
 ```
 
-and the resolver builds its map from that. A history without a compaction is read whole, which is
-then the size of the transcript's one branch. `recorded_context_of(id)`,
-`AgentContextView::produced` and `::saw` keep reading backwards over everything for an old
-message: that part is 379's and 380's, since it is what the stores answer. `next_context_tokens` finds the profile of the agent's
-last message from the end backwards already.
+and the resolver builds its map from it, with the digests of the path it resolves as `on_branch`.
+So it holds for whichever branch a reference names; for the current one - every caller today: the
+turn under way, or the head between turns - it reads back to the latest compaction. What it reads
+besides, produced on later branches, names entries the path does not hold and matches nothing. A
+history without a compaction is read whole, which is then the size of the transcript's one branch.
+`recorded_context_of(id)`, `AgentContextView::produced` and `::saw` keep reading backwards over
+everything for an old message: that part is 379's and 380's, since it is what the stores answer.
+`next_context_tokens` finds the profile of the agent's last message from the end backwards already.
 
 ### 6. The chain may hold a suffix
 
@@ -330,3 +333,7 @@ independent of each other and of 6.
   without the feature `test-support`, since the import of `SessionPrivacy` in `session/mod.rs` is
   limited to tests while `SessionLoop::privacy` is not. Tests and clippy with `--all-targets` turn
   the feature on and do not show it.
+- **2026-10-16** — Step 4 done: the resolver measures token positions from what the agent produced
+  since the compaction that began the branch it resolves (`History::produced_on_branch`), not from
+  every message of the history. Told which branch by the digests of the path, rather than taking the
+  latest compaction, so that it holds for a reference to any branch.
