@@ -91,6 +91,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [338](338-artifacts-go-with-their-session.md) | open | An artifact is published into its session's scope and is deleted with the session unless its owner keeps it elsewhere, though it is meant to outlive the conversation. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 | [305](305-skill-versions.md) | open | A skill keeps only its current text: every change overwrites what it said, nobody sees what changed, and an earlier version cannot be made current again. |
+| [390](390-context-gauge-profile-from-history.md) | open | How full an agent's context is between turns is estimated with the model profile of a message from its history, not with the rules of the model it is run with now. |
 
 ## Maintenance
 
