@@ -100,7 +100,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 
 | No. | Status | Issue |
 |---|---|---|
-| [378](378-resource-management-epic.md) | open | Epic for resource management: the bracket around 376, 379–383, 218 and 223, which reduce what the server holds in memory, and their recommended order. |
+| [378](378-resource-management-epic.md) | open | Epic for resource management: the bracket around 376, 379–383 and 218, which reduce what the server holds in memory, and their recommended order. |
 
 ## Code structure
 

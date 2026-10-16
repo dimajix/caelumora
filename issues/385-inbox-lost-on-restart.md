@@ -55,3 +55,5 @@ the in-memory receiver's `commit` clears a list.
 - **2026-10-16** — Opened while weighing options on [223](223-full-inbox-drops-events.md): the
   maintainer proposed persisting the inbox, which answers this loss and 223's with one design. The
   design is 223's plan; this issue is done with it.
+- **2026-10-16** — Taken out of the epic [378](378-resource-management-epic.md) with 223, which
+  records why; after [379](379-history-stored-as-it-stands.md).
