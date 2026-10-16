@@ -88,3 +88,7 @@ order along the way.
 - **2026-10-16** — 397 narrowed to `compact` and done there: it binds its turn once, and the copy of
   an entry kept is the entry's. The method that would move a turn's context after the transcript in
   one place was not taken up. Next in the order: 398; 394 still waits for the maintainer's decision.
+- **2026-10-16** — 398 narrowed to `TranscriptStore::given` and done there: it is `in_transcript`,
+  as the view and the REST field that read it are named; the `.given` directory stays, since it
+  holds what the model was given. Of the order, 394 alone is left: it waits for the maintainer's
+  decision whether the branch memory of `Chain` goes, and this epic stays open until it is decided.

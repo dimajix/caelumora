@@ -104,7 +104,7 @@ impl TranscriptStore for JsonFileStore {
         Ok(known(nodes.iter(), id))
     }
 
-    async fn given(&self, agent: AgentId, channel: ChannelId, ids: &[MessageId]) -> StoreResult<HashSet<MessageId>> {
+    async fn in_transcript(&self, agent: AgentId, channel: ChannelId, ids: &[MessageId]) -> StoreResult<HashSet<MessageId>> {
         let dir = self.transcript_dir(agent, channel);
         let end = read_head(&dir).await?.end;
         let mut wanted: HashSet<MessageId> = ids.iter().copied().collect();

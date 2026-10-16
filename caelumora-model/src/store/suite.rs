@@ -798,8 +798,8 @@ pub(crate) async fn transcript_store_behaves(states: &dyn StateStore, transcript
     assert_eq!(seqs(transcripts.path(agent, channel, state.transcript.digest().unwrap()).await.unwrap()), Some(vec![301]), "on the active one");
     assert_eq!(transcripts.message(agent, channel, id(1)).await.unwrap().and_then(|m| m.content), Some("changed".to_string()), "as it stands on its branch");
     assert!(transcripts.message(agent, channel, id(999)).await.unwrap().is_none());
-    let given = transcripts.given(agent, channel, &[id(1), id(301), id(999)]).await.unwrap();
-    assert_eq!(given, [id(1), id(301)].into_iter().collect(), "which it holds, on whichever branch");
+    let held = transcripts.in_transcript(agent, channel, &[id(1), id(301), id(999)]).await.unwrap();
+    assert_eq!(held, [id(1), id(301)].into_iter().collect(), "which it holds, on whichever branch");
 
     let loaded = states.get_agent_channel_state(agent, channel).await.expect("get");
     assert_eq!((loaded.transcript.digest(), loaded.transcript.end(), loaded.transcript.base()), (state.transcript.digest(), state.transcript.end(), 0), "the transcript comes back whole");
@@ -827,7 +827,7 @@ pub(crate) async fn transcript_store_behaves(states: &dyn StateStore, transcript
     again.transcript.push(make_message(id(2)));
     states.put_agent_channel_state(agent, channel, &mut again).await.expect("put");
     states.delete_agent_state(agent).await.expect("delete");
-    assert!(transcripts.given(agent, channel, &[id(2)]).await.unwrap().is_empty(), "and with the agent");
+    assert!(transcripts.in_transcript(agent, channel, &[id(2)]).await.unwrap().is_empty(), "and with the agent");
 }
 
 /// The prompt texts and the tool sets an agent's model was given (issue

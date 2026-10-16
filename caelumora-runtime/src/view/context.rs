@@ -154,7 +154,7 @@ impl AgentContextView {
     /// # Errors
     /// `Failed` if the transcript cannot be read.
     pub async fn in_transcript(&self, messages: &[MessageId]) -> Result<HashSet<MessageId>, AgentContextError> {
-        self.transcripts.given(self.agent, self.channel, messages).await
+        self.transcripts.in_transcript(self.agent, self.channel, messages).await
             .map_err(|source| AgentContextError::Failed { actor: self.actor(), message: None, source })
     }
 
