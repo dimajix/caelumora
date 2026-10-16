@@ -45,11 +45,12 @@ async fn wakeup_is_announced_to_the_channel_in_the_issuers_name() {
     let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
     let actor = channel.user_actor(alice.id).unwrap();
     let mut events = channel.observe();
-    let mut following = actor.watch().events;
+    let mut following = actor.watch();
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
     let reply = actor.execute_command("wakeup", "").await.expect("/wakeup runs");
-    assert!(matches!(following.try_recv().map(|e| e.event), Ok(ActorEvent::CommandExecuted { .. })), "the issuer sees it from its own actor (issue 220)");
+    let shown = tokio::time::timeout(Duration::from_secs(2), following.recv()).await.expect("shown").map(|e| e.event);
+    assert!(matches!(shown, Ok(ActorEvent::CommandExecuted { .. })), "the issuer sees it from its own actor (issue 220)");
     assert_eq!(reply.visibility, CommandVisibility::Channel, "the answer goes to the channel");
     assert_eq!(reply.output.as_deref(), Some("No agent was asleep."), "and back to the issuer, whom the channel does not route it to");
 
@@ -139,7 +140,7 @@ async fn a_nudged_agent_responds_in_the_name_of_who_nudged_it_and_the_history_ke
     let alice = alice_of(&context);
     answered(&mut events, agent).await;
     settled(&helper, ActorState::Idle).await;
-    let mut following = channel.user_actor(alice).unwrap().watch().events;
+    let mut following = channel.user_actor(alice).unwrap().watch();
 
     let output = nudge(&channel, alice, "@helper").await.expect("/nudge runs");
     assert_eq!((output.text.as_str(), output.visibility), ("Asked helper to respond.", CommandVisibility::Private), "told to the issuer alone");
@@ -207,7 +208,7 @@ async fn a_nudged_user_is_shown_who_asks_them_to_respond() {
     let (alice, bob) = (user("alice"), user("bob"));
     let channel = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
-    let mut his = channel.user_actor(bob.id).unwrap().watch().events;
+    let mut his = channel.user_actor(bob.id).unwrap().watch();
 
     let output = nudge(&channel, alice.id, "Bob").await.expect("/nudge runs");
     assert_eq!(output.text, "Asked bob to respond.");

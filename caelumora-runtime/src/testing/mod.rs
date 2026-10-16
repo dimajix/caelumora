@@ -496,7 +496,7 @@ pub async fn asked_for(world: &World, line: &str) {
 pub async fn shown(watch: &mut ChannelWatch, wanted: &str) -> ActorEvent {
     timeout(Duration::from_secs(5), async {
         loop {
-            let envelope = watch.events.recv().await.expect("the channel runs");
+            let envelope = watch.recv().await.expect("the channel runs");
             if envelope.event.kind() == wanted {
                 break envelope.event;
             }

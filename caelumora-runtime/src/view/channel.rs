@@ -3,6 +3,7 @@
 use super::member::{member_state, AgentMember, MemberState};
 use super::ChannelReading;
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
+use crate::actor::user::ChannelWatch;
 use crate::channel::{visible_message, visible_page, visible_part, ChannelLoop, VisibleHistory};
 use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
@@ -140,6 +141,15 @@ impl ChannelView {
     /// Whether the channel runs: its loop is where an operation goes.
     pub fn running(&self) -> Option<&Arc<ChannelLoop>> {
         self.running.as_ref()
+    }
+
+    /// The channel as the viewer follows it, from now on (`ChannelWatch`,
+    /// issues 104, 386): what their own actor in it shows, across its runs,
+    /// whether the channel runs or not; it is not started for this. `None`
+    /// if the viewer is no user taking part in it.
+    pub fn user_follow(&self) -> Option<ChannelWatch> {
+        let viewer @ ActorId::User(_) = self.views().context().caller_id else { return None };
+        self.lists(viewer).then(|| ChannelWatch::of(&self.views().actor_manager().outbox(self.channel.id, viewer)))
     }
 
     /// Whether the viewer may read an entry of the channel classified

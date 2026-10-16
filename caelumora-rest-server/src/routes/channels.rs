@@ -23,16 +23,18 @@ use caelumora_rest_api::history::{HistoryMessageResponse, HistoryPageResponse, H
 use caelumora_rest_api::session::DescriptionRequest;
 use caelumora_rest_api::stream::StreamOptions;
 use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
-use caelumora_runtime::actor::user::UserActor;
+use caelumora_runtime::actor::Shown;
+use caelumora_runtime::actor::user::{ChannelWatch, UserActor};
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
 use caelumora_runtime::view::{ChannelView, MemberView, Reached, SessionView, Viewer};
-use futures::Stream;
+use futures::stream::{self, Stream, StreamExt};
 use std::convert::Infallible;
 use std::sync::Arc;
 use uuid::Uuid;
 use crate::routes::{change_error, channel_of, channel_view, ensure_session, open_channel, views};
-use crate::sse::stream;
+use crate::sse::{bounded_by_token, data_event, named_event};
+use tokio::sync::broadcast::error::RecvError;
 use tracing::Span;
 
 /// The channels of the session the user may read - or, with
@@ -158,27 +160,27 @@ pub async fn get_notes(
     Ok(Json(notes.into_iter().map(Into::into).collect()))
 }
 
-/// The state of `channel` right now, for a stream that starts with a
-/// snapshot (issue 34); `None` if the channel cannot be described to
-/// `viewer` any more - deleted, or no longer theirs to read - in which case
-/// their watch ends.
-async fn channel_snapshot(state: &AppState, channel: &ChannelLoop, viewer: &SecurityContext) -> Option<ChannelSnapshot> {
+/// The state of channel `channel_id` of session `session_id` right now,
+/// for a stream that starts with a snapshot (issue 34); `None` if the
+/// channel cannot be described to `viewer` any more - deleted, or no longer
+/// theirs to read - in which case their stream ends.
+async fn channel_snapshot(state: &AppState, session_id: SessionId, channel_id: ChannelId, viewer: &SecurityContext) -> Option<ChannelSnapshot> {
     let views = state.session_manager.views(Viewer::new(viewer.clone()));
-    let reached = match views.session(channel.session_id()).await {
-        Ok(session) => session.channel(channel.id()).await,
+    let reached = match views.session(session_id).await {
+        Ok(session) => session.channel(channel_id).await,
         Err(e) => Err(e),
     };
     let view = match reached {
         Ok(view) => view,
         Err(e) => {
-            tracing::warn!("Cannot describe channel {} for its snapshot: {:#}", channel.id(), e);
+            tracing::warn!("Cannot describe channel {} for its snapshot: {:#}", channel_id, e);
             return None;
         }
     };
     let page = match view.history_page(None, SNAPSHOT_ITEMS).await {
         Ok(page) => page,
         Err(e) => {
-            tracing::warn!("Cannot read the history of channel {} for its snapshot: {:#}", channel.id(), e);
+            tracing::warn!("Cannot read the history of channel {} for its snapshot: {:#}", channel_id, e);
             return None;
         }
     };
@@ -187,27 +189,81 @@ async fn channel_snapshot(state: &AppState, channel: &ChannelLoop, viewer: &Secu
     Some(ChannelSnapshot::of(channel, HistoryPageResponse::of(page, |message, _| message)))
 }
 
-/// Follows a channel live (issue 104): only as one of its participants,
-/// through the user's own actor - the stream ends when the user leaves the
-/// channel, or it stops or is deleted. Starts with a snapshot if asked.
+/// Follows a channel live (issues 104, 386): only as one of its
+/// participants, through the user's own actor - and across its stops,
+/// without starting it: nothing new is said in a channel that does not run,
+/// and whoever acts in it starts it. The stream carries what the user's
+/// actor shows; where a run of it begins and ends, the stream starts again
+/// from the channel's state - with a snapshot, if asked for, or else
+/// `started` and `stopped`. It ends when the user is no longer a
+/// participant - they left, or the channel or its session was deleted
+/// while it ran.
 pub async fn join_channel(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     Query(options): Query<StreamOptions>,
     user: AuthenticatedUser,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let viewer = user.security_context();
-    // Watched *before* the state is read: nothing that happens while the
-    // snapshot is assembled is lost. The price is that an event can arrive
-    // twice - once in the snapshot, once as an event - which clients drop by
-    // message id.
-    let watch = user_actor_of(&channel, &user)?.watch();
-    let snapshot = move || {
-        let (state, channel, viewer) = (Arc::clone(&state), Arc::clone(&channel), viewer.clone());
-        async move { channel_snapshot(&state, &channel, &viewer).await }
-    };
-    Ok(Sse::new(stream(&user, options.snapshot, watch.events, format!("channel {}", cid), snapshot, watch.ended.cancelled_owned()).await))
+    let (session_id, channel_id) = (SessionId(id), ChannelId(cid));
+    let channel = channel_of(&state, &user, session_id, channel_id).await?;
+    let watch = channel.user_follow().ok_or_else(|| not_a_participant(channel_id))?;
+    let follower = ChannelFollower { state, user: user.clone(), session_id, channel_id, watch, with_snapshot: options.snapshot };
+    // Read after the watch began, so that nothing is lost in between; what
+    // is in both, clients drop by message id.
+    let first = if follower.with_snapshot { follower.snapshot().await } else { None };
+    Ok(Sse::new(bounded_by_token(&user, stream::iter(first.map(Ok)).chain(stream::unfold(follower, ChannelFollower::next)))))
+}
+
+/// The stream of `join_channel` after its snapshot (issue 386): what the
+/// user's actor shows, each run of it begun and ended with the channel as
+/// it then is.
+struct ChannelFollower {
+    state: Arc<AppState>,
+    user: AuthenticatedUser,
+    session_id: SessionId,
+    channel_id: ChannelId,
+    watch: ChannelWatch,
+    with_snapshot: bool,
+}
+
+impl ChannelFollower {
+    /// The next event of the stream and the follower after it; `None` once
+    /// the user no longer follows the channel.
+    async fn next(mut self) -> Option<(Result<Event, Infallible>, Self)> {
+        let event = match self.watch.next().await {
+            Ok(Shown::Envelope(envelope)) => data_event(&envelope),
+            Ok(Shown::Started) => self.anew("started").await?,
+            Ok(Shown::Ended) => self.anew("stopped").await?,
+            Err(RecvError::Lagged(lost)) => {
+                tracing::warn!("SSE client of channel {} fell behind and lost {} events", self.channel_id, lost);
+                let resynced = if self.with_snapshot { self.snapshot().await } else { None };
+                resynced.unwrap_or_else(|| Event::default().comment(format!("{} events lost", lost)))
+            }
+            Err(RecvError::Closed) => return None,
+        };
+        Some((Ok(event), self))
+    }
+
+    /// What begins the stream anew where a run of the user's actor began or
+    /// ended: the snapshot if the client asked for snapshots, else `marker`;
+    /// `None` if the user no longer takes part in the channel, or cannot
+    /// reach it.
+    async fn anew(&self, marker: &'static str) -> Option<Event> {
+        let channel = channel_of(&self.state, &self.user, self.session_id, self.channel_id).await.ok()?;
+        if !channel.lists(ActorId::User(self.user.id)) {
+            return None;
+        }
+        match self.with_snapshot {
+            true => self.snapshot().await,
+            false => Some(Event::default().event(marker).data("")),
+        }
+    }
+
+    /// The channel's snapshot as a named event, as it is now.
+    async fn snapshot(&self) -> Option<Event> {
+        channel_snapshot(&self.state, self.session_id, self.channel_id, &self.user.security_context()).await
+            .map(|snapshot| named_event("snapshot", &snapshot))
+    }
 }
 
 /// Adds a user or agent to the channel (issue 46), with as much of its
@@ -362,9 +418,13 @@ async fn member_of(channel: &ChannelView, id: Uuid) -> Result<MemberView, ApiErr
 /// Whoever writes or approves does so in their own name, so someone who is
 /// not a participant of the channel has no actor here and is refused.
 fn user_actor_of(channel: &ChannelLoop, user: &AuthenticatedUser) -> Result<Arc<UserActor>, ApiError> {
-    channel.user_actor(user.id).ok_or_else(|| {
-        ApiError::forbidden("not_a_participant", format!("You are not a participant of channel {}", channel.id()))
-    })
+    channel.user_actor(user.id).ok_or_else(|| not_a_participant(channel.id()))
+}
+
+/// What a user is answered who acts as a participant of channel `id`
+/// without being one.
+fn not_a_participant(id: ChannelId) -> ApiError {
+    ApiError::forbidden("not_a_participant", format!("You are not a participant of channel {}", id))
 }
 
 /// Ends the turn of every agent in the channel - an operation on the
@@ -690,6 +750,18 @@ mod tests {
     use caelumora_runtime::command::CommandError;
     use caelumora_runtime::view::{AgentContextError, ViewError};
     use anyhow::Error;
+    use crate::routes::api;
+    use crate::routes::tests::{login, state};
+    use axum::Router;
+    use axum::body::{to_bytes, Body, BodyDataStream};
+    use axum::http::header::{CONTENT_TYPE, COOKIE};
+    use axum::http::Request;
+    use caelumora_model::session::Participant;
+    use caelumora_model::user::UserId;
+    use caelumora_runtime::session::testing::{create, make_session};
+    use serde_json::{json, Value};
+    use std::time::Duration;
+    use tower::ServiceExt;
 
     #[test]
     fn a_command_that_does_not_run_is_answered_with_what_the_user_did() {
@@ -703,6 +775,122 @@ mod tests {
 
         let refused = Error::new(ChannelError::Forbidden { action: "waking the agents of", channel: ChannelId::default(), refused });
         assert_eq!(ApiError::from(refused).status(), StatusCode::FORBIDDEN);
+    }
+
+    /// The API on `state`, the cookie of alice, and a session of hers with
+    /// her in its main channel, started and stopped again.
+    async fn stopped_session_of_alice(state: &Arc<AppState>) -> (Router, String, SessionId, ChannelId) {
+        let api = api(Arc::clone(state), &[]);
+        let cookie = login(&api, "alice").await;
+        let me = api.clone().oneshot(Request::get("/auth/me").header(COOKIE, &cookie).body(Body::empty()).unwrap()).await.unwrap();
+        let me: Value = serde_json::from_slice(&to_bytes(me.into_body(), usize::MAX).await.unwrap()).unwrap();
+        let alice = UserId(me["id"].as_str().unwrap().parse().unwrap());
+        let mut session = make_session("talk", ActorId::User(alice));
+        session.participants = vec![Participant::User(alice)];
+        let (session_id, channel_id) = (session.id, session.channels[0]);
+        create(&state.session_manager, &SecurityContext::system(), session).await.unwrap();
+        state.session_manager.stop(&SecurityContext::system(), session_id).await.unwrap();
+        (api, cookie, session_id, channel_id)
+    }
+
+    /// The stream of the channel, as whoever `cookie` logs in follows it.
+    async fn follow(api: &Router, cookie: &str, session: SessionId, channel: ChannelId, snapshot: bool) -> BodyDataStream {
+        let uri = format!("/sessions/{}/channels/{}/events?snapshot={snapshot}", session.0, channel.0);
+        let response = api.clone().oneshot(Request::get(uri).header(COOKIE, cookie).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        response.into_body().into_data_stream()
+    }
+
+    /// What `stream` sent, read on until `seen` holds of all of it.
+    async fn read_until(stream: &mut BodyDataStream, read: &mut String, seen: impl Fn(&str) -> bool) {
+        while !seen(read) {
+            let chunk = tokio::time::timeout(Duration::from_secs(5), stream.next()).await
+                .unwrap_or_else(|_| panic!("nothing more came of the stream: {read}"))
+                .unwrap_or_else(|| panic!("the stream ended: {read}"))
+                .unwrap();
+            read.push_str(&String::from_utf8_lossy(&chunk));
+        }
+    }
+
+    /// Whether channel `channel` of `session` runs.
+    async fn runs(state: &AppState, session: SessionId, channel: ChannelId) -> bool {
+        let views = state.session_manager.views(Viewer::new(SecurityContext::system()));
+        views.session(session).await.unwrap().channel(channel).await.unwrap().running().is_some()
+    }
+
+    /// Issue 386: following a channel that does not run does not start it;
+    /// the stream waits for whoever acts in it - and shows what they said,
+    /// after the channel's state -, follows it while it runs, starts from
+    /// its state again when it stops, and ends once it is deleted.
+    #[tokio::test]
+    async fn a_stopped_channel_is_followed_without_being_started() {
+        let state = state();
+        let (api, cookie, session, channel) = stopped_session_of_alice(&state).await;
+        let snapshots = |read: &str| read.matches("event: snapshot").count();
+
+        let mut stream = follow(&api, &cookie, session, channel, true).await;
+        let mut read = String::new();
+        read_until(&mut stream, &mut read, |read| snapshots(read) == 1).await;
+        assert!(!runs(&state, session, channel).await, "following starts nothing");
+
+        let sent = Request::post(format!("/sessions/{}/channels/{}/messages", session.0, channel.0))
+            .header(COOKIE, &cookie).header(CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"content": "hello there"}).to_string())).unwrap();
+        assert_eq!(api.clone().oneshot(sent).await.unwrap().status(), StatusCode::OK);
+        let after = |read: &str, nth: usize| read.split("event: snapshot").nth(nth).unwrap_or_default().to_string();
+        read_until(&mut stream, &mut read, |read| after(read, 2).contains("hello there")).await;
+        assert!(runs(&state, session, channel).await, "whoever acts starts it, and is shown what they said after the state it started from");
+
+        // Kept, before the stop would lose it on its way (issue 385).
+        let history = format!("/sessions/{}/channels/{}/history", session.0, channel.0);
+        for _ in 0..100 {
+            let page = api.clone().oneshot(Request::get(&history).header(COOKIE, &cookie).body(Body::empty()).unwrap()).await.unwrap();
+            if String::from_utf8_lossy(&to_bytes(page.into_body(), usize::MAX).await.unwrap()).contains("hello there") { break }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        // Seen at the stop, which only a stream following the actor sees.
+        state.session_manager.stop(&SecurityContext::system(), session).await.unwrap();
+        read_until(&mut stream, &mut read, |read| snapshots(read) == 3).await;
+        assert!(read.rsplit("event: snapshot").next().is_some_and(|last| last.contains("hello there")), "{read}");
+        assert!(!runs(&state, session, channel).await, "the stream does not start it again");
+
+        state.session_manager.open(&SecurityContext::system(), session).await.unwrap();
+        read_until(&mut stream, &mut read, |read| snapshots(read) == 4).await;
+        state.session_manager.delete(&SecurityContext::system(), session).await.unwrap();
+        let ended = tokio::time::timeout(Duration::from_secs(5), async { while stream.next().await.is_some() {} }).await;
+        assert!(ended.is_ok(), "the stream of a deleted channel ends: {read}");
+    }
+
+    /// Issue 386: a client without snapshots is told that the channel
+    /// stopped and started.
+    #[tokio::test]
+    async fn a_stream_without_snapshots_says_when_the_channel_stops_and_starts() {
+        let state = state();
+        let (api, cookie, session, channel) = stopped_session_of_alice(&state).await;
+        let mut stream = follow(&api, &cookie, session, channel, false).await;
+        let mut read = String::new();
+        read_until(&mut stream, &mut read, |read| read.contains("retry:")).await;
+
+        state.session_manager.open(&SecurityContext::system(), session).await.unwrap();
+        read_until(&mut stream, &mut read, |read| read.contains("event: started")).await;
+        state.session_manager.stop(&SecurityContext::system(), session).await.unwrap();
+        read_until(&mut stream, &mut read, |read| read.contains("event: stopped")).await;
+        assert!(!read.contains("event: snapshot"), "{read}");
+    }
+
+    /// Who takes no part in a channel cannot follow it, whether it runs or
+    /// not.
+    #[tokio::test]
+    async fn only_a_participant_follows_a_channel() {
+        let state = state();
+        let (api, _, session, channel) = stopped_session_of_alice(&state).await;
+        let bob = login(&api, "bob").await;
+        let uri = format!("/sessions/{}/channels/{}/events", session.0, channel.0);
+        for _ in [false, true] {
+            let response = api.clone().oneshot(Request::get(&uri).header(COOKIE, &bob).body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            state.session_manager.open(&SecurityContext::system(), session).await.unwrap();
+        }
     }
 
     #[test]

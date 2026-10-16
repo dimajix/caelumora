@@ -1,3 +1,4 @@
+use crate::actor::Shown;
 use crate::actor::{Actor, Answering};
 use crate::channel::{ChannelError, ChannelLoop};
 use crate::command::{CommandContext, CommandError, CommandReply};
@@ -22,15 +23,11 @@ use tracing::{debug, info, warn};
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError};
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::{broadcast, mpsc, Mutex, MutexGuard};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use caelumora_model::agent::AgentId;
-
-/// How many envelopes a watcher of the actor may fall behind before it
-/// loses the oldest (see `UserActor::watch`). A power of two, since a
-/// broadcast rounds up to one (as the `EventBus`, issue 38).
-const SUBSCRIBER_CAPACITY: usize = 128;
 
 #[derive(Debug)]
 pub struct UserActor {
@@ -47,25 +44,83 @@ pub struct UserActor {
     // channel by `run`.
     user_rx: Mutex<Receiver<Envelope>>,
     user_tx: Sender<Envelope>,
-    // Where envelopes routed to this user go, to everyone who listens:
-    // see `watch` (issue 220).
-    received: broadcast::Sender<Envelope>,
-    // Cancelled when the actor ends - it left the channel, or the channel
-    // stopped: what ends every `watch` (issue 104).
+    /// Where what the actor shows its user goes, to everyone who follows
+    /// it (issues 220, 386): what it is routed and says, between the start
+    /// and the end of each run. Its user's outbox in the channel, which
+    /// outlives this actor (`ActorManager`).
+    outbox: broadcast::Sender<Shown>,
+    // Cancelled when the actor is to end - it left the channel, or the
+    // channel stopped: what ends `run`.
     ended: CancellationToken,
+    /// Where its run stands, so that its start and end are shown once each
+    /// (issue 386).
+    run: std::sync::Mutex<Run>,
     /// The questions shown to this user that are open (issue 165), as the
     /// agents asked them and until they close them: those put to the user
     /// are what they may answer, and what a message of theirs declines.
     open_questions: std::sync::Mutex<HashMap<QuestionId, QuestionRequest>>,
 }
 
-/// The channel as a user follows it (issues 104, 220): what is routed to
-/// their actor and what the actor says for them, until `ended` - when the
-/// actor ends, because they left the channel or it stopped. Only a
-/// participant follows a channel live, and only through their actor.
+/// The channel as a user follows it (issues 104, 220, 386): what their
+/// actor in it shows - what it is routed and says for them, and where its
+/// runs begin and end -, across its runs: also while the channel does not
+/// run, so that whoever follows it sees it run again. Only a participant
+/// follows a channel live, and only through their actor's outbox.
 pub struct ChannelWatch {
-    pub events: broadcast::Receiver<Envelope>,
-    pub ended: CancellationToken,
+    shown: broadcast::Receiver<Shown>,
+    /// Keeps the outbox while no actor runs.
+    outbox: broadcast::Sender<Shown>,
+}
+
+impl ChannelWatch {
+    /// Follows `outbox` from now on.
+    pub(crate) fn of(outbox: &broadcast::Sender<Shown>) -> Self {
+        Self { shown: outbox.subscribe(), outbox: outbox.clone() }
+    }
+
+    /// Another watch of the same outbox, from where this one stands.
+    pub fn resubscribe(&self) -> Self {
+        Self { shown: self.shown.resubscribe(), outbox: self.outbox.clone() }
+    }
+
+    /// What is shown next. One that falls `OUTBOX_CAPACITY` items behind
+    /// loses the oldest (`RecvError::Lagged`) rather than stalling the
+    /// actor, which would also stop it from forwarding what the user
+    /// sends.
+    ///
+    /// # Errors
+    /// `RecvError::Lagged` with how many were lost.
+    pub async fn next(&mut self) -> Result<Shown, RecvError> {
+        match self.shown.recv().await {
+            // Held by this watch, the outbox is never closed.
+            Err(RecvError::Closed) => std::future::pending().await,
+            shown => shown,
+        }
+    }
+
+    /// The next envelope shown, past where runs begin and end.
+    ///
+    /// # Errors
+    /// As `next`.
+    pub async fn recv(&mut self) -> Result<Envelope, RecvError> {
+        loop {
+            if let Shown::Envelope(envelope) = self.next().await? {
+                return Ok(envelope);
+            }
+        }
+    }
+
+    /// The next envelope shown, if one was, past where runs begin and end.
+    ///
+    /// # Errors
+    /// `TryRecvError::Empty` if none was, `Lagged` as `next`.
+    pub fn try_recv(&mut self) -> Result<Envelope, TryRecvError> {
+        loop {
+            if let Shown::Envelope(envelope) = self.shown.try_recv()? {
+                return Ok(envelope);
+            }
+        }
+    }
 }
 
 impl UserActor {
@@ -78,6 +133,7 @@ impl UserActor {
         let user_id = user.id();
 
         let (utx,urx) = mpsc::channel(100);
+        let outbox = actor_runtime.actor_manager().outbox(channel.id, ActorId::User(user_id));
 
         Ok(Self {
             id: ActorId::User(user_id),
@@ -89,8 +145,9 @@ impl UserActor {
             channel: channel_controller,
             user_rx: Mutex::new(urx),
             user_tx: utx,
-            received: broadcast::channel(SUBSCRIBER_CAPACITY).0,
+            outbox,
             ended: CancellationToken::new(),
+            run: std::sync::Mutex::new(Run::Before),
             open_questions: std::sync::Mutex::new(HashMap::new()),
         })
     }
@@ -381,24 +438,40 @@ impl UserActor {
         Ok(message)
     }
 
-    /// Hands `envelope` to `run`, which forwards it into the channel, and
-    /// shows it to those who follow this actor: the channel sends nothing
-    /// back to its sender - but why it did not let something in
-    /// (`MessageRejected`, issue 304) -, so as an agent takes its own messages in itself,
-    /// this actor shows what its user says itself (issue 220) - all but the
-    /// requests to wake the channel and to nudge an agent (issue 278),
-    /// which are not said to anyone, and answers
-    /// to questions, which are for the tool asking alone (issue 165): their
-    /// closing tells the user's frontends that they were answered.
+    /// Hands `envelope` to `run`, which shows it and forwards it into the
+    /// channel (`forward`).
     async fn send(&self, envelope: Envelope) -> Result<()> {
-        // Shown first, so that why the channel did not let it in
-        // (`MessageRejected`) always follows it. An error only says that
-        // nobody listens.
-        if !matches!(envelope.event, ActorEvent::WakeupRequested | ActorEvent::NudgeRequested { .. } | ActorEvent::QuestionAnswered { .. }) {
-            let _ = self.received.send(envelope.clone());
-        }
         self.user_tx.send(envelope).await?;
         Ok(())
+    }
+
+    /// Shows `shown` to whoever follows this actor. An error only says that
+    /// nobody does.
+    fn show(&self, shown: Shown) {
+        let _ = self.outbox.send(shown);
+    }
+
+    /// Begins the run and shows it - unless the actor was ended before it
+    /// ran. Returns whether it began.
+    fn begin_run(&self) -> bool {
+        let mut run = self.run.lock().unwrap_or_else(PoisonError::into_inner);
+        if *run != Run::Before {
+            return false;
+        }
+        *run = Run::Running;
+        self.show(Shown::Started);
+        true
+    }
+
+    /// Ends the run and shows it, if it stands at `from`: an actor ended
+    /// while it runs shows its end once its task has, after everything it
+    /// showed; one ended before it ran, at once.
+    fn end_run(&self, from: Run) {
+        let mut run = self.run.lock().unwrap_or_else(PoisonError::into_inner);
+        if *run == from {
+            *run = Run::Over;
+            self.show(Shown::Ended);
+        }
     }
 
     /// Sends this user's decision on an approval. Returns the `span_id`, as
@@ -536,14 +609,10 @@ impl UserActor {
     }
 
     /// Follows the channel as this user, from now on: see `ChannelWatch`.
-    /// Any number may follow - two tabs, two devices (issue 220). One that
-    /// falls `SUBSCRIBER_CAPACITY` envelopes behind loses the oldest
-    /// (`RecvError::Lagged`) rather than stalling this actor, which would
-    /// also stop it from forwarding what the user sends; without anyone
-    /// following, envelopes are dropped.
+    /// Any number may follow - two tabs, two devices (issue 220); without
+    /// anyone following, what is shown is dropped.
     pub fn watch(&self) -> ChannelWatch {
-        // A child: whoever watches can end their own watch, not the actor.
-        ChannelWatch { events: self.received.subscribe(), ended: self.ended.child_token() }
+        ChannelWatch::of(&self.outbox)
     }
 
     /// Hands `maybe_event` to whoever watches, and answers a request for
@@ -565,22 +634,33 @@ impl UserActor {
             }
             _ => None,
         };
-        // An error only says that nobody listens.
-        let _ = self.received.send(event);
+        self.show(Shown::Envelope(event));
         match answer {
-            Some(answer) => {
-                let _ = self.received.send(answer.clone());
-                !self.forward(answer, tx).await
-            }
+            Some(answer) => !self.forward(answer, tx).await,
             None => false,
         }
     }
 
-    /// Forwards what the user sent into the channel. `false` once the
-    /// channel's inbox is gone - the only way the in-memory transport fails
-    /// - and with it the channel: the actor then ends (issue 79).
+    /// Forwards what the user sent into the channel, and shows it to those
+    /// who follow this actor first, so that why the channel did not let it
+    /// in (`MessageRejected`, issue 304) always follows it: the channel
+    /// sends nothing back to its sender, so as an agent takes its own
+    /// messages in itself, this actor shows what its user says itself
+    /// (issue 220) - all but the requests to wake the channel and to nudge
+    /// an agent (issue 278), which are not said to anyone, and answers to
+    /// questions, which are for the tool asking alone (issue 165): their
+    /// closing tells the user's frontends that they were answered. Shown
+    /// here rather than when it is queued, so that it falls within the run
+    /// it is said in (issue 386).
+    ///
+    /// `false` once the channel's inbox is gone - the only way the
+    /// in-memory transport fails - and with it the channel: the actor then
+    /// ends (issue 79).
     async fn forward(&self, envelope: Envelope, tx: &dyn EventSender) -> bool {
         debug!(span_id = %envelope.context.span_id, "UserActor {} sends {}", self.id(), envelope.event.kind());
+        if !matches!(envelope.event, ActorEvent::WakeupRequested | ActorEvent::NudgeRequested { .. } | ActorEvent::QuestionAnswered { .. }) {
+            self.show(Shown::Envelope(envelope.clone()));
+        }
         match tx.send(envelope).await {
             Ok(()) => true,
             Err(TransportError::Closed) => {
@@ -595,19 +675,29 @@ impl UserActor {
     }
 }
 
+/// Where the run of a user's actor stands (issue 386).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Run {
+    Before,
+    Running,
+    Over,
+}
+
 /// The end of the actor's task, however it ends - also when it is aborted
 /// with its channel: the queue closes, so that what the user sends to a
 /// stopped channel fails at once instead of filling a queue nobody reads
-/// (issue 90), and every watch ends (issue 104).
+/// (issue 90), and whoever follows the actor is told, after everything it
+/// showed (issue 386).
 struct EndOfRun<'a> {
     queue: MutexGuard<'a, Receiver<Envelope>>,
-    ended: &'a CancellationToken,
+    actor: &'a UserActor,
 }
 
 impl Drop for EndOfRun<'_> {
     fn drop(&mut self) {
         self.queue.close();
-        self.ended.cancel();
+        self.actor.ended.cancel();
+        self.actor.end_run(Run::Running);
     }
 }
 
@@ -625,16 +715,18 @@ impl Actor for UserActor {
         ActorState::Idle
     }
 
-    /// Ends the actor: its channel stops (issue 377). Its task ends, and
-    /// with it every watch; it holds nothing to keep.
+    /// Ends the actor: its channel stops (issue 377). Its task ends, which
+    /// it tells whoever follows it; it holds nothing to keep.
     fn stop(&self) {
         self.ended.cancel();
+        self.end_run(Run::Before);
     }
 
-    /// Ends the actor: it left the channel (issue 46). Its task ends, and
-    /// with it every watch.
+    /// Ends the actor: it left the channel (issue 46). Its task ends, which
+    /// it tells whoever follows it.
     fn leave(&self) {
         self.ended.cancel();
+        self.end_run(Run::Before);
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {
@@ -648,7 +740,11 @@ impl Actor for UserActor {
     ) -> Result<()> {
         let queue = self.user_rx.try_lock()
             .map_err(|_| anyhow!("UserActor {} is already running", self.id()))?;
-        let mut run = EndOfRun { queue, ended: &self.ended };
+        let mut run = EndOfRun { queue, actor: self };
+        // Shown before anything of the run, which follows it.
+        if !self.begin_run() {
+            return Ok(());
+        }
 
         info!("UserActor {} is starting", self.id());
         // Until the channel closes this actor's inbox - the user left, or
@@ -672,6 +768,7 @@ impl Actor for UserActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actor::manager::OUTBOX_CAPACITY;
     use crate::session::testing::{bare_session, test_runtime};
     use caelumora_model::actor::EventContext;
     use caelumora_model::value::name::Name;
@@ -679,7 +776,7 @@ mod tests {
     use caelumora_model::security::SecurityAttributes;
     use caelumora_model::channel::{Channel, moderation_components};
     use caelumora_model::user::{User, UserId};
-    use crate::transport::memory::InMemoryEventSender;
+    use crate::transport::memory::{InMemoryEventReceiver, InMemoryEventSender};
     use std::time::Duration;
 
     /// A user's actor, with the channel it is in - to be kept while the
@@ -744,17 +841,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_actor_shows_its_own_messages_to_those_who_follow_it() {
+    async fn the_actor_shows_its_own_messages_to_those_who_follow_it_within_its_run() {
         let (actor, _channel) = user_actor().await;
-        let mut following = actor.watch().events;
+        let actor = Arc::new(actor);
+        let mut following = actor.watch();
+        let (_inbox, rx) = mpsc::channel(1);
+        let (output, mut channel_inbox) = mpsc::channel(10);
+        let running = tokio::spawn({
+            let actor = Arc::clone(&actor);
+            async move { actor.run(Box::new(InMemoryEventReceiver::new(rx)), Box::new(InMemoryEventSender::new(output))).await }
+        });
+        assert!(matches!(following.next().await, Ok(Shown::Started)), "its run begins first (issue 386)");
 
         actor.send_message("hello".to_string(), None).await.unwrap();
-
+        for _ in ["WakeupRequested", "CompleteMessageGenerated"] {
+            channel_inbox.recv().await.expect("forwarded");
+        }
         let shown: Vec<&str> = std::iter::from_fn(|| following.try_recv().ok()).map(|e| e.event.kind()).collect();
-        assert_eq!(shown, ["CompleteMessageGenerated"], "what it said, not the request to wake the channel (issue 220)");
+        assert_eq!(shown, ["CompleteMessageGenerated"], "what it said, as it forwarded it, not the request to wake the channel (issue 220)");
 
         actor.send_approval(ApprovalResponse::new(Default::default(), Default::default()), true).await.unwrap();
+        channel_inbox.recv().await.expect("forwarded");
         assert_eq!(following.try_recv().map(|e| e.event.kind()).ok(), Some("ApprovalGranted"), "everything it sends");
+
+        actor.stop();
+        running.await.unwrap().unwrap();
+        assert!(matches!(following.next().await, Ok(Shown::Ended)), "and its end, after everything it showed");
+    }
+
+    #[tokio::test]
+    async fn an_actor_ended_before_it_ran_shows_its_end_alone() {
+        let (actor, _channel) = user_actor().await;
+        let mut following = actor.watch();
+        actor.leave();
+        assert!(matches!(following.next().await, Ok(Shown::Ended)), "its followers are told at once (issue 386)");
+        let ran = actor.run(Box::new(InMemoryEventReceiver::new(mpsc::channel(1).1)), Box::new(nowhere())).await;
+        assert!(ran.is_ok() && following.shown.try_recv().is_err(), "and nothing more: it does not run");
     }
 
     #[tokio::test]
@@ -783,7 +905,7 @@ mod tests {
         let (actor, _channel) = user_actor().await;
         let agent = ActorId::Agent(Default::default());
         // More than any queue would hold: must neither block nor fail.
-        for _ in 0..(SUBSCRIBER_CAPACITY * 2) {
+        for _ in 0..(OUTBOX_CAPACITY * 2) {
             assert!(!actor.handle_actor_envelope(Some(envelope_from(agent)), &nowhere()).await);
         }
         assert!(actor.handle_actor_envelope(None, &nowhere()).await, "a closed input ends the actor");
@@ -793,12 +915,12 @@ mod tests {
     async fn every_subscriber_receives_what_is_routed_and_a_lagging_one_loses_the_oldest() {
         let (actor, _channel) = user_actor().await;
         let agent = ActorId::Agent(Default::default());
-        let (mut first, mut second) = (actor.watch().events, actor.watch().events);
+        let (mut first, mut second) = (actor.watch(), actor.watch());
 
         assert!(!actor.handle_actor_envelope(Some(envelope_from(agent)), &nowhere()).await);
         assert!(first.try_recv().is_ok() && second.try_recv().is_ok(), "two tabs, both are told");
 
-        for _ in 0..(SUBSCRIBER_CAPACITY + 10) {
+        for _ in 0..(OUTBOX_CAPACITY + 10) {
             assert!(!actor.handle_actor_envelope(Some(envelope_from(agent)), &nowhere()).await);
         }
         assert!(matches!(first.try_recv(), Err(broadcast::error::TryRecvError::Lagged(10))), "the oldest are lost, and it learns how many");
@@ -806,7 +928,7 @@ mod tests {
         while first.try_recv().is_ok() {
             received += 1;
         }
-        assert_eq!(received, SUBSCRIBER_CAPACITY, "the newest are kept");
+        assert_eq!(received, OUTBOX_CAPACITY, "the newest are kept");
     }
 
 

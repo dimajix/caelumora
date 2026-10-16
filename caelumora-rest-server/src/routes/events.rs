@@ -28,7 +28,7 @@ pub async fn global_events(
         async move { global_snapshot(&state, &user).await }
     };
     // Open until the token that authenticated it expires (issue 33).
-    Sse::new(stream(&user, options.snapshot, receiver, "the global stream".to_string(), snapshot, std::future::pending()).await)
+    Sse::new(stream(&user, options.snapshot, receiver, "the global stream".to_string(), snapshot).await)
 }
 
 /// Every session the user may read, with the channels they may read, as the

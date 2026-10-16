@@ -86,6 +86,12 @@ pub fn named_event(name: &str, value: &impl Serialize) -> Event {
     Event::default().event(name).data(json(value))
 }
 
+/// `value` as an unnamed event, serialized as JSON - what a stream carries
+/// as it happens.
+pub fn data_event(value: &impl Serialize) -> Event {
+    Event::default().data(json(value))
+}
+
 /// `value` as JSON, or - should it not serialize - nothing, and a warning:
 /// an event without data rather than a broken stream.
 fn json(value: &impl Serialize) -> String {
@@ -99,23 +105,21 @@ fn json(value: &impl Serialize) -> String {
 /// produces, if the client asked for one (`with_snapshot`) - none if it
 /// produces `None`, having logged why; then the events
 /// of `receiver` - with a fresh snapshot instead of a gap when the client
-/// falls behind, see [`resync_on_lag`]; until `until` completes, or the
-/// token that authenticated the request is about to expire (see
-/// [`bounded_by_token`]). `what` names the stream in the log.
-pub async fn stream<T, V, S, F, U>(
+/// falls behind, see [`resync_on_lag`]; until the token that authenticated
+/// the request is about to expire (see [`bounded_by_token`]). `what` names
+/// the stream in the log.
+pub async fn stream<T, V, S, F>(
     user: &AuthenticatedUser,
     with_snapshot: bool,
     receiver: broadcast::Receiver<T>,
     what: String,
     snapshot: S,
-    until: U,
 ) -> impl Stream<Item = Result<Event, Infallible>> + Send
 where
     T: Serialize + Clone + Send + 'static,
     V: Serialize,
     S: Fn() -> F + Send + Sync + 'static,
     F: Future<Output = Option<V>> + Send,
-    U: Future<Output = ()> + Send + 'static,
 {
     let snapshot = Arc::new(snapshot);
     let first = if with_snapshot { snapshot().await.map(|value| named_event("snapshot", &value)) } else { None };
@@ -123,7 +127,7 @@ where
         let snapshot = Arc::clone(&snapshot);
         async move { snapshot().await.map(|value| named_event("snapshot", &value)) }
     });
-    let updates = resync_on_lag(receiver, what, resync).take_until(until);
+    let updates = resync_on_lag(receiver, what, resync);
     bounded_by_token(user, stream::iter(first.map(Ok)).chain(updates))
 }
 
@@ -150,7 +154,7 @@ where
         let what = what.clone();
         async move {
             match item {
-                Ok(value) => Ok(Event::default().data(json(&value))),
+                Ok(value) => Ok(data_event(&value)),
                 Err(BroadcastStreamRecvError::Lagged(lost)) => {
                     tracing::warn!("SSE client of {} fell behind and lost {} events", what, lost);
                     let resynced = match snapshot {

@@ -181,7 +181,7 @@ impl LLMClient for Scripted {
 }
 
 /// The states `agent` told the users of through `shown`, up to `until`.
-async fn told_states(shown: &mut broadcast::Receiver<Envelope>, agent: AgentId, until: ActorState) -> Vec<ActorState> {
+async fn told_states(shown: &mut ChannelWatch, agent: AgentId, until: ActorState) -> Vec<ActorState> {
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut states = Vec::new();
         loop {
@@ -323,7 +323,7 @@ async fn command_events(watch: &mut ChannelWatch) -> (Option<Envelope>, Vec<Acto
     tokio::time::timeout(Duration::from_secs(5), async {
         let (mut started, mut states) = (None, Vec::new());
         loop {
-            let envelope = watch.events.recv().await.expect("the channel is running");
+            let envelope = watch.recv().await.expect("the channel is running");
             match envelope.event {
                 ActorEvent::CommandStarted { .. } => started = Some(envelope),
                 ActorEvent::StateChanged(state) => states.push(state),

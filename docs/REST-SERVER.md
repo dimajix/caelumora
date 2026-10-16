@@ -67,11 +67,11 @@ A handler translates; it does not decide. Every handler derives its `SecurityCon
     the running one, or loaded and started - and only if the user may read it. It tells a session
     that does not exist (`404`) from one that cannot be started (`500`, naming e.g. the broken
     component).
-*   **It acts on a channel through `open_channel`**, the one way a handler that writes, approves,
-    runs a command or joins the event stream gets the running channel. A handler that only reads -
-    the history, the notes, what an agent saw - reaches the channel through the views
-    (`routes::channel_of`), running or not. Either way a channel the user may not read is answered
-    as absent, like one that does not exist; the runtime decides that.
+*   **It acts on a channel through `open_channel`**, the one way a handler that writes, approves or
+    runs a command gets the running channel. A handler that only reads - the history, the notes,
+    what an agent saw, the channel's stream - reaches the channel through the views
+    (`routes::channel_of`), running or not, and starts nothing. Either way a channel the user may
+    not read is answered as absent, like one that does not exist; the runtime decides that.
 *   **It acts through the user's actor.** Writing, approving and running commands go through
     `user_actor_of`, the user's own actor in the channel. Someone who is not a participant has none
     and is refused with `403`. See [CHANNELS.md](CHANNELS.md#acting-in-a-channel).
@@ -241,8 +241,9 @@ The server has two server-sent event streams:
     [EVENTS.md](EVENTS.md));
 *   a **channel's stream**, `GET /sessions/{id}/channels/{cid}/events`, carrying `Envelope`s.
 
-Both are built by one `sse::stream`: snapshot, resync on lag, and the end at the token's expiry or
-when the watch ends.
+Both are built of the same parts in `sse`: snapshot, resync on lag, and the end at the token's
+expiry. The global stream is one `sse::stream`; a channel's follows the user's actor across its
+runs (`ChannelFollower`, below).
 
 An `Envelope`'s event is an `ActorEvent` as serde writes it. An agent's answer begins with
 `ResponseStarted` and its `turn_id`, and every message of it, partial or complete, carries the same
@@ -269,14 +270,27 @@ reads the history whole while it holds it in memory (issue 379).
 
 ### Who follows a channel
 
-A channel is followed live only by its participants, through their own actor (`UserActor::watch`).
-The stream is what their actor receives - what the moderator routes to the user - what it says for
-them, and why the channel did not let in what the user sent (`MessageRejected` with its reason). A
-request that sends something into the channel is answered once it is on its way, so a refusal
-arrives on the stream, after what the user sent. The stream ends when the actor ends: when the user
-left the channel, or when the channel was stopped or deleted. Any number of streams may follow one
-actor - two tabs, two devices; one that falls too far behind loses the oldest events and is sent a
-snapshot instead, if it asked for snapshots.
+A channel is followed live only by its participants, through their own actor's outbox
+(`ChannelView::user_follow`, see [CHANNELS.md](CHANNELS.md#acting-in-a-channel)). The stream is what
+their actor shows: what the moderator routes to the user, what it says for them, and why the
+channel did not let in what the user sent (`MessageRejected` with its reason). A request that sends
+something into the channel is answered once it is on its way, so a refusal arrives on the stream,
+after what the user sent. Any number of streams may follow one actor - two tabs, two devices; one
+that falls too far behind loses the oldest events and is sent a snapshot instead, if it asked for
+snapshots.
+
+Following a channel does not start it (issue 386). Nothing new is said in a channel that does not
+run - whoever acts in it, by writing, approving or retrying, starts its session - so there is
+nothing to follow until then, and a stopped session stays stopped while browsers have its channels
+open. The outbox outlives the actor: while the channel does not run, the stream waits on it, and
+the actor of the next run shows to it again. Where a run begins and where it ends, after
+everything it showed, the stream reaches the channel through the views again and starts anew from
+its state: with `?snapshot=true` a snapshot - at a stop without a member's state or an answer under
+way -, without, a named `started` or `stopped` event. So what the user says to start the channel
+comes after the state it started from. The stream ends when the user is no longer a participant -
+they left the channel or were removed, or it or its session was deleted while it ran - or may no
+longer read it. A session deleted while it does not run has no actor to tell its followers: their
+stream ends with its token, and the reconnect is answered `404`.
 
 Anyone else who may read the channel - its session's owner, say - reads its history over REST but
 does not follow it.
@@ -297,14 +311,15 @@ starting a stopped session.
 Both streams accept `?snapshot=true` and then begin with a named `snapshot` event describing the
 state they start from:
 
-*   for a channel, its members, the last page of its history with `earlier` (older ones over REST,
-    from there on) and the notes its agents published; for a participant, also the approvals and
-    questions its agents wait for, read from their stored turns, so that one asked before the client
-    connected or before a restart is shown - a sensitive question only to whom it was asked. A
-    member giving an answer carries its turn (`turn_under_way`) and an agent member where it stands
-    (`state`), both read from the running channel and kept up by the stream; a client that connects
-    during an answer shows it as under way. Only here, not where channels are listed, do members
-    carry what their model calls used, since that reads every agent's state;
+*   for a channel - at the start, and again whenever it stops or starts -, its members, the last
+    page of its history with `earlier` (older ones over REST, from there on) and the notes its
+    agents published; for a participant, also the approvals and questions its agents wait for, read
+    from their stored turns, so that one asked before the client connected or before a restart is
+    shown - a sensitive question only to whom it was asked. A member giving an answer carries its
+    turn (`turn_under_way`) and an agent member where it stands (`state`), both read from the
+    running channel - none of a channel that does not run - and kept up by the stream; a client that
+    connects during an answer shows it as under way. Only here, not where channels are listed, do
+    members carry what their model calls used, since that reads every agent's state;
 *   for the global stream, every session with its channels.
 
 The order matters: the server subscribes *first* and reads the state afterwards, so nothing that

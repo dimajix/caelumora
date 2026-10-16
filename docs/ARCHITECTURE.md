@@ -152,11 +152,12 @@ Sessions and channels hold their users and agents by reference - `Participant::U
 `Participant::Agent(AgentId)` - not as copies. The records live in the `EntityStore`; a channel
 leaves out a participant whose record no longer exists, and runs without it. A deleted agent rests
 in its channels so: they keep it, show it as a former member and run it again once it is restored.
-Making, deleting, restoring and purging an agent are the `AgentManager`'s - a template's agents
-too, which the template only finds -, renaming it its `AgentController`'s. What lies in a
-session's or a channel's scope goes with it, deleted, restored and purged by the manager of its
-kind; so an agent is made there only by whoever may read the session or the channel. An approver
-has no record of its own and is held whole.
+What of an actor outlives its run - the outbox a user follows a channel through, while the channel
+is stopped too - is the `ActorManager`'s (issue 386). Making, deleting, restoring and purging an
+agent are the `AgentManager`'s - a template's agents too, which the template only finds -, renaming
+it its `AgentController`'s. What lies in a session's or a channel's scope goes with it, deleted,
+restored and purged by the manager of its kind; so an agent is made there only by whoever may read
+the session or the channel. An approver has no record of its own and is held whole.
 
 Details: [CHANNELS.md](CHANNELS.md).
 

@@ -1,4 +1,5 @@
 use crate::actor::AgentKinds;
+use crate::actor::ActorManager;
 use crate::channel::Participation;
 use crate::component::{ComponentRegistry, ComponentResult};
 use crate::controller::ControllerManager;
@@ -352,6 +353,7 @@ impl RuntimeBuilder {
             command_reaper: self.command_reaper,
             groups: self.groups,
             agents: self.agents,
+            actors: Arc::new(ActorManager::new()),
             scoped,
             services: self.services,
             seed_sections: self.seed_sections,

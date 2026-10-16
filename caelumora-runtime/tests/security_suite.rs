@@ -43,6 +43,7 @@ use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_runtime::group::GroupError;
 use caelumora_model::workspace::{CommandStatus, Workspace, WorkspaceId};
 use caelumora_runtime::event::EventSubscription;
+use caelumora_runtime::actor::Shown;
 
 // --- Personalities and agents ---------------------------------------------
 
@@ -246,6 +247,38 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
+/// S5 (issue 386): a participant follows a channel through their own actor
+/// alone, whether it runs or not - asked as reaching the channel is, and
+/// nothing more; following a stopped channel does not start it. Carol does
+/// not reach it.
+#[tokio::test]
+async fn a_participant_follows_a_channel_through_their_own_actor_whether_it_runs_or_not() {
+    use caelumora_model::actor::ActorEvent;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let reach = |user| {
+        let manager = &world.manager;
+        let (session, channel) = (session.id(), main.id());
+        async move { manager.views(Viewer::new(World::as_user(user))).session(session).await?.channel(channel).await }
+    };
+
+    let (watch, asked) = world.asked(async { reach(world.bob).await.expect("he takes part").user_follow() }).await;
+    assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes"]), "reaching the channel; following asks nothing more");
+    let mut his = watch.expect("his actor's");
+    main.user_actor(world.alice).unwrap().send_message("hello bob".to_string(), None).await.unwrap();
+    let ActorEvent::CompleteMessageGenerated(said) = shown(&mut his, "CompleteMessageGenerated").await else { unreachable!() };
+    assert_eq!(said.content.as_deref(), Some("hello bob"), "what alice said, routed to him - not to her own actor");
+    assert!(matches!(reach(world.carol).await, Err(ViewError::SessionNotFound(_))), "carol finds nothing of it");
+
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    let ended = tokio::time::timeout(Duration::from_secs(5), async { while !matches!(his.next().await, Ok(Shown::Ended)) {} }).await;
+    assert!(ended.is_ok(), "he is told his actor ended");
+    let stopped = reach(world.bob).await.expect("he still takes part");
+    assert!(stopped.user_follow().is_some(), "and follows the channel while it does not run");
+    assert!(stopped.running().is_none(), "without starting it");
+}
+
 // --- Taking someone into a session (issue 221) ------------------------------
 
 /// Whoever may change the session takes a user into it and into a channel
@@ -395,7 +428,7 @@ async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
     alice.send_message("hello".to_string(), None).await.expect("sent");
     let ActorEvent::CompleteMessageGenerated(said) = shown(&mut his, "CompleteMessageGenerated").await else { unreachable!() };
     assert_eq!((said.content.as_deref(), Some(said.id) != message), (Some("hello"), true), "he hears what was let in, and nothing of what was not");
-    while let Ok(envelope) = his.events.try_recv() {
+    while let Ok(envelope) = his.try_recv() {
         assert_ne!(envelope.event.kind(), "MessageRejected", "nor of the refusal");
     }
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
