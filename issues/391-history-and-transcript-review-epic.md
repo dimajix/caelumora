@@ -1,6 +1,6 @@
 # 391 — Epic: review of history and transcript
 
-**Status:** open
+**Status:** done
 **Area:** Maintenance
 
 ## The problem
@@ -92,3 +92,10 @@ order along the way.
   as the view and the REST field that read it are named; the `.given` directory stays, since it
   holds what the model was given. Of the order, 394 alone is left: it waits for the maintainer's
   decision whether the branch memory of `Chain` goes, and this epic stays open until it is decided.
+- **2026-10-16** — 394 rejected: the maintainer keeps the branch memory of `Chain`, for a concept of
+  branching in a channel of more than two participants that may yet come. Every issue of the order
+  is done or rejected, so this epic is done. Of the seven, five were done - 392, 393 and 396 as
+  proposed, 397 and 398 each narrowed to one part - and two rejected, 394 and 395: looked at
+  closely, several findings of the review were smaller than they had seemed - a rule written once
+  with a short dispatch twice, a name that meant the same thing in more places than it seemed to -
+  and their fixes would have added more than they took away.

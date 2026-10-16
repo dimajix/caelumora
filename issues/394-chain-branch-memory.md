@@ -1,6 +1,6 @@
 # 394 — `Chain` remembers the branch last taken from every entry, for a switch nothing makes
 
-**Status:** open
+**Status:** rejected
 **Area:** Code structure
 
 Part of [391](391-history-and-transcript-review-epic.md).
@@ -65,3 +65,11 @@ old message need.
 
 - **2026-10-16** — Opened from the review of the history and the transcript
   ([391](391-history-and-transcript-review-epic.md)), after 08 was found rejected.
+- **2026-10-16** — Rejected by the maintainer, as *B - Keep it*: a viable concept for branching in a
+  channel of more than two participants may yet be found, and the branch memory is what a switch
+  back to a branch would go on from. Looked at once more before the decision: in production
+  `active_child` is set only where an entry is appended with the digest of one already there
+  (`Chain::push_with`), and read only by `leaf_from`, which, like `children`, `seq_of` and `at`, has
+  no caller outside the tests of `chain.rs`; `start_anew` moves the head to the root and remembers
+  nothing. What *Considerations* says of option A was put too strongly in one point: removing the
+  field would have needed no stored data deleted, since `Node` ignores a field it does not know.
