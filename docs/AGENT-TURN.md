@@ -318,7 +318,7 @@ the tokens used (`used`) and the classifications the remote agent was given (`Re
 Of the prompt texts and the tool sets, kept once by digest, the actor holds those its turn under way
 names, and between turns none (issue 383): the turn's calls, how full its context is and the tools
 its calls are checked against read them, and nothing reads them between turns - how full the context
-is then is read without prompt parts, answering again begins a turn that assembles its parts anew,
+is then is kept, not read (issue 390), answering again begins a turn that assembles its parts anew,
 and an external agent tells what it gave by digest. A text kept again in the next turn is written as
 the same. What the context of an older message names is read from the store, with the path of its
 transcript (see [STORAGE.md](STORAGE.md#prompt-texts-and-tool-sets)).
@@ -386,19 +386,20 @@ Every message the model produces carries the tokens of its call and the size of 
 had. What an agent used in a channel is a running total kept with its state, counted as each of its
 calls' messages is recorded - said in a turn, or written as a summary in a compaction - so that a
 call is counted once, on whichever branch, the turn under way's included; it is not summed over the
-transcript, whose older branches need not be at hand (`AgentChannelState::usage`). Two groups mean
+transcript, whose older branches need not be at hand (`AgentChannelState::used`). Two groups mean
 different things:
 
-*   **context** - the tokens the model is given next against its context size
-    (`TokenUsage::context_tokens`): how full it is. The `ContextResolver` measures it, as it
-    resolves the context (`ContextResolver::token_positions`), from the transcript alone: before
-    a message of the agent's model added where it stands - after where the compaction that began
-    the branch ends, if one did (`TranscriptEntry::Compacted`) - at its call's `prompt_tokens`, and
-    elsewhere estimated from what the model is given, as it is given it
-    (`ContextItem::estimated_tokens`) - a message's reasoning only where its rule gives it back,
-    the prompt parts where they are placed: what was added since the last call, or a branch no
-    call measured yet. After a compaction that is no longer the last call's, which was the
-    summary's over the old context;
+*   **context** - how full the context is against its size (`TokenUsage::context_tokens`): the
+    last call's prompt and answer, as counted. A compaction replaces it once, when it is made:
+    the summary's call measured the old branch, so the new one is estimated then, by the
+    `ContextResolver`, with what the turn's model is given next (issue 390). It is kept, never
+    read anew however often it is asked for; what was added since the last call - a tool's
+    result, what was heard - is not in it until the next call measures it. How full the context
+    is before a call, the compaction reads for itself (`ContextResolver::token_positions`): from
+    the transcript alone, at a call's `prompt_tokens` before a message of the agent's model added
+    where it stands - after where the compaction that began the branch ends, if one did
+    (`TranscriptEntry::Compacted`) - and elsewhere estimated from what the model is given, as it
+    is given it (`ContextItem::estimated_tokens`);
 *   **usage** - the total of all calls: what was processed. Every call is given the whole context
     again, so the totals grow much faster than the context and are no measure of how full it is.
 

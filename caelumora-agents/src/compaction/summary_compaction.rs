@@ -220,7 +220,7 @@ impl CompactionStrategy for SummaryCompaction {
         let agent = ActorId::Agent(turn.agent_id());
         let whole = kept_whole(turn.agent_channel_state().transcript.entries().map(|node| &node.entry));
         let (positions, _) = turn.work().token_positions().ok_or(CompactionError::TranscriptUnreadable)?;
-        let size = turn.agent_channel_state().usage(agent).and_then(|usage| usage.context_size).or(positions.last().copied()).unwrap_or(0);
+        let size = turn.agent_channel_state().used.and_then(|usage| usage.context_size).or(positions.last().copied()).unwrap_or(0);
         let keep = self.keep_of(size);
         let path: Vec<Entry> = as_they_stand(turn.agent_channel_state().transcript.entries())
             .map(|(node, message)| {
@@ -511,7 +511,7 @@ mod tests {
         assert_eq!(replacement[1].turn_id, under_way, "what is given again is given in the turn");
         let knowledge = &state.turn.as_ref().unwrap().work.context.knowledge;
         assert!(knowledge.iter().any(|k| k.source.about::<Workspace>().is_some_and(|(s, _)| s == skill)), "the turn has read it");
-        let usage = state.usage(ActorId::Agent(world.agent)).expect("the summary's call");
+        let usage = state.used.expect("the summary's call");
         assert_eq!((usage.prompt_tokens, usage.completion_tokens), (40, 8), "the summary's call counts");
     }
 

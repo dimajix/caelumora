@@ -786,7 +786,7 @@ impl MemberView {
         let (mut usage, mut notes, mut pending_approvals, mut pending_questions) = (None, Vec::new(), Vec::new(), Vec::new());
         if let Some(state) = &state {
             if wanted.contains(Detail::USAGE) {
-                usage = state.usage(self.id());
+                usage = state.used;
             }
             if wanted.contains(Detail::NOTES) {
                 notes = self.notes_in(state).await;

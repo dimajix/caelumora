@@ -350,7 +350,7 @@ published before anyone else can take it.
 | [302](302-update-note.md) | done | A note cannot be changed, only revoked and written again under a new number, and `note` is not named after what it does like `revoke_note` and `read_notes`. |
 | [305](305-skill-versions.md) | open | A skill keeps only its current text: every change overwrites what it said, nobody sees what changed, and an earlier version cannot be made current again. |
 | [389](389-knowledge-read-in-the-transcript.md) | done | A compaction finds what the agent read, to give it again, in the history, although the model's input is to be built from the transcript alone. |
-| [390](390-context-gauge-profile-from-history.md) | open | How full an agent's context is between turns is estimated with the model profile of a message from its history, not with the rules of the model it is run with now. |
+| [390](390-context-gauge-profile-from-history.md) | done | How full an agent's context is between turns is estimated with the model profile of a message from its history, not with the rules of the model it is run with now. |
 
 ## Maintenance
 

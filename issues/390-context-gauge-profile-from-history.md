@@ -1,6 +1,6 @@
 # 390 — How full an agent's context is between turns is estimated with a profile from its history
 
-**Status:** open
+**Status:** done
 **Area:** Context and knowledge
 
 ## The problem
@@ -74,6 +74,23 @@ Options, none decided:
   by whoever knows them, never with a profile read from the history.
 - AGENT-TURN.md (*Tokens used*) says where it comes from.
 
+## Decision
+
+Decided on 2026-10-16 (see History): none of A to H. Every one of them resolves the context anew,
+through `token_positions` and the path it is given, each time the usage is asked for - and the
+member's details ask for it again and again. Too expensive for a number that is only shown.
+
+**I - The last state, kept.** How full the context is, is the last call's prompt and answer, as
+`TokenUsage::counted` keeps it with every message recorded. The one time that is wrong by much is a
+compaction: the summary's call measured the old branch. So `AgentChannelState::compact` estimates
+the new branch once, when it is made - with the turn's context, so with the profile of the model the
+turn runs with - and keeps the estimate in `used`. Nothing is read anew between turns, nothing is
+read from the history, and `usage` and `next_context_tokens` go: `used` is what is read.
+
+What was added since the last call - a tool's result, what was heard - is not in it until the next
+call measures it. That is accepted: it is a gauge, and the compaction reads how full the context is
+before a call for itself (`token_positions`), with the turn's model.
+
 ## History
 
 - **2026-10-16** — Opened from the discussion of
@@ -81,3 +98,8 @@ Options, none decided:
   [389](389-knowledge-read-in-the-transcript.md): `next_context_tokens` is the last reader of the
   history that concerns what the model is given. The maintainer wants the current model there;
   none of the options above is decided yet.
+- **2026-10-16** — Decided and done as *I*: `compact` estimates the new branch once and keeps it in
+  `used.context_tokens`; `AgentChannelState::usage` and `next_context_tokens` are gone, and the
+  view, the compaction policy and the strategy read `used`. Between turns the gauge shows the last
+  call's measure, its answer included. AGENT-TURN.md (*Tokens used*) and WEB-UI.md say so. Stored
+  data stays readable.

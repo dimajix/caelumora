@@ -357,8 +357,10 @@ pub struct AgentChannelState {
     /// counted once, as the message it produced is recorded - said, or
     /// replacing older messages in a compaction (`TokenUsage::counted`) -
     /// rather than summed over the transcript (issue 376). `None` while no
-    /// call reported its tokens; an external agent's never do. Read through
-    /// `usage`, which adds how full the context is now.
+    /// call reported its tokens; an external agent's never do. How full the
+    /// context is, is the last call's measure, and after a compaction the
+    /// new branch as estimated then (`compact`, issue 390): never read anew,
+    /// however often it is asked for.
     pub used: Option<TokenUsage>,
     /// What an external agent keeps of the remote side (issue 179), empty
     /// for an agent run here.
@@ -616,6 +618,15 @@ impl AgentChannelState {
                 Some(after) => moved.get(&after).map(|now| prompt.after = *now).is_some(),
             });
         }
+        // How full the new branch is: no call measured it yet, and the
+        // summary's measured the old one. Estimated once, here, with what the
+        // turn's model is given next (issue 390).
+        let estimated = self.turn.as_ref()
+            .and_then(|turn| ContextResolver::of(self).token_positions(&turn.work.context, turn.work.turn_id, actor))
+            .and_then(|(positions, _)| positions.last().copied());
+        if let (Some(used), Some(estimated)) = (self.used.as_mut(), estimated) {
+            used.context_tokens = estimated;
+        }
         Some((from, to))
     }
 
@@ -823,41 +834,6 @@ impl AgentChannelState {
     /// without a turn.
     pub fn pending_questions(&self) -> Vec<QuestionRequest> {
         self.turn.as_ref().map(TurnState::pending_questions).unwrap_or_default()
-    }
-
-    /// What the model calls of `agent` - whose state this is - used in the
-    /// channel (issue 209): every call made, on every branch, the turn under
-    /// way's included, as counted when its message was recorded (`used`). A
-    /// message kept through a compaction (issue 16) is in the transcript
-    /// twice, but its call was made once and is counted once. How full the
-    /// context is now, `context_tokens`, is read from what the model is
-    /// given next (`next_context_tokens`, issue 284).
-    pub fn usage(&self, agent: ActorId) -> Option<TokenUsage> {
-        let usage = self.used?;
-        let context_tokens = self.next_context_tokens(agent).unwrap_or(usage.context_tokens);
-        Some(TokenUsage { context_tokens, ..usage })
-    }
-
-    /// How many tokens what the model of `agent` - whose state this is - is
-    /// given next holds (issue 284): the context of the turn under way, or
-    /// between turns the transcript as it stands, given as the agent's last
-    /// message was (`ContextResolver::token_positions`). `None` if that
-    /// cannot be resolved.
-    fn next_context_tokens(&self, agent: ActorId) -> Option<u64> {
-        let (reference, turn) = match &self.turn {
-            Some(turn) => (turn.work.context.clone(), turn.work.turn_id),
-            None => {
-                let profile = self.history.entries().rev()
-                    .find_map(|node| match &node.entry {
-                        HistoryEntry::Said { message, context: Some(context) } if message.sender_id == agent => Some(context.profile),
-                        _ => None,
-                    })
-                    .unwrap_or_default();
-                (ContextRef { transcript: self.transcript.digest(), profile, ..ContextRef::default() }, TurnId::new())
-            }
-        };
-        let (positions, _) = ContextResolver::of(self).token_positions(&reference, turn, agent)?;
-        positions.last().copied()
     }
 }
 
@@ -1304,7 +1280,7 @@ pub(crate) mod tests {
         let compacted = items.iter().position(|item| matches!(item, HistoryEntry::Compacted { from: f, to: t, actor, .. } if *f == from && *t == to && *actor == agent)).expect("recorded");
         let followed: Vec<_> = items[compacted + 1..].iter().filter_map(|item| match item { HistoryEntry::Said { message, context: None } => Some(message.id), _ => None }).collect();
         assert_eq!(followed, [summary.id, skill.id], "then what replaced the older messages, as given");
-        let usage = state.usage(agent).expect("calls were made");
+        let usage = state.used.expect("calls were made");
         assert_eq!((usage.calls, usage.prompt_tokens), (2, 150), "the answer kept counts once");
 
         let again = state.transcript.entries().find(|n| n.entry.message().is_some_and(|m| m.content.as_deref() == Some("again!"))).map(|n| n.digest);
@@ -1315,7 +1291,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_gauge_reads_the_context_as_it_stands_not_the_last_call() {
+    fn after_a_compaction_the_context_is_the_new_branch_as_estimated_then() {
         let agent = ActorId::Agent(AgentId::new());
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
         begin(&mut state, Vec::new());
@@ -1324,11 +1300,11 @@ pub(crate) mod tests {
         let kept_from = state.transcript.entries().find(|n| n.entry.message().is_some_and(|m| m.id == first.id)).map(|n| n.digest);
         let summary = Message { sender_id: agent, prompt_tokens: Some(500), completion_tokens: Some(8), ..said("summary", Classification::PUBLIC) };
         state.compact(agent, vec![(summary, None)], kept_from).expect("compacted");
-        assert_eq!(state.usage(agent).map(|u| (u.calls, u.context_tokens)), Some((2, 2 + 1)), "the new branch as estimated, not the summary's call over the old one");
+        assert_eq!(state.used.map(|u| (u.calls, u.context_tokens)), Some((2, 2 + 1)), "the new branch as estimated, not the summary's call over the old one");
 
         let turn = state.turn.take().unwrap().work.turn_id;
         state.finish_turn(turn, agent, Vec::new(), Vec::new(), None);
-        assert_eq!(state.usage(agent).map(|u| u.context_tokens), Some(3), "between turns as well");
+        assert_eq!(state.used.map(|u| u.context_tokens), Some(3), "kept, between turns as well (issue 390)");
     }
 
     #[test]
