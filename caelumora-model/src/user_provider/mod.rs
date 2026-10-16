@@ -25,6 +25,14 @@ use std::fmt::Debug;
 #[non_exhaustive]
 pub enum Credential<'a> {
     Password(&'a str),
+    /// No secret: a frontend that runs in the runtime's own process - the
+    /// TUI - vouches for whom it acts for. It holds the stores itself, so a
+    /// secret would keep out nobody it does not already let in. A provider
+    /// that verifies a secret refuses it for a user it knows, as it refuses
+    /// a wrong one, so that the chain does not pass them on to one that
+    /// would take them without. It never reaches the REST server's login,
+    /// which takes a password.
+    Trusted,
 }
 
 impl Credential<'_> {
@@ -32,6 +40,7 @@ impl Credential<'_> {
     pub fn kind(&self) -> &'static str {
         match self {
             Credential::Password(_) => "password",
+            Credential::Trusted => "trusted",
         }
     }
 }

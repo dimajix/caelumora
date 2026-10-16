@@ -8,10 +8,9 @@ use caelumora_model::config::AppConfig;
 use caelumora_model::mention::mention_spans;
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::question::{Question, QuestionId, QuestionRequest, Response};
-use caelumora_model::security::SecurityContext;
 use caelumora_model::turn::GivenUpReason;
-use caelumora_model::user::{User, UserId};
-use caelumora_model::value::name::Name;
+use caelumora_model::user::UserId;
+use caelumora_model::user_provider::Credential;
 use caelumora_model::work::TurnId;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::component::{ComponentError, ComponentRegistry};
@@ -464,6 +463,12 @@ struct Args {
     /// configuration's `seed` provides, e.g. `examples/config.yaml`.
     #[arg(short, long, default_value = "sassy-session")]
     template: String,
+
+    /// Whom the terminal acts for, by name: the user the configured user
+    /// providers know under it, with their roles - without a password, as
+    /// the terminal runs in the runtime's own process (`Credential::Trusted`).
+    #[arg(short, long, default_value = "user")]
+    user: String,
 }
 
 /// The plugins the terminal builds its runtime with (issue 323) - first the
@@ -505,20 +510,14 @@ async fn main() -> Result<()> {
     runtime.seed(&config.seed).await?;
     let entity_stores = runtime.entity_stores();
 
-    let owner = UserId::default();
-    // Users belong to the system (issue 94), so the system records this one.
-    let system = SecurityContext::system();
-    if entity_stores.users.get(&system, owner).await.is_err() {
-        entity_stores.users.create(&system, &User {
-            id: owner,
-            username: Name::new("user")?,
-            email: "user@example.com".to_string(),
-            // The role "user" it had was configured nowhere and granted
-            // nothing; the terminal user's identity is issue 10's.
-            roles: Vec::new(),
-            deleted: None,
-        }).await?;
+    // Whom the terminal acts for: the user the providers know by that name,
+    // recorded with their roles as a login records them (issue 306).
+    let users = runtime.user_manager();
+    if users.is_empty() {
+        anyhow::bail!("No user providers are configured (`users` section), so the terminal can act for nobody. See examples/config.yaml.");
     }
+    let owner = users.authenticate(&args.user, &Credential::Trusted).await
+        .map_err(|e| anyhow::anyhow!("The terminal cannot act for '{}': {e}", args.user))?.id;
     // The session is this terminal user's own; their context, with their
     // roles, is their controller's (issue 304).
     let security = runtime.controller_manager().user_controller(owner).await?.security_context(Default::default(), Default::default());
