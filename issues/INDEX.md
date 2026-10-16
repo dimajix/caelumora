@@ -87,6 +87,9 @@ published before anyone else can take it.
 | [295](295-access-as-a-query-condition.md) | rejected | A list asks the policy entity by entity, so a database store cannot push access into its query and a full page may be followed by an empty one. |
 | [318](318-restore-returns-nothing.md) | done | A store's restore returns nothing, so every caller reads or rebuilds what it restored - under a permission the restore did not need - and the managers answer a restore differently. |
 | [376](376-histories-held-whole-in-memory.md) | open | A channel's history and an agent's history and transcript are held in memory and loaded whole, though they grow with the channel and almost only their recent end is used. |
+| [379](379-history-stored-as-it-stands.md) | open | A page of a channel's or an agent's history costs folding the whole chain, however far back and however small the page is, though the history is read almost only in pages. |
+| [380](380-transcript-window.md) | open | An agent's transcript holds every branch it ever had in memory, though only the active branch is given to the model and an old branch is read for the context of an old message alone. |
+| [383](383-prompt-texts-and-tool-sets-kept-per-turn.md) | open | Every prompt text and tool set an agent was ever given in a channel is held in memory for the record, though only the current turn's and an old context's are read. |
 
 ## Sessions and channels
 
@@ -135,6 +138,8 @@ published before anyone else can take it.
 | [342](342-invitations.md) | open | Nobody can be invited to a session or channel: who is added is taken in without being asked, told nothing beforehand and unable to decline. |
 | [362](362-retry-of-a-message-of-an-agent-that-left.md) | done | The channel admits a request to answer a message again for an agent that left, and drops it unseen, while the same request for a turn is refused. |
 | [377](377-stopping-a-session-aborts-its-actors.md) | open | Stopping or deleting a session aborts its actors at once, so a turn ends mid-step, a tool is cut off and a deleted session's external agents keep their remote tasks. |
+| [381](381-inactive-channels-held-in-memory.md) | open | A channel nobody has spoken in for days keeps its loop, its actors and their states in memory until its session is stopped, and nothing notices that it is idle. |
+| [382](382-agents-held-without-a-session.md) | open | An agent stays loaded with its memory while nothing uses it, and what still holds it once its sessions are unloaded has not been checked. |
 
 ## Identity and access management
 
@@ -364,6 +369,7 @@ published before anyone else can take it.
 | [192](192-issue-179-small-duplicates.md) | done | Small duplicates were left from issue 179 in the member views, the reader's place, "not found means none" and `unheard`. |
 | [313](313-docs-too-detailed.md) | done | The documents in `docs/` have about 130,000 tokens, mostly code retold - variants, fields, call orders - and inline issue history, so the concepts and rules are hard to find and every change has a second place to update. |
 | [349](349-core-review-epic.md) | done | Epic for the review of agents, sessions and channels of 2026-10-14: the bracket around issues 350–361 and their recommended order. |
+| [378](378-resource-management-epic.md) | open | Epic for resource management: the bracket around 376, 379–383, 218 and 223, which reduce what the server holds in memory, and their recommended order. |
 
 ## Code structure
 

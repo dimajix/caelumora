@@ -21,6 +21,9 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [05](05-postgres-event-recorder.md) | open | The `Recorder` hook is wired into every channel, but `BlackholeRecorder` is the only implementation, so nothing is recorded. |
 | [182](182-entity-reads-not-cached.md) | open | Personalities, agents and users are read from the store again for every use - for every member of a channel, on every turn - though they change rarely. |
 | [376](376-histories-held-whole-in-memory.md) | open | A channel's history and an agent's history and transcript are held in memory and loaded whole, though they grow with the channel and almost only their recent end is used. |
+| [379](379-history-stored-as-it-stands.md) | open | A page of a channel's or an agent's history costs folding the whole chain, however far back and however small the page is, though the history is read almost only in pages. |
+| [380](380-transcript-window.md) | open | An agent's transcript holds every branch it ever had in memory, though only the active branch is given to the model and an old branch is read for the context of an old message alone. |
+| [383](383-prompt-texts-and-tool-sets-kept-per-turn.md) | open | Every prompt text and tool set an agent was ever given in a channel is held in memory for the record, though only the current turn's and an old context's are read. |
 
 ## Sessions and channels
 
@@ -35,6 +38,8 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
 | [342](342-invitations.md) | open | Nobody can be invited to a session or channel: who is added is taken in without being asked, told nothing beforehand and unable to decline. |
 | [377](377-stopping-a-session-aborts-its-actors.md) | open | Stopping or deleting a session aborts its actors at once, so a turn ends mid-step, a tool is cut off and a deleted session's external agents keep their remote tasks. |
+| [381](381-inactive-channels-held-in-memory.md) | open | A channel nobody has spoken in for days keeps its loop, its actors and their states in memory until its session is stopped, and nothing notices that it is idle. |
+| [382](382-agents-held-without-a-session.md) | open | An agent stays loaded with its memory while nothing uses it, and what still holds it once its sessions are unloaded has not been checked. |
 
 ## Identity and access management
 
@@ -90,6 +95,12 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [338](338-artifacts-go-with-their-session.md) | open | An artifact is published into its session's scope and is deleted with the session unless its owner keeps it elsewhere, though it is meant to outlive the conversation. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 | [305](305-skill-versions.md) | open | A skill keeps only its current text: every change overwrites what it said, nobody sees what changed, and an earlier version cannot be made current again. |
+
+## Maintenance
+
+| No. | Status | Issue |
+|---|---|---|
+| [378](378-resource-management-epic.md) | open | Epic for resource management: the bracket around 376, 379–383, 218 and 223, which reduce what the server holds in memory, and their recommended order. |
 
 ## Code structure
 

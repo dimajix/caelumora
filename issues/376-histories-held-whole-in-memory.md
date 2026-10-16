@@ -77,3 +77,12 @@ back to.
   problem while that history is held whole, and [218](218-paged-histories.md) pages what is sent
   but not what is read. Proposed order: stable positions and a range API as a refactoring first,
   218 and 223 on it, spilling behind it.
+- **2026-10-16** — Options weighed with the maintainer; the frame decided is recorded on the epic
+  [378](378-resource-management-epic.md). This issue is narrowed to the refactoring that prepares
+  the rest, without a change of behaviour: a stable position (`seq`) per entry, reads by range on
+  `Chain`, the sums over whole chains (`usage`, the classification an external agent's remote side
+  has seen) turned into small parts of the state, and every reader that needs only the end or one
+  entry taken off `all_entries()`. The history's half - a derived store of the items as they stand,
+  read in pages - is [379](379-history-stored-as-it-stands.md); the transcript's half - the active
+  branch in memory, older branches in the store - is [380](380-transcript-window.md). The *Done
+  when* above is reached by the three together.
