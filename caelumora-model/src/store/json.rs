@@ -6,6 +6,7 @@ use crate::removal::{Deletable, Removal};
 use crate::security::{ActionType, AccessPolicy};
 use crate::store::access::{name_free, Access};
 use crate::store::history::HistoryKey;
+use crate::store::transcript::load_named_by_turn;
 use crate::store::query::{Field, Filter, NoField, Page, Query};
 use crate::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, Journaled, Policies, StateStore, StoreError, StoreResult, Stored};
 use crate::type_map::TypeMap;
@@ -576,12 +577,15 @@ impl StateStore for JsonFileStore {
         let mut state: AgentChannelState = load_state(&path).await?.unwrap_or_default();
         state.history = self.load_history(HistoryKey::Agent(agent_id, channel_id), state.history_from).await?;
         state.transcript = self.load_transcript(agent_id, channel_id, state.transcript_from).await?;
+        load_named_by_turn(self, agent_id, channel_id, &mut state).await?;
         Ok(state)
     }
 
-    /// The history and the transcript first, then the document, which says
+    /// The prompt texts and the tool sets first, which what follows names,
+    /// then the history and the transcript, then the document, which says
     /// from where they are loaded.
     async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
+        self.append_given(agent_id, channel_id, state).await?;
         self.append_history(HistoryKey::Agent(agent_id, channel_id), &mut state.history).await?;
         self.append_transcript(agent_id, channel_id, &mut state.transcript).await?;
         self.store_state(&self.agent_channel_state_path(agent_id, channel_id), state).await
@@ -639,6 +643,7 @@ impl StateStore for JsonFileStore {
             delete_if_exists(&journal_path(&path)).await?;
             delete_dir_if_exists(&path.with_extension("history")).await?;
             delete_dir_if_exists(&path.with_extension("transcript")).await?;
+            delete_dir_if_exists(&path.with_extension("given")).await?;
         }
         Ok(())
     }
@@ -692,6 +697,7 @@ mod tests {
         let store = store(dir.path());
         suite::history_store_behaves(&store, &store).await;
         suite::transcript_store_behaves(&store, &store).await;
+        suite::given_store_behaves(&store, &store).await;
     }
 
     #[tokio::test]
@@ -912,7 +918,7 @@ mod tests {
     }
 
     use crate::message::tests::{id, make_message};
-    use crate::digest;
+    use crate::note::{NoteChange, NoteId};
     use crate::actor::ActorState;
     use crate::channel::moderation_components;
     use crate::value::name::Name;
@@ -930,12 +936,13 @@ mod tests {
     }
 
     /// A state with messages `from..to` in its transcript and history, and
-    /// a prompt part kept for each in its document, which grows with them.
+    /// a note published for each in its document, which grows with them.
     fn said(state: &mut AgentChannelState, from: u128, to: u128) {
         for n in from..to {
             state.transcript.push(make_message(id(n)));
             state.history.extend(vec![make_message(id(n))]);
-            state.prompts.keep(digest::prompt(&format!("part {n}")), || format!("part {n}"));
+            let note = NoteChange::Add { id: NoteId(n as u32), text: format!("note {n}"), classification: Classification::CHANNEL_DEFAULT };
+            state.notes.push(note, Default::default(), id(n));
         }
     }
 

@@ -11,14 +11,15 @@ use crate::security::{ActionType, AllowAllPolicy, SecurityContext, AccessPolicy}
 use crate::store::access::{name_free, Access};
 use crate::store::history::{page_of, HistoryKey, HistoryStore, Keep, StandingItems};
 use crate::store::kept_chain::KeptChain;
-use crate::store::transcript::{transcript_of, TranscriptStore};
+use crate::store::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
 use crate::transcript::{known, Transcript, TranscriptEntry};
 use crate::store::query::{self, Filter, NoField, Page, Query};
 use crate::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, Journaled, Policies, StateStore, StoreError, StoreResult, Stored};
+use crate::tool::ToolSet;
 use crate::type_map::TypeMap;
 use crate::value::name::ScopedName;
 use async_trait::async_trait;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::Infallible;
 use std::fmt::{self, Debug};
 use std::future::ready;
@@ -29,7 +30,8 @@ use tracing::info;
 /// state, in memory: a store per kind (`MemoryEntityStore`, issue 323),
 /// opened when it is first asked for, and maps for the states - their
 /// documents, and apart their histories, each whole with its items as they
-/// stand (issue 379), and the agents' transcripts, each whole (issue 380).
+/// stand (issue 379), the agents' transcripts, each whole (issue 380), and
+/// the prompt texts and tool sets their models were given (issue 383).
 #[derive(Debug)]
 pub struct MemoryStore {
     policies: Policies,
@@ -41,6 +43,15 @@ pub struct MemoryStore {
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
     histories: RwLock<HashMap<HistoryKey, KeptHistory>>,
     transcripts: RwLock<HashMap<(AgentId, ChannelId), KeptChain<TranscriptEntry>>>,
+    given: RwLock<HashMap<(AgentId, ChannelId), KeptGiven>>,
+}
+
+/// The prompt texts and the tool sets an agent's model was given in a
+/// channel, as the memory store keeps them: every one, each once.
+#[derive(Debug, Default)]
+struct KeptGiven {
+    prompts: BTreeMap<Digest, String>,
+    offered_tools: BTreeMap<Digest, Vec<ToolSet>>,
 }
 
 /// A history as the memory store keeps it: its chain whole, and the items
@@ -78,6 +89,7 @@ impl MemoryStore {
             channel_states: Default::default(),
             histories: Default::default(),
             transcripts: Default::default(),
+            given: Default::default(),
         }
     }
 
@@ -121,6 +133,22 @@ impl MemoryStore {
         Ok(())
     }
 
+    /// Keeps the prompt texts and the tool sets `state`, that of `agent` in
+    /// `channel`, kept since they were last stored, and marks them stored.
+    fn append_given(&self, agent: AgentId, channel: ChannelId, state: &mut AgentChannelState) {
+        write_lock(&self.given, |all| {
+            let kept = all.entry((agent, channel)).or_default();
+            for (digest, text) in state.prompts.changes() {
+                kept.prompts.entry(digest).or_insert(text);
+            }
+            for (digest, sets) in state.offered_tools.changes() {
+                kept.offered_tools.entry(digest).or_insert(sets);
+            }
+        });
+        state.prompts.mark_stored();
+        state.offered_tools.mark_stored();
+    }
+
     /// The transcript of `agent` in `channel` from the position `from` on,
     /// as its state holds it; empty if none is kept.
     fn load_transcript(&self, agent: AgentId, channel: ChannelId, from: u64) -> StoreResult<Transcript> {
@@ -139,14 +167,19 @@ impl MemoryStore {
         document
     }
 
-    /// `state`'s document - what is stored of it but its history and its
-    /// transcript - as a copy without them, which are kept apart.
+    /// `state`'s document - what is stored of it but its history, its
+    /// transcript, its prompt texts and its tool sets - as a copy without
+    /// them, which are kept apart.
     fn agent_document(state: &mut AgentChannelState) -> AgentChannelState {
         let history = std::mem::take(&mut state.history);
         let transcript = std::mem::take(&mut state.transcript);
+        let prompts = std::mem::take(&mut state.prompts);
+        let offered_tools = std::mem::take(&mut state.offered_tools);
         let document = state.clone();
         state.history = history;
         state.transcript = transcript;
+        state.prompts = prompts;
+        state.offered_tools = offered_tools;
         document
     }
 
@@ -370,10 +403,14 @@ impl StateStore for MemoryStore {
         let mut state = read_lock(&self.agent_channel_states, |v| v.get(&(agent_id, channel_id)).cloned()).unwrap_or_default();
         state.history = self.load_history(HistoryKey::Agent(agent_id, channel_id), state.history_from)?;
         state.transcript = self.load_transcript(agent_id, channel_id, state.transcript_from)?;
+        load_named_by_turn(self, agent_id, channel_id, &mut state).await?;
         Ok(state)
     }
 
+    /// The prompt texts and the tool sets first, as the `JsonFileStore`
+    /// writes them.
     async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
+        self.append_given(agent_id, channel_id, state);
         self.append_history(HistoryKey::Agent(agent_id, channel_id), &mut state.history)?;
         self.append_transcript(agent_id, channel_id, &mut state.transcript)?;
         // Marked first: the copy kept is the state as stored, with nothing pending.
@@ -414,6 +451,7 @@ impl StateStore for MemoryStore {
         write_lock(&self.agent_channel_states, |v| v.retain(|(_, cid), _| *cid != channel_id));
         write_lock(&self.histories, |v| v.retain(|key, _| !key.in_channel(channel_id)));
         write_lock(&self.transcripts, |v| v.retain(|(_, cid), _| *cid != channel_id));
+        write_lock(&self.given, |v| v.retain(|(_, cid), _| *cid != channel_id));
         Ok(())
     }
 
@@ -422,6 +460,7 @@ impl StateStore for MemoryStore {
         write_lock(&self.agent_channel_states, |v| v.retain(|(aid, _), _| *aid != agent_id));
         write_lock(&self.histories, |v| v.retain(|key, _| !key.of_agent(agent_id)));
         write_lock(&self.transcripts, |v| v.retain(|(aid, _), _| *aid != agent_id));
+        write_lock(&self.given, |v| v.retain(|(aid, _), _| *aid != agent_id));
         Ok(())
     }
 
@@ -475,6 +514,18 @@ impl TranscriptStore for MemoryStore {
                 .filter(|id| ids.contains(id))
                 .collect()
         }))
+    }
+
+    async fn prompts(&self, agent: AgentId, channel: ChannelId, digests: &[Digest]) -> StoreResult<BTreeMap<Digest, String>> {
+        Ok(read_lock(&self.given, |all| {
+            all.get(&(agent, channel)).into_iter()
+                .flat_map(|kept| digests.iter().filter_map(|digest| kept.prompts.get(digest).map(|text| (*digest, text.clone()))))
+                .collect()
+        }))
+    }
+
+    async fn offered_tools(&self, agent: AgentId, channel: ChannelId, digest: Digest) -> StoreResult<Option<Vec<ToolSet>>> {
+        Ok(read_lock(&self.given, |all| all.get(&(agent, channel)).and_then(|kept| kept.offered_tools.get(&digest).cloned())))
     }
 }
 
@@ -548,6 +599,7 @@ mod tests {
         let store = MemoryStore::new();
         suite::history_store_behaves(&store, &store).await;
         suite::transcript_store_behaves(&store, &store).await;
+        suite::given_store_behaves(&store, &store).await;
     }
 
     #[tokio::test]

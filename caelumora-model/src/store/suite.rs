@@ -19,6 +19,10 @@ use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityKind, EntityStore, EntityStores, Journaled, NoEntity, StateStore, StoreError, Stored};
 use crate::store::history::{every, HistoryKey, HistoryStore};
 use crate::store::transcript::TranscriptStore;
+use crate::actor::EventContext;
+use crate::context::ModelProfile;
+use crate::tool::ToolSet;
+use std::collections::BTreeMap;
 use crate::chain::Node;
 use crate::digest;
 use crate::transcript::TranscriptEntry;
@@ -31,7 +35,7 @@ use crate::group::{Group, GroupId};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::message::Message;
+use crate::message::{Message, MessageRole};
 use crate::role::RoleId;
 
 /// Runs one kind through its whole life: create, create again, update, get,
@@ -823,6 +827,55 @@ pub(crate) async fn transcript_store_behaves(states: &dyn StateStore, transcript
     states.put_agent_channel_state(agent, channel, &mut again).await.expect("put");
     states.delete_agent_state(agent).await.expect("delete");
     assert!(transcripts.given(agent, channel, &[id(2)]).await.unwrap().is_empty(), "and with the agent");
+}
+
+/// The prompt texts and the tool sets an agent's model was given (issue
+/// 383): written by the put of its state, apart from its document, each
+/// once by its digest - written again as the same -, read by digest; a
+/// state loaded holds those its turn under way names, and none between
+/// turns; gone with the state.
+pub(crate) async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn TranscriptStore) {
+    let (channel, agent) = (ChannelId::new(), AgentId::new());
+    let sets = vec![ToolSet::new("calc", "calculates", Vec::new())];
+    let offer = digest::tool_sets(&sets);
+    let mut state = AgentChannelState::default();
+    let before = state.keep_prompt(MessageRole::System, "before".to_string(), None, None);
+    states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
+    assert!(state.prompts.changes().is_empty(), "the texts are marked stored");
+
+    state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, sets.clone(), ModelProfile::default());
+    let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
+    state.turn.as_mut().expect("a turn").work.context.prompts.push(system.clone());
+    states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
+    assert!(state.offered_tools.changes().is_empty(), "the tool sets are marked stored");
+
+    let read = transcripts.prompts(agent, channel, &[before.text, system.text, digest::prompt("never")]).await.unwrap();
+    let expected: BTreeMap<_, _> = [(before.text, "before".to_string()), (system.text, "system".to_string())].into_iter().collect();
+    assert_eq!(read, expected, "those kept, by their digests");
+    assert_eq!(transcripts.offered_tools(agent, channel, offer).await.unwrap(), Some(sets.clone()));
+    assert!(transcripts.offered_tools(agent, channel, digest::prompt("never")).await.unwrap().is_none());
+
+    let loaded = states.get_agent_channel_state(agent, channel).await.expect("get");
+    assert_eq!(loaded.prompts.get(&system.text).map(String::as_str), Some("system"), "what its turn under way names");
+    assert!(loaded.prompts.get(&before.text).is_none(), "and nothing else");
+    assert_eq!(loaded.offered_tools.get(&offer), Some(&sets));
+    assert!(loaded.prompts.changes().is_empty() && loaded.offered_tools.changes().is_empty(), "nothing to write again");
+
+    let mut next = AgentChannelState::default();
+    next.keep_prompt(MessageRole::System, "system".to_string(), None, None);
+    states.put_agent_channel_state(agent, channel, &mut next).await.expect("a text kept again is written as the same");
+    assert_eq!(transcripts.prompts(agent, channel, &[system.text]).await.unwrap().get(&system.text).map(String::as_str), Some("system"));
+    let between = states.get_agent_channel_state(agent, channel).await.expect("get");
+    assert!(between.prompts.is_empty() && between.offered_tools.is_empty(), "between turns a state holds none");
+
+    states.delete_channel_state(channel).await.expect("delete");
+    assert!(transcripts.prompts(agent, channel, &[system.text]).await.unwrap().is_empty(), "gone with the channel's state");
+    let elsewhere = ChannelId::new();
+    let mut other = AgentChannelState::default();
+    other.keep_prompt(MessageRole::System, "system".to_string(), None, None);
+    states.put_agent_channel_state(agent, elsewhere, &mut other).await.expect("put");
+    states.delete_agent_state(agent).await.expect("delete");
+    assert!(transcripts.prompts(agent, elsewhere, &[system.text]).await.unwrap().is_empty(), "and with the agent");
 }
 
 /// `value` marked deleted, as only deleting may.

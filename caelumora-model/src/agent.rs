@@ -336,13 +336,18 @@ pub struct AgentChannelState {
     /// The agent's private notes in this channel, which only it reads - and
     /// only where the channel's confidentiality allows (issue 51).
     pub private_notes: NoteChain,
-    /// Every prompt part the agent was given in this channel - the system
+    /// The prompt parts the agent was given in this channel - the system
     /// prompt, notes, ... - by digest, each kept once: what the `ContextRef`s
-    /// in the history point to (issues 06, 47).
+    /// in the history point to (issues 06, 47). Written by the store apart
+    /// from the document, before everything that names them, and read by
+    /// digest (`TranscriptStore::prompts`, issue 383); a state loaded holds
+    /// those its turn under way names.
+    #[serde(skip)]
     pub prompts: Kept<String>,
     /// The tool sets the agent's model was offered in this channel, by
     /// digest, each offer kept once: what the `ContextRef`s in the history
-    /// point to (issues 137, 194).
+    /// point to (issues 137, 194). Kept as the prompt parts are.
+    #[serde(skip)]
     pub offered_tools: Kept<Vec<ToolSet>>,
     /// The turn under way, `None` between turns (issue 85). Stored with the
     /// rest, so that a turn cut off by a crash is resumed (issue 75).
@@ -863,8 +868,6 @@ pub enum RetryRefused {
 pub enum AgentChannelStateChange {
     Notes(Stored<LedgerEntry<Notes>>),
     PrivateNotes(Stored<LedgerEntry<Notes>>),
-    Prompt { digest: Digest, text: String },
-    OfferedTools { digest: Digest, tools: Vec<ToolSet> },
     ProcessingState(ActorState),
     /// The turn under way, whole: it is changed in place at every step
     /// (`prepare_resume`, the turn's own methods), and bounded by one turn.
@@ -887,8 +890,6 @@ impl Journaled for AgentChannelState {
         let mut changes: Vec<Self::Change> = Vec::new();
         changes.extend(self.notes.changes().map(AgentChannelStateChange::Notes));
         changes.extend(self.private_notes.changes().map(AgentChannelStateChange::PrivateNotes));
-        changes.extend(self.prompts.changes().into_iter().map(|(digest, text)| AgentChannelStateChange::Prompt { digest, text }));
-        changes.extend(self.offered_tools.changes().into_iter().map(|(digest, tools)| AgentChannelStateChange::OfferedTools { digest, tools }));
         changes.push(AgentChannelStateChange::ProcessingState(self.processing_state));
         changes.push(AgentChannelStateChange::Turn(self.turn.clone()));
         changes.push(AgentChannelStateChange::Used(self.used));
@@ -898,21 +899,17 @@ impl Journaled for AgentChannelState {
         changes
     }
 
-    /// The history and the transcript are marked stored by the store that
-    /// wrote them.
+    /// The history, the transcript, the prompt parts and the tool sets are
+    /// marked stored by the store that wrote them.
     fn mark_stored(&mut self) {
         self.notes.mark_stored();
         self.private_notes.mark_stored();
-        self.prompts.mark_stored();
-        self.offered_tools.mark_stored();
     }
 
     fn apply(&mut self, change: Self::Change) -> Result<(), String> {
         match change {
             AgentChannelStateChange::Notes(change) => self.notes.apply(change)?,
             AgentChannelStateChange::PrivateNotes(change) => self.private_notes.apply(change)?,
-            AgentChannelStateChange::Prompt { digest, text } => self.prompts.apply(digest, text),
-            AgentChannelStateChange::OfferedTools { digest, tools } => self.offered_tools.apply(digest, tools),
             AgentChannelStateChange::ProcessingState(state) => self.processing_state = state,
             AgentChannelStateChange::Turn(turn) => self.turn = turn,
             AgentChannelStateChange::Used(used) => self.used = used,
@@ -1449,8 +1446,6 @@ pub(crate) mod tests {
         state.history.push(make_message(id(2)), Some(ContextRef { transcript: before, ..ContextRef::default() }));
         state.notes.push(NoteChange::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), id(2));
         state.private_notes.push(NoteChange::Add { id: NoteId(1), text: "mine".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), id(2));
-        state.prompts.keep(digest::prompt("system"), || "system".to_string());
-        state.offered_tools.keep(digest::tool_sets(&[]), Vec::new);
         state.processing_state = ActorState::WaitingForUser;
         state.turn = Some(TurnState { model_calls: 3, ..TurnState::default() });
         state.used = TokenUsage::counted(None, &Message { prompt_tokens: Some(5), ..make_message(id(2)) });
@@ -1459,8 +1454,6 @@ pub(crate) mod tests {
         let parts: Vec<&str> = changes.iter().map(|c| match c {
             AgentChannelStateChange::Notes(_) => "notes",
             AgentChannelStateChange::PrivateNotes(_) => "private_notes",
-            AgentChannelStateChange::Prompt { .. } => "prompt",
-            AgentChannelStateChange::OfferedTools { .. } => "offered_tools",
             AgentChannelStateChange::ProcessingState(_) => "processing_state",
             AgentChannelStateChange::Turn(_) => "turn",
             AgentChannelStateChange::Used(_) => "used",
@@ -1468,7 +1461,7 @@ pub(crate) mod tests {
             AgentChannelStateChange::HistoryFrom(_) => "history_from",
             AgentChannelStateChange::TranscriptFrom(_) => "transcript_from",
         }).collect();
-        assert_eq!(parts, ["notes", "private_notes", "prompt", "offered_tools", "processing_state", "turn", "used", "remote", "history_from", "transcript_from"], "what was added, then the small parts whole; the history and the transcript are the store's to write");
+        assert_eq!(parts, ["notes", "private_notes", "processing_state", "turn", "used", "remote", "history_from", "transcript_from"], "what was added, then the small parts whole; the history, the transcript, the prompt parts and the tool sets are the store's to write");
         replayed(&state, &mut copy);
         assert_eq!(copy.used, state.used, "the running total with them");
 

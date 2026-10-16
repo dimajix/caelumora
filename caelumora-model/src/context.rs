@@ -447,12 +447,14 @@ impl<'a> ContextResolver<'a> {
         Self { transcript: TranscriptSource::Held(&state.transcript), prompts: &state.prompts, offered_tools: &state.offered_tools, history: &state.history }
     }
 
-    /// The resolver over the data of `state`, its transcript the path
-    /// `path`, loaded from the store (`TranscriptStore::path`, issue 380):
-    /// what an older message's context is resolved against, which may lie
-    /// on a branch the state does not hold.
-    pub fn on_path(state: &'a AgentChannelState, path: &'a [Node<TranscriptEntry>]) -> Self {
-        Self { transcript: TranscriptSource::Path(path), prompts: &state.prompts, offered_tools: &state.offered_tools, history: &state.history }
+    /// The resolver over what was loaded from the store for an older
+    /// message's context - which may lie on a branch the state does not
+    /// hold, and name texts it no longer holds -: the path `path` of its
+    /// transcript (`TranscriptStore::path`, issue 380), the `prompts` and
+    /// the `offered_tools` it names (`TranscriptStore::named_by`, issue
+    /// 383); the history of `state`.
+    pub fn on_path(state: &'a AgentChannelState, path: &'a [Node<TranscriptEntry>], prompts: &'a Kept<String>, offered_tools: &'a Kept<Vec<ToolSet>>) -> Self {
+        Self { transcript: TranscriptSource::Path(path), prompts, offered_tools, history: &state.history }
     }
 
     /// What the model of `agent` is given, or was given, for the message

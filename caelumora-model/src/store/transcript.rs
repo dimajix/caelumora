@@ -2,25 +2,32 @@
 //! ever had, written by the put of the agent's state in the channel
 //! (`StateStore::put_agent_channel_state`), while the agent's actor holds
 //! only its active branch. The `TranscriptStore` is the read side, for
-//! whoever reads what lies on an older branch.
+//! whoever reads what lies on an older branch - and of the prompt texts and
+//! tool sets placed beside it (issue 383), which are written by the same
+//! put, and held by the actor only while its turn under way names them.
 
-use crate::agent::AgentId;
+use crate::agent::{AgentChannelState, AgentId};
 use crate::chain::Node;
 use crate::channel::ChannelId;
+use crate::context::ContextRef;
 use crate::digest::Digest;
+use crate::kept::Kept;
 use crate::message::{Message, MessageId};
 use crate::store::StoreResult;
+use crate::tool::ToolSet;
 use crate::transcript::TranscriptEntry;
 use async_trait::async_trait;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Debug;
 
 /// The read side of the transcripts a store keeps (issue 380), each of an
-/// agent in a channel. A transcript is written with the agent's state in
+/// agent in a channel, with the prompt texts and the tool sets its model was
+/// given beside it (issue 383). Both are written with the agent's state in
 /// the channel; what is read here is as fresh as what was put. A transcript
-/// no store holds reads as empty. A digest may be there twice - a holder
-/// dedupes only within its window -, and names the same content either
-/// time.
+/// no store holds reads as empty. A digest may be there twice in a
+/// transcript - a holder dedupes only within its window -, and names the
+/// same content either time; a text or a set of tools is kept once by its
+/// digest, written again as the same.
 #[async_trait]
 pub trait TranscriptStore: Debug + Send + Sync {
     /// The path from the root up to the entry with the digest `digest`, on
@@ -38,6 +45,40 @@ pub trait TranscriptStore: Debug + Send + Sync {
     /// branch: which of what the agent heard was passed on to it (issue
     /// 196).
     async fn given(&self, agent: AgentId, channel: ChannelId, ids: &[MessageId]) -> StoreResult<HashSet<MessageId>>;
+
+    /// The prompt texts of those of `digests` that are kept, each by its
+    /// digest (issue 383).
+    async fn prompts(&self, agent: AgentId, channel: ChannelId, digests: &[Digest]) -> StoreResult<BTreeMap<Digest, String>>;
+
+    /// The tool sets of the offer `digest` names (issue 383); `None` if it
+    /// is not kept.
+    async fn offered_tools(&self, agent: AgentId, channel: ChannelId, digest: Digest) -> StoreResult<Option<Vec<ToolSet>>>;
+
+    /// The prompt texts and the tool sets `reference` names, of `agent` in
+    /// `channel`, with nothing pending (issue 383): what a context is
+    /// resolved with besides its transcript (`ContextResolver`). What it
+    /// names and is not kept is not there.
+    async fn named_by(&self, agent: AgentId, channel: ChannelId, reference: &ContextRef) -> StoreResult<(Kept<String>, Kept<Vec<ToolSet>>)> {
+        let digests: Vec<Digest> = reference.prompts.iter().map(|prompt| prompt.text).collect();
+        let prompts = self.prompts(agent, channel, &digests).await?;
+        let offered = match reference.tools {
+            Some(digest) => self.offered_tools(agent, channel, digest).await?.map(|sets| (digest, sets)),
+            None => None,
+        };
+        Ok((Kept::stored(prompts), Kept::stored(offered)))
+    }
+}
+
+/// Reads into `state`, that of `agent` in `channel` as a store loaded it,
+/// the prompt texts and the tool sets its turn under way names (issue
+/// 383): what a turn cut off by a crash is resumed with. A state between
+/// turns holds none.
+pub(crate) async fn load_named_by_turn(transcripts: &dyn TranscriptStore, agent: AgentId, channel: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
+    let Some(turn) = &state.turn else { return Ok(()) };
+    let (prompts, offered_tools) = transcripts.named_by(agent, channel, &turn.work.context).await?;
+    state.prompts = prompts;
+    state.offered_tools = offered_tools;
+    Ok(())
 }
 
 /// How a transcript is named where something about it fails.
