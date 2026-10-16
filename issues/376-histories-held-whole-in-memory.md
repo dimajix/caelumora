@@ -241,8 +241,9 @@ The hinge to 379 and 380, in `Chain` alone, with nothing trimming yet: a chain m
 entries from a position `base` on instead of from `0`, and know that what lies before is older and
 a store's.
 
-- `base: u64`, `0` for a chain built here; `nodes[i].seq == base + i`; `end() == base +
-  nodes.len()`; `at`, `from` and `before` answer nothing for positions below `base`.
+- `base: u64`, `0` for a chain built here, read by `base()`; `nodes[i].seq == base + i`;
+  `end() == base + nodes.len()`. `at` and `from` answer nothing for a position below `base`, where
+  the chain does not hold all that was asked for; `before` gives what it holds of the page.
 - `Chain::suffix(base: u64, stored: Stored<E>) -> Result<Self, String>` builds a chain from the
   nodes of a range that begins at `base`: the first node may follow an entry that is not there,
   which is older and trusted; every other node is checked as `apply` checks. `from_stored` is
@@ -258,6 +259,9 @@ a store's.
   same.
 - `move_head` to a digest below `base` returns `false`, as to one that is not there: whoever needs
   it loads the range first (380).
+- A suffix is not serialized: `Serialize` fails for it, since what it would write is not the chain,
+  and a snapshot of the JSON store written from it would lose everything before `base` without a
+  word. 379 and 380 give the chains a store of their own before anything builds a suffix.
 
 Unit tests of the chain cover a suffix built from the end of a chain: the same `digest`, `end`,
 `from` and `before` as the whole chain for everything from `base` on, `entries` the path from
@@ -341,3 +345,8 @@ independent of each other and of 6.
   parts) and AGENT-TURN.md (positions, the running total of tokens, how a range of the history is
   read as it stands), each written with its step; AGENT-TURN.md also says now that a change in the
   history applies on every branch, and that a reader goes back only as far as it has to.
+- **2026-10-16** — Step 6 done: a chain may hold the part of itself from a position on
+  (`Chain::suffix`, `base`); its paths begin at `base`, an entry may follow an older one there, and
+  a position or digest before `base` is not found. A suffix refuses to be serialized. Nothing builds
+  one outside the tests until 380; the docs say so when something does. With this step the plan
+  above is carried out.
