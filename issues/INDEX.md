@@ -265,7 +265,7 @@ published before anyone else can take it.
 | [207](207-agent-history-in-ui.md) | done | An agent's history - all that was offered to it and what it said - cannot be shown; neither the views, the REST API nor the web UI hand it out. |
 | [208](208-generated-artifacts.md) | open | Files and data an agent generates - an external agent's artifacts, a tool's images - are dropped; only their text is kept, and nothing can be stored or downloaded. |
 | [216](216-show-reasoning.md) | done | The web UI shows an agent's reasoning nowhere - neither in the chat, while it streams or afterwards, nor in the context panel - although the server hands it out. |
-| [218](218-paged-histories.md) | open | A channel's history and an agent's history are returned whole over REST, though both grow without a limit and only their end is shown first. |
+| [218](218-paged-histories.md) | done | A channel's history and an agent's history are returned whole over REST, though both grow without a limit and only their end is shown first. |
 | [219](219-usage-hover.md) | done | The token usage is shown in two hovers built differently - a box too narrow for lines that wrap, and the browser's plain tooltip - and neither looks good. |
 | [220](220-user-stream-from-its-actor.md) | done | A user's stream is the channel's broadcast, not what their actor receives, so the moderator cannot decide what a user sees and a cut-off chain never reaches the web UI. |
 | [225](225-cancel-leaves-answer-generating.md) | done | After a cancel the web UI keeps showing the answer as being generated, and the cancel button stays lit. |

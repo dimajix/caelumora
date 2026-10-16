@@ -49,6 +49,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
 use caelumora_model::group::{Group, GroupField, GroupId};
+use caelumora_model::message::MessageId;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
@@ -122,6 +123,9 @@ pub enum ViewError {
     NoChannelNamed(String),
     #[error("Channel {channel} has no member {actor}")]
     MemberNotFound { channel: ChannelId, actor: ActorId },
+    /// Not in the history, or not in the part of it the viewer sees.
+    #[error("Channel {channel} has no message {message}")]
+    MessageNotFound { channel: ChannelId, message: MessageId },
     /// Reached, but not the viewer's to read: what an agent saw, which
     /// tools it has.
     #[error("You are not permitted to read this of {actor}")]
@@ -772,7 +776,7 @@ mod tests {
     use caelumora_model::value::text::{Briefing, Summary};
     use caelumora_model::approval::ToolMatcher;
     use caelumora_model::context::{ContextItem, ContextRef};
-    use caelumora_model::history::HistoryEntry;
+    use caelumora_model::history::{HistoryEntry, HistoryPage};
     use caelumora_model::turn::GivenUpReason;
     use caelumora_model::work::TurnId;
     use chrono::Utc;
@@ -1041,7 +1045,7 @@ mod tests {
         stored_session(&store, &session).await;
 
         // What was said, of which bob - who joined later - sees the end only.
-        let said = |t: &str| Message { content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let said = |t: &str| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let (first, second) = (said("first"), said("second"));
         channel.history_limits.push(HistoryLimit { participant: ActorId::User(bob.id), start: HistoryStart::After(first.id) });
         // And so does the agent, though alice, for whom it acts, sees it all.
@@ -1067,6 +1071,18 @@ mod tests {
         assert_eq!(texts(&reach(as_user(bob.id)).await.history().await.unwrap().messages()), ["second"], "bob joined after the first");
         let as_helper = Viewer::new(SecurityContext::new(ActorId::User(alice.id), session.id, channel.id).next(ActorId::Agent(helper.id), ActorId::User(alice.id), ActorId::User(alice.id)));
         assert_eq!(texts(&reach(as_helper).await.history().await.unwrap().messages()), ["second"], "the agent reads with its own limit, not its owner's");
+        // In pages (issue 218), with the same limits.
+        let page_texts = |page: &HistoryPage| page.items.iter().filter_map(HistoryEntry::said).filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        let last = for_alice.history_page(None, 1).await.unwrap();
+        assert_eq!(page_texts(&last), ["second"]);
+        let before = for_alice.history_page(last.earlier, 1).await.unwrap();
+        assert_eq!((page_texts(&before), before.earlier), (vec!["first".to_string()], None), "the page before it, and nothing older");
+        let for_bob = reach(as_user(bob.id)).await;
+        let his = for_bob.history_page(None, 10).await.unwrap();
+        assert_eq!((page_texts(&his), his.earlier), (vec!["second".to_string()], None), "bob's from where he joined");
+        assert_eq!(for_alice.message(first.id).await.unwrap().content.as_deref(), Some("first"));
+        assert!(matches!(for_bob.message(first.id).await, Err(ViewError::MessageNotFound { .. })), "not before where his view begins");
+        assert_eq!(for_bob.message(second.id).await.unwrap().id, second.id);
         let notes = for_alice.notes().await.unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!((notes[0].agent, notes[0].name.as_str(), notes[0].notes[0].text.as_str()), (ActorId::Agent(helper.id), "Helper", "noted"));
@@ -1348,7 +1364,8 @@ mod tests {
         // Said and noted in secret: one of each released to everyone.
         let said = |t: &str, classification: &Classification| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(classification.clone()) };
         let mut state = ChannelState::new(secret.id);
-        state.history.extend(vec![said("the plan", &secret.classification), said("the date", &public.classification)]);
+        let plan = said("the plan", &secret.classification);
+        state.history.extend(vec![plan.clone(), said("the date", &public.classification)]);
         let ended = HistoryEntry::TurnGivenUp { turn_id: TurnId::new(), actor: ActorId::Agent(helper.id), reason: GivenUpReason::Stopped, at: Utc::now() };
         state.history.end_turn(ended);
         store.put_channel_state(secret.id, &mut state).await.unwrap();
@@ -1377,6 +1394,9 @@ mod tests {
         let released = secret_from_team.history().await.unwrap();
         assert_eq!(released.items.len(), 1, "nothing of how turns ended: it would tell of work whose messages are not released (issue 258)");
         assert_eq!(texts(released), ["the date"]);
+        let page = secret_from_team.history_page(None, 10).await.unwrap();
+        assert_eq!(page.items.iter().filter_map(HistoryEntry::said).filter_map(|m| m.content.as_deref()).collect::<Vec<_>>(), ["the date"], "a page of what was released (issue 218)");
+        assert!(matches!(secret_from_team.message(plan.id).await, Err(ViewError::NoChannelNamed(_))), "what was not released is not found");
         let notes = secret_from_team.notes().await.unwrap();
         assert_eq!(notes[0].notes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["noted openly"]);
         let refused = secret_from_team.member(ActorId::Agent(helper.id)).await.unwrap().context().await.expect_err("not as a whole");
@@ -1384,6 +1404,7 @@ mod tests {
         let hr_from_team = from_team.channel_named("hr").await.unwrap();
         assert!(matches!(hr_from_team.history().await, Err(ViewError::NoChannelNamed(name)) if name == "hr"), "nothing released: as if it did not exist");
         assert!(matches!(hr_from_team.notes().await, Err(ViewError::NoChannelNamed(_))));
+        assert!(matches!(hr_from_team.history_page(None, 10).await, Err(ViewError::NoChannelNamed(_))));
         assert!(matches!(from_team.channel_named("nope").await, Err(ViewError::NoChannelNamed(_))));
 
         let from_secret = manager.views(reading_from(&secret)).session(session.id).await.unwrap();

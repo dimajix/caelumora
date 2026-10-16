@@ -254,10 +254,10 @@ export interface ToolResult {
 /** The state of a channel when an event stream connects (issue 34). */
 export interface ChannelSnapshot {
   channel: ChannelResponse;
-  /** The end of its history: messages, and how turns ended (issue 258). */
+  /** The last page of its history: messages, and how turns ended (issue 258). */
   items: HistoryItem<Message>[];
-  /** Whether the history is longer than the snapshot; the rest comes over REST. */
-  has_more: boolean;
+  /** What to read the page before it with over REST (issue 218); `null` if there is none. */
+  earlier: number | null;
   /** The notes every agent of the channel published (issue 17). */
   notes: PublishedNotes[];
   /** The approvals the channel's agents wait for (issue 172): the stream tells only of requests made while it listens. */
@@ -1063,6 +1063,15 @@ export type HistoryItem<M> =
   | {activity_finished: {turn_id: string; actor: ActorId; activity: string; output: string; at: string}}
   /** An agent replaced its context `from` by `to` (issue 16); in an agent's history only. */
   | {compacted: {turn_id: string; actor: ActorId; from: string; to: string; at: string}};
+
+/**
+ * A page of a history (issue 218): its items, oldest first, and `earlier`,
+ * what to read the page before it with (`before`) - `null` if there is none.
+ */
+export interface HistoryPage<M> {
+  items: HistoryItem<M>[];
+  earlier: number | null;
+}
 
 /** What an agent's model saw when it produced a message (issues 06, 47). */
 export interface MessageContextResponse {

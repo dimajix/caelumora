@@ -16,7 +16,7 @@ import type {
   ChannelMember,
   ChannelResponse,
   Command,
-  HistoryItem,
+  HistoryPage,
   HistoryMessage,
   CommandReply,
   MessageContextResponse,
@@ -47,6 +47,11 @@ import type {PrivacyPolicy} from '../privacy';
 import {ensureOk} from '../errors';
 
 const API_BASE = '/api';
+
+/** The query of a page of a history (issue 218): the one before `before`, or the last. */
+function pageQuery(before?: number | null): string {
+  return before == null ? '' : `?before=${before}`;
+}
 
 /** A path inside a workspace, each part encoded, `/` kept between them. */
 function filePath(path: string): string {
@@ -283,10 +288,21 @@ export const api = {
     return res.json();
   },
 
-  /** The channel's history as the user may see it: messages, and how turns ended (issue 258). */
-  async getHistory(sessionId: string, channelId: string): Promise<HistoryItem<Message>[]> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/history`);
+  /**
+   * A page of the channel's history as the user may see it: messages, and how
+   * turns ended (issue 258) - the last ones, or those before `before`, the
+   * `earlier` of the page after it (issue 218).
+   */
+  async getHistory(sessionId: string, channelId: string, before?: number | null): Promise<HistoryPage<Message>> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/history${pageQuery(before)}`);
     await ensureOk(res, 'Failed to fetch the history');
+    return res.json();
+  },
+
+  /** The message `messageId` of the channel as it stands, if the user sees it (issue 218). */
+  async getMessage(sessionId: string, channelId: string, messageId: string): Promise<Message> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages/${messageId}`);
+    await ensureOk(res, 'Failed to fetch the message');
     return res.json();
   },
 
@@ -403,9 +419,9 @@ export const api = {
     return res.json();
   },
 
-  /** All that was offered to actor `actorUuid` in the channel and what it said itself (issue 207). */
-  async getAgentHistory(sessionId: string, channelId: string, actorUuid: string): Promise<HistoryItem<HistoryMessage>[]> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/history`);
+  /** A page of all that was offered to actor `actorUuid` in the channel and what it said itself (issues 207, 218), as `getHistory`. */
+  async getAgentHistory(sessionId: string, channelId: string, actorUuid: string, before?: number | null): Promise<HistoryPage<HistoryMessage>> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/history${pageQuery(before)}`);
     await ensureOk(res, 'Failed to fetch the history');
     return res.json();
   },

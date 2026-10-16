@@ -2,12 +2,12 @@
 
 use caelumora_model::actor::ActorId;
 use caelumora_model::digest::Digest;
-use caelumora_model::history::HistoryEntry;
+use caelumora_model::history::{HistoryEntry, HistoryPage};
 use caelumora_model::message::Message;
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::work::TurnId;
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// An item of a history (issue 258), as the API gives it: a message said -
 /// `M`, the channel's `Message` or an agent's `HistoryMessageResponse` -,
@@ -47,6 +47,53 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::ActivityFinished { turn_id, actor, activity, output, at } => Some(Self::ActivityFinished { turn_id, actor, activity, output, at }),
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
         }
+    }
+}
+
+/// How many items a page of a history holds unless asked for fewer or more.
+const PAGE_ITEMS: usize = 50;
+
+/// The most items a page of a history holds.
+const MAX_PAGE_ITEMS: usize = 200;
+
+/// Which page of a history to read (issue 218): `?before=<position>` - the
+/// `earlier` of the page after it; without it, the last page - and
+/// `&limit=<items>`.
+#[derive(Debug, Default, Deserialize)]
+pub struct HistoryQuery {
+    #[serde(default)]
+    pub before: Option<u64>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+impl HistoryQuery {
+    /// How many items the page holds: as asked, between one and
+    /// `MAX_PAGE_ITEMS`; `PAGE_ITEMS` if not asked.
+    pub fn limit(&self) -> usize {
+        self.limit.map_or(PAGE_ITEMS, |limit| limit.clamp(1, MAX_PAGE_ITEMS))
+    }
+}
+
+/// A page of a history (issue 218), as the API gives it: its items, oldest
+/// first, and `earlier`, what to ask for the page before it with
+/// (`?before=`) - `null` if there is none.
+#[derive(Debug, Serialize)]
+pub struct HistoryPageResponse<M> {
+    pub items: Vec<HistoryItemResponse<M>>,
+    pub earlier: Option<u64>,
+}
+
+impl<M> HistoryPageResponse<M> {
+    /// `page`, its messages given as `said` makes them from the message and
+    /// whether what it was produced from is recorded
+    /// (`HistoryEntry::context`).
+    pub fn of(page: HistoryPage, mut said: impl FnMut(Message, bool) -> M) -> Self {
+        let items = page.items.into_iter().filter_map(|entry| {
+            let recorded = entry.context().is_some();
+            HistoryItemResponse::of(entry, |message| said(message, recorded))
+        }).collect();
+        Self { items, earlier: page.earlier }
     }
 }
 

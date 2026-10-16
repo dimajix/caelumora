@@ -111,15 +111,15 @@ its handler's doc comment.
 | `PUT …/channels/{cid}/classification`, `…/language`, `…/description`, `…/uses-workspace`, `…/approval-rules` | Change a channel: reclassify it, its language, what it is for, whether it uses the session's workspace, what it restricts of tool calls |
 | `GET …/channels/{cid}/artifacts` | The artifacts with a version published in the channel (the plugin's) |
 | `POST …/channels/{cid}/commands/{command_id}/kill` | End a command of the workspace's shell started in the channel, with what it started |
-| `GET …/history`, `POST …/messages` | The channel's history as items; write a message |
-| `PUT`, `DELETE …/messages/{mid}`; `PUT …/messages/{mid}/classification`; `POST …/messages/{mid}/retry` | Modify or take back one's own message; reclassify a message; ask the agent that said it to answer again |
+| `GET …/history`, `POST …/messages` | A page of the channel's history as items; write a message |
+| `GET`, `PUT`, `DELETE …/messages/{mid}`; `PUT …/messages/{mid}/classification`; `POST …/messages/{mid}/retry` | Read a message as it stands (`404 message_not_found` where the user's view of the history does not reach it); modify or take back one's own message; reclassify a message; ask the agent that said it to answer again |
 | `POST …/approvals`, `POST …/questions/{qid}` | Approve or deny a tool call; answer or decline the questions of an agent's call |
 | `POST …/cancel` | End the current turn of every agent in the channel |
 | `POST`, `DELETE …/participants`, `…/participants/{aid}`; `GET …/participants/{aid}` | Add or remove a participant - one not in the session yet is taken into it, too; one participant, with what its model calls used and who it is |
 | `POST …/participants/{aid}/retry`, `…/cancel`, `…/tool-calls/{call_id}/cancel` | Ask one agent to answer again; end its turn alone; interrupt one tool call of its turn |
 | `GET …/notes` | The notes the channel's agents published |
 | `GET …/actors/{aid}/messages/{mid}/context` | What an agent's model saw when it wrote a message: `403 context_forbidden`, `404 context_not_recorded` (not produced by that actor), `404 context_unavailable` (recorded, no longer resolvable) |
-| `GET …/actors/{aid}/history`, `…/components`, `…/tools` | All that was offered to an agent and what it said; the components it was built from in the channel; the tools it has now |
+| `GET …/actors/{aid}/history`, `…/components`, `…/tools` | A page of all that was offered to an agent and what it said; the components it was built from in the channel; the tools it has now |
 | `GET`, `POST …/commands` | The commands of the channel the user may see; issue one |
 | `GET …/channels/{cid}/events`, `GET /events` | The channel's stream; the global stream |
 
@@ -259,6 +259,14 @@ did of its own accord and what came of it (`activity_finished`), and - in an age
 compactions of its context. Read from another channel, a history holds only
 the messages released, and neither a turn's end nor the start of a step.
 
+Both histories are read in pages, alike (issue 218): `?limit=` items (50 unless asked, at most 200)
+before `?before=`, the last ones without it, as `{"items": […], "earlier": …}`. `earlier` is the
+position in the history of the oldest item of the page, what the page before it is read with
+(`?before=`), and `null` once there is none; a client passes it on and computes nothing with it. A
+page holds no item from before where the reader's view of the history begins, and its messages stand
+as they do now, with every change made since. Paging saves what is sent and shown; the server still
+reads the history whole while it holds it in memory (issue 379).
+
 ### Who follows a channel
 
 A channel is followed live only by its participants, through their own actor (`UserActor::watch`).
@@ -289,14 +297,14 @@ starting a stopped session.
 Both streams accept `?snapshot=true` and then begin with a named `snapshot` event describing the
 state they start from:
 
-*   for a channel, its members, the last messages with `has_more` (older ones over REST) and the
-    notes its agents published; for a participant, also the approvals and questions its agents wait
-    for, read from their stored turns, so that one asked before the client connected or before a
-    restart is shown - a sensitive question only to whom it was asked. A member giving an answer
-    carries its turn (`turn_under_way`) and an agent member where it stands (`state`), both read
-    from the running channel and kept up by the stream; a client that connects during an answer
-    shows it as under way. Only here, not where channels are listed, do members carry what their
-    model calls used, since that reads every agent's state;
+*   for a channel, its members, the last page of its history with `earlier` (older ones over REST,
+    from there on) and the notes its agents published; for a participant, also the approvals and
+    questions its agents wait for, read from their stored turns, so that one asked before the client
+    connected or before a restart is shown - a sensitive question only to whom it was asked. A
+    member giving an answer carries its turn (`turn_under_way`) and an agent member where it stands
+    (`state`), both read from the running channel and kept up by the stream; a client that connects
+    during an answer shows it as under way. Only here, not where channels are listed, do members
+    carry what their model calls used, since that reads every agent's state;
 *   for the global stream, every session with its channels.
 
 The order matters: the server subscribes *first* and reads the state afterwards, so nothing that

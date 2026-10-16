@@ -6,11 +6,12 @@
 // produced from opens as that message's context. A turn it gave up is shown
 // where it ended, after what it said, with why (issues 146, 258), a command
 // it carried out where it did, with on whose word (issue 269), and where it
-// compacted its context (issue 16).
+// compacted its context (issue 16). It is read in pages from the end
+// (issue 218), older ones on request.
 
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {ChevronRight, FoldVertical, History, ScrollText, Undo2, X} from 'lucide-react';
-import type {ActorId, ChannelMember, GivenUpReason, HistoryItem, HistoryMessage, Message} from '../types';
+import type {ActorId, ChannelMember, GivenUpReason, HistoryItem, HistoryMessage, HistoryPage, Message} from '../types';
 import {classificationLabel} from '../confidentiality';
 import {cn} from '../classNames';
 import {api} from '../api';
@@ -18,9 +19,6 @@ import {actorKey, actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
 import {MessageView} from './MessageView';
 import {formatTimestamp, givenUpText, mergeToolResults} from '../messages';
-
-/** How many of the latest messages are shown before "show earlier". */
-const SHOWN_AT_FIRST = 20;
 
 interface HistoryPanelProps {
   sessionId: string;
@@ -44,6 +42,22 @@ type Row =
   | {kind: 'givenUp'; turnId: string; reason: GivenUpReason; at: string}
   | {kind: 'command'; turnId: string; command: string; args: string; issuer: ActorId; at: string}
   | {kind: 'compacted'; turnId: string; at: string};
+
+/**
+ * The pages of a history read again from its end back to `until` - the
+ * `earlier` of the oldest page shown, `null` if all of it was - one after the
+ * other with `read`, joined into one: what is shown, as it stands now, with
+ * what was added since.
+ */
+async function readBack<M>(read: (before: number | null) => Promise<HistoryPage<M>>, until: number | null): Promise<HistoryPage<M>> {
+  let page = await read(null);
+  let items = page.items;
+  while (page.earlier !== null && (until === null || page.earlier > until)) {
+    page = await read(page.earlier);
+    items = [...page.items, ...items];
+  }
+  return {items, earlier: page.earlier};
+}
 
 /**
  * The rows of `items`, in the order they happened: the messages, each run of
@@ -83,13 +97,27 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
   const actor = actorUuid(member.id);
   const [items, setItems] = useState<HistoryItem<HistoryMessage>[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
+  // What to read the page before those shown with; `null` once there is none.
+  const [earlier, setEarlier] = useState<number | null>(null);
+  const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
+  // How far back what is shown goes, for reading it again when it grew:
+  // `undefined` while nothing is shown. The panel is made anew for another
+  // agent.
+  const shownBack = useRef<number | null | undefined>(undefined);
+
+  const show = (page: HistoryPage<HistoryMessage>) => {
+    setItems(page.items);
+    setEarlier(page.earlier);
+    shownBack.current = page.earlier;
+  };
 
   useEffect(() => {
     if (!actor) return;
     let current = true;
-    api.getAgentHistory(sessionId, channelId, actor)
-      .then(items => { if (current) setItems(items); })
+    const read = (before: number | null) => api.getAgentHistory(sessionId, channelId, actor, before);
+    const until = shownBack.current;
+    (until === undefined ? read(null) : readBack(read, until))
+      .then(page => { if (current) show(page); })
       .catch(error => {
         if (error instanceof ApiRequestError && error.code === 'context_forbidden') {
           if (current) setNotice('Only the owner of this agent can see what it heard.');
@@ -100,11 +128,22 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
     return () => { current = false; };
   }, [sessionId, channelId, actor, version]);
 
+  /** Puts the page before those shown in front of them. */
+  const loadEarlier = async () => {
+    if (!actor || earlier === null) return;
+    setIsLoadingEarlier(true);
+    try {
+      const page = await api.getAgentHistory(sessionId, channelId, actor, earlier);
+      show({items: [...page.items, ...(items ?? [])], earlier: page.earlier});
+    } catch (error) {
+      reportError('Failed to load earlier messages', error);
+    } finally {
+      setIsLoadingEarlier(false);
+    }
+  };
+
   const marks = new Map((items ?? []).flatMap(item => 'said' in item ? [[item.said.message.id, item.said] as const] : []));
   const rows = rowsOf(items ?? []);
-  const messageRows = rows.flatMap((row, index) => row.kind === 'message' ? [index] : []);
-  const hidden = showAll ? 0 : Math.max(0, messageRows.length - SHOWN_AT_FIRST);
-  const firstShown = hidden > 0 ? messageRows[hidden] : 0;
 
   const messageView = (message: Message, key: React.Key) => {
     const mark = message.id ? marks.get(message.id) : undefined;
@@ -208,17 +247,18 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
         {!items && !notice && <div className="text-sm text-gray-500 dark:text-gray-400">Loading…</div>}
         {items && (
           <>
-            {hidden > 0 && (
+            {earlier !== null && (
               <div className="text-center">
                 <button
-                  onClick={() => setShowAll(true)}
-                  className="text-xs px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                  onClick={loadEarlier}
+                  disabled={isLoadingEarlier}
+                  className="text-xs px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
                 >
-                  Show {hidden} earlier {hidden === 1 ? 'message' : 'messages'}
+                  {isLoadingEarlier ? 'Loading…' : 'Show earlier messages'}
                 </button>
               </div>
             )}
-            {rows.slice(firstShown).map(rowView)}
+            {rows.map(rowView)}
             {rows.length === 0 && (
               <div className="text-sm text-gray-500 dark:text-gray-400">The agent has heard nothing here yet.</div>
             )}

@@ -216,10 +216,13 @@ from the dialog that adds someone to a channel (see below).
 `ChatView` shows one channel. Only a participant follows it live, over the channel's stream; anyone
 else who may read it - the session's owner, say - is shown its history and no input.
 
-*   **History.** The snapshot holds the newest items of the history; older ones are fetched on
-    request. A turn given up is shown as the notice the chat shows live, once; a turn that finished
-    shows nothing of its own. A call that is not public is marked with how far it may travel. A
-    message's reasoning, where the server hands it out, is folded above its content.
+*   **History.** The snapshot holds the last page of the history; "Load earlier messages" puts the
+    page before those shown in front of them, until there is none (issue 218). One who does not take
+    part is shown the last page the same way. A reclassification of the channel shows its last page
+    anew, as a snapshot would, and lets go of the older pages loaded. A turn given up is shown as
+    the notice the chat shows live, once; a turn that finished shows nothing of its own. A call that
+    is not public is marked with how far it may travel. A message's reasoning, where the server
+    hands it out, is folded above its content.
 *   **Tool calls** are shown by their presentation, which the tool declares and the agent stamps on
     each call, never by the tool's name. `ToolCallView` draws the frame every call has - the tool,
     who sees it, its status and duration, the record of questions it asked - and leaves what is
@@ -254,7 +257,7 @@ else who may read it - the session's owner, say - is shown its history and no in
     modification keeps the message's classification.
 *   **What the channel did not let in.** What the user sends is shown as they sent it, and the
     channel decides whether it enters. A message refused is marked so, with why; a refused change of
-    a message is undone by reading the message back from the history.
+    a message is undone by reading the message back (`GET …/messages/{mid}`).
 *   **Asking for another answer.** An agent's last message has a retry icon while nothing is being
     generated and its member's `can_retry` allows it - never an external agent's, which never
     answers again. So has an answer under way, once its turn is known, and the notice of a turn
@@ -392,4 +395,5 @@ which may differ from what the channel shows. What its perceive processors did n
 greyed out and marked "not passed on"; a message whose context is recorded opens it in the context
 panel. Where a turn was given up, a command carried out or the context compacted, it is marked where
 it happened, with why, on whose word, and when; what replaced the older messages in a compaction
-follows its mark.
+follows its mark. It is read in pages like the chat; when the history grew, the pages shown are read
+again from the end, back to the oldest shown, so that the messages stand as they do now.

@@ -3,7 +3,7 @@
 use super::member::{member_state, AgentMember, MemberState};
 use super::ChannelReading;
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
-use crate::channel::{visible_part, ChannelLoop, VisibleHistory};
+use crate::channel::{visible_message, visible_page, visible_part, ChannelLoop, VisibleHistory};
 use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
 use caelumora_model::actor::{ActorId, ActorState};
@@ -15,7 +15,8 @@ use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::confidentiality::Place;
 use caelumora_model::digest::Digest;
-use caelumora_model::history::HistoryEntry;
+use caelumora_model::history::{HistoryEntry, HistoryPage};
+use caelumora_model::message::{Message, MessageId};
 use caelumora_model::note::Note;
 use caelumora_model::removal::Removal;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement};
@@ -144,7 +145,7 @@ impl ChannelView {
     /// Whether the viewer may read an entry of the channel classified
     /// `classification`: every one if it reads the channel as a whole, else
     /// those released to where it reads from.
-    pub(super) async fn may_read_entry(&self, classification: &Classification) -> bool {
+    pub(super) fn may_read_entry(&self, classification: &Classification) -> bool {
         match self.readable {
             ChannelReading::Whole => true,
             ChannelReading::Released => self.views().may_copy_from(&self.place(classification)),
@@ -250,43 +251,93 @@ impl ChannelView {
     /// `Failed` if the stored history cannot be read; `NoChannelNamed` if
     /// nothing of a channel read entry by entry can be.
     pub async fn history(&self) -> ViewResult<VisibleHistory> {
-        // Whoever reads: an agent reads as itself, not as the owner it acts
-        // for - its own limit applies, not the owner's.
-        let actor = self.views().viewer().context().caller_id;
+        let actor = self.reader();
         let mut history = match &self.running {
             Some(channel_loop) => channel_loop.visible_history(actor).await,
             None => {
-                let state = match self.views().states().get_channel_state(self.channel.id).await {
-                    Ok(state) => state,
-                    // Nothing was said yet.
-                    Err(StoreError::NotFound { .. }) => ChannelState::new(self.channel.id),
-                    Err(e) => {
-                        warn!("Cannot read the history of channel {}: {}", self.channel.id, e);
-                        return Err(ViewError::failed(e, format!("reading the history of channel {}", self.channel.id)));
-                    }
-                };
-                let start = self.channel.history_limits.iter().find(|l| l.participant == actor).map(|l| l.start);
+                let state = self.stored_state().await?;
+                let start = self.channel.history_start_of(actor);
                 VisibleHistory { items: visible_part(start, state.history.items()), digest: state.history.digest(), start }
             }
         };
         if self.readable == ChannelReading::Released {
-            // The messages released, and nothing of how turns ended: that
-            // would tell of work in the channel whose messages are not
-            // released (issue 258).
-            let mut released = Vec::with_capacity(history.items.len());
-            for item in history.items {
-                if let HistoryEntry::Said { message, .. } = &item {
-                    if self.may_read_entry(&message.classification).await {
-                        released.push(item);
-                    }
-                }
-            }
-            if released.is_empty() {
+            history.items.retain(|item| self.may_read_item(item));
+            if history.items.is_empty() {
                 return Err(self.nothing_released());
             }
-            history.items = released;
         }
         Ok(history)
+    }
+
+    /// A page of the history as the viewer sees it (issue 218): the last
+    /// `limit` items before the position `before` - the last ones without
+    /// it -, as `history` would give them, and where the page before it
+    /// ends.
+    ///
+    /// # Errors
+    /// `Failed` if the stored history cannot be read; `NoChannelNamed` if
+    /// nothing of a channel read entry by entry can be on this page.
+    pub async fn history_page(&self, before: Option<u64>, limit: usize) -> ViewResult<HistoryPage> {
+        let actor = self.reader();
+        let keep = |item: &HistoryEntry| self.may_read_item(item);
+        let page = match &self.running {
+            Some(channel_loop) => channel_loop.visible_page(actor, before, limit, keep).await,
+            None => visible_page(&self.stored_state().await?.history, self.channel.history_start_of(actor), before, limit, keep),
+        };
+        if self.readable == ChannelReading::Released && page.items.is_empty() {
+            return Err(self.nothing_released());
+        }
+        Ok(page)
+    }
+
+    /// The message `id` as it stands (issue 218), if the viewer sees it in
+    /// the history.
+    ///
+    /// # Errors
+    /// `MessageNotFound` if it does not; `Failed` if the stored history
+    /// cannot be read; `NoChannelNamed` instead of `MessageNotFound` in a
+    /// channel read entry by entry.
+    pub async fn message(&self, id: MessageId) -> ViewResult<Message> {
+        let actor = self.reader();
+        let message = match &self.running {
+            Some(channel_loop) => channel_loop.visible_message(actor, id).await,
+            None => visible_message(&self.stored_state().await?.history, self.channel.history_start_of(actor), id),
+        };
+        match message {
+            Some(message) if self.may_read_entry(&message.classification) => Ok(message),
+            _ if self.readable == ChannelReading::Released => Err(self.nothing_released()),
+            _ => Err(ViewError::MessageNotFound { channel: self.channel.id, message: id }),
+        }
+    }
+
+    /// Whoever reads the history: an agent reads as itself, not as the owner
+    /// it acts for - its own limit applies, not the owner's.
+    fn reader(&self) -> ActorId {
+        self.views().viewer().context().caller_id
+    }
+
+    /// The channel's state as stored, of a channel that does not run; a new
+    /// one if nothing was said yet.
+    async fn stored_state(&self) -> ViewResult<ChannelState> {
+        match self.views().states().get_channel_state(self.channel.id).await {
+            Ok(state) => Ok(state),
+            Err(StoreError::NotFound { .. }) => Ok(ChannelState::new(self.channel.id)),
+            Err(e) => {
+                warn!("Cannot read the history of channel {}: {}", self.channel.id, e);
+                Err(ViewError::failed(e, format!("reading the history of channel {}", self.channel.id)))
+            }
+        }
+    }
+
+    /// Whether the viewer may read `item` of the history: every one if it
+    /// reads the channel as a whole; else the messages released, and nothing
+    /// of how turns ended - that would tell of work in the channel whose
+    /// messages are not released (issue 258).
+    fn may_read_item(&self, item: &HistoryEntry) -> bool {
+        match self.readable {
+            ChannelReading::Whole => true,
+            ChannelReading::Released => item.said().is_some_and(|message| self.may_read_entry(&message.classification)),
+        }
     }
 
     /// The notes every agent of the channel published (issue 17), read from
@@ -634,7 +685,7 @@ impl MemberView {
     /// Of the notes the agent published, as its `state` holds them, those
     /// the viewer may read.
     async fn notes_in(&self, state: &AgentChannelState) -> Vec<Note> {
-        self.channel.released(state.notes.current()).await
+        self.channel.released(state.notes.current())
     }
 
     /// The approvals the member's turn waits for (issue 172), as stored;
@@ -660,7 +711,7 @@ impl MemberView {
     pub async fn private_notes(&self) -> ViewResult<(Vec<Note>, Option<Digest>)> {
         let agent = self.readable_agent().await?;
         let (notes, digest) = agent.private_notes().await?;
-        Ok((self.channel.released(notes).await, digest))
+        Ok((self.channel.released(notes), digest))
     }
 
     /// What the member saw in the channel (issue 41): its transcript, its
@@ -777,16 +828,10 @@ impl MemberView {
 
 impl ChannelView {
     /// Of `notes`, those the viewer may read (`may_read_entry`).
-    async fn released(&self, notes: Vec<Note>) -> Vec<Note> {
+    fn released(&self, notes: Vec<Note>) -> Vec<Note> {
         if self.readable == ChannelReading::Whole {
             return notes;
         }
-        let mut released = Vec::with_capacity(notes.len());
-        for note in notes {
-            if self.may_read_entry(&note.classification).await {
-                released.push(note);
-            }
-        }
-        released
+        notes.into_iter().filter(|note| self.may_read_entry(&note.classification)).collect()
     }
 }
