@@ -27,6 +27,7 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
+use tokio_util::sync::CancellationToken;
 
 /// How long a client waits before reconnecting after the stream broke. Sent
 /// as the SSE `retry` field, because the browser default (3-5 seconds,
@@ -105,11 +106,13 @@ fn json(value: &impl Serialize) -> String {
 /// produces, if the client asked for one (`with_snapshot`) - none if it
 /// produces `None`, having logged why; then the events
 /// of `receiver` - with a fresh snapshot instead of a gap when the client
-/// falls behind, see [`resync_on_lag`]; until the token that authenticated
-/// the request is about to expire (see [`bounded_by_token`]). `what` names
-/// the stream in the log.
+/// falls behind, see [`resync_on_lag`]; until the server shuts down
+/// (`shutdown`, issue 297), or the token that authenticated the request is
+/// about to expire (see [`bounded_by_token`]). `what` names the stream in
+/// the log.
 pub async fn stream<T, V, S, F>(
     user: &AuthenticatedUser,
+    shutdown: &CancellationToken,
     with_snapshot: bool,
     receiver: broadcast::Receiver<T>,
     what: String,
@@ -127,7 +130,7 @@ where
         let snapshot = Arc::clone(&snapshot);
         async move { snapshot().await.map(|value| named_event("snapshot", &value)) }
     });
-    let updates = resync_on_lag(receiver, what, resync);
+    let updates = resync_on_lag(receiver, what, resync).take_until(shutdown.clone().cancelled_owned());
     bounded_by_token(user, stream::iter(first.map(Ok)).chain(updates))
 }
 
@@ -211,6 +214,20 @@ mod tests {
 
         assert!(body.contains("data: one"));
         assert!(!body.contains("expired"), "the token is still valid, the stream just ended: {body}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stream_ends_as_the_server_shuts_down() {
+        let shutdown = CancellationToken::new();
+        let started = Instant::now();
+        let ending = { let shutdown = shutdown.clone(); async move { tokio::time::sleep(Duration::from_secs(1)).await; shutdown.cancel() } };
+        let user = user(600);
+        let (_still_sending, receiver) = broadcast::channel::<u32>(1);
+        let events = stream(&user, &shutdown, false, receiver, "test".to_string(), || async { None::<u32> }).await;
+        let (body, ()) = tokio::join!(wire(&user, events), ending);
+
+        assert_eq!(started.elapsed(), Duration::from_secs(1), "at once, its token still valid (issue 297)");
+        assert!(!body.contains("expired"), "not told to reconnect at once, to a server going away: {body}");
     }
 
     #[tokio::test(start_paused = true)]

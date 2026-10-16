@@ -312,6 +312,7 @@ impl From<SessionError> for ApiError {
             SessionError::InvalidComponents(_) | SessionError::NotAParticipant { .. } | SessionError::ClassificationRefused(_) => Self::bad_request("invalid_channel", detail),
             SessionError::WorkspaceOutOfScope(_) => Self::bad_request("workspace_out_of_scope", detail),
             SessionError::ScopeNotEmpty { .. } => Self::conflict("scope_not_empty", detail),
+            SessionError::ShuttingDown => Self::unavailable("shutting_down", detail),
             SessionError::AlreadyParticipant { .. } => Self::conflict("already_participant", detail),
             SessionError::CannotTakeIn(_) => Self::bad_request("invalid_participant", detail),
             // A caller that is no user: not the client's request.
@@ -611,6 +612,7 @@ mod tests {
         assert_eq!(answer(SessionError::WorkspaceOutOfScope(WorkspaceId::new())), (400, "workspace_out_of_scope".to_string()));
         assert_eq!(answer(SessionError::AlreadyParticipant { session, participant: ActorId::User(UserId::new()) }), (409, "already_participant".to_string()));
         assert_eq!(answer(SessionError::CannotTakeIn(ActorId::System)), (400, "invalid_participant".to_string()));
+        assert_eq!(answer(SessionError::ShuttingDown), (503, "shutting_down".to_string()), "for now, not for good (issue 297)");
         let left = vec![(Agent::KIND, 1)];
         assert_eq!(answer(SessionError::ScopeNotEmpty { holder: Scope::SessionScope { session_id: session }, left }), (409, "scope_not_empty".to_string()), "what is left is the others' to take away (issue 320)");
     }

@@ -25,6 +25,10 @@ use crate::scoped::ScopedEntities;
 use crate::workspace::reaper::CommandReaper;
 use crate::agent::AgentManager;
 use dashmap::DashMap;
+use futures::future::join_all;
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use std::ops::AsyncFnOnce;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -32,6 +36,11 @@ use super::{SessionError, SessionLoop, purge_channel_document, require_attachabl
 use caelumora_model::session;
 use crate::template::{resolve_participants, resolve_workspace, take_in_agents};
 use tokio::sync::Mutex;
+
+/// How long `SessionManager::shutdown` takes at most (issue 297): within
+/// the ten seconds Docker leaves between SIGTERM and SIGKILL, with the
+/// actors' `STOP_GRACE` and the time a command's kill waits.
+const SHUTDOWN_BOUND: Duration = Duration::from_secs(8);
 
 pub struct SessionManager {
     sessions: DashMap<SessionId, Arc<SessionLoop>>,
@@ -41,6 +50,9 @@ pub struct SessionManager {
     /// at the same time (issue 62): two loops of one session would run two
     /// actors per agent and channel, which overwrite each other's state.
     starts: DashMap<SessionId, Arc<Mutex<()>>>,
+    /// Set once the sessions are shut down (`shutdown`): none is started
+    /// any more.
+    shutting_down: AtomicBool,
     /// What builds the loops of the sessions it starts.
     pub(super) runtime_manager: Arc<RuntimeManager>,
     /// The services it works with, taken from `runtime_manager` once (issue
@@ -96,6 +108,7 @@ impl SessionManager {
             sessions: DashMap::new(),
             handles: DashMap::new(),
             starts: DashMap::new(),
+            shutting_down: AtomicBool::new(false),
             access_policy: Arc::clone(runtime_manager.access_policy()),
             stores: runtime_manager.entity_stores().clone(),
             events: Arc::clone(runtime_manager.event_bus()),
@@ -117,6 +130,7 @@ impl SessionManager {
     /// run task, and announce that the session has started running. Called
     /// with the session's start lock held.
     async fn spawn_session(&self, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
+        self.refuse_while_shutting_down()?;
         let id = session.id;
         let attributes = session.security_attributes.clone();
         let session_loop = SessionLoop::new(session, channels, Arc::clone(&self.runtime_manager)).await?;
@@ -176,6 +190,7 @@ impl SessionManager {
     /// what attaching an existing workspace or making one reports;
     /// whatever creating the session reports.
     pub async fn create_from_template(&self, context: &SecurityContext, template_id: SessionTemplateId, name: Option<&str>, workspace: Option<WorkspaceChoice>) -> Result<Arc<SessionLoop>> {
+        self.refuse_while_shutting_down()?;
         let owner = context.principal_id.as_user_id().ok_or(SessionError::OwnerNotAUser(context.principal_id))?;
         // Before anything is found or made for it.
         let name = Name::optional(name)?;
@@ -270,6 +285,7 @@ impl SessionManager {
     /// would: asks to create it (`CreateSession`) before anything else.
     #[cfg(any(test, feature = "test-support"))]
     pub async fn create(&self, context: &SecurityContext, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
+        self.refuse_while_shutting_down()?;
         self.access_policy.require(context, ActionType::create(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
         self.establish(context, session, channels).await
     }
@@ -407,11 +423,59 @@ impl SessionManager {
         let attributes = found.attributes();
         self.access_policy
             .require(context, ActionType::StopSession(&attributes), StoreError::PermissionDenied).await?;
-        Ok(matches!(found, Found::Running(_)) && self.stop_running(id, SessionLoop::stop_actors).await.is_some())
+        if !matches!(found, Found::Running(_)) {
+            return Ok(false);
+        }
+        let Some(stopped) = self.stop_running(id, SessionLoop::stop_actors).await else { return Ok(false) };
+        self.end_commands_of(&stopped).await;
+        Ok(true)
     }
 
-    /// Stops session `id` if it runs, and with it the commands started in
-    /// its channels (issue 254). Called with its start lock held. Its
+    /// Shuts the sessions down as the process ends (issue 297): from now on
+    /// none is started, and every running one is stopped as `stop` stops
+    /// it, all at once - each actor keeping what it is in the middle of, to
+    /// be resumed when its session runs again. Of the commands, only what
+    /// does not outlive the process is ended (`CommandReaper::shutdown`):
+    /// an Open Terminal instance keeps its commands, unlike at a `stop`.
+    /// Returns within `SHUTDOWN_BOUND`, leaving whatever is still under way
+    /// to end with the process: a shutdown that hangs is worse than none.
+    pub async fn shutdown(&self) {
+        self.shutting_down.store(true, Ordering::SeqCst);
+        let ending = async {
+            // Those being started too: their start is waited for, as `stop`
+            // waits for it, and what started is stopped.
+            let ids: HashSet<SessionId> = self.starts.iter().map(|entry| *entry.key())
+                .chain(self.sessions.iter().map(|entry| *entry.key()))
+                .collect();
+            join_all(ids.into_iter().map(|id| async move {
+                let start = self.start_lock(id);
+                let _starting = start.lock().await;
+                self.stop_running(id, SessionLoop::stop_actors).await;
+            })).await;
+            self.command_reaper.shutdown().await;
+        };
+        match tokio::time::timeout(SHUTDOWN_BOUND, ending).await {
+            Ok(()) => info!("Every session is shut down"),
+            Err(_) => warn!("Shutting the sessions down took longer than {:?}; what is still under way ends with the process", SHUTDOWN_BOUND),
+        }
+    }
+
+    /// `SessionError::ShuttingDown` once the sessions are shut down.
+    fn refuse_while_shutting_down(&self) -> Result<(), SessionError> {
+        match self.shutting_down.load(Ordering::SeqCst) {
+            true => Err(SessionError::ShuttingDown),
+            false => Ok(()),
+        }
+    }
+
+    /// Ends every command started in a channel of `stopped`, with what it
+    /// started: what stops a session ends what runs in its channels (issue
+    /// 254).
+    async fn end_commands_of(&self, stopped: &SessionLoop) {
+        self.command_reaper.end_commands_in(&stopped.session().channels).await;
+    }
+
+    /// Stops session `id` if it runs. Called with its start lock held. Its
     /// actors are ended first by `end_actors`, told to stop
     /// (`SessionLoop::stop_actors`) or to leave (`SessionLoop::leave_actors`),
     /// and given `STOP_GRACE` to end by themselves before the session's
@@ -428,7 +492,6 @@ impl SessionManager {
         }
         if let Some(session_loop) = &removed {
             let session = Arc::clone(&session_loop.session());
-            self.command_reaper.end_commands_in(&session.channels).await;
             self.events.publish(GlobalEvent::custom::<Session>(&id, session::STOPPED, &()), session.security_attributes.clone());
         }
         removed
@@ -496,8 +559,11 @@ impl SessionManager {
             return Err(error);
         }
 
-        // Its actors leave, as those of a deleted channel do (issue 377).
-        self.stop_running(id, SessionLoop::leave_actors).await;
+        // Its actors leave, as those of a deleted channel do (issue 377),
+        // and the commands of its channels end.
+        if let Some(stopped) = self.stop_running(id, SessionLoop::leave_actors).await {
+            self.end_commands_of(&stopped).await;
+        }
 
         let event_bus = &self.events;
         for channel in &channels {
@@ -640,6 +706,8 @@ mod tests {
     use serde_json::Value;
     use std::time::Duration;
     use crate::channel::STOP_GRACE;
+    use super::SHUTDOWN_BOUND;
+    use anyhow::Result;
     use crate::session::SessionLoop;
     use caelumora_model::actor::{ActorEvent, Envelope};
     use caelumora_model::turn::GivenUpReason;
@@ -1196,6 +1264,28 @@ mod tests {
         assert!(manager.stop(&alice, session.id()).await.unwrap(), "it ran");
         assert!(stopping.elapsed() < STOP_GRACE, "the actors ended by themselves");
         assert_eq!(turns_given_up(&mut events, agent), Vec::<GivenUpReason>::new(), "nothing is given up");
+    }
+
+    /// Shutting down (issue 297) stops every running session as a stop
+    /// does - the answer under way is kept, within the bound - and starts
+    /// none afterwards, neither one stored nor a new one.
+    #[tokio::test]
+    async fn a_shutdown_stops_every_session_keeping_its_turns_and_starts_none_after() {
+        let (manager, alice, session, agent, mut events) = with_a_hanging_answer().await;
+        let stored = create(&manager, &alice, make_session("idle", ActorId::User(alice.caller_id.as_user_id().unwrap()))).await.unwrap().id();
+        manager.stop(&alice, stored).await.unwrap();
+        let other = create(&manager, &alice, make_session("other", ActorId::None)).await.unwrap().id();
+
+        let shutting = std::time::Instant::now();
+        manager.shutdown().await;
+        assert!(shutting.elapsed() < SHUTDOWN_BOUND, "the actors ended by themselves");
+        assert!(manager.running(session.id()).is_none() && manager.running(other).is_none(), "every session stopped");
+        assert_eq!(turns_given_up(&mut events, agent), Vec::<GivenUpReason>::new(), "nothing is given up");
+
+        let refused = |result: Result<Arc<SessionLoop>>| matches!(result.err().and_then(|e| e.downcast::<SessionError>().ok()), Some(SessionError::ShuttingDown));
+        assert!(refused(manager.open(&alice, stored).await), "a stored one is not started");
+        assert!(refused(manager.open(&alice, session.id()).await), "nor one that ran");
+        assert!(refused(create(&manager, &alice, make_session("new", ActorId::None)).await), "nor a new one");
     }
 
     /// A session deleted (issue 377) has its actors leave, as a deleted

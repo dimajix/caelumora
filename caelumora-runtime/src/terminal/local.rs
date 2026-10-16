@@ -12,6 +12,7 @@ use crate::component::config_of_params;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::workspace::WorkspaceId;
+use futures::future::join_all;
 use futures::StreamExt;
 use serde::Deserialize;
 use std::io::{ErrorKind, Error};
@@ -139,6 +140,16 @@ impl TerminalProvider for LocalProvider {
         let Some(commands) = &self.commands else { return Ok(()) };
         let shell = LocalShell { dir: self.place(*workspace), workspace: *workspace, scope: scope.clone(), commands: Arc::clone(commands), max_run: self.max_run };
         shell.end(id).await
+    }
+
+    /// Ends every command of its shells, all at once: their processes
+    /// would outlive the process unknown to anybody.
+    async fn shutdown(&self) {
+        join_all(self.commands().into_iter().map(|key| async move {
+            if let Err(e) = self.end_command(&key).await {
+                warn!(workspace = %key.0, command = %key.2, "A command could not be ended as Caelumora ends: {e}");
+            }
+        })).await;
     }
 
     fn destination(&self) -> Option<&Classification> {

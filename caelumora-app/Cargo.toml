@@ -23,6 +23,7 @@ caelumora-open-terminal = { path = "../caelumora-open-terminal" }
 caelumora-ollama = { path = "../caelumora-ollama" }
 axum = "0.8.9"
 tokio = { version = "1.0", features = ["full"] }
+tokio-util = "0.7"
 tracing = "0.1"
 anyhow = "1.0"
 tower-http = { version = "0.7.1", features = ["trace"] }

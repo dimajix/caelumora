@@ -265,6 +265,13 @@ pub trait TerminalProvider: Send + Sync + Debug {
         }
         Ok(())
     }
+    /// Ends, as the process ends (issue 297), what it ran that does not
+    /// outlive the process - the `local` shell's commands, whose processes
+    /// nothing would know of after a restart. A storage whose commands
+    /// outlive the process keeps them, as an Open Terminal instance does:
+    /// the model can follow them by their id after a restart, and their
+    /// bound ends them.
+    async fn shutdown(&self) {}
     /// What may be put into this storage: the classification a workspace
     /// in it may have at most; `None` for no bound (issue 251, part B2).
     fn destination(&self) -> Option<&Classification>;
