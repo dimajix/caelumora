@@ -229,9 +229,11 @@ impl<'a> Turn<'a> {
 
     /// The agent's tools as they were when the turn began: what its model
     /// is offered, and what its calls are labelled and put up for approval
-    /// by (issue 137).
-    pub(crate) fn tools(&self) -> &[Tool] {
-        &self.current().tools
+    /// by (issue 137) - the tools of the sets it was offered
+    /// (`AgentWork::tool_sets`), one offer for the whole turn, a resumed one
+    /// included.
+    pub(crate) fn tools(&self) -> impl Iterator<Item = &Tool> {
+        self.work().tool_sets().iter().flat_map(|set| &set.tools)
     }
 
     /// The messages the turn said so far, as they stand (issue 260): as the

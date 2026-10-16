@@ -17,7 +17,7 @@ use crate::role::RoleId;
 use crate::scope::{ScopeField, Scoped};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::store::{self, EntityKind, Journaled, NoEntity, Updatable};
-use crate::tool::{RecordedToolSets, Tool, ToolCallResult, ToolCallStatus, ToolResultStatus, ToolSet};
+use crate::tool::{ToolCallResult, ToolCallStatus, ToolResultStatus, ToolSet};
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use crate::turn::GivenUpReason;
 use crate::turn::{CommandRequest, TurnState};
@@ -25,7 +25,7 @@ use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Description, Introduction};
 use crate::value::ValueError;
 use crate::work::{TurnId, Work};
-use serde::{Deserialize, Serialize, Deserializer};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::warn;
 use uuid::Uuid;
@@ -342,9 +342,7 @@ pub struct AgentChannelState {
     pub prompts: Kept<String>,
     /// The tool sets the agent's model was offered in this channel, by
     /// digest, each offer kept once: what the `ContextRef`s in the history
-    /// point to (issues 137, 194). Stored as `tool_sets` before issue 194
-    /// took the name, and each offer as a flat list of tools.
-    #[serde(alias = "tool_sets", deserialize_with = "recorded_offers")]
+    /// point to (issues 137, 194).
     pub offered_tools: Kept<Vec<ToolSet>>,
     /// The turn under way, `None` between turns (issue 85). Stored with the
     /// rest, so that a turn cut off by a crash is resumed (issue 75).
@@ -651,6 +649,17 @@ impl AgentChannelState {
         PromptRef { text: digest, role, after, classification }
     }
 
+    /// Keeps the tool sets the agent's model is offered once by digest
+    /// (issues 137, 194), and returns the digest that names the offer:
+    /// what a `ContextRef` records; `None` for no sets, an offer of nothing.
+    pub fn keep_offer(&mut self, tool_sets: Vec<ToolSet>) -> Option<Digest> {
+        (!tool_sets.is_empty()).then(|| {
+            let digest = digest::tool_sets(&tool_sets);
+            self.offered_tools.keep(digest, || tool_sets);
+            digest
+        })
+    }
+
     /// Begins a turn (issue 85): fixes what it is - the envelope it answers,
     /// whose authority it acts with, the channel's classification now, how
     /// the agent's model is given its context (the `profile`, issues 49, 63),
@@ -670,12 +679,7 @@ impl AgentChannelState {
         tool_sets: Vec<ToolSet>,
         profile: ModelProfile,
     ) -> TurnId {
-        let offered = (!tool_sets.is_empty()).then(|| {
-            let digest = digest::tool_sets(&tool_sets);
-            self.offered_tools.keep(digest, || tool_sets.clone());
-            digest
-        });
-        let tools: Vec<Tool> = tool_sets.into_iter().flat_map(|set| set.tools).collect();
+        let offered = self.keep_offer(tool_sets);
         if self.turn.is_some() {
             tracing::warn!("A turn was begun while another was under way; the other ends without an end recorded");
         }
@@ -683,7 +687,7 @@ impl AgentChannelState {
         work.context = ContextRef { transcript: self.transcript.digest(), tools: offered, profile, ..ContextRef::default() };
         self.transcript.messages().iter().for_each(|m| work.see_message(m));
         let turn_id = work.turn_id;
-        let turn = TurnState { work, tools, ..TurnState::default() };
+        let turn = TurnState { work, ..TurnState::default() };
         self.turn = Some(turn);
         turn_id
     }
@@ -860,14 +864,7 @@ pub enum AgentChannelStateChange {
     Notes(Stored<LedgerEntry<Notes>>),
     PrivateNotes(Stored<LedgerEntry<Notes>>),
     Prompt { digest: Digest, text: String },
-    /// Stored as `tool_set` before issue 194 took the name, with a flat
-    /// list of tools.
-    #[serde(alias = "tool_set")]
-    OfferedTools {
-        digest: Digest,
-        #[serde(deserialize_with = "recorded_offer")]
-        tools: Vec<ToolSet>,
-    },
+    OfferedTools { digest: Digest, tools: Vec<ToolSet> },
     ProcessingState(ActorState),
     /// The turn under way, whole: it is changed in place at every step
     /// (`prepare_resume`, the turn's own methods), and bounded by one turn.
@@ -881,16 +878,6 @@ pub enum AgentChannelStateChange {
     HistoryFrom(u64),
     /// From where the transcript is held, whole.
     TranscriptFrom(u64),
-}
-
-/// The tool sets of one offer as they were recorded (`RecordedToolSets`).
-fn recorded_offer<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<ToolSet>, D::Error> {
-    RecordedToolSets::deserialize(deserializer).map(Into::into)
-}
-
-/// Every offer of tool sets as it was recorded (`RecordedToolSets`).
-fn recorded_offers<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Kept<Vec<ToolSet>>, D::Error> {
-    Kept::<RecordedToolSets>::deserialize(deserializer).map(|kept| kept.map(Into::into))
 }
 
 impl Journaled for AgentChannelState {
@@ -981,7 +968,7 @@ pub(crate) mod tests {
     use crate::context::{ContextResolver, KnowledgeSource};
     use crate::digest;
     use crate::store::Stored;
-    use crate::tool::{ToolParameters, ToolVisibility};
+    use crate::tool::{Tool, ToolParameters, ToolVisibility};
     use crate::user::UserId;
     use crate::workspace::{Workspace, WorkspaceId};
     use crate::note::NoteId;
@@ -1318,7 +1305,7 @@ pub(crate) mod tests {
         let turn_id = state.begin_command_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), request.clone());
         let turn = state.turn.as_ref().expect("a turn was begun");
         assert_eq!(turn.command.as_ref(), Some(&request), "kept with the turn, for one resumed");
-        assert!(turn.tools.is_empty() && turn.work.context.tools.is_none(), "a command turn offers its model nothing");
+        assert!(turn.work.context.tools.is_none(), "a command turn offers its model nothing");
 
         state.turn = None;
         let agent = ActorId::Agent(AgentId::new());
@@ -1490,27 +1477,6 @@ pub(crate) mod tests {
         assert_eq!(state.changes().len(), 6, "between turns a step is the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.turn.is_none());
-    }
-
-    #[test]
-    fn the_tools_offered_are_read_as_they_were_stored_before_issue_194() {
-        let digest = digest::tool_sets(&[]);
-        let flat = serde_json::json!([{ "name": "calc", "description": "calculates", "parameters": ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()) }]);
-        let change: AgentChannelStateChange = serde_json::from_value(serde_json::json!({ "tool_set": { "digest": digest, "tools": flat } })).unwrap();
-        let AgentChannelStateChange::OfferedTools { tools: sets, .. } = change else { panic!("read under its old name") };
-        assert_eq!((sets.len(), sets[0].name.as_str(), sets[0].tools[0].name.as_str()), (1, "", "calc"), "a flat list is one set without a name");
-
-        let mut stored = serde_json::to_value(AgentChannelState::default()).unwrap();
-        stored.as_object_mut().and_then(|s| s.remove("offered_tools")).unwrap();
-        stored["tool_sets"] = serde_json::json!({ digest.to_string(): flat });
-        let state = serde_json::from_value::<AgentChannelState>(stored).expect("the old name and form are read");
-        assert_eq!(state.offered_tools.get(&digest).map(|sets| sets[0].tools.len()), Some(1));
-
-        let mut sets = state.offered_tools.get(&digest).cloned().unwrap();
-        sets[0].name = "calculator".to_string();
-        let written = serde_json::to_value(AgentChannelStateChange::OfferedTools { digest, tools: sets.clone() }).unwrap();
-        let AgentChannelStateChange::OfferedTools { tools: read, .. } = serde_json::from_value(written).unwrap() else { panic!("an offer") };
-        assert_eq!(read, sets, "and the sets as they are written now");
     }
 
     #[test]
