@@ -13,7 +13,6 @@ use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Co
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
 use crate::view::{Viewer, Views};
-#[cfg(any(test, feature = "test-support"))]
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::store::{EntityKind, EntityStores, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::scope::Scope;
