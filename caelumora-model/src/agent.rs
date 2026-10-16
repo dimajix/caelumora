@@ -555,10 +555,10 @@ impl AgentChannelState {
     /// transcript is empty, if `keep_from` is not on its active path, or if
     /// the new branch would be empty.
     pub fn compact(&mut self, actor: ActorId, replacement: Vec<(Message, Option<KnowledgeRef>)>, keep_from: Option<Digest>) -> Option<(Digest, Digest)> {
-        let turn_id = self.turn.as_ref()?.work.turn_id;
+        let turn = self.turn.as_mut()?;
         // A compaction comes before a call of the model, never while the
         // calls of a step run: nothing is put aside to be given (issue 389).
-        debug_assert!(self.turn.as_ref().is_some_and(|turn| turn.given_after_step.is_empty()));
+        debug_assert!(turn.given_after_step.is_empty());
         let from = self.transcript.digest()?;
         let path: Vec<_> = self.transcript.entries().collect();
         let start = match keep_from {
@@ -566,32 +566,23 @@ impl AgentChannelState {
             Some(first) => path.iter().position(|node| node.digest == first)?,
         };
         let replaced: Vec<Digest> = path[..start].iter().map(|node| node.digest).collect();
-        // Each entry kept with its copy, `None` for a change of a message,
-        // which is in the copy, or a message taken back.
-        let kept: Vec<(Digest, Option<TranscriptEntry>)> = as_they_stand(path[start..].iter().copied()).map(|(node, standing)| {
-            let copy = match (&node.entry, standing) {
-                (TranscriptEntry::Message(_), Some(message)) => Some(TranscriptEntry::Message(message)),
-                (TranscriptEntry::Given { source, .. }, Some(message)) => Some(TranscriptEntry::Given { message, source: *source }),
-                (end @ (TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }), _) => Some(end.clone()),
-                _ => None,
-            };
-            (node.digest, copy)
-        }).collect();
+        // Each entry kept with its copy as it stands, `None` if none is made.
+        let kept: Vec<(Digest, Option<TranscriptEntry>)> = as_they_stand(path[start..].iter().copied())
+            .map(|(node, standing)| (node.digest, node.entry.copy_standing(standing)))
+            .collect();
         if replacement.is_empty() && kept.iter().all(|(_, copy)| copy.is_none()) {
             return None;
         }
         self.transcript.start_anew();
         let mut given = Vec::new();
         for (message, knowledge) in replacement {
-            if let Some(turn) = self.turn.as_mut() {
-                turn.work.see_message(&message);
-            }
+            turn.work.see_message(&message);
             // A summary written by the agent's model is a call of it.
             if message.sender_id == actor {
                 self.used = TokenUsage::counted(self.used, &message);
             }
             self.transcript.give(message.clone(), knowledge.as_ref().map(|knowledge| knowledge.source));
-            if let (Some(turn), Some(knowledge)) = (self.turn.as_mut(), knowledge) {
+            if let Some(knowledge) = knowledge {
                 turn.work.record_knowledge(knowledge);
             }
             given.push(message);
@@ -607,17 +598,15 @@ impl AgentChannelState {
         }
         self.transcript.record(TranscriptEntry::Compacted { at: Utc::now() });
         let to = self.transcript.digest()?;
-        self.history.record(HistoryEntry::Compacted { turn_id, actor, from, to, at: Utc::now() });
+        self.history.record(HistoryEntry::Compacted { turn_id: turn.work.turn_id, actor, from, to, at: Utc::now() });
         for message in given {
             self.history.push(message, None);
         }
-        if let Some(turn) = self.turn.as_mut() {
-            turn.work.context.transcript = Some(to);
-            turn.work.context.prompts.retain_mut(|prompt| match prompt.after {
-                None => true,
-                Some(after) => moved.get(&after).map(|now| prompt.after = *now).is_some(),
-            });
-        }
+        turn.work.context.transcript = Some(to);
+        turn.work.context.prompts.retain_mut(|prompt| match prompt.after {
+            None => true,
+            Some(after) => moved.get(&after).map(|now| prompt.after = *now).is_some(),
+        });
         // How full the new branch is: no call measured it yet, and the
         // summary's measured the old one. Estimated once, here, with what the
         // turn's model is given next (issue 390).

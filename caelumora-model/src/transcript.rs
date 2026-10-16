@@ -236,6 +236,22 @@ impl TranscriptEntry {
         }
     }
 
+    /// The copy of the entry a compaction keeps on a branch of its own
+    /// (issue 16), given `standing`, its message as it stands on its path
+    /// (`as_they_stand`): a message as it stands - a change of it is in the
+    /// copy -, none if it was taken back; a turn's end as it is. Nothing of
+    /// a change, which is in the copy of its message, nor of an earlier
+    /// compaction's end, which ends what that compaction wrote.
+    pub(crate) fn copy_standing(&self, standing: Option<Message>) -> Option<TranscriptEntry> {
+        match (self, standing) {
+            (TranscriptEntry::Message(_), Some(message)) => Some(TranscriptEntry::Message(message)),
+            (TranscriptEntry::Given { source, .. }, Some(message)) => Some(TranscriptEntry::Given { message, source: *source }),
+            (TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }, _) => Some(self.clone()),
+            (TranscriptEntry::Message(_) | TranscriptEntry::Given { .. }, None)
+            | (TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. } | TranscriptEntry::Compacted { .. }, _) => None,
+        }
+    }
+
     /// The turn whose end this is, if it is one.
     pub fn ended_turn(&self) -> Option<TurnId> {
         match self {

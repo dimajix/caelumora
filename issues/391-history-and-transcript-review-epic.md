@@ -85,3 +85,6 @@ order along the way.
   are, as it says it can.
 - **2026-10-16** — 396 done: one message as it stands is read as `known` reads it, in the history
   and the transcript alike. Next in the order: 397; 394 still waits for the maintainer's decision.
+- **2026-10-16** — 397 narrowed to `compact` and done there: it binds its turn once, and the copy of
+  an entry kept is the entry's. The method that would move a turn's context after the transcript in
+  one place was not taken up. Next in the order: 398; 394 still waits for the maintainer's decision.

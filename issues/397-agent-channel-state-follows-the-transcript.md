@@ -1,6 +1,6 @@
 # 397 — `AgentChannelState` moves the turn's context after the transcript in four places
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 Part of [391](391-history-and-transcript-review-epic.md).
@@ -51,3 +51,19 @@ afterwards finds the end of the replacement again with `entries().nth(replaced -
 
 - **2026-10-16** — Opened from the review of the history and the transcript
   ([391](391-history-and-transcript-review-epic.md)).
+- **2026-10-16** — Narrowed with the maintainer to `compact`, and done there.
+  `AgentChannelState::compact` binds the turn under way once (`self.turn.as_mut()?`) - the rest of
+  the method touches other fields of the state, which the borrow checker allows -, so the four
+  checks for a turn, the `turn_id` read ahead and the second lookup in the `debug_assert` are gone;
+  `self.turn.take()`, proposed above, was not taken, since every `?` after it would lose the turn
+  without a word. The copy of an entry kept is `TranscriptEntry::copy_standing`, with the type whose
+  variants it tells apart. No stored data changes.
+
+  Not taken up: one method for moving the turn's context after the transcript's head - the four
+  places set the same field but do different things beside it (`perceive` lets the turn see all it
+  heard, `said` sees nothing of the turn's own message, `given` sees and records knowledge,
+  `compact` sees, records and counts the summary's call), so a shared method could only wrap the one
+  assignment, and `said` would have to be rearranged for it; the tests that resolve the context of a
+  turn under way would catch a fifth place forgetting it. Nor does `compact` return the end of the
+  replacement: `Turn::compact` finds it with one correct line, and a triple of two `Digest`s and an
+  `Option<Digest>` is easy to mix up.
