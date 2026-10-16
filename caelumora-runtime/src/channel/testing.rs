@@ -4,6 +4,7 @@
 //! and her agent, started, and what is waited for in it. Behind the
 //! feature `test-support`, as `crate::testing` is.
 
+use caelumora_model::history::testing::{items_of, messages_of};
 use crate::actor::Actor;
 use crate::channel::ChannelLoop;
 use crate::command::CommandError;
@@ -169,7 +170,7 @@ impl ChannelLoop {
     /// The messages of the history it holds in memory, as they stand: what
     /// a test of the channel looks at.
     pub(crate) async fn history(&self) -> Vec<Message> {
-        self.state.lock().await.history.messages()
+        messages_of(&self.state.lock().await.history)
     }
 
     /// The whole history, whoever may see it (`ChannelLoop::history`).
@@ -201,7 +202,7 @@ impl ChannelLoop {
 
     /// The entries of the whole history, its messages folded as they stand.
     pub async fn history_entries(&self) -> Vec<HistoryEntry> {
-        self.state.lock().await.history.items()
+        items_of(&self.state.lock().await.history)
     }
 
     /// The last entry of the history as it was recorded, unfolded.

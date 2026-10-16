@@ -4,6 +4,7 @@
 //! The tests of an action that acts in someone's name assert what it asks,
 //! as the suite does for the core's.
 
+use caelumora_model::history::testing::{items_of, messages_of};
 use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -312,8 +313,8 @@ async fn an_agent_loads_a_skill_for_its_owner_whoever_asked() {
     assert!(given.content.as_deref().is_some_and(|c| c.starts_with("[Skill: release-notes]\n1. Collect.")), "{given:?}");
     assert_eq!((given.sender_id, given.role), (ActorId::User(world.bob), MessageRole::User), "in his name");
     let history = world.store.get_channel_state(main.id()).await.unwrap().history;
-    assert!(history.messages().iter().all(|m| !m.content.as_deref().unwrap_or_default().contains("Collect.")), "nothing of the text in the channel's history");
-    assert!(history.items().iter().any(|item| matches!(item, HistoryEntry::CommandExecuted { command, issuer, .. } if command == "skill" && *issuer == ActorId::User(world.bob))), "but the command");
+    assert!(messages_of(&history).iter().all(|m| !m.content.as_deref().unwrap_or_default().contains("Collect.")), "nothing of the text in the channel's history");
+    assert!(items_of(&history).iter().any(|item| matches!(item, HistoryEntry::CommandExecuted { command, issuer, .. } if command == "skill" && *issuer == ActorId::User(world.bob))), "but the command");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use crate::digest;
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
+
 /// What happened in a `History`; its node carries the digest of the
 /// history up to and including it.
 // Nearly every entry is a message said: boxing it would cost an allocation
@@ -137,26 +140,6 @@ pub struct HistoryPage {
 }
 
 impl Chain<HistoryEntry> {
-    /// The messages of the active path as they stand.
-    pub fn messages(&self) -> Vec<Message> {
-        let mut folded = self.folded();
-        self.entries().filter_map(|node| folded.remove(&node.seq)).collect()
-    }
-
-    /// The history of the active path as it stands, in the order it
-    /// happened (issue 258): the messages said - `Said`, each as it stands,
-    /// with every change since folded into it -, where the steps of a plan
-    /// began - `PlanStepStarted` (issue 263) -, the commands carried out -
-    /// `CommandExecuted` (issue 269) -, the activities of agents ended -
-    /// `ActivityFinished` (issue 284) - and how turns ended - `TurnFinished`
-    /// and `TurnGivenUp`; in an agent's history its compactions, `Compacted`.
-    /// No other entry occurs: what changes
-    /// a message is in the message, a fitting in every message.
-    pub fn items(&self) -> Vec<HistoryEntry> {
-        let mut folded = self.folded();
-        self.entries().filter_map(|node| item(node, &mut folded)).collect()
-    }
-
     /// What the turn `turn_id` of `actor` said, as it stands, in the order
     /// it was said (issue 284): its messages recorded with the context they
     /// were produced from - not what it was given, nor what replaced older
@@ -215,12 +198,6 @@ impl Chain<HistoryEntry> {
     pub fn message(&self, id: MessageId) -> Option<Message> {
         let said = self.all_entries().rev().find(|node| node.entry.said().is_some_and(|m| m.id == id))?;
         fold(self.from(said.seq)).into_iter().next().map(|(_, message)| message)
-    }
-
-    /// The messages of every branch as they stand, by the position of the
-    /// entry that said each.
-    fn folded(&self) -> HashMap<u64, Message> {
-        fold(self.all_entries()).into_iter().map(|(node, message)| (node.seq, message)).collect()
     }
 
     /// The id of the last message said on the active path,
@@ -342,22 +319,12 @@ impl Chain<HistoryEntry> {
     }
 }
 
-/// `node` as an item of its history (`History::items`): the message it says
-/// as `folded` holds it - taken from there -, with what it was produced from;
-/// any other item as it is; `None` for a change, which is in the message it
-/// changes.
-fn item(node: &Node<HistoryEntry>, folded: &mut HashMap<u64, Message>) -> Option<HistoryEntry> {
-    match &node.entry {
-        HistoryEntry::Said { context, .. } => folded.remove(&node.seq).map(|message| HistoryEntry::Said { message, context: context.clone() }),
-        entry => entry.is_item().then(|| entry.clone()),
-    }
-}
-
 impl HistoryEntry {
-    /// Whether it is an item of its history (`History::items`) - a message
-    /// said, the start of a plan's step, a command carried out, an activity
-    /// ended, a compaction, a turn's end - rather than a change of what was
-    /// said before.
+    /// Whether it is an item of its history - a message said, the start of a
+    /// plan's step, a command carried out, an activity ended, a compaction, a
+    /// turn's end - rather than a change of what was said before: what a
+    /// reader of the history is given as it stands (`StandingItems`), a
+    /// change being in the message it changes.
     pub(crate) fn is_item(&self) -> bool {
         match self {
             HistoryEntry::Said { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
@@ -410,19 +377,15 @@ impl HistoryEntry {
         }
     }
 
-    /// What message `id` was produced from, and in which turn (issue 241),
-    /// if this is it and both are known.
-    pub fn context_of(&self, id: MessageId) -> Option<(&ContextRef, TurnId)> {
-        self.context().filter(|_| self.said().is_some_and(|message| message.id == id))
-    }
-
     /// What the message it says was produced from, and in which turn, if
     /// this is one said and both are known: whether what its author saw can
     /// be shown (issue 207).
     pub fn context(&self) -> Option<(&ContextRef, TurnId)> {
         match self {
             HistoryEntry::Said { message, context } => Some((context.as_ref()?, message.turn_id?)),
-            _ => None,
+            HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
+            | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
+            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => None,
         }
     }
 }
@@ -434,6 +397,7 @@ mod tests {
     use crate::digest::message_chain;
     use crate::message::tests::{id, make_message};
     use crate::agent::AgentId;
+    use super::testing::{items_of, messages_of, recorded_context};
 
     #[test]
     fn a_turn_given_up_is_found_while_its_end_is_the_last_thing() {
@@ -463,7 +427,7 @@ mod tests {
         history.end_turn(HistoryEntry::TurnGivenUp { turn_id: given_up, actor: ActorId::default(), reason: GivenUpReason::Left, at });
         history.fit_into(&Classification::CHANNEL_DEFAULT);
 
-        let items = history.items();
+        let items = items_of(&history);
         let kinds: Vec<String> = items.iter().map(|item| match item {
             HistoryEntry::Said { message, .. } => format!("said {}", message.content.clone().unwrap_or_default()),
             HistoryEntry::TurnFinished { turn_id, .. } => format!("finished {}", *turn_id == finished),
@@ -474,7 +438,7 @@ mod tests {
         let text = |n: u128| format!("said {}", make_message(id(n)).content.unwrap_or_default());
         assert_eq!(kinds, ["said changed".to_string(), "step first true".to_string(), text(2), "finished true".to_string(), text(3), "given up true".to_string()],
             "in the order they happened, the change folded into its message, the fitting in every one");
-        assert_eq!(history.messages().len(), 3, "the messages alone, as before");
+        assert_eq!(messages_of(&history).len(), 3, "the messages alone, as before");
     }
 
     #[test]
@@ -584,9 +548,10 @@ mod tests {
 
         let loaded: History = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         let entries: Vec<_> = loaded.all_entries().collect();
-        assert_eq!(entries[0].entry.context_of(id(1)), None, "said by someone else");
-        assert_eq!(entries[1].entry.context_of(id(2)), Some((&reference, turn)), "with the turn it was produced in");
-        assert_eq!(entries[1].entry.context_of(id(1)), None, "another message");
+        assert_eq!(entries[0].entry.context(), None, "said by someone else");
+        assert_eq!(entries[1].entry.context(), Some((&reference, turn)), "with the turn it was produced in");
+        assert_eq!(recorded_context(&loaded, id(2)), Some((reference.clone(), turn)), "found by its message");
+        assert_eq!(recorded_context(&loaded, id(1)), None);
         assert_eq!(loaded.digest(), history.digest());
     }
 
@@ -611,17 +576,17 @@ mod tests {
         assert_ne!(history.digest(), before, "recorded: the digest covers it");
         assert_eq!(history.all_entries().len(), 4, "one entry");
         assert_eq!(history.message(id(2)).map(|m| m.classification), Some(public.clone()), "read as it stands, on whichever branch");
-        assert_eq!(history.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(3)], "the active path says what was said");
+        assert_eq!(messages_of(&history).iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(3)], "the active path says what was said");
 
         let entries = history.all_entries().len();
         history.fit_into(&public);
         history.fit_into(&public);
         assert_eq!(history.all_entries().len(), entries + 2, "recorded, also when nothing is left to fit");
-        assert!(history.messages().iter().chain(history.message(id(2)).iter()).all(|m| m.classification == public));
+        assert!(messages_of(&history).iter().chain(history.message(id(2)).iter()).all(|m| m.classification == public));
         assert_eq!(history.last_message_id(), id(3), "the last message said, not the last entry");
 
         let loaded: History = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
-        assert_eq!(loaded.messages().iter().map(|m| &m.classification).collect::<Vec<_>>(), [&public, &public]);
+        assert_eq!(messages_of(&loaded).iter().map(|m| &m.classification).collect::<Vec<_>>(), [&public, &public]);
     }
 
     #[test]
@@ -638,7 +603,7 @@ mod tests {
         assert_eq!(changes.entries.len(), 2, "one entry each: {changes:?}");
         stored.apply(changes).unwrap();
         assert_eq!(stored.digest(), history.digest());
-        assert!(stored.messages().iter().all(|m| m.classification == public));
+        assert!(messages_of(&stored).iter().all(|m| m.classification == public));
     }
 
     #[test]
@@ -661,7 +626,7 @@ mod tests {
         assert_ne!(history.digest(), before, "recorded: the digest covers it");
         assert_eq!(history.all_entries().len(), 5, "one entry each, nothing rewritten");
 
-        let messages = history.messages();
+        let messages = messages_of(&history);
         assert_eq!(messages.iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(3)], "in their places");
         assert_eq!((messages[0].content.as_deref(), messages[0].modified), (Some("corrected"), Some(at)));
         let revoked = history.message(id(2)).expect("a message taken back is still found");
@@ -669,7 +634,7 @@ mod tests {
         assert_eq!(history.last_message_id(), id(3), "a change is no message said");
 
         let loaded: History = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
-        assert_eq!(loaded.messages()[0].content.as_deref(), Some("corrected"));
+        assert_eq!(messages_of(&loaded)[0].content.as_deref(), Some("corrected"));
         assert_eq!(loaded.digest(), history.digest());
     }
 

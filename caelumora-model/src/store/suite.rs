@@ -3,6 +3,7 @@
 //! drift apart again. What is specific to one store - files on disk,
 //! concurrent writers - stays in that store's own tests.
 
+use crate::history::testing::items_of;
 use crate::store::query::{Field, Filter, Query};
 use crate::actor::ActorId;
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
@@ -719,7 +720,7 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     state.history.fit_into(&Classification::general(Confidentiality::Public));
     assert!(state.history.reclassify(id(599), Classification::general(Confidentiality::Public)));
     states.put_channel_state(channel, &mut state).await.expect("put what changed");
-    let expected: Vec<String> = state.history.items().iter().map(standing).collect();
+    let expected: Vec<String> = items_of(&state.history).iter().map(standing).collect();
 
     assert_eq!(all_pages(histories, key, 0, 70).await, expected, "the items as they stand, page by page");
     let last = histories.page(key, 0, None, 3, &every).await.unwrap();

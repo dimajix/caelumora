@@ -31,6 +31,11 @@ tokio = { version = "1.53.1", features = ["fs", "io-util", "sync"] }
 # The URL of a remote endpoint, parsed to show it without credentials.
 url = "2.5"
 
+[features]
+# What the tests of other crates read of a model value held in memory
+# (`history::testing`, issue 392).
+test-support = []
+
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["macros", "rt", "sync"] }
 tempfile = "3.27"

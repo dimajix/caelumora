@@ -106,6 +106,7 @@ impl Turn<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::history::testing::recorded_context;
     use caelumora_runtime::transport::Discard;
     use crate::turn::tests::seen;
     use caelumora_model::actor::EventContext;
@@ -197,7 +198,7 @@ mod tests {
             ["System:You are good at sums.", "What is 2+2?"], "the first answer saw exactly what the turn gave the model");
         assert_eq!(order(&seen(&state, agent, second.id).expect("the agent produced it")),
             ["System:You are good at sums.", "What is 2+2?", "Let me think."], "everything before it, its own earlier message included");
-        assert!(state.recorded_context_of(question.id).is_none(), "not produced by the agent");
+        assert!(recorded_context(&state.history, question.id).is_none(), "not produced by the agent");
 
         // Knowledge read in a turn counts for the messages after it.
         let (before, after) = (text(MessageRole::Assistant, "Let me look."), text(MessageRole::Assistant, "Found it."));
@@ -215,7 +216,7 @@ mod tests {
             turn.push_message(after.clone());
             turn.commit(false, &Discard).await;
         }
-        let knowledge_of = |id| state.recorded_context_of(id).unwrap().0.knowledge;
+        let knowledge_of = |id| recorded_context(&state.history, id).unwrap().0.knowledge;
         assert!(knowledge_of(before.id).is_empty(), "produced before the read");
         assert_eq!(knowledge_of(after.id), vec![read], "produced after it, recorded once");
 
@@ -259,7 +260,7 @@ mod tests {
         // The same tools, treated otherwise: offered so then.
         take_turn(&mut state, vec![tool("echo", true), tool("notes", false)], &[&fourth]);
 
-        let offered = |id| { let (reference, turn) = state.recorded_context_of(id).unwrap(); ContextResolver::of(&state).resolve(&reference, turn, ActorId::Agent(agent)) }
+        let offered = |id| { let (reference, turn) = recorded_context(&state.history, id).unwrap(); ContextResolver::of(&state).resolve(&reference, turn, ActorId::Agent(agent)) }
             .expect("everything it names is here").tool_sets.into_iter().flat_map(|set| set.tools).map(|t| (t.name, t.requires_approval)).collect::<Vec<_>>();
         let named = |offer: Vec<(String, bool)>| offer.into_iter().map(|(name, asks)| format!("{name}{}", if asks { "?" } else { "" })).collect::<Vec<_>>();
         assert_eq!(named(offered(first.id)), ["echo", "notes?"]);

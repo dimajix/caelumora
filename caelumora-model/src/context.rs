@@ -614,6 +614,7 @@ fn given_up_notice(turn: TurnId, reason: &GivenUpReason, at: DateTime<Utc>) -> M
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history::testing::recorded_context;
     use crate::agent::AgentId;
     use crate::digest::prompt;
     use crate::message::{MessageId, TokenUsage};
@@ -822,7 +823,7 @@ mod tests {
         // said (issue 260), resolves to what the model was given for it -
         // while the turn is under way and once it ended.
         let seen = |state: &AgentChannelState, message: &Message| {
-            let (context, turn) = state.recorded_context_of(message.id).expect("recorded as it was said");
+            let (context, turn) = recorded_context(&state.history, message.id).expect("recorded as it was said");
             contents(&ContextResolver::of(state).resolve(&context, turn, agent).expect("everything it names is here").items)
         };
         assert_eq!(seen(&state, &second), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);

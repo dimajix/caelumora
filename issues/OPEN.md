@@ -104,7 +104,6 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | No. | Status | Issue |
 |---|---|---|
 | [346](346-subscription-topics-for-every-kind.md) | open | The event bus has subscription topics only for sessions, channels, agents and users, so a plugin cannot follow a single entity - an artifact, say - without reading every event. |
-| [392](392-history-readers-without-callers.md) | open | `History::messages`, `items` and `recorded_context_of` read a history held in memory, which nothing in production does any more, and two comments of the agent's run loop describe a history that keeps only final messages. |
 | [393](393-history-record-wrappers.md) | open | `History` records a turn's end, a plan step, a command, an activity and a compaction through five methods that each only assert the variant of the entry they are handed. |
 | [394](394-chain-branch-memory.md) | open | `Chain` remembers the branch last taken from every entry and the stores take in nodes changed in their place, for a switch between branches that nothing makes since 08 was rejected. |
 | [395](395-message-change-applied-twice.md) | open | `HistoryEntry` and `TranscriptEntry` apply a modification, revocation or reclassification to a message, and digest it, by two copies of one rule. |

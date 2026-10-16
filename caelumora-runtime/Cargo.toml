@@ -26,8 +26,8 @@ tempfile = { version = "3.27", optional = true }
 
 [features]
 # The world of the security suite (`testing`), for the suite and for the
-# tests of a plugin (issue 323).
-test-support = ["dep:tempfile"]
+# tests of a plugin (issue 323); with it, what the model offers tests.
+test-support = ["dep:tempfile", "caelumora-model/test-support"]
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["full"] }
