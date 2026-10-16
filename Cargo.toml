@@ -5,8 +5,6 @@ members = [
     "caelumora-agents",
     "caelumora-logging",
     "caelumora-tui",
-    "caelumora-client-api",
-    "caelumora-local-client",
     "caelumora-app",
     "caelumora-rest-api",
     "caelumora-rest-client",
