@@ -1,6 +1,6 @@
 # 395 — A change of a message is applied and digested by two copies of one rule
 
-**Status:** open
+**Status:** rejected
 **Area:** Code structure
 
 Part of [391](391-history-and-transcript-review-epic.md).
@@ -57,3 +57,15 @@ The variants carry the same fields in both enums.
 
 - **2026-10-16** — Opened from the review of the history and the transcript
   ([391](391-history-and-transcript-review-epic.md)).
+- **2026-10-16** — Rejected with the maintainer: the gain does not pay for what either form adds.
+  The rule itself is written once already - what a change does to a message is `Message::modify`,
+  `revoke` and `reclassify`, the three digest schemes are defined once in `digest` -; what stands
+  twice is only the dispatch from a variant to its function, three lines on each side. The set of
+  changes has been stable since 234 and 239, and a fourth kind would touch the event, the chain
+  methods, the intake and the channel loop anyway, beside which the two dispatches hardly count; the
+  tests of both chains would catch them drifting apart. The borrowed `MessageChange<'a>` adds a
+  type, a lifetime and an accessor and leaves every variant where it is; the owned one as the
+  payload of `Changed` deepens every pattern by a level, nests the stored form and has stored
+  data deleted. The one imprecision found on the way - the hand-over of an external agent takes a
+  whole `TranscriptEntry` where only a modification or a revocation can come (`HandOver`,
+  `give_notice`) - is local to that actor and no reason for a type in the model.
