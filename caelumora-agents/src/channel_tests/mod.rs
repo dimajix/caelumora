@@ -50,6 +50,7 @@ use futures::stream::BoxStream;
 use serde_json::Value;
 use std::collections::VecDeque;
 use tokio::sync::broadcast::Receiver;
+use tokio::task::JoinHandle;
 
 mod agent;
 mod agent_commands;
@@ -66,6 +67,28 @@ async fn shown_by(events: &mut Receiver<Envelope>, agent: AgentId, wanted: &str)
             }
         }
     }).await.unwrap_or_else(|_| panic!("the agent sends {wanted}"))
+}
+
+/// Stops the actors of `channel` (issue 377) and waits: they end their
+/// tasks by themselves, within the grace, and the channel with them - not
+/// aborted.
+async fn stop_and_wait(channel: &ChannelLoop, running: JoinHandle<Result<()>>) {
+    let stopping = std::time::Instant::now();
+    channel.stop_all_actors().await;
+    assert!(stopping.elapsed() < STOP_GRACE, "the actors ended by themselves");
+    tokio::time::timeout(Duration::from_secs(1), running).await
+        .expect("and with them the channel")
+        .expect("the channel's task was not aborted")
+        .expect("the channel ended without an error");
+}
+
+/// The channel of `stopped` built again from the stores and running, with
+/// what it takes in from then on: as when its session runs again.
+async fn run_again(stopped: &ChannelLoop) -> (Arc<ChannelLoop>, Receiver<Envelope>, JoinHandle<Result<()>>) {
+    let restarted = ChannelLoop::new(stopped.restarted_runtime()).await.unwrap();
+    let events = restarted.observe();
+    let running = tokio::spawn({ let restarted = Arc::clone(&restarted); async move { restarted.run().await } });
+    (restarted, events, running)
 }
 
 /// A model whose answer never comes: what a cancel has to interrupt.
@@ -185,7 +208,7 @@ async fn turn_given_up(events: &mut Receiver<Envelope>, agent: AgentId) -> Strin
                 break match reason {
                     GivenUpReason::Failed { message } => message,
                     GivenUpReason::Lowered { channel } => format!("{cause} to {channel}"),
-                    GivenUpReason::Stopped | GivenUpReason::Retried => cause.to_string(),
+                    GivenUpReason::Left | GivenUpReason::Retried => cause.to_string(),
                 };
             }
         }

@@ -30,8 +30,9 @@ use uuid::Uuid;
 pub enum Script {
     /// Answers every request at once with this text, in a turn of its own.
     Answers(String),
-    /// Begins a turn and stays in it until it is cancelled, asked for again
-    /// or stopped: what a cancel, a retry or a stop has to end.
+    /// Begins a turn and stays in it until it is cancelled, asked for
+    /// again, stopped or leaves: what a cancel, a retry, a stop or leaving
+    /// has to end.
     Hangs,
 }
 
@@ -64,6 +65,7 @@ enum Interrupt {
     Cancel,
     Retry,
     Stop,
+    Leave,
 }
 
 /// An agent whose answers are scripted.
@@ -83,7 +85,8 @@ pub struct ScriptedAgent {
     heard: Mutex<Vec<Envelope>>,
     /// Whether it was woken (`wakeup`).
     woken: AtomicBool,
-    /// What `cancel`, `retry_turn` and `stop` asked for, taken by `run`.
+    /// What `cancel`, `retry_turn`, `stop` and `leave` asked for, taken by
+    /// `run`.
     interrupt: Mutex<Option<Interrupt>>,
     interrupted: Notify,
 }
@@ -117,14 +120,15 @@ impl ScriptedAgent {
     }
 
     /// Answers `request` as the script says. Returns whether it was told to
-    /// stop meanwhile.
+    /// stop or leave meanwhile. Stopped, it keeps its turn as an agent
+    /// does, and says nothing more of it (issue 377).
     async fn respond(&self, request: &Envelope, output: &dyn EventSender) -> bool {
         let answering = Answering::to(request, self.id, self.name.clone(), &self.security);
         let turn_id = TurnId::new();
         self.set_turn(Some(turn_id));
         self.go_to(ActorState::Planning, output).await;
         answering.send_all(vec![ActorEvent::ResponseStarted { turn_id }], output).await;
-        let (events, stopped) = match &self.script {
+        let (events, ended) = match &self.script {
             Script::Answers(text) => {
                 let message = self.message(text, turn_id);
                 (vec![ActorEvent::CompleteMessageGenerated(message.clone()), ActorEvent::TurnFinished { turn_id, messages: vec![message] }], false)
@@ -132,13 +136,14 @@ impl ScriptedAgent {
             Script::Hangs => match self.interrupted().await {
                 Interrupt::Cancel => (vec![ActorEvent::TurnFinished { turn_id, messages: Vec::new() }], false),
                 Interrupt::Retry => (vec![ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Retried }], false),
-                Interrupt::Stop => (vec![ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Stopped }], true),
+                Interrupt::Stop => return true,
+                Interrupt::Leave => (vec![ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Left }], true),
             },
         };
         self.set_turn(None);
         answering.send_all(events, output).await;
         self.go_to(ActorState::Idle, output).await;
-        stopped
+        ended
     }
 
     /// Its message saying `text`, of the turn `turn_id`, classified as its
@@ -210,8 +215,8 @@ impl Actor for ScriptedAgent {
             let received = tokio::select! {
                 received = rx.recv() => received,
                 () = self.interrupted.notified() => {
-                    // Outside a turn, only a stop ends anything.
-                    if self.take_interrupt() == Some(Interrupt::Stop) {
+                    // Outside a turn, only a stop or leaving ends anything.
+                    if matches!(self.take_interrupt(), Some(Interrupt::Stop | Interrupt::Leave)) {
                         break;
                     }
                     continue;
@@ -254,5 +259,9 @@ impl Actor for ScriptedAgent {
 
     fn stop(&self) {
         self.ask(Interrupt::Stop);
+    }
+
+    fn leave(&self) {
+        self.ask(Interrupt::Leave);
     }
 }

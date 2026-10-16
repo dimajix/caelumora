@@ -573,7 +573,7 @@ impl ContextItem {
 fn given_up_notice(turn: TurnId, reason: &GivenUpReason, at: DateTime<Utc>) -> Message {
     let withheld = match reason {
         GivenUpReason::Lowered { .. } => " What it read and said is withheld; only which tools it called is given.",
-        GivenUpReason::Failed { .. } | GivenUpReason::Stopped | GivenUpReason::Retried => "",
+        GivenUpReason::Failed { .. } | GivenUpReason::Left | GivenUpReason::Retried => "",
     };
     Message {
         id: MessageId(turn.0),
@@ -823,7 +823,7 @@ mod tests {
         state.perceive(vec![heard.clone()], vec![heard]);
         let before_given = state.transcript.digest();
         state.said(call(agent, 200, 20, Some(4096)));
-        state.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Stopped, at: Utc::now() });
+        state.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Left, at: Utc::now() });
         // A branch no longer active - as an external agent's earlier calls
         // are (`start_anew`) - counts as well.
         state.transcript.move_head(before_given.as_ref());

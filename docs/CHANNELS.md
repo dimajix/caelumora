@@ -75,18 +75,28 @@ then is the running session changed and the change announced:
     caller may not restore.
 *   **Purging** is not a channel's: a deleted channel is removed for good with its session.
 
-A deleted channel stops its actors before its task is aborted: every actor is told to `stop` and
-given up to `STOP_GRACE` to end, in which an external agent cancels its open remote tasks and every
-actor stores its state.
+A deleted channel has its actors leave before its task is aborted: every actor is told to `leave`
+and given up to `STOP_GRACE` to end, in which an external agent cancels its open remote tasks and
+every actor stores its state.
 
-### Stopping an actor
+### Ending an actor
 
-`Actor::stop` is synchronous and goes past the events, like `cancel`: it takes effect at once, not
-after what is queued. Every actor ends its own task when stopped. The channel's run loop alone owns
-the actors' tasks, so that they end with the channel's; whoever stopped an actor waits on its task
-separately. Removing a participant and deleting the channel use the same grace: an actor that has
-not ended after `STOP_GRACE` is aborted. A tool that hangs does not keep an agent: a stop interrupts
-it, and the agent gives its turn up within the grace, the call recorded as having run.
+An actor's task ends in one of two ways (issue 377), each a method of `Actor` without a default, so
+that an actor cannot forget one:
+
+*   **`stop`** - the channel stops, because its session is stopped or the process shuts down. The
+    actor keeps what it is in the middle of, to be resumed when the channel runs again: an agent
+    stores its turn at the step it stands at, an external agent keeps its remote tasks.
+*   **`leave`** - the actor leaves the channel for good: removed from it, or the channel or its
+    session deleted. An agent gives its turn up and says so, an external agent cancels its remote
+    tasks.
+
+Both are synchronous and go past the events, like `cancel`: they take effect at once, not after
+what is queued. Every actor ends its own task. The channel's run loop alone owns the actors' tasks,
+so that they end with the channel's; whoever ended an actor waits on its task separately
+(`ChannelLoop::stop_actors`, `leave_actors`). All of them use the same grace: an actor that has not
+ended after `STOP_GRACE` is aborted. A tool that hangs does not keep an agent: both interrupt it,
+the call recorded as having run, and the agent ends within the grace.
 
 ### One writer per document
 
@@ -156,8 +166,11 @@ may use it. How a session comes to its workspace and who reaches the files is in
 
 `SessionLoop::run` runs every channel, those the session had and those created later.
 
-*   Stopping the session aborts every channel; the commands started in its workspace shell are
-    ended.
+*   Stopping the session stops the actors of every channel (`SessionLoop::stop_actors`), all at
+    once, waits for them up to `STOP_GRACE` and then aborts every channel; the commands started in
+    its workspace shell are ended. A stop therefore takes as long as its slowest actor needs to
+    store its state. Deleting the session has the actors leave instead (`leave_actors`), as
+    deleting a channel does.
 *   Deleting a channel aborts that channel's task; its state is kept until it is purged. A channel
     deleted while it waits to be started is never started.
 *   A participant that cannot be run is left out when the channel starts, with a warning, and the
@@ -363,8 +376,8 @@ said and saw stays readable for whoever may read its context.
 Deleting an agent (`AgentManager::delete`) marks it and changes no channel: it rests in every
 channel it takes part in until it is restored. The channels follow its mark instead:
 
-*   a running session, told of the deletion, stops the agent's actor in each of its channels, in the
-    runtime's name, and announces it as a leave (`channel::LEFT`);
+*   a running session, told of the deletion, has the agent's actor leave each of its channels, in
+    the runtime's name, and announces it as a leave (`channel::LEFT`);
 *   a channel that starts leaves it out, as any participant that no longer exists -
     `Participation::resolve` asks the store whether it exists, not the controllers, which keep an
     agent's controller while an actor of it still runs;
@@ -406,7 +419,7 @@ conversation.
 The channel starts the new actor's task, tells the moderator and rebuilds the mentions; a handle
 that becomes ambiguous is logged.
 
-A removed actor is stopped at once - an agent without finishing its turn, which it gives up and says
+A removed actor leaves at once - an agent without finishing its turn, which it gives up and says
 so - and its state is kept, for the record and for a later return. The approver answers a leaving
 agent's pending approvals as denied, so that nothing keeps waiting, and decides the others again,
 since who may approve them changed. The approver itself cannot be removed.
@@ -515,12 +528,12 @@ An **actor** is anything that sends and receives events in a channel.
 
 *   **`Actor`** (`caelumora_runtime::actor`) is the trait of all actors: `AgentActor`, `UserActor`,
     `ApproverActor` and `ExternalAgentActor`. Its task, `run`, receives envelopes and sends its
-    output through the transport it is given. `wakeup`, `cancel` and `stop` are synchronous, because
-    they come from other tasks and must take effect at once. The trait is public, so that a kind of
-    agent can be built in a crate of its own (issue 370); only the channel controls its actors,
-    after the operation that does it checked its permission - a rule for linked code, not a
-    boundary (see [SECURITY.md](SECURITY.md#operations-that-check-themselves)). What an agent's
-    model saw is read through the views, not asked of its actor (see
+    output through the transport it is given. `wakeup`, `cancel`, `stop` and `leave` are
+    synchronous, because they come from other tasks and must take effect at once. The trait is
+    public, so that a kind of agent can be built in a crate of its own (issue 370); only the channel
+    controls its actors, after the operation that does it checked its permission - a rule for linked
+    code, not a boundary (see [SECURITY.md](SECURITY.md#operations-that-check-themselves)). What an
+    agent's model saw is read through the views, not asked of its actor (see
     [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw)).
 *   **An actor's inbox** (`EventReceiver`) can wait for the next envelope of a kind, leaving the
     others queued - as an agent waiting for approvals does - and acknowledges what was taken. Both
@@ -537,13 +550,13 @@ An **actor** is anything that sends and receives events in a channel.
     personality as the agent may read it; a kind the program registered nothing for is refused
     (`ChannelError::UnknownAgentKind`). The agent is `ActorId::Agent` either way, and nothing else
     - the participants, the REST API, the moderator - tells the two apart.
-*   **What both kinds of agent are in a channel** is their `AgentBody` (issue 355): the agent and
-    in whose name it acts there, its `AgentChannelState`, how it takes in what it hears, its
-    context provider, the commands it carries out itself, and its `RunControl` - where its actor
-    stands and what `cancel` and `stop` asked of it (issue 363). The two actors differ in their
-    mind: a model run here with its tools, or the remote agent, whose every answer is a turn of the
-    run control, ended by `cancel` and `stop` as an agent's turn is. Both tell where they stand the
-    same way; an external agent tells the begin and end of an answer at once.
+*   **What both kinds of agent are in a channel** is their `AgentBody` (issue 355): the agent and in
+    whose name it acts there, its `AgentChannelState`, how it takes in what it hears, its context
+    provider, the commands it carries out itself, and its `RunControl` - where its actor stands and
+    what `cancel`, `stop` and `leave` asked of it (issue 363). The two actors differ in their mind:
+    a model run here with its tools, or the remote agent, whose every answer is a turn of the run
+    control, ended by `cancel`, `stop` and `leave` as an agent's turn is. Both tell where they stand
+    the same way; an external agent tells the begin and end of an answer at once.
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`, or `System` - the
     runtime itself, set only deliberately.
 *   **`Envelope`** is the unit of communication: a timestamp, a `SecurityContext`, an `EventContext`

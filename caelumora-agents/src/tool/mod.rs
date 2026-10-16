@@ -196,18 +196,19 @@ pub(crate) fn declined_result() -> String {
 }
 
 /// The result for a call that was approved but has no result when its
-/// agent is loaded again (issue 75): the server stopped before the call
-/// ran, or before its result was stored. The runtime cannot tell which, so
-/// it never runs the call again - the model decides.
+/// agent is loaded again (issue 75): the server or the session stopped
+/// before the call ran (issue 377), or before its result was stored. The
+/// runtime cannot tell which, so it never runs the call again - the model
+/// decides.
 pub(crate) fn not_executed_result() -> String {
     unsuccessful_result(
         ToolResultStatus::NotExecuted,
-        "This tool call was not executed: the server restarted before it ran. Decide again whether to call it; if its effect matters, check first.",
+        "This tool call was not executed: the session was stopped or the server restarted before it ran. Decide again whether to call it; if its effect matters, check first.",
     )
 }
 
 /// The result for a call that was running when its turn was cancelled or
-/// stopped (issue 161): it was interrupted, and what it did before stays
+/// given up (issue 161): it was interrupted, and what it did before stays
 /// done. The runtime cannot tell how far it got - the model checks before
 /// it calls it again.
 pub(crate) fn interrupted_result() -> String {
@@ -221,8 +222,11 @@ pub(crate) fn interrupted_result() -> String {
 /// the model is told of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Interruption {
-    /// Its turn was cancelled or stopped: no further call of the step runs.
+    /// Its turn was cancelled or given up: no further call of the step runs.
     TurnEnded,
+    /// Its channel stopped (issue 377): the turn is kept, to be resumed;
+    /// the calls of the step still to run are not run then (issue 75).
+    Stopped,
     /// A user, called so, interrupted this call alone: the turn goes on.
     ByUser(String),
 }
@@ -232,6 +236,10 @@ impl Interruption {
     fn result(&self, after: Duration) -> String {
         match self {
             Self::TurnEnded => interrupted_result(),
+            Self::Stopped => unsuccessful_result(
+                ToolResultStatus::Interrupted,
+                &format!("This tool call was interrupted after {:.1} seconds while it ran, because the session was stopped; your turn resumed when it ran again. It may have taken effect in part or in full. Check its effect before calling it again.", after.as_secs_f64()),
+            ),
             Self::ByUser(by) => unsuccessful_result(
                 ToolResultStatus::Interrupted,
                 &format!("{by} interrupted this tool call after {:.1} seconds while it ran; your turn goes on. It may have taken effect in part or in full. Check its effect before calling it again, and decide how to go on - differently, or by asking the user.", after.as_secs_f64()),

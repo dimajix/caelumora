@@ -713,7 +713,7 @@ export interface ActorEvent {
   PlanStepStarted?: PlanStepEvent;
   PlanStepFinished?: PlanStepEvent;
   /** An agent's turn was aborted by an error; the agent is idle again. */
-  /** An agent gave its turn up (issues 145, 258); a stopped agent sends none. */
+  /** An agent gave its turn up (issues 145, 258); one whose session merely stops keeps it and sends none (issue 377). */
   TurnGivenUp?: { turn_id: string; reason: GivenUpReason };
   /**
    * A command was carried out (issues 28, 269): by the session, sent by the
@@ -1045,7 +1045,7 @@ export interface HistoryMessage {
 export type GivenUpReason =
   | {kind: 'failed'; message: string}
   | {kind: 'lowered'; channel: Classification}
-  | {kind: 'stopped'}
+  | {kind: 'left'}
   | {kind: 'retried'};
 
 /**

@@ -280,7 +280,8 @@ pub enum ToolResultStatus {
     /// The tool ran and failed.
     Failed,
     /// The tool never ran: the turn that made the call ended first (issue
-    /// 148), or the server restarted before it ran (issue 75).
+    /// 148), or the server restarted or the session was stopped before it
+    /// ran (issues 75, 377).
     NotExecuted,
     /// The tool ran, but was interrupted before it ended: the turn that made
     /// the call was cancelled or stopped meanwhile (issue 161). What it did

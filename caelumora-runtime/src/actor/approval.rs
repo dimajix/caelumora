@@ -360,9 +360,16 @@ impl Actor for ApproverActor {
         Ok(())
     }
 
+    /// Ends the run: its channel stops (issue 377). What is pending is
+    /// left undecided; the agents that wait for it ask again as their
+    /// channel runs again.
+    fn stop(&self) {
+        self.ended.cancel();
+    }
+
     /// Ends the run: the channel is deleted - an approver never leaves one
     /// otherwise. What is pending is left undecided; nobody is left to ask.
-    fn stop(&self) {
+    fn leave(&self) {
         self.ended.cancel();
     }
 }

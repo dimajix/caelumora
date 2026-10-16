@@ -225,7 +225,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
                         match reason {
                             GivenUpReason::Failed { message } => println!("\r[error] {} could not answer: {}", sender, message),
                             GivenUpReason::Lowered { channel } => println!("\r{} gave its answer up: the channel was lowered to {}", sender, channel),
-                            GivenUpReason::Stopped | GivenUpReason::Retried => println!("\r{} gave its answer up: {}", sender, reason.cause()),
+                            GivenUpReason::Left | GivenUpReason::Retried => println!("\r{} gave its answer up: {}", sender, reason.cause()),
                         }
                     }
                     Some(ActorEvent::CommandStarted { command, .. }) => {

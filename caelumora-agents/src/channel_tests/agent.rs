@@ -826,7 +826,7 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the turn is given up");
-    assert_eq!(turns[0].1, GivenUpReason::Stopped);
+    assert_eq!(turns[0].1, GivenUpReason::Left);
     running.abort();
 }
 
@@ -1204,7 +1204,7 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the turn is given up before the grace runs out");
-    assert_eq!(given_up_turns(&stored)[0].1, GivenUpReason::Stopped);
+    assert_eq!(given_up_turns(&stored)[0].1, GivenUpReason::Left);
     let interrupted = stored.transcript.messages().iter().flat_map(|m| m.tool_results.clone())
         .find(|r| r.tool_name == "sleep").map(|r| r.content).unwrap_or_default();
     assert!(interrupted.contains("interrupted"), "the call that ran stays, with how it ended: {interrupted}");
@@ -1218,9 +1218,77 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the channel records the turn's end");
-    assert_eq!(ended, (ActorId::Agent(agent), GivenUpReason::Stopped));
+    assert_eq!(ended, (ActorId::Agent(agent), GivenUpReason::Left));
     assert!(channel.whole_history().await.iter().any(|m| m.tool_calls.iter().any(|c| c.function_name == "sleep")), "what it said stays");
     running.abort();
+}
+
+#[tokio::test]
+async fn an_agent_stopped_in_a_model_call_keeps_its_turn_and_asks_again_when_its_channel_runs_again() {
+    let (Stuck { channel, agent, running, .. }, model) = asking_a_gated_model(&["never given", "Answered."]).await;
+
+    stop_and_wait(&channel, running).await;
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert_eq!(stored.processing_state, ActorState::Planning, "stored at the step it stood at");
+    assert!(stored.turn.is_some(), "the turn is kept");
+    assert!(given_up_turns(&stored).is_empty(), "not given up");
+
+    let (_restarted, mut events, running) = run_again(&channel).await;
+    asked(&model, 2).await;
+    model.gate.add_permits(1);
+    let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
+    assert_eq!(said, ["Answered."], "the turn resumed with the call it stood at");
+    running.abort();
+}
+
+/// The call under way is interrupted and recorded so; the one still to
+/// run is not run when the turn resumes, but told the model as not
+/// executed, as after a restart (issue 75) - and the turn goes on.
+#[tokio::test]
+async fn an_agent_stopped_while_a_tool_runs_records_the_call_as_stopped_and_goes_on_when_its_channel_runs_again() {
+    let (Stuck { channel, agent, running, .. }, model) = with_an_agent_in_long_tools(&["1", "2"]).await;
+
+    stop_and_wait(&channel, running).await;
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert_eq!(stored.processing_state, ActorState::ExecutingTools, "the second call has no result yet");
+    assert!(given_up_turns(&stored).is_empty(), "not given up");
+
+    let (_restarted, mut events, running) = run_again(&channel).await;
+    let finished = answered(&mut events, agent).await;
+    let results: Vec<_> = finished.iter().flat_map(|m| m.tool_results.iter()).collect();
+    assert_eq!(results.iter().map(|r| r.status).collect::<Vec<_>>(), [ToolResultStatus::Interrupted, ToolResultStatus::NotExecuted], "{finished:?}");
+    assert!(results[0].content.contains("because the session was stopped"), "the model is told why: {}", results[0].content);
+    assert!(results[0].started_at.is_some() && results[1].started_at.is_none(), "the first ran, the second never did");
+    let said: Vec<_> = finished.iter().filter_map(|m| m.content.clone()).collect();
+    assert_eq!(said, ["never given"], "the turn goes on with the results");
+    assert_eq!(model.0.lock().unwrap().len(), 0, "the model was asked again");
+    running.abort();
+}
+
+#[tokio::test]
+async fn an_idle_agent_stopped_ends_at_once_where_it_stands() {
+    let model = Arc::new(Scripted(Mutex::new([model_says("Hello.")].into())));
+    let Stuck { channel, agent, helper, mut events, running, .. } = with_an_agent(model, Default::default()).await;
+    answered(&mut events, agent).await;
+    settled(&helper, ActorState::Idle).await;
+
+    stop_and_wait(&channel, running).await;
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert_eq!(stored.processing_state, ActorState::Idle);
+    assert!(stored.turn.is_none() && given_up_turns(&stored).is_empty(), "nothing under way, nothing given up");
+}
+
+#[tokio::test]
+async fn an_agent_whose_channel_is_deleted_while_a_tool_runs_gives_its_turn_up() {
+    let (Stuck { channel, agent, running, .. }, _) = with_an_agent_in_a_long_tool().await;
+
+    let leaving = std::time::Instant::now();
+    channel.leave_all_actors().await;
+    assert!(leaving.elapsed() < STOP_GRACE, "the actors ended by themselves");
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert!(stored.turn.is_none(), "the turn is not kept");
+    assert_eq!(given_up_turns(&stored).iter().map(|(_, reason, _)| reason.clone()).collect::<Vec<_>>(), [GivenUpReason::Left]);
+    tokio::time::timeout(Duration::from_secs(1), running).await.expect("and the channel ended with them").ok();
 }
 
 #[tokio::test]
@@ -1242,7 +1310,7 @@ async fn an_agent_removed_while_waiting_for_approval_gives_up_its_turn() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the turn is given up");
-    assert_eq!(given_up_turns(&stored)[0].1, GivenUpReason::Stopped);
+    assert_eq!(given_up_turns(&stored)[0].1, GivenUpReason::Left);
     // The request it waited for is withdrawn, as for any turn given up
     // (issue 262).
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -1371,7 +1439,7 @@ async fn a_removed_agent_gives_its_turn_up_says_so_and_leaves_an_idle_state_behi
             }
         }
     }).await.expect("the agent tells the channel it gave its turn up");
-    assert_eq!(farewell, GivenUpReason::Stopped);
+    assert_eq!(farewell, GivenUpReason::Left);
     // The channel is still running: alice is still in it.
     assert!(!running.is_finished());
     running.abort();

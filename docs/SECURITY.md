@@ -478,16 +478,16 @@ changed:
 The store asks again as it stores (rule 2): that pair is the rule, not a double.
 
 **Actors are controlled only through such operations.** `Actor::cancel`, `retry_turn`,
-`interrupt_tool_call`, `wakeup` and `stop` check nothing: they are the consequence of an act that
-was checked - cancelling or waking a channel or an actor, interrupting a tool call, removing a
-participant, deleting a channel, a request to answer again the channel admitted - and know no
-caller. That only the channel calls them is a rule for the code linked into the program, not a
-boundary: the `Actor` trait is public, so that a kind of agent can be built in a crate of its own
-(issue 370), as `SecurityContext::system` and the stores are public. Code linked into the program
-is trusted; what is kept from it is kept by the API, not by a guarantee. The `Moderator` trait
-that is handed actors and `ChannelLoop::actor` stay crate-internal, so that no agent's actor is
-handed out: a frontend reaches its user's actor through `ChannelLoop::user_actor`, and acts
-through that actor's own methods, never the control methods.
+`interrupt_tool_call`, `wakeup`, `stop` and `leave` check nothing: they are the consequence of an
+act that was checked - cancelling or waking a channel or an actor, interrupting a tool call,
+removing a participant, deleting a channel, stopping or deleting a session, a request to answer
+again the channel admitted - and know no caller. That only the channel calls them is a rule for the
+code linked into the program, not a boundary: the `Actor` trait is public, so that a kind of agent
+can be built in a crate of its own (issue 370), as `SecurityContext::system` and the stores are
+public. Code linked into the program is trusted; what is kept from it is kept by the API, not by a
+guarantee. The `Moderator` trait that is handed actors and `ChannelLoop::actor` stay crate-internal,
+so that no agent's actor is handed out: a frontend reaches its user's actor through
+`ChannelLoop::user_actor`, and acts through that actor's own methods, never the control methods.
 
 ### What enters a channel
 
