@@ -471,7 +471,7 @@ published before anyone else can take it.
 | [394](394-chain-branch-memory.md) | open | `Chain` remembers the branch last taken from every entry and the stores take in nodes changed in their place, for a switch between branches that nothing makes since 08 was rejected. |
 | [395](395-message-change-applied-twice.md) | rejected | `HistoryEntry` and `TranscriptEntry` apply a modification, revocation or reclassification to a message, and digest it, by two copies of one rule. |
 | [396](396-three-ways-to-read-a-message-as-it-stands.md) | done | One message as it stands is read by three functions, two of which fold everything said after it or given before it. |
-| [397](397-agent-channel-state-follows-the-transcript.md) | open | Four methods of `AgentChannelState` move the turn's context after the transcript's head each for itself, and `compact` checks for a turn four times. |
+| [397](397-agent-channel-state-follows-the-transcript.md) | done | Four methods of `AgentChannelState` move the turn's context after the transcript's head each for itself, and `compact` checks for a turn four times. |
 | [398](398-given-means-four-things.md) | open | Around the transcript "given" names a message given to read, which messages the transcript holds, and the directory of the prompt texts and tool sets. |
 
 ## Integrations
