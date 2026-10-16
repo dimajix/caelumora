@@ -25,6 +25,7 @@ use caelumora_model::note::Note;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::ChannelId;
 use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
+use caelumora_model::store::history::{HistoryKey, HistoryStore};
 use caelumora_model::user::{UserId, UserProfile};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -93,7 +94,7 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
         Participant::Approver(_) => Arc::new(ApproverMember { name: participant.actor_id().fixed_name() }),
         Participant::Agent(id) => match views.agent_of(*id).await {
             Some(agent) => Arc::new(AgentMemberState {
-                member: AgentMember(StateRef { agent: agent.id, channel, store: Arc::clone(views.states()) }),
+                member: AgentMember(StateRef { agent: agent.id, channel, store: Arc::clone(views.states()), histories: Arc::clone(views.histories()) }),
                 agent,
                 personalities: Arc::clone(&views.stores().personalities),
                 personality: OnceCell::new(),
@@ -171,6 +172,8 @@ struct StateRef {
     agent: AgentId,
     channel: ChannelId,
     store: Arc<dyn StateStore>,
+    /// Where its history is read (issue 379).
+    histories: Arc<dyn HistoryStore>,
 }
 
 impl StateRef {
@@ -244,6 +247,7 @@ impl AgentMember {
 
     /// What it saw (issue 41).
     pub(super) async fn context(&self) -> ViewResult<AgentContextView> {
-        Ok(AgentContextView::of(ActorId::Agent(self.0.agent), self.stored().await?))
+        let place = &self.0;
+        Ok(AgentContextView::of(ActorId::Agent(place.agent), self.stored().await?, Arc::clone(&place.histories), HistoryKey::Agent(place.agent, place.channel)))
     }
 }

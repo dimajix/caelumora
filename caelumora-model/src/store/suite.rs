@@ -17,7 +17,7 @@ use crate::scope::{Scoped, Scope};
 use crate::security::{AclEntry, Secured, SecurityAttributes, SecurityContext};
 use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityKind, EntityStore, EntityStores, Journaled, NoEntity, StateStore, StoreError, Stored};
-use crate::store::history::{HistoryKey, HistoryStore};
+use crate::store::history::{every, HistoryKey, HistoryStore};
 use crate::history::{History, HistoryEntry};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
 use crate::removal::{Deletable, Removal};
@@ -673,7 +673,7 @@ async fn all_pages(histories: &dyn HistoryStore, key: HistoryKey, from: u64, lim
     let mut pages = Vec::new();
     let mut before = None;
     loop {
-        let page = histories.page(key, from, before, limit).await.expect("a page");
+        let page = histories.page(key, from, before, limit, &every).await.expect("a page");
         assert!(page.items.len() <= limit, "no more than asked for");
         pages.push(page.items.iter().map(standing).collect::<Vec<_>>());
         match page.earlier {
@@ -694,8 +694,8 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     use crate::confidentiality::Confidentiality;
     let (channel, agent) = (ChannelId::new(), AgentId::new());
     let key = HistoryKey::Channel(channel);
-    assert!(histories.page(key, 0, None, 10).await.unwrap().items.is_empty(), "no history yet");
-    assert!(histories.message(key, id(1)).await.unwrap().is_none());
+    assert!(histories.page(key, 0, None, 10, &every).await.unwrap().items.is_empty(), "no history yet");
+    assert!(histories.said(key, id(1)).await.unwrap().is_none());
 
     let mut state = ChannelState::new(channel);
     for n in 1..=300 {
@@ -714,16 +714,21 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     let expected: Vec<String> = state.history.items().iter().map(standing).collect();
 
     assert_eq!(all_pages(histories, key, 0, 70).await, expected, "the items as they stand, page by page");
-    let last = histories.page(key, 0, None, 3).await.unwrap();
+    let last = histories.page(key, 0, None, 3, &every).await.unwrap();
     assert_eq!((last.items.iter().map(standing).collect::<Vec<_>>(), last.earlier), (expected[597..].to_vec(), Some(597)));
     let from_middle = all_pages(histories, key, 250, 100).await;
     assert_eq!(from_middle, expected[250..].to_vec(), "none before where a view begins");
-    let (at, first) = histories.message(key, id(1)).await.unwrap().expect("said");
-    assert_eq!((at, first.content.as_deref()), (0, Some("changed")), "as it stands, where it was said");
-    assert!(histories.message(key, id(300)).await.unwrap().is_some_and(|(_, m)| m.revoked.is_some()));
+    let (at, first) = histories.said(key, id(1)).await.unwrap().expect("said");
+    assert_eq!((at, first.said().and_then(|m| m.content.as_deref())), (0, Some("changed")), "as it stands, where it was said");
+    assert!(histories.said(key, id(300)).await.unwrap().is_some_and(|(_, item)| item.said().is_some_and(|m| m.revoked.is_some())));
+    assert_eq!(histories.page(key, 0, None, 1, &every).await.unwrap().digest, state.history.digest(), "read from the history as it is");
     let entries = histories.entries(key, 598).await.unwrap();
     assert_eq!(entries.iter().map(|node| node.seq).collect::<Vec<_>>(), state.history.from(598).map(|node| node.seq).collect::<Vec<_>>(), "the chain itself from a position on");
     assert!(histories.entries(key, 10_000).await.unwrap().is_empty());
+
+    let revoked = |item: &HistoryEntry| item.said().is_some_and(|m| m.revoked.is_some() || m.content.as_deref() == Some("changed"));
+    let kept = histories.page(key, 0, None, 5, &revoked).await.unwrap();
+    assert_eq!((kept.items.len(), kept.earlier), (2, None), "a page of those kept, read back as far as there are any");
 
     histories.rebuild(key).await.expect("rebuild");
     assert_eq!(all_pages(histories, key, 0, 200).await, expected, "the items derived anew are the same");
@@ -737,7 +742,7 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     let mut going_on = loaded;
     going_on.history.push(make_message(id(601)), None);
     states.put_channel_state(channel, &mut going_on).await.expect("appended to what was loaded in part");
-    assert_eq!(histories.message(key, id(601)).await.unwrap().map(|(at, _)| at), Some(state.history.end()));
+    assert_eq!(histories.said(key, id(601)).await.unwrap().map(|(at, _)| at), Some(state.history.end()));
 
     let mut agents = AgentChannelState::default();
     agents.history.push(make_message(id(1)), None);
@@ -747,14 +752,14 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     assert_eq!(states.get_agent_channel_state(agent, channel).await.unwrap().history.digest(), agents.history.digest());
 
     states.delete_channel_state(channel).await.expect("delete");
-    assert!(histories.page(key, 0, None, 10).await.unwrap().items.is_empty(), "the channel's history is gone with its state");
-    assert!(histories.page(agents_key, 0, None, 10).await.unwrap().items.is_empty(), "and its agents'");
+    assert!(histories.page(key, 0, None, 10, &every).await.unwrap().items.is_empty(), "the channel's history is gone with its state");
+    assert!(histories.page(agents_key, 0, None, 10, &every).await.unwrap().items.is_empty(), "and its agents'");
     states.put_agent_channel_state(agent, channel, &mut AgentChannelState { history: History::default(), ..agents.clone() }).await.expect("put");
     let mut again = AgentChannelState::default();
     again.history.push(make_message(id(2)), None);
     states.put_agent_channel_state(agent, ChannelId::new(), &mut again).await.expect("put");
     states.delete_agent_state(agent).await.expect("delete");
-    assert!(histories.page(agents_key, 0, None, 10).await.unwrap().items.is_empty(), "an agent's histories go with it");
+    assert!(histories.page(agents_key, 0, None, 10, &every).await.unwrap().items.is_empty(), "an agent's histories go with it");
 }
 
 /// `value` marked deleted, as only deleting may.

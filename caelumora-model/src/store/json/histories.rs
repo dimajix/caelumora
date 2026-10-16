@@ -15,8 +15,8 @@ use super::{delete_if_exists, read_json_opt, to_backend_error, write_json_atomic
 use crate::chain::{Chain, Node, Stored as StoredChain};
 use crate::digest::Digest;
 use crate::history::{History, HistoryEntry, HistoryPage};
-use crate::message::{Message, MessageId};
-use crate::store::history::{page_of, HistoryKey, HistoryStore, StandingItems};
+use crate::message::MessageId;
+use crate::store::history::{page_of, HistoryKey, HistoryStore, Keep, StandingItems};
 use crate::store::{StoreError, StoreResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -227,7 +227,7 @@ impl JsonFileStore {
 
 #[async_trait]
 impl HistoryStore for JsonFileStore {
-    async fn page(&self, key: HistoryKey, from: u64, before: Option<u64>, limit: usize) -> StoreResult<HistoryPage> {
+    async fn page(&self, key: HistoryKey, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
         let dir = self.history_dir(key);
         let head = read_head(&dir).await?;
         let before = before.map_or(head.items_end, |before| before.min(head.items_end));
@@ -237,16 +237,16 @@ impl HistoryStore for JsonFileStore {
         }
         let mut segment = segment_of(before - 1);
         loop {
-            newest.extend(read_items(&dir, segment).await?.newest_before(before).cloned());
+            newest.extend(read_items(&dir, segment).await?.newest_before(before).filter(|(seq, item)| *seq >= from && keep(item)).cloned());
             if newest.len() > limit || segment == 0 || segment <= from {
                 break;
             }
             segment -= SEGMENT;
         }
-        Ok(page_of(newest, from, limit))
+        Ok(page_of(newest, from, limit, keep, head.head))
     }
 
-    async fn message(&self, key: HistoryKey, id: MessageId) -> StoreResult<Option<(u64, Message)>> {
+    async fn said(&self, key: HistoryKey, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>> {
         let dir = self.history_dir(key);
         let head = read_head(&dir).await?;
         if head.items_end == 0 {
@@ -254,7 +254,7 @@ impl HistoryStore for JsonFileStore {
         }
         let mut segment = segment_of(head.items_end - 1);
         loop {
-            if let Some(found) = read_items(&dir, segment).await?.message(id) {
+            if let Some(found) = read_items(&dir, segment).await?.said(id) {
                 return Ok(Some(found));
             }
             if segment == 0 {

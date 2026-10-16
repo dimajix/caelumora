@@ -31,7 +31,6 @@ use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::{Message, MessageId, MessageEvent};
 use caelumora_model::work::TurnId;
 use tokio::sync::broadcast;
-use caelumora_runtime::view::AgentContextView;
 use crate::command::AgentCommandProvider;
 use crate::plugin::AgentsPlugin;
 use crate::work::AgentWork;

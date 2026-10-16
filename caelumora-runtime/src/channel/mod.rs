@@ -18,7 +18,7 @@ use crate::controller::{ChannelController, ControllerManager, WorkspaceControlle
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::mention::MentionDirectory;
 use caelumora_model::question::{QuestionError, QuestionId};
-use caelumora_model::message::{Message, MessageId};
+use caelumora_model::message::MessageId;
 use caelumora_model::work::TurnId;
 use caelumora_model::security::{ActionType, Enforcement, Grant, Refused, SecurityAttributes, SecurityContext, AccessPolicy};
 use caelumora_model::session::{Session, SessionId};
@@ -27,6 +27,7 @@ use crate::terminal::{Shell, Terminal};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::store::{StateStore, StoreError};
+use caelumora_model::store::history::HistoryStore;
 use caelumora_model::user::UserId;
 use tracing::{info, warn};
 use std::any::Any;
@@ -53,8 +54,7 @@ pub mod testing;
 #[cfg(test)]
 mod tests;
 
-pub use history::VisibleHistory;
-pub(crate) use history::{visible_message, visible_page, visible_part};
+pub(crate) use history::visible_from;
 pub(crate) use participation::{ResolvedParticipant, ResolvedKind, Participation};
 
 /// A participant of a channel, with the handle it is `@`-mentioned by.
@@ -235,6 +235,9 @@ pub struct ChannelLoop {
     recorder: Mutex<Box<dyn Recorder>>,
     state: Mutex<ChannelState>,
     state_store: Arc<dyn StateStore>,
+    /// The read side of the histories (issue 379): the channel's own, as it
+    /// is stored with its state after every entry.
+    history_store: Arc<dyn HistoryStore>,
     /// Set by `cancel`, cleared when the channel is woken: while set, what is
     /// said is still delivered, but nobody is asked to respond to it
     /// (`route_event_impl`). The turns themselves are cancelled on the actors.
@@ -261,6 +264,7 @@ impl ChannelLoop {
         let id = channel.id;
         let session_id = channel.session_id;
         let state_store = Arc::clone(runtime.state_store());
+        let history_store = Arc::clone(runtime.history_store());
         // Its components (issue 174) are built in its owner's name, as an
         // agent's are in the agent's, with the roles of now (issue 321):
         // what they ask is asked as they are built; routing, they act in
@@ -309,6 +313,7 @@ impl ChannelLoop {
             recorder: Mutex::new(recorder),
             state,
             state_store,
+            history_store,
             quiet: AtomicBool::new(false),
             #[cfg(any(test, feature = "test-support"))]
             observed: broadcast::channel(128).0,
@@ -389,17 +394,6 @@ impl ChannelLoop {
         self.observed.subscribe()
     }
 
-    /// The whole history, whoever may see it; outside the channel, what a
-    /// participant sees is `visible_history`.
-    pub(crate) async fn history(&self) -> Vec<Message> {
-        self.state.lock().await.history.messages()
-    }
-
-    /// The message `id` of the history as it stands - on whichever branch -
-    /// or `None` if it was never said here.
-    pub(crate) async fn message(&self, id: MessageId) -> Option<Message> {
-        self.state.lock().await.history.message(id)
-    }
 
     pub fn id(&self) -> ChannelId { self.id }
 

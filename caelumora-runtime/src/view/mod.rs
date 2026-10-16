@@ -50,6 +50,7 @@ use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
 use caelumora_model::group::{Group, GroupField, GroupId};
 use caelumora_model::message::MessageId;
+use caelumora_model::store::history::HistoryStore;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
@@ -188,6 +189,8 @@ pub struct Views {
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     stores: EntityStores,
     states: Arc<dyn StateStore>,
+    /// Where every history is read, in pages (issue 379).
+    histories: Arc<dyn HistoryStore>,
     components: Arc<ComponentRegistry>,
     workspaces: Arc<WorkspaceManager>,
     /// Where a session's workspace is asked whether it may be used in a
@@ -205,6 +208,7 @@ impl Views {
             confidentiality: Arc::clone(runtime.confidentiality()),
             stores: runtime.entity_stores().clone(),
             states: Arc::clone(runtime.state_store()),
+            histories: Arc::clone(runtime.history_store()),
             components: Arc::clone(runtime.component_registry()),
             workspaces: Arc::clone(runtime.workspace_manager()),
             controllers: Arc::clone(runtime.controller_manager()),
@@ -251,6 +255,10 @@ impl Views {
 
     pub(crate) fn states(&self) -> &Arc<dyn StateStore> {
         &self.states
+    }
+
+    pub(crate) fn histories(&self) -> &Arc<dyn HistoryStore> {
+        &self.histories
     }
 
     pub(crate) fn components(&self) -> &ComponentRegistry {
@@ -757,7 +765,19 @@ impl Debug for Views {
 mod tests {
     use super::*;
     use crate::testing::{Script, ScriptedAgents, TestRuntime};
-    use crate::channel::{ChannelLoop, VisibleHistory};
+
+    use caelumora_model::message::Message;
+
+    /// All of the history `view` shows, as one page.
+    async fn whole(view: &ChannelView) -> ViewResult<HistoryPage> {
+        view.history_page(None, 10_000).await
+    }
+
+    /// The messages of `page`.
+    fn messages(page: &HistoryPage) -> Vec<Message> {
+        page.items.iter().filter_map(HistoryEntry::said).cloned().collect()
+    }
+    use crate::channel::ChannelLoop;
     use crate::group::keep_participants;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError};
@@ -868,12 +888,12 @@ mod tests {
         let texts = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
         assert_eq!(texts(seen.transcript().messages()), ["later"], "what it is given next, not what it was given or answered");
         assert_eq!(seen.private_notes(), (Vec::new(), None), "an external agent writes none");
-        assert!(!seen.history().iter().any(|item| matches!(item, HistoryEntry::TurnGivenUp { .. })));
-        let context = seen.context_of(answer.id).expect("what the call was given (issue 205)");
+        assert!(!seen.history_page(None, 100).await.unwrap().items.iter().any(|item| matches!(item, HistoryEntry::TurnGivenUp { .. })));
+        let context = seen.context_of(answer.id).await.expect("what the call was given (issue 205)");
         assert_eq!(context.items.len(), 1, "the messages of the one call, no prompt parts");
         assert!(matches!(&context.items[0], ContextItem::Conversation { message } if message.id == question.id));
         assert!(context.tool_sets.is_empty(), "and no tools: those are the remote agent's");
-        assert_eq!(seen.classification_of(answer.id), Some(Classification::CHANNEL_DEFAULT), "its answer is in its history");
+        assert_eq!(seen.classification_of(answer.id).await.unwrap(), Some(Classification::CHANNEL_DEFAULT), "its answer is in its history");
         assert_eq!(member.private_notes().await.unwrap(), (Vec::new(), None));
         assert!(member.notes().await.unwrap().expect("an agent").notes.is_empty(), "it writes none");
         assert!(for_alice.notes().await.unwrap().iter().all(|published| published.notes.is_empty()));
@@ -1067,10 +1087,10 @@ mod tests {
         };
         let for_alice = reach(as_user(alice.id)).await;
         let texts = |messages: &[Message]| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
-        assert_eq!(texts(&for_alice.history().await.unwrap().messages()), ["first", "second"]);
-        assert_eq!(texts(&reach(as_user(bob.id)).await.history().await.unwrap().messages()), ["second"], "bob joined after the first");
+        assert_eq!(texts(&messages(&whole(&for_alice).await.unwrap())), ["first", "second"]);
+        assert_eq!(texts(&messages(&whole(&reach(as_user(bob.id)).await).await.unwrap())), ["second"], "bob joined after the first");
         let as_helper = Viewer::new(SecurityContext::new(ActorId::User(alice.id), session.id, channel.id).next(ActorId::Agent(helper.id), ActorId::User(alice.id), ActorId::User(alice.id)));
-        assert_eq!(texts(&reach(as_helper).await.history().await.unwrap().messages()), ["second"], "the agent reads with its own limit, not its owner's");
+        assert_eq!(texts(&messages(&whole(&reach(as_helper).await).await.unwrap())), ["second"], "the agent reads with its own limit, not its owner's");
         // In pages (issue 218), with the same limits.
         let page_texts = |page: &HistoryPage| page.items.iter().filter_map(HistoryEntry::said).filter_map(|m| m.content.clone()).collect::<Vec<_>>();
         let last = for_alice.history_page(None, 1).await.unwrap();
@@ -1091,7 +1111,7 @@ mod tests {
         let seen = agent.context().await.expect("alice made the agent");
         assert_eq!(seen.private_notes().0[0].text, "mine");
         assert_eq!(seen.transcript().messages().len(), 1);
-        assert!(matches!(seen.context_of(first.id), Err(AgentContextError::NotRecorded { .. })), "the agent did not produce it");
+        assert!(matches!(seen.context_of(first.id).await, Err(AgentContextError::NotRecorded { .. })), "the agent did not produce it");
         let refused = reach(as_user(bob.id)).await.member(ActorId::Agent(helper.id)).await.unwrap().context().await.expect_err("not bob's to read");
         assert!(matches!(refused, ViewError::Forbidden { .. }), "{refused}");
         let none = for_alice.member(ActorId::User(bob.id)).await.unwrap().context().await.expect_err("a user saw nothing");
@@ -1385,13 +1405,13 @@ mod tests {
             Viewer::from_place(context, from)
         };
         let names = |channels: Vec<ChannelView>| channels.iter().map(|c| c.name().to_string()).collect::<Vec<_>>();
-        let texts = |history: VisibleHistory| history.messages().iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        let texts = |page: HistoryPage| messages(&page).iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
 
         let from_team = manager.views(reading_from(&team)).session(session.id).await.unwrap();
         assert_eq!(names(from_team.channels().await), ["public", "team"], "as a whole: what is public, and itself");
         assert_eq!(names(from_team.all_channels().await), ["public", "team", "secret", "hr"], "the rest entry by entry");
         let secret_from_team = from_team.channel_named("secret").await.expect("reachable for what was released");
-        let released = secret_from_team.history().await.unwrap();
+        let released = whole(&secret_from_team).await.unwrap();
         assert_eq!(released.items.len(), 1, "nothing of how turns ended: it would tell of work whose messages are not released (issue 258)");
         assert_eq!(texts(released), ["the date"]);
         let page = secret_from_team.history_page(None, 10).await.unwrap();
@@ -1402,19 +1422,19 @@ mod tests {
         let refused = secret_from_team.member(ActorId::Agent(helper.id)).await.unwrap().context().await.expect_err("not as a whole");
         assert!(matches!(refused, ViewError::Forbidden { .. }), "{refused}");
         let hr_from_team = from_team.channel_named("hr").await.unwrap();
-        assert!(matches!(hr_from_team.history().await, Err(ViewError::NoChannelNamed(name)) if name == "hr"), "nothing released: as if it did not exist");
+        assert!(matches!(whole(&hr_from_team).await, Err(ViewError::NoChannelNamed(name)) if name == "hr"), "nothing released: as if it did not exist");
         assert!(matches!(hr_from_team.notes().await, Err(ViewError::NoChannelNamed(_))));
         assert!(matches!(hr_from_team.history_page(None, 10).await, Err(ViewError::NoChannelNamed(_))));
         assert!(matches!(from_team.channel_named("nope").await, Err(ViewError::NoChannelNamed(_))));
 
         let from_secret = manager.views(reading_from(&secret)).session(session.id).await.unwrap();
         assert_eq!(names(from_secret.channels().await), ["public", "team", "secret"], "confidential reads internal; HR's never a general channel");
-        assert_eq!(texts(from_secret.channel_named("team").await.unwrap().history().await.unwrap()), ["internal"]);
-        let whole = from_secret.channel(secret.id).await.unwrap();
-        let history = whole.history().await.unwrap();
+        assert_eq!(texts(whole(&from_secret.channel_named("team").await.unwrap()).await.unwrap()), ["internal"]);
+        let itself = from_secret.channel(secret.id).await.unwrap();
+        let history = whole(&itself).await.unwrap();
         assert_eq!(history.items.len(), 3, "its messages, and how its turns ended (issue 258)");
         assert_eq!(texts(history), ["the plan", "the date"], "a channel reads itself as a whole");
-        assert!(whole.member(ActorId::Agent(helper.id)).await.unwrap().context().await.is_ok());
+        assert!(itself.member(ActorId::Agent(helper.id)).await.unwrap().context().await.is_ok());
     }
 
     #[tokio::test]
@@ -1677,10 +1697,10 @@ mod tests {
             let (context, classification) = (alice_ctx.clone(), channel.classification());
             async move { runtime.session_view(&context, classification).await.expect("attached to its session") }
         };
-        let read = reading_from(&finance).await.channel_named("hr").await.expect("reachable for what was released").history().await.expect("what was released to finance");
-        let texts: Vec<_> = read.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect();
+        let read = whole(&reading_from(&finance).await.channel_named("hr").await.expect("reachable for what was released")).await.expect("what was released to finance");
+        let texts: Vec<_> = messages(&read).iter().map(|m| m.content.clone().unwrap_or_default()).collect();
         assert_eq!(texts, ["for finance too"], "only what was released");
-        let nothing = reading_from(&team).await.channel_named("hr").await.expect("reachable, but").history().await;
+        let nothing = whole(&reading_from(&team).await.channel_named("hr").await.expect("reachable, but")).await;
         assert!(matches!(nothing, Err(ViewError::NoChannelNamed(_))), "nothing was released to a general channel");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }

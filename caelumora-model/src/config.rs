@@ -5,7 +5,7 @@ use crate::role::Roles;
 use std::collections::BTreeMap;
 use crate::component::ComponentConfig;
 use crate::security::{AllowAllPolicy, Memberships, OwnershipPolicy, AccessPolicy};
-use crate::store::{StateStore, StoreBackend, StoreError};
+use crate::store::{StoreBackend, StoreError};
 use crate::store::json::JsonFileStore;
 use crate::store::memory::MemoryStore;
 use serde::Deserialize;
@@ -405,12 +405,13 @@ impl AppConfig {
         self.persistence.entity_store.open(access_policy, confidentiality)
     }
 
-    /// The state store, as configured under `persistence.state_store`.
+    /// The store of the states and their histories (issue 379), as
+    /// configured under `persistence.state_store`.
     ///
     /// # Errors
     /// `ConfigError::Store` if the store cannot be opened.
-    pub fn create_state_store(&self, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<Arc<dyn StateStore>> {
-        Ok(self.persistence.state_store.open(access_policy, confidentiality)?.state_store())
+    pub fn open_state_store(&self, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>) -> ConfigResult<StoreBackend> {
+        self.persistence.state_store.open(access_policy, confidentiality)
     }
 }
 

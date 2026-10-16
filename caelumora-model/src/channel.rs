@@ -4,7 +4,7 @@ use crate::approval::{ApprovalRule, ApprovalStrategy, Approver, ApproverId};
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
 use crate::group::GroupId;
-use crate::history::{HistoryEntry, History};
+use crate::history::History;
 use crate::message::{Message, MessageId};
 use crate::removal::{Deletable, Removal};
 use crate::scope::{Scope, Scoped};
@@ -144,23 +144,41 @@ pub enum HistoryAccess {
 }
 
 impl HistoryAccess {
-    /// Where the view of `history` begins for a participant granted this,
-    /// fixed `now` - so that "the last three days" does not move day by
-    /// day. `None` if all of it is visible.
-    pub fn start_in(&self, history: &[Message], now: DateTime<Utc>) -> Option<HistoryStart> {
-        let last = || history.last().map(|m| HistoryStart::After(m.id));
-        let from = |index: usize| match index {
-            0 => None,
-            i if i >= history.len() => last(),
-            i => Some(HistoryStart::From(history[i].id)),
-        };
+    /// Whether `newest` - a channel's messages, newest first, as far as they
+    /// were read - is enough to tell where the view begins (`start_in`): the
+    /// history is read from its end only as far back as the grant reaches
+    /// (issue 379).
+    pub fn read_enough(&self, newest: &[Message], now: DateTime<Utc>) -> bool {
         match *self {
-            HistoryAccess::All => None,
-            HistoryAccess::None => last(),
-            HistoryAccess::LastMessages { count } => from(history.len().saturating_sub(count as usize)),
+            HistoryAccess::All => true,
+            HistoryAccess::None => !newest.is_empty(),
+            HistoryAccess::LastMessages { count } => newest.len() > count as usize,
             HistoryAccess::LastDays { count } => {
                 let since = now - Duration::days(i64::from(count));
-                from(history.iter().position(|m| m.timestamp >= since).unwrap_or(history.len()))
+                newest.last().is_some_and(|m| m.timestamp < since)
+            }
+        }
+    }
+
+    /// Where the view of a channel's history begins for a participant
+    /// granted this, fixed `now` - so that "the last three days" does not
+    /// move day by day. `newest` are its messages, newest first, as many as
+    /// `read_enough` asks for, or all there are. `None` if all of it is
+    /// visible.
+    pub fn start_in(&self, newest: &[Message], now: DateTime<Utc>) -> Option<HistoryStart> {
+        let last = || newest.first().map(|m| HistoryStart::After(m.id));
+        // From the `n`-th newest, if an older one is there; all of it if not.
+        let from = |n: usize| newest.get(n).map(|_| HistoryStart::From(newest[n - 1].id));
+        match *self {
+            HistoryAccess::All => None,
+            HistoryAccess::None | HistoryAccess::LastMessages { count: 0 } => last(),
+            HistoryAccess::LastMessages { count } => from(count as usize),
+            HistoryAccess::LastDays { count } => {
+                let since = now - Duration::days(i64::from(count));
+                match newest.iter().take_while(|m| m.timestamp >= since).count() {
+                    0 => last(),
+                    recent => from(recent),
+                }
             }
         }
     }
@@ -178,27 +196,20 @@ pub enum HistoryStart {
 }
 
 impl HistoryStart {
-    /// The part of `items` - a channel's history - visible from here:
-    /// nothing if the message it begins at is not there, rather than more
-    /// than was granted.
-    pub fn visible(&self, items: Vec<HistoryEntry>) -> Vec<HistoryEntry> {
-        let (id, skip) = match *self {
-            HistoryStart::From(id) => (id, 0),
-            HistoryStart::After(id) => (id, 1),
-        };
-        match items.iter().position(|item| item.said().is_some_and(|m| m.id == id)) {
-            Some(index) => items.into_iter().skip(index + skip).collect(),
-            None => Vec::new(),
+    /// The message the view begins at or after.
+    pub fn message(&self) -> MessageId {
+        match *self {
+            HistoryStart::From(id) | HistoryStart::After(id) => id,
         }
     }
 
-    /// The position in `history` - a channel's - from which on it is
-    /// visible from here (issue 218): `None` if the message it begins at is
-    /// not there, rather than more than was granted.
-    pub fn position_in(&self, history: &History) -> Option<u64> {
-        match *self {
-            HistoryStart::From(id) => history.position_of(id),
-            HistoryStart::After(id) => history.position_of(id).map(|at| at + 1),
+    /// The position in a channel's history from which on it is visible from
+    /// here, `said_at` being the position of the entry that said `message`
+    /// (issue 379).
+    pub fn from(&self, said_at: u64) -> u64 {
+        match self {
+            HistoryStart::From(_) => said_at,
+            HistoryStart::After(_) => said_at + 1,
         }
     }
 }
@@ -442,22 +453,21 @@ mod tests {
         history.iter().map(|m| m.id).collect()
     }
 
-    /// `messages` as the items of a history.
-    fn said(messages: &[Message]) -> Vec<HistoryEntry> {
-        messages.iter().map(|message| HistoryEntry::Said { message: message.clone(), context: None }).collect()
-    }
-
-    /// The ids of the messages of `items`.
-    fn ids_of(items: &[HistoryEntry]) -> Vec<MessageId> {
-        items.iter().filter_map(HistoryEntry::said).map(|m| m.id).collect()
-    }
-
+    /// What `access` grants of `history`, oldest first, read from the end
+    /// only as far as it asks: the ids from where the view begins.
     fn granted(access: HistoryAccess, history: &[Message], now: DateTime<Utc>) -> Vec<MessageId> {
-        let items = match access.start_in(history, now) {
-            Some(start) => start.visible(said(history)),
-            None => said(history),
+        let mut newest: Vec<Message> = Vec::new();
+        for message in history.iter().rev() {
+            if access.read_enough(&newest, now) {
+                break;
+            }
+            newest.push(message.clone());
+        }
+        let from = match access.start_in(&newest, now) {
+            Some(start) => start.from(history.iter().position(|m| m.id == start.message()).unwrap() as u64) as usize,
+            None => 0,
         };
-        ids_of(&items)
+        ids(&history[from.min(history.len())..])
     }
 
     #[test]
@@ -480,6 +490,7 @@ mod tests {
         assert_eq!(granted(HistoryAccess::All, &history, now), ids(&history), "All sees every message");
         assert!(granted(HistoryAccess::None, &history, now).is_empty(), "None sees no earlier message");
         assert_eq!(HistoryAccess::None.start_in(&[], now), None, "an empty channel has nothing to hide");
+        assert!(HistoryAccess::All.read_enough(&[], now), "all of it is granted without reading any");
     }
 
     #[test]
@@ -494,17 +505,14 @@ mod tests {
         assert_eq!(granted(HistoryAccess::LastDays { count: 3 }, &history, now), ids(&history[1..]));
         assert!(granted(HistoryAccess::LastDays { count: 3 }, &history, now + Duration::days(10)).is_empty(),
                 "nothing within the last days sees nothing");
+        assert!(!HistoryAccess::LastDays { count: 3 }.read_enough(&history[3..].iter().rev().cloned().collect::<Vec<_>>(), now), "read back until one older than the grant");
     }
 
     #[test]
-    fn a_history_start_shows_later_messages_and_nothing_if_its_message_is_gone() {
-        let now = Utc::now();
-        let mut later = daily(now);
-        let start = HistoryStart::After(later[1].id);
-        later.push(Message { id: MessageId::new(), ..Message::new(Classification::CHANNEL_DEFAULT) });
-        assert_eq!(ids_of(&start.visible(said(&later))), ids(&later[2..]), "messages sent after joining stay visible");
-        assert!(HistoryStart::From(MessageId::new()).visible(said(&later)).is_empty(),
-                "an unknown start shows nothing rather than everything");
+    fn a_history_start_is_the_position_of_its_message_or_the_one_after() {
+        let at = id(1);
+        assert_eq!((HistoryStart::From(at).from(4), HistoryStart::After(at).from(4)), (4, 5));
+        assert_eq!(HistoryStart::After(at).message(), at);
     }
 
     #[test]

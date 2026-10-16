@@ -6,8 +6,11 @@ use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::approval::ApprovalRule;
+use caelumora_model::chain::Node;
 use caelumora_model::channel::{self, Channel, ChannelId};
 use caelumora_model::event::{Announcing, GlobalEvent};
+use caelumora_model::history::HistoryEntry;
+use caelumora_model::message::MessageId;
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
 use crate::agent::state::AgentStateHandle;
@@ -16,6 +19,7 @@ use crate::view::{SessionView, Viewer};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{SecurityContext, AccessPolicy};
 use caelumora_model::session::Session;
+use caelumora_model::store::history::HistoryKey;
 use caelumora_model::store::StoreResult;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Place};
 use caelumora_model::question::{QuestionError, Questions};
@@ -122,6 +126,24 @@ impl ActorRuntime {
     pub async fn load_channel_state(&self) -> Result<AgentChannelState> {
         let agent = self.agent_id()?;
         Ok(self.runtime.runtime_manager.state_store().get_agent_channel_state(agent, self.channel_id).await?)
+    }
+
+    /// The position in its channel's history of the entry that said the
+    /// message `id`; `None` if the channel never heard it (issue 379).
+    ///
+    /// # Errors
+    /// Whatever the `HistoryStore` reports.
+    pub async fn channel_position_of(&self, id: MessageId) -> Result<Option<u64>> {
+        Ok(self.runtime.runtime_manager.history_store().said(HistoryKey::Channel(self.channel_id), id).await?.map(|(at, _)| at))
+    }
+
+    /// The entries of its channel's history from the position `from` on, as
+    /// they were added (issue 379): what the actor missed of it.
+    ///
+    /// # Errors
+    /// Whatever the `HistoryStore` reports.
+    pub async fn channel_entries(&self, from: u64) -> Result<Vec<Node<HistoryEntry>>> {
+        Ok(self.runtime.runtime_manager.history_store().entries(HistoryKey::Channel(self.channel_id), from).await?)
     }
 
     /// Stores the state of this agent in its channel, and marks it stored

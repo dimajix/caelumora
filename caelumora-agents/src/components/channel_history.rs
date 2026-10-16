@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use caelumora_model::question::Answers;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::Message;
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde::Deserialize;
@@ -84,12 +85,15 @@ impl ToolProvider for ChannelHistoryComponent {
             return Err(ToolError::ExecutionFailed("the turn is in no session to read from".to_string()));
         };
         let channel = session.channel_named(channel).await?;
-        let history = channel.history().await?;
-        let said = history.messages();
-        let (messages, more) = select(&said, last, query);
+        // Read from the end, only as far back as `last` such messages lie
+        // (issue 379).
+        let query = query.map(str::to_lowercase);
+        let page = channel.history_page_of(None, last, &|item| wanted(item, query.as_deref())).await?;
+        let messages: Vec<&Message> = page.items.iter().filter_map(HistoryEntry::said).collect();
+        let more = page.earlier.is_some();
         // What was read is classified as the messages given (issue 168).
         let classification = Classification::join_all(messages.iter().map(|m| &m.classification));
-        let source = KnowledgeSource::History { digest: history.digest, start: history.start };
+        let source = KnowledgeSource::History { digest: page.digest, start: channel.history_start() };
         turn.record_knowledge(KnowledgeRef { channel: channel.id(), session: channel.session().id(), source, classification: classification.clone() });
 
         let value = serde_json::json!({
@@ -105,19 +109,11 @@ impl ToolProvider for ChannelHistoryComponent {
     }
 }
 
-/// The latest `last` messages with text, of those containing `query` if
-/// given, oldest first - and whether there are more such messages.
-fn select<'a>(messages: &'a [Message], last: usize, query: Option<&str>) -> (Vec<&'a Message>, bool) {
-    let query = query.map(str::to_lowercase);
-    let matching: Vec<&Message> = messages.iter()
-        .filter(|m| m.content.as_deref().is_some_and(|c| !c.is_empty()))
-        .filter(|m| match &query {
-            Some(q) => m.content.as_deref().is_some_and(|c| c.to_lowercase().contains(q)),
-            None => true,
-        })
-        .collect();
-    let start = matching.len().saturating_sub(last);
-    (matching[start..].to_vec(), start > 0)
+/// Whether `item` is a message the tool returns: one with text, containing
+/// `query`, lowercase, if given - ignoring case.
+fn wanted(item: &HistoryEntry, query: Option<&str>) -> bool {
+    let Some(content) = item.said().and_then(|m| m.content.as_deref()).filter(|c| !c.is_empty()) else { return false };
+    query.is_none_or(|q| content.to_lowercase().contains(q))
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
@@ -141,21 +137,11 @@ mod tests {
     }
 
     #[test]
-    fn the_latest_messages_are_selected_oldest_first() {
-        let messages: Vec<Message> = ["one", "two", "three"].into_iter().map(text).collect();
-        let (selected, more) = select(&messages, 2, None);
-        let selected: Vec<&str> = selected.iter().map(|m| m.content.as_deref().unwrap()).collect();
-        assert_eq!(selected, ["two", "three"]);
-        assert!(more);
-        assert!(!select(&messages, 3, None).1, "all of them");
-    }
-
-    #[test]
-    fn a_query_selects_what_contains_it_ignoring_case() {
-        let messages: Vec<Message> = ["Tea time", "coffee", "More TEA"].into_iter().map(text).collect();
-        let (selected, more) = select(&messages, 10, Some("tea"));
-        let selected: Vec<&str> = selected.iter().map(|m| m.content.as_deref().unwrap()).collect();
-        assert_eq!(selected, ["Tea time", "More TEA"]);
-        assert!(!more, "messages without text or the query do not count");
+    fn a_message_with_text_containing_the_query_is_wanted_ignoring_case() {
+        let said = |content: &str| HistoryEntry::Said { message: text(content), context: None };
+        assert!(wanted(&said("Tea time"), Some("tea")) && wanted(&said("More TEA"), Some("tea")));
+        assert!(!wanted(&said("coffee"), Some("tea")));
+        assert!(wanted(&said("coffee"), None), "any text without a query");
+        assert!(!wanted(&said(""), None), "a message without text does not count");
     }
 }

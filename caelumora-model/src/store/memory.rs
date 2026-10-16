@@ -2,13 +2,13 @@ use crate::agent::{AgentChannelState, AgentId, AgentState};
 use crate::chain::{Chain, Node, Stored as StoredChain};
 use crate::channel::{ChannelId, ChannelState};
 use crate::history::{History, HistoryEntry, HistoryPage};
-use crate::message::{Message, MessageId};
+use crate::message::MessageId;
 use crate::component::StoredComponents;
 use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use crate::removal::{Deletable, Removal};
 use crate::security::{ActionType, AllowAllPolicy, SecurityContext, AccessPolicy};
 use crate::store::access::{name_free, Access};
-use crate::store::history::{page_of, HistoryKey, HistoryStore, StandingItems};
+use crate::store::history::{page_of, HistoryKey, HistoryStore, Keep, StandingItems};
 use crate::store::query::{self, Filter, NoField, Page, Query};
 use crate::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, Journaled, Policies, StateStore, StoreError, StoreResult, Stored};
 use crate::type_map::TypeMap;
@@ -387,15 +387,15 @@ impl StateStore for MemoryStore {
 
 #[async_trait]
 impl HistoryStore for MemoryStore {
-    async fn page(&self, key: HistoryKey, from: u64, before: Option<u64>, limit: usize) -> StoreResult<HistoryPage> {
+    async fn page(&self, key: HistoryKey, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
         Ok(read_lock(&self.histories, |all| match all.get(&key) {
-            Some(kept) => page_of(kept.items.newest_before(before.unwrap_or(u64::MAX)).cloned(), from, limit),
+            Some(kept) => page_of(kept.items.newest_before(before.unwrap_or(u64::MAX)).cloned(), from, limit, keep, kept.chain.digest()),
             None => HistoryPage::default(),
         }))
     }
 
-    async fn message(&self, key: HistoryKey, id: MessageId) -> StoreResult<Option<(u64, Message)>> {
-        Ok(read_lock(&self.histories, |all| all.get(&key).and_then(|kept| kept.items.message(id))))
+    async fn said(&self, key: HistoryKey, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>> {
+        Ok(read_lock(&self.histories, |all| all.get(&key).and_then(|kept| kept.items.said(id))))
     }
 
     async fn entries(&self, key: HistoryKey, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>> {

@@ -811,8 +811,8 @@ impl Actor for AgentActor {
     /// Takes in what it missed as what it hears (issues 190, 196): all of
     /// it into its history, what passes its perceive processors into its
     /// transcript.
-    async fn catch_up(&self, visible: Vec<Message>) -> Result<()> {
-        self.body.catch_up(visible).await
+    async fn catch_up(&self, from: u64) -> Result<()> {
+        self.body.catch_up(from).await
     }
 
     async fn run(

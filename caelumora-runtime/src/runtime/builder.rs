@@ -13,6 +13,7 @@ use caelumora_model::security::AccessPolicy;
 use caelumora_model::user_provider::{UserManager, UserProvider};
 use crate::backend::Backends;
 use caelumora_model::removal::Deletable;
+use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::{EntityStore, EntityStoreFactory, EntityStores, StateStore, StoreBackend, StoreResult};
 use crate::plugin::Plugin;
@@ -40,6 +41,7 @@ use serde_json::Value;
 pub struct RuntimeBuilder {
     backend: StoreBackend,
     state_store: Arc<dyn StateStore>,
+    history_store: Arc<dyn HistoryStore>,
     entity_stores: EntityStores,
     secret_manager: Arc<SecretManager>,
     user_manager: Arc<UserManager>,
@@ -104,7 +106,7 @@ impl RuntimeBuilder {
     /// workspaces or a user provider cannot be made.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        state_store: Arc<dyn StateStore>,
+        states: impl Into<StoreBackend>,
         backend: impl Into<StoreBackend>,
         secret_manager: Arc<SecretManager>,
         access_policy: Arc<dyn AccessPolicy>,
@@ -114,6 +116,9 @@ impl RuntimeBuilder {
         backends: Backends,
     ) -> Result<Self> {
         let backend = backend.into();
+        let states = states.into();
+        let state_store = states.state_store();
+        let history_store = states.history_store();
         let entity_stores = backend.entity_stores()?;
         let event_bus = Arc::new(EventBus::new(Arc::clone(&access_policy), Arc::clone(&confidentiality)));
         // What a backend may ask for: the policies, the secrets and, for a
@@ -148,6 +153,7 @@ impl RuntimeBuilder {
         Ok(Self {
             backend,
             state_store,
+            history_store,
             entity_stores,
             secret_manager,
             user_manager,
@@ -193,14 +199,14 @@ impl RuntimeBuilder {
         let memberships = Arc::new(StoreMemberships::new());
         let access_policy = config.create_access_policy(Arc::<StoreMemberships>::clone(&memberships));
         let confidentiality = config.create_confidentiality_policy();
-        let state_store = config.create_state_store(Arc::clone(&access_policy), Arc::clone(&confidentiality))?;
+        let states = config.open_state_store(Arc::clone(&access_policy), Arc::clone(&confidentiality))?;
         let backend = config.open_entity_store(Arc::clone(&access_policy), Arc::clone(&confidentiality))?;
         memberships.bind(&backend.entity_stores()?.groups);
         let secret_services = Services::empty().with(Arc::clone(&access_policy)).with(Arc::clone(&confidentiality));
         let secret_providers = backends.make_chain::<dyn SecretProvider>("secret provider", &config.secrets.providers, &secret_services)?;
         let secret_manager = Arc::new(SecretManager::new(secret_providers, Arc::clone(&access_policy)));
         let registry = ComponentRegistry::built_in(backend.component_store());
-        let mut builder = Self::new(state_store, backend, secret_manager, access_policy, confidentiality, config, registry, backends)?;
+        let mut builder = Self::new(states, backend, secret_manager, access_policy, confidentiality, config, registry, backends)?;
         for plugin in plugins {
             builder.plugin(*plugin)?;
         }
@@ -336,6 +342,7 @@ impl RuntimeBuilder {
             access_policy: self.access_policy,
             confidentiality: self.confidentiality,
             state_store: self.state_store,
+            history_store: self.history_store,
             entity_stores: self.entity_stores,
             component_store: self.backend.component_store(),
             secret_manager: self.secret_manager,

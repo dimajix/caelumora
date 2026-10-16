@@ -13,6 +13,7 @@ use caelumora_model::channel::Channel;
 use caelumora_model::session::Session;
 use caelumora_model::security::AccessPolicy;
 use caelumora_model::store::StateStore;
+use caelumora_model::store::history::HistoryStore;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use std::sync::{Arc, OnceLock, Weak};
 use super::{ActorRuntime, RuntimeManager, Services};
@@ -104,6 +105,7 @@ impl ChannelRuntime {
     pub(crate) fn agent_kinds(&self) -> &Arc<AgentKinds> { self.runtime_manager.agent_kinds() }
 
     pub(crate) fn state_store(&self) -> &Arc<dyn StateStore> { self.runtime_manager.state_store() }
+    pub(crate) fn history_store(&self) -> &Arc<dyn HistoryStore> { self.runtime_manager.history_store() }
 
     pub(crate) fn controller_manager(&self) -> &Arc<ControllerManager> { self.runtime_manager.controller_manager() }
 

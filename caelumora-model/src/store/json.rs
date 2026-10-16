@@ -1038,7 +1038,7 @@ mod tests {
 
     #[tokio::test]
     async fn items_behind_their_chain_and_entries_past_its_head_are_what_a_crash_leaves() {
-        use crate::store::history::HistoryStore;
+        use crate::store::history::{every, HistoryStore};
         let dir = tempdir().unwrap();
         let store = store(dir.path());
         let channel = ChannelId::new();
@@ -1059,7 +1059,7 @@ mod tests {
         write("head.json", &head);
         let loaded = store.get_channel_state(channel).await.unwrap();
         assert_eq!(loaded.history.end(), 3);
-        assert_eq!(store.page(key, 0, None, 10).await.unwrap().items.len(), 3, "the items are derived anew from the chain");
+        assert_eq!(store.page(key, 0, None, 10, &every).await.unwrap().items.len(), 3, "the items are derived anew from the chain");
         assert_eq!(read("head.json")["items_end"], serde_json::json!(3));
 
         // As if the crash came after the chain, before its head.
@@ -1072,7 +1072,7 @@ mod tests {
         assert_eq!(loaded.history.end(), 3, "what lies past the head is not there");
         loaded.history.push(make_message(id(4)), None);
         store.put_channel_state(channel, &mut loaded).await.unwrap();
-        assert_eq!(store.message(key, id(4)).await.unwrap().map(|(at, _)| at), Some(3), "and the next entry takes its place");
+        assert_eq!(store.said(key, id(4)).await.unwrap().map(|(at, _)| at), Some(3), "and the next entry takes its place");
         assert_eq!(store.get_channel_state(channel).await.unwrap().history.digest(), loaded.history.digest());
     }
 

@@ -8,8 +8,9 @@
 use crate::agent::AgentId;
 use crate::chain::Node;
 use crate::channel::ChannelId;
+use crate::digest::Digest;
 use crate::history::{HistoryEntry, HistoryPage};
-use crate::message::{Message, MessageId};
+use crate::message::MessageId;
 use crate::store::StoreResult;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -47,6 +48,16 @@ impl Display for HistoryKey {
     }
 }
 
+/// Which items a page holds (`HistoryStore::page`): a viewer reading a
+/// channel entry by entry keeps what was released to it, a search what it
+/// looks for.
+pub type Keep<'a> = dyn Fn(&HistoryEntry) -> bool + Send + Sync + 'a;
+
+/// Keeps every item.
+pub fn every(_: &HistoryEntry) -> bool {
+    true
+}
+
 /// The read side of the histories a store keeps (issue 379). A history is
 /// written with the state that holds it (`StateStore::put_channel_state`,
 /// `put_agent_channel_state`); what is read here is as fresh as what was
@@ -55,15 +66,17 @@ impl Display for HistoryKey {
 #[async_trait]
 pub trait HistoryStore: Debug + Send + Sync {
     /// The last `limit` items - at least one - before the position `before`,
-    /// the last ones without it, and none before the position `from`: a
-    /// page of the history as it stands (issue 218), oldest first, with
-    /// `earlier` set if an older item from `from` on is there. Read in the
-    /// cost of the page.
-    async fn page(&self, key: HistoryKey, from: u64, before: Option<u64>, limit: usize) -> StoreResult<HistoryPage>;
+    /// the last ones without it, none before the position `from`, of those
+    /// `keep` keeps: a page of the history as it stands (issue 218), oldest
+    /// first, with `earlier` set if an older item from `from` on is kept,
+    /// and the digest of the history as it was read. Read backwards in the
+    /// cost of the page and of what `keep` passes over.
+    async fn page(&self, key: HistoryKey, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage>;
 
-    /// The message `id` as it stands, with the position of the entry that
-    /// said it; `None` if it was never said in the history.
-    async fn message(&self, key: HistoryKey, id: MessageId) -> StoreResult<Option<(u64, Message)>>;
+    /// The item that said the message `id` - `HistoryEntry::Said`, its
+    /// message as it stands, with what it was produced from - and its
+    /// position; `None` if it was never said in the history.
+    async fn said(&self, key: HistoryKey, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>>;
 
     /// The entries of the chain from the position `from` on, in the order
     /// they were added: what was added since an entry before `from` was.
@@ -137,10 +150,10 @@ impl StandingItems {
         true
     }
 
-    /// The message `id` as it stands, with its position, if it holds it.
-    pub fn message(&self, id: MessageId) -> Option<(u64, Message)> {
-        let (seq, item) = &self.items[*self.by_message.get(&id)?];
-        item.said().map(|message| (*seq, message.clone()))
+    /// The item that said the message `id`, as it stands, with its
+    /// position, if it holds it.
+    pub fn said(&self, id: MessageId) -> Option<(u64, HistoryEntry)> {
+        self.by_message.get(&id).map(|&at| self.items[at].clone())
     }
 
     /// The items before the position `before`, newest first.
@@ -176,17 +189,17 @@ impl From<StandingItems> for Vec<(u64, HistoryEntry)> {
 
 /// The page that `newest` - items newest first, as a store reads them
 /// backwards from a position - gives: the first `limit` of them - at least
-/// one - from the position `from` on, oldest first, and `earlier` if one
-/// more is there.
-pub(crate) fn page_of(newest: impl IntoIterator<Item = (u64, HistoryEntry)>, from: u64, limit: usize) -> HistoryPage {
+/// one - from the position `from` on that `keep` keeps, oldest first, and
+/// `earlier` if one more is there; read from the history `digest` names.
+pub(crate) fn page_of(newest: impl IntoIterator<Item = (u64, HistoryEntry)>, from: u64, limit: usize, keep: &Keep<'_>, digest: Option<Digest>) -> HistoryPage {
     let limit = limit.max(1);
-    let mut read: Vec<(u64, HistoryEntry)> = newest.into_iter().take_while(|(seq, _)| *seq >= from).take(limit + 1).collect();
+    let mut read: Vec<(u64, HistoryEntry)> = newest.into_iter().take_while(|(seq, _)| *seq >= from).filter(|(_, item)| keep(item)).take(limit + 1).collect();
     let earlier = (read.len() > limit).then(|| {
         read.truncate(limit);
         read.last().map(|(seq, _)| *seq)
     }).flatten();
     read.reverse();
-    HistoryPage { items: read.into_iter().map(|(_, item)| item).collect(), earlier }
+    HistoryPage { items: read.into_iter().map(|(_, item)| item).collect(), earlier, digest }
 }
 
 #[cfg(test)]
@@ -194,6 +207,7 @@ mod tests {
     use super::*;
     use crate::confidentiality::Classification;
     use crate::history::History;
+    use crate::message::Message;
     use crate::message::tests::{id, make_message};
     use chrono::Utc;
 
@@ -222,13 +236,13 @@ mod tests {
         }
         let derived: Vec<String> = items.newest_before(u64::MAX).map(|(_, item)| label(item)).collect::<Vec<_>>().into_iter().rev().collect();
         assert_eq!(derived, history.items().iter().map(label).collect::<Vec<_>>());
-        assert_eq!(items.message(id(1)).map(|(seq, m)| (seq, m.content)), Some((0, Some("changed".to_string()))));
-        assert!(items.message(id(9)).is_none());
+        assert_eq!(items.said(id(1)).map(|(seq, item)| (seq, item.said().and_then(|m| m.content.clone()))), Some((0, Some("changed".to_string()))));
+        assert!(items.said(id(9)).is_none());
 
         let again = StandingItems::of(history.all_entries());
         assert_eq!(serde_json::to_value(&again).unwrap(), serde_json::to_value(&items).unwrap(), "the same, derived at once");
         let read: StandingItems = serde_json::from_value(serde_json::to_value(&items).unwrap()).unwrap();
-        assert_eq!(read.message(id(3)).map(|(seq, _)| seq), Some(3), "the index is made anew when it is read");
+        assert_eq!(read.said(id(3)).map(|(seq, _)| seq), Some(3), "the index is made anew when it is read");
         let node = history.at(0).unwrap().clone();
         items.push(&node);
         assert_eq!(items.newest_before(u64::MAX).count(), 3, "an item is added once");
@@ -237,11 +251,14 @@ mod tests {
     #[test]
     fn a_page_is_cut_from_the_newest_items() {
         let newest = |n: u64| (0..n).rev().map(|seq| (seq, HistoryEntry::Said { message: make_message(id(seq as u128 + 1)), context: None }));
-        let page = page_of(newest(5), 0, 2);
+        let page = page_of(newest(5), 0, 2, &every, None);
         assert_eq!((page.items.iter().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(1).unwrap().1), label(&newest(5).next().unwrap().1)], Some(3)));
-        let page = page_of(newest(5), 3, 5);
+        let page = page_of(newest(5), 3, 5, &every, None);
         assert_eq!((page.items.len(), page.earlier), (2, None), "none before where the view begins");
-        assert_eq!(page_of(newest(0), 0, 5).items.len(), 0);
-        assert_eq!(page_of(newest(3), 0, 0).items.len(), 1, "at least one");
+        assert_eq!(page_of(newest(0), 0, 5, &every, None).items.len(), 0);
+        assert_eq!(page_of(newest(3), 0, 0, &every, None).items.len(), 1, "at least one");
+        let odd = |item: &HistoryEntry| item.said().is_some_and(|m| m.id.0.as_u128() % 2 == 1);
+        let page = page_of(newest(5), 0, 2, &odd, None);
+        assert_eq!((page.items.iter().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(2).unwrap().1), label(&newest(5).next().unwrap().1)], Some(2)), "a page of those kept, full, and an older one kept");
     }
 }
