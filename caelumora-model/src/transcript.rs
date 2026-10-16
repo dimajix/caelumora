@@ -148,20 +148,33 @@ impl Chain<TranscriptEntry> {
 
     /// Appends `msg` and returns the digest of the transcript before it.
     pub fn push(&mut self, msg: Message) -> Option<Digest> {
-        self.push_with(TranscriptEntry::Message(msg), digest::transcript_chain)
-    }
-
-    /// Appends `entry` as it is - a copy of one on another branch, kept
-    /// through a compaction (issue 16).
-    pub(crate) fn push_entry(&mut self, entry: TranscriptEntry) {
-        self.push_with(entry, digest::transcript_chain);
+        self.record(TranscriptEntry::Message(msg))
     }
 
     /// Appends `msg`, given to read - as `source`, if it is knowledge
     /// (issues 16, 389) -, and returns the digest of the transcript before
     /// it.
     pub fn give(&mut self, msg: Message, source: Option<KnowledgeSource>) -> Option<Digest> {
-        self.push_with(TranscriptEntry::Given { message: msg, source }, digest::transcript_chain)
+        self.record(TranscriptEntry::Given { message: msg, source })
+    }
+
+    /// Records `entry`, what happened that is no change of a message
+    /// (`TranscriptEntry::changed`): a message said or given - as `push`
+    /// and `give` record one -, how a turn ended (issue 258), after its
+    /// messages, where a compaction's part of a branch ends (issue 387),
+    /// after what it wrote; a copy of any of them on a branch of its own
+    /// (issue 16). A change is recorded by its own method - `modify`,
+    /// `revoke`, `reclassify` -, which says whether it applies. Returns the
+    /// digest of the transcript before it.
+    pub fn record(&mut self, entry: TranscriptEntry) -> Option<Digest> {
+        debug_assert!(entry.changed().is_none(), "a change is recorded by its own method");
+        self.append(entry)
+    }
+
+    /// Appends `entry`, whatever it is, with its digest, and returns the
+    /// digest of the transcript before it.
+    fn append(&mut self, entry: TranscriptEntry) -> Option<Digest> {
+        self.push_with(entry, digest::transcript_chain)
     }
 
     /// Records that the message `modified.id` of the active path is given
@@ -175,7 +188,7 @@ impl Chain<TranscriptEntry> {
         if !self.standing(modified.id).is_some_and(|mut m| m.modify(&modified)) {
             return false;
         }
-        self.push_with(TranscriptEntry::Modified { message: modified }, digest::transcript_chain);
+        self.append(TranscriptEntry::Modified { message: modified });
         true
     }
 
@@ -187,7 +200,7 @@ impl Chain<TranscriptEntry> {
         if self.standing(id).is_none() {
             return false;
         }
-        self.push_with(TranscriptEntry::Revoked { message: id, at }, digest::transcript_chain);
+        self.append(TranscriptEntry::Revoked { message: id, at });
         true
     }
 
@@ -200,7 +213,7 @@ impl Chain<TranscriptEntry> {
         if self.standing(id).is_none() {
             return false;
         }
-        self.push_with(TranscriptEntry::Reclassified { message: id, classification }, digest::transcript_chain);
+        self.append(TranscriptEntry::Reclassified { message: id, classification });
         true
     }
 
@@ -208,13 +221,6 @@ impl Chain<TranscriptEntry> {
     /// not on it or was taken back.
     fn standing(&self, id: MessageId) -> Option<Message> {
         as_they_stand(self.entries()).find_map(|(_, m)| m.filter(|m| m.id == id))
-    }
-
-    /// Records how a turn ended (issue 258): `TurnFinished` or
-    /// `TurnGivenUp`, after its messages.
-    pub fn end_turn(&mut self, end: TranscriptEntry) {
-        debug_assert!(end.ended_turn().is_some(), "only the end of a turn");
-        self.push_with(end, digest::transcript_chain);
     }
 }
 
@@ -402,7 +408,7 @@ mod tests {
         let mut transcript = Transcript::default();
         transcript.push(make_message(id(1)));
         transcript.extend(vec![of_turn(turn, 2), of_turn(turn, 3)]);
-        transcript.end_turn(given_up(turn, GivenUpReason::Failed { message: "boom".to_string() }, Utc::now()));
+        transcript.record(given_up(turn, GivenUpReason::Failed { message: "boom".to_string() }, Utc::now()));
         transcript.push(make_message(id(4)));
         (transcript, turn)
     }
@@ -431,7 +437,7 @@ mod tests {
             let mut other = Transcript::default();
             other.push(make_message(id(1)));
             other.extend(vec![of_turn(turn, 2), of_turn(turn, 3)]);
-            other.end_turn(end);
+            other.record(end);
             other.push(make_message(id(4)));
             other.digest()
         };
@@ -452,7 +458,7 @@ mod tests {
 
         let turn = TurnId::new();
         transcript.extend(vec![of_turn(turn, 2), of_turn(turn, 3)]);
-        transcript.end_turn(given_up(turn, GivenUpReason::Left, Utc::now()));
+        transcript.record(given_up(turn, GivenUpReason::Left, Utc::now()));
         transcript.push(make_message(id(4)));
 
         stored.apply(transcript.changes().expect("changed")).unwrap();

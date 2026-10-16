@@ -1,6 +1,6 @@
 # 393 — Five wrappers around `History::record` that only assert the variant
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 Part of [391](391-history-and-transcript-review-epic.md).
@@ -46,3 +46,17 @@ a turn's end, and `push_entry`, which appends any entry as it is.
 
 - **2026-10-16** — Opened from the review of the history and the transcript
   ([391](391-history-and-transcript-review-epic.md)).
+- **2026-10-16** — Done. `History::record` and `Transcript::record` are public and take whatever is
+  no change of a message - on the history `HistoryEntry::is_item`, on the transcript
+  `TranscriptEntry::changed` is `None`, asserted in a debug build -, a message said included:
+  `push` and `give` are written through them. The five wrappers of the history,
+  `Transcript::end_turn` and `push_entry` are gone; a change is appended by a private `append`
+  behind the method that checks it, which is what keeps it from being recorded unchecked. Wider
+  than the assertion first proposed above, which left a message said out: the one rule "a change
+  goes through its own method" is simpler to state than a list of what `record` takes.
+
+  `HistoryEntry::of_event` was weighed and not taken up. With one `record` the arms of
+  `ChannelLoop::append_history` are one constructor each; which events are part of the channel's
+  record - not a command the session ran, which carries no turn - is the channel's rule, not the
+  history's; and `finish_turn` and `give_up_turn` build an agent's ends from its turn, not from an
+  event, so there is no second copy of the mapping to fold into it.

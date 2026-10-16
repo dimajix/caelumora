@@ -76,3 +76,6 @@ order along the way.
 - **2026-10-16** — 392 done: the readers of a history held in memory that only tests called live in
   `history::testing`, behind a new `test-support` feature of `caelumora-model`. Next in the order:
   393.
+- **2026-10-16** — 393 done: one `record` on each chain; `HistoryEntry::of_event`, mentioned above,
+  was weighed there and not taken up. Next in the order: 394, which waits for the maintainer's
+  decision.

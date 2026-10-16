@@ -492,18 +492,18 @@ impl ChannelLoop {
                 true
             }
             ActorEvent::TurnFinished { turn_id, .. } => {
-                state.history.end_turn(HistoryEntry::TurnFinished { turn_id: *turn_id, actor: envelope.context.sender_id, at: envelope.timestamp });
+                state.history.record(HistoryEntry::TurnFinished { turn_id: *turn_id, actor: envelope.context.sender_id, at: envelope.timestamp });
                 true
             }
             ActorEvent::TurnGivenUp { turn_id, reason } => {
-                state.history.end_turn(HistoryEntry::TurnGivenUp { turn_id: *turn_id, actor: envelope.context.sender_id, reason: reason.clone(), at: envelope.timestamp });
+                state.history.record(HistoryEntry::TurnGivenUp { turn_id: *turn_id, actor: envelope.context.sender_id, reason: reason.clone(), at: envelope.timestamp });
                 true
             }
             // A command an agent carried out is part of the record (issue
             // 269), before its turn's end; who asked is the initiator. One
             // the session ran addresses the system and is not.
             ActorEvent::CommandExecuted { turn_id: Some(turn_id), command, args, .. } => {
-                state.history.record_command(HistoryEntry::CommandExecuted {
+                state.history.record(HistoryEntry::CommandExecuted {
                     turn_id: *turn_id,
                     actor: envelope.context.sender_id,
                     issuer: envelope.security.initiator_id,
@@ -516,7 +516,7 @@ impl ChannelLoop {
             // What an agent did of its own accord is part of the record
             // (issue 284), with what came of it, before its turn's end.
             ActorEvent::ActivityFinished { turn_id, activity, output } => {
-                state.history.record_activity(HistoryEntry::ActivityFinished {
+                state.history.record(HistoryEntry::ActivityFinished {
                     turn_id: *turn_id,
                     actor: envelope.context.sender_id,
                     activity: activity.clone(),
@@ -526,7 +526,7 @@ impl ChannelLoop {
                 true
             }
             ActorEvent::PlanStepStarted { turn_id, step_index, total_steps, description } => {
-                state.history.start_plan_step(HistoryEntry::PlanStepStarted {
+                state.history.record(HistoryEntry::PlanStepStarted {
                     turn_id: *turn_id,
                     actor: envelope.context.sender_id,
                     step_index: *step_index,
