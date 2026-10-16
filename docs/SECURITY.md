@@ -611,7 +611,8 @@ The user chain fails differently from the secret chain:
 *   An unknown user is reported exactly like a wrong password.
 
 There is no default provider. The only built-in one so far, `accept_any`, is a development stand-in:
-it accepts any username and password and finds users in the `EntityStore`. It must be enabled
+it accepts any username, with any password or none (`Credential::Trusted`), and finds users in the
+`EntityStore`. It must be enabled
 explicitly and warns at startup. It gives users the roles its configuration names for them, which
 must be configured roles - refused when it is made otherwise; what
 roles grant - clearances - is described in [CONFIDENTIALITY.md](CONFIDENTIALITY.md#clearances).
@@ -621,8 +622,11 @@ roles grant - clearances - is described in [CONFIDENTIALITY.md](CONFIDENTIALITY.
 Users are authenticated by the frontend that serves them; the runtime only receives the
 `SecurityContext` it builds. The REST server logs a user in through the `UserManager` and keeps the
 login as a short-lived signed token in a cookie, renewed by use and bounded in its lifetime, since
-it cannot be revoked (see [REST-SERVER.md](REST-SERVER.md#authentication)). The TUI logs nobody in:
-it acts as one fixed local user.
+it cannot be revoked (see [REST-SERVER.md](REST-SERVER.md#authentication)). The TUI acts for the
+user its `--user` names, through the same `UserManager`, but without a password: it runs in the
+runtime's own process and holds the stores itself, so it vouches for whom it acts for
+(`Credential::Trusted`). A provider that verifies a secret refuses that for a user it knows, so the
+chain does not pass them on to one that takes them without.
 
 ## Secrets
 

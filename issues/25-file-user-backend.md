@@ -159,3 +159,7 @@ unreadable one should deny rather than fall through.
   removed: of the local paths, only the TUI is left to obtain its identity through the providers.
   Without it, its user has no roles, and since clearances are checked it reaches no channel above
   `public` - with `examples/config.yaml` it does not start ("… is not cleared for channel …").
+- **2026-10-16** — The TUI obtains its identity through the providers (`--user <name>`,
+  `Credential::Trusted`), so it starts with `examples/config.yaml` again, its user cleared as
+  `accept_any` configures them. A provider that verifies a secret refuses `Trusted` for a user it
+  knows; with a file backend, the TUI would need a password - to be decided with it.

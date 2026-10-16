@@ -161,3 +161,6 @@ without it treats every authenticated user as the same channel participant.
 - **2026-10-16** — The empty crates `caelumora-client-api` and `caelumora-local-client` were
   removed. What *Done when* says of the local client lapses with it; the TUI is the one in-process
   frontend left that fabricates its `SecurityContext`.
+- **2026-10-16** — The TUI no longer fabricates its user: `--user <name>` names whom it acts for,
+  authenticated through the `UserManager` with `Credential::Trusted` - no secret, since it runs in
+  the runtime's process -, and recorded with their roles as a login records them.
