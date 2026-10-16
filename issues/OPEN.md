@@ -20,7 +20,7 @@ the pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this 
 | [04](04-postgres-state-store.md) | open | `StateStore` likewise — and it holds the state whose loss is most expensive, including agents suspended on an approval. |
 | [05](05-postgres-event-recorder.md) | open | The `Recorder` hook is wired into every channel, but `BlackholeRecorder` is the only implementation, so nothing is recorded. |
 | [182](182-entity-reads-not-cached.md) | open | Personalities, agents and users are read from the store again for every use - for every member of a channel, on every turn - though they change rarely. |
-| [379](379-history-stored-as-it-stands.md) | open | A page of a channel's or an agent's history costs folding the whole chain, however far back and however small the page is, though the history is read almost only in pages. |
+| [379](379-history-stored-as-it-stands.md) | in progress | A page of a channel's or an agent's history costs folding the whole chain, however far back and however small the page is, though the history is read almost only in pages. |
 | [380](380-transcript-window.md) | open | An agent's transcript holds every branch it ever had in memory, though only the active branch is given to the model and an old branch is read for the context of an old message alone. |
 | [383](383-prompt-texts-and-tool-sets-kept-per-turn.md) | open | Every prompt text and tool set an agent was ever given in a channel is held in memory for the record, though only the current turn's and an old context's are read. |
 
