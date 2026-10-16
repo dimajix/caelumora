@@ -1,6 +1,6 @@
 # 376 — Histories and transcripts are held in memory whole
 
-**Status:** in progress
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -350,3 +350,7 @@ independent of each other and of 6.
   a position or digest before `base` is not found. A suffix refuses to be serialized. Nothing builds
   one outside the tests until 380; the docs say so when something does. With this step the plan
   above is carried out.
+- **2026-10-16** — Done, as narrowed on this day: the plan above is carried out and merged. The
+  *Done when* of the description is reached together with [379](379-history-stored-as-it-stands.md)
+  and [380](380-transcript-window.md), which build on positions, ranges and suffixes; see the epic
+  [378](378-resource-management-epic.md).
