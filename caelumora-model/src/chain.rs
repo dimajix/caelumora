@@ -396,6 +396,29 @@ impl<E> Chain<E> {
         path
     }
 
+    /// Lets go of the entries before the position `from`, so that it holds
+    /// only the part from there on, as a suffix (issue 379): what a holder
+    /// keeps of a chain a store holds whole. Only entries that are stored go,
+    /// and only while the head is from `from` on; otherwise, and before
+    /// `base`, nothing changes.
+    pub fn keep_from(&mut self, from: u64) {
+        let Some(cut) = self.index_of(from) else { return };
+        let head_kept = self.head.is_none_or(|head| self.index.get(&head).is_some_and(|&at| at >= cut));
+        if cut == 0 || !head_kept || self.pending.iter().any(|&at| at < cut) {
+            return;
+        }
+        let kept: Vec<Node<E>> = self.nodes.drain(cut..).collect();
+        let mut suffix = Self { base: self.base + cut as u64, ..Self::default() };
+        for node in kept {
+            suffix.insert(node);
+        }
+        suffix.head = self.head;
+        suffix.path = suffix.path_from(self.head.as_ref());
+        suffix.pending = self.pending.iter().map(|&at| at - cut).collect();
+        suffix.stored_head = self.stored_head;
+        *self = suffix;
+    }
+
     /// The part of a chain from the position `base` on, made of `stored` -
     /// its nodes from that position on and its head - with nothing to store
     /// (issue 376): what a store gives of a chain it holds whole. The first
@@ -668,6 +691,30 @@ mod tests {
     /// The part of `chain` from `base` on, as a store would give it.
     fn suffix_of(chain: &Chain<String>, base: u64) -> Chain<String> {
         Chain::suffix(base, Stored { entries: chain.from(base).cloned().collect(), head: chain.digest() }).unwrap()
+    }
+
+    #[test]
+    fn a_chain_lets_go_of_what_is_stored_before_a_position() {
+        let mut chain = Chain::new();
+        for label in ["a", "b", "c", "d"] {
+            push(&mut chain, label);
+        }
+        let mut whole = chain.clone();
+        chain.keep_from(2);
+        assert_eq!(chain.base(), 0, "nothing goes while it is not stored");
+        chain.mark_stored();
+        push(&mut chain, "e");
+        chain.keep_from(2);
+        assert_eq!((chain.base(), chain.end(), labels(chain.entries())), (2, 5, vec!["c".to_string(), "d".to_string(), "e".to_string()]), "the stored part before it goes, what is pending stays");
+        let changes = chain.changes().expect("still pending");
+        assert_eq!(changes.entries.iter().map(|n| n.seq).collect::<Vec<_>>(), [4], "and is still what changed");
+        whole.mark_stored();
+        whole.apply(changes).unwrap();
+        assert_eq!(whole.digest(), chain.digest(), "which fits the whole chain");
+        chain.keep_from(1);
+        assert_eq!(chain.base(), 2, "nothing before what it holds");
+        push(&mut chain, "f");
+        assert_eq!(chain.at(5).map(|n| n.entry.as_str()), Some("f"), "and it goes on after it");
     }
 
     #[test]

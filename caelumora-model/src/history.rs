@@ -116,6 +116,10 @@ pub fn fold<'a>(nodes: impl IntoIterator<Item = &'a Node<HistoryEntry>>) -> Vec<
     messages
 }
 
+/// How many entries of a history its holder keeps in memory at least (issue
+/// 379): the rest is read from the store.
+pub const WINDOW: u64 = 200;
+
 /// A page of a history's items (issues 218, 379): the last ones before a
 /// position, as `items` gives them, where the page before it ends, and which
 /// history it was read from.
@@ -258,9 +262,10 @@ impl Chain<HistoryEntry> {
     /// Records that message `id` - on whichever branch - is classified
     /// `classification` from now on (issue 133). `false`, and nothing is
     /// recorded, if there is no such message or it was taken back
-    /// (`Message::reclassify`).
+    /// (`Message::reclassify`); one before what it holds is recorded
+    /// (`is_changed`).
     pub fn reclassify(&mut self, id: MessageId, classification: Classification) -> bool {
-        if !self.message(id).is_some_and(|mut m| m.reclassify(&classification)) {
+        if !self.is_changed(id, |m| m.reclassify(&classification)) {
             return false;
         }
         self.record(HistoryEntry::Reclassified { message: id, classification });
@@ -270,9 +275,10 @@ impl Chain<HistoryEntry> {
     /// Records that the message `modified.id` - on whichever branch -
     /// reads as `modified` from now on (issue 234). `false`, and nothing is
     /// recorded, if there is no such message or it cannot be modified so as
-    /// it stands (`Message::modify`): taken back, or by another sender.
+    /// it stands (`Message::modify`): taken back, or by another sender; one
+    /// before what it holds is recorded (`is_changed`).
     pub fn modify(&mut self, modified: Message) -> bool {
-        if !self.message(modified.id).is_some_and(|mut m| m.modify(&modified)) {
+        if !self.is_changed(modified.id, |m| m.modify(&modified)) {
             return false;
         }
         self.record(HistoryEntry::Modified { message: modified });
@@ -281,13 +287,27 @@ impl Chain<HistoryEntry> {
 
     /// Records that the message `id` - on whichever branch - was taken back
     /// at `at` (issue 234). `false`, and nothing is recorded, if there is no
-    /// such message or it was taken back already.
+    /// such message or it was taken back already; one before what it holds
+    /// is recorded (`is_changed`).
     pub fn revoke(&mut self, id: MessageId, at: DateTime<Utc>) -> bool {
-        if !self.message(id).is_some_and(|mut m| m.revoke(at)) {
+        if !self.is_changed(id, |m| m.revoke(at)) {
             return false;
         }
         self.record(HistoryEntry::Revoked { message: id, at });
         true
+    }
+
+    /// Whether what `change` does to the message `id` is a change to
+    /// record: whether it changes the message as it stands, if it holds
+    /// it. Held from a position on (issue 379), it may not hold a message
+    /// said before: the change is recorded then, and the store applies it to
+    /// the message if it holds it - a change of a message it never held
+    /// changes nothing there either.
+    fn is_changed(&self, id: MessageId, change: impl FnOnce(&mut Message) -> bool) -> bool {
+        match self.message(id) {
+            Some(mut standing) => change(&mut standing),
+            None => self.base() > 0,
+        }
     }
 
     /// Records that the channel is classified `channel` now, which every
@@ -472,6 +492,19 @@ mod tests {
         assert_eq!(kinds, ["said changed".to_string(), "step first true".to_string(), text(2), "finished true".to_string(), text(3), "given up true".to_string()],
             "in the order they happened, the change folded into its message, the fitting in every one");
         assert_eq!(history.messages().len(), 3, "the messages alone, as before");
+    }
+
+    #[test]
+    fn a_change_of_a_message_before_what_is_held_is_recorded_for_the_store() {
+        let mut history = History::default();
+        history.extend(vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
+        assert!(!history.revoke(id(9), Utc::now()), "a message it never held, whole");
+        history.mark_stored();
+        history.keep_from(2);
+        assert!(history.revoke(id(1), Utc::now()), "before what it holds: recorded, the store applies it");
+        assert!(history.modify(Message { content: Some("changed".to_string()), ..make_message(id(3)) }), "one it holds as before");
+        assert!(history.revoke(id(3), Utc::now()) && !history.revoke(id(3), Utc::now()), "and taken back once");
+        assert_eq!(history.end(), 6);
     }
 
     #[test]

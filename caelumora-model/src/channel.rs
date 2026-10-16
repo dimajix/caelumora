@@ -4,7 +4,7 @@ use crate::approval::{ApprovalRule, ApprovalStrategy, Approver, ApproverId};
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
 use crate::group::GroupId;
-use crate::history::History;
+use crate::history::{History, WINDOW};
 use crate::message::{Message, MessageId};
 use crate::removal::{Deletable, Removal};
 use crate::scope::{Scope, Scoped};
@@ -382,6 +382,15 @@ impl ChannelState {
             window_from: 0,
         }
     }
+
+    /// Lets go of what its history holds before its window - the last
+    /// `WINDOW` entries - once it is stored, and records where the window
+    /// begins, to be stored with the next put (issue 379). The channel reads
+    /// no further back than that in memory; everything else is the store's.
+    pub fn keep_window(&mut self) {
+        self.history.keep_from(self.history.end().saturating_sub(WINDOW));
+        self.window_from = self.history.base();
+    }
 }
 
 /// A change to a [`ChannelState`] since it was last stored (issue 193). The
@@ -513,6 +522,18 @@ mod tests {
         let at = id(1);
         assert_eq!((HistoryStart::From(at).from(4), HistoryStart::After(at).from(4)), (4, 5));
         assert_eq!(HistoryStart::After(at).message(), at);
+    }
+
+    #[test]
+    fn a_channel_keeps_the_last_entries_of_its_history_once_they_are_stored() {
+        let mut state = ChannelState::new(ChannelId::new());
+        state.history.extend((1..=250).map(|n| make_message(id(n))).collect());
+        state.keep_window();
+        assert_eq!((state.history.base(), state.window_from), (0, 0), "nothing goes before it is stored");
+        state.history.mark_stored();
+        state.keep_window();
+        assert_eq!((state.history.base(), state.history.end(), state.window_from), (50, 250, 50), "the last entries");
+        assert_eq!(state.history.last_message_id(), id(250));
     }
 
     #[test]

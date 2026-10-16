@@ -6,7 +6,7 @@ use crate::confidentiality::{Classification, Visibility};
 use crate::context::{ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptRef};
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
-use crate::history::{HistoryEntry, History};
+use crate::history::{HistoryEntry, History, WINDOW};
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
 use crate::memory::{Memories, MemoryChain};
@@ -356,6 +356,21 @@ pub struct AgentChannelState {
 }
 
 impl AgentChannelState {
+    /// Lets go of what its history holds before its window once it is
+    /// stored, and records where the window begins, to be stored with the
+    /// next put (issue 379): from its last compaction on (issue 16) - the
+    /// branch its transcript gives the model began there, and what it reads
+    /// of its history in memory, a turn and what a branch produced, lies
+    /// after it -, and at least the last `WINDOW` entries. An agent that
+    /// never compacted its context keeps all of it, as its transcript does.
+    pub fn keep_window(&mut self) {
+        let compacted = self.history.all_entries().rev().find(|node| matches!(node.entry, HistoryEntry::Compacted { .. })).map(|node| node.seq);
+        if let Some(compacted) = compacted {
+            self.history.keep_from(compacted.min(self.history.end().saturating_sub(WINDOW)));
+        }
+        self.window_from = self.history.base();
+    }
+
     /// Makes a loaded state fit to run from (issue 75). A state stored
     /// between two steps of a turn is a turn to resume - the server
     /// stopped or crashed in the middle of it - stored with the step that
@@ -1370,6 +1385,27 @@ pub(crate) mod tests {
         // have recorded nothing: as a copy loaded afresh.
         let reloaded: T = serde_json::from_value(serde_json::to_value(&*copy).unwrap()).unwrap();
         assert_eq!(serde_json::to_value(copy.changes()).unwrap(), serde_json::to_value(reloaded.changes()).unwrap(), "replaying records nothing");
+    }
+
+    #[test]
+    fn an_agent_keeps_its_history_from_its_last_compaction_and_at_least_the_last_entries() {
+        use crate::message::tests::{id, make_message};
+        let mut state = AgentChannelState::default();
+        state.history.extend((1..=300).map(|n| make_message(id(n))).collect());
+        state.history.mark_stored();
+        state.keep_window();
+        assert_eq!(state.history.base(), 0, "never compacted: all of it, as its transcript");
+        let compacted = |state: &mut AgentChannelState| state.history.record_compaction(HistoryEntry::Compacted { turn_id: TurnId::new(), actor: ActorId::default(), from: digest::prompt("before"), to: digest::prompt("after"), at: Utc::now() });
+        compacted(&mut state);
+        state.history.extend((301..=310).map(|n| make_message(id(n))).collect());
+        state.history.mark_stored();
+        state.keep_window();
+        assert_eq!((state.history.base(), state.window_from), (111, 111), "at least the last entries, the compaction among them");
+        compacted(&mut state);
+        state.history.extend((311..=600).map(|n| make_message(id(n))).collect());
+        state.history.mark_stored();
+        state.keep_window();
+        assert_eq!(state.history.base(), 311, "from the last compaction on, more than the last entries");
     }
 
     #[test]

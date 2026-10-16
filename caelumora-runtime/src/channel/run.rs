@@ -7,6 +7,8 @@ use crate::logging::envelope_span;
 use crate::transport::{EventSender, TransportError};
 use crate::transport::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
 use anyhow::{anyhow, Result};
+use caelumora_model::channel::ChannelState;
+use caelumora_model::store::StoreResult;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, Rejection, RetryTarget};
 use caelumora_model::confidentiality::ConfidentialityQuestions;
 use caelumora_model::history::HistoryEntry;
@@ -542,10 +544,22 @@ impl ChannelLoop {
         };
 
         if changed {
-            if let Err(e) = self.state_store.put_channel_state(self.id, &mut state).await {
+            if let Err(e) = self.store_state(&mut state).await {
                 warn!("Cannot store state of channel {}: {}", self.id, e);
             }
         }
+    }
+
+    /// Stores `state`, the channel's, and then lets go of what its history
+    /// holds before its window (`ChannelState::keep_window`, issue 379): the
+    /// store has it.
+    ///
+    /// # Errors
+    /// Whatever the `StateStore` reports; nothing is let go then.
+    pub(super) async fn store_state(&self, state: &mut ChannelState) -> StoreResult<()> {
+        self.state_store.put_channel_state(self.id, state).await?;
+        state.keep_window();
+        Ok(())
     }
     async fn record_send_event(&self, event: &Envelope) {
         let mut recorder = self.recorder.lock().await;
@@ -882,6 +896,38 @@ mod tests {
         channel.process_envelope(from(alice_id, ActorEvent::NudgeRequested { participant: alice_id }), &actors).await;
         channel.process_envelope(from(alice_id, ActorEvent::NudgeRequested { participant: ActorId::Agent(AgentId::new()) }), &actors).await;
         assert!(routed.try_recv().is_err(), "neither a user's message nor one another said, nor a turn of someone who is no agent here, nor a nudge of oneself or of a stranger");
+    }
+
+    #[tokio::test]
+    async fn the_channel_keeps_the_end_of_its_history_and_reads_the_rest_from_the_store() {
+        use caelumora_model::history::WINDOW;
+        let alice = user("alice");
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
+        let alice_id = ActorId::User(alice.id);
+        let from = |event| Envelope::new(SecurityContext::new(alice_id, Default::default(), Default::default()), EventContext { sender_id: alice_id, ..EventContext::default() }, event);
+        let said = |n: usize| Message { id: MessageId::new(), sender_id: alice_id, role: MessageRole::User, content: Some(format!("message {n}")), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let (to_alice, _alices) = mpsc::channel(16);
+        let actors = HashMap::from([(alice_id, RunningActor { id: alice_id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(to_alice))), leaving: None })]);
+        let first = said(0);
+        channel.process_envelope(from(ActorEvent::CompleteMessageGenerated(first.clone())), &actors).await;
+        for n in 1..250 {
+            channel.process_envelope(from(ActorEvent::CompleteMessageGenerated(said(n))), &actors).await;
+        }
+        let (base, end, digest) = {
+            let state = channel.state.lock().await;
+            (state.history.base(), state.history.end(), state.history.digest())
+        };
+        assert_eq!((base, end), (end - WINDOW, 250), "the channel holds the end of its history (issue 379)");
+        assert_eq!(channel.visible_messages(alice_id).await.len(), 250, "the store all of it");
+
+        // A message before the window is changed as any: the check reads the store.
+        channel.process_envelope(from(ActorEvent::MessageModified(Message { content: Some("changed".to_string()), ..first.clone() })), &actors).await;
+        assert_eq!(channel.message(first.id).await.and_then(|m| m.content).as_deref(), Some("changed"));
+
+        let loaded = channel.state_store.get_channel_state(channel.id).await.unwrap();
+        assert!(loaded.history.base() > 0, "loaded from where its window began");
+        assert_ne!(loaded.history.digest(), digest, "with the change after it");
+        assert_eq!(loaded.history.end(), 251);
     }
 
     #[tokio::test]

@@ -146,14 +146,19 @@ impl ActorRuntime {
         Ok(self.runtime.runtime_manager.history_store().entries(HistoryKey::Channel(self.channel_id), from).await?)
     }
 
-    /// Stores the state of this agent in its channel, and marks it stored
-    /// (`StateStore`).
+    /// Stores the state of this agent in its channel, marks it stored
+    /// (`StateStore`), and then lets go of what its history holds before
+    /// its window (`AgentChannelState::keep_window`, issue 379): the store
+    /// has it.
     ///
     /// # Errors
-    /// If this actor is no agent, or whatever the `StateStore` reports.
+    /// If this actor is no agent, or whatever the `StateStore` reports;
+    /// nothing is let go then.
     pub async fn store_channel_state(&self, state: &mut AgentChannelState) -> Result<()> {
         let agent = self.agent_id()?;
-        Ok(self.runtime.runtime_manager.state_store().put_agent_channel_state(agent, self.channel_id, state).await?)
+        self.runtime.runtime_manager.state_store().put_agent_channel_state(agent, self.channel_id, state).await?;
+        state.keep_window();
+        Ok(())
     }
 
     /// The global events about the actor's channel (issue 69): nothing about

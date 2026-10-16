@@ -113,7 +113,7 @@ impl ChannelLoop {
         }
         let mut state = self.state.lock().await;
         state.history.fit_into(&classification);
-        self.state_store.put_channel_state(self.id, &mut state).await?;
+        self.store_state(&mut state).await?;
         info!(channel = %self.id, %classification, lowered, by = %context.caller_id, "Channel reclassified");
         Ok(())
     }
