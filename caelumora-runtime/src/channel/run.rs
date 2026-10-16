@@ -116,8 +116,8 @@ impl ChannelLoop {
                     running.insert(handle.id, handle);
                 }
             }
-            ActorChange::Stop(id, remover) => {
-                // Dropping its inbox closes it; told to stop (`Actor::stop`),
+            ActorChange::Leave(id, remover) => {
+                // Dropping its inbox closes it; told to leave (`Actor::leave`),
                 // the actor ends its task itself once its state is stored
                 // consistent. Only if it does not - a tool that hangs - is it
                 // aborted. It keeps running until then: what it sends is
@@ -690,6 +690,7 @@ mod tests {
         }
         fn state(&self) -> ActorState { ActorState::Idle }
         fn stop(&self) {}
+        fn leave(&self) {}
     }
 
     #[tokio::test]
@@ -772,7 +773,7 @@ mod tests {
             ActorEvent::ActivityStarted { turn_id, activity: activity.clone() },
             ActorEvent::ActivityFinished { turn_id, activity, output: "done".to_string() },
             ActorEvent::TurnFinished { turn_id, messages: Vec::new() },
-            ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Stopped },
+            ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Left },
         ];
         for event in of_a_turn {
             let kind = event.kind();
@@ -1066,7 +1067,7 @@ mod tests {
         let mut events = channel.observe();
         let going = ActorId::Agent(AgentId::new());
         let turn_id = TurnId::new();
-        let farewell = Envelope::new(SecurityContext::default().next(going, ActorId::None, ActorId::None), EventContext::new(channel.session_id, channel.id, going, "helper".to_string()), ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Stopped });
+        let farewell = Envelope::new(SecurityContext::default().next(going, ActorId::None, ActorId::None), EventContext::new(channel.session_id, channel.id, going, "helper".to_string()), ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Left });
 
         // Told to stop, its task still runs: what it says is its own (issue 262).
         let running = HashMap::from([(going, leaving_actor(going, SecurityContext::default()))]);

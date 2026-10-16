@@ -1386,7 +1386,7 @@ mod tests {
         let mut state = ChannelState::new(secret.id);
         let plan = said("the plan", &secret.classification);
         state.history.extend(vec![plan.clone(), said("the date", &public.classification)]);
-        let ended = HistoryEntry::TurnGivenUp { turn_id: TurnId::new(), actor: ActorId::Agent(helper.id), reason: GivenUpReason::Stopped, at: Utc::now() };
+        let ended = HistoryEntry::TurnGivenUp { turn_id: TurnId::new(), actor: ActorId::Agent(helper.id), reason: GivenUpReason::Left, at: Utc::now() };
         state.history.end_turn(ended);
         store.put_channel_state(secret.id, &mut state).await.unwrap();
         let mut agent_state = AgentChannelState::default();

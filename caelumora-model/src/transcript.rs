@@ -431,7 +431,7 @@ mod tests {
         let boom = GivenUpReason::Failed { message: "boom".to_string() };
         let earlier = Utc::now() - Duration::hours(1);
         assert_eq!(ended(given_up(turn, boom.clone(), earlier)), transcript.digest(), "the same end at another time");
-        assert_ne!(ended(given_up(turn, GivenUpReason::Stopped, earlier)), transcript.digest(), "another reason");
+        assert_ne!(ended(given_up(turn, GivenUpReason::Left, earlier)), transcript.digest(), "another reason");
         assert_ne!(ended(given_up(TurnId::new(), boom, earlier)), transcript.digest(), "another turn");
         assert_ne!(ended(TranscriptEntry::TurnFinished { turn_id: turn, at: earlier }), transcript.digest(), "taken over");
     }
@@ -445,7 +445,7 @@ mod tests {
 
         let turn = TurnId::new();
         transcript.extend(vec![of_turn(turn, 2), of_turn(turn, 3)]);
-        transcript.end_turn(given_up(turn, GivenUpReason::Stopped, Utc::now()));
+        transcript.end_turn(given_up(turn, GivenUpReason::Left, Utc::now()));
         transcript.push(make_message(id(4)));
 
         stored.apply(transcript.changes().expect("changed")).unwrap();

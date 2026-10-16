@@ -1,6 +1,6 @@
 //! The run control of an agent's actor - an `AgentActor` or an
 //! `ExternalAgentActor` (issue 363): what its run loop shares with
-//! `cancel`, `retry`, `stop`, `wakeup` and `interrupt_call` (see
+//! `cancel`, `retry`, `stop`, `leave`, `wakeup` and `interrupt_call` (see
 //! `RunControl`). Held by its body (`AgentBody`).
 
 use crate::tool::Interruption;
@@ -8,32 +8,37 @@ use caelumora_model::actor::{ActorState, ProcessingStateHolder};
 use caelumora_model::work::TurnId;
 use std::collections::HashMap;
 use std::future::pending;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use tokio::sync::{oneshot, Notify};
 use tokio_util::sync::CancellationToken;
 use std::sync::{Mutex, MutexGuard};
 
-/// What `cancel`, `retry` or `stop` asked of the run loop, which takes it
-/// after every step and alone decides what follows (issue 152). A stop wins
-/// over everything; of a cancel and a retry, the first.
+/// What `cancel`, `retry`, `stop` or `leave` asked of the run loop, which
+/// takes it after every step and alone decides what follows (issue 152).
+/// Leaving wins over everything, then a stop; of a cancel and a retry, the
+/// first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum Interrupt {
     /// End the turn under way and take it over (`Cancelling`).
     Cancel = 1,
-    /// Give the turn under way up and end the run loop: the actor left the
-    /// channel.
+    /// Keep the turn under way at the step it stands at and end the run
+    /// loop: the channel stops, and the turn is resumed when it runs again
+    /// (issue 377).
     Stop = 2,
     /// Give the turn under way up, because its answer was asked for again
     /// (issue 235): a turn of its own answers instead.
     Retry = 3,
+    /// Give the turn under way up and end the run loop: the actor left the
+    /// channel.
+    Leave = 4,
 }
 
 /// `RunControl::interrupt` when nothing was asked.
 const NO_INTERRUPT: u8 = 0;
 
-/// Where the run loop of an agent stands, and what `cancel`, `stop` and
-/// `wakeup` asked of it. These come from other tasks and are synchronous:
+/// Where the run loop of an agent stands, and what `cancel`, `stop`,
+/// `leave` and `wakeup` asked of it. These come from other tasks and are synchronous:
 /// they only leave word here and interrupt the step under way; the run loop
 /// takes the word after every step and alone decides what follows (issue
 /// 152). The same for both kinds of agent (issue 363): an external agent's
@@ -49,19 +54,23 @@ pub(crate) struct RunControl {
     woken: Notify,
     /// The turn that runs or ran last, by its id (issue 235), and its
     /// token, both replaced when the next one begins. The token is cancelled
-    /// by `cancel` and `stop` while the turn runs: the streaming loop waits
+    /// by `cancel`, `stop` and `leave` while the turn runs: the streaming loop waits
     /// on it next to the model's stream, so that a cancel drops the request
     /// instead of waiting for its next chunk, and so does waiting for an
     /// approval. `None` before the first turn. A `std` mutex, because
-    /// `cancel` is synchronous. Every token is a child of `stopped`.
+    /// `cancel` is synchronous. Every token is a child of `ending`.
     turn: Mutex<(Option<TurnId>, CancellationToken)>,
-    /// Cancelled by `stop`: the actor left the channel. A turn begun after
-    /// it finds its token cancelled already; a run loop that waits for more
-    /// than its input - an external agent following its open tasks - waits
-    /// for it too (`stopped`).
-    stopped: CancellationToken,
-    /// What `cancel` or `stop` asked of the run loop (an `Interrupt`, or
-    /// `NO_INTERRUPT`), taken after every step.
+    /// Cancelled by `stop` and `leave`: the run loop is to end. A turn begun
+    /// after it finds its token cancelled already; a run loop that waits for
+    /// more than a turn - for its input, or an external agent following its
+    /// open tasks - waits for it too (`ending`).
+    ending: CancellationToken,
+    /// Set by `leave`, for good: the actor left the channel, and what goes
+    /// on elsewhere on its behalf ends with it (`has_left`). Unlike the
+    /// interrupt, it is not taken.
+    left: AtomicBool,
+    /// What `cancel`, `retry`, `stop` or `leave` asked of the run loop (an
+    /// `Interrupt`, or `NO_INTERRUPT`), taken after every step.
     interrupt: AtomicU8,
     /// The calls of the last tool step that can be interrupted on their own
     /// (issue 276), by their ids, each with where the name of whoever
@@ -75,13 +84,14 @@ impl RunControl {
     /// The run control of an agent that stands at `state`, in the turn
     /// `turn` if it resumes one.
     pub(crate) fn new(state: ActorState, turn: Option<TurnId>) -> Self {
-        let stopped = CancellationToken::new();
+        let ending = CancellationToken::new();
         Self {
             state: ProcessingStateHolder::new(state),
             announced: ProcessingStateHolder::new(state),
             woken: Notify::new(),
-            turn: Mutex::new((turn, stopped.child_token())),
-            stopped,
+            turn: Mutex::new((turn, ending.child_token())),
+            ending,
+            left: AtomicBool::new(false),
             interrupt: AtomicU8::new(NO_INTERRUPT),
             calls: Mutex::new(HashMap::new()),
         }
@@ -121,10 +131,10 @@ impl RunControl {
 
     /// The turn `turn` begins: it gets a token of its own, and a cancel or
     /// a retry that came as the turn before ended has nothing to end here;
-    /// a stop still has.
+    /// a stop or leaving still has.
     pub(crate) fn begin_turn(&self, turn: TurnId) {
-        *self.lock_turn() = (Some(turn), self.stopped.child_token());
-        let _ = self.interrupt.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |asked| (asked != Interrupt::Stop as u8).then_some(NO_INTERRUPT));
+        *self.lock_turn() = (Some(turn), self.ending.child_token());
+        let _ = self.interrupt.try_update(Ordering::SeqCst, Ordering::SeqCst, |asked| (!ends_run(asked)).then_some(NO_INTERRUPT));
     }
 
     /// The turn under way, if the run loop is in one that can still be
@@ -140,7 +150,8 @@ impl RunControl {
         self.state().interruptible()
     }
 
-    /// The token of the current turn, cancelled by `cancel` and `stop`.
+    /// The token of the current turn, cancelled by `cancel`, `stop` and
+    /// `leave`.
     pub(crate) fn token(&self) -> CancellationToken {
         self.lock_turn().1.clone()
     }
@@ -174,31 +185,51 @@ impl RunControl {
         true
     }
 
-    /// Asks the run loop to end: a model call in flight is interrupted, and
-    /// the turn under way is given up instead of taken over.
+    /// Asks the run loop to end because the channel stops (issue 377): the
+    /// step under way is interrupted - a model call in flight, a tool - and
+    /// the turn kept where it stands, to be resumed.
     pub(crate) fn stop(&self) {
         self.interrupt(Interrupt::Stop);
-        self.stopped.cancel();
+        self.ending.cancel();
     }
 
-    /// Returns once `stop` asked the run loop to end - at once if it did.
-    pub(crate) async fn stopped(&self) {
-        self.stopped.cancelled().await;
+    /// Asks the run loop to end because the actor left the channel: the
+    /// step under way is interrupted, and the turn given up instead of
+    /// taken over.
+    pub(crate) fn leave(&self) {
+        self.left.store(true, Ordering::SeqCst);
+        self.interrupt(Interrupt::Leave);
+        self.ending.cancel();
     }
 
-    /// Whether `stop` asked the run loop to end.
-    pub(crate) fn is_stopped(&self) -> bool {
-        self.stopped.is_cancelled()
+    /// Returns once `stop` or `leave` asked the run loop to end - at once if
+    /// one did.
+    pub(crate) async fn ending(&self) {
+        self.ending.cancelled().await;
     }
 
-    /// Leaves `interrupt` for the run loop - a stop is not turned back into
-    /// a cancel - and interrupts the step under way.
+    /// Whether `stop` or `leave` asked the run loop to end.
+    pub(crate) fn is_ending(&self) -> bool {
+        self.ending.is_cancelled()
+    }
+
+    /// Whether `leave` asked the run loop to end: the actor left the
+    /// channel.
+    pub(crate) fn has_left(&self) -> bool {
+        self.left.load(Ordering::SeqCst)
+    }
+
+    /// Leaves `interrupt` for the run loop - leaving is not turned back into
+    /// a stop, nor either into a cancel - and interrupts the step under way.
     fn interrupt(&self, interrupt: Interrupt) {
         match interrupt {
             Interrupt::Cancel | Interrupt::Retry => {
                 let _ = self.interrupt.compare_exchange(NO_INTERRUPT, interrupt as u8, Ordering::SeqCst, Ordering::SeqCst);
             }
-            Interrupt::Stop => self.interrupt.store(Interrupt::Stop as u8, Ordering::SeqCst),
+            Interrupt::Stop => {
+                let _ = self.interrupt.try_update(Ordering::SeqCst, Ordering::SeqCst, |asked| (asked != Interrupt::Leave as u8).then_some(Interrupt::Stop as u8));
+            }
+            Interrupt::Leave => self.interrupt.store(Interrupt::Leave as u8, Ordering::SeqCst),
         }
         self.token().cancel();
     }
@@ -241,31 +272,43 @@ impl RunControl {
             v if v == Interrupt::Cancel as u8 => Some(Interrupt::Cancel),
             v if v == Interrupt::Stop as u8 => Some(Interrupt::Stop),
             v if v == Interrupt::Retry as u8 => Some(Interrupt::Retry),
+            v if v == Interrupt::Leave as u8 => Some(Interrupt::Leave),
             _ => None,
+        }
+    }
+
+    /// What interrupts a call of the turn whose token is `turn`: the turn
+    /// ending, or the channel stopping (issue 377) - told apart by what was
+    /// asked, which the run loop takes only after the step -, or - through
+    /// `by_user`, for a call that can be interrupted on its own
+    /// (`begin_calls`) - a user interrupting this call alone (issue 276).
+    /// The turn's end wins.
+    pub(crate) async fn interruption(&self, turn: CancellationToken, by_user: Option<oneshot::Receiver<String>>) -> Interruption {
+        let by_user = async {
+            match by_user {
+                Some(by_user) => match by_user.await {
+                    Ok(by) => by,
+                    // Nobody can interrupt it any more: the turn's end can.
+                    Err(_) => pending().await,
+                },
+                None => pending().await,
+            }
+        };
+        tokio::select! {
+            biased;
+            () = turn.cancelled() => match self.interrupt.load(Ordering::SeqCst) == Interrupt::Stop as u8 {
+                true => Interruption::Stopped,
+                false => Interruption::TurnEnded,
+            },
+            by = by_user => Interruption::ByUser(by),
         }
     }
 }
 
-/// What interrupts a call of the turn whose token is `turn`: the turn
-/// ending, or - through `by_user`, for a call that can be interrupted on its
-/// own (`RunControl::begin_calls`) - a user interrupting this call alone
-/// (issue 276). The turn's end wins.
-pub(crate) async fn interruption(turn: CancellationToken, by_user: Option<oneshot::Receiver<String>>) -> Interruption {
-    let by_user = async {
-        match by_user {
-            Some(by_user) => match by_user.await {
-                Ok(by) => by,
-                // Nobody can interrupt it any more: the turn's end can.
-                Err(_) => pending().await,
-            },
-            None => pending().await,
-        }
-    };
-    tokio::select! {
-        biased;
-        () = turn.cancelled() => Interruption::TurnEnded,
-        by = by_user => Interruption::ByUser(by),
-    }
+/// Whether `asked`, an `Interrupt` or `NO_INTERRUPT`, ends the run loop:
+/// a stop or leaving, which a new turn does not drop.
+fn ends_run(asked: u8) -> bool {
+    asked == Interrupt::Stop as u8 || asked == Interrupt::Leave as u8
 }
 
 #[cfg(test)]
@@ -291,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stop_wins_over_a_cancel_whichever_comes_first() {
+    fn a_stop_wins_over_a_cancel_whichever_comes_first_and_leaving_over_both() {
         let control = RunControl::new(ActorState::Planning, None);
         control.cancel();
         control.stop();
@@ -301,10 +344,21 @@ mod tests {
         control.stop();
         control.cancel();
         assert_eq!(control.take_interrupt(), Some(Interrupt::Stop));
+
+        let control = RunControl::new(ActorState::Planning, None);
+        control.leave();
+        control.stop();
+        control.cancel();
+        assert_eq!(control.take_interrupt(), Some(Interrupt::Leave));
+
+        let control = RunControl::new(ActorState::Planning, None);
+        control.stop();
+        control.leave();
+        assert_eq!(control.take_interrupt(), Some(Interrupt::Leave));
     }
 
     #[test]
-    fn a_new_turn_drops_a_leftover_cancel_but_not_a_stop() {
+    fn a_new_turn_drops_a_leftover_cancel_but_not_a_stop_nor_leaving() {
         let control = RunControl::new(ActorState::Planning, None);
         control.cancel();
         control.begin_turn(TurnId::new());
@@ -315,16 +369,26 @@ mod tests {
         control.begin_turn(TurnId::new());
         assert_eq!(control.take_interrupt(), Some(Interrupt::Stop));
         assert!(control.token().is_cancelled(), "a turn begun after a stop has nothing to run for");
-        assert!(control.is_stopped());
+        assert!(control.is_ending() && !control.has_left(), "stopped, it did not leave");
+
+        let control = RunControl::new(ActorState::Planning, None);
+        control.leave();
+        control.begin_turn(TurnId::new());
+        assert_eq!(control.take_interrupt(), Some(Interrupt::Leave));
+        assert!(control.token().is_cancelled());
+        assert!(control.is_ending());
+        assert!(control.has_left(), "for good: not taken with the interrupt");
     }
 
     #[tokio::test]
-    async fn a_stop_is_waited_for_also_once_it_came() {
-        let control = RunControl::new(ActorState::Idle, None);
-        assert!(!control.is_stopped());
-        control.stop();
-        control.stopped().await;
-        assert!(control.is_stopped());
+    async fn the_end_is_waited_for_also_once_it_came() {
+        for end in [RunControl::stop, RunControl::leave] {
+            let control = RunControl::new(ActorState::Idle, None);
+            assert!(!control.is_ending());
+            end(&control);
+            control.ending().await;
+            assert!(control.is_ending());
+        }
     }
 
     #[test]
@@ -395,7 +459,7 @@ mod tests {
 
         assert!(control.interrupt_call(turn, "a", "alice".to_string()));
         assert!(!control.interrupt_call(turn, "a", "bob".to_string()), "once");
-        let interrupted = interruption(control.token(), calls.remove("a")).await;
+        let interrupted = control.interruption(control.token(), calls.remove("a")).await;
         assert_eq!(interrupted, Interruption::ByUser("alice".to_string()));
         assert!(!control.token().is_cancelled() && control.take_interrupt().is_none(), "the turn goes on");
 
@@ -411,12 +475,28 @@ mod tests {
         let mut calls = control.begin_calls(["a".to_string()]);
         assert!(control.interrupt_call(turn, "a", "alice".to_string()));
         control.cancel();
-        assert_eq!(interruption(control.token(), calls.remove("a")).await, Interruption::TurnEnded);
-        assert_eq!(interruption(control.token(), None).await, Interruption::TurnEnded, "also a call without an id");
+        assert_eq!(control.interruption(control.token(), calls.remove("a")).await, Interruption::TurnEnded);
+        assert_eq!(control.interruption(control.token(), None).await, Interruption::TurnEnded, "also a call without an id");
 
         let control = RunControl::new(ActorState::Cancelling, Some(turn));
         let _calls = control.begin_calls(["a".to_string()]);
         assert!(!control.interrupt_call(turn, "a", "alice".to_string()), "not in a turn that is ending");
+    }
+
+    /// A call broken off because the channel stops is told so (issue 377):
+    /// its turn is kept, unlike one that is cancelled or given up.
+    #[tokio::test]
+    async fn a_stop_interrupts_every_call_as_stopped_and_leaving_as_ended() {
+        let turn = TurnId::new();
+        let control = RunControl::new(ActorState::ExecutingTools, Some(turn));
+        let mut calls = control.begin_calls(["a".to_string()]);
+        control.stop();
+        assert_eq!(control.interruption(control.token(), calls.remove("a")).await, Interruption::Stopped);
+
+        let control = RunControl::new(ActorState::ExecutingTools, Some(turn));
+        control.stop();
+        control.leave();
+        assert_eq!(control.interruption(control.token(), None).await, Interruption::TurnEnded);
     }
 
     #[test]

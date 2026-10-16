@@ -469,7 +469,7 @@ mod tests {
         let given_up = |turn_id, reason| TranscriptEntry::TurnGivenUp { turn_id, reason, at: Utc::now() };
         let entries = [
             given_up(lowered, GivenUpReason::Lowered { channel: Classification::PUBLIC }),
-            given_up(failed, GivenUpReason::Stopped),
+            given_up(failed, GivenUpReason::Left),
             TranscriptEntry::TurnFinished { turn_id: TurnId::new(), at: Utc::now() },
         ];
         assert_eq!(kept_whole(entries.iter()), HashSet::from([lowered]));

@@ -62,6 +62,22 @@ impl SessionLoop {
         }
     }
 
+    /// Tells the actors of every channel to stop (`ChannelLoop::stop_actors`),
+    /// for a session that stops (issue 377): they keep what they are in the
+    /// middle of, to be resumed when it runs again. All channels at once;
+    /// returns once their actors have ended, or `STOP_GRACE` has passed.
+    pub(crate) async fn stop_actors(&self) {
+        futures::future::join_all(self.channels().iter().map(|channel| channel.stop_actors())).await;
+    }
+
+    /// Has the actors of every channel leave for good
+    /// (`ChannelLoop::leave_actors`), for a session that is deleted (issue
+    /// 377): as when each of its channels is deleted. All channels at once;
+    /// returns once their actors have ended, or `STOP_GRACE` has passed.
+    pub(crate) async fn leave_actors(&self) {
+        futures::future::join_all(self.channels().iter().map(|channel| channel.leave_actors())).await;
+    }
+
     pub fn channel(&self, channel_id: ChannelId) -> Option<Arc<ChannelLoop>> {
         self.channels.get(&channel_id).map(|entry| Arc::clone(&entry.channel))
     }
@@ -239,7 +255,7 @@ impl SessionLoop {
         // Given the time to end by themselves before the channel's task -
         // and with it whoever did not - is aborted (issue 187): they store
         // their state on their way out, which stays.
-        running.stop_actors().await;
+        running.leave_actors().await;
         let event_bus = &self.events;
         if let Some(task) = task {
             task.abort();

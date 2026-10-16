@@ -126,18 +126,30 @@ pub trait Actor: Any + Debug + Send + Sync {
         false
     }
 
-    /// Ends the actor for good, because it left the channel (issue 75) -
-    /// removed from it, or the channel deleted: a turn under way is given
-    /// up, not kept for a resume (issue 145), and the channel told of its
-    /// end - a removed actor's events are taken until its task has ended
-    /// (issue 262). The act that removed it checked its permission and is
-    /// who did it; stopping is its consequence, and like `cancel` and
-    /// `wakeup` knows no caller.
+    /// Ends the actor's task because its channel stops (issue 377) - its
+    /// session is stopped, or the process shuts down - to run again when
+    /// the channel does: a turn under way is stored at the step it stands
+    /// at, to be resumed (issue 75), a tool under way interrupted and
+    /// recorded so (issue 161), and what goes on elsewhere on its behalf -
+    /// an external agent's remote tasks - is kept. The act that stopped
+    /// the session checked its permission; stopping is its consequence, and
+    /// like `cancel` and `wakeup` knows no caller.
     /// Synchronous like `cancel`; every actor ends its own task, one with
     /// state once that state is stored consistent. The channel waits for
     /// that and aborts the task only if it does not end by itself in time
-    /// (issue 187) - which is why there is no default that does nothing.
+    /// (issue 187) - which is why there is no default that does nothing:
+    /// an actor that forgot it would be aborted silently.
     fn stop(&self);
+
+    /// Ends the actor for good, because it left the channel (issues 75,
+    /// 377) - removed from it, or the channel or its session deleted: a
+    /// turn under way is given up, not kept for a resume (issue 145), what
+    /// goes on elsewhere on its behalf ended, and the channel told of its
+    /// end - a removed actor's events are taken until its task has ended
+    /// (issue 262). Otherwise as `stop`: the consequence of a checked act,
+    /// synchronous, its task ended by itself or aborted after the grace,
+    /// and no default.
+    fn leave(&self);
 }
 
 /// The contexts an actor publishes in when it answers: those of the

@@ -27,10 +27,11 @@ pub enum GivenUpReason {
     /// turn ran (issue 141): what the turn saw may not flow into it any
     /// more.
     Lowered { channel: Classification },
-    /// The agent was stopped, leaving the channel: removed from it, or the
-    /// channel deleted. Who did that is a matter of that act, not of its
-    /// consequence - the audit log's (issue 140).
-    Stopped,
+    /// The agent left the channel: removed from it, or the channel or its
+    /// session deleted (issue 377). Who did that is a matter of that act,
+    /// not of its consequence - the audit log's (issue 140). An agent whose
+    /// session merely stops keeps its turn, to be resumed.
+    Left,
     /// Its answer was asked for again while it was under way (issue 235):
     /// a turn of its own answers instead.
     Retried,
@@ -39,8 +40,8 @@ pub enum GivenUpReason {
 impl GivenUpReason {
     /// Whether the agent may be asked to answer anew after a turn given up
     /// so (issue 259): one that failed or whose channel was lowered below
-    /// it. One asked for again is answered anew already; one stopped belongs
-    /// to an agent that left.
+    /// it. One asked for again is answered anew already; one given up as it
+    /// left belongs to an agent that left.
     pub fn may_be_answered_again(&self) -> bool {
         matches!(self, GivenUpReason::Failed { .. } | GivenUpReason::Lowered { .. })
     }
@@ -51,7 +52,7 @@ impl GivenUpReason {
         match self {
             GivenUpReason::Failed { .. } => "it failed",
             GivenUpReason::Lowered { .. } => "the channel's classification was lowered",
-            GivenUpReason::Stopped => "you were stopped",
+            GivenUpReason::Left => "you left the channel",
             GivenUpReason::Retried => "your answer was asked for again",
         }
     }

@@ -649,16 +649,16 @@ async fn an_external_agent_removed_while_it_answers_cancels_its_task_and_gives_i
             }
         }
     }).await.expect("the agent tells the channel it gave its answer up");
-    assert_eq!(farewell, GivenUpReason::Stopped);
+    assert_eq!(farewell, GivenUpReason::Left);
     running.abort();
 }
 
 /// What a deleted channel does with its actors before it aborts its
 /// task (`SessionLoop::delete_channel`, issue 187): an external agent
-/// has cancelled the remote task it followed by the time `stop_actors`
+/// has cancelled the remote task it followed by the time `leave_actors`
 /// returns, and every actor - the approver too - ended by itself.
 #[tokio::test]
-async fn a_stopped_channel_waits_for_its_external_agent_to_cancel_its_open_task() {
+async fn a_deleted_channel_waits_for_its_external_agent_to_cancel_its_open_task() {
     use crate::external::ExternalEvent;
 
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![
@@ -667,7 +667,7 @@ async fn a_stopped_channel_waits_for_its_external_agent_to_cancel_its_open_task(
     let Stuck { channel, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
     answered(&mut events, agent).await;
 
-    channel.stop_all_actors().await;
+    channel.leave_all_actors().await;
     assert_eq!(*remote.cancelled.lock().unwrap(), vec![task("t-1")], "the open task is cancelled before the channel is aborted");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "and that is stored");
@@ -675,6 +675,57 @@ async fn a_stopped_channel_waits_for_its_external_agent_to_cancel_its_open_task(
         .expect("every actor ended by itself, and with them the channel")
         .expect("the channel's task was not aborted")
         .expect("the channel ended without an error");
+}
+
+/// A channel that merely stops keeps its external agent's open task
+/// (issue 377): nothing is cancelled, and the task stays stored, to be
+/// followed again when the channel runs again.
+#[tokio::test]
+async fn a_stopped_channel_keeps_its_external_agents_open_task() {
+    use crate::external::ExternalEvent;
+
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
+        vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::InputRequired("Which city?".to_string()))],
+    ]));
+    let Stuck { channel, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
+    answered(&mut events, agent).await;
+
+    stop_and_wait(&channel, running).await;
+    assert!(remote.cancelled.lock().unwrap().is_empty(), "nothing is cancelled");
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert_eq!(state.remote.open_tasks.iter().map(|t| t.task.clone()).collect::<Vec<_>>(), [task("t-1")], "the task stays stored");
+}
+
+/// Stopped while it answers (issue 377), an external agent leaves the
+/// answer to its remote task: nothing is cancelled, nothing given up, and
+/// what came so far is said with the rest once the task ends - followed
+/// again when the channel runs again.
+#[tokio::test]
+async fn an_external_agent_stopped_while_it_answers_says_the_answer_when_its_channel_runs_again() {
+    use crate::external::ExternalEvent;
+
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
+        vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::Message("Let me think. ".to_string()))],
+    ]).resuming(vec![vec![Ok(ExternalEvent::Message("Found it.".to_string())), Ok(ExternalEvent::Completed)]]));
+    let Stuck { channel, agent, helper, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
+    settled(&helper, ActorState::Planning).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    stop_and_wait(&channel, running).await;
+    assert!(remote.cancelled.lock().unwrap().is_empty(), "the remote task is not cancelled");
+    while let Ok(envelope) = events.try_recv() {
+        let ended = matches!(envelope.event, ActorEvent::TurnGivenUp { .. } | ActorEvent::TurnFinished { .. });
+        assert!(!(envelope.context.sender_id == ActorId::Agent(agent) && ended), "the answer does not end now: {:?}", envelope.event);
+    }
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert_eq!(state.remote.open_tasks.iter().map(|t| t.task.clone()).collect::<Vec<_>>(), [task("t-1")], "the task stays stored");
+
+    let (_restarted, mut events, running) = run_again(&channel).await;
+    let said: Vec<_> = answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("Let me think.") && said[0].contains("Found it."), "what came before the stop, with the rest: {said:?}");
+    assert!(remote.cancelled.lock().unwrap().is_empty());
+    running.abort();
 }
 
 #[tokio::test]

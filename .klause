@@ -1,0 +1,2 @@
+MOUNTS="~/.cargo/registry ~/.cargo/git ~/.npm ~/.cache/yarn"
+NETWORK=host

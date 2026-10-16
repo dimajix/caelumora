@@ -170,9 +170,10 @@ struct ChannelActor {
 /// The actors of a channel's participants.
 type Actors = HashMap<ActorId, ChannelActor>;
 
-/// How long a stopped actor gets to end its task by itself before it is
-/// aborted (issue 75). An agent's tool under way is interrupted by the stop
-/// rather than waited for (issue 161); this is for whatever else hangs.
+/// How long an actor that stops or leaves gets to end its task by itself
+/// before it is aborted (issues 75, 377). An agent's tool under way is
+/// interrupted rather than waited for (issue 161); this is for whatever
+/// else hangs.
 pub const STOP_GRACE: Duration = Duration::from_secs(5);
 
 /// How long adding a participant again waits for the actor it had before
@@ -194,10 +195,10 @@ async fn stopped(tasks: &[TaskTracker]) -> bool {
 /// `run`, which owns their tasks.
 enum ActorChange {
     Start(ChannelActor),
-    /// The actor to stop, and on whose behalf it was removed - in whose name
-    /// `run` announces it once its task has ended (`ParticipantRemoved`,
+    /// The actor that leaves, and on whose behalf it was removed - in whose
+    /// name `run` announces it once its task has ended (`ParticipantRemoved`,
     /// issues 162, 262).
-    Stop(ActorId, SecurityContext),
+    Leave(ActorId, SecurityContext),
 }
 
 #[derive(Debug)]

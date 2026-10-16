@@ -1,5 +1,6 @@
 //! Controlling the actors of a channel: cancelling, waking, interrupting and stopping them.
 
+use crate::actor::Actor;
 use anyhow::Result;
 use caelumora_model::actor::{ActorId, ActorState};
 use caelumora_model::work::TurnId;
@@ -112,22 +113,38 @@ impl ChannelLoop {
         Ok(was_asleep)
     }
 
-    /// Tells every actor of the channel to stop for good (`Actor::stop`) -
-    /// for a channel that is deleted: nothing of it is resumed, and whoever
-    /// follows it through their actor is told it ended, whether or not the
-    /// actors' tasks ever ran (issue 104). Returns once their tasks have
-    /// ended, or `STOP_GRACE` has passed (issue 187): an external agent
-    /// cancels its open remote tasks on its way out, and every actor stores
-    /// its state consistent. Those still running then are the caller's to
-    /// abort, with the channel's task.
+    /// Tells every actor of the channel to stop (`Actor::stop`), for a
+    /// channel that stops with its session (issue 377): what they are in
+    /// the middle of is kept, to be resumed when the channel runs again.
+    /// Returns once their tasks have ended, or `STOP_GRACE` has passed; as
+    /// `leave_actors`.
     pub(crate) async fn stop_actors(&self) {
+        self.end_actors(|actor| actor.stop()).await;
+    }
+
+    /// Tells every actor of the channel to leave it for good
+    /// (`Actor::leave`) - for a channel that is deleted, by itself or with
+    /// its session: nothing of it is resumed, and whoever follows it through
+    /// their actor is told it ended, whether or not the actors' tasks ever
+    /// ran (issue 104). Returns once their tasks have ended, or `STOP_GRACE`
+    /// has passed (issue 187): an external agent cancels its open remote
+    /// tasks on its way out, and every actor stores its state consistent.
+    /// Those still running then are the caller's to abort, with the
+    /// channel's task.
+    pub(crate) async fn leave_actors(&self) {
+        self.end_actors(|actor| actor.leave()).await;
+    }
+
+    /// Tells every actor of the channel to end its task, by `end`, and
+    /// waits for them as `stop_actors` and `leave_actors` say.
+    async fn end_actors(&self, end: impl Fn(&dyn Actor)) {
         let actors = self.actors.load();
         for ChannelActor { actor, .. } in actors.values() {
-            actor.stop();
+            end(actor.as_ref());
         }
         let tasks: Vec<TaskTracker> = actors.values().map(|a| a.task.clone()).collect();
         if !stopped(&tasks).await {
-            warn!("Not every actor of channel {} stopped by itself: the rest is aborted", self.id);
+            warn!("Not every actor of channel {} ended by itself: the rest is aborted", self.id);
         }
     }
 

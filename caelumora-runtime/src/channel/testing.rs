@@ -220,10 +220,16 @@ impl ChannelLoop {
         self.turn_under_way(actor)
     }
 
-    /// Stops every actor, as stopping the channel does
+    /// Stops every actor, as stopping the channel with its session does
     /// (`ChannelLoop::stop_actors`).
     pub async fn stop_all_actors(&self) {
         self.stop_actors().await;
+    }
+
+    /// Has every actor leave, as deleting the channel does
+    /// (`ChannelLoop::leave_actors`).
+    pub async fn leave_all_actors(&self) {
+        self.leave_actors().await;
     }
 
     /// The state of `agent` in this channel, as stored.

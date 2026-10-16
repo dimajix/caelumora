@@ -103,8 +103,13 @@ enum Ending {
     /// The channel was lowered to this classification since it began: it
     /// is given up, nothing of it is published (issue 212).
     Lowered(Classification),
-    /// The actor was stopped meanwhile: the answer is given up, nothing of
-    /// it published, and the channel told (issue 262).
+    /// The actor left the channel meanwhile: the answer is given up,
+    /// nothing of it published, and the channel told (issue 262).
+    Left,
+    /// The channel stopped meanwhile (issue 377): the remote task goes on,
+    /// what came of it so far kept with it, and the answer is said when it
+    /// ends - followed again when the channel runs again. Nothing is said
+    /// now.
     Stopped,
 }
 
@@ -218,8 +223,9 @@ impl ExternalAgentActor {
     }
 
     /// Answers the `ResponseRequested` in `request`. Whatever happens, the
-    /// answer ends here: published, given up with `TurnGivenUp`, or -
-    /// stopped - not at all; and the state is stored. An error ends the
+    /// answer ends here - published, or given up with `TurnGivenUp` -, or
+    /// its channel stops and it ends with the remote task it waits for
+    /// (issue 377); and the state is stored. An error ends the
     /// answer, never the actor.
     async fn respond(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
         let answering = Answering::to(request, self.id(), self.name(), &self.body.security_context());
@@ -227,7 +233,7 @@ impl ExternalAgentActor {
         // The work of this exchange, as a turn: bound by the channel as it
         // is now (issue 212), and how it ends is told as its turn's end.
         let mut work = Work::new(answering.event_context.clone(), answering.security_context.clone(), classification);
-        // A turn of its own, whose token `cancel` and `stop` reach.
+        // A turn of its own, whose token `cancel`, `stop` and `leave` reach.
         self.body.control.begin_turn(work.turn_id);
         let token = self.body.control.token();
         self.go_to(ActorState::Planning, output).await;
@@ -244,9 +250,13 @@ impl ExternalAgentActor {
                 info!("External agent {} {} gives up its answer: the channel was lowered to {}", self.id(), self.name(), channel);
                 vec![ActorEvent::TurnGivenUp { turn_id: work.turn_id, reason: GivenUpReason::Lowered { channel } }]
             }
+            Ok(Ending::Left) => {
+                info!("External agent {} {} gives up its answer: it left the channel", self.id(), self.name());
+                vec![ActorEvent::TurnGivenUp { turn_id: work.turn_id, reason: GivenUpReason::Left }]
+            }
             Ok(Ending::Stopped) => {
-                info!("External agent {} {} gives up its answer: it was stopped", self.id(), self.name());
-                vec![ActorEvent::TurnGivenUp { turn_id: work.turn_id, reason: GivenUpReason::Stopped }]
+                info!("External agent {} {} leaves its answer to its remote task: the channel stops", self.id(), self.name());
+                Vec::new()
             }
             Err(e) => {
                 tracing::error!("External agent {} {} could not answer: {:#}", self.id(), self.name(), e);
@@ -333,11 +343,23 @@ impl ExternalAgentActor {
             let next = tokio::select! {
                 biased;
                 _ = token.cancelled() => {
+                    // The channel stops (issue 377): the remote task is
+                    // left to work on, and what came of it so far is kept
+                    // with it, as when the answer breaks off (issue 195).
+                    // Without a task there is nothing to follow: it ends as
+                    // a cancel does.
+                    if self.body.control.is_ending() && !self.body.control.has_left() {
+                        if let Some(open) = &task {
+                            state.remote.set_unsaid(open, answer.finish());
+                            return Ok(Ending::Stopped);
+                        }
+                        break;
+                    }
                     if let Some(task) = &task {
                         self.cancel_remote(state, &work.security_context, task).await;
                     }
-                    if self.body.control.is_stopped() {
-                        return Ok(Ending::Stopped);
+                    if self.body.control.has_left() {
+                        return Ok(Ending::Left);
                     }
                     // A lowering cancels the channel's actors: what came so
                     // far is then not published, but given up (issue 212).
@@ -409,7 +431,12 @@ impl ExternalAgentActor {
     /// not keep it busy; the next run tries again. A task that asked back
     /// waits for the next request instead. A task whose channel was lowered
     /// since it began is given up instead of followed (`give_up_task`).
+    /// Nothing is followed once the run is to end (issue 377): the answer
+    /// its channel's stop ended is left to the next run.
     async fn follow_open_tasks(&self, state: &mut AgentChannelState, followed: &mut Followed, attempted: &mut HashSet<TaskId>, output: &dyn EventSender) {
+        if self.body.control.is_ending() {
+            return;
+        }
         let working = state.remote.working().cloned();
         for task in working.collect::<Vec<_>>() {
             if !attempted.insert(task.clone()) {
@@ -811,7 +838,7 @@ impl Actor for ExternalAgentActor {
         loop {
             // What others said, a request to respond, or an open task's news.
             tokio::select! {
-                () = self.body.control.stopped() => break,
+                () = self.body.control.ending() => break,
                 received = rx.recv() => {
                     let Some(received) = received else { break };
                     // One answer to all that was queued, to the last request.
@@ -831,8 +858,9 @@ impl Actor for ExternalAgentActor {
             self.body.announce_state(&*output).await;
         }
         // Left the channel: nobody waits for its open tasks any more. A
-        // channel that merely stops keeps them, to be followed again.
-        if self.body.control.is_stopped() {
+        // channel that merely stops keeps them, to be followed again (issue
+        // 377).
+        if self.body.control.has_left() {
             let working: Vec<TaskId> = state.remote.open_tasks.iter().map(|t| t.task.clone()).collect();
             for task in working {
                 let acting = self.acting_for(&state, &task);
@@ -855,9 +883,15 @@ impl Actor for ExternalAgentActor {
     }
 
     fn stop(&self) {
+        info!("Stopping external agent {} {}: its channel stops", self.id(), self.name());
+        // The answer under way is left to its remote task, and `run` ends.
+        self.body.control.stop();
+    }
+
+    fn leave(&self) {
         info!("Stopping external agent {} {}: it left the channel", self.id(), self.name());
         // The answer under way ends too, and so does `run`.
-        self.body.control.stop();
+        self.body.control.leave();
     }
 }
 

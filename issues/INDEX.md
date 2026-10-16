@@ -138,9 +138,10 @@ published before anyone else can take it.
 | [262](262-stopped-turn-not-recorded-while-reflecting.md) | done | An agent removed while its turn ends leaves the turn's messages in the channel's history without an end. |
 | [342](342-invitations.md) | open | Nobody can be invited to a session or channel: who is added is taken in without being asked, told nothing beforehand and unable to decline. |
 | [362](362-retry-of-a-message-of-an-agent-that-left.md) | done | The channel admits a request to answer a message again for an agent that left, and drops it unseen, while the same request for a turn is refused. |
-| [377](377-stopping-a-session-aborts-its-actors.md) | open | Stopping or deleting a session aborts its actors at once, so a turn ends mid-step, a tool is cut off and a deleted session's external agents keep their remote tasks. |
+| [377](377-stopping-a-session-aborts-its-actors.md) | done | Stopping or deleting a session aborts its actors at once, so a turn ends mid-step, a tool is cut off and a deleted session's external agents keep their remote tasks. |
 | [381](381-inactive-channels-held-in-memory.md) | open | A channel nobody has spoken in for days keeps its loop, its actors and their states in memory until its session is stopped, and nothing notices that it is idle. |
 | [382](382-agents-held-without-a-session.md) | open | An agent stays loaded with its memory while nothing uses it, and what still holds it once its sessions are unloaded has not been checked. |
+| [386](386-actor-state-after-a-stop.md) | open | Whoever follows a channel keeps an agent's last state and its answer under way after the session stops, and the follower's reconnect starts the session again. |
 
 ## Identity and access management
 

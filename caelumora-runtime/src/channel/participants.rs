@@ -125,7 +125,7 @@ impl ChannelLoop {
         }
         self.channel.remove_participant(context, participant).await?;
         if let Some(running) = running {
-            self.stop_actor(participant, running, context);
+            self.leave_actor(participant, running, context);
         }
         info!("{} left channel {}, removed by {}", participant, self.id, context.caller_id);
         Ok(())
@@ -152,7 +152,7 @@ impl ChannelLoop {
                 Some(running) => match self.participation.agent_exists(id).await {
                     Ok(true) => {}
                     Ok(false) => {
-                        self.stop_actor(actor, running, &SecurityContext::system());
+                        self.leave_actor(actor, running, &SecurityContext::system());
                         self.channel.announce_resting(id, true);
                         info!("{} was deleted and rests in channel {}", actor, self.id);
                     }
@@ -199,11 +199,11 @@ impl ChannelLoop {
         Ok(())
     }
 
-    /// Stops `running`, the actor of `participant`, and takes it out of the
-    /// channel's actors, the moderator and the mentions; `run` announces it
-    /// in the name of `remover` once its task has ended. The document is
-    /// the caller's.
-    fn stop_actor(&self, participant: ActorId, running: ChannelActor, remover: &SecurityContext) {
+    /// Makes `running`, the actor of `participant`, leave (`Actor::leave`),
+    /// and takes it out of the channel's actors, the moderator and the
+    /// mentions; `run` announces it in the name of `remover` once its task
+    /// has ended. The document is the caller's.
+    fn leave_actor(&self, participant: ActorId, running: ChannelActor, remover: &SecurityContext) {
         let ChannelActor { actor, task, .. } = running;
         self.leaving.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(participant, task);
         self.actors.rcu(|actors| {
@@ -213,8 +213,8 @@ impl ChannelLoop {
         });
         self.moderator.remove_actor(participant);
         self.rebuild_mentions();
-        actor.stop();
-        let _ = self.changes_tx.send(ActorChange::Stop(participant, remover.clone()));
+        actor.leave();
+        let _ = self.changes_tx.send(ActorChange::Leave(participant, remover.clone()));
     }
 
     /// Waits until the actor `participant` had in the channel before has

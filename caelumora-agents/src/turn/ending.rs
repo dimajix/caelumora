@@ -159,7 +159,7 @@ mod tests {
     async fn a_turn_given_up_keeps_what_it_said_and_nothing_it_staged_is_applied() {
         let mut state = a_state_with("mail bob");
         let turn = a_turn_that_called(&mut state, "send_mail", false);
-        turn.give_up(GivenUpReason::Stopped, &Discard).await;
+        turn.give_up(GivenUpReason::Left, &Discard).await;
 
         assert!(state.turn.is_none(), "the turn is over");
         assert_eq!(state.transcript.messages().len(), 3, "what it said is not unsaid (issue 258)");
@@ -167,7 +167,7 @@ mod tests {
         assert_eq!(state.transcript.all_entries().count(), 4, "followed by its end, and nothing branches");
         let turns = given_up_turns(&state);
         assert_eq!(turns.len(), 1);
-        assert_eq!((turns[0].1.clone(), turns[0].2.len()), (GivenUpReason::Stopped, 2));
+        assert_eq!((turns[0].1.clone(), turns[0].2.len()), (GivenUpReason::Left, 2));
         assert!(state.notes.current().is_empty(), "the note it staged is not taken over");
     }
 
@@ -260,7 +260,7 @@ mod tests {
     async fn a_turn_given_up_before_it_said_anything_leaves_its_end() {
         let mut state = a_state_with("hello");
         let turn = Turn::begun(AgentId::default(), &mut state);
-        turn.give_up(GivenUpReason::Stopped, &Discard).await;
+        turn.give_up(GivenUpReason::Left, &Discard).await;
         assert_eq!(given_up_turns(&state).len(), 1, "one rule for every turn (issue 258)");
         assert!(given_up_turns(&state)[0].2.is_empty());
         assert_eq!(state.transcript.entries().len(), 2);

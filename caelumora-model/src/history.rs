@@ -459,8 +459,8 @@ mod tests {
         let mut history = History::default();
         history.push(make_message(id(1)), None);
         assert_eq!(history.turn_given_up_last(agent), None, "no turn ended");
-        history.end_turn(HistoryEntry::TurnGivenUp { turn_id: turn, actor: agent, reason: GivenUpReason::Stopped, at: Utc::now() });
-        assert_eq!(history.turn_given_up_last(agent), Some((turn, GivenUpReason::Stopped)));
+        history.end_turn(HistoryEntry::TurnGivenUp { turn_id: turn, actor: agent, reason: GivenUpReason::Left, at: Utc::now() });
+        assert_eq!(history.turn_given_up_last(agent), Some((turn, GivenUpReason::Left)));
         assert_eq!(history.turn_given_up_last(other), None, "another agent's");
         history.push(make_message(id(2)), None);
         assert_eq!(history.turn_given_up_last(agent), None, "something followed it");
@@ -477,7 +477,7 @@ mod tests {
         history.end_turn(HistoryEntry::TurnFinished { turn_id: finished, actor: ActorId::default(), at });
         history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
         history.push(Message { turn_id: Some(given_up), ..make_message(id(3)) }, None);
-        history.end_turn(HistoryEntry::TurnGivenUp { turn_id: given_up, actor: ActorId::default(), reason: GivenUpReason::Stopped, at });
+        history.end_turn(HistoryEntry::TurnGivenUp { turn_id: given_up, actor: ActorId::default(), reason: GivenUpReason::Left, at });
         history.fit_into(&Classification::CHANNEL_DEFAULT);
 
         let items = history.items();

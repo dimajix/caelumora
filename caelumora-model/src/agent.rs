@@ -1321,16 +1321,16 @@ pub(crate) mod tests {
         state.said(said("mailing", Classification::CHANNEL_DEFAULT));
 
         let turn_id = state.turn.take().expect("a turn was begun").work.turn_id;
-        state.give_up_turn(turn_id, ActorId::default(), GivenUpReason::Stopped);
+        state.give_up_turn(turn_id, ActorId::default(), GivenUpReason::Left);
         let contents = |messages: Vec<Message>| messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>();
         assert_eq!(contents(state.transcript.messages()), ["mail bob", "mailing"], "what it said is not unsaid");
         assert_eq!(contents(state.history.messages()), ["mail bob", "mailing"]);
-        assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnGivenUp { turn_id: t, reason: GivenUpReason::Stopped, .. }) if *t == turn_id));
+        assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnGivenUp { turn_id: t, reason: GivenUpReason::Left, .. }) if *t == turn_id));
         assert_eq!(state.transcript.all_entries().count(), state.transcript.entries().count(), "nothing branches");
         assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::TurnGivenUp { turn_id: t, .. }) if *t == turn_id));
 
         let silent = TurnId::new();
-        state.give_up_turn(silent, ActorId::default(), GivenUpReason::Stopped);
+        state.give_up_turn(silent, ActorId::default(), GivenUpReason::Left);
         assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnGivenUp { turn_id: t, .. }) if *t == silent), "a turn that said nothing leaves its end too");
     }
 
@@ -1348,7 +1348,7 @@ pub(crate) mod tests {
         assert_eq!(state.answers_again_after(TurnId::new()), Err(RetryRefused::NotItsAnswer), "no turn of its own");
         let lowered = given_up(GivenUpReason::Lowered { channel: Classification::PUBLIC });
         assert_eq!(lowered.0.answers_again_after(lowered.1), Ok(()));
-        for reason in [GivenUpReason::Stopped, GivenUpReason::Retried] {
+        for reason in [GivenUpReason::Left, GivenUpReason::Retried] {
             let (state, turn) = given_up(reason.clone());
             assert_eq!(state.answers_again_after(turn), Err(RetryRefused::Ended), "{reason:?}");
         }
@@ -1584,7 +1584,7 @@ pub(crate) mod tests {
         finished.transcript.end_turn(TranscriptEntry::TurnFinished { turn_id: turn, at: Utc::now() });
         assert_eq!(finished.retried(first.id, agent), Ok(vec![first.id]), "its own turn's end");
         let mut given_up = state.clone();
-        given_up.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: turn, reason: GivenUpReason::Stopped, at: Utc::now() });
+        given_up.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: turn, reason: GivenUpReason::Left, at: Utc::now() });
         assert_eq!(given_up.retried(first.id, agent), Err(RetryRefused::NotLast), "a turn given up");
 
         // What its turn did after it is taken back with it - not a step of

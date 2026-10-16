@@ -85,4 +85,6 @@ impl Actor for StandIn {
     }
 
     fn stop(&self) {}
+
+    fn leave(&self) {}
 }

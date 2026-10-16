@@ -3,7 +3,7 @@ use super::body::retry_target;
 use crate::error::failure_message;
 use crate::message::apply_stage_processors;
 use caelumora_runtime::actor::{Actor, Answering};
-use super::run_control::{interruption, Interrupt};
+use super::run_control::Interrupt;
 use crate::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use crate::command::AgentCommandProvider;
 use crate::compaction::{CompactionPolicy, CompactionStrategy};
@@ -85,7 +85,7 @@ impl AgentActor {
         let resume = |state: &mut AgentChannelState| {
             let not_executed = state.prepare_resume(&not_executed_result());
             if not_executed > 0 {
-                warn!("Agent {} in channel {}: {} approved tool calls were not executed before the restart; the model is told", agent_id, channel_id, not_executed);
+                warn!("Agent {} in channel {}: {} approved tool calls were not executed before it stopped; the model is told", agent_id, channel_id, not_executed);
             }
         };
         let (body, components) = AgentBody::build(agent_controller, &personality, Self::COMPONENT_FACETS, &ComponentConfig::default(), actor_runtime, resume).await?;
@@ -235,7 +235,9 @@ impl AgentActor {
     /// are one turn, answering the conversation as it stands, in the
     /// contexts of the request; a retry alone begins one in its own. A
     /// command is carried out where it came in the batch, asleep or not
-    /// (issue 269). `None` once the actor's input is closed.
+    /// (issue 269). `None` once the actor's input is closed; where it
+    /// stands, untouched, once `stop` or `leave` ask the run loop to end
+    /// (issue 377) - the channel's input stays open then.
     async fn handle_waiting(
         &self,
         state: &mut AgentChannelState,
@@ -249,6 +251,7 @@ impl AgentActor {
             tokio::select! {
                 received = rx.recv() => break received,
                 () = self.body.control.woken() => self.body.announce_state(output).await,
+                () = self.body.control.ending() => return Ok(Some(self.body.control.state())),
             }
         };
         let Some(received) = received else { return Ok(None) };
@@ -537,11 +540,14 @@ impl AgentActor {
         loop {
             // A cancel wins over the next chunk, and returning drops the
             // stream - and with it the request to the model.
+            // Interrupted, the step stands where it began: whether it is
+            // cancelled, given up or resumed later is the run loop's to
+            // decide (issues 152, 377).
             let next = tokio::select! {
                 biased;
                 _ = cancelled.cancelled() => {
-                    info!("Stopping for cancelled agent {} {}", self.id(), agent_name);
-                    return Ok(ActorState::Cancelling);
+                    info!("Interrupting the model call of agent {} {}", self.id(), agent_name);
+                    return Ok(ActorState::Planning);
                 }
                 next = response.try_next() => next.with_context(|| "Error during LLM stream".to_string())?,
             };
@@ -601,11 +607,12 @@ impl AgentActor {
         let turn_id = turn.turn_id();
         turn.send_event(ActorEvent::ActivityStarted { turn_id, activity: ACTIVITY.to_string() }, output).await?;
         let cancelled = self.body.control.token();
+        // Interrupted, the step stands where it began, as a model call does.
         let compacted = tokio::select! {
             biased;
             _ = cancelled.cancelled() => {
-                info!("Stopping compacting for cancelled agent {} {}", self.id(), turn.agent_name());
-                return Ok(ActorState::Cancelling);
+                info!("Interrupting the compaction of agent {} {}", self.id(), turn.agent_name());
+                return Ok(ActorState::Busy);
             }
             compacted = self.compaction.compact(turn) => compacted,
         };
@@ -637,10 +644,12 @@ impl AgentActor {
         // a step of a plan, not its final answer - one made while
         // finalizing is not, as its message is not.
         let internal = turn.in_plan_step();
-        // A cancel or stop interrupts the call under way, and no further call
-        // is started (issue 161); those left without a result are abandoned
-        // as the turn ends. What happens to the turn is the run loop's: it
-        // takes the interrupt after this step. A user may interrupt one call
+        // A cancel, stop or leaving interrupts the call under way, and no
+        // further call is started (issue 161); those left without a result
+        // are abandoned as the turn ends, or - stopped - told the model as
+        // not executed when the turn resumes (issues 75, 377). What happens
+        // to the turn is the run loop's: it takes the interrupt after this
+        // step. A user may interrupt one call
         // alone, running or still to run, and the step goes on (issue 276).
         let cancelled = self.body.control.token();
         let to_run = turn.tool_calls().to_run();
@@ -654,7 +663,7 @@ impl AgentActor {
                 turn.tool_calls().skip(index, &by);
                 continue;
             }
-            let result = self.tool_executor.execute(&call, answers.as_ref(), turn, interruption(cancelled.clone(), interrupt)).await;
+            let result = self.tool_executor.execute(&call, answers.as_ref(), turn, self.body.control.interruption(cancelled.clone(), interrupt)).await;
             turn.tool_calls().record(index, result);
         }
         // Once every call has its result, the turn keeps the tool message for
@@ -896,16 +905,17 @@ impl Actor for AgentActor {
                 Err(e) => return Err(e),
             };
 
-            // What `cancel` or `stop` asked for is decided here, after the
-            // step it interrupted, and nowhere else (issue 152). Told to
-            // stop, the actor is leaving the channel: a turn under way is
-            // not resumed later, so it is given up rather than stored to be
-            // resumed (issues 75, 145), and the channel is told - its
+            // What `cancel`, `stop` or `leave` asked for is decided here,
+            // after the step it interrupted, and nowhere else (issue 152).
+            // Told to leave, the actor is leaving the channel: a turn under
+            // way is not resumed later, so it is given up rather than stored
+            // to be resumed (issues 75, 145), and the channel is told - its
             // farewell, which the channel takes until its task has ended
-            // (issue 262).
+            // (issue 262). Told to stop, it stores the step that comes next
+            // below and ends there (issue 377).
             let interrupt = self.body.control.take_interrupt();
-            if interrupt == Some(Interrupt::Stop) {
-                self.give_up(&mut state, GivenUpReason::Stopped, &*output).await;
+            if interrupt == Some(Interrupt::Leave) {
+                self.give_up(&mut state, GivenUpReason::Left, &*output).await;
                 self.settle(&mut state, ActorState::Idle).await;
                 break;
             }
@@ -934,8 +944,9 @@ impl Actor for AgentActor {
                 self.body.control.go_to(if cancelled { ActorState::Cancelling } else { next });
             }
             self.body.store(&mut state).await;
-            // Channel is closed, actor wants to quit
-            if next_state.is_none() {
+            // Channel is closed, actor wants to quit; or the channel stops,
+            // and the turn is resumed when it runs again (issue 377).
+            if next_state.is_none() || interrupt == Some(Interrupt::Stop) {
                 break;
             }
         }
@@ -996,8 +1007,13 @@ impl Actor for AgentActor {
     }
 
     fn stop(&self) {
-        info!("Stopping agent {} {}: it left the channel", self.id(), self.body.agent.name());
+        info!("Stopping agent {} {}: its channel stops", self.id(), self.body.agent.name());
         self.body.control.stop();
+    }
+
+    fn leave(&self) {
+        info!("Stopping agent {} {}: it left the channel", self.id(), self.body.agent.name());
+        self.body.control.leave();
     }
 }
 

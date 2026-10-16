@@ -132,7 +132,7 @@ components never see: they are given the turn's methods (issue 370).
 *   **Taking a turn over** (`Turn::commit`) records its end, `TurnFinished`, after its messages -
     which are in the transcript and history since they were said - applies the changes it staged
     and clears the working state.
-*   **Giving a turn up** (`Turn::give_up`) - failed, stopped, asked for again - unsays nothing: its
+*   **Giving a turn up** (`Turn::give_up`) - failed, left, asked for again - unsays nothing: its
     messages stay where they were said, and its end follows, `TurnGivenUp` with the reason. Nothing
     it staged is applied. What its tools did stays done; calls still without a result are answered
     as not executed. The model is told why the turn ended by a fixed text that says nothing of the
@@ -187,9 +187,18 @@ resumed:
 
 A turn state stored without the turn's working state cannot be resumed; the agent starts `Idle`.
 
-A deliberate end never leaves a turn in the store. An agent removed from its channel is told to
-`stop`: it gives up a turn under way, says so, stores itself idle and ends its task; the channel
-aborts it only if it does not end (see [CHANNELS.md](CHANNELS.md)).
+An agent ends its task in one of two ways (see [CHANNELS.md](CHANNELS.md#ending-an-actor)):
+
+*   **Stopped** - its session is stopped, or the process shuts down - it keeps its turn: the step
+    under way is interrupted and the turn stored at the step it stood at, to be resumed as above
+    when the session runs again (issue 377). A model call is made again, and a tool call that ran
+    is answered as interrupted because the session was stopped; a call that had not run yet is
+    answered as not executed, as after a crash. An approval it waits for stays pending and is asked
+    for again. Nothing is given up and nothing announced.
+*   **Leaving** - removed from its channel, or the channel or its session deleted - it gives up a
+    turn under way (`GivenUpReason::Left`), says so, stores itself idle and ends its task.
+
+Either way the channel aborts the task only if it does not end within `STOP_GRACE`.
 
 ## What an agent saw
 
