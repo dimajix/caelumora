@@ -601,13 +601,13 @@ impl AgentChannelState {
         let mut moved: HashMap<Digest, Option<Digest>> = replaced.into_iter().map(|old| (old, replacement_end)).collect();
         for (old, copy) in kept {
             if let Some(copy) = copy {
-                self.transcript.push_entry(copy);
+                self.transcript.record(copy);
             }
             moved.insert(old, self.transcript.digest());
         }
-        self.transcript.push_entry(TranscriptEntry::Compacted { at: Utc::now() });
+        self.transcript.record(TranscriptEntry::Compacted { at: Utc::now() });
         let to = self.transcript.digest()?;
-        self.history.record_compaction(HistoryEntry::Compacted { turn_id, actor, from, to, at: Utc::now() });
+        self.history.record(HistoryEntry::Compacted { turn_id, actor, from, to, at: Utc::now() });
         for message in given {
             self.history.push(message, None);
         }
@@ -802,10 +802,10 @@ impl AgentChannelState {
         }
         let at = Utc::now();
         if let Some(CommandRequest { command, args, issuer }) = command {
-            self.history.record_command(HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, at });
+            self.history.record(HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, at });
         }
-        self.transcript.end_turn(TranscriptEntry::TurnFinished { turn_id, at });
-        self.history.end_turn(HistoryEntry::TurnFinished { turn_id, actor, at });
+        self.transcript.record(TranscriptEntry::TurnFinished { turn_id, at });
+        self.history.record(HistoryEntry::TurnFinished { turn_id, actor, at });
         changed
     }
 
@@ -814,8 +814,8 @@ impl AgentChannelState {
     /// for a turn that said nothing. What it staged is not applied.
     pub fn give_up_turn(&mut self, turn_id: TurnId, actor: ActorId, reason: GivenUpReason) {
         let at = Utc::now();
-        self.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id, reason: reason.clone(), at });
-        self.history.end_turn(HistoryEntry::TurnGivenUp { turn_id, actor, reason, at });
+        self.transcript.record(TranscriptEntry::TurnGivenUp { turn_id, reason: reason.clone(), at });
+        self.history.record(HistoryEntry::TurnGivenUp { turn_id, actor, reason, at });
     }
 
     /// The approvals its turn waits for (issue 172); none without a turn.
@@ -1436,7 +1436,7 @@ pub(crate) mod tests {
         state.history.mark_stored();
         state.keep_window();
         assert_eq!((state.history.base(), state.history_from), (100, 100), "never compacted: the last entries alone (issue 387)");
-        state.history.record_compaction(HistoryEntry::Compacted { turn_id: TurnId::new(), actor: ActorId::default(), from: digest::prompt("before"), to: digest::prompt("after"), at: Utc::now() });
+        state.history.record(HistoryEntry::Compacted { turn_id: TurnId::new(), actor: ActorId::default(), from: digest::prompt("before"), to: digest::prompt("after"), at: Utc::now() });
         state.history.extend((301..=600).map(|n| make_message(id(n))).collect());
         state.history.mark_stored();
         state.keep_window();
@@ -1651,13 +1651,13 @@ pub(crate) mod tests {
         // Its turn ended: taken over, it is still its last answer; given up,
         // what it said stands and nothing is taken back.
         let mut finished = state.clone();
-        finished.transcript.end_turn(TranscriptEntry::TurnFinished { turn_id: turn, at: Utc::now() });
+        finished.transcript.record(TranscriptEntry::TurnFinished { turn_id: turn, at: Utc::now() });
         assert_eq!(finished.retried(first.id, agent), Ok(vec![first.id]), "its own turn's end");
         let mut given_up = state.clone();
-        given_up.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: turn, reason: GivenUpReason::Left, at: Utc::now() });
+        given_up.transcript.record(TranscriptEntry::TurnGivenUp { turn_id: turn, reason: GivenUpReason::Left, at: Utc::now() });
         assert_eq!(given_up.retried(first.id, agent), Err(RetryRefused::NotLast), "a turn given up");
         let mut compacted = state.clone();
-        compacted.transcript.push_entry(TranscriptEntry::Compacted { at: Utc::now() });
+        compacted.transcript.record(TranscriptEntry::Compacted { at: Utc::now() });
         assert_eq!(compacted.retried(first.id, agent), Err(RetryRefused::NotLast), "a compaction since, which may have summarised it (issue 387)");
 
         // What its turn did after it is taken back with it - not a step of

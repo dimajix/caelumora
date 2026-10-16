@@ -228,7 +228,7 @@ impl Chain<HistoryEntry> {
         if !self.is_changed(id, |m| m.reclassify(&classification)) {
             return false;
         }
-        self.record(HistoryEntry::Reclassified { message: id, classification });
+        self.append(HistoryEntry::Reclassified { message: id, classification });
         true
     }
 
@@ -241,7 +241,7 @@ impl Chain<HistoryEntry> {
         if !self.is_changed(modified.id, |m| m.modify(&modified)) {
             return false;
         }
-        self.record(HistoryEntry::Modified { message: modified });
+        self.append(HistoryEntry::Modified { message: modified });
         true
     }
 
@@ -253,7 +253,7 @@ impl Chain<HistoryEntry> {
         if !self.is_changed(id, |m| m.revoke(at)) {
             return false;
         }
-        self.record(HistoryEntry::Revoked { message: id, at });
+        self.append(HistoryEntry::Revoked { message: id, at });
         true
     }
 
@@ -276,45 +276,25 @@ impl Chain<HistoryEntry> {
     /// Recorded whether or not it changes a message: telling which would
     /// fold the whole history.
     pub fn fit_into(&mut self, channel: &Classification) {
-        self.record(HistoryEntry::Fitted { channel: channel.clone() });
+        self.append(HistoryEntry::Fitted { channel: channel.clone() });
     }
 
-    /// Records how a turn ended (issue 258): `TurnFinished` or
-    /// `TurnGivenUp`, after its messages.
-    pub fn end_turn(&mut self, end: HistoryEntry) {
-        debug_assert!(matches!(end, HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }), "only the end of a turn");
-        self.record(end);
+    /// Records `item`, what happened that is no change of a message (`is_item`):
+    /// a message said - as `push` records it, with what it was produced
+    /// from -, how a turn ended (issue 258), after its messages, where a step
+    /// of its plan began (issue 263), before the messages of the step, a
+    /// command carried out (issue 269) or an activity ended (issue 284),
+    /// before the turn's end, a compaction (issue 16), before what replaced
+    /// the older messages. A change is recorded by its own method -
+    /// `modify`, `revoke`, `reclassify`, `fit_into` -, which says whether it
+    /// applies.
+    pub fn record(&mut self, item: HistoryEntry) {
+        debug_assert!(item.is_item(), "a change is recorded by its own method");
+        self.append(item);
     }
 
-    /// Records that a step of a turn's plan began (issue 263):
-    /// `PlanStepStarted`, before the messages of the step.
-    pub fn start_plan_step(&mut self, start: HistoryEntry) {
-        debug_assert!(matches!(start, HistoryEntry::PlanStepStarted { .. }), "only the start of a plan step");
-        self.record(start);
-    }
-
-    /// Records that a command was carried out in a turn (issue 269):
-    /// `CommandExecuted`, before the turn's end.
-    pub fn record_command(&mut self, executed: HistoryEntry) {
-        debug_assert!(matches!(executed, HistoryEntry::CommandExecuted { .. }), "only a command carried out");
-        self.record(executed);
-    }
-
-    /// Records that an agent ended an activity of its own (issue 284):
-    /// `ActivityFinished`, before the turn's end.
-    pub fn record_activity(&mut self, finished: HistoryEntry) {
-        debug_assert!(matches!(finished, HistoryEntry::ActivityFinished { .. }), "only an activity ended");
-        self.record(finished);
-    }
-
-    /// Records that the agent replaced its context (issue 16):
-    /// `Compacted`, before what replaced its older messages.
-    pub fn record_compaction(&mut self, compacted: HistoryEntry) {
-        debug_assert!(matches!(compacted, HistoryEntry::Compacted { .. }), "only a compaction");
-        self.record(compacted);
-    }
-
-    fn record(&mut self, entry: HistoryEntry) {
+    /// Appends `entry`, whatever it is, with its digest.
+    fn append(&mut self, entry: HistoryEntry) {
         self.push_with(entry, digest::history_chain);
     }
 }
@@ -406,7 +386,7 @@ mod tests {
         let mut history = History::default();
         history.push(make_message(id(1)), None);
         assert_eq!(history.turn_given_up_last(agent), None, "no turn ended");
-        history.end_turn(HistoryEntry::TurnGivenUp { turn_id: turn, actor: agent, reason: GivenUpReason::Left, at: Utc::now() });
+        history.record(HistoryEntry::TurnGivenUp { turn_id: turn, actor: agent, reason: GivenUpReason::Left, at: Utc::now() });
         assert_eq!(history.turn_given_up_last(agent), Some((turn, GivenUpReason::Left)));
         assert_eq!(history.turn_given_up_last(other), None, "another agent's");
         history.push(make_message(id(2)), None);
@@ -419,12 +399,12 @@ mod tests {
         let at = Utc::now();
         let mut history = History::default();
         history.push(make_message(id(1)), None);
-        history.start_plan_step(HistoryEntry::PlanStepStarted { turn_id: finished, actor: ActorId::default(), step_index: 0, total_steps: 1, description: "first".to_string(), at });
+        history.record(HistoryEntry::PlanStepStarted { turn_id: finished, actor: ActorId::default(), step_index: 0, total_steps: 1, description: "first".to_string(), at });
         history.push(Message { turn_id: Some(finished), ..make_message(id(2)) }, None);
-        history.end_turn(HistoryEntry::TurnFinished { turn_id: finished, actor: ActorId::default(), at });
+        history.record(HistoryEntry::TurnFinished { turn_id: finished, actor: ActorId::default(), at });
         history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
         history.push(Message { turn_id: Some(given_up), ..make_message(id(3)) }, None);
-        history.end_turn(HistoryEntry::TurnGivenUp { turn_id: given_up, actor: ActorId::default(), reason: GivenUpReason::Left, at });
+        history.record(HistoryEntry::TurnGivenUp { turn_id: given_up, actor: ActorId::default(), reason: GivenUpReason::Left, at });
         history.fit_into(&Classification::CHANNEL_DEFAULT);
 
         let items = items_of(&history);
@@ -482,21 +462,21 @@ mod tests {
         let ended = |turn_id, actor| HistoryEntry::TurnFinished { turn_id, actor, at };
         let mut history = History::default();
         history.push(said(before, 1), Some(ContextRef::default()));
-        history.end_turn(ended(before, agent));
+        history.record(ended(before, agent));
         let began = history.end();
         assert!(history.said_in_turn(agent, turn).is_empty(), "nothing said yet");
 
         history.push(said(turn, 2), Some(ContextRef::default()));
         history.push(said(theirs, 3), Some(ContextRef::default()));
         // Another actor's turn ends in between: no end of this actor's.
-        history.end_turn(ended(theirs, other));
+        history.record(ended(theirs, other));
         history.push(said(turn, 4), Some(ContextRef::default()));
         assert_eq!(history.turn_began(agent, turn), Some(began), "after the end of its turn before");
         assert_eq!(history.said_in_turn(agent, turn).iter().map(|m| m.id).collect::<Vec<_>>(), [id(2), id(4)], "past the other actor's turn end");
 
-        history.end_turn(ended(turn, agent));
+        history.record(ended(turn, agent));
         history.push(said(TurnId::new(), 5), Some(ContextRef::default()));
-        history.end_turn(ended(TurnId::new(), agent));
+        history.record(ended(TurnId::new(), agent));
         assert!(history.revoke(id(2), at), "changed after later turns");
         assert_eq!(history.said_in_turn(agent, turn).iter().map(|m| m.id).collect::<Vec<_>>(), [id(4)], "an older turn, as it stands");
         assert_eq!(history.said_in_turn(agent, before).iter().map(|m| m.id).collect::<Vec<_>>(), [id(1)], "the first, from the start");

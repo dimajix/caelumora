@@ -854,7 +854,7 @@ mod tests {
         state.perceive(vec![heard.clone()], vec![heard]);
         let before_given = state.transcript.digest();
         state.said(call(agent, 200, 20, Some(4096)));
-        state.transcript.end_turn(TranscriptEntry::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Left, at: Utc::now() });
+        state.transcript.record(TranscriptEntry::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Left, at: Utc::now() });
         // A branch no longer active - as an external agent's earlier calls
         // are (`start_anew`) - counts as well.
         state.transcript.move_head(before_given.as_ref());
