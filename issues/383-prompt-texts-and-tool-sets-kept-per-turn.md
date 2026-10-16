@@ -46,3 +46,7 @@ exactly the texts that context names.
 
 - **2026-10-16** — Opened as part of the epic [378](378-resource-management-epic.md), noticed while
   weighing options on 376.
+- **2026-10-16** — [380](380-transcript-window.md) done: the context of an older message is resolved
+  against a path of the transcript the view loads from the store before
+  (`ContextResolver::on_path`); the prompt texts and tool sets it names are still taken from the
+  agent's state as loaded. This issue loads them the same way, by the digests the context names.

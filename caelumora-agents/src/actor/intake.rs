@@ -120,14 +120,14 @@ impl AgentBody {
                     }
                     ActorEvent::MessageModified(modified) => {
                         if let Some(change) = self.take_in_modified(state, modified).await {
-                            (self.hand_over)(state, change);
+                            (self.hand_over)(&self.runtime, state, change).await;
                         }
                         None
                     }
                     ActorEvent::MessageRevoked { message, at } => {
                         state.history.revoke(message, at);
                         if !state.transcript.revoke(message, at) {
-                            (self.hand_over)(state, TranscriptEntry::Revoked { message, at });
+                            (self.hand_over)(&self.runtime, state, TranscriptEntry::Revoked { message, at }).await;
                         }
                         None
                     }
@@ -220,7 +220,10 @@ mod tests {
     use crate::message::PerceiveInProcessor;
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::security::SecurityContext;
+    use caelumora_runtime::runtime::ActorRuntime;
     use caelumora_runtime::transport::{EventReceiver, InMemoryEventReceiver};
+    use futures::future::BoxFuture;
+    use std::future::ready;
     use caelumora_model::component::ComponentFailPolicy;
     use caelumora_model::message::{MessageId, MessageRole};
     use caelumora_model::confidentiality::Classification;
@@ -323,13 +326,14 @@ mod tests {
         let modified = |message: &Message, text: &str| envelope(ActorEvent::MessageModified(Message { content: Some(text.to_string()), ..message.clone() }));
         let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(Message { id: MessageId::new(), ..said(text) }));
         // Writes down what it is handed, where it is handed it.
-        fn noted(state: &mut AgentChannelState, change: TranscriptEntry) {
+        fn noted<'a>(_: &'a ActorRuntime, state: &'a mut AgentChannelState, change: TranscriptEntry) -> BoxFuture<'a, ()> {
             let text = match change {
                 TranscriptEntry::Modified { message } => format!("modified: {}", message.content.unwrap_or_default()),
                 TranscriptEntry::Revoked { .. } => "taken back".to_string(),
                 _ => "something else".to_string(),
             };
             state.transcript.push(Message { id: MessageId::new(), ..said(&text) });
+            Box::pin(ready(()))
         }
 
         let noting = AgentBody::detached(Vec::new()).handing_over(noted);

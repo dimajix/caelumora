@@ -56,6 +56,7 @@ use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::value::name::Name;
 use chrono::{Utc, DateTime};
+use futures::future::BoxFuture;
 use futures::stream::{BoxStream, SelectAll};
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
@@ -723,7 +724,25 @@ impl Answer {
 /// the message as it stands then. Nothing for a message never given or
 /// taken back where it was given, or while the remote agent keeps no
 /// conversation: then it is given everything anew.
-fn tell(state: &mut AgentChannelState, change: TranscriptEntry) {
+///
+/// What the remote agent was given of the message is read from the store
+/// (`ActorRuntime::transcript_message`, issue 380): it lies on a branch
+/// before the active one, which the actor does not hold, and every branch
+/// given is stored before the next change is taken in. A store that cannot
+/// be read is logged, and nothing is told.
+fn tell<'a>(runtime: &'a ActorRuntime, state: &'a mut AgentChannelState, change: TranscriptEntry) -> BoxFuture<'a, ()> {
+    Box::pin(async move {
+        let Some(id) = change.changed().filter(|_| state.remote.conversation.is_some()) else { return };
+        match runtime.transcript_message(id).await {
+            Ok(was) => give_notice(state, change, was),
+            Err(e) => warn!("External agent cannot read message {} as it was given, to tell of its change: {:#}", id, e),
+        }
+    })
+}
+
+/// Tells the remote agent of `state` of `change` (`tell`), which it was
+/// given the message of as `was` - `None`: never.
+fn give_notice(state: &mut AgentChannelState, change: TranscriptEntry, was: Option<Message>) {
     if state.remote.conversation.is_none() {
         return;
     }
@@ -732,7 +751,7 @@ fn tell(state: &mut AgentChannelState, change: TranscriptEntry) {
         TranscriptEntry::Revoked { message, at } => (message, None, at),
         _ => return,
     };
-    let Some(was) = state.transcript.message(id).filter(|was| was.revoked.is_none()) else { return };
+    let Some(was) = was.filter(|was| was.revoked.is_none()) else { return };
     let mut told = notice(&was, now.as_ref(), at);
     match state.transcript.messages().into_iter().find(|m| m.notice_of == Some(id)) {
         Some(pending) => {
@@ -898,7 +917,12 @@ impl Actor for ExternalAgentActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::agent::AgentId;
+    use caelumora_model::channel::ChannelId;
     use caelumora_model::confidentiality::Classification;
+    use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::store::transcript::TranscriptStore;
+    use caelumora_model::store::StateStore;
     use caelumora_model::user::UserId;
 
     fn said(sender: ActorId, name: &str, text: &str) -> Message {
@@ -912,24 +936,40 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_change_of_a_message_given_is_told_by_a_notice_once_until_it_is_given() {
+    /// Tells of `change` as `tell` does, reading what the remote agent was
+    /// given of the message from `store`, which `state` is put into first,
+    /// as the actor stores it before it takes a change in.
+    async fn tell_from(store: &MemoryStore, state: &mut AgentChannelState, change: TranscriptEntry) {
+        let agent = AgentId::default();
+        let channel = ChannelId::default();
+        store.put_agent_channel_state(agent, channel, state).await.expect("put");
+        state.keep_window();
+        let was = match change.changed() {
+            Some(id) => store.message(agent, channel, id).await.expect("read"),
+            None => None,
+        };
+        give_notice(state, change, was);
+    }
+
+    #[tokio::test]
+    async fn a_change_of_a_message_given_is_told_by_a_notice_once_until_it_is_given() {
         use caelumora_model::external_agent::ConversationId;
         let alice = ActorId::User(UserId::new());
         let (first, second) = (said(alice, "alice", "first"), said(alice, "alice", "second"));
         let at = Utc::now();
         let modified = |text: &str| TranscriptEntry::Modified { message: Message { content: Some(text.to_string()), timestamp: at, ..first.clone() } };
         let told = |state: &AgentChannelState| state.transcript.messages().into_iter().map(|m| (m.notice_of, m.content.unwrap_or_default())).collect::<Vec<_>>();
+        let store = MemoryStore::new();
         let mut state = AgentChannelState::default();
         state.transcript.extend(vec![first.clone(), second.clone()]);
         state.transcript.start_anew();
 
-        tell(&mut state, modified("first, corrected"));
+        tell_from(&store, &mut state, modified("first, corrected")).await;
         assert!(state.transcript.messages().is_empty(), "no conversation that holds it: nothing to tell");
 
         state.remote.conversation = Some(ConversationId("c-1".to_string()));
         for change in [modified("first, corrected"), TranscriptEntry::Revoked { message: second.id, at }, modified("first, corrected again"), TranscriptEntry::Revoked { message: MessageId::new(), at }] {
-            tell(&mut state, change);
+            tell_from(&store, &mut state, change).await;
         }
         assert_eq!(told(&state), [
             (Some(first.id), "[changed an earlier message \"first\"; it now reads:] first, corrected again".to_string()),
@@ -940,7 +980,7 @@ mod tests {
         assert_eq!((notice.sender_id, notice.role, notice.sender_name.as_str()), (alice, MessageRole::User, "alice"), "in the name of the message's sender");
 
         state.transcript.start_anew();
-        tell(&mut state, modified("once more"));
+        tell_from(&store, &mut state, modified("once more")).await;
         assert_eq!(told(&state), [(Some(first.id), "[changed an earlier message \"first\"; it now reads:] once more".to_string())], "after a call, a notice of its own, naming it as it was first given");
 
         let mut revoked = AgentChannelState::default();
@@ -948,7 +988,7 @@ mod tests {
         revoked.transcript.push(first.clone());
         revoked.transcript.revoke(first.id, at);
         revoked.transcript.start_anew();
-        tell(&mut revoked, modified("again"));
+        tell_from(&MemoryStore::new(), &mut revoked, modified("again")).await;
         assert!(revoked.transcript.messages().is_empty(), "taken back where it was given");
     }
 

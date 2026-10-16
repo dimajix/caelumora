@@ -241,10 +241,11 @@ impl ChannelLoop {
     }
 
     /// What `agent` saw in the channel, as a viewer who may read it is shown
-    /// it: its state and its history as stored (`AgentContextView`).
+    /// it: its state, its history and its transcript as stored
+    /// (`AgentContextView`).
     pub async fn agent_context(&self, agent: AgentId) -> AgentContextView {
         let state = self.stored_agent_channel_state(agent).await.expect("the state is read");
-        AgentContextView::of(ActorId::Agent(agent), state, Arc::clone(&self.history_store), HistoryKey::Agent(agent, self.id))
+        AgentContextView::of(agent, self.id, state, Arc::clone(&self.history_store), Arc::clone(self.runtime.transcript_store()))
     }
 
     /// The runtime of this channel built again, as after a restart

@@ -19,6 +19,7 @@ use crate::backend::Backends;
 use caelumora_model::session::Session;
 use caelumora_model::store::{ComponentStore, EntityStores, StateStore, StoreBackend};
 use caelumora_model::store::history::HistoryStore;
+use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::type_map::TypeKey;
 use crate::seed::{self, SeedSection};
 use std::collections::BTreeMap;
@@ -41,6 +42,8 @@ pub struct RuntimeManager {
     pub(super) state_store: Arc<dyn StateStore>,
     /// The read side of the histories the states hold (issue 379).
     pub(super) history_store: Arc<dyn HistoryStore>,
+    /// The read side of the agents' transcripts the states hold (issue 380).
+    pub(super) transcript_store: Arc<dyn TranscriptStore>,
     pub(super) entity_stores: EntityStores,
     /// The preconfigured components, which the seed puts in.
     pub(super) component_store: Arc<dyn ComponentStore>,
@@ -151,6 +154,9 @@ impl RuntimeManager {
 
     /// The read side of the histories the states hold (issue 379).
     pub fn history_store(&self) -> &Arc<dyn HistoryStore> { &self.history_store }
+
+    /// The read side of the agents' transcripts the states hold (issue 380).
+    pub fn transcript_store(&self) -> &Arc<dyn TranscriptStore> { &self.transcript_store }
 
     /// The stores of the entities, one per kind (issue 323).
     pub fn entity_stores(&self) -> &EntityStores { &self.entity_stores }

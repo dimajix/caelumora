@@ -1,20 +1,24 @@
 use crate::agent::{AgentChannelState, AgentId, AgentState};
-use crate::chain::{Chain, Node, Stored as StoredChain};
+use crate::chain::Node;
 use crate::channel::{ChannelId, ChannelState};
 use crate::history::{History, HistoryEntry, HistoryPage};
-use crate::message::MessageId;
+use crate::digest::Digest;
+use crate::message::{Message, MessageId};
 use crate::component::StoredComponents;
 use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use crate::removal::{Deletable, Removal};
 use crate::security::{ActionType, AllowAllPolicy, SecurityContext, AccessPolicy};
 use crate::store::access::{name_free, Access};
 use crate::store::history::{page_of, HistoryKey, HistoryStore, Keep, StandingItems};
+use crate::store::kept_chain::KeptChain;
+use crate::store::transcript::{transcript_of, TranscriptStore};
+use crate::transcript::{known, Transcript, TranscriptEntry};
 use crate::store::query::{self, Filter, NoField, Page, Query};
 use crate::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, Journaled, Policies, StateStore, StoreError, StoreResult, Stored};
 use crate::type_map::TypeMap;
 use crate::value::name::ScopedName;
 use async_trait::async_trait;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::fmt::{self, Debug};
 use std::future::ready;
@@ -24,8 +28,8 @@ use tracing::info;
 /// Every kind's entities, the preconfigured components and the runtime
 /// state, in memory: a store per kind (`MemoryEntityStore`, issue 323),
 /// opened when it is first asked for, and maps for the states - their
-/// documents, and their histories apart, each whole with its items as they
-/// stand (issue 379).
+/// documents, and apart their histories, each whole with its items as they
+/// stand (issue 379), and the agents' transcripts, each whole (issue 380).
 #[derive(Debug)]
 pub struct MemoryStore {
     policies: Policies,
@@ -36,13 +40,14 @@ pub struct MemoryStore {
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
     histories: RwLock<HashMap<HistoryKey, KeptHistory>>,
+    transcripts: RwLock<HashMap<(AgentId, ChannelId), KeptChain<TranscriptEntry>>>,
 }
 
 /// A history as the memory store keeps it: its chain whole, and the items
 /// derived from it.
 #[derive(Debug, Default)]
 struct KeptHistory {
-    chain: History,
+    chain: KeptChain<HistoryEntry>,
     items: StandingItems,
 }
 
@@ -72,6 +77,7 @@ impl MemoryStore {
             agent_channel_states: Default::default(),
             channel_states: Default::default(),
             histories: Default::default(),
+            transcripts: Default::default(),
         }
     }
 
@@ -83,7 +89,7 @@ impl MemoryStore {
         write_lock(&self.histories, |all| {
             let kept = all.entry(key).or_default();
             let end = kept.chain.end();
-            kept.chain.apply(changes).map_err(|e| StoreError::Backend(format!("what {key} added does not fit: {e}")))?;
+            kept.chain.append(changes).map_err(|e| StoreError::Backend(format!("what {key} added does not fit: {e}")))?;
             for node in kept.chain.from(end) {
                 kept.items.take(node);
             }
@@ -98,17 +104,49 @@ impl MemoryStore {
     fn load_history(&self, key: HistoryKey, from: u64) -> StoreResult<History> {
         read_lock(&self.histories, |all| {
             let Some(kept) = all.get(&key) else { return Ok(History::default()) };
-            Chain::suffix(from, StoredChain { entries: kept.chain.from(from).cloned().collect(), head: kept.chain.digest() })
+            kept.chain.suffix(from)
                 .map_err(|e| StoreError::Backend(format!("{key} cannot be read from position {from}: {e}")))
+        })
+    }
+
+    /// Appends what `transcript`, that of `agent` in `channel` as its state
+    /// holds it, added since it was last stored, and marks it stored.
+    fn append_transcript(&self, agent: AgentId, channel: ChannelId, transcript: &mut Transcript) -> StoreResult<()> {
+        let Some(changes) = transcript.changes() else { return Ok(()) };
+        write_lock(&self.transcripts, |all| {
+            all.entry((agent, channel)).or_default().append(changes)
+                .map_err(|e| StoreError::Backend(format!("what {} added does not fit: {e}", transcript_of(agent, channel))))
+        })?;
+        transcript.mark_stored();
+        Ok(())
+    }
+
+    /// The transcript of `agent` in `channel` from the position `from` on,
+    /// as its state holds it; empty if none is kept.
+    fn load_transcript(&self, agent: AgentId, channel: ChannelId, from: u64) -> StoreResult<Transcript> {
+        read_lock(&self.transcripts, |all| {
+            let Some(kept) = all.get(&(agent, channel)) else { return Ok(Transcript::default()) };
+            kept.suffix(from).map_err(|e| StoreError::Backend(format!("{} cannot be read from position {from}: {e}", transcript_of(agent, channel))))
         })
     }
 
     /// `state`'s document - what is stored of it but its history - as a
     /// copy without the history, which is kept apart.
-    fn document<T: Clone>(state: &mut T, history: impl Fn(&mut T) -> &mut History) -> T {
-        let held = std::mem::take(history(state));
+    fn document(state: &mut ChannelState) -> ChannelState {
+        let held = std::mem::take(&mut state.history);
         let document = state.clone();
-        *history(state) = held;
+        state.history = held;
+        document
+    }
+
+    /// `state`'s document - what is stored of it but its history and its
+    /// transcript - as a copy without them, which are kept apart.
+    fn agent_document(state: &mut AgentChannelState) -> AgentChannelState {
+        let history = std::mem::take(&mut state.history);
+        let transcript = std::mem::take(&mut state.transcript);
+        let document = state.clone();
+        state.history = history;
+        state.transcript = transcript;
         document
     }
 
@@ -330,15 +368,17 @@ impl ComponentStore for MemoryStore {
 impl StateStore for MemoryStore {
     async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState> {
         let mut state = read_lock(&self.agent_channel_states, |v| v.get(&(agent_id, channel_id)).cloned()).unwrap_or_default();
-        state.history = self.load_history(HistoryKey::Agent(agent_id, channel_id), state.window_from)?;
+        state.history = self.load_history(HistoryKey::Agent(agent_id, channel_id), state.history_from)?;
+        state.transcript = self.load_transcript(agent_id, channel_id, state.transcript_from)?;
         Ok(state)
     }
 
     async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
         self.append_history(HistoryKey::Agent(agent_id, channel_id), &mut state.history)?;
+        self.append_transcript(agent_id, channel_id, &mut state.transcript)?;
         // Marked first: the copy kept is the state as stored, with nothing pending.
         state.mark_stored();
-        let document = Self::document(state, |s| &mut s.history);
+        let document = Self::agent_document(state);
         write_lock(&self.agent_channel_states, |v| v.insert((agent_id, channel_id), document));
         Ok(())
     }
@@ -356,7 +396,7 @@ impl StateStore for MemoryStore {
 
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
         let mut state = read_lock(&self.channel_states, |v| v.get(&channel_id).cloned()).ok_or_else(|| StoreError::NotFound { entity: "channel_state", id: channel_id.to_string() })?;
-        state.history = self.load_history(HistoryKey::Channel(channel_id), state.window_from)?;
+        state.history = self.load_history(HistoryKey::Channel(channel_id), state.history_from)?;
         Ok(state)
     }
 
@@ -364,7 +404,7 @@ impl StateStore for MemoryStore {
         self.append_history(HistoryKey::Channel(channel_id), &mut state.history)?;
         // Marked first: the copy kept is the state as stored, with nothing pending.
         state.mark_stored();
-        let document = Self::document(state, |s| &mut s.history);
+        let document = Self::document(state);
         write_lock(&self.channel_states, |v| v.insert(channel_id, document));
         Ok(())
     }
@@ -373,6 +413,7 @@ impl StateStore for MemoryStore {
         write_lock(&self.channel_states, |v| v.remove(&channel_id));
         write_lock(&self.agent_channel_states, |v| v.retain(|(_, cid), _| *cid != channel_id));
         write_lock(&self.histories, |v| v.retain(|key, _| !key.in_channel(channel_id)));
+        write_lock(&self.transcripts, |v| v.retain(|(_, cid), _| *cid != channel_id));
         Ok(())
     }
 
@@ -380,6 +421,7 @@ impl StateStore for MemoryStore {
         write_lock(&self.agent_states, |v| v.remove(&agent_id));
         write_lock(&self.agent_channel_states, |v| v.retain(|(aid, _), _| *aid != agent_id));
         write_lock(&self.histories, |v| v.retain(|key, _| !key.of_agent(agent_id)));
+        write_lock(&self.transcripts, |v| v.retain(|(aid, _), _| *aid != agent_id));
         Ok(())
     }
 
@@ -389,7 +431,7 @@ impl StateStore for MemoryStore {
 impl HistoryStore for MemoryStore {
     async fn page(&self, key: HistoryKey, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
         Ok(read_lock(&self.histories, |all| match all.get(&key) {
-            Some(kept) => page_of(kept.items.newest_before(before.unwrap_or(u64::MAX)).cloned(), from, limit, keep, kept.chain.digest()),
+            Some(kept) => page_of(kept.items.newest_before(before.unwrap_or(u64::MAX)).cloned(), from, limit, keep, kept.chain.head()),
             None => HistoryPage::default(),
         }))
     }
@@ -399,16 +441,40 @@ impl HistoryStore for MemoryStore {
     }
 
     async fn entries(&self, key: HistoryKey, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>> {
-        Ok(read_lock(&self.histories, |all| all.get(&key).map(|kept| kept.chain.from(from).cloned().collect()).unwrap_or_default()))
+        Ok(read_lock(&self.histories, |all| all.get(&key).map(|kept| kept.chain.from(from).to_vec()).unwrap_or_default()))
     }
 
     async fn rebuild(&self, key: HistoryKey) -> StoreResult<()> {
         write_lock(&self.histories, |all| {
             if let Some(kept) = all.get_mut(&key) {
-                kept.items = StandingItems::of(kept.chain.all_entries());
+                kept.items = StandingItems::of(kept.chain.from(0));
             }
         });
         Ok(())
+    }
+}
+
+#[async_trait]
+impl TranscriptStore for MemoryStore {
+    async fn path(&self, agent: AgentId, channel: ChannelId, digest: Digest) -> StoreResult<Option<Vec<Node<TranscriptEntry>>>> {
+        read_lock(&self.transcripts, |all| match all.get(&(agent, channel)) {
+            Some(kept) => kept.path(digest).map_err(|e| StoreError::Backend(format!("{} does not lead back to its root: {e}", transcript_of(agent, channel)))),
+            None => Ok(None),
+        })
+    }
+
+    async fn message(&self, agent: AgentId, channel: ChannelId, id: MessageId) -> StoreResult<Option<Message>> {
+        Ok(read_lock(&self.transcripts, |all| all.get(&(agent, channel)).and_then(|kept| known(kept.from(0).iter(), id))))
+    }
+
+    async fn given(&self, agent: AgentId, channel: ChannelId, ids: &[MessageId]) -> StoreResult<HashSet<MessageId>> {
+        Ok(read_lock(&self.transcripts, |all| {
+            all.get(&(agent, channel)).into_iter()
+                .flat_map(|kept| kept.from(0))
+                .filter_map(|node| node.entry.message().map(|m| m.id))
+                .filter(|id| ids.contains(id))
+                .collect()
+        }))
     }
 }
 
@@ -481,6 +547,7 @@ mod tests {
     async fn keeps_the_histories_of_the_states() {
         let store = MemoryStore::new();
         suite::history_store_behaves(&store, &store).await;
+        suite::transcript_store_behaves(&store, &store).await;
     }
 
     #[tokio::test]

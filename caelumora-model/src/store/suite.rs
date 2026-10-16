@@ -18,6 +18,10 @@ use crate::security::{AclEntry, Secured, SecurityAttributes, SecurityContext};
 use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityKind, EntityStore, EntityStores, Journaled, NoEntity, StateStore, StoreError, Stored};
 use crate::store::history::{every, HistoryKey, HistoryStore};
+use crate::store::transcript::TranscriptStore;
+use crate::chain::Node;
+use crate::digest;
+use crate::transcript::TranscriptEntry;
 use crate::history::{History, HistoryEntry};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
 use crate::removal::{Deletable, Removal};
@@ -735,7 +739,7 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
 
     let loaded = states.get_channel_state(channel).await.expect("get");
     assert_eq!((loaded.history.digest(), loaded.history.end(), loaded.history.base()), (state.history.digest(), state.history.end(), 0), "the history comes back whole");
-    state.window_from = 590;
+    state.history_from = 590;
     states.put_channel_state(channel, &mut state).await.expect("put where the window begins");
     let loaded = states.get_channel_state(channel).await.expect("get");
     assert_eq!((loaded.history.base(), loaded.history.end(), loaded.history.digest()), (590, state.history.end(), state.history.digest()), "from where the state holds it");
@@ -760,6 +764,65 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     states.put_agent_channel_state(agent, ChannelId::new(), &mut again).await.expect("put");
     states.delete_agent_state(agent).await.expect("delete");
     assert!(histories.page(agents_key, 0, None, 10, &every).await.unwrap().items.is_empty(), "an agent's histories go with it");
+}
+
+/// A transcript kept apart from its state (issue 380): written by the put,
+/// loaded from where the state holds it, every branch read by the
+/// `TranscriptStore` - a path to a digest, a message as it stands on its
+/// branch, which messages it holds -, a digest there twice, and gone with
+/// the state.
+pub(crate) async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn TranscriptStore) {
+    use crate::message::tests::{id, make_message};
+    let (channel, agent) = (ChannelId::new(), AgentId::new());
+    let seqs = |path: Option<Vec<Node<TranscriptEntry>>>| path.map(|path| path.iter().map(|node| node.seq).collect::<Vec<_>>());
+    assert!(transcripts.path(agent, channel, digest::prompt("nothing")).await.unwrap().is_none(), "no transcript yet");
+    assert!(transcripts.message(agent, channel, id(1)).await.unwrap().is_none());
+
+    let mut state = AgentChannelState::default();
+    for n in 1..=300 {
+        state.transcript.push(make_message(id(n)));
+    }
+    assert!(state.transcript.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) }));
+    let first = state.transcript.start_anew().expect("a branch");
+    state.transcript.push(make_message(id(301)));
+    states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
+    assert!(state.transcript.changes().is_none(), "the transcript is marked stored");
+
+    let expected = seqs(state.transcript.prefix(&first).map(|path| path.into_iter().cloned().collect()));
+    assert_eq!(seqs(transcripts.path(agent, channel, first).await.unwrap()), expected, "the path to a digest on an older branch");
+    assert_eq!(seqs(transcripts.path(agent, channel, state.transcript.digest().unwrap()).await.unwrap()), Some(vec![301]), "on the active one");
+    assert_eq!(transcripts.message(agent, channel, id(1)).await.unwrap().and_then(|m| m.content), Some("changed".to_string()), "as it stands on its branch");
+    assert!(transcripts.message(agent, channel, id(999)).await.unwrap().is_none());
+    let given = transcripts.given(agent, channel, &[id(1), id(301), id(999)]).await.unwrap();
+    assert_eq!(given, [id(1), id(301)].into_iter().collect(), "which it holds, on whichever branch");
+
+    let loaded = states.get_agent_channel_state(agent, channel).await.expect("get");
+    assert_eq!((loaded.transcript.digest(), loaded.transcript.end(), loaded.transcript.base()), (state.transcript.digest(), state.transcript.end(), 0), "the transcript comes back whole");
+
+    // Held from a position on, a root given again is added a second time.
+    let end = state.transcript.end();
+    state.transcript.start_anew();
+    state.transcript_from = end;
+    states.put_agent_channel_state(agent, channel, &mut state).await.expect("put where the window begins");
+    let mut window = states.get_agent_channel_state(agent, channel).await.expect("get");
+    assert_eq!((window.transcript.base(), window.transcript.is_empty()), (end, true), "from where the state holds it");
+    let root = state.transcript.prefix(&first).and_then(|path| path.first().map(|node| node.digest)).expect("a root");
+    window.transcript.push(make_message(id(1)));
+    assert_eq!(window.transcript.digest(), Some(root), "the same digest");
+    states.put_agent_channel_state(agent, channel, &mut window).await.expect("a digest there twice");
+    assert_eq!(seqs(transcripts.path(agent, channel, root).await.unwrap()), Some(vec![end]), "the newest");
+
+    let mut other = AgentChannelState::default();
+    other.transcript.push(make_message(id(1)));
+    states.put_agent_channel_state(agent, ChannelId::new(), &mut other).await.expect("put");
+    states.delete_channel_state(channel).await.expect("delete");
+    assert!(transcripts.path(agent, channel, root).await.unwrap().is_none(), "gone with the channel's state");
+    states.put_agent_channel_state(agent, channel, &mut AgentChannelState::default()).await.expect("put");
+    let mut again = AgentChannelState::default();
+    again.transcript.push(make_message(id(2)));
+    states.put_agent_channel_state(agent, channel, &mut again).await.expect("put");
+    states.delete_agent_state(agent).await.expect("delete");
+    assert!(transcripts.given(agent, channel, &[id(2)]).await.unwrap().is_empty(), "and with the agent");
 }
 
 /// `value` marked deleted, as only deleting may.

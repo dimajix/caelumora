@@ -10,7 +10,7 @@ use caelumora_model::chain::Node;
 use caelumora_model::channel::{self, Channel, ChannelId};
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::history::HistoryEntry;
-use caelumora_model::message::MessageId;
+use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
 use crate::agent::state::AgentStateHandle;
@@ -144,6 +144,19 @@ impl ActorRuntime {
     /// Whatever the `HistoryStore` reports.
     pub async fn channel_entries(&self, from: u64) -> Result<Vec<Node<HistoryEntry>>> {
         Ok(self.runtime.runtime_manager.history_store().entries(HistoryKey::Channel(self.channel_id), from).await?)
+    }
+
+    /// The message `id` as this agent's transcript in its channel holds it,
+    /// on whichever branch, with every change of it recorded since (issue
+    /// 380): what the remote side of an external agent was given of it, read
+    /// from the store, since its actor holds only the active branch. `None`
+    /// if the transcript holds it nowhere.
+    ///
+    /// # Errors
+    /// If this actor is no agent, or whatever the `TranscriptStore` reports.
+    pub async fn transcript_message(&self, id: MessageId) -> Result<Option<Message>> {
+        let agent = self.agent_id()?;
+        Ok(self.runtime.transcript_store().message(agent, self.channel_id, id).await?)
     }
 
     /// Stores the state of this agent in its channel, marks it stored

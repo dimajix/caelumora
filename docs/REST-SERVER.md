@@ -118,7 +118,7 @@ its handler's doc comment.
 | `POST`, `DELETE …/participants`, `…/participants/{aid}`; `GET …/participants/{aid}` | Add or remove a participant - one not in the session yet is taken into it, too; one participant, with what its model calls used and who it is |
 | `POST …/participants/{aid}/retry`, `…/cancel`, `…/tool-calls/{call_id}/cancel` | Ask one agent to answer again; end its turn alone; interrupt one tool call of its turn |
 | `GET …/notes` | The notes the channel's agents published |
-| `GET …/actors/{aid}/messages/{mid}/context` | What an agent's model saw when it wrote a message: `403 context_forbidden`, `404 context_not_recorded` (not produced by that actor), `404 context_unavailable` (recorded, no longer resolvable) |
+| `GET …/actors/{aid}/messages/{mid}/context` | What an agent's model saw when it wrote a message, its transcript read from the store on whichever branch: `403 context_forbidden`, `404 context_not_recorded` (not produced by that actor), `404 context_unavailable` (recorded, no longer resolvable), `500 context_failed` (the store could not be read) |
 | `GET …/actors/{aid}/history`, `…/components`, `…/tools` | A page of all that was offered to an agent and what it said; the components it was built from in the channel; the tools it has now |
 | `GET`, `POST …/commands` | The commands of the channel the user may see; issue one |
 | `GET …/channels/{cid}/events`, `GET /events` | The channel's stream; the global stream |
@@ -265,7 +265,9 @@ position in the history of the oldest item of the page, what the page before it 
 (`?before=`), and `null` once there is none; a client passes it on and computes nothing with it. A
 page holds no item from before where the reader's view of the history begins, and its messages stand
 as they do now, with every change made since. A page is read from the store in the cost of the page
-(issue 379, see [STORAGE.md](STORAGE.md#histories)).
+(issue 379, see [STORAGE.md](STORAGE.md#histories)). On a page of an agent's history, whether each
+message reached the agent's transcript (`in_transcript`) is asked of the store once for the page,
+on whichever branch (issue 380).
 
 ### Who follows a channel
 

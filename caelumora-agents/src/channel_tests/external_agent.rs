@@ -200,7 +200,10 @@ async fn what_an_external_agents_perceive_processors_drop_is_kept_but_never_give
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
     assert_eq!(contents(state.history.messages()), vec!["hello", "Hello, alice.", "the secret is 42"], "its history keeps all it was offered");
-    assert_eq!(contents(state.transcript.all_entries().filter_map(|e| e.entry.message().cloned()).collect()), vec!["hello"], "its transcript what it was given");
+    let offered: Vec<MessageId> = state.history.messages().iter().map(|m| m.id).collect();
+    let given = channel.agent_context(agent).await.in_transcript(&offered).await.expect("read");
+    let given: Vec<Message> = state.history.messages().into_iter().filter(|m| given.contains(&m.id)).collect();
+    assert_eq!(contents(given), vec!["hello"], "its transcript what it was given, on whichever branch");
     assert_eq!(remote.sent.lock().unwrap().len(), 1, "the secret was not given to the remote agent");
 
     alice.send_message("and now?".to_string(), None).await.unwrap();
@@ -271,8 +274,10 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
     assert!(state.remote.open_tasks.is_empty(), "both tasks ended");
     let kept: Vec<_> = state.history.messages().into_iter().filter_map(|m| m.content).collect();
     assert_eq!(kept, vec!["hello", "Hello, alice.", "How are you?", "Fine."], "what it heard and what it answered");
-    let given: Vec<_> = state.transcript.all_entries().filter_map(|e| e.entry.message()?.content.clone()).collect();
-    assert_eq!(given, vec!["hello", "How are you?"], "what the remote agent was given, as received");
+    let offered: Vec<MessageId> = state.history.messages().iter().map(|m| m.id).collect();
+    let passed_on = channel.agent_context(agent).await.in_transcript(&offered).await.expect("read");
+    let given: Vec<_> = state.history.messages().into_iter().filter(|m| passed_on.contains(&m.id)).filter_map(|m| m.content).collect();
+    assert_eq!(given, vec!["hello", "How are you?"], "what the remote agent was given, on whichever branch");
     assert!(state.transcript.messages().is_empty(), "all of it sent: nothing to give next");
     // The context of each answer is what was given in its call (issue 205).
     assert_eq!(given_for(&channel, agent, &first[0]).await, ["@alice: hello"], "as it was given, marked");

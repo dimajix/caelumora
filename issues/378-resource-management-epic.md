@@ -91,3 +91,7 @@ order along the way.
   and the channel loop and an agent's actor hold a window of their history. Its store contract - the
   put of a state writes the chain and the document, the `HistoryStore` is the read side - is what
   380 builds the `TranscriptStore` alike to.
+- **2026-10-16** — 380 done: an agent's actor holds the active branch of its transcript, every older
+  branch is read from the store by the `TranscriptStore`, built alike to the `HistoryStore`; both
+  stores keep the two chains by one implementation. Next in the order: 383, whose prompt texts and
+  tool sets are what `AgentContextView::context_of` still takes from the loaded state.

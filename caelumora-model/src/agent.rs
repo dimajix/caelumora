@@ -310,7 +310,7 @@ pub struct AgentChannelState {
     pub processing_state: ActorState,
     /// The conversation of the channel as the agent keeps it - all that was
     /// offered to it (issue 196) - each of its own messages with what it was
-    /// produced from (issue 06). From `window_from` on, as a store loads it:
+    /// produced from (issue 06). From `history_from` on, as a store loads it:
     /// not part of the state's document, but a chain a store keeps apart
     /// (issue 379), written with the state and read on its own
     /// (`HistoryStore`).
@@ -318,12 +318,19 @@ pub struct AgentChannelState {
     pub history: History,
     /// The position from which on the agent keeps its history in memory; a
     /// store loads the history from there.
-    pub window_from: u64,
+    pub history_from: u64,
     /// What the agent's model is given of the conversation: its own
     /// messages in full, internal steps included, and what others said
     /// (issue 50). Of an external agent, what the remote agent was given,
-    /// in the order it was given (issue 179).
+    /// in the order it was given (issue 179). From `transcript_from` on, as
+    /// a store loads it: not part of the state's document, but a chain a
+    /// store keeps apart (issue 380), written with the state and read on its
+    /// own (`TranscriptStore`).
+    #[serde(skip)]
     pub transcript: Transcript,
+    /// The position from which on the agent keeps its transcript in memory;
+    /// a store loads the transcript from there.
+    pub transcript_from: u64,
     /// The notes the agent published in this channel (issue 17).
     pub notes: NoteChain,
     /// The agent's private notes in this channel, which only it reads - and
@@ -356,19 +363,27 @@ pub struct AgentChannelState {
 }
 
 impl AgentChannelState {
-    /// Lets go of what its history holds before its window once it is
-    /// stored, and records where the window begins, to be stored with the
-    /// next put (issue 379): from its last compaction on (issue 16) - the
-    /// branch its transcript gives the model began there, and what it reads
-    /// of its history in memory, a turn and what a branch produced, lies
-    /// after it -, and at least the last `WINDOW` entries. An agent that
-    /// never compacted its context keeps all of it, as its transcript does.
+    /// Lets go of what its history and its transcript hold before their
+    /// windows once they are stored, and records where the windows begin,
+    /// to be stored with the next put (issues 379, 380).
+    ///
+    /// The history from its last compaction on (issue 16) - the branch its
+    /// transcript gives the model began there, and what it reads of its
+    /// history in memory, a turn and what a branch produced, lies after it
+    /// -, and at least the last `WINDOW` entries; an agent that never
+    /// compacted its context keeps all of it. The transcript from the root
+    /// of its active branch on: every reader in memory reads that branch
+    /// alone, and what lies before is read from the store
+    /// (`TranscriptStore`); right after it began anew, nothing.
     pub fn keep_window(&mut self) {
         let compacted = self.history.all_entries().rev().find(|node| matches!(node.entry, HistoryEntry::Compacted { .. })).map(|node| node.seq);
         if let Some(compacted) = compacted {
             self.history.keep_from(compacted.min(self.history.end().saturating_sub(WINDOW)));
         }
-        self.window_from = self.history.base();
+        self.history_from = self.history.base();
+        let root = self.transcript.entries().next().map_or(self.transcript.end(), |node| node.seq);
+        self.transcript.keep_from(root);
+        self.transcript_from = self.transcript.base();
     }
 
     /// Makes a loaded state fit to run from (issue 75). A state stored
@@ -835,13 +850,13 @@ pub enum RetryRefused {
 /// 193): a variant per part of the state. A change of the agent's *state* -
 /// what it heard, said, noted - as against an update of the agent itself.
 /// The growing parts record what was added, the small ones are recorded
-/// whole. The history is a chain a store keeps apart (issue 379).
+/// whole. The history and the transcript are chains a store keeps apart
+/// (issues 379, 380).
 // A record is made once per store; its size in memory does not matter.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentChannelStateChange {
-    Transcript(Stored<TranscriptEntry>),
     Notes(Stored<LedgerEntry<Notes>>),
     PrivateNotes(Stored<LedgerEntry<Notes>>),
     Prompt { digest: Digest, text: String },
@@ -863,7 +878,9 @@ pub enum AgentChannelStateChange {
     /// bounded by its open tasks.
     Remote(RemoteState),
     /// From where the history is held, whole.
-    WindowFrom(u64),
+    HistoryFrom(u64),
+    /// From where the transcript is held, whole.
+    TranscriptFrom(u64),
 }
 
 /// The tool sets of one offer as they were recorded (`RecordedToolSets`).
@@ -881,7 +898,6 @@ impl Journaled for AgentChannelState {
 
     fn changes(&self) -> Vec<Self::Change> {
         let mut changes: Vec<Self::Change> = Vec::new();
-        changes.extend(self.transcript.changes().map(AgentChannelStateChange::Transcript));
         changes.extend(self.notes.changes().map(AgentChannelStateChange::Notes));
         changes.extend(self.private_notes.changes().map(AgentChannelStateChange::PrivateNotes));
         changes.extend(self.prompts.changes().into_iter().map(|(digest, text)| AgentChannelStateChange::Prompt { digest, text }));
@@ -890,13 +906,14 @@ impl Journaled for AgentChannelState {
         changes.push(AgentChannelStateChange::Turn(self.turn.clone()));
         changes.push(AgentChannelStateChange::Used(self.used));
         changes.push(AgentChannelStateChange::Remote(self.remote.clone()));
-        changes.push(AgentChannelStateChange::WindowFrom(self.window_from));
+        changes.push(AgentChannelStateChange::HistoryFrom(self.history_from));
+        changes.push(AgentChannelStateChange::TranscriptFrom(self.transcript_from));
         changes
     }
 
-    /// The history is marked stored by the store that wrote it.
+    /// The history and the transcript are marked stored by the store that
+    /// wrote them.
     fn mark_stored(&mut self) {
-        self.transcript.mark_stored();
         self.notes.mark_stored();
         self.private_notes.mark_stored();
         self.prompts.mark_stored();
@@ -905,7 +922,6 @@ impl Journaled for AgentChannelState {
 
     fn apply(&mut self, change: Self::Change) -> Result<(), String> {
         match change {
-            AgentChannelStateChange::Transcript(change) => self.transcript.apply(change)?,
             AgentChannelStateChange::Notes(change) => self.notes.apply(change)?,
             AgentChannelStateChange::PrivateNotes(change) => self.private_notes.apply(change)?,
             AgentChannelStateChange::Prompt { digest, text } => self.prompts.apply(digest, text),
@@ -914,7 +930,8 @@ impl Journaled for AgentChannelState {
             AgentChannelStateChange::Turn(turn) => self.turn = turn,
             AgentChannelStateChange::Used(used) => self.used = used,
             AgentChannelStateChange::Remote(remote) => self.remote = remote,
-            AgentChannelStateChange::WindowFrom(from) => self.window_from = from,
+            AgentChannelStateChange::HistoryFrom(from) => self.history_from = from,
+            AgentChannelStateChange::TranscriptFrom(from) => self.transcript_from = from,
         }
         Ok(())
     }
@@ -1088,7 +1105,9 @@ pub(crate) mod tests {
         waiting.said(Message::new(Classification::CHANNEL_DEFAULT));
         let json = serde_json::to_string(&waiting).unwrap();
         assert!(json.contains("\"WaitingForUser\""));
-        let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
+        let mut decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
+        assert!(decoded.transcript.is_empty(), "the transcript is a store's to keep apart (issue 380)");
+        decoded.transcript = waiting.transcript.clone();
         assert_eq!(decoded.processing_state, ActorState::WaitingForUser);
         let turn_id = decoded.turn.as_ref().map(|t| t.work.turn_id).expect("the turn is resumed from what was stored");
         assert_eq!(decoded.transcript.messages().len(), 1, "with what it said, in the transcript (issue 260)");
@@ -1400,12 +1419,35 @@ pub(crate) mod tests {
         state.history.extend((301..=310).map(|n| make_message(id(n))).collect());
         state.history.mark_stored();
         state.keep_window();
-        assert_eq!((state.history.base(), state.window_from), (111, 111), "at least the last entries, the compaction among them");
+        assert_eq!((state.history.base(), state.history_from), (111, 111), "at least the last entries, the compaction among them");
         compacted(&mut state);
         state.history.extend((311..=600).map(|n| make_message(id(n))).collect());
         state.history.mark_stored();
         state.keep_window();
         assert_eq!(state.history.base(), 311, "from the last compaction on, more than the last entries");
+    }
+
+    #[test]
+    fn an_agent_keeps_the_active_branch_of_its_transcript() {
+        use crate::message::tests::{id, make_message};
+        let mut state = AgentChannelState::default();
+        state.transcript.extend((1..=3).map(|n| make_message(id(n))).collect());
+        state.transcript.mark_stored();
+        state.keep_window();
+        assert_eq!((state.transcript.base(), state.transcript_from), (0, 0), "one branch: all of it");
+        state.transcript.extend(vec![make_message(id(4))]);
+        let given = state.transcript.start_anew().expect("a branch");
+        state.transcript.extend(vec![make_message(id(5))]);
+        state.keep_window();
+        assert_eq!(state.transcript.base(), 0, "nothing goes before it is stored");
+        state.transcript.mark_stored();
+        state.keep_window();
+        assert_eq!((state.transcript.base(), state.transcript_from, state.transcript.messages().len()), (4, 4, 1), "from the root of the active branch");
+        assert!(state.transcript.prefix(&given).is_none(), "the branch before is the store's");
+        state.transcript.start_anew();
+        state.transcript.mark_stored();
+        state.keep_window();
+        assert_eq!((state.transcript.base(), state.transcript.len()), (5, 0), "right after it began anew, nothing");
     }
 
     #[test]
@@ -1428,7 +1470,6 @@ pub(crate) mod tests {
 
         let changes = state.changes();
         let parts: Vec<&str> = changes.iter().map(|c| match c {
-            AgentChannelStateChange::Transcript(_) => "transcript",
             AgentChannelStateChange::Notes(_) => "notes",
             AgentChannelStateChange::PrivateNotes(_) => "private_notes",
             AgentChannelStateChange::Prompt { .. } => "prompt",
@@ -1437,15 +1478,16 @@ pub(crate) mod tests {
             AgentChannelStateChange::Turn(_) => "turn",
             AgentChannelStateChange::Used(_) => "used",
             AgentChannelStateChange::Remote(_) => "remote",
-            AgentChannelStateChange::WindowFrom(_) => "window_from",
+            AgentChannelStateChange::HistoryFrom(_) => "history_from",
+            AgentChannelStateChange::TranscriptFrom(_) => "transcript_from",
         }).collect();
-        assert_eq!(parts, ["transcript", "notes", "private_notes", "prompt", "offered_tools", "processing_state", "turn", "used", "remote", "window_from"], "what was added, then the small parts whole; the history is the store's to write");
+        assert_eq!(parts, ["notes", "private_notes", "prompt", "offered_tools", "processing_state", "turn", "used", "remote", "history_from", "transcript_from"], "what was added, then the small parts whole; the history and the transcript are the store's to write");
         replayed(&state, &mut copy);
         assert_eq!(copy.used, state.used, "the running total with them");
 
         state.mark_stored();
         state.turn = None;
-        assert_eq!(state.changes().len(), 5, "between turns a step is the small parts alone");
+        assert_eq!(state.changes().len(), 6, "between turns a step is the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.turn.is_none());
     }
@@ -1519,12 +1561,12 @@ pub(crate) mod tests {
         let remote = &mut state.remote;
         remote.conversation = Some(ConversationId("c-1".to_string()));
         remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), work: None });
-        assert_eq!(state.changes().len(), 1 + 5, "the transcript's and the small parts; the history is the store's");
+        assert_eq!(state.changes().len(), 6, "the small parts; the history and the transcript are the store's");
         replayed(&state, &mut copy);
 
         state.mark_stored();
         state.remote.open_tasks.clear();
-        assert_eq!(state.changes().len(), 5, "the small parts alone");
+        assert_eq!(state.changes().len(), 6, "the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.remote.open_tasks.is_empty());
     }

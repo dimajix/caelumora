@@ -25,7 +25,8 @@ use caelumora_model::note::Note;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::ChannelId;
 use caelumora_model::store::{EntityStore, StateStore, StoreError, StoreResultExt};
-use caelumora_model::store::history::{HistoryKey, HistoryStore};
+use caelumora_model::store::history::HistoryStore;
+use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::user::{UserId, UserProfile};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -94,7 +95,7 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
         Participant::Approver(_) => Arc::new(ApproverMember { name: participant.actor_id().fixed_name() }),
         Participant::Agent(id) => match views.agent_of(*id).await {
             Some(agent) => Arc::new(AgentMemberState {
-                member: AgentMember(StateRef { agent: agent.id, channel, store: Arc::clone(views.states()), histories: Arc::clone(views.histories()) }),
+                member: AgentMember(StateRef { agent: agent.id, channel, store: Arc::clone(views.states()), histories: Arc::clone(views.histories()), transcripts: Arc::clone(views.transcripts()) }),
                 agent,
                 personalities: Arc::clone(&views.stores().personalities),
                 personality: OnceCell::new(),
@@ -174,6 +175,8 @@ struct StateRef {
     store: Arc<dyn StateStore>,
     /// Where its history is read (issue 379).
     histories: Arc<dyn HistoryStore>,
+    /// Where its transcript is read beyond what the state holds (issue 380).
+    transcripts: Arc<dyn TranscriptStore>,
 }
 
 impl StateRef {
@@ -248,6 +251,6 @@ impl AgentMember {
     /// What it saw (issue 41).
     pub(super) async fn context(&self) -> ViewResult<AgentContextView> {
         let place = &self.0;
-        Ok(AgentContextView::of(ActorId::Agent(place.agent), self.stored().await?, Arc::clone(&place.histories), HistoryKey::Agent(place.agent, place.channel)))
+        Ok(AgentContextView::of(place.agent, place.channel, self.stored().await?, Arc::clone(&place.histories), Arc::clone(&place.transcripts)))
     }
 }

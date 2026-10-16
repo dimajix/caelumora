@@ -617,7 +617,9 @@ pub async fn agent_history(
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let view = member_of(&channel, aid).await?.context().await?;
     let page = view.history_page(query.before, query.limit()).await?;
-    Ok(Json(HistoryPageResponse::of(page, |message, has_context| HistoryMessageResponse { has_context, in_transcript: view.in_transcript(message.id), message })))
+    let heard: Vec<MessageId> = page.items.iter().filter_map(|item| item.said().map(|m| m.id)).collect();
+    let passed_on = view.in_transcript(&heard).await?;
+    Ok(Json(HistoryPageResponse::of(page, |message, has_context| HistoryMessageResponse { has_context, in_transcript: passed_on.contains(&message.id), message })))
 }
 
 /// The tools actor `aid` has now in the channel (issue 194), for whoever

@@ -233,6 +233,11 @@ A chain is a tree with a head:
     the chain - the entries after a position, a page before one - is read by positions.
 *   An external agent's transcript starts anew with every call, since the remote agent keeps what
     it was given: every call before is a branch from the root.
+*   Whoever holds a chain in memory may hold only a window of it, from a position on; the store
+    holds all of it. A digest whose entry lies before the window is found in the store, and an
+    entry appended with the digest of one only the store holds is added a second time - the same
+    content after the same predecessors, which the store keeps both of (see
+    [What is held in memory](#what-is-held-in-memory)).
 
 Neither ending a turn nor changing a message moves a head: each is an entry after what it is about.
 
@@ -265,7 +270,8 @@ or for what a turn said, reads from where the message was said or the turn began
 (`HistoryEntry::fold_into` is the history's rule, `history::fold` reads a range by it).
 
 An external agent's remote agent was given the message on a branch where the change is not recorded,
-so the external agent tells it instead: it appends a *notice* to its transcript, in the name and
+so the external agent tells it instead - the message as it was given read from the store, since that
+branch lies before the one the actor holds: it appends a *notice* to its transcript, in the name and
 role of the message's sender, given with the next call. The remote agent is told once, of the
 message as it stands; a reclassification is not told, since it knows no labels. A notice only tells:
 nothing in its wording asks the remote agent to disregard something, which a filter of the remote
@@ -292,6 +298,16 @@ message. What reads further back - what the agent saw when it produced an old me
 history - reads the store, through the views. Catching up when it joins looks for the last message
 it holds that the channel's history has, within the window; finding none, it takes in what it may
 see from where its view begins.
+
+Of its transcript the actor holds the active branch alone, from its root on (`transcript_from`,
+issue 380): right after the transcript began anew - a compaction, an external agent's call -,
+nothing. Every reader in memory reads that branch: a turn and its next call, a compaction, how full
+the context is, answering again, taking in a change of a message. What lies on an older branch is
+read from the store (`TranscriptStore`): the path to a digest, for the context of an older message;
+which messages reached the transcript, for a page of the agent's history; and, for an external
+agent, a message as its remote agent was given it, before it tells of a change (`tell`, through
+`ActorRuntime::transcript_message`). Its sums are parts of its state, not read over the branches:
+the tokens used (`used`) and the classifications the remote agent was given (`RemoteState`).
 
 ### What is recorded
 
@@ -382,8 +398,8 @@ old one but does not continue it:
 *   **A branch of its own.** The transcript begins anew from the root with what replaces the older
     messages - a summary, what is given again - and then copies of the entries kept, as they
     stand. Every copy gets a digest of its own, since what precedes it is another.
-*   **The old branch stays.** Every reference recorded before resolves to what it did; the resolver
-    does not know there was a compaction.
+*   **The old branch stays**, in the store. Every reference recorded before resolves to what it
+    did; the resolver does not know there was a compaction.
 *   **Prompt parts are carried over.** A part the turn placed after an entry kept follows its
     copy, one placed after an entry replaced follows the replacement - the notes before the
     turn's input as well as the step of a plan. A plan whose instructions were replaced is named
@@ -528,7 +544,9 @@ What the model is given is not stored; it is resolved from what is (`caelumora_m
     they count for the messages produced from then on.
 *   **Resolving** - the `ContextResolver` resolves a reference against the transcript, the prompt
     texts and the tool sets, each as the profile gives it. The turn's next call and every later
-    question about a message go through it.
+    question about a message go through it: the turn against the active branch the agent's state
+    holds (`ContextResolver::of`), a question about an older message against the path its reference
+    names, loaded from the store (`ContextResolver::on_path`).
 
 What the model was given and what is recorded as given are the same reference, resolved by one
 implementation, and therefore cannot diverge.
@@ -543,13 +561,15 @@ of them produced it.
     owner may, since a context holds more than the conversation: the system prompt, internal steps,
     tool results. It reads the agent's stored state, the same for both kinds of agent.
 *   `context_of(message_id)` resolves what the message was produced from, as the message's item in
-    the agent's history records it, read from the store. For an external agent it is what its
+    the agent's history records it, read from the store, against the path of the transcript it
+    names, loaded from the store on whichever branch it lies. For an external agent it is what its
     remote agent was given in the call that produced it, without prompt parts or tools, which are
     the remote agent's own.
 *   `history_page(before, limit)` is a page of all that was offered to the agent and what it said,
     as the messages stand now - which may differ from what the channel shows, for an agent that
-    joined late or was asleep -, read from the store. `in_transcript` tells which messages reached
-    the transcript: not those the perceive processors dropped.
+    joined late or was asleep -, read from the store. `in_transcript` tells which of a page's
+    messages reached the transcript, on whichever branch - not those the perceive processors
+    dropped -, asked of the store once for the page.
 
 REST exposes it as `GET …/actors/{aid}/messages/{mid}/context` (see
 [REST-SERVER.md](REST-SERVER.md)), the web UI in its context panel (see
