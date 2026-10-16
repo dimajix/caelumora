@@ -208,10 +208,12 @@ For every message an agent produced, it can be told what its model saw when it w
 
 The `Transcript` is what the agent's context is built from: its own messages in full, with tool
 calls and internal steps, and what others said as it received them. The `History` is all that
-was offered to the agent and what it said, with how its turns ended. Both are a
-`caelumora_model::chain::Chain` of entries, each with a `Digest` over its content and the digest
-before it, so one digest names everything up to that point by content. What a message's digest
-covers is what the model sees of it, not what only describes it afterwards
+was offered to the agent and what it said, with how its turns ended. The history is informational:
+it is the record of what was said and what it was produced from, for people to read, and it is never
+read to build what the model is given - that is built from the transcript alone (issue 387). Both
+are a `caelumora_model::chain::Chain` of entries, each with a `Digest` over its content and the
+digest before it, so one digest names everything up to that point by content. What a message's
+digest covers is what the model sees of it, not what only describes it afterwards
 (`digest::message_chain`). A message does not name its predecessor: the same message is in several
 chains with a different one in each, so the predecessor belongs to the chain.
 
@@ -240,6 +242,8 @@ A chain is a tree with a head:
     [What is held in memory](#what-is-held-in-memory)).
 
 Neither ending a turn nor changing a message moves a head: each is an entry after what it is about.
+Nor does the end of what a compaction wrote, which is an entry of the transcript after it (see
+[Compaction](#compaction)).
 
 A digest is stored with its entry and never recomputed: it records what was sent to the model. Were
 the scheme to change, old entries keep their digests and only new ones get the new scheme's.
@@ -279,17 +283,17 @@ side may take for an injection. An agent run here tells nobody.
 
 ### What is held in memory
 
-An agent's actor holds its history only from its window on: from its last compaction on, and at
-least the last 200 entries; the store holds all of it (see [STORAGE.md](STORAGE.md#histories), issue
-379). What the agent reads of its history in memory reads from the end, and lies in the window as
-long as a turn and a branch of its transcript do:
+An agent's actor holds its history only from its window on: the last 200 entries, and during a turn
+everything from the turn's first message on; the store holds all of it (see
+[STORAGE.md](STORAGE.md#histories), issues 379, 387). The window is the same for both kinds of agent
+and does not follow the transcript or its compactions: nothing that builds what the model is given
+reads the history. What reads it in memory is informational, reads from the end, and lies in the
+window:
 
-*   what a turn said (`History::said_in_turn`), read from where the turn began - after the
-    compaction before it, or within the last 200 entries;
-*   what a branch of its transcript produced (`History::produced_on_branch`, for the tokens used),
-    read back to the compaction that began the branch;
-*   what the messages a compaction replaces were produced after reading;
-*   the messages a request to answer again takes back, its last turn's;
+*   what a turn said (`History::said_in_turn`), its answer, read from where the turn began;
+*   what the messages a compaction replaces were produced after reading - the one reader that
+    still builds the model's input from the history, to be moved to the transcript (issue 389);
+*   which of the messages a request to answer again takes back were said, to announce them;
 *   its last message, whether its last turn was given up, and the digest an entry pushed again is
     found by.
 
@@ -385,9 +389,10 @@ different things:
 
 *   **context** - the tokens the model is given next against its context size
     (`TokenUsage::context_tokens`): how full it is. The `ContextResolver` measures it, as it
-    resolves the context (`ContextResolver::token_positions`): before a message of the agent's
-    model made on the active branch - which its recorded context shows - at its call's
-    `prompt_tokens`, and elsewhere estimated from what the model is given, as it is given it
+    resolves the context (`ContextResolver::token_positions`), from the transcript alone: before
+    a message of the agent's model added where it stands - after where the compaction that began
+    the branch ends, if one did (`TranscriptEntry::Compacted`) - at its call's `prompt_tokens`, and
+    elsewhere estimated from what the model is given, as it is given it
     (`ContextItem::estimated_tokens`) - a message's reasoning only where its rule gives it back,
     the prompt parts where they are placed: what was added since the last call, or a branch no
     call measured yet. After a compaction that is no longer the last call's, which was the
@@ -415,8 +420,14 @@ old one but does not continue it:
     instruction (`Turn::compact`).
 *   **The turn's answer is what it said**, read from the history (`History::said_in_turn`),
     not from the transcript, of which a part may have been summarised.
-*   **Where it came from** is recorded in the history (`HistoryEntry::Compacted`), in no digest of
-    the transcript: two identical contexts get the same digest however they came about.
+*   **Where its part ends** is an entry of the transcript, `TranscriptEntry::Compacted`, after the
+    replacement and the copies: what comes before it on the branch was written by the compaction
+    and carries the measures of calls made on another branch, what comes after was added where it
+    stands. It gives the model nothing, and its digest covers its place alone. An earlier
+    compaction's end is not copied, and an answer followed by one is not answered again: it may be
+    in a summary already.
+*   **Where it came from** - the old branch, the turn - is recorded in the history
+    (`HistoryEntry::Compacted`).
 *   **Counted once.** The tokens used count a message kept where it was first recorded.
 
 The mechanism takes the replacement and the first entry kept, and whose the replacement is;

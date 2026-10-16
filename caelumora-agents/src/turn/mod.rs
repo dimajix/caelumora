@@ -236,13 +236,6 @@ impl<'a> Turn<'a> {
         self.work().tool_sets().iter().flat_map(|set| &set.tools)
     }
 
-    /// The messages the turn said so far, as they stand (issue 260): as the
-    /// history holds them, whatever a compaction left of them in the
-    /// transcript (issue 284).
-    pub fn messages(&self) -> Vec<Message> {
-        self.agent_channel_state.history.said_in_turn(ActorId::Agent(self.agent_id), self.turn_id())
-    }
-
     /// Gives the agent `message` to read in this turn (issue 22) - a skill a
     /// user loaded for it - as the knowledge `knowledge`: into its
     /// transcript and history at once, as what it was given, not what it
@@ -478,7 +471,7 @@ mod tests {
             Some(ActorEvent::TurnFinished { messages, .. }) => assert!(messages.is_empty(), "the hidden call is not published"),
             other => panic!("the complete message is not sent at all, got {other:?}"),
         }
-        assert_eq!(turn.messages().first().map(|m| m.tool_calls.len()), Some(1), "the agent keeps it");
+        assert_eq!(turn.agent_channel_state().transcript.messages().last().map(|m| m.tool_calls.len()), Some(1), "the agent keeps it");
 
         // Reasoning reaches the channel unless it is the owner's.
         let thinking = Message {

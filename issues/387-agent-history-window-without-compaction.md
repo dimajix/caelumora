@@ -1,6 +1,6 @@
 # 387 — An agent that never compacts holds its whole history in memory
 
-**Status:** open
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -112,3 +112,11 @@ holds no `Compacted`, and its copies would count as measured.
   model's input. The fix is to take the history out of what builds it, not to choose another
   window; see *Decision*. What a compaction gives again was split off as
   [389](389-knowledge-read-in-the-transcript.md).
+- **2026-10-16** — Done as planned. The transcript marks where a compaction's part of a branch ends
+  (`TranscriptEntry::Compacted`), `ContextResolver::token_positions` measures from the transcript
+  alone, and `History::produced_on_branch` and the resolver's history are gone. An agent's actor
+  keeps its history from the first message of its turn under way on and at least the last `WINDOW`
+  entries, whatever it compacted. `retried` refuses an answer a compaction followed;
+  `Turn::messages`, used only in tests, is gone. Found on the way: `History::turn_began` answered
+  `0` for a turn whose end before lay before the window, so that `said_in_turn` read nothing; it
+  answers where what is held begins. Stored agent states and transcripts are to be deleted.

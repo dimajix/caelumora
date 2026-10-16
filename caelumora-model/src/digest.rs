@@ -239,7 +239,8 @@ pub fn message_reclassified(previous: Option<&Digest>, message: MessageId, class
 /// `message_chain`, so that every digest recorded before issue 197 names
 /// what it named - one given to read (issue 16) alike, since the model is
 /// given the same; a turn's end (issue 258) by what it says - the turn and,
-/// given up, the reason, not the time - in schemes of their own; a message
+/// given up, the reason, not the time - in schemes of their own, and where a
+/// compaction's part ends (issue 387) by its place alone; a message
 /// modified, taken back or reclassified as `message_modified`,
 /// `message_revoked` and `message_reclassified`.
 pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> Digest {
@@ -250,6 +251,11 @@ pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> D
         TranscriptEntry::Reclassified { message, classification } => message_reclassified(previous, *message, classification),
         TranscriptEntry::TurnFinished { turn_id, .. } => turn_ended("caelumora.transcript-turn-finished.v1", previous, *turn_id, None, None),
         TranscriptEntry::TurnGivenUp { turn_id, reason, .. } => turn_ended("caelumora.transcript-turn-given-up.v1", previous, *turn_id, None, Some(reason)),
+        TranscriptEntry::Compacted { .. } => {
+            let mut e = Encoder::new("caelumora.transcript-compacted.v1");
+            e.opt_digest(previous);
+            e.finish()
+        }
     }
 }
 
