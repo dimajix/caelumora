@@ -506,7 +506,7 @@ impl TranscriptStore for MemoryStore {
         Ok(read_lock(&self.transcripts, |all| all.get(&(agent, channel)).and_then(|kept| known(kept.from(0).iter(), id))))
     }
 
-    async fn given(&self, agent: AgentId, channel: ChannelId, ids: &[MessageId]) -> StoreResult<HashSet<MessageId>> {
+    async fn in_transcript(&self, agent: AgentId, channel: ChannelId, ids: &[MessageId]) -> StoreResult<HashSet<MessageId>> {
         Ok(read_lock(&self.transcripts, |all| {
             all.get(&(agent, channel)).into_iter()
                 .flat_map(|kept| kept.from(0))

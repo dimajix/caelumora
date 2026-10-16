@@ -1,6 +1,6 @@
 # 398 — "Given" names four different things around the transcript
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 Part of [391](391-history-and-transcript-review-epic.md).
@@ -51,3 +51,16 @@ named before it, each for itself.
 
 - **2026-10-16** — Opened from the review of the history and the transcript
   ([391](391-history-and-transcript-review-epic.md)).
+- **2026-10-16** — Narrowed with the maintainer to `TranscriptStore::given`, and done there: it is
+  `in_transcript` now, the name the view that asks it (`AgentContextView::in_transcript`) and the
+  REST field it answers (`in_transcript`) have, so that the one concept has one name from the store
+  to the client. Neither stored data nor the REST API changes.
+
+  The problem above was put too strongly. *Given* means *given to the agent or its model* nearly
+  everywhere: a message given to read, the message as the model is given it (`ModelProfile::given`,
+  `ReasoningHistory::given`, `SenderFormat::given`, which the issue overlooked), and the prompt
+  texts and tool sets the model was given, which `<agent>.given` holds, as its module says. So the
+  directory and what hangs on its name - `given_dir`, `append_given`, the `MemoryStore`'s `given`,
+  `given_store_behaves` - stay: renaming it to `.kept` would change where stored texts lie, leave
+  the contexts of older messages unresolvable until stored data is deleted, and *kept* is the vaguer
+  word of the two.

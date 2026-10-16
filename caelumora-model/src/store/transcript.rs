@@ -44,7 +44,7 @@ pub trait TranscriptStore: Debug + Send + Sync {
     /// Those of the messages `ids` the transcript holds, on whichever
     /// branch: which of what the agent heard was passed on to it (issue
     /// 196).
-    async fn given(&self, agent: AgentId, channel: ChannelId, ids: &[MessageId]) -> StoreResult<HashSet<MessageId>>;
+    async fn in_transcript(&self, agent: AgentId, channel: ChannelId, ids: &[MessageId]) -> StoreResult<HashSet<MessageId>>;
 
     /// The prompt texts of those of `digests` that are kept, each by its
     /// digest (issue 383).
