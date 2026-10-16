@@ -205,7 +205,7 @@ mod tests {
         let view = AgentContextView::of_state(actor, state).await;
         let items = history(&view).await;
         assert!(items.iter().any(|item| matches!(item, HistoryEntry::Said { message, .. } if message.id == step.id)), "in its history as it was said");
-        assert!(items.iter().any(|item| item.context_of(step.id).is_some()) && view.in_transcript(&[step.id]).await.expect("read").contains(&step.id));
+        assert!(items.iter().any(|item| item.said().is_some_and(|m| m.id == step.id) && item.context().is_some()) && view.in_transcript(&[step.id]).await.expect("read").contains(&step.id));
         let seen = view.context_of(step.id).await.expect("what it was produced from is recorded");
         assert!(seen.items.iter().any(|item| matches!(item, ContextItem::Conversation { message } if message.id == question.id)), "the question it answered");
     }
@@ -240,7 +240,7 @@ mod tests {
         }).collect::<Vec<MessageId>>();
         let items = history(&view).await;
         assert_eq!(said(items.clone()), vec![question.id, answer.id], "all it heard and said (issue 207)");
-        let has_context = |id| items.iter().any(|item| item.context_of(id).is_some());
+        let has_context = |id| items.iter().any(|item| item.said().is_some_and(|m| m.id == id) && item.context().is_some());
         assert!(has_context(answer.id) && !has_context(question.id));
         assert!(view.in_transcript(&[question.id]).await.expect("read").contains(&question.id));
 

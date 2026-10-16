@@ -1,6 +1,7 @@
 //! The agent actor in a running channel: its turns, plans, retries, approvals, tool calls, and how
 //! it is cancelled, removed or lowered.
 
+use caelumora_model::history::testing::messages_of;
 use super::*;
 use anyhow::Result;
 use caelumora_model::agent::{AgentChannelState, AgentId, RetryRefused};
@@ -427,7 +428,7 @@ async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
     settled(&helper, ActorState::Sleeping).await;
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(stored.turn.is_none(), "the turn was taken over");
-    assert!(stored.history.messages().iter().any(|m| m.content.as_deref() == Some("Good bye.")), "and its answer recorded");
+    assert!(messages_of(&stored.history).iter().any(|m| m.content.as_deref() == Some("Good bye.")), "and its answer recorded");
     running.abort();
 }
 
@@ -778,7 +779,7 @@ async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_
     assert_eq!(roles, [MessageRole::Assistant, MessageRole::Tool], "the call and its result");
     assert!(seen.context_of(calculate.id).await.is_ok(), "the call's context is resolved");
     assert!(stored.transcript.messages().iter().any(|m| m.id == calculate.id), "in the transcript");
-    assert!(stored.history.messages().iter().any(|m| m.id == calculate.id), "and in the agent's history");
+    assert!(messages_of(&stored.history).iter().any(|m| m.id == calculate.id), "and in the agent's history");
 
     // Its model is given the call in full, and told why the turn ended.
     let given = given_next(&stored, agent);
@@ -1464,7 +1465,7 @@ async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_th
     assert_eq!(heard.len(), 1, "nothing of the tool message: {heard:?}");
     assert_eq!((heard[0].id, heard[0].role, heard[0].content.as_deref()), (answer.id, MessageRole::User, Some("Let me check.")), "the other's words, as another's");
     assert!(heard[0].tool_calls.is_empty(), "not the other's call, as if its own");
-    let kept: Vec<_> = state.history.messages().iter().map(|m| (m.id, m.role)).collect();
+    let kept: Vec<_> = messages_of(&state.history).iter().map(|m| (m.id, m.role)).collect();
     assert_eq!(kept, [(answer.id, MessageRole::Assistant)], "the history keeps what it heard as it was said; the tool traffic, which it would not have heard live, stays the channel's (issue 258)");
 }
 
@@ -1484,7 +1485,7 @@ async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
 
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert_eq!(contents(state.history.messages()), ["hello", "the secret is 42"], "its history keeps all it missed");
+    assert_eq!(contents(messages_of(&state.history)), ["hello", "the secret is 42"], "its history keeps all it missed");
     assert_eq!(contents(state.transcript.messages()), ["hello"], "its transcript what passed its processors");
 }
 
@@ -1503,7 +1504,7 @@ async fn an_agent_keeps_all_it_was_offered_in_its_history_and_what_passes_its_pr
 
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert!(contents(state.history.messages()).contains(&"the secret is 42".to_string()), "its history keeps all it was offered");
+    assert!(contents(messages_of(&state.history)).contains(&"the secret is 42".to_string()), "its history keeps all it was offered");
     assert!(!contents(state.transcript.messages()).contains(&"the secret is 42".to_string()), "its transcript only what passed");
     assert!(contents(state.transcript.messages()).contains(&"hello".to_string()));
     running.abort();

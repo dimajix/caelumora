@@ -192,12 +192,6 @@ impl AgentActor {
     /// lands in: the one a tool requested (the stop tool), or `Idle`; a
     /// cancelled turn lands `Idle` whatever was requested.
     ///
-    /// `context` (this agent's own future-turn LLM input) keeps every message
-    /// accumulated this turn, including internal deliberation/plan-execution
-    /// scaffolding - it needs the full detail to stay coherent. `history`
-    /// (the audit/user-facing trail - see `ChannelLoop::append_history` and
-    /// `channel.history()`) only keeps genuinely final messages.
-    ///
     /// The turn is taken over and stored before its `TurnFinished`
     /// announces its end (issue 65): whoever reacts to it - another agent
     /// whose turn it starts, a user interface reloading notes - reads the
@@ -506,15 +500,16 @@ impl AgentActor {
     /// `ExecutingTools`) as long as the model keeps making tool calls, up to
     /// `MAX_MODEL_CALLS` in a turn.
     ///
-    /// A message is "final" (shown to the user, kept in `history`) exactly
+    /// A message is "final" (shown to the user as the answer) exactly
     /// when it isn't part of executing an in-progress plan
     /// (`Turn::in_plan_step`: not yet at the final answer) - ordinary tool calls,
     /// pre-plan research, and the `create_plan` call itself are all shown
     /// like any other message, same as a personality with no planning
     /// capability at all. Anything internal instead gets
     /// `IntermediatePartialGenerated`/`IntermediateMessageGenerated` instead
-    /// of the `Partial`/`Complete` variants, and is excluded from `history`
-    /// in `end_turn`.
+    /// of the `Partial`/`Complete` variants: kept in the transcript and the
+    /// history like every message (issues 258, 260), but heard by no other
+    /// participant and not part of the answer.
     async fn handle_planning(
         &self,
         turn: &mut Turn<'_>,

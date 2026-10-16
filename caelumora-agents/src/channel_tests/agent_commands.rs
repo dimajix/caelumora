@@ -1,6 +1,7 @@
 //! The commands an agent carries out itself in a running channel (issue
 //! 269): an agent's, which move with the agents' logic (issue 370).
 
+use caelumora_model::history::testing::items_of;
 use super::*;
 use caelumora_runtime::command::{CommandContext, CommandError, CommandReply};
 use crate::tool::stop_tool::STOP_TOOL_KIND;
@@ -60,7 +61,7 @@ async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_iss
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["marked twice"], "what it staged is applied");
     assert!(state.turn.is_none(), "the turn is over");
-    let ends: Vec<String> = state.history.items().iter().filter_map(|item| match item {
+    let ends: Vec<String> = items_of(&state.history).iter().filter_map(|item| match item {
         HistoryEntry::CommandExecuted { turn_id: t, command, .. } if Some(*t) == turn_id => Some(format!("/{command}")),
         HistoryEntry::TurnFinished { turn_id: t, .. } if Some(*t) == turn_id => Some("finished".to_string()),
         _ => None,
@@ -115,7 +116,7 @@ async fn a_command_that_fails_is_told_to_the_issuer_and_leaves_nothing_behind() 
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.notes.current().is_empty(), "nothing it staged is applied");
     assert!(state.turn.is_none());
-    assert!(!state.history.items().iter().any(|item| matches!(item, HistoryEntry::CommandExecuted { .. } | HistoryEntry::TurnGivenUp { .. })), "no command, no turn given up: nothing happened");
+    assert!(!items_of(&state.history).iter().any(|item| matches!(item, HistoryEntry::CommandExecuted { .. } | HistoryEntry::TurnGivenUp { .. })), "no command, no turn given up: nothing happened");
     assert_eq!(channel.history_entries().await.len(), before, "nor in the channel's");
     running.abort();
 }

@@ -205,6 +205,7 @@ pub(crate) fn page_of(newest: impl IntoIterator<Item = (u64, HistoryEntry)>, fro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history::testing::items_of;
     use crate::confidentiality::Classification;
     use crate::history::History;
     use crate::message::Message;
@@ -235,7 +236,7 @@ mod tests {
             items.take(node);
         }
         let derived: Vec<String> = items.newest_before(u64::MAX).map(|(_, item)| label(item)).collect::<Vec<_>>().into_iter().rev().collect();
-        assert_eq!(derived, history.items().iter().map(label).collect::<Vec<_>>());
+        assert_eq!(derived, items_of(&history).iter().map(label).collect::<Vec<_>>());
         assert_eq!(items.said(id(1)).map(|(seq, item)| (seq, item.said().and_then(|m| m.content.clone()))), Some((0, Some("changed".to_string()))));
         assert!(items.said(id(9)).is_none());
 

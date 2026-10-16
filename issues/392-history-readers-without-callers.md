@@ -1,6 +1,6 @@
 # 392 — Readers of a history that nothing calls, and comments that describe an older history
 
-**Status:** open
+**Status:** done
 **Area:** Code structure
 
 Part of [391](391-history-and-transcript-review-epic.md).
@@ -61,3 +61,14 @@ matches with `_` where its neighbours `said`, `changed` and `is_item` name every
 
 - **2026-10-16** — Opened from the review of the history and the transcript
   ([391](391-history-and-transcript-review-epic.md)).
+- **2026-10-16** — Done. `History::messages`, `items`, `folded`, `item`, `HistoryEntry::context_of`
+  and `AgentChannelState::recorded_context_of` are gone; what the tests read of a history held in
+  memory is `history::testing` (`items_of`, `messages_of`, `recorded_context`), as the coding
+  guidelines place shared fixtures: `history.rs` became `history/mod.rs` beside `testing.rs`, and
+  `caelumora-model` got a `test-support` feature, which that of `caelumora-runtime` turns on, so
+  that the tests of the agents and the plugins have it too. `items_of` folds the chain itself, so
+  the store suite still checks the store's items against the chain folded, not against
+  `StandingItems`. `Chain::new` is gone; `HistoryEntry::context` names every variant. The comments
+  of `end_turn` and `handle_planning` say that internal messages are kept like every other. The
+  double filter of `JsonFileStore::page` stays: the one in its loop decides when to stop reading
+  segments, the one in `page_of` serves both stores. No stored data changes.

@@ -73,3 +73,6 @@ order along the way.
 
 - **2026-10-16** — Created at the maintainer's request from the review of the history and the
   transcript, with 392 to 398 opened from its findings.
+- **2026-10-16** — 392 done: the readers of a history held in memory that only tests called live in
+  `history::testing`, behind a new `test-support` feature of `caelumora-model`. Next in the order:
+  393.

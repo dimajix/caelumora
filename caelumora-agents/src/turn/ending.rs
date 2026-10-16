@@ -118,6 +118,7 @@ impl Turn<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::history::testing::messages_of;
     use crate::notes::NoteKind;
     use crate::turn::tests::message;
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -163,7 +164,7 @@ mod tests {
 
         assert!(state.turn.is_none(), "the turn is over");
         assert_eq!(state.transcript.messages().len(), 3, "what it said is not unsaid (issue 258)");
-        assert_eq!(state.history.messages().len(), 3, "in the history as well");
+        assert_eq!(messages_of(&state.history).len(), 3, "in the history as well");
         assert_eq!(state.transcript.all_entries().count(), 4, "followed by its end, and nothing branches");
         let turns = given_up_turns(&state);
         assert_eq!(turns.len(), 1);

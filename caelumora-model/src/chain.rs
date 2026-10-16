@@ -118,10 +118,6 @@ impl<E> Default for Chain<E> {
 }
 
 impl<E> Chain<E> {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// The digest of the active path, or `None` while it is empty.
     pub fn digest(&self) -> Option<Digest> {
         self.head
@@ -468,12 +464,12 @@ mod tests {
 
     #[test]
     fn every_entry_is_chained_to_the_one_before() {
-        let mut chain = Chain::new();
+        let mut chain = Chain::default();
         assert_eq!(push(&mut chain, "a"), None, "nothing before the first");
         let after_a = chain.digest();
         assert_eq!(push(&mut chain, "b"), after_a, "the digest before is what an entry was made from");
 
-        let mut other = Chain::new();
+        let mut other = Chain::default();
         push(&mut other, "x");
         push(&mut other, "b");
         assert_ne!(chain.digest(), other.digest(), "the same entry after another one");
@@ -485,7 +481,7 @@ mod tests {
 
     #[test]
     fn an_earlier_digest_names_a_prefix() {
-        let mut chain = Chain::new();
+        let mut chain = Chain::default();
         push(&mut chain, "a");
         let after_a = chain.digest().unwrap();
         push(&mut chain, "b");
@@ -497,7 +493,7 @@ mod tests {
 
     #[test]
     fn going_on_from_an_earlier_entry_keeps_the_later_ones_as_a_branch() {
-        let mut chain = Chain::new();
+        let mut chain = Chain::default();
         push(&mut chain, "a");
         let after_a = chain.digest().unwrap();
         push(&mut chain, "b");
@@ -519,7 +515,7 @@ mod tests {
 
     #[test]
     fn going_on_from_the_root_makes_another_root() {
-        let mut chain = Chain::new();
+        let mut chain = Chain::default();
         push(&mut chain, "a");
         assert!(chain.move_head(None));
         assert!(chain.is_empty() && chain.digest().is_none(), "before every entry");
@@ -530,7 +526,7 @@ mod tests {
 
     #[test]
     fn a_switch_to_a_branch_goes_on_where_it_was_left() {
-        let mut chain = Chain::new();
+        let mut chain = Chain::default();
         push(&mut chain, "a");
         let after_a = chain.digest().unwrap();
         push(&mut chain, "b");
@@ -552,7 +548,7 @@ mod tests {
 
     #[test]
     fn the_same_entry_after_the_same_one_is_not_added_twice() {
-        let mut chain = Chain::new();
+        let mut chain = Chain::default();
         push(&mut chain, "a");
         let after_a = chain.digest().unwrap();
         push(&mut chain, "b");
@@ -566,7 +562,7 @@ mod tests {
 
     #[test]
     fn a_chain_is_stored_with_its_branches_and_its_head() {
-        let mut chain = Chain::new();
+        let mut chain = Chain::default();
         push(&mut chain, "a");
         let after_a = chain.digest().unwrap();
         push(&mut chain, "b");
@@ -597,7 +593,7 @@ mod tests {
 
     #[test]
     fn what_changed_since_the_chain_was_stored_is_merged_into_what_was_stored() {
-        let mut chain = Chain::new();
+        let mut chain = Chain::default();
         push(&mut chain, "a");
         let after_a = chain.digest().unwrap();
         push(&mut chain, "b");
@@ -630,7 +626,7 @@ mod tests {
 
     #[test]
     fn what_does_not_fit_is_not_merged() {
-        let mut chain = Chain::new();
+        let mut chain = Chain::default();
         push(&mut chain, "a");
         let after_a = chain.digest().unwrap();
         let elsewhere = crate::digest::prompt("elsewhere");
@@ -658,7 +654,7 @@ mod tests {
 
     #[test]
     fn an_entry_has_its_position_in_the_order_added_and_a_range_is_read_by_it() {
-        let mut chain = Chain::new();
+        let mut chain = Chain::default();
         push(&mut chain, "a");
         let after_a = chain.digest().unwrap();
         push(&mut chain, "b");
@@ -695,7 +691,7 @@ mod tests {
 
     #[test]
     fn a_chain_lets_go_of_what_is_stored_before_a_position() {
-        let mut chain = Chain::new();
+        let mut chain = Chain::default();
         for label in ["a", "b", "c", "d"] {
             push(&mut chain, label);
         }
@@ -719,7 +715,7 @@ mod tests {
 
     #[test]
     fn a_suffix_says_what_the_whole_chain_says_from_its_base_on() {
-        let mut chain = Chain::new();
+        let mut chain = Chain::default();
         push(&mut chain, "a");
         let after_a = chain.digest().unwrap();
         push(&mut chain, "b");
@@ -752,7 +748,7 @@ mod tests {
 
     #[test]
     fn what_the_whole_chain_changed_is_merged_into_a_suffix() {
-        let mut chain = Chain::new();
+        let mut chain = Chain::default();
         push(&mut chain, "a");
         push(&mut chain, "b");
         let after_b = chain.digest().unwrap();
@@ -778,7 +774,7 @@ mod tests {
 
     #[test]
     fn what_is_not_a_chain_is_not_loaded() {
-        let mut chain = Chain::new();
+        let mut chain = Chain::default();
         push(&mut chain, "a");
         push(&mut chain, "b");
         let json = serde_json::to_value(&chain).unwrap();

@@ -818,13 +818,6 @@ impl AgentChannelState {
         self.history.end_turn(HistoryEntry::TurnGivenUp { turn_id, actor, reason, at });
     }
 
-    /// What the history recorded the message `id` - on whichever branch -
-    /// was produced from, and in which turn, what `ContextResolver::resolve`
-    /// takes; `None` if this agent did not produce it.
-    pub fn recorded_context_of(&self, id: MessageId) -> Option<(ContextRef, TurnId)> {
-        self.history.all_entries().rev().find_map(|e| e.entry.context_of(id)).map(|(context, turn)| (context.clone(), turn))
-    }
-
     /// The approvals its turn waits for (issue 172); none without a turn.
     pub fn pending_approvals(&self) -> Vec<ApprovalRequest> {
         self.turn.as_ref().map(TurnState::pending_approvals).unwrap_or_default()
@@ -968,6 +961,7 @@ impl Journaled for AgentState {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::history::testing::{items_of, messages_of, recorded_context};
     use crate::actor::ActorState;
     use crate::confidentiality::Confidentiality;
     use crate::context::{ContextResolver, KnowledgeSource};
@@ -1162,7 +1156,7 @@ pub(crate) mod tests {
         state.said(answer.clone());
         assert_eq!(produced_from.transcript, state.transcript.entries().nth(1).map(|n| n.digest), "said after the step, from the transcript with it");
         assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "the context moved on to the head");
-        assert_eq!(state.recorded_context_of(answer.id), Some((produced_from.clone(), turn_id)), "recorded as it is said (issue 260)");
+        assert_eq!(recorded_context(&state.history, answer.id), Some((produced_from.clone(), turn_id)), "recorded as it is said (issue 260)");
         let note = NoteChange::Add { id: NoteId(1), text: "sums".to_string(), classification: Classification::CHANNEL_DEFAULT };
 
         state.turn = None;
@@ -1170,11 +1164,11 @@ pub(crate) mod tests {
         assert_eq!(state.transcript.entries().count(), 4, "the turn's messages, followed by its end");
         assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id));
         assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id));
-        assert_eq!(state.history.messages().iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["add 1 and 2", "thinking", "3"], "an internal step too (issue 258)");
+        assert_eq!(messages_of(&state.history).iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["add 1 and 2", "thinking", "3"], "an internal step too (issue 258)");
         let turns: Vec<_> = state.transcript.messages().iter().map(|m| m.turn_id).collect();
         assert_eq!(turns, [None, Some(turn_id), Some(turn_id)], "what the turn keeps is the turn's, what was heard no turn's");
-        assert_eq!(state.history.messages().last().and_then(|m| m.turn_id), Some(turn_id));
-        assert_eq!(state.recorded_context_of(answer.id), Some((produced_from, turn_id)), "with what it was produced from, and in which turn");
+        assert_eq!(messages_of(&state.history).last().and_then(|m| m.turn_id), Some(turn_id));
+        assert_eq!(recorded_context(&state.history, answer.id), Some((produced_from, turn_id)), "with what it was produced from, and in which turn");
         assert_eq!(state.notes.current().len(), 1);
     }
 
@@ -1194,8 +1188,8 @@ pub(crate) mod tests {
         assert_eq!(work.context.knowledge, [knowledge], "the knowledge recorded with the turn");
         assert_eq!(work.label(), Classification::CHANNEL_DEFAULT, "which has seen it");
         assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "what the turn says next is produced from it");
-        assert_eq!(state.recorded_context_of(skill.id), None, "the agent did not produce it");
-        assert_eq!(state.history.messages().last().map(|m| m.id), Some(skill.id), "and its history keeps it, as what it was given");
+        assert_eq!(recorded_context(&state.history, skill.id), None, "the agent did not produce it");
+        assert_eq!(messages_of(&state.history).last().map(|m| m.id), Some(skill.id), "and its history keeps it, as what it was given");
     }
 
     #[test]
@@ -1235,7 +1229,7 @@ pub(crate) mod tests {
         let first = state.turn.take().unwrap().work.turn_id;
         state.finish_turn(first, agent, Vec::new(), Vec::new(), None);
         let answered = state.transcript.entries().find(|n| n.entry.message().is_some_and(|m| m.id == answer.id)).unwrap().digest;
-        let (recorded, turn) = state.recorded_context_of(answer.id).expect("recorded with the answer");
+        let (recorded, turn) = recorded_context(&state.history, answer.id).expect("recorded with the answer");
         let resolve = |state: &AgentChannelState| ContextResolver::of(state).resolve(&recorded, turn, agent).map(|r| r.items.len());
         let before = resolve(&state);
         let (again, gone) = (said("again", Classification::PUBLIC), said("gone", Classification::PUBLIC));
@@ -1276,7 +1270,7 @@ pub(crate) mod tests {
 
         assert_eq!(resolve(&state), before, "what was recorded before resolves to what it did");
         assert!(state.transcript.prefix(&head.unwrap()).is_some(), "the old branch stays");
-        let items = state.history.items();
+        let items = items_of(&state.history);
         let compacted = items.iter().position(|item| matches!(item, HistoryEntry::Compacted { from: f, to: t, actor, .. } if *f == from && *t == to && *actor == agent)).expect("recorded");
         let followed: Vec<_> = items[compacted + 1..].iter().filter_map(|item| match item { HistoryEntry::Said { message, context: None } => Some(message.id), _ => None }).collect();
         assert_eq!(followed, [summary.id, skill.id], "then what replaced the older messages, as given");
@@ -1351,14 +1345,14 @@ pub(crate) mod tests {
         state.turn = None;
         let agent = ActorId::Agent(AgentId::new());
         assert!(!state.finish_turn(turn_id, agent, Vec::new(), Vec::new(), Some(request)));
-        let ends: Vec<String> = state.history.items().iter().filter_map(|item| match item {
+        let ends: Vec<String> = items_of(&state.history).iter().filter_map(|item| match item {
             HistoryEntry::CommandExecuted { turn_id: t, actor, issuer: by, command, args, .. } if *t == turn_id => Some(format!("{actor} ran /{command} {args} for {by}")),
             HistoryEntry::TurnFinished { turn_id: t, .. } if *t == turn_id => Some("finished".to_string()),
             _ => None,
         }).collect();
         assert_eq!(ends, [format!("{agent} ran /compact hard for {issuer}"), "finished".to_string()], "the command before the turn's end (issue 269)");
         assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id));
-        assert_eq!(state.history.messages().len(), 1, "nothing said");
+        assert_eq!(messages_of(&state.history).len(), 1, "nothing said");
     }
 
     #[test]
@@ -1371,7 +1365,7 @@ pub(crate) mod tests {
         state.give_up_turn(turn_id, ActorId::default(), GivenUpReason::Left);
         let contents = |messages: Vec<Message>| messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>();
         assert_eq!(contents(state.transcript.messages()), ["mail bob", "mailing"], "what it said is not unsaid");
-        assert_eq!(contents(state.history.messages()), ["mail bob", "mailing"]);
+        assert_eq!(contents(messages_of(&state.history)), ["mail bob", "mailing"]);
         assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnGivenUp { turn_id: t, reason: GivenUpReason::Left, .. }) if *t == turn_id));
         assert_eq!(state.transcript.all_entries().count(), state.transcript.entries().count(), "nothing branches");
         assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::TurnGivenUp { turn_id: t, .. }) if *t == turn_id));
@@ -1552,7 +1546,7 @@ pub(crate) mod tests {
         use crate::message::tests::{id, make_message};
         let mut state = AgentChannelState::default();
         state.perceive(vec![make_message(id(1)), make_message(id(2))], vec![make_message(id(1))]);
-        assert_eq!(state.history.messages().len(), 2, "all that was heard");
+        assert_eq!(messages_of(&state.history).len(), 2, "all that was heard");
         assert_eq!(state.transcript.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1)], "what was perceived");
 
         let channel = Classification::general(Confidentiality::Confidential);
@@ -1621,7 +1615,7 @@ pub(crate) mod tests {
     #[test]
     fn a_turn_begun_after_a_release_is_labelled_by_the_message_as_it_stands() {
         let mut state = a_state_that_heard("the numbers", Classification::CHANNEL_DEFAULT);
-        let heard = state.history.messages()[0].id;
+        let heard = messages_of(&state.history)[0].id;
         assert!(state.transcript.reclassify(heard, Classification::PUBLIC));
 
         begin(&mut state, Vec::new());
@@ -1641,7 +1635,7 @@ pub(crate) mod tests {
         let turn = TurnId::new();
         let answer = |content: &str| Message { sender_id: agent, role: MessageRole::Assistant, turn_id: Some(turn), ..said(content, Classification::CHANNEL_DEFAULT) };
         let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
-        let question = state.history.messages()[0].clone();
+        let question = messages_of(&state.history)[0].clone();
         let first = answer("hi");
         state.transcript.push(first.clone());
         state.history.push(first.clone(), None);

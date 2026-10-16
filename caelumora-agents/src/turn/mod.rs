@@ -405,6 +405,7 @@ fn event_for(message: Message, partial: bool) -> ActorEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::history::testing::recorded_context;
     use caelumora_model::actor::{Envelope, EventContext};
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::context::{ContextItem, ContextResolver, PromptPart};
@@ -427,7 +428,7 @@ mod tests {
 
     /// What `state` says its agent `agent` saw when it produced message `id`.
     pub(super) fn seen(state: &AgentChannelState, agent: AgentId, id: MessageId) -> Option<Vec<ContextItem>> {
-        let (reference, turn) = state.recorded_context_of(id)?;
+        let (reference, turn) = recorded_context(&state.history, id)?;
         Some(ContextResolver::of(state).resolve(&reference, turn, ActorId::Agent(agent))?.items)
     }
 

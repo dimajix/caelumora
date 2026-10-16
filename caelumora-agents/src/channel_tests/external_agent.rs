@@ -1,6 +1,7 @@
 //! The external agent actor in a running channel: what it is given, how it answers, and the remote
 //! tasks it keeps open.
 
+use caelumora_model::history::testing::messages_of;
 use crate::plugin::AgentsPlugin;
 use super::*;
 use caelumora_model::value::name::Name;
@@ -142,8 +143,7 @@ async fn an_external_agent_that_joins_keeps_what_it_may_see_and_on_joining_again
     let own = message(ActorId::Agent(agent), "mine");
     let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
     let kept = || async {
-        channel.stored_agent_channel_state(agent).await.unwrap()
-            .history.messages().into_iter().map(|m| m.content.unwrap()).collect::<Vec<_>>()
+        messages_of(&channel.stored_agent_channel_state(agent).await.unwrap().history).into_iter().map(|m| m.content.unwrap()).collect::<Vec<_>>()
     };
 
     channel.record_said(vec![one, two]).await;
@@ -200,10 +200,10 @@ async fn what_an_external_agents_perceive_processors_drop_is_kept_but_never_give
 
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
-    assert_eq!(contents(state.history.messages()), vec!["hello", "Hello, alice.", "the secret is 42"], "its history keeps all it was offered");
-    let offered: Vec<MessageId> = state.history.messages().iter().map(|m| m.id).collect();
+    assert_eq!(contents(messages_of(&state.history)), vec!["hello", "Hello, alice.", "the secret is 42"], "its history keeps all it was offered");
+    let offered: Vec<MessageId> = messages_of(&state.history).iter().map(|m| m.id).collect();
     let given = channel.agent_context(agent).await.in_transcript(&offered).await.expect("read");
-    let given: Vec<Message> = state.history.messages().into_iter().filter(|m| given.contains(&m.id)).collect();
+    let given: Vec<Message> = messages_of(&state.history).into_iter().filter(|m| given.contains(&m.id)).collect();
     assert_eq!(contents(given), vec!["hello"], "its transcript what it was given, on whichever branch");
     assert_eq!(remote.sent.lock().unwrap().len(), 1, "the secret was not given to the remote agent");
 
@@ -273,11 +273,11 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(state.remote.conversation, Some(conversation));
     assert!(state.remote.open_tasks.is_empty(), "both tasks ended");
-    let kept: Vec<_> = state.history.messages().into_iter().filter_map(|m| m.content).collect();
+    let kept: Vec<_> = messages_of(&state.history).into_iter().filter_map(|m| m.content).collect();
     assert_eq!(kept, vec!["hello", "Hello, alice.", "How are you?", "Fine."], "what it heard and what it answered");
-    let offered: Vec<MessageId> = state.history.messages().iter().map(|m| m.id).collect();
+    let offered: Vec<MessageId> = messages_of(&state.history).iter().map(|m| m.id).collect();
     let passed_on = channel.agent_context(agent).await.in_transcript(&offered).await.expect("read");
-    let given: Vec<_> = state.history.messages().into_iter().filter(|m| passed_on.contains(&m.id)).filter_map(|m| m.content).collect();
+    let given: Vec<_> = messages_of(&state.history).into_iter().filter(|m| passed_on.contains(&m.id)).filter_map(|m| m.content).collect();
     assert_eq!(given, vec!["hello", "How are you?"], "what the remote agent was given, on whichever branch");
     assert!(state.transcript.messages().is_empty(), "all of it sent: nothing to give next");
     // The context of each answer is what was given in its call (issue 205).
@@ -318,7 +318,7 @@ async fn an_external_agent_tells_its_remote_agent_of_a_message_it_was_given_that
     assert_eq!(sent[2].1.said, vec![said("@alice: [took back an earlier message \"And?\"; it no longer stands.]"), said("@alice: Well?")]);
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(given_for(&channel, agent, &second[0]).await, ["@alice: [changed an earlier message \"hello\"; it now reads:] hello, corrected", "@alice: And?"], "what its answer was given, word for word");
-    assert!(state.history.messages().iter().all(|m| m.notice_of.is_none()), "a notice is never in the history");
+    assert!(messages_of(&state.history).iter().all(|m| m.notice_of.is_none()), "a notice is never in the history");
     running.abort();
 }
 
@@ -405,7 +405,7 @@ async fn an_external_agent_s_answer_carries_the_turn_its_start_announced() {
     assert_eq!(partial, Some(started), "what it streams is of the turn");
     assert_eq!(answer.iter().map(|m| m.turn_id).collect::<Vec<_>>(), [Some(started)], "and what it answers");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert_eq!(state.history.messages().last().and_then(|m| m.turn_id), Some(started), "kept so in its history");
+    assert_eq!(messages_of(&state.history).last().and_then(|m| m.turn_id), Some(started), "kept so in its history");
     running.abort();
 }
 
@@ -830,7 +830,7 @@ async fn an_open_task_whose_answer_broke_off_is_followed_and_its_end_said_unaske
     assert_eq!(said[0].content.as_deref(), Some("Here it is."));
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "the task ended");
-    assert_eq!(state.history.messages().last().and_then(|m| m.content.clone()).as_deref(), Some("Here it is."), "kept as said");
+    assert_eq!(messages_of(&state.history).last().and_then(|m| m.content.clone()).as_deref(), Some("Here it is."), "kept as said");
     assert_eq!(given_for(&channel, agent, &said[0]).await, ["hello"], "with what the call that began the task was given (issue 205)");
     running.abort();
 }
@@ -885,7 +885,7 @@ async fn an_answer_that_broke_off_is_said_once_in_full_when_its_task_ends() {
         assert_eq!(said.len(), 1);
         assert_eq!(said[0].content.as_deref(), Some(expected), "said once, in full");
         let state = channel.stored_agent_channel_state(agent).await.unwrap();
-        let own: Vec<_> = state.history.messages().into_iter().filter(|m| m.sender_id == ActorId::Agent(agent)).filter_map(|m| m.content).collect();
+        let own: Vec<_> = messages_of(&state.history).into_iter().filter(|m| m.sender_id == ActorId::Agent(agent)).filter_map(|m| m.content).collect();
         assert_eq!(own, vec![expected.to_string()], "and kept once");
         running.abort();
     }
@@ -1069,7 +1069,7 @@ async fn lowering_the_channel_gives_up_an_external_agents_answer_under_way() {
     assert_eq!(remote.cancelled.lock().unwrap().as_slice(), &[task("t-1")], "the remote task is cancelled");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "and forgotten");
-    assert!(state.history.messages().iter().all(|m| m.sender_id != ActorId::Agent(agent)), "nothing of the answer is kept");
+    assert!(messages_of(&state.history).iter().all(|m| m.sender_id != ActorId::Agent(agent)), "nothing of the answer is kept");
     running.abort();
 }
 
@@ -1142,7 +1142,7 @@ async fn a_followed_task_that_fails_says_so_and_keeps_nothing_of_what_came_befor
     assert!(failed.contains("hermes could not finish: out of coffee"), "{failed}");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "the failed task ended");
-    assert!(state.history.messages().is_empty(), "nothing the channel never saw is kept as said");
+    assert!(messages_of(&state.history).is_empty(), "nothing the channel never saw is kept as said");
     running.abort();
 }
 
@@ -1163,7 +1163,7 @@ async fn a_followed_task_whose_stream_breaks_says_nothing_and_stays_open() {
     assert!(!said_anything(&mut events, agent), "no half answer is published");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(state.remote.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)], "left open, to be followed again");
-    assert!(state.history.messages().is_empty(), "nothing is kept as said");
+    assert!(messages_of(&state.history).is_empty(), "nothing is kept as said");
     running.abort();
 }
 

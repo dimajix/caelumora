@@ -4,6 +4,7 @@
 //! the agents' logic into a crate of its own (issue 370); what they share
 //! with the runtime's tests is `channel::testing`.
 
+use caelumora_model::history::testing::messages_of;
 use caelumora_runtime::channel::*;
 use caelumora_runtime::channel::testing::*;
 use caelumora_runtime::session::testing::user;
@@ -235,7 +236,7 @@ struct Heard;
 #[async_trait::async_trait]
 impl PromptProvider for Heard {
     async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
-        Ok(Prompt::from(format!("[Heard]\n{}", work.agent_channel_state().history.messages().len())))
+        Ok(Prompt::from(format!("[Heard]\n{}", messages_of(&work.agent_channel_state().history).len())))
     }
 }
 

@@ -215,6 +215,7 @@ impl TakenIn {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::history::testing::messages_of;
     use caelumora_runtime::component::ComponentImpl;
     use crate::message::testing::Without;
     use crate::message::PerceiveInProcessor;
@@ -259,7 +260,7 @@ mod tests {
         assert_eq!(ids(state.transcript.messages()), vec![first.id], "never sent anything: what others said");
         state.transcript.start_anew();
         body.perceive(&mut state, vec![empty.clone(), step.clone(), second.clone()]).await;
-        assert_eq!(ids(state.history.messages()), vec![first.id, empty.id, step.id, second.id], "all it heard is kept");
+        assert_eq!(ids(messages_of(&state.history)), vec![first.id, empty.id, step.id, second.id], "all it heard is kept");
         assert_eq!(ids(state.transcript.messages()), vec![second.id], "after what was sent, with text");
         state.transcript.start_anew();
         assert!(state.transcript.messages().is_empty(), "nothing new");

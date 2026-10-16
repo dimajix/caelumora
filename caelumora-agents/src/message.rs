@@ -72,6 +72,7 @@ where
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
+    use caelumora_model::history::testing::items_of;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::history::HistoryEntry;
     use caelumora_model::turn::GivenUpReason;
@@ -81,7 +82,7 @@ pub(crate) mod testing {
     /// (issue 258): each with why, and the messages before its end that
     /// carry its id.
     pub(crate) fn given_up_turns(state: &AgentChannelState) -> Vec<(TurnId, GivenUpReason, Vec<Message>)> {
-        let items = state.history.items();
+        let items = items_of(&state.history);
         items.iter().enumerate()
             .filter_map(|(at, item)| {
                 let HistoryEntry::TurnGivenUp { turn_id, reason, .. } = item else { return None };
