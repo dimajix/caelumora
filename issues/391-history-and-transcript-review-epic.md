@@ -83,3 +83,5 @@ order along the way.
   already, in `Message`; what stands twice is a dispatch of three lines, and either form of a
   `MessageChange` would add more than it takes away. 396 goes ahead on the two dispatches as they
   are, as it says it can.
+- **2026-10-16** — 396 done: one message as it stands is read as `known` reads it, in the history
+  and the transcript alike. Next in the order: 397; 394 still waits for the maintainer's decision.
