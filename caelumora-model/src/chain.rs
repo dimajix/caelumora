@@ -11,7 +11,7 @@
 //! entry is, its position (`Node::seq`, issue 376), is counted apart from
 //! what it says: the order entries were added, across every branch - what a
 //! range of the chain is read by.
-//! `MessageHistory` and `Transcript` are chains of messages (issue 06), an
+//! `History` and `Transcript` are chains of messages (issue 06), an
 //! agent's notes (issue 17) and memory (issue 62) chains of changes.
 //!
 //! What goes into a digest is up to the entry's type, which computes it when

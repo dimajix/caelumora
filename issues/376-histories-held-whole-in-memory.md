@@ -147,11 +147,11 @@ match arms. It becomes two things:
   This is the rule 379 applies when a store writes an entry into the derived store and when it
   rebuilds it, so it lives on the entry and nowhere else.
 - **The fold, a function over nodes:** `history::fold<'a>(nodes: impl IntoIterator<Item = &'a
-  Node<HistoryEntry>>) -> Vec<(u64, Message)>`: the messages the nodes say, each with the position
-  of the node that said it, with every later node of the range folded into it. Given
-  `all_entries()` it is what `fold_nodes` is today; given a range, it is the range as it stands
-  with respect to the changes in the range - which is complete for every message the range begins
-  before, since a change always comes after what it changes.
+  Node<HistoryEntry>>) -> Vec<(&'a Node<HistoryEntry>, Message)>`: the messages the nodes say,
+  each with the node that said it - its position, and its context, which `items` and
+  `said_in_turn` need -, with every later node of the range folded into it. Given `all_entries()`
+  it is what `fold_nodes` is today; given a range that goes on to the end of the history, every
+  message in it as it stands, since a change always comes after what it changes.
 
 The readers are written over them, each over no more than it needs:
 
@@ -162,12 +162,13 @@ The readers are written over them, each over no more than it needs:
   `fold(self.from(at))` and the message of that position - not a fold of everything. The three
   checks before a change (`reclassify`, `modify`, `revoke`) use it as they do.
 - `said_in_turn(actor, turn)` takes the actor whose turn it is - both callers, `Turn::messages`
-  and the turn's ending, know it - and reads from the end backwards to the end of the actor's
-  previous turn: a `TurnFinished` or `TurnGivenUp` of `actor` with another turn id, or the start.
-  An actor has one turn at a time and a turn given up is answered again under a new turn id
-  (issue 259), so every message of `turn` lies after that end, and every change to one of them
-  after the message. What it collects is `fold` of that tail, filtered as today: the messages
-  produced in `turn`, none taken back.
+  and the turn's ending, know it - and reads from the end backwards until it has met the turn - a
+  message of it, or its end - and then the end of the turn of `actor` before it: a `TurnFinished`
+  or `TurnGivenUp` of `actor` with another turn id, or the start. An actor has one turn at a time
+  and a turn given up is answered again under a new turn id (issue 259), so every message of
+  `turn` lies after that end, and every change to one of them after the message. What it collects
+  is `fold` from that end on, filtered as today: the messages produced in `turn`, none taken back.
+  A turn that recorded nothing is not folded at all.
 - `fit_into(channel)` records `Fitted` and returns nothing: the count of messages it changes was
   the only reason to fold everything, and its one caller (`ChannelLoop`, `settings.rs`) stores the
   state whenever the entry is recorded, which it should - today an entry that changed nothing is
@@ -309,3 +310,8 @@ independent of each other and of 6.
 - **2026-10-16** — Step 1 done: every node carries its position (`Node::seq`), given when it is
   added and checked when a stored chain is merged; `Chain` reads by range (`end`, `at`, `from`,
   `before`, `seq_of`). Every stored state is to be deleted.
+- **2026-10-16** — Step 2 done: `HistoryEntry::fold_into` is the one rule of what stands,
+  `history::fold` folds any range with it, and `message`, `said_in_turn` read from where their
+  message or turn began rather than from the start. `fold` gives each message with its node, not
+  its position alone. `fit_into` records without counting, and the channel stores whenever it
+  records; `messages_after`, which nothing called, is gone.

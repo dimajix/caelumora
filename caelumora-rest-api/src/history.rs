@@ -33,7 +33,7 @@ pub enum HistoryItemResponse<M> {
 }
 
 impl<M> HistoryItemResponse<M> {
-    /// The item `entry` of a history (`MessageHistory::items`), its message
+    /// The item `entry` of a history (`History::items`), its message
     /// given as `said` makes it; `None` for an entry a reader of a history
     /// is not given - a change, which the message it changed holds.
     pub fn of(entry: HistoryEntry, said: impl FnOnce(Message) -> M) -> Option<Self> {

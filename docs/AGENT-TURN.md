@@ -351,7 +351,7 @@ old one but does not continue it:
     turn's input as well as the step of a plan. A plan whose instructions were replaced is named
     again where its current step stood: its steps, which are done and which is under way, then the
     instruction (`Turn::compact`).
-*   **The turn's answer is what it said**, read from the history (`MessageHistory::said_in_turn`),
+*   **The turn's answer is what it said**, read from the history (`History::said_in_turn`),
     not from the transcript, of which a part may have been summarised.
 *   **Where it came from** is recorded in the history (`HistoryEntry::Compacted`), in no digest of
     the transcript: two identical contexts get the same digest however they came about.
