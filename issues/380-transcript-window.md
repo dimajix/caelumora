@@ -1,6 +1,6 @@
 # 380 — A transcript holds every branch it ever had in memory
 
-**Status:** open
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -190,3 +190,26 @@ Every stored state has to be deleted afterwards.
   one generic way of keeping a chain per backend, read by a `TranscriptStore` of its own; the
   window the active branch; the context of an old message, whether a message reached the
   transcript and what an external agent tells its remote side read from the store.
+- **2026-10-16** — Done, in the five steps of the plan. An agent's actor holds the active branch of
+  its transcript (`transcript_from`, `keep_window`); the store holds every branch, written by the
+  put of the agent's state, read by the `TranscriptStore` (`path`, `message`, `given`). The context
+  of an older message is resolved against a path loaded from the store
+  (`ContextResolver::on_path`), a page of an agent's history asks once which of its messages reached
+  the transcript, and an external agent reads what its remote agent was given before it tells of a
+  change. Where it differs from the plan:
+  - The history's items keep how far they are derived in a file of their own, `items-head.json`,
+    so that `head.json` is the same for every chain; the order of writing and the repair stay.
+  - Both stores check that what a put appends fits before they write anything; the `MemoryStore`
+    checks positions alone, as the JSON store always did, no longer the parents a `Chain` checks.
+  - `Transcript::message`, which read every branch in memory, is gone; its rule is `known`, which
+    the stores read by, and `TranscriptEntry::changed` is public for the hand over.
+  - `tell` reads from the store and hands what it read to `give_notice`, the part tested without a
+    runtime.
+  - `AgentContextView::in_transcript` takes the messages of a page and answers which reached the
+    transcript; `AgentContextView::of` takes the agent and the channel instead of a `HistoryKey`.
+  - The `TranscriptStore` has no `entries`: no reader needs the chain itself.
+  - `AtomicU8::fetch_update`, deprecated by the toolchain, became `try_update` on the way, since the
+    hook refuses a commit while clippy warns.
+
+  Every stored state is to be deleted: the transcript is no longer part of the agent's document,
+  `window_from` is `history_from`, and the history's head no longer holds `items_end`.

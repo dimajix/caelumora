@@ -191,7 +191,9 @@ The `StateStore` (in `caelumora-model`) stores the runtime state of channels and
 
 *   **`ChannelState`**: the channel's history (see [Histories](#histories)).
 *   **`AgentChannelState`**: an agent in one channel, of either kind - processing state, history,
-    transcript, notes, prompt texts, and the turn under way (see [AGENT-TURN.md](AGENT-TURN.md)).
+    transcript, notes, prompt texts, and the turn under way (see [AGENT-TURN.md](AGENT-TURN.md));
+    its history and its transcript kept apart (see [Histories](#histories),
+    [Transcripts](#transcripts)).
     An external agent keeps instead what it keeps of the remote side: the remote conversation and
     the tasks not yet ended.
 *   **`AgentState`**: the agent itself, across its channels and sessions - so far its memory (see
@@ -263,11 +265,40 @@ state's document (issue 379):
     the chain ends -, written after the segments; the items likewise (`items-<from>.json`) and
     `items-head.json` - up to where they are derived -, written after the items. Entries a crash
     left past the head's end are not there; items behind the chain are derived anew when the
-    history is next loaded or appended to. A message is found by scanning the items backwards, and a fitting
-    rewrites every items segment: slow where a database has indexes. In Postgres
+    history is next loaded or appended to. A message is found by scanning the items backwards, and
+    a fitting rewrites every items segment: slow where a database has indexes. In Postgres
     ([04](../issues/04-postgres-state-store.md)) a history is the tables `history_entries(key, seq,
     parent, digest, entry)` and `history_items(key, seq, message_id, item)` beside the documents,
     written in one transaction with them.
+
+### Transcripts
+
+An agent's transcript in a channel (`Transcript`, a chain of `TranscriptEntry`) grows with every
+compaction and, for an external agent, with every call, each of which begins a branch of its own;
+the model is given only the active one. It is kept apart from the agent's state document as the
+history is (issue 380), with what differs:
+
+*   **The same chain, nothing derived.** The put of the agent's state writes the entries added since
+    it was last stored, after the history and before the document; the store keeps every branch.
+    What stands of a branch is read from it as it is loaded (`as_they_stand`).
+*   **The read side is the `TranscriptStore`**, handed out by the `StoreBackend`: the path to a
+    digest, on whichever branch - what the context of an older message names -, a message as it
+    stands where it was given, and which of some messages the transcript holds. The views read
+    there, and an external agent's actor when it tells its remote agent of a change.
+*   **The holder keeps the active branch**, from its root on (`transcript_from`), and lets go of
+    what lies before after every put (`keep_window`, see
+    [AGENT-TURN.md](AGENT-TURN.md#what-is-held-in-memory)).
+*   **A digest may be there twice.** The holder dedupes an entry by its digest only within its
+    window, so a root given again after the transcript began anew is a second entry where it would
+    have been one. Both name the same content after the same predecessors; the store makes no
+    digest unique, and a path is followed back from the newest entry with the digest.
+*   **One way of keeping a chain.** Both stores keep a history's and a transcript's chain alike, by
+    position: the `MemoryStore` as nodes by position (`KeptChain`), the `JsonFileStore` in segments
+    and a head (`chains`), the transcript in `<agent>.transcript/` beside the agent's snapshot,
+    without anything laid over it. A path is followed back segment by segment, a message looked for
+    in every segment: slow where a database has indexes. In Postgres a transcript is the table
+    `transcript_entries(agent, channel, seq, parent, digest, entry)`, with an index on the digest
+    and on the message an entry holds, written in the transaction of the agent's state.
 
 ### The agent state has one owner per process
 
