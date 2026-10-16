@@ -9,7 +9,7 @@
 use super::{read_json_opt, to_backend_error, write_json_atomic};
 use crate::chain::{Chain, Node, Stored};
 use crate::digest::Digest;
-use crate::store::kept_chain::{fits, place};
+use crate::store::kept_chain::{fits, follow_back, followed, place};
 use crate::store::{StoreError, StoreResult};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -109,4 +109,27 @@ pub(super) async fn load<E: DeserializeOwned>(dir: &Path, key: impl Display, fro
     let entries = read_chain(dir, from, head.end).await?;
     Chain::suffix(from, Stored { entries, head: head.head })
         .map_err(|e| StoreError::Backend(format!("{key} cannot be read from position {from}: {e}")))
+}
+
+/// The path from the root up to the entry with the digest `digest` of the
+/// chain `key` names, kept in `dir`, on whichever branch - the newest such
+/// entry if one is there twice -, read backwards segment by segment; `None`
+/// if there is none.
+///
+/// # Errors
+/// If it cannot be read, or the path does not lead back to a root.
+pub(super) async fn path<E: DeserializeOwned + Clone>(dir: &Path, key: impl Display, digest: Digest) -> StoreResult<Option<Vec<Node<E>>>> {
+    let end = read_head(dir).await?.end;
+    let mut want = Some(digest);
+    let mut path = Vec::new();
+    let mut segment = segment_of(end.saturating_sub(1));
+    while end > 0 && want.is_some() {
+        let nodes: Vec<Node<E>> = read_segment(dir, segment).await?;
+        follow_back(&mut want, &mut path, nodes.iter().rev().filter(|node| node.seq < end));
+        if segment == 0 {
+            break;
+        }
+        segment -= SEGMENT;
+    }
+    followed(want, path).map_err(|e| StoreError::Backend(format!("{key} does not lead back to its root: {e}")))
 }

@@ -322,8 +322,15 @@ pub struct AgentChannelState {
     /// What the agent's model is given of the conversation: its own
     /// messages in full, internal steps included, and what others said
     /// (issue 50). Of an external agent, what the remote agent was given,
-    /// in the order it was given (issue 179).
+    /// in the order it was given (issue 179). From `transcript_from` on, as
+    /// a store loads it: not part of the state's document, but a chain a
+    /// store keeps apart (issue 380), written with the state and read on its
+    /// own (`TranscriptStore`).
+    #[serde(skip)]
     pub transcript: Transcript,
+    /// The position from which on the agent keeps its transcript in memory;
+    /// a store loads the transcript from there.
+    pub transcript_from: u64,
     /// The notes the agent published in this channel (issue 17).
     pub notes: NoteChain,
     /// The agent's private notes in this channel, which only it reads - and
@@ -835,13 +842,13 @@ pub enum RetryRefused {
 /// 193): a variant per part of the state. A change of the agent's *state* -
 /// what it heard, said, noted - as against an update of the agent itself.
 /// The growing parts record what was added, the small ones are recorded
-/// whole. The history is a chain a store keeps apart (issue 379).
+/// whole. The history and the transcript are chains a store keeps apart
+/// (issues 379, 380).
 // A record is made once per store; its size in memory does not matter.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentChannelStateChange {
-    Transcript(Stored<TranscriptEntry>),
     Notes(Stored<LedgerEntry<Notes>>),
     PrivateNotes(Stored<LedgerEntry<Notes>>),
     Prompt { digest: Digest, text: String },
@@ -864,6 +871,8 @@ pub enum AgentChannelStateChange {
     Remote(RemoteState),
     /// From where the history is held, whole.
     HistoryFrom(u64),
+    /// From where the transcript is held, whole.
+    TranscriptFrom(u64),
 }
 
 /// The tool sets of one offer as they were recorded (`RecordedToolSets`).
@@ -881,7 +890,6 @@ impl Journaled for AgentChannelState {
 
     fn changes(&self) -> Vec<Self::Change> {
         let mut changes: Vec<Self::Change> = Vec::new();
-        changes.extend(self.transcript.changes().map(AgentChannelStateChange::Transcript));
         changes.extend(self.notes.changes().map(AgentChannelStateChange::Notes));
         changes.extend(self.private_notes.changes().map(AgentChannelStateChange::PrivateNotes));
         changes.extend(self.prompts.changes().into_iter().map(|(digest, text)| AgentChannelStateChange::Prompt { digest, text }));
@@ -891,12 +899,13 @@ impl Journaled for AgentChannelState {
         changes.push(AgentChannelStateChange::Used(self.used));
         changes.push(AgentChannelStateChange::Remote(self.remote.clone()));
         changes.push(AgentChannelStateChange::HistoryFrom(self.history_from));
+        changes.push(AgentChannelStateChange::TranscriptFrom(self.transcript_from));
         changes
     }
 
-    /// The history is marked stored by the store that wrote it.
+    /// The history and the transcript are marked stored by the store that
+    /// wrote them.
     fn mark_stored(&mut self) {
-        self.transcript.mark_stored();
         self.notes.mark_stored();
         self.private_notes.mark_stored();
         self.prompts.mark_stored();
@@ -905,7 +914,6 @@ impl Journaled for AgentChannelState {
 
     fn apply(&mut self, change: Self::Change) -> Result<(), String> {
         match change {
-            AgentChannelStateChange::Transcript(change) => self.transcript.apply(change)?,
             AgentChannelStateChange::Notes(change) => self.notes.apply(change)?,
             AgentChannelStateChange::PrivateNotes(change) => self.private_notes.apply(change)?,
             AgentChannelStateChange::Prompt { digest, text } => self.prompts.apply(digest, text),
@@ -915,6 +923,7 @@ impl Journaled for AgentChannelState {
             AgentChannelStateChange::Used(used) => self.used = used,
             AgentChannelStateChange::Remote(remote) => self.remote = remote,
             AgentChannelStateChange::HistoryFrom(from) => self.history_from = from,
+            AgentChannelStateChange::TranscriptFrom(from) => self.transcript_from = from,
         }
         Ok(())
     }
@@ -1088,7 +1097,9 @@ pub(crate) mod tests {
         waiting.said(Message::new(Classification::CHANNEL_DEFAULT));
         let json = serde_json::to_string(&waiting).unwrap();
         assert!(json.contains("\"WaitingForUser\""));
-        let decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
+        let mut decoded: AgentChannelState = serde_json::from_str(&json).unwrap();
+        assert!(decoded.transcript.is_empty(), "the transcript is a store's to keep apart (issue 380)");
+        decoded.transcript = waiting.transcript.clone();
         assert_eq!(decoded.processing_state, ActorState::WaitingForUser);
         let turn_id = decoded.turn.as_ref().map(|t| t.work.turn_id).expect("the turn is resumed from what was stored");
         assert_eq!(decoded.transcript.messages().len(), 1, "with what it said, in the transcript (issue 260)");
@@ -1428,7 +1439,6 @@ pub(crate) mod tests {
 
         let changes = state.changes();
         let parts: Vec<&str> = changes.iter().map(|c| match c {
-            AgentChannelStateChange::Transcript(_) => "transcript",
             AgentChannelStateChange::Notes(_) => "notes",
             AgentChannelStateChange::PrivateNotes(_) => "private_notes",
             AgentChannelStateChange::Prompt { .. } => "prompt",
@@ -1438,14 +1448,15 @@ pub(crate) mod tests {
             AgentChannelStateChange::Used(_) => "used",
             AgentChannelStateChange::Remote(_) => "remote",
             AgentChannelStateChange::HistoryFrom(_) => "history_from",
+            AgentChannelStateChange::TranscriptFrom(_) => "transcript_from",
         }).collect();
-        assert_eq!(parts, ["transcript", "notes", "private_notes", "prompt", "offered_tools", "processing_state", "turn", "used", "remote", "history_from"], "what was added, then the small parts whole; the history is the store's to write");
+        assert_eq!(parts, ["notes", "private_notes", "prompt", "offered_tools", "processing_state", "turn", "used", "remote", "history_from", "transcript_from"], "what was added, then the small parts whole; the history and the transcript are the store's to write");
         replayed(&state, &mut copy);
         assert_eq!(copy.used, state.used, "the running total with them");
 
         state.mark_stored();
         state.turn = None;
-        assert_eq!(state.changes().len(), 5, "between turns a step is the small parts alone");
+        assert_eq!(state.changes().len(), 6, "between turns a step is the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.turn.is_none());
     }
@@ -1519,12 +1530,12 @@ pub(crate) mod tests {
         let remote = &mut state.remote;
         remote.conversation = Some(ConversationId("c-1".to_string()));
         remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), work: None });
-        assert_eq!(state.changes().len(), 1 + 5, "the transcript's and the small parts; the history is the store's");
+        assert_eq!(state.changes().len(), 6, "the small parts; the history and the transcript are the store's");
         replayed(&state, &mut copy);
 
         state.mark_stored();
         state.remote.open_tasks.clear();
-        assert_eq!(state.changes().len(), 5, "the small parts alone");
+        assert_eq!(state.changes().len(), 6, "the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.remote.open_tasks.is_empty());
     }

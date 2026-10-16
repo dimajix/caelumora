@@ -25,6 +25,7 @@ use tracing::{debug, info, warn};
 
 mod chains;
 mod histories;
+mod transcripts;
 
 /// A journal is folded into its snapshot once it is at least as large as
 /// the snapshot, and at least this large (issue 193): small states are not
@@ -39,8 +40,9 @@ pub const DEFAULT_JOURNAL_FLOOR: u64 = 64 * 1024;
 /// once the journal is at least as large as the snapshot and
 /// `journal_floor`. What a crash leaves is read as it is: a torn last line
 /// is dropped, and a journal that survived its snapshot replays onto it
-/// without effect, since replaying is idempotent. A state's history is kept
-/// apart, in segments beside the snapshot (`histories`, issue 379).
+/// without effect, since replaying is idempotent. A state's history and an
+/// agent's transcript are kept apart, in segments beside the snapshot
+/// (`chains`; `histories`, `transcripts`, issues 379, 380).
 #[derive(Debug)]
 pub struct JsonFileStore {
     root: PathBuf,
@@ -573,13 +575,15 @@ impl StateStore for JsonFileStore {
         debug!("Reading agent channel state from {}", path.display());
         let mut state: AgentChannelState = load_state(&path).await?.unwrap_or_default();
         state.history = self.load_history(HistoryKey::Agent(agent_id, channel_id), state.history_from).await?;
+        state.transcript = self.load_transcript(agent_id, channel_id, state.transcript_from).await?;
         Ok(state)
     }
 
-    /// The history first, then the document, which says from where the
-    /// history is loaded.
+    /// The history and the transcript first, then the document, which says
+    /// from where they are loaded.
     async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
         self.append_history(HistoryKey::Agent(agent_id, channel_id), &mut state.history).await?;
+        self.append_transcript(agent_id, channel_id, &mut state.transcript).await?;
         self.store_state(&self.agent_channel_state_path(agent_id, channel_id), state).await
     }
 
@@ -634,6 +638,7 @@ impl StateStore for JsonFileStore {
             delete_if_exists(&path).await?;
             delete_if_exists(&journal_path(&path)).await?;
             delete_dir_if_exists(&path.with_extension("history")).await?;
+            delete_dir_if_exists(&path.with_extension("transcript")).await?;
         }
         Ok(())
     }
@@ -686,6 +691,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = store(dir.path());
         suite::history_store_behaves(&store, &store).await;
+        suite::transcript_store_behaves(&store, &store).await;
     }
 
     #[tokio::test]
@@ -906,6 +912,7 @@ mod tests {
     }
 
     use crate::message::tests::{id, make_message};
+    use crate::digest;
     use crate::actor::ActorState;
     use crate::channel::moderation_components;
     use crate::value::name::Name;
@@ -922,11 +929,13 @@ mod tests {
         journal_path(&store.agent_channel_state_path(agent, channel))
     }
 
-    /// A state with messages `from..to` in its transcript and history.
+    /// A state with messages `from..to` in its transcript and history, and
+    /// a prompt part kept for each in its document, which grows with them.
     fn said(state: &mut AgentChannelState, from: u128, to: u128) {
         for n in from..to {
             state.transcript.push(make_message(id(n)));
             state.history.extend(vec![make_message(id(n))]);
+            state.prompts.keep(digest::prompt(&format!("part {n}")), || format!("part {n}"));
         }
     }
 

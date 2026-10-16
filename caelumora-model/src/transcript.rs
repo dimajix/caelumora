@@ -104,7 +104,7 @@ where
 /// The message `id` as `nodes` hold it: as it was first recorded, with
 /// every change of it since, in the order they were. `None` if they do not
 /// hold it.
-fn known<'a>(mut nodes: impl Iterator<Item = &'a Node<TranscriptEntry>>, id: MessageId) -> Option<Message> {
+pub(crate) fn known<'a>(mut nodes: impl Iterator<Item = &'a Node<TranscriptEntry>>, id: MessageId) -> Option<Message> {
     let mut message = nodes.by_ref().find_map(|node| node.entry.message().filter(|m| m.id == id)).cloned()?;
     nodes.filter(|node| node.entry.changed() == Some(id)).for_each(|node| node.entry.apply_to(&mut message));
     Some(message)
