@@ -79,3 +79,7 @@ order along the way.
 - **2026-10-16** — 393 done: one `record` on each chain; `HistoryEntry::of_event`, mentioned above,
   was weighed there and not taken up. Next in the order: 394, which waits for the maintainer's
   decision.
+- **2026-10-16** — 395 rejected: the rule a change of a message is applied by is written once
+  already, in `Message`; what stands twice is a dispatch of three lines, and either form of a
+  `MessageChange` would add more than it takes away. 396 goes ahead on the two dispatches as they
+  are, as it says it can.
