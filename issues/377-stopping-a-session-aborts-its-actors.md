@@ -1,6 +1,6 @@
 # 377 — Stopping or deleting a session aborts its actors
 
-**Status:** open
+**Status:** done
 **Area:** Sessions and channels
 
 ## The problem
@@ -73,3 +73,22 @@ remote tasks kept. And a deleted session should end its actors as a deleted chan
 - **2026-10-15** — Opened while looking at [297](297-orderly-shutdown.md) with the maintainer: 297
   assumed that stopping a session gives its actors the time to store their state, which it does
   not. An orderly shutdown needs this first.
+- **2026-10-16** — Done. `Actor` has `stop` (the channel stops: kept for a resume) and `leave` (the
+  actor left: today's `stop`), both without a default. `ChannelLoop` and `SessionLoop` have
+  `stop_actors` and `leave_actors`; `SessionManager::stop_running` is told which and has the
+  actors end before it aborts the session's task - `stop` stops them, `delete` has them leave.
+  Removing a participant, a deleted agent and a deleted channel leave.
+  In the agents, `RunControl` keeps `Interrupt::Stop` and `Interrupt::Leave` and whether the actor
+  left. A step that is interrupted returns the state it stands at - `Planning` and `Busy` no
+  longer return `Cancelling` themselves -, so that the run loop alone decides: a cancel goes to
+  `Cancelling`, leaving gives the turn up, a stop stores the step and ends. Waiting between turns
+  ends on a stop too; before, an idle agent of a deleted channel waited out `STOP_GRACE`. A tool
+  call interrupted by a stop is answered as `Interruption::Stopped`, which tells the model that the
+  session was stopped and the turn resumed; a call that had not run yet is answered as not
+  executed when the turn resumes, by the rules of 75 unchanged - the stored turn cannot tell a
+  stop from a crash. An external agent stopped while it answers leaves the answer to its remote
+  task, what came so far kept with it as when the answer breaks off (195), and says nothing now;
+  it follows no task once its run is to end.
+  `GivenUpReason::Stopped` is renamed `Left` (`"left"` in the REST API and the web UI), since a
+  stop no longer gives anything up. No state `Stopped` is introduced, for the reason given above;
+  whether the views should report no state for an actor whose channel does not run stays open.

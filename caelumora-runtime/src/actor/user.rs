@@ -625,9 +625,15 @@ impl Actor for UserActor {
         ActorState::Idle
     }
 
+    /// Ends the actor: its channel stops (issue 377). Its task ends, and
+    /// with it every watch; it holds nothing to keep.
+    fn stop(&self) {
+        self.ended.cancel();
+    }
+
     /// Ends the actor: it left the channel (issue 46). Its task ends, and
     /// with it every watch.
-    fn stop(&self) {
+    fn leave(&self) {
         self.ended.cancel();
     }
 

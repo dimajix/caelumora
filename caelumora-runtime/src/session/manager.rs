@@ -25,6 +25,7 @@ use crate::scoped::ScopedEntities;
 use crate::workspace::reaper::CommandReaper;
 use crate::agent::AgentManager;
 use dashmap::DashMap;
+use std::ops::AsyncFnOnce;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use super::{SessionError, SessionLoop, purge_channel_document, require_attachable, require_classification};
@@ -386,8 +387,10 @@ impl SessionManager {
     }
 
     /// Stops session `id` on behalf of `context` without deleting it: its
-    /// channels and actors stop, for everybody in it (`StopSession`).
-    /// Returns whether it ran.
+    /// channels and actors stop, for everybody in it (`StopSession`) - each
+    /// actor keeps what it is in the middle of, to be resumed when the
+    /// session runs again, and is given up to `STOP_GRACE` to store it
+    /// (issue 377). Returns whether it ran.
     ///
     /// Waits for a start of the same session that is under way (issue 62):
     /// otherwise that start could register the session after it was stopped,
@@ -404,16 +407,25 @@ impl SessionManager {
         let attributes = found.attributes();
         self.access_policy
             .require(context, ActionType::StopSession(&attributes), StoreError::PermissionDenied).await?;
-        Ok(matches!(found, Found::Running(_)) && self.stop_running(id).await.is_some())
+        Ok(matches!(found, Found::Running(_)) && self.stop_running(id, SessionLoop::stop_actors).await.is_some())
     }
 
     /// Stops session `id` if it runs, and with it the commands started in
-    /// its channels (issue 254). Called with its start lock held.
-    async fn stop_running(&self, id: SessionId) -> Option<Arc<SessionLoop>> {
-        if let Some((_, handle)) = self.handles.remove(&id) {
+    /// its channels (issue 254). Called with its start lock held. Its
+    /// actors are ended first by `end_actors`, told to stop
+    /// (`SessionLoop::stop_actors`) or to leave (`SessionLoop::leave_actors`),
+    /// and given `STOP_GRACE` to end by themselves before the session's
+    /// task, and with it whoever did not, is aborted (issue 377). Nobody
+    /// finds it running meanwhile.
+    async fn stop_running(&self, id: SessionId, end_actors: impl AsyncFnOnce(&SessionLoop)) -> Option<Arc<SessionLoop>> {
+        let handle = self.handles.remove(&id).map(|(_, handle)| handle);
+        let removed = self.sessions.remove(&id).map(|(_, s)| s);
+        if let Some(session_loop) = &removed {
+            end_actors(session_loop).await;
+        }
+        if let Some(handle) = handle {
             handle.abort();
         }
-        let removed = self.sessions.remove(&id).map(|(_, s)| s);
         if let Some(session_loop) = &removed {
             let session = Arc::clone(&session_loop.session());
             self.command_reaper.end_commands_in(&session.channels).await;
@@ -484,7 +496,8 @@ impl SessionManager {
             return Err(error);
         }
 
-        self.stop_running(id).await;
+        // Its actors leave, as those of a deleted channel do (issue 377).
+        self.stop_running(id, SessionLoop::leave_actors).await;
 
         let event_bus = &self.events;
         for channel in &channels {
@@ -625,6 +638,11 @@ mod tests {
     use crate::error::is_forbidden;
     use serde_json::Value;
     use std::time::Duration;
+    use crate::channel::STOP_GRACE;
+    use crate::session::SessionLoop;
+    use caelumora_model::actor::{ActorEvent, Envelope};
+    use caelumora_model::turn::GivenUpReason;
+    use tokio::sync::broadcast::Receiver;
 
     #[tokio::test]
     async fn create_session_emits_created_then_started() {
@@ -1110,5 +1128,83 @@ mod tests {
 
         manager.delete(&as_user(alice), id).await.expect("the owner deletes it");
         assert!(!manager.sessions.contains_key(&id));
+    }
+
+    /// A running session of alice and an agent of hers that hangs in its
+    /// answer to her hello (`Script::Hangs`): the manager, alice's context,
+    /// the session, the agent and what its channel takes in from the start
+    /// of the answer on.
+    async fn with_a_hanging_answer() -> (Arc<SessionManager>, SecurityContext, Arc<SessionLoop>, ActorId, Receiver<Envelope>) {
+        use crate::testing::{Script, ScriptedAgents};
+        use caelumora_model::agent::{Personality, PersonalityId, PersonalityKind};
+
+        let store = Arc::new(MemoryStore::new());
+        let runtime = TestRuntime { store: Arc::clone(&store), plugins: vec![&ScriptedAgents(Script::Hangs)], ..Default::default() }.build();
+        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
+        let system = SecurityContext::system();
+        let alice = user("alice");
+        let participants = record_users(&manager, &[&alice]).await;
+        let personality = Personality {
+            id: PersonalityId::new(), name: ScopedName::new("thinker", Default::default()).unwrap(), kind: PersonalityKind::Internal,
+            roles: None, description: None, introduction: None,
+            components: Default::default(),
+            security_attributes: Default::default(), reasoning_visibility: Default::default(),
+            deleted: None,
+        };
+        store.entity_stores().personalities.create(&system, &personality).await.unwrap();
+        let thinker = Agent::new(ScopedName::new("thinker", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(alice.id));
+        store.entity_stores().agents.create(&system, &thinker).await.unwrap();
+        let agent = ActorId::Agent(thinker.id);
+
+        let alice_ctx = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
+        let mut session = make_session("thinking", ActorId::None);
+        session.participants = participants;
+        session.participants.push(caelumora_model::session::Participant::Agent(thinker.id));
+        let session = create(&manager, &alice_ctx, session).await.unwrap();
+        let channel = session.create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), agent])).await.unwrap();
+        let mut events = channel.observe();
+        channel.user_actor(alice.id).unwrap().send_message("hello".to_string(), None).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let envelope = events.recv().await.expect("the channel is running");
+                if envelope.context.sender_id == agent && matches!(envelope.event, ActorEvent::ResponseStarted { .. }) { break }
+            }
+        }).await.expect("the agent begins its answer");
+        (manager, alice_ctx, session, agent, events)
+    }
+
+    /// How the turns of `agent` ended among `events`, as far as they came.
+    fn turns_given_up(events: &mut Receiver<Envelope>, agent: ActorId) -> Vec<GivenUpReason> {
+        let mut given_up = Vec::new();
+        while let Ok(envelope) = events.try_recv() {
+            if let (true, ActorEvent::TurnGivenUp { reason, .. }) = (envelope.context.sender_id == agent, envelope.event) {
+                given_up.push(reason);
+            }
+        }
+        given_up
+    }
+
+    /// A session stopped (issue 377) has its actors stop, not leave: the
+    /// answer under way is kept, not given up - and the stop waits for them
+    /// to end by themselves, which takes less than the grace.
+    #[tokio::test]
+    async fn stopping_a_session_lets_its_agents_keep_their_turns() {
+        let (manager, alice, session, agent, mut events) = with_a_hanging_answer().await;
+
+        let stopping = std::time::Instant::now();
+        assert!(manager.stop(&alice, session.id()).await.unwrap(), "it ran");
+        assert!(stopping.elapsed() < STOP_GRACE, "the actors ended by themselves");
+        assert_eq!(turns_given_up(&mut events, agent), Vec::<GivenUpReason>::new(), "nothing is given up");
+    }
+
+    /// A session deleted (issue 377) has its actors leave, as a deleted
+    /// channel does: the answer under way is given up, and the channel told
+    /// before the session's task ends.
+    #[tokio::test]
+    async fn deleting_a_session_has_its_agents_leave_and_give_their_turns_up() {
+        let (manager, alice, session, agent, mut events) = with_a_hanging_answer().await;
+
+        assert!(manager.delete(&alice, session.id()).await.unwrap());
+        assert_eq!(turns_given_up(&mut events, agent), [GivenUpReason::Left]);
     }
 }

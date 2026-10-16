@@ -1279,6 +1279,34 @@ async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_bega
     world.manager.stop(&World::as_user(world.alice), reopened.id()).await.unwrap();
 }
 
+/// A session deleted has its external agents leave, as a deleted channel
+/// does (issue 377): the open remote task is cancelled, in the name it
+/// was begun in - alice's credential, asked by bob - as he asked, though
+/// alice deletes the session. A session merely stopped keeps it (above).
+#[tokio::test]
+async fn deleting_a_session_cancels_its_external_agents_task_as_whoever_asked_began_it() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let world = with_remote_at_work(&calls, None).await;
+    let remote = remote_personality(&world).await;
+    let hermes = world.agent("hermes", world.alice, &remote).await;
+    let session = world.shared_session(&[hermes], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
+    calls_made(&calls, 1).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while world.store.get_agent_channel_state(hermes, main.id()).await.unwrap().remote.open_tasks.is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("the task is stored");
+
+    let (deleted, asked) = world.asked(world.manager.delete(&World::as_user(world.alice), session.id())).await;
+    assert!(deleted.expect("hers to delete"), "it ran");
+    assert_eq!(calls.lock().unwrap().as_slice(), ["send", "cancel"], "cancelled before the session's task ended");
+    let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
+    assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "in the name the task was begun in");
+}
+
 /// Asked several times while it answers, an agent answers once afterwards
 /// (issue 222) - as asked by the last who asked, not by the first nor by
 /// all of them, and with its owner's rights (issue 255): alice's request is
