@@ -95,3 +95,6 @@ order along the way.
   branch is read from the store by the `TranscriptStore`, built alike to the `HistoryStore`; both
   stores keep the two chains by one implementation. Next in the order: 383, whose prompt texts and
   tool sets are what `AgentContextView::context_of` still takes from the loaded state.
+- **2026-10-16** — 383 done: an agent's actor holds the prompt texts and tool sets its turn under
+  way names; the store keeps every one once by digest, beside the transcript, read by the
+  `TranscriptStore`. Next in the order: 381.

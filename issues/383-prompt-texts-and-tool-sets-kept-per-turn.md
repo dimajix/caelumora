@@ -1,6 +1,6 @@
 # 383 — Prompt texts and tool sets are kept in memory for the record
 
-**Status:** open
+**Status:** done
 **Area:** Persistence
 
 ## The problem
@@ -153,3 +153,20 @@ Every stored state has to be deleted afterwards.
   them for the context view; in memory the state holds what the turn under way names, not the last
   turn's as well, since the store's idempotent write is all that was for; `TurnState::tools` and the
   reading of older stored forms go on the way.
+- **2026-10-16** — Done, in the steps of the plan. The prompt texts and tool sets leave the agent's
+  state document: the put writes them first, once by digest (`<agent>.given/` in the JSON store),
+  the `TranscriptStore` reads them (`prompts`, `offered_tools`, `named_by`), a state loaded holds
+  those its turn under way names, and `keep_window` lets go of the rest; the context of an older
+  message loads what it names. Where it differs from the plan:
+  - Step 4 - `context_of` loading from the store - went into step 2: without it, the context of an
+    older message could not be resolved after a restart once the texts left the document.
+  - The `Done when` asks for the current and the last turn's texts in memory; held are the current
+    turn's alone, as the plan decided.
+  - `Kept` is no longer serialized; `Kept::stored` takes what a store read, `Kept::keep_only` lets
+    go of what is stored and not wanted, never of what is pending. The `MemoryStore` keeps the texts
+    in maps of its own.
+  - `AgentChannelState::keep_offer` keeps an offer of tool sets, as `keep_prompt` keeps a text;
+    `Turn::tools` reads the tools of the offer.
+
+  Every stored state is to be deleted: `prompts`, `offered_tools` and their journal entries are no
+  longer part of the agent's document, and a turn under way no longer stores `tools`.
