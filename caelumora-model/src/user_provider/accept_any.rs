@@ -160,8 +160,10 @@ mod tests {
         let first = users.authenticate("alice", &Credential::Password("one")).await.expect("accepted");
         let second = users.authenticate("alice", &Credential::Password("two")).await.expect("accepted");
         let bob = users.authenticate("bob", &Credential::Password("")).await.expect("accepted");
+        let trusted = users.authenticate("alice", &Credential::Trusted).await.expect("accepted from a trusted frontend, the TUI");
 
         assert_eq!(first.id, second.id, "the same name must map to the same id");
+        assert_eq!(first.id, trusted.id, "whatever the credential");
         assert_ne!(first.id, bob.id, "different names must map to different ids");
     }
 

@@ -189,11 +189,11 @@ mod tests {
             Ok(self.users.values().find(|(u, _)| u.id == id).map(|(u, _)| u.clone()))
         }
         async fn authenticate(&self, username: &str, credential: &Credential<'_>) -> AuthResult<Option<User>> {
-            let Credential::Password(password) = credential;
-            match self.users.get(username) {
-                None => Ok(None),
-                Some((u, p)) if p == password => Ok(Some(u.clone())),
-                Some(_) => Err(AuthError::InvalidCredentials),
+            match (self.users.get(username), credential) {
+                (None, _) => Ok(None),
+                (Some((u, p)), Credential::Password(password)) if p == password => Ok(Some(u.clone())),
+                // A wrong secret, or none where one is verified.
+                (Some(_), _) => Err(AuthError::InvalidCredentials),
             }
         }
     }
@@ -238,6 +238,19 @@ mod tests {
 
         let result = manager.authenticate("alice", &Credential::Password("other")).await;
         assert!(matches!(result, Err(AuthError::InvalidCredentials)), "a later provider must not override a rejection");
+    }
+
+    #[tokio::test]
+    async fn a_trusted_frontend_is_not_passed_on_past_a_provider_that_verifies_the_user() {
+        let alice = user("alice");
+        let bob = user("bob");
+        let manager = chain(vec![
+            Arc::new(MapUserProvider::new(&[(&alice, "a")])),
+            Arc::new(MapUserProvider::new(&[(&alice, "a"), (&bob, "b")])),
+        ]);
+
+        let result = manager.authenticate("alice", &Credential::Trusted).await;
+        assert!(matches!(result, Err(AuthError::InvalidCredentials)), "her secret is verified, and none was given");
     }
 
     #[tokio::test]
