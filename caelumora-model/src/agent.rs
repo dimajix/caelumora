@@ -27,6 +27,7 @@ use crate::value::ValueError;
 use crate::work::{TurnId, Work};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::mem;
 use tracing::warn;
 use uuid::Uuid;
 use chrono::Utc;
@@ -462,8 +463,10 @@ impl AgentChannelState {
     /// into the transcript and into the history with what it was produced
     /// from - the turn's context as it stands - and the context moved on
     /// past it. Kept as it is said, so that nothing of it waits for the
-    /// turn's end. Between turns, which says nothing, it is recorded as
-    /// heard would be, without a context.
+    /// turn's end. Once it ends a step - its calls have their results -,
+    /// what the turn was given while they ran follows it (`given`, issue
+    /// 389). Between turns, which says nothing, it is recorded as heard
+    /// would be, without a context.
     pub fn said(&mut self, mut message: Message) {
         self.used = TokenUsage::counted(self.used, &message);
         let Some(turn) = self.turn.as_mut() else {
@@ -477,23 +480,40 @@ impl AgentChannelState {
         self.transcript.push(message.clone());
         self.history.push(message, Some(context));
         turn.work.context.transcript = self.transcript.digest();
+        if turn.tool_calls.is_empty() {
+            for (message, knowledge) in mem::take(&mut turn.given_after_step) {
+                self.given(message, knowledge);
+            }
+        }
     }
 
     /// Records `message`, given to the agent to read in the turn under way
-    /// (issue 22) - a skill a user loaded for it - as the knowledge
-    /// `knowledge`: the turn's from now on (`Message::turn_id`), into the
-    /// transcript as what it was given (`TranscriptEntry::Given`, issue 16)
-    /// and into the history without a context - the agent did not produce
-    /// it -, the knowledge recorded with the turn, and the turn's context
-    /// moved on past it, so that what the turn says next is produced from
-    /// it. Not published: it is what the agent read, not what it said.
-    /// Between turns it is recorded as heard would be, still as given.
-    pub fn given(&mut self, mut message: Message, knowledge: KnowledgeRef) {
-        let source = knowledge.source;
+    /// (issue 22) - a skill loaded for it - as the knowledge `knowledge`,
+    /// if it is knowledge (issue 389): the turn's from now on
+    /// (`Message::turn_id`), into the transcript as what it was given
+    /// (`TranscriptEntry::Given`, issue 16) and into the history without a
+    /// context - the agent did not produce it -, the knowledge recorded with
+    /// the turn, and the turn's context moved on past it, so that what the
+    /// turn says next is produced from it. Not published: it is what the
+    /// agent read, not what it said. Between turns it is recorded as heard
+    /// would be, still as given.
+    ///
+    /// While the calls of a step run, it is put aside and written after the
+    /// step's tool message (`TurnState::given_after_step`, issue 389): a
+    /// tool gives what it gives at any time, and nothing stands between the
+    /// calls and their results, which the models refuse.
+    pub fn given(&mut self, mut message: Message, knowledge: Option<KnowledgeRef>) {
+        if let Some(turn) = self.turn.as_mut().filter(|turn| !turn.tool_calls.is_empty()) {
+            turn.given_after_step.push((message, knowledge));
+            return;
+        }
+        let source = knowledge.as_ref().map(|knowledge| knowledge.source);
         if let Some(turn) = self.turn.as_mut() {
             message.turn_id = Some(turn.work.turn_id);
             turn.work.see_message(&message);
-            turn.work.record_knowledge(knowledge);
+            if let Some(knowledge) = knowledge {
+                turn.work.record_knowledge(knowledge);
+            }
         }
         self.transcript.give(message.clone(), source);
         self.history.push(message, None);
@@ -506,7 +526,8 @@ impl AgentChannelState {
     /// whose state this is - (issue 16): the transcript begins anew, as a
     /// branch of its own from the root, with `replacement` - what stands
     /// for the older messages: a summary, the skills given again, each
-    /// with the knowledge it is, if it is one - and after it the entries
+    /// given to read (`TranscriptEntry::Given`, issue 389) with the
+    /// knowledge it is, if it is one - and after it the entries
     /// of the active path from `keep_from` on - `None`: none - as they
     /// stand, and after them where the compaction's part of the branch ends
     /// (`TranscriptEntry::Compacted`, issue 387). The turn's context moves
@@ -533,6 +554,9 @@ impl AgentChannelState {
     /// the new branch would be empty.
     pub fn compact(&mut self, actor: ActorId, replacement: Vec<(Message, Option<KnowledgeRef>)>, keep_from: Option<Digest>) -> Option<(Digest, Digest)> {
         let turn_id = self.turn.as_ref()?.work.turn_id;
+        // A compaction comes before a call of the model, never while the
+        // calls of a step run: nothing is put aside to be given (issue 389).
+        debug_assert!(self.turn.as_ref().is_some_and(|turn| turn.given_after_step.is_empty()));
         let from = self.transcript.digest()?;
         let path: Vec<_> = self.transcript.entries().collect();
         let start = match keep_from {
@@ -564,16 +588,9 @@ impl AgentChannelState {
             if message.sender_id == actor {
                 self.used = TokenUsage::counted(self.used, &message);
             }
-            match knowledge {
-                Some(knowledge) => {
-                    self.transcript.give(message.clone(), knowledge.source);
-                    if let Some(turn) = self.turn.as_mut() {
-                        turn.work.record_knowledge(knowledge);
-                    }
-                }
-                None => {
-                    self.transcript.push(message.clone());
-                }
+            self.transcript.give(message.clone(), knowledge.as_ref().map(|knowledge| knowledge.source));
+            if let (Some(turn), Some(knowledge)) = (self.turn.as_mut(), knowledge) {
+                turn.work.record_knowledge(knowledge);
             }
             given.push(message);
         }
@@ -1194,15 +1211,42 @@ pub(crate) mod tests {
         let source = KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), Some(digest::prompt("Collect, group, write.")));
         let knowledge = KnowledgeRef { channel: Default::default(), session: Default::default(), source, classification: Some(Classification::CHANNEL_DEFAULT) };
 
-        state.given(skill.clone(), knowledge.clone());
+        state.given(skill.clone(), Some(knowledge.clone()));
         assert_eq!(state.transcript.messages().last().map(|m| (m.id, m.turn_id)), Some((skill.id, Some(turn_id))), "into the transcript, the turn's");
-        assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::Given { source: s, .. }) if *s == source), "as what it was given (issue 16)");
+        assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::Given { source: Some(s), .. }) if *s == source), "as what it was given (issue 16)");
         let work = &state.turn.as_ref().unwrap().work;
         assert_eq!(work.context.knowledge, [knowledge], "the knowledge recorded with the turn");
         assert_eq!(work.label(), Classification::CHANNEL_DEFAULT, "which has seen it");
         assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "what the turn says next is produced from it");
         assert_eq!(state.recorded_context_of(skill.id), None, "the agent did not produce it");
         assert_eq!(state.history.messages().last().map(|m| m.id), Some(skill.id), "and its history keeps it, as what it was given");
+    }
+
+    #[test]
+    fn what_is_given_while_the_calls_of_a_step_run_follows_their_results() {
+        use crate::tool::{ToolCall, ToolCallState};
+        let mut state = a_state_that_heard("hello", Classification::PUBLIC);
+        begin(&mut state, Vec::new());
+        let call = ToolCall { id: Some("1".to_string()), function_name: "load_skill".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
+        state.said(Message { role: MessageRole::Assistant, tool_calls: vec![call.clone()], ..said("", Classification::PUBLIC) });
+        state.turn.as_mut().unwrap().tool_calls = vec![ToolCallState::approved(call.clone())];
+        let skill = said("Collect, group, write.", Classification::PUBLIC);
+        let summary = said("what was given without being knowledge", Classification::PUBLIC);
+
+        state.given(skill.clone(), Some(KnowledgeRef { channel: Default::default(), session: Default::default(), source: KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), None), classification: None }));
+        state.given(summary.clone(), None);
+        assert_eq!(state.transcript.messages().len(), 2, "nothing between the calls and their results");
+
+        let result = ToolCallResult::of(&call, ToolResultStatus::Ok, "loaded".to_string(), Classification::PUBLIC);
+        state.turn.as_mut().unwrap().tool_calls.clear();
+        let results = Message { role: MessageRole::Tool, tool_results: vec![result], ..said("", Classification::PUBLIC) };
+        state.said(results.clone());
+        let order: Vec<_> = state.transcript.messages().iter().map(|m| m.id).collect();
+        assert_eq!(order[2..], [results.id, skill.id, summary.id], "after the results, in the order given");
+        let sources: Vec<_> = state.transcript.entries().skip(3).map(|n| matches!(&n.entry, TranscriptEntry::Given { source: Some(_), .. })).collect();
+        assert_eq!(sources, [true, false], "each as it was given, knowledge or not");
+        assert!(state.turn.as_ref().unwrap().given_after_step.is_empty());
+        assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "what the turn says next is produced from it");
     }
 
     #[test]
@@ -1245,11 +1289,13 @@ pub(crate) mod tests {
             TranscriptEntry::Compacted { .. } => "compacted".to_string(),
             other => format!("{other:?}"),
         }).collect();
-        assert_eq!(entries, ["said [Summary] they greeted", "given [Skill: steps]", "said hi", "finished true", "said again!", "compacted"],
-            "the replacement, then what was kept as it stands - the change in it, the message taken back left out -, then where the compaction's part ends (issue 387)");
+        assert_eq!(entries, ["given [Summary] they greeted", "given [Skill: steps]", "said hi", "finished true", "said again!", "compacted"],
+            "the replacement, given (issue 389), then what was kept as it stands - the change in it, the message taken back left out -, then where the compaction's part ends (issue 387)");
         let turn_under_way = &state.turn.as_ref().unwrap().work;
         assert_eq!(turn_under_way.context.transcript, Some(to), "what the turn says next is produced from the new branch");
         assert_eq!(turn_under_way.context.knowledge, [knowledge], "the skill given again is knowledge of the turn");
+        let sources: Vec<_> = state.transcript.entries().take(2).map(|n| match &n.entry { TranscriptEntry::Given { source, .. } => *source, _ => None }).collect();
+        assert_eq!(sources, [None, Some(source)], "the summary is no knowledge, the skill is");
         assert!(state.transcript.messages().iter().take(2).all(|m| m.turn_id.is_none()), "the replacement is whose its caller says (issue 284)");
 
         assert_eq!(resolve(&state), before, "what was recorded before resolves to what it did");

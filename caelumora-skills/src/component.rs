@@ -35,6 +35,7 @@ use crate::manager::SkillError;
 use crate::skill::{Skill, SkillId};
 use crate::view::{SkillView, SkillViews};
 use async_trait::async_trait;
+use caelumora_model::actor::ActorId;
 use caelumora_model::command::{Command, CommandOutput};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::message::{Message, MessageId, MessageRole};
@@ -228,8 +229,8 @@ impl ToolProvider for SkillsComponent {
             },
             Tool {
                 name: LOAD_SKILL_TOOL_NAME.to_string(),
-                description: "Load a skill by its name and get its text - a procedure to follow for the task at hand. \
-                    The channel sees which skill you loaded, not what it says; do not quote it to them."
+                description: "Load a skill by its name - a procedure to follow for the task at hand. Its text follows the \
+                    result. The channel sees which skill you loaded, not what it says; do not quote it to them."
                     .to_string(),
                 parameters: ToolParameters::object([("name", ToolParameters::string("The name of the skill"))], ["name"]),
                 requires_approval: false,
@@ -317,8 +318,23 @@ impl ToolProvider for SkillsComponent {
                 struct Load { name: String }
                 let Load { name } = arguments(params)?;
                 let skill = session_of(turn).await?.views().usable_skill_named(name.trim()).await?;
-                turn.record_knowledge(skill.knowledge(turn.channel_id(), turn.session_id()));
-                Ok(ToolOutput { value: Value::String(skill.as_given()), classification: Some(skill.classification().clone()) })
+                // Its text is given after the step's results, as a skill a
+                // user loads is (issue 389): the transcript holds every skill
+                // as what it is, for a compaction to give it again. The
+                // result only names it, classified as the skill, as the
+                // catalogue names it.
+                let given = Message {
+                    id: MessageId::new(),
+                    sender_id: ActorId::Agent(turn.agent_id()),
+                    sender_name: turn.agent_name().to_string(),
+                    role: MessageRole::User,
+                    content: Some(skill.as_given()),
+                    timestamp: Utc::now(),
+                    ..Message::new(skill.classification().clone())
+                };
+                let knowledge = skill.knowledge(turn.channel_id(), turn.session_id());
+                turn.give(given, Some(knowledge));
+                Ok(ToolOutput { value: serde_json::json!({ "status": "loaded", "name": skill.name(), "skill_id": skill.id() }), classification: Some(skill.classification().clone()) })
             }
             CREATE_SKILL_TOOL_NAME => {
                 let Create { name, description, body, scope } = arguments(params)?;
@@ -433,7 +449,7 @@ impl AgentCommandProvider for SkillsComponent {
                 };
                 // Nothing can fail from here on: what is given is written at once.
                 let knowledge = skill.knowledge(turn.channel_id(), turn.session_id());
-                turn.give(given, knowledge);
+                turn.give(given, Some(knowledge));
                 Ok(CommandOutput::private(format!("{} has the skill '{}' now.", turn.agent_name(), skill.name())))
             }
             _ => Err(CommandError::Unknown(name.to_string())),

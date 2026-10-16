@@ -61,9 +61,11 @@ who may not read the skill.
     and description, and how to load one. In the system prompt by default: it changes rarely, and
     the model has to know what it could load. Classified as the bounded join of the skills it lists;
     nothing where there are none.
-*   **`load_skill(name)`** - the model loads one: the skill's text, classified as the skill. Its
-    result is the owner's: the channel sees which skill was loaded, not what it says, and the model
-    is told not to quote it.
+*   **`load_skill(name)`** - the model loads one. Its result names the skill - classified as the
+    skill, as the catalogue names it - and the skill's text is given to the agent as a `/skill`
+    gives it (`Turn::give`), after the results of the step: in the agent's name, as a `Given` entry
+    that names the skill (issue 389). The channel sees which skill was loaded, not what it says,
+    and the model is told not to quote it.
 *   **`/skill @agent <name>`** - a member gives one to an agent, a command the agent carries out
     itself. In its command turn the skill's text is given to the agent (`Turn::give`): into its
     transcript in the member's name and role, as a `Given` entry that names the skill, and into its
@@ -77,9 +79,9 @@ Every load is recorded as knowledge, and the turn has seen the skill: what it wr
 classified at least so.
 
 A compaction by summary gives again every skill loaded in the part of the transcript it summarises -
-given or loaded by the model - as it is now and only if the agent may still load it, unless the part
-kept still holds it. The compaction asks the `skills` component for it, as its `KnowledgeRestorer`
-(issue 323): it knows no skills itself.
+given or loaded by the model, either way a `Given` entry - as it is now and only if the agent may
+still load it, unless the part kept still holds it. The compaction asks the `skills` component for
+it, as its `KnowledgeRestorer` (issue 323): it knows no skills itself.
 
 ## Agents write skills
 
