@@ -613,11 +613,14 @@ mod tests {
         let (alice, bob) = (user("alice"), user("bob"));
         let channel = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
         let actor = channel.user_actor(alice.id).unwrap();
-        let mut following = actor.watch().events;
+        let mut following = actor.watch();
+        let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
         actor.send_message("@bob, look".to_string(), None).await.expect("sent");
 
-        let shown = following.try_recv().expect("shown at once, before the channel takes it in");
+        let shown = tokio::time::timeout(Duration::from_secs(5), following.recv()).await
+            .expect("shown by its actor, as it forwards it to the channel").unwrap();
+        running.abort();
         let ActorEvent::CompleteMessageGenerated(message) = shown.event else { panic!("its message, got {}", shown.event.kind()) };
         assert_eq!(message.mentions, vec![ActorId::User(bob.id)], "as the channel resolves them (issue 220)");
     }
@@ -706,7 +709,7 @@ mod tests {
         let said = Message { sender_id: talker, role: MessageRole::Assistant, content: Some("and you?".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let answer = Envelope::new(SecurityContext::default().next(talker, ActorId::None, ActorId::None), context, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![said] });
         channel.adopt(Forger::sending(talker, vec![answer]), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
-        let mut following = channel.user_actor(alice.id).unwrap().watch().events;
+        let mut following = channel.user_actor(alice.id).unwrap().watch();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
         let told = tokio::time::timeout(Duration::from_secs(5), async {

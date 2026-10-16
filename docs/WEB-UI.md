@@ -88,6 +88,9 @@ session are handled in one place:
     restores what happened in between, so the handover is invisible.
 *   An unexpected break is left to the browser's own retry. A stream that is really closed checks
     the session (`GET /auth/me`), whose `401` brings up the login page if that was the cause.
+*   A channel's stream stays open while its channel stops and starts again, and opening a channel
+    does not start it (issue 386). The snapshot sent at each stop and start replaces what was shown,
+    so a member's state and an answer under way are gone with the channel that ran them.
 
 Messages can arrive twice, in the snapshot and as an event; they are dropped by id.
 

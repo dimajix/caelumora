@@ -387,7 +387,7 @@ async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_wor
     assert!(asked.is_empty(), "nothing beyond taking part: {asked:?}");
     let finished = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let envelope = his.events.recv().await.expect("the channel runs");
+            let envelope = his.recv().await.expect("the channel runs");
             if envelope.event.kind() == "TurnFinished" {
                 break envelope;
             }
@@ -696,7 +696,7 @@ async fn sensitive_questions_reach_only_whom_they_are_put_to() {
     assert!(matches!(refused.downcast_ref::<ChannelError>(), Some(ChannelError::Question { reason: QuestionError::NotOpen, .. })), "{refused}");
     main.user_actor(world.alice).unwrap().answer_questions(request.id, Some(vec![Response::Text { text: "Alice".to_string() }])).await.expect("put to her");
     tokio::time::sleep(Duration::from_millis(200)).await;
-    while let Ok(envelope) = his.events.try_recv() {
+    while let Ok(envelope) = his.try_recv() {
         assert!(!matches!(envelope.event, ActorEvent::QuestionRequested(_) | ActorEvent::QuestionClosed { .. }), "nothing of them reaches him: {}", envelope.event.kind());
     }
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -743,7 +743,7 @@ async fn ask_helper(world: &World, main: &ChannelLoop, user: UserId) -> Asked {
     let mut asked = Asked { request: None, by_rule: None, approved: None };
     let _ = tokio::time::timeout(Duration::from_millis(1500), async {
         loop {
-            let envelope = watch.events.recv().await.expect("the channel runs");
+            let envelope = watch.recv().await.expect("the channel runs");
             let from_approver = matches!(envelope.context.sender_id, ActorId::Approver(_));
             match envelope.event {
                 ActorEvent::ApprovalRequested(request) if from_approver => asked.request = Some(request),
@@ -853,7 +853,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     main.user_actor(world.alice).unwrap().send_message("@helper wait".to_string(), None).await.expect("sent");
     let request = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if let ActorEvent::ApprovalRequested(request) = watch.events.recv().await.expect("the channel runs").event {
+            if let ActorEvent::ApprovalRequested(request) = watch.recv().await.expect("the channel runs").event {
                 break request;
             }
         }
@@ -883,7 +883,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 // The approver's decision, not the answers shown as given.
-                let envelope = watch.events.recv().await.expect("the channel runs");
+                let envelope = watch.recv().await.expect("the channel runs");
                 if !matches!(envelope.context.sender_id, ActorId::Approver(_)) {
                     continue;
                 }
@@ -979,7 +979,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
         main.user_actor(world.bob).unwrap().send_message("@helper send it".to_string(), None).await.expect("sent");
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                if let ActorEvent::CompleteMessageGenerated(message) = watch.events.recv().await.expect("the channel runs").event {
+                if let ActorEvent::CompleteMessageGenerated(message) = watch.recv().await.expect("the channel runs").event {
                     if let Some(result) = message.tool_results.first() {
                         break result.status;
                     }
@@ -1322,7 +1322,7 @@ async fn an_agent_asked_by_several_while_it_answers_answers_once_as_asked_by_the
     let session = world.shared_session(&[hermes], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
-    let mut events = main.user_actor(world.bob).expect("he takes part").watch().events;
+    let mut events = main.user_actor(world.bob).expect("he takes part").watch();
     main.user_actor(world.alice).expect("she takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
     calls_made(&calls, 1).await;
 
@@ -1367,7 +1367,7 @@ async fn an_external_agent_whose_answers_no_longer_enter_its_lowered_channel_is_
     let main = Arc::clone(&session.channels()[0]);
     main.reclassify(&World::as_user(world.alice), Classification::general(Confidentiality::Public)).await.expect("hers to lower");
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
-    let mut events = main.user_actor(world.bob).expect("he takes part").watch().events;
+    let mut events = main.user_actor(world.bob).expect("he takes part").watch();
 
     let (failed, asked) = world.asked(async {
         main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
@@ -1403,7 +1403,7 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_be
     let session = world.shared_session(&[hermes], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
-    let mut events = main.user_actor(world.bob).expect("he takes part").watch().events;
+    let mut events = main.user_actor(world.bob).expect("he takes part").watch();
     main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
     calls_made(&calls, 1).await;
 

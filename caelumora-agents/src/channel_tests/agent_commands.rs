@@ -69,7 +69,7 @@ async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_iss
     let recorded = channel.history_entries().await.into_iter()
         .any(|item| matches!(item, HistoryEntry::CommandExecuted { issuer, actor, ref command, .. } if issuer == ActorId::User(alice) && actor == ActorId::Agent(agent) && command == "mark"));
     assert!(recorded, "the channel's history records what was carried out, and on whose word");
-    assert_eq!(told_states(&mut watch.events, agent, ActorState::Idle).await, [ActorState::Idle], "idle again after, and no answer begun");
+    assert_eq!(told_states(&mut watch, agent, ActorState::Idle).await, [ActorState::Idle], "idle again after, and no answer begun");
     assert_eq!(helper.state(), ActorState::Idle);
     running.abort();
 }

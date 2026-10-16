@@ -142,7 +142,7 @@ published before anyone else can take it.
 | [377](377-stopping-a-session-aborts-its-actors.md) | done | Stopping or deleting a session aborts its actors at once, so a turn ends mid-step, a tool is cut off and a deleted session's external agents keep their remote tasks. |
 | [381](381-inactive-channels-held-in-memory.md) | open | A channel nobody has spoken in for days keeps its loop, its actors and their states in memory until its session is stopped, and nothing notices that it is idle. |
 | [382](382-agents-held-without-a-session.md) | open | An agent stays loaded with its memory while nothing uses it, and what still holds it once its sessions are unloaded has not been checked. |
-| [386](386-actor-state-after-a-stop.md) | open | Whoever follows a channel keeps an agent's last state and its answer under way after the session stops, and the follower's reconnect starts the session again. |
+| [386](386-actor-state-after-a-stop.md) | done | Whoever follows a channel keeps an agent's last state and its answer under way after the session stops, and the follower's reconnect starts the session again. |
 
 ## Identity and access management
 

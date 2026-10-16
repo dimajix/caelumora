@@ -31,9 +31,12 @@ idle, and nothing gives it back.
   copies. The entity is untouched; a stopped session and an unloaded one differ in that the latter
   starts again on its own.
 - **What starts it again.** A request to the channel over REST, an event addressed to it, an
-  external agent's answer arriving, a user's stream subscribing. The place is the one that today
-  answers "the session is not running" with an error; it starts the session instead, under the
-  same per-session lock that starting and stopping take (STORAGE.md, *one writer per state*).
+  external agent's answer arriving. Not a user's stream: it follows the user's outbox, which
+  outlives the actor, without starting the channel, and the actor of the next run shows to it again
+  ([386](386-actor-state-after-a-stop.md)) - so unloading is unnoticed by whoever follows. The
+  place is the one that today answers "the session is not running" with an error; it starts the
+  session instead, under the same per-session lock that starting and stopping take (STORAGE.md,
+  *one writer per state*).
 - **The rule "a session runs once"** stays: an unloaded session is one that is not running, and
   the lock serialises the start. What must not happen is a start from two places at once, or an
   unload while a start is under way.
@@ -55,3 +58,5 @@ idle, and nothing gives it back.
 ## History
 
 - **2026-10-16** — Opened as part of the epic [378](378-resource-management-epic.md).
+- **2026-10-16** — With [386](386-actor-state-after-a-stop.md), a user's stream no longer starts a
+  channel; it is taken out of what starts one again.

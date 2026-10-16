@@ -40,6 +40,7 @@ pub use group::GroupView;
 pub use session::{PrivateNotesElsewhere, SessionView};
 pub use workspace::WorkspaceView;
 
+use crate::actor::ActorManager;
 use crate::component::ComponentRegistry;
 use crate::controller::ControllerManager;
 use crate::runtime::{RuntimeManager, Services};
@@ -200,6 +201,8 @@ pub struct Views {
     /// Where a session's workspace is asked whether it may be used in a
     /// channel (issue 344).
     controllers: Arc<ControllerManager>,
+    /// Where a user follows a channel through, running or not (issue 386).
+    actors: Arc<ActorManager>,
     running: Arc<dyn RunningSessions>,
     viewer: Viewer,
 }
@@ -217,6 +220,7 @@ impl Views {
             components: Arc::clone(runtime.component_registry()),
             workspaces: Arc::clone(runtime.workspace_manager()),
             controllers: Arc::clone(runtime.controller_manager()),
+            actors: Arc::clone(runtime.actor_manager()),
             running,
             viewer,
         }
@@ -279,6 +283,11 @@ impl Views {
     }
 
     /// The controllers of this instance: a session's workspace among them.
+    /// Where what of an actor outlives its run is kept (issue 386).
+    pub(crate) fn actor_manager(&self) -> &Arc<ActorManager> {
+        &self.actors
+    }
+
     pub(crate) fn controller_manager(&self) -> &Arc<ControllerManager> {
         &self.controllers
     }
@@ -790,7 +799,8 @@ mod tests {
     use crate::group::keep_participants;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError};
-    use caelumora_model::actor::{Rejection, Envelope};
+    use caelumora_model::actor::Rejection;
+    use crate::actor::user::ChannelWatch;
     use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind, AgentChannelState};
     use caelumora_model::channel::{Channel, Participant};
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules, Visibility};
@@ -810,7 +820,6 @@ mod tests {
     use caelumora_model::work::TurnId;
     use chrono::Utc;
     use std::time::Duration;
-    use tokio::sync::broadcast::Receiver;
     use uuid::Uuid;
 
     fn as_user(id: UserId) -> Viewer {
@@ -1692,7 +1701,7 @@ mod tests {
         let team = session.create_channel(&alice_ctx, with("team", classified(Confidentiality::Internal, &[]))).await.unwrap();
 
         let writer = hr.user_actor(alice.id).expect("the creator takes part");
-        let mut events = writer.watch().events;
+        let mut events = writer.watch();
         writer.send_message("for HR".to_string(), None).await.unwrap();
         writer.send_message("for finance too".to_string(), Some(classified(Confidentiality::Internal, &["hr", "finance"]))).await.unwrap();
         writer.send_message("too secret".to_string(), Some(classified(Confidentiality::Confidential, &["hr"]))).await.expect("sent: the channel decides");
@@ -1743,8 +1752,8 @@ mod tests {
         session.participants.push(caelumora_model::session::Participant::Agent(thinker.id));
         let session = create(&manager, &alice_ctx, session).await.unwrap();
         let channel = session.create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), agent])).await.unwrap();
-        let mut events = channel.user_actor(alice.id).unwrap().watch().events;
-        let shown = |events: &mut Receiver<Envelope>, wanted: &'static str| {
+        let mut events = channel.user_actor(alice.id).unwrap().watch();
+        let shown = |events: &mut ChannelWatch, wanted: &'static str| {
             let mut events = events.resubscribe();
             async move {
                 tokio::time::timeout(Duration::from_secs(5), async {

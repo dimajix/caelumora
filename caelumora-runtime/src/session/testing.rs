@@ -22,11 +22,11 @@ use caelumora_model::channel::{Channel, moderation_components};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::actor::{ActorEvent, Envelope, Rejection};
+use caelumora_model::actor::{ActorEvent, Rejection};
 use caelumora_model::message::{MessageId, Message};
-use tokio::sync::broadcast;
 use chrono::Utc;
 use crate::event::EventSubscription;
+use crate::actor::user::ChannelWatch;
 use std::time::Duration;
 
 /// A user named `name`, not stored.
@@ -223,7 +223,7 @@ pub fn spec(name: &str, participants: Vec<ActorId>) -> ChannelSpec {
 
 /// The message and the reason of the next `MessageRejected` `events`
 /// show: why the channel did not let in what their user sent (issue 304).
-pub async fn rejection(events: &mut broadcast::Receiver<Envelope>) -> (Option<MessageId>, Rejection) {
+pub async fn rejection(events: &mut ChannelWatch) -> (Option<MessageId>, Rejection) {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if let ActorEvent::MessageRejected { message, reason, .. } = events.recv().await.expect("the channel is running").event {

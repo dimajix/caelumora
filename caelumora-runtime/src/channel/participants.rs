@@ -360,6 +360,8 @@ mod tests {
     use caelumora_model::security::{SecurityContext, Grant, Subject};
     use crate::view::Viewer;
     use caelumora_model::session::ChannelId;
+    use crate::actor::Shown;
+    use crate::actor::user::ChannelWatch;
 
     
     use crate::session::{ChannelSpec, SessionError, SessionManager};
@@ -367,7 +369,6 @@ mod tests {
     use anyhow::Error;
     use caelumora_model::user::UserId;
     use crate::error::is_forbidden;
-    use tokio_util::sync::CancellationToken;
     #[tokio::test]
     async fn an_agent_is_found_by_its_name_or_its_handle_however_it_is_written() {
         let (channel, _, _) = channel_with_sleepers(&["Sassy", "Dr. Who", "Dr-Who", "Zoë"]).await;
@@ -499,26 +500,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_users_watch_ends_when_they_leave_or_the_channel_is_deleted() {
+    async fn a_users_followers_are_told_their_actor_ended_when_they_leave_or_the_channel_is_deleted() {
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let owner = ctx.initiator_id.as_user_id().unwrap();
-        let within = |ended: CancellationToken| async move {
-            tokio::time::timeout(Duration::from_secs(5), ended.cancelled_owned()).await
-        };
+        async fn ended(watch: &mut ChannelWatch, within: Duration) -> bool {
+            tokio::time::timeout(within, async { while !matches!(watch.next().await, Ok(Shown::Ended)) {} }).await.is_ok()
+        }
 
         // Leaving ends it.
         let channel = session.create_channel(&ctx, spec("side", vec![other])).await.unwrap();
-        let theirs = channel.user_actor(other.as_user_id().unwrap()).unwrap().watch();
-        let mine = channel.user_actor(owner).unwrap().watch();
+        let mut theirs = channel.user_actor(other.as_user_id().unwrap()).unwrap().watch();
+        let mut mine = channel.user_actor(owner).unwrap().watch();
         channel.remove_participant(&ctx, other).await.expect("removed");
-        within(theirs.ended).await.expect("the watch of whoever left ends");
-        assert!(!mine.ended.is_cancelled(), "everybody else's goes on");
+        assert!(ended(&mut theirs, Duration::from_secs(5)).await, "whoever left is told their actor ended (issue 386)");
+        assert!(!ended(&mut mine, Duration::from_millis(50)).await, "everybody else's goes on");
 
         // So does deleting the channel, for everybody.
         session.delete_channel(&ctx, channel.id()).await.expect("deleted");
-        within(mine.ended).await.expect("a deleted channel is watched by nobody");
+        assert!(ended(&mut mine, Duration::from_secs(5)).await, "a deleted channel runs no actor");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 

@@ -30,6 +30,7 @@ use crate::agent::AgentManager;
 use crate::group::GroupManager;
 use crate::scoped::ScopedEntities;
 use crate::workspace::WorkspaceManager;
+use crate::actor::ActorManager;
 use crate::workspace::reaper::CommandReaper;
 use super::{RuntimeBuilder, Services};
 
@@ -72,6 +73,8 @@ pub struct RuntimeManager {
     pub(super) groups: Arc<GroupManager>,
     /// The one owner of agents' lifecycle (issue 314).
     pub(super) agents: Arc<AgentManager>,
+    /// The one owner of what of an actor outlives its run (issue 386).
+    pub(super) actors: Arc<ActorManager>,
     /// What deletes, restores and purges what lies in a scope with what
     /// holds it (issues 178, 319).
     pub(super) scoped: Arc<ScopedEntities>,
@@ -219,6 +222,11 @@ impl RuntimeManager {
     /// The one owner of agents' lifecycle (issue 314).
     pub fn agent_manager(&self) -> &Arc<AgentManager> {
         &self.agents
+    }
+
+    /// The one owner of what of an actor outlives its run (issue 386).
+    pub(crate) fn actor_manager(&self) -> &Arc<ActorManager> {
+        &self.actors
     }
 
     /// What deletes, restores and purges what lies in a scope with what

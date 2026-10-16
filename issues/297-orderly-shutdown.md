@@ -41,6 +41,12 @@ session stopped by hand ends that way.
   groups beyond the process (a file under the storage's root) and killing them at start - with the
   risk of a process id used again. `local` is for development; whether that is worth it is open.
 
+- **Resuming after a restart.** Until [386](386-actor-state-after-a-stop.md), an open browser
+  started every session it followed when it reconnected to a restarted server, and with it the
+  turns stopped at the shutdown. Now a session runs again only when someone acts in it. Whether the
+  server should start what ran when it went down, so that interrupted turns go on by themselves, is
+  to be decided here.
+
 ## Done when
 
 - SIGINT, SIGTERM and leaving the TUI stop the running sessions as `stop_session` does, close the
@@ -51,3 +57,5 @@ session stopped by hand ends that way.
 - **2026-10-10** — Opened while deciding the open points of [254](254-commands-run-unbounded.md)
   with the maintainer: a `local` command left running when Caelumora ends belongs to an orderly
   shutdown, which is worth having for the actors and the streams in the first place.
+- **2026-10-16** — Since [386](386-actor-state-after-a-stop.md), following a channel does not start
+  its session; whether the server resumes what ran at a shutdown is added to the considerations.

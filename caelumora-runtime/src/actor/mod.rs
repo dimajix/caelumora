@@ -7,6 +7,7 @@
 
 pub mod approval;
 mod kinds;
+mod manager;
 pub mod user;
 
 use anyhow::{Context, Result};
@@ -17,6 +18,7 @@ use tracing::warn;
 
 use crate::transport::{EventReceiver, EventSender};
 pub use kinds::AgentKinds;
+pub use manager::{ActorManager, Shown};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::command::Command;

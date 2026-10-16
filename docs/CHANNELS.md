@@ -199,6 +199,13 @@ approves or announces, and its task sends it on through the transport, like ever
 actor takes a way around it. The queue closes when the actor's task ends, so that sending to a
 stopped channel fails instead of waiting.
 
+What the actor shows its user - what it is routed, and what its user says, as it forwards it - goes
+to the user's outbox in the channel, which the `ActorManager` keeps across the actor's runs (issue
+386). A frontend follows the channel through it (`ChannelView::user_follow`, a `ChannelWatch`),
+also while the channel does not run, without starting it. Each run of the actor begins and ends in
+it (`Shown::Started`, `Shown::Ended`): what a run showed comes after its start and before its end,
+and an actor ended before it ran shows its end alone.
+
 The channel does not take an actor's word for whose name it speaks in. Each actor is given an
 `OriginEventSender`, which passes on only an envelope that speaks as the actor: as its sender, as
 the caller of its `SecurityContext`, and as the sender of every message it carries. Anything else
@@ -441,7 +448,8 @@ of the actor enters the channel. That is how a frontend ends what an actor abort
 left under way. Every moderator forwards it to the users only, and it is never stored.
 
 A removed user's live stream of the channel ends because it is theirs: it is followed through their
-actor, which ends when it is stopped, so no one has to listen for the announcement.
+actor, which ends when it is stopped, and the stream then finds them no longer a participant (issue
+386), so no one has to listen for the announcement.
 
 Every channel response carries `can_change`, so that a client offers adding and removing
 participants only where the user may (see [WEB-UI.md](WEB-UI.md)).

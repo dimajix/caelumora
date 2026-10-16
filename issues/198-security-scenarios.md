@@ -118,6 +118,7 @@ be given.
 | S2 | Alice's shared session | Bob, in it, opens it, sees its members, writes, cancels; renames it, changes its privacy, adds or deletes channels, removes alice, reclassifies, stops or deletes it | He takes part - opens, sees, writes, cancels - but changes nothing: every change is refused, permission denied where he may see what he would change | `a_participant_takes_part_but_changes_nothing` |
 | S3 | Alice's shared session | Alice renames it, adds a channel with bob, deletes it, deletes the session | All of it; the session is gone afterwards | `the_owner_changes_and_ends_the_session` |
 | S4 | Alice's channel "side", bob taken in after she said something, without what was said | Alice and bob read its history in pages and a message by its id; carol reaches for it | Alice reads it all, page by page; bob from where he was taken in, the message before not found; carol finds nothing. Asked as reaching the channel is (issue 218) | `a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_goes` |
+| S5 | Alice's shared session, bob in its channel "main" | Bob reaches the channel and follows it; alice writes; the session stops; carol reaches for it | Bob follows his own actor and sees what alice said; asked as reaching the channel is, and nothing more; told when his actor ended, and follows the stopped channel without starting it; carol finds nothing (issue 386) | `a_participant_follows_a_channel_through_their_own_actor_whether_it_runs_or_not` |
 
 ### What an agent saw
 

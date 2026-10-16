@@ -188,7 +188,7 @@ mod tests {
         let (as_alice, as_bob) = (hr.user_actor(alice.id).unwrap(), hr.user_actor(bob.id).unwrap());
         let released = classified(Confidentiality::Internal, &["hr", "finance"]);
         as_bob.reclassify_message(bobs, released.clone()).await.expect("the author releases their message");
-        let mut bobs_events = as_bob.watch().events;
+        let mut bobs_events = as_bob.watch();
         as_bob.reclassify_message(alices, released.clone()).await.expect("sent: the channel decides");
         assert_eq!(rejection(&mut bobs_events).await, (Some(alices), Rejection::Forbidden), "not another's, and he is told (issue 304)");
         let missing = as_alice.reclassify_message(MessageId::new(), released.clone()).await.expect_err("no such message");

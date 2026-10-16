@@ -452,12 +452,10 @@ async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
         fail_policy: ComponentFailPolicy::FailClosed,
     }] };
     let (channel, context, agent, alice) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(Scripted(Mutex::new([bye].into()))), components).await;
-    // What it sends, watched since before it ran.
-    let mut events = channel.observe();
+    // What reaches alice, watched since before it ran.
+    let mut shown = channel.user_actor(alice).unwrap().watch();
     let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
-    assert_eq!(told_states(&mut events, agent, ActorState::Idle).await, [ActorState::Idle], "where it starts, before it is asked");
-    // What reaches alice, from before she asks.
-    let mut shown = channel.user_actor(alice).unwrap().watch().events;
+    assert_eq!(told_states(&mut shown, agent, ActorState::Idle).await, [ActorState::Idle], "where it starts, before it is asked");
     channel.user_actor(alice).unwrap().send_message("hello".to_string(), None).await.unwrap();
     let helper = channel.actor_of(ActorId::Agent(agent)).unwrap();
     assert_eq!(told_states(&mut shown, agent, ActorState::Sleeping).await, [ActorState::Planning, ActorState::ExecutingTools, ActorState::Reflecting, ActorState::Sleeping], "each step it moves to, once");
@@ -1390,7 +1388,7 @@ async fn a_cancel_interrupts_a_model_call_that_is_in_flight() {
 #[tokio::test]
 async fn a_user_learns_that_a_turn_cancelled_before_it_said_anything_ended() {
     let Stuck { channel, context, agent, running, .. } = stuck_in_a_model_call().await;
-    let mut followed = channel.user_actor(alice_of(&context)).unwrap().watch().events;
+    let mut followed = channel.user_actor(alice_of(&context)).unwrap().watch();
 
     channel.cancel(&context).await.expect("permitted");
 

@@ -1,4 +1,5 @@
 use crate::channel::ChannelLoop;
+use crate::actor::ActorManager;
 use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, SessionController};
@@ -63,6 +64,9 @@ impl ActorRuntime {
     pub fn secret_manager(&self) -> &Arc<SecretManager> { self.runtime.runtime_manager.secret_manager() }
 
     pub fn services(&self) -> &Services { self.runtime.runtime_manager.services() }
+
+    /// Where the actor's outbox is kept across its runs (issue 386).
+    pub(crate) fn actor_manager(&self) -> &Arc<ActorManager> { self.runtime.runtime_manager.actor_manager() }
 
     pub fn component_registry(&self) -> &Arc<ComponentRegistry> {
         self.runtime.runtime_manager.component_registry()

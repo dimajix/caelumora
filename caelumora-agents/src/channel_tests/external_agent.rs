@@ -34,6 +34,7 @@ use crate::external::testing::ScriptedExternalAgent;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::sync::broadcast::Receiver;
+use caelumora_runtime::actor::user::ChannelWatch;
 
 /// A running channel with alice and an external agent (issue 179) that
 /// `remote` stands in for, after alice said "hello". The remote agent is
@@ -372,7 +373,7 @@ async fn an_external_agent_is_shown_carrying_out_a_command_as_an_agent_run_here_
     assert!(matches!(started.map(|e| e.event), Some(ActorEvent::CommandStarted { .. })), "she is told it began");
     assert_eq!(states.last(), Some(&ActorState::CarryingOutCommand), "shown carrying it out: {states:?}");
     assert!(matches!(answer.event, ActorEvent::CommandExecuted { .. }), "{:?}", answer.event);
-    assert_eq!(told_states(&mut watch.events, agent, ActorState::Idle).await, [ActorState::Idle], "and idle again after");
+    assert_eq!(told_states(&mut watch, agent, ActorState::Idle).await, [ActorState::Idle], "and idle again after");
     running.abort();
 }
 
@@ -1209,8 +1210,8 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     session.participants.push(Participant::Agent(hermes.id));
     let session = create(&manager, &alice_ctx, session).await.unwrap();
     let channel = session.create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), ActorId::Agent(hermes.id)])).await.unwrap();
-    let mut events = channel.user_actor(alice.id).unwrap().watch().events;
-    let answered = |events: &mut Receiver<Envelope>| {
+    let mut events = channel.user_actor(alice.id).unwrap().watch();
+    let answered = |events: &mut ChannelWatch| {
         let mut events = events.resubscribe();
         async move {
             tokio::time::timeout(Duration::from_secs(5), async {
