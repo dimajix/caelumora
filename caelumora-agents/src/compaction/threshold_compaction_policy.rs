@@ -12,7 +12,6 @@
 use crate::work::AgentWork;
 use crate::compaction::CompactionPolicy;
 use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
-use caelumora_model::actor::ActorId;
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -54,7 +53,7 @@ impl CompactionPolicy for ThresholdCompactionPolicy {
     fn is_due(&self, work: &AgentWork<'_>) -> bool {
         let Some((positions, true)) = work.token_positions() else { return false };
         let tokens = positions.last().copied().unwrap_or(0);
-        let size = work.agent_channel_state().usage(ActorId::Agent(work.agent_id())).and_then(|usage| usage.context_size);
+        let size = work.agent_channel_state().used.and_then(|usage| usage.context_size);
         let Some(size) = size.filter(|size| *size > 0) else {
             if !self.told_no_size.swap(true, Ordering::Relaxed) {
                 info!("Agent {}: its model reports no context size; it does not compact its context on its own", work.agent_id());
@@ -86,6 +85,7 @@ mod tests {
     use super::*;
     use crate::testing::workspace_turn;
     use caelumora_runtime::workspace::testing::session_with_workspace;
+    use caelumora_model::actor::ActorId;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageId, MessageRole};

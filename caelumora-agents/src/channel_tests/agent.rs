@@ -1585,7 +1585,7 @@ async fn an_agent_whose_context_fills_up_compacts_it_on_its_own_before_its_next_
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     let now: Vec<_> = stored.transcript.messages().into_iter().filter_map(|m| m.content).filter(|c| !c.is_empty()).collect();
     assert!(now[0].contains("They greeted each other.") && !now.iter().any(|c| c == "hello" || c == "Hi."), "the older messages replaced: {now:?}");
-    assert_eq!(stored.usage(ActorId::Agent(agent)).map(|u| u.calls), Some(4), "the summary's call counts as used");
+    assert_eq!(stored.used.map(|u| u.calls), Some(4), "the summary's call counts as used");
     running.abort();
 }
 

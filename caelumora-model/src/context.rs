@@ -844,7 +844,7 @@ mod tests {
             ..text("answer")
         };
         let mut state = AgentChannelState::default();
-        assert_eq!(state.usage(agent), None, "no call yet");
+        assert_eq!(state.used, None, "no call yet");
 
         begin(&mut state, ModelProfile::default());
         state.said(call(agent, 100, 10, Some(4096)));
@@ -860,13 +860,13 @@ mod tests {
         begin(&mut state, ModelProfile::default());
         state.said(call(agent, 300, 30, None));
 
-        assert_eq!(state.usage(agent), Some(TokenUsage {
+        assert_eq!(state.used, Some(TokenUsage {
             calls: 3,
             prompt_tokens: 600,
             completion_tokens: 60,
             context_size: None,
-            context_tokens: 302,
-        }), "not the other agent's call; the turn given up and the one under way count, the context as the call under way measured it and its answer estimated");
+            context_tokens: 330,
+        }), "not the other agent's call; the turn given up and the one under way count, the context as the last call measured it, its answer included");
     }
 
     #[test]

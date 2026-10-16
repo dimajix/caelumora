@@ -335,13 +335,14 @@ user ended a command, and when the channel's switch to use the workspace changes
 
 ### Members, moderator and notes
 
-Under each agent, a gauge shows how full its context is: the tokens it holds now (`context_tokens`)
-against the size of its context, coloured as it fills; without a known size, the tokens alone. Its
-hover card keeps two things apart: the context, and the usage of all of the agent's calls in the
-channel as totals - which grow much faster than the context, since every call is given the whole
-context again. Above the list, "Total tokens" adds up the usage of the agents shown. An agent's
-numbers are updated by each of its calls and fetched again when its turn ends or it compacted its
-context, which also counts calls whose messages were not published. An external agent reports none.
+Under each agent, a gauge shows how full its context is: the tokens its last call measured, or a
+compaction estimated (`context_tokens`), against the size of its context, coloured as it fills;
+without a known size, the tokens alone. Its hover card keeps two things apart: the context, and the
+usage of all of the agent's calls in the channel as totals - which grow much faster than the
+context, since every call is given the whole context again. Above the list, "Total tokens" adds up
+the usage of the agents shown. An agent's numbers are updated by each of its calls and fetched again
+when its turn ends or it compacted its context, which also counts calls whose messages were not
+published. An external agent reports none.
 
 Each agent has a dot for where it stands, starting from the snapshot and following its state
 changes: idle, working, carrying out a command, busy with something of its own - what, as its

@@ -300,10 +300,11 @@ pub struct TokenUsage {
     /// known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_size: Option<u64>,
-    /// How many tokens the context holds now (issue 284): what the calls on
-    /// it measured and what was added since, estimated - after a compaction
-    /// no longer the last call's (`AgentChannelState::usage`). As counted
-    /// (`TokenUsage::counted`), the last call's prompt and answer.
+    /// How many tokens the context holds (issue 284): as counted
+    /// (`TokenUsage::counted`), the last call's prompt and answer; after a
+    /// compaction, the new branch as estimated then
+    /// (`AgentChannelState::compact`, issue 390). What was added since is
+    /// not in it.
     pub context_tokens: u64,
 }
 
