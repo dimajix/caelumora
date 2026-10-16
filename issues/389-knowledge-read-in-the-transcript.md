@@ -114,7 +114,7 @@ well is open, and it is not this issue's.
 - **Put aside, not yet written:** a compaction runs before a call of the model, never while a
   step's calls run, so nothing is put aside then. The implementation asserts it.
 
-### The summary - to be decided here
+### The summary
 
 The summary is written into the new branch as `TranscriptEntry::Message`, from the agent
 (`sender_id`), with the tokens of the call that wrote it, and recorded in the history as given,
@@ -129,8 +129,13 @@ without a context. Two ways to see it:
 - **A message, as now.** It is the agent's own text, written by its own model; a `Given` would
   hide that it is the agent's. Nothing reads the difference today.
 
-Recommended: a `Given` without a source - what the transcript says of an entry is how the model is
-given it, and it is given the summary to read. To be decided before step 5 of the plan.
+**Decided: a `Given` without a source.** What the transcript says of an entry is how the model is
+given it, and it is given the summary to read - as the history records it already. `compact` then
+writes every message of the replacement alike (`give`, the knowledge recorded where there is
+one), and the summary, as a `Given`, never counts as a measure (`token_positions` reads the
+agent's `Message` entries alone). The model is given the same as before: the digest and what the
+resolver gives of it do not change. That it is the agent's own text stays in its sender; that it
+is a summary is told, as now, by its title and its place before the compaction's end.
 
 ### Found on the way
 
@@ -155,7 +160,8 @@ where the text stands. The implementation shows it with a test first.
 4. `load_skill` gives the skill (`Skill::as_given`, `Skill::knowledge`) instead of returning its
    text, and answers that it was loaded; its result is classified as the turn's label, the
    skill's classification goes with the message given.
-5. The summary, as decided above.
+5. The summary is a `Given` without a source: `AgentChannelState::compact` gives every message
+   of the replacement as `Given`, the source where there is one.
 6. `SummaryCompaction` finds what was given in the `Given` entries alone, as *Given, in a
    compaction* says; `given_read` and the map by message go, and with them the last place that
    builds the model's input from the history (AGENT-TURN.md, *What is held in memory*).
@@ -189,3 +195,4 @@ Stored data: agent states and transcripts are to be deleted - `TurnState` gains 
   and the model puts it aside while a step's calls run; `Given` takes an optional source.
   `create_plan` stays as it is. How a `Given` is treated in a compaction is part of this issue,
   and so is the decision whether the summary is a `Given` without a source.
+- **2026-10-16** — Decided: the summary of a compaction is a `Given` without a source.
