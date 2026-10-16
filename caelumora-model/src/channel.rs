@@ -366,12 +366,12 @@ pub struct FormerParticipant {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelState {
     pub channel_id: ChannelId,
-    /// The channel's history, from `window_from` on: as a store loads it.
+    /// The channel's history, from `history_from` on: as a store loads it.
     #[serde(skip)]
     pub history: History,
     /// The position from which on the channel keeps its history in memory;
     /// a store loads the history from there.
-    pub window_from: u64,
+    pub history_from: u64,
 }
 
 impl ChannelState {
@@ -379,7 +379,7 @@ impl ChannelState {
         Self {
             channel_id,
             history: History::default(),
-            window_from: 0,
+            history_from: 0,
         }
     }
 
@@ -389,7 +389,7 @@ impl ChannelState {
     /// no further back than that in memory; everything else is the store's.
     pub fn keep_window(&mut self) {
         self.history.keep_from(self.history.end().saturating_sub(WINDOW));
-        self.window_from = self.history.base();
+        self.history_from = self.history.base();
     }
 }
 
@@ -400,14 +400,14 @@ impl ChannelState {
 #[serde(rename_all = "snake_case")]
 pub enum ChannelStateChange {
     /// From where the history is held, whole.
-    WindowFrom(u64),
+    HistoryFrom(u64),
 }
 
 impl Journaled for ChannelState {
     type Change = ChannelStateChange;
 
     fn changes(&self) -> Vec<Self::Change> {
-        vec![ChannelStateChange::WindowFrom(self.window_from)]
+        vec![ChannelStateChange::HistoryFrom(self.history_from)]
     }
 
     /// The history is marked stored by the store that wrote it.
@@ -415,7 +415,7 @@ impl Journaled for ChannelState {
 
     fn apply(&mut self, change: Self::Change) -> Result<(), String> {
         match change {
-            ChannelStateChange::WindowFrom(from) => self.window_from = from,
+            ChannelStateChange::HistoryFrom(from) => self.history_from = from,
         }
         Ok(())
     }
@@ -529,10 +529,10 @@ mod tests {
         let mut state = ChannelState::new(ChannelId::new());
         state.history.extend((1..=250).map(|n| make_message(id(n))).collect());
         state.keep_window();
-        assert_eq!((state.history.base(), state.window_from), (0, 0), "nothing goes before it is stored");
+        assert_eq!((state.history.base(), state.history_from), (0, 0), "nothing goes before it is stored");
         state.history.mark_stored();
         state.keep_window();
-        assert_eq!((state.history.base(), state.history.end(), state.window_from), (50, 250, 50), "the last entries");
+        assert_eq!((state.history.base(), state.history.end(), state.history_from), (50, 250, 50), "the last entries");
         assert_eq!(state.history.last_message_id(), id(250));
     }
 
@@ -544,9 +544,9 @@ mod tests {
         assert!(copy.history.is_empty(), "the history is not in the document");
         assert!(state.history.changes().is_some(), "and is marked stored by the store that writes it");
 
-        state.window_from = 1;
+        state.history_from = 1;
         assert_eq!(state.changes().len(), 1, "the small part, whole");
         replayed(&state, &mut copy);
-        assert_eq!((copy.channel_id, copy.window_from), (state.channel_id, 1));
+        assert_eq!((copy.channel_id, copy.history_from), (state.channel_id, 1));
     }
 }

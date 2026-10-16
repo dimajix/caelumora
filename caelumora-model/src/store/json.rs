@@ -23,6 +23,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, MutexGuard};
 use tracing::{debug, info, warn};
 
+mod chains;
 mod histories;
 
 /// A journal is folded into its snapshot once it is at least as large as
@@ -571,7 +572,7 @@ impl StateStore for JsonFileStore {
         let path = self.agent_channel_state_path(agent_id, channel_id);
         debug!("Reading agent channel state from {}", path.display());
         let mut state: AgentChannelState = load_state(&path).await?.unwrap_or_default();
-        state.history = self.load_history(HistoryKey::Agent(agent_id, channel_id), state.window_from).await?;
+        state.history = self.load_history(HistoryKey::Agent(agent_id, channel_id), state.history_from).await?;
         Ok(state)
     }
 
@@ -599,7 +600,7 @@ impl StateStore for JsonFileStore {
             entity: "channel_state",
             id: channel_id.to_string(),
         })?;
-        state.history = self.load_history(HistoryKey::Channel(channel_id), state.window_from).await?;
+        state.history = self.load_history(HistoryKey::Channel(channel_id), state.history_from).await?;
         Ok(state)
     }
 
@@ -1054,13 +1055,11 @@ mod tests {
         let mut items = read("items-0.json");
         items.as_array_mut().unwrap().truncate(1);
         write("items-0.json", &items);
-        let mut head = read("head.json");
-        head["items_end"] = serde_json::json!(1);
-        write("head.json", &head);
+        write("items-head.json", &serde_json::json!({ "end": 1 }));
         let loaded = store.get_channel_state(channel).await.unwrap();
         assert_eq!(loaded.history.end(), 3);
         assert_eq!(store.page(key, 0, None, 10, &every).await.unwrap().items.len(), 3, "the items are derived anew from the chain");
-        assert_eq!(read("head.json")["items_end"], serde_json::json!(3));
+        assert_eq!(read("items-head.json")["end"], serde_json::json!(3));
 
         // As if the crash came after the chain, before its head.
         let mut chain = read("chain-0.json");

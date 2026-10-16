@@ -252,18 +252,18 @@ state's document (issue 379):
     another channel. A page is addressed by the position (`seq`) of its oldest item; a client passes
     it back without computing with it.
 *   **The holder keeps a window.** The channel loop and an agent's actor hold their history from
-    `window_from` on, a small part of the document: the channel the last `WINDOW` (200) entries, an
+    `history_from` on, a small part of the document: the channel the last `WINDOW` (200) entries, an
     agent from its last compaction on and at least the last 200. After every put they let go of what
     lies before (`keep_window`, `Chain::keep_from`), and a state is loaded from there. What a holder
     reads in memory reads from the end and stays within its window (see
     [AGENT-TURN.md](AGENT-TURN.md#what-is-held-in-memory)); a change of a message before the window
     is recorded, and the store applies it.
 *   **The `JsonFileStore`** keeps a history in `<key>.history/` beside its state's snapshot: the
-    chain in segments of 256 positions (`chain-<from>.json`), the items likewise
-    (`items-<from>.json`), and `head.json` - the head, where the chain ends and up to where the
-    items are derived -, written after the chain and again after the items. Entries a crash left
-    past the head's end are not there; items behind the chain are derived anew when the history is
-    next loaded or appended to. A message is found by scanning the items backwards, and a fitting
+    chain in segments of 256 positions (`chain-<from>.json`) and `head.json` - the head and where
+    the chain ends -, written after the segments; the items likewise (`items-<from>.json`) and
+    `items-head.json` - up to where they are derived -, written after the items. Entries a crash
+    left past the head's end are not there; items behind the chain are derived anew when the
+    history is next loaded or appended to. A message is found by scanning the items backwards, and a fitting
     rewrites every items segment: slow where a database has indexes. In Postgres
     ([04](../issues/04-postgres-state-store.md)) a history is the tables `history_entries(key, seq,
     parent, digest, entry)` and `history_items(key, seq, message_id, item)` beside the documents,

@@ -1,5 +1,5 @@
 use crate::agent::{AgentChannelState, AgentId, AgentState};
-use crate::chain::{Chain, Node, Stored as StoredChain};
+use crate::chain::Node;
 use crate::channel::{ChannelId, ChannelState};
 use crate::history::{History, HistoryEntry, HistoryPage};
 use crate::message::MessageId;
@@ -9,6 +9,7 @@ use crate::removal::{Deletable, Removal};
 use crate::security::{ActionType, AllowAllPolicy, SecurityContext, AccessPolicy};
 use crate::store::access::{name_free, Access};
 use crate::store::history::{page_of, HistoryKey, HistoryStore, Keep, StandingItems};
+use crate::store::kept_chain::KeptChain;
 use crate::store::query::{self, Filter, NoField, Page, Query};
 use crate::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, Journaled, Policies, StateStore, StoreError, StoreResult, Stored};
 use crate::type_map::TypeMap;
@@ -42,7 +43,7 @@ pub struct MemoryStore {
 /// derived from it.
 #[derive(Debug, Default)]
 struct KeptHistory {
-    chain: History,
+    chain: KeptChain<HistoryEntry>,
     items: StandingItems,
 }
 
@@ -83,7 +84,7 @@ impl MemoryStore {
         write_lock(&self.histories, |all| {
             let kept = all.entry(key).or_default();
             let end = kept.chain.end();
-            kept.chain.apply(changes).map_err(|e| StoreError::Backend(format!("what {key} added does not fit: {e}")))?;
+            kept.chain.append(changes).map_err(|e| StoreError::Backend(format!("what {key} added does not fit: {e}")))?;
             for node in kept.chain.from(end) {
                 kept.items.take(node);
             }
@@ -98,7 +99,7 @@ impl MemoryStore {
     fn load_history(&self, key: HistoryKey, from: u64) -> StoreResult<History> {
         read_lock(&self.histories, |all| {
             let Some(kept) = all.get(&key) else { return Ok(History::default()) };
-            Chain::suffix(from, StoredChain { entries: kept.chain.from(from).cloned().collect(), head: kept.chain.digest() })
+            kept.chain.suffix(from)
                 .map_err(|e| StoreError::Backend(format!("{key} cannot be read from position {from}: {e}")))
         })
     }
@@ -330,7 +331,7 @@ impl ComponentStore for MemoryStore {
 impl StateStore for MemoryStore {
     async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState> {
         let mut state = read_lock(&self.agent_channel_states, |v| v.get(&(agent_id, channel_id)).cloned()).unwrap_or_default();
-        state.history = self.load_history(HistoryKey::Agent(agent_id, channel_id), state.window_from)?;
+        state.history = self.load_history(HistoryKey::Agent(agent_id, channel_id), state.history_from)?;
         Ok(state)
     }
 
@@ -356,7 +357,7 @@ impl StateStore for MemoryStore {
 
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
         let mut state = read_lock(&self.channel_states, |v| v.get(&channel_id).cloned()).ok_or_else(|| StoreError::NotFound { entity: "channel_state", id: channel_id.to_string() })?;
-        state.history = self.load_history(HistoryKey::Channel(channel_id), state.window_from)?;
+        state.history = self.load_history(HistoryKey::Channel(channel_id), state.history_from)?;
         Ok(state)
     }
 
@@ -389,7 +390,7 @@ impl StateStore for MemoryStore {
 impl HistoryStore for MemoryStore {
     async fn page(&self, key: HistoryKey, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
         Ok(read_lock(&self.histories, |all| match all.get(&key) {
-            Some(kept) => page_of(kept.items.newest_before(before.unwrap_or(u64::MAX)).cloned(), from, limit, keep, kept.chain.digest()),
+            Some(kept) => page_of(kept.items.newest_before(before.unwrap_or(u64::MAX)).cloned(), from, limit, keep, kept.chain.head()),
             None => HistoryPage::default(),
         }))
     }
@@ -399,13 +400,13 @@ impl HistoryStore for MemoryStore {
     }
 
     async fn entries(&self, key: HistoryKey, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>> {
-        Ok(read_lock(&self.histories, |all| all.get(&key).map(|kept| kept.chain.from(from).cloned().collect()).unwrap_or_default()))
+        Ok(read_lock(&self.histories, |all| all.get(&key).map(|kept| kept.chain.from(from).to_vec()).unwrap_or_default()))
     }
 
     async fn rebuild(&self, key: HistoryKey) -> StoreResult<()> {
         write_lock(&self.histories, |all| {
             if let Some(kept) = all.get_mut(&key) {
-                kept.items = StandingItems::of(kept.chain.all_entries());
+                kept.items = StandingItems::of(kept.chain.from(0));
             }
         });
         Ok(())

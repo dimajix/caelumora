@@ -735,7 +735,7 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
 
     let loaded = states.get_channel_state(channel).await.expect("get");
     assert_eq!((loaded.history.digest(), loaded.history.end(), loaded.history.base()), (state.history.digest(), state.history.end(), 0), "the history comes back whole");
-    state.window_from = 590;
+    state.history_from = 590;
     states.put_channel_state(channel, &mut state).await.expect("put where the window begins");
     let loaded = states.get_channel_state(channel).await.expect("get");
     assert_eq!((loaded.history.base(), loaded.history.end(), loaded.history.digest()), (590, state.history.end(), state.history.digest()), "from where the state holds it");

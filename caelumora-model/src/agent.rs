@@ -310,7 +310,7 @@ pub struct AgentChannelState {
     pub processing_state: ActorState,
     /// The conversation of the channel as the agent keeps it - all that was
     /// offered to it (issue 196) - each of its own messages with what it was
-    /// produced from (issue 06). From `window_from` on, as a store loads it:
+    /// produced from (issue 06). From `history_from` on, as a store loads it:
     /// not part of the state's document, but a chain a store keeps apart
     /// (issue 379), written with the state and read on its own
     /// (`HistoryStore`).
@@ -318,7 +318,7 @@ pub struct AgentChannelState {
     pub history: History,
     /// The position from which on the agent keeps its history in memory; a
     /// store loads the history from there.
-    pub window_from: u64,
+    pub history_from: u64,
     /// What the agent's model is given of the conversation: its own
     /// messages in full, internal steps included, and what others said
     /// (issue 50). Of an external agent, what the remote agent was given,
@@ -368,7 +368,7 @@ impl AgentChannelState {
         if let Some(compacted) = compacted {
             self.history.keep_from(compacted.min(self.history.end().saturating_sub(WINDOW)));
         }
-        self.window_from = self.history.base();
+        self.history_from = self.history.base();
     }
 
     /// Makes a loaded state fit to run from (issue 75). A state stored
@@ -863,7 +863,7 @@ pub enum AgentChannelStateChange {
     /// bounded by its open tasks.
     Remote(RemoteState),
     /// From where the history is held, whole.
-    WindowFrom(u64),
+    HistoryFrom(u64),
 }
 
 /// The tool sets of one offer as they were recorded (`RecordedToolSets`).
@@ -890,7 +890,7 @@ impl Journaled for AgentChannelState {
         changes.push(AgentChannelStateChange::Turn(self.turn.clone()));
         changes.push(AgentChannelStateChange::Used(self.used));
         changes.push(AgentChannelStateChange::Remote(self.remote.clone()));
-        changes.push(AgentChannelStateChange::WindowFrom(self.window_from));
+        changes.push(AgentChannelStateChange::HistoryFrom(self.history_from));
         changes
     }
 
@@ -914,7 +914,7 @@ impl Journaled for AgentChannelState {
             AgentChannelStateChange::Turn(turn) => self.turn = turn,
             AgentChannelStateChange::Used(used) => self.used = used,
             AgentChannelStateChange::Remote(remote) => self.remote = remote,
-            AgentChannelStateChange::WindowFrom(from) => self.window_from = from,
+            AgentChannelStateChange::HistoryFrom(from) => self.history_from = from,
         }
         Ok(())
     }
@@ -1400,7 +1400,7 @@ pub(crate) mod tests {
         state.history.extend((301..=310).map(|n| make_message(id(n))).collect());
         state.history.mark_stored();
         state.keep_window();
-        assert_eq!((state.history.base(), state.window_from), (111, 111), "at least the last entries, the compaction among them");
+        assert_eq!((state.history.base(), state.history_from), (111, 111), "at least the last entries, the compaction among them");
         compacted(&mut state);
         state.history.extend((311..=600).map(|n| make_message(id(n))).collect());
         state.history.mark_stored();
@@ -1437,9 +1437,9 @@ pub(crate) mod tests {
             AgentChannelStateChange::Turn(_) => "turn",
             AgentChannelStateChange::Used(_) => "used",
             AgentChannelStateChange::Remote(_) => "remote",
-            AgentChannelStateChange::WindowFrom(_) => "window_from",
+            AgentChannelStateChange::HistoryFrom(_) => "history_from",
         }).collect();
-        assert_eq!(parts, ["transcript", "notes", "private_notes", "prompt", "offered_tools", "processing_state", "turn", "used", "remote", "window_from"], "what was added, then the small parts whole; the history is the store's to write");
+        assert_eq!(parts, ["transcript", "notes", "private_notes", "prompt", "offered_tools", "processing_state", "turn", "used", "remote", "history_from"], "what was added, then the small parts whole; the history is the store's to write");
         replayed(&state, &mut copy);
         assert_eq!(copy.used, state.used, "the running total with them");
 

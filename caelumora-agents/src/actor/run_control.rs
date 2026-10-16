@@ -124,7 +124,7 @@ impl RunControl {
     /// a stop still has.
     pub(crate) fn begin_turn(&self, turn: TurnId) {
         *self.lock_turn() = (Some(turn), self.stopped.child_token());
-        let _ = self.interrupt.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |asked| (asked != Interrupt::Stop as u8).then_some(NO_INTERRUPT));
+        let _ = self.interrupt.try_update(Ordering::SeqCst, Ordering::SeqCst, |asked| (asked != Interrupt::Stop as u8).then_some(NO_INTERRUPT));
     }
 
     /// The turn under way, if the run loop is in one that can still be

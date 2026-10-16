@@ -1,6 +1,7 @@
 pub(crate) mod access;
 pub mod history;
 pub mod json;
+pub(crate) mod kept_chain;
 pub mod memberships;
 pub mod memory;
 pub mod query;
