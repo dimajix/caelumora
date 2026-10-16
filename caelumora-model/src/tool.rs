@@ -225,25 +225,6 @@ impl ToolSet {
     }
 }
 
-/// The tool sets a model was offered as they were recorded: as sets since
-/// issue 194, before as a flat list of tools - read as one set without a
-/// name or description.
-#[derive(Deserialize)]
-#[serde(untagged)]
-pub(crate) enum RecordedToolSets {
-    Sets(Vec<ToolSet>),
-    Flat(Vec<Tool>),
-}
-
-impl From<RecordedToolSets> for Vec<ToolSet> {
-    fn from(recorded: RecordedToolSets) -> Self {
-        match recorded {
-            RecordedToolSets::Sets(sets) => sets,
-            RecordedToolSets::Flat(tools) => vec![ToolSet::new("", "", tools)],
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: Option<String>,

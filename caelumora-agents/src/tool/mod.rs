@@ -430,7 +430,7 @@ impl TryFrom<Value> for ApprovalMode {
 /// Whether `call` names a tool `turn` was offered (issue 180): a tool of a
 /// set withheld in the turn's channel, or of none, is not called by name.
 fn offered(call: &ToolCall, turn: &Turn<'_>) -> bool {
-    turn.tools().iter().any(|tool| tool.name == call.function_name)
+    turn.tools().any(|tool| tool.name == call.function_name)
 }
 
 /// Runs an agent's tool calls with the tools of its components' providers
@@ -566,7 +566,7 @@ impl ToolExecutor {
     /// The result for `call`, which failed with `error`: what went wrong and
     /// what to do next, classified as the channel.
     fn failed(&self, call: &ToolCall, error: ToolError, turn: &Turn<'_>) -> ToolCallResult {
-        let available: Vec<String> = turn.tools().iter().map(|t| t.name.clone()).collect();
+        let available: Vec<String> = turn.tools().map(|t| t.name.clone()).collect();
         let (status, content) = error.to_result(&available);
         ToolCallResult::of(call, status, content, turn.classification())
     }
@@ -578,7 +578,7 @@ impl ToolExecutor {
     /// name: the result enters its context in the channel).
     async fn admitted(&self, call: &ToolCall, output: ToolOutput, turn: &Turn<'_>) -> ToolCallResult {
         let channel = turn.classification();
-        let configured = turn.tools().iter().find(|t| t.name == call.function_name).and_then(|t| t.classification.clone());
+        let configured = turn.tools().find(|t| t.name == call.function_name).and_then(|t| t.classification.clone());
         let classification = output.classification.or(configured).unwrap_or_else(|| channel.clone());
         let context = turn.security_context();
         if !self.confidentiality.may_publish(context, &classification, &channel) {
@@ -634,7 +634,7 @@ impl ToolExecutor {
             }
         };
         let explicit = rule.is_some_and(|r| r.decision == RuleDecision::Ask);
-        let asks = explicit || turn.tools().iter().any(|t| t.name == call.function_name && t.requires_approval);
+        let asks = explicit || turn.tools().any(|t| t.name == call.function_name && t.requires_approval);
         match questions {
             _ if asks => Admission::Ask { description, explicit, suggested: self.providers.matcher(call), questions },
             Some(questions) => Admission::Await(questions),
@@ -710,6 +710,7 @@ mod tests {
     use caelumora_model::channel::Channel;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::note::NoteId;
+    use caelumora_model::context::ContextRef;
     use caelumora_model::turn::TurnState;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
@@ -927,9 +928,8 @@ mod tests {
     async fn the_policy_is_checked_once_as_the_call_is_admitted() {
         let executor = executor(Arc::new(DenyAllPolicy));
 
-        let mut agent_channel_state = AgentChannelState::default();
         let agent_id = AgentId::new();
-        agent_channel_state.turn = Some(TurnState { work: Work { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() }, tools: executor.providers.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() });
+        let mut agent_channel_state = offering(Work { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() }, executor.providers.tool_sets());
         let mut context = Turn::under_way(agent_id, &mut agent_channel_state);
 
         let admitted = executor.admit(&call("test_tool"), &context).await;
@@ -1007,14 +1007,7 @@ mod tests {
         assert!(outward.tools.is_empty() && outward.unavailable.as_deref().is_some_and(|why| why.contains("not cleared for this channel")), "withheld above it: {outward:?}");
         assert!(local.unavailable.is_none() && !local.tools.is_empty(), "a set that sends nothing out is offered");
 
-        let mut agent_channel_state = AgentChannelState {
-            turn: Some(TurnState {
-                work: Work { security_context: agent, classification: Classification::general(Confidentiality::Confidential), ..Default::default() },
-                tools: confidential.into_iter().flat_map(|set| set.tools).collect(),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
+        let mut agent_channel_state = offering(Work { security_context: agent, classification: Classification::general(Confidentiality::Confidential), ..Default::default() }, confidential);
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let admitted = executor.admit(&call("send_out"), &turn).await;
         assert!(matches!(&admitted, Admission::Answered(r) if r.status == ToolResultStatus::UnknownTool), "not called by its name: {admitted:?}");
@@ -1038,7 +1031,7 @@ mod tests {
     #[tokio::test]
     async fn only_an_agent_calls_tools() {
         let executor = executor(Arc::new(AllowAllPolicy::new()));
-        let mut agent_channel_state = AgentChannelState { turn: Some(TurnState { work: Work { security_context: SecurityContext { caller_id: ActorId::User(UserId::new()), ..SecurityContext::default() }, ..Default::default() }, tools: executor.providers.tool_sets().into_iter().flat_map(|set| set.tools).collect(), ..Default::default() }), ..Default::default() };
+        let mut agent_channel_state = offering(Work { security_context: SecurityContext { caller_id: ActorId::User(UserId::new()), ..SecurityContext::default() }, ..Default::default() }, executor.providers.tool_sets());
         let mut context = Turn::under_way(AgentId::new(), &mut agent_channel_state);
 
         let result = executor.execute(&call("test_tool"), None, &mut context, std::future::pending()).await;
@@ -1048,14 +1041,16 @@ mod tests {
     /// A turn of an agent in a general internal channel, with the tools of
     /// `executor` as it began with them.
     fn agent_turn(executor: &ToolExecutor) -> AgentChannelState {
-        AgentChannelState {
-            turn: Some(TurnState {
-                work: Work { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() },
-                tools: executor.providers.tool_sets().into_iter().flat_map(|set| set.tools).collect(),
-                ..Default::default()
-            }),
-            ..Default::default()
-        }
+        offering(Work { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() }, executor.providers.tool_sets())
+    }
+
+    /// A turn under way, done as `work` says, offered `tool_sets` as it
+    /// began with them.
+    fn offering(work: Work, tool_sets: Vec<ToolSet>) -> AgentChannelState {
+        let mut state = AgentChannelState::default();
+        let tools = state.keep_offer(tool_sets);
+        state.turn = Some(TurnState { work: Work { context: ContextRef { tools, ..work.context }, ..work }, ..Default::default() });
+        state
     }
 
     /// An executor whose flow knows the compartment "hr", and which lets

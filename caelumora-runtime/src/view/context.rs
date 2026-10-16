@@ -92,7 +92,8 @@ impl AgentContextView {
     /// prompts and tools are its own (issue 205). What it was produced from
     /// is read from the message's item in the agent's history, the path of
     /// the transcript it names from the store, on whichever branch it lies
-    /// (issue 380).
+    /// (issue 380), and the prompt texts and the tool sets it names from the
+    /// store too (issue 383).
     ///
     /// # Errors
     /// `NotRecorded` if the agent did not produce the message, or what it
@@ -108,7 +109,8 @@ impl AgentContextView {
             Some(digest) => self.transcripts.path(self.agent, self.channel, digest).await.map_err(|source| self.failed(message, source))?.ok_or_else(unavailable)?,
             None => Vec::new(),
         };
-        ContextResolver::on_path(&self.state, &path).resolve(reference, turn, self.actor()).ok_or_else(unavailable)
+        let (prompts, offered_tools) = self.transcripts.named_by(self.agent, self.channel, reference).await.map_err(|source| self.failed(message, source))?;
+        ContextResolver::on_path(&self.state, &path, &prompts, &offered_tools).resolve(reference, turn, self.actor()).ok_or_else(unavailable)
     }
 
     /// The classification of the message `message` the agent produced, as

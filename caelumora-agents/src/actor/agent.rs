@@ -760,9 +760,8 @@ fn stamp(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, c
 /// most the channel's classification. The tools are those the turn began
 /// with, which the model was offered (issue 137).
 fn label(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, complete: bool) {
-    let tools = turn.tools();
     for call in &mut message.tool_calls {
-        let declared = tools.iter().find(|t| t.name == call.function_name);
+        let declared = turn.tools().find(|t| t.name == call.function_name);
         call.visibility = declared.map(|t| t.visibility).unwrap_or_default();
         call.presentation = declared.map(|t| t.presentation).unwrap_or_default();
     }
@@ -774,7 +773,7 @@ fn label(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, c
     let owners_call = if complete {
         message.tool_calls.iter().any(|c| !c.visibility.arguments.is_channel())
     } else {
-        tools.iter().any(|t| !t.visibility.arguments.is_channel())
+        turn.tools().any(|t| !t.visibility.arguments.is_channel())
     };
     let owners = !reasoning_visibility.is_channel() || turn.saw_private_knowledge() || owners_call;
     message.reasoning_visibility = if owners { Visibility::Owner } else { Visibility::Channel };

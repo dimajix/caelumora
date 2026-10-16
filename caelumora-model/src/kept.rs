@@ -1,21 +1,18 @@
 //! Values kept once by digest (issues 47, 137): the texts of an agent's
 //! prompt parts and the sets of tools its model was offered, which the
-//! `ContextRef`s in its history point to. Only ever added to, and - like a
-//! chain - keeping what was added since it was last stored (issue 193), so
-//! that a store writes that and not the whole.
+//! `ContextRef`s in its history point to. Added to, and - like a chain -
+//! keeping what was added since it was last stored (issue 193), so that a
+//! store writes that, apart from the state's document (issue 383).
 
 use crate::digest::Digest;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
-/// Values by digest, each kept once. Stored as the map alone.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(transparent)]
+/// Values by digest, each kept once.
+#[derive(Debug, Clone)]
 pub struct Kept<V> {
     values: BTreeMap<Digest, V>,
     /// The digests added since the values were last stored, in order.
-    #[serde(skip)]
     pending: Vec<Digest>,
 }
 
@@ -33,12 +30,6 @@ impl<V> Kept<V> {
             vacant.insert(value());
             self.pending.push(digest);
         }
-    }
-
-    /// The values made of these by `f`, under the same digests - for values
-    /// read in an older form.
-    pub fn map<W>(self, mut f: impl FnMut(V) -> W) -> Kept<W> {
-        Kept { values: self.values.into_iter().map(|(digest, value)| (digest, f(value))).collect(), pending: self.pending }
     }
 
     pub fn get(&self, digest: &Digest) -> Option<&V> {
@@ -67,11 +58,17 @@ impl<V> Kept<V> {
         self.pending.clear();
     }
 
-    /// Replays a change, as a store does when loading what it appended:
-    /// `value` is kept under `digest` unless something is already. No change
-    /// to store again.
-    pub fn apply(&mut self, digest: Digest, value: V) {
-        self.values.entry(digest).or_insert(value);
+    /// Lets go of the values that are stored and not `wanted` (issue 383):
+    /// what is still to be stored stays, whatever is wanted.
+    pub fn keep_only(&mut self, wanted: impl Fn(&Digest) -> bool) {
+        let pending = &self.pending;
+        self.values.retain(|digest, _| wanted(digest) || pending.contains(digest));
+    }
+
+    /// The values a store read, each under its digest, with nothing
+    /// pending: they are stored.
+    pub fn stored(values: impl IntoIterator<Item = (Digest, V)>) -> Self {
+        Self { values: values.into_iter().collect(), pending: Vec::new() }
     }
 }
 
@@ -84,32 +81,22 @@ mod tests {
     fn a_value_is_kept_once_and_what_was_added_since_stored_is_told() {
         let mut kept = Kept::default();
         kept.keep(prompt("a"), || "a".to_string());
-        let mut stored: Kept<String> = serde_json::from_value(serde_json::to_value(&kept).unwrap()).unwrap();
-        assert!(stored.changes().is_empty(), "loaded: nothing pending");
         kept.mark_stored();
 
         kept.keep(prompt("a"), || unreachable!("kept already"));
         kept.keep(prompt("b"), || "b".to_string());
         assert_eq!(kept.len(), 2);
-        let changes = kept.changes();
-        assert_eq!(changes, [(prompt("b"), "b".to_string())], "once, and only what is new");
+        assert_eq!(kept.changes(), [(prompt("b"), "b".to_string())], "once, and only what is new");
 
-        for (digest, value) in changes.clone() {
-            stored.apply(digest, value);
-        }
-        for (digest, value) in changes {
-            stored.apply(digest, value);
-        }
+        kept.keep_only(|_| false);
+        assert_eq!(kept.changes(), [(prompt("b"), "b".to_string())], "what is to be stored stays");
+        assert!(kept.get(&prompt("a")).is_none(), "what is stored and not wanted goes");
+        kept.mark_stored();
+        kept.keep_only(|digest| *digest == prompt("b"));
+        assert_eq!(kept.len(), 1, "what is wanted stays");
+
+        let stored = Kept::stored([(prompt("b"), "b".to_string())]);
         assert_eq!(stored.get(&prompt("b")).map(String::as_str), Some("b"));
-        assert_eq!(stored.len(), 2, "applied twice, kept once");
-        assert!(stored.changes().is_empty(), "nothing replayed is a change to store again");
-    }
-
-    #[test]
-    fn stored_as_the_map_alone() {
-        let mut kept = Kept::default();
-        kept.keep(prompt("a"), || "a".to_string());
-        let json = serde_json::to_value(&kept).unwrap();
-        assert_eq!(json, serde_json::json!({ prompt("a").to_string(): "a" }));
+        assert!(stored.changes().is_empty(), "what a store read is no change to store again");
     }
 }

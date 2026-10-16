@@ -191,9 +191,10 @@ The `StateStore` (in `caelumora-model`) stores the runtime state of channels and
 
 *   **`ChannelState`**: the channel's history (see [Histories](#histories)).
 *   **`AgentChannelState`**: an agent in one channel, of either kind - processing state, history,
-    transcript, notes, prompt texts, and the turn under way (see [AGENT-TURN.md](AGENT-TURN.md));
-    its history and its transcript kept apart (see [Histories](#histories),
-    [Transcripts](#transcripts)).
+    transcript, notes, prompt texts and tool sets, and the turn under way (see
+    [AGENT-TURN.md](AGENT-TURN.md)); its history, its transcript, its prompt texts and its tool sets
+    kept apart (see [Histories](#histories), [Transcripts](#transcripts),
+    [Prompt texts and tool sets](#prompt-texts-and-tool-sets)).
     An external agent keeps instead what it keeps of the remote side: the remote conversation and
     the tasks not yet ended.
 *   **`AgentState`**: the agent itself, across its channels and sessions - so far its memory (see
@@ -208,9 +209,8 @@ against an update of the entity.
 
 *   A growing part records what was added: a chain tells the nodes added since it was last stored
     and its head, the same form the whole chain is stored in (see
-    [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)); what is kept once by digest tells the
-    digests added. Each node carries its position, and a node is merged only at the position it
-    has, or at the one after the last if it is new.
+    [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)). Each node carries its position, and
+    a node is merged only at the position it has, or at the one after the last if it is new.
 *   A small part - the processing state, the turn under way, the tokens the agent's calls used, an
     external agent's open tasks and the classifications it was given - is recorded whole: it is
     changed in place and bounded by one turn, one exchange, or the labels in use. What would be
@@ -299,6 +299,30 @@ history is (issue 380), with what differs:
     in every segment: slow where a database has indexes. In Postgres a transcript is the table
     `transcript_entries(agent, channel, seq, parent, digest, entry)`, with an index on the digest
     and on the message an entry holds, written in the transaction of the agent's state.
+
+### Prompt texts and tool sets
+
+The texts of the prompt parts an agent's model was given and the tool sets it was offered are kept
+once by digest (`Kept`), and named by digest from every `ContextRef`. A system prompt changes with
+every note and every participant, so a new text is kept nearly every turn. They are kept apart from
+the agent's state document as the transcript is (issue 383):
+
+*   **Written first.** The put of the agent's state writes the texts and sets kept since it was last
+    stored before the history, the transcript and the document, so that nothing stored names a text
+    that is not there after a crash.
+*   **Once by digest, idempotent.** A text kept again - the same system prompt in the next turn - is
+    written as the same: a digest there already is not written again. A text nothing names any
+    more, that of a turn cut off before it said anything, stays.
+*   **Read by digest, through the `TranscriptStore`**: the texts of some digests, the sets of an
+    offer, and both for a `ContextRef` (`named_by`) - what the context of an older message is
+    resolved with.
+*   **The holder keeps what its turn under way names**, and lets go of the rest after every put
+    (`keep_window`); between turns it holds none, and a state loaded holds those its turn names, so
+    that a turn cut off by a crash is resumed with them.
+*   **The `JsonFileStore`** keeps them in `<agent>.given/` beside the agent's snapshot, one file per
+    digest (`prompt-<digest>.json`, `tools-<digest>.json`), and looks for the file before it writes
+    one. In Postgres each is a table keyed by agent, channel and digest, written with
+    `ON CONFLICT DO NOTHING`.
 
 ### The agent state has one owner per process
 

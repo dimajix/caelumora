@@ -309,6 +309,14 @@ agent, a message as its remote agent was given it, before it tells of a change (
 `ActorRuntime::transcript_message`). Its sums are parts of its state, not read over the branches:
 the tokens used (`used`) and the classifications the remote agent was given (`RemoteState`).
 
+Of the prompt texts and the tool sets, kept once by digest, the actor holds those its turn under way
+names, and between turns none (issue 383): the turn's calls, how full its context is and the tools
+its calls are checked against read them, and nothing reads them between turns - how full the context
+is then is read without prompt parts, answering again begins a turn that assembles its parts anew,
+and an external agent tells what it gave by digest. A text kept again in the next turn is written as
+the same. What the context of an older message names is read from the store, with the path of its
+transcript (see [STORAGE.md](STORAGE.md#prompt-texts-and-tool-sets)).
+
 ### What is recorded
 
 Every message a turn says is recorded in the history with the `ContextRef` it was produced from: the
@@ -544,9 +552,10 @@ What the model is given is not stored; it is resolved from what is (`caelumora_m
     they count for the messages produced from then on.
 *   **Resolving** - the `ContextResolver` resolves a reference against the transcript, the prompt
     texts and the tool sets, each as the profile gives it. The turn's next call and every later
-    question about a message go through it: the turn against the active branch the agent's state
-    holds (`ContextResolver::of`), a question about an older message against the path its reference
-    names, loaded from the store (`ContextResolver::on_path`).
+    question about a message go through it: the turn against the active branch, the texts and the
+    tool sets the agent's state holds (`ContextResolver::of`), a question about an older message
+    against the path, the texts and the tool sets its reference names, loaded from the store
+    (`ContextResolver::on_path`).
 
 What the model was given and what is recorded as given are the same reference, resolved by one
 implementation, and therefore cannot diverge.

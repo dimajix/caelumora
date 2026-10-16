@@ -17,7 +17,7 @@ use crate::role::RoleId;
 use crate::scope::{ScopeField, Scoped};
 use crate::security::{Secured, SecurityAttributes, SecurityContext};
 use crate::store::{self, EntityKind, Journaled, NoEntity, Updatable};
-use crate::tool::{RecordedToolSets, Tool, ToolCallResult, ToolCallStatus, ToolResultStatus, ToolSet};
+use crate::tool::{ToolCallResult, ToolCallStatus, ToolResultStatus, ToolSet};
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use crate::turn::GivenUpReason;
 use crate::turn::{CommandRequest, TurnState};
@@ -25,8 +25,8 @@ use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Description, Introduction};
 use crate::value::ValueError;
 use crate::work::{TurnId, Work};
-use serde::{Deserialize, Serialize, Deserializer};
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use tracing::warn;
 use uuid::Uuid;
 use chrono::Utc;
@@ -336,15 +336,18 @@ pub struct AgentChannelState {
     /// The agent's private notes in this channel, which only it reads - and
     /// only where the channel's confidentiality allows (issue 51).
     pub private_notes: NoteChain,
-    /// Every prompt part the agent was given in this channel - the system
+    /// The prompt parts the agent was given in this channel - the system
     /// prompt, notes, ... - by digest, each kept once: what the `ContextRef`s
-    /// in the history point to (issues 06, 47).
+    /// in the history point to (issues 06, 47). Written by the store apart
+    /// from the document, before everything that names them, and read by
+    /// digest (`TranscriptStore::prompts`, issue 383); a state loaded holds
+    /// those its turn under way names.
+    #[serde(skip)]
     pub prompts: Kept<String>,
     /// The tool sets the agent's model was offered in this channel, by
     /// digest, each offer kept once: what the `ContextRef`s in the history
-    /// point to (issues 137, 194). Stored as `tool_sets` before issue 194
-    /// took the name, and each offer as a flat list of tools.
-    #[serde(alias = "tool_sets", deserialize_with = "recorded_offers")]
+    /// point to (issues 137, 194). Kept as the prompt parts are.
+    #[serde(skip)]
     pub offered_tools: Kept<Vec<ToolSet>>,
     /// The turn under way, `None` between turns (issue 85). Stored with the
     /// rest, so that a turn cut off by a crash is resumed (issue 75).
@@ -374,7 +377,10 @@ impl AgentChannelState {
     /// compacted its context keeps all of it. The transcript from the root
     /// of its active branch on: every reader in memory reads that branch
     /// alone, and what lies before is read from the store
-    /// (`TranscriptStore`); right after it began anew, nothing.
+    /// (`TranscriptStore`); right after it began anew, nothing. Of the
+    /// prompt texts and the tool sets those the turn under way names
+    /// (issue 383): its calls read them, and between turns nothing does;
+    /// what an older message's context names is read from the store.
     pub fn keep_window(&mut self) {
         let compacted = self.history.all_entries().rev().find(|node| matches!(node.entry, HistoryEntry::Compacted { .. })).map(|node| node.seq);
         if let Some(compacted) = compacted {
@@ -384,6 +390,11 @@ impl AgentChannelState {
         let root = self.transcript.entries().next().map_or(self.transcript.end(), |node| node.seq);
         self.transcript.keep_from(root);
         self.transcript_from = self.transcript.base();
+        let context = self.turn.as_ref().map(|turn| &turn.work.context);
+        let named: HashSet<Digest> = context.into_iter().flat_map(|context| context.prompts.iter().map(|prompt| prompt.text)).collect();
+        let offered = context.and_then(|context| context.tools);
+        self.prompts.keep_only(|digest| named.contains(digest));
+        self.offered_tools.keep_only(|digest| offered == Some(*digest));
     }
 
     /// Makes a loaded state fit to run from (issue 75). A state stored
@@ -651,6 +662,17 @@ impl AgentChannelState {
         PromptRef { text: digest, role, after, classification }
     }
 
+    /// Keeps the tool sets the agent's model is offered once by digest
+    /// (issues 137, 194), and returns the digest that names the offer:
+    /// what a `ContextRef` records; `None` for no sets, an offer of nothing.
+    pub fn keep_offer(&mut self, tool_sets: Vec<ToolSet>) -> Option<Digest> {
+        (!tool_sets.is_empty()).then(|| {
+            let digest = digest::tool_sets(&tool_sets);
+            self.offered_tools.keep(digest, || tool_sets);
+            digest
+        })
+    }
+
     /// Begins a turn (issue 85): fixes what it is - the envelope it answers,
     /// whose authority it acts with, the channel's classification now, how
     /// the agent's model is given its context (the `profile`, issues 49, 63),
@@ -670,12 +692,7 @@ impl AgentChannelState {
         tool_sets: Vec<ToolSet>,
         profile: ModelProfile,
     ) -> TurnId {
-        let offered = (!tool_sets.is_empty()).then(|| {
-            let digest = digest::tool_sets(&tool_sets);
-            self.offered_tools.keep(digest, || tool_sets.clone());
-            digest
-        });
-        let tools: Vec<Tool> = tool_sets.into_iter().flat_map(|set| set.tools).collect();
+        let offered = self.keep_offer(tool_sets);
         if self.turn.is_some() {
             tracing::warn!("A turn was begun while another was under way; the other ends without an end recorded");
         }
@@ -683,7 +700,7 @@ impl AgentChannelState {
         work.context = ContextRef { transcript: self.transcript.digest(), tools: offered, profile, ..ContextRef::default() };
         self.transcript.messages().iter().for_each(|m| work.see_message(m));
         let turn_id = work.turn_id;
-        let turn = TurnState { work, tools, ..TurnState::default() };
+        let turn = TurnState { work, ..TurnState::default() };
         self.turn = Some(turn);
         turn_id
     }
@@ -859,15 +876,6 @@ pub enum RetryRefused {
 pub enum AgentChannelStateChange {
     Notes(Stored<LedgerEntry<Notes>>),
     PrivateNotes(Stored<LedgerEntry<Notes>>),
-    Prompt { digest: Digest, text: String },
-    /// Stored as `tool_set` before issue 194 took the name, with a flat
-    /// list of tools.
-    #[serde(alias = "tool_set")]
-    OfferedTools {
-        digest: Digest,
-        #[serde(deserialize_with = "recorded_offer")]
-        tools: Vec<ToolSet>,
-    },
     ProcessingState(ActorState),
     /// The turn under way, whole: it is changed in place at every step
     /// (`prepare_resume`, the turn's own methods), and bounded by one turn.
@@ -883,16 +891,6 @@ pub enum AgentChannelStateChange {
     TranscriptFrom(u64),
 }
 
-/// The tool sets of one offer as they were recorded (`RecordedToolSets`).
-fn recorded_offer<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<ToolSet>, D::Error> {
-    RecordedToolSets::deserialize(deserializer).map(Into::into)
-}
-
-/// Every offer of tool sets as it was recorded (`RecordedToolSets`).
-fn recorded_offers<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Kept<Vec<ToolSet>>, D::Error> {
-    Kept::<RecordedToolSets>::deserialize(deserializer).map(|kept| kept.map(Into::into))
-}
-
 impl Journaled for AgentChannelState {
     type Change = AgentChannelStateChange;
 
@@ -900,8 +898,6 @@ impl Journaled for AgentChannelState {
         let mut changes: Vec<Self::Change> = Vec::new();
         changes.extend(self.notes.changes().map(AgentChannelStateChange::Notes));
         changes.extend(self.private_notes.changes().map(AgentChannelStateChange::PrivateNotes));
-        changes.extend(self.prompts.changes().into_iter().map(|(digest, text)| AgentChannelStateChange::Prompt { digest, text }));
-        changes.extend(self.offered_tools.changes().into_iter().map(|(digest, tools)| AgentChannelStateChange::OfferedTools { digest, tools }));
         changes.push(AgentChannelStateChange::ProcessingState(self.processing_state));
         changes.push(AgentChannelStateChange::Turn(self.turn.clone()));
         changes.push(AgentChannelStateChange::Used(self.used));
@@ -911,21 +907,17 @@ impl Journaled for AgentChannelState {
         changes
     }
 
-    /// The history and the transcript are marked stored by the store that
-    /// wrote them.
+    /// The history, the transcript, the prompt parts and the tool sets are
+    /// marked stored by the store that wrote them.
     fn mark_stored(&mut self) {
         self.notes.mark_stored();
         self.private_notes.mark_stored();
-        self.prompts.mark_stored();
-        self.offered_tools.mark_stored();
     }
 
     fn apply(&mut self, change: Self::Change) -> Result<(), String> {
         match change {
             AgentChannelStateChange::Notes(change) => self.notes.apply(change)?,
             AgentChannelStateChange::PrivateNotes(change) => self.private_notes.apply(change)?,
-            AgentChannelStateChange::Prompt { digest, text } => self.prompts.apply(digest, text),
-            AgentChannelStateChange::OfferedTools { digest, tools } => self.offered_tools.apply(digest, tools),
             AgentChannelStateChange::ProcessingState(state) => self.processing_state = state,
             AgentChannelStateChange::Turn(turn) => self.turn = turn,
             AgentChannelStateChange::Used(used) => self.used = used,
@@ -981,7 +973,7 @@ pub(crate) mod tests {
     use crate::context::{ContextResolver, KnowledgeSource};
     use crate::digest;
     use crate::store::Stored;
-    use crate::tool::{ToolParameters, ToolVisibility};
+    use crate::tool::{Tool, ToolParameters, ToolVisibility};
     use crate::user::UserId;
     use crate::workspace::{Workspace, WorkspaceId};
     use crate::note::NoteId;
@@ -1318,7 +1310,7 @@ pub(crate) mod tests {
         let turn_id = state.begin_command_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), request.clone());
         let turn = state.turn.as_ref().expect("a turn was begun");
         assert_eq!(turn.command.as_ref(), Some(&request), "kept with the turn, for one resumed");
-        assert!(turn.tools.is_empty() && turn.work.context.tools.is_none(), "a command turn offers its model nothing");
+        assert!(turn.work.context.tools.is_none(), "a command turn offers its model nothing");
 
         state.turn = None;
         let agent = ActorId::Agent(AgentId::new());
@@ -1451,6 +1443,29 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_agent_keeps_the_texts_and_tools_its_turn_under_way_names() {
+        let mut state = AgentChannelState::default();
+        let earlier = state.keep_prompt(MessageRole::System, "earlier".to_string(), None, None);
+        let sets = vec![ToolSet::new("calc", "calculates", Vec::new())];
+        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, sets, ModelProfile::default());
+        let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
+        state.turn.as_mut().unwrap().work.context.prompts.push(system.clone());
+        let offer = state.turn.as_ref().unwrap().work.context.tools.expect("an offer");
+        state.keep_window();
+        assert_eq!((state.prompts.len(), state.offered_tools.len()), (2, 1), "nothing goes before it is stored");
+
+        state.prompts.mark_stored();
+        state.offered_tools.mark_stored();
+        state.keep_window();
+        assert!(state.prompts.get(&earlier.text).is_none(), "what no turn under way names is the store's");
+        assert!(state.prompts.get(&system.text).is_some() && state.offered_tools.get(&offer).is_some(), "what it names stays");
+
+        state.turn = None;
+        state.keep_window();
+        assert!(state.prompts.is_empty() && state.offered_tools.is_empty(), "between turns, nothing");
+    }
+
+    #[test]
     fn what_changed_in_an_agents_channel_state_replays_onto_what_was_stored() {
         use crate::message::tests::{id, make_message};
         let mut state = AgentChannelState::default();
@@ -1462,8 +1477,6 @@ pub(crate) mod tests {
         state.history.push(make_message(id(2)), Some(ContextRef { transcript: before, ..ContextRef::default() }));
         state.notes.push(NoteChange::Add { id: NoteId(1), text: "noted".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), id(2));
         state.private_notes.push(NoteChange::Add { id: NoteId(1), text: "mine".to_string(), classification: Classification::CHANNEL_DEFAULT }, Default::default(), id(2));
-        state.prompts.keep(digest::prompt("system"), || "system".to_string());
-        state.offered_tools.keep(digest::tool_sets(&[]), Vec::new);
         state.processing_state = ActorState::WaitingForUser;
         state.turn = Some(TurnState { model_calls: 3, ..TurnState::default() });
         state.used = TokenUsage::counted(None, &Message { prompt_tokens: Some(5), ..make_message(id(2)) });
@@ -1472,8 +1485,6 @@ pub(crate) mod tests {
         let parts: Vec<&str> = changes.iter().map(|c| match c {
             AgentChannelStateChange::Notes(_) => "notes",
             AgentChannelStateChange::PrivateNotes(_) => "private_notes",
-            AgentChannelStateChange::Prompt { .. } => "prompt",
-            AgentChannelStateChange::OfferedTools { .. } => "offered_tools",
             AgentChannelStateChange::ProcessingState(_) => "processing_state",
             AgentChannelStateChange::Turn(_) => "turn",
             AgentChannelStateChange::Used(_) => "used",
@@ -1481,7 +1492,7 @@ pub(crate) mod tests {
             AgentChannelStateChange::HistoryFrom(_) => "history_from",
             AgentChannelStateChange::TranscriptFrom(_) => "transcript_from",
         }).collect();
-        assert_eq!(parts, ["notes", "private_notes", "prompt", "offered_tools", "processing_state", "turn", "used", "remote", "history_from", "transcript_from"], "what was added, then the small parts whole; the history and the transcript are the store's to write");
+        assert_eq!(parts, ["notes", "private_notes", "processing_state", "turn", "used", "remote", "history_from", "transcript_from"], "what was added, then the small parts whole; the history, the transcript, the prompt parts and the tool sets are the store's to write");
         replayed(&state, &mut copy);
         assert_eq!(copy.used, state.used, "the running total with them");
 
@@ -1490,27 +1501,6 @@ pub(crate) mod tests {
         assert_eq!(state.changes().len(), 6, "between turns a step is the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.turn.is_none());
-    }
-
-    #[test]
-    fn the_tools_offered_are_read_as_they_were_stored_before_issue_194() {
-        let digest = digest::tool_sets(&[]);
-        let flat = serde_json::json!([{ "name": "calc", "description": "calculates", "parameters": ToolParameters::object(Vec::<(String, ToolParameters)>::new(), Vec::<String>::new()) }]);
-        let change: AgentChannelStateChange = serde_json::from_value(serde_json::json!({ "tool_set": { "digest": digest, "tools": flat } })).unwrap();
-        let AgentChannelStateChange::OfferedTools { tools: sets, .. } = change else { panic!("read under its old name") };
-        assert_eq!((sets.len(), sets[0].name.as_str(), sets[0].tools[0].name.as_str()), (1, "", "calc"), "a flat list is one set without a name");
-
-        let mut stored = serde_json::to_value(AgentChannelState::default()).unwrap();
-        stored.as_object_mut().and_then(|s| s.remove("offered_tools")).unwrap();
-        stored["tool_sets"] = serde_json::json!({ digest.to_string(): flat });
-        let state = serde_json::from_value::<AgentChannelState>(stored).expect("the old name and form are read");
-        assert_eq!(state.offered_tools.get(&digest).map(|sets| sets[0].tools.len()), Some(1));
-
-        let mut sets = state.offered_tools.get(&digest).cloned().unwrap();
-        sets[0].name = "calculator".to_string();
-        let written = serde_json::to_value(AgentChannelStateChange::OfferedTools { digest, tools: sets.clone() }).unwrap();
-        let AgentChannelStateChange::OfferedTools { tools: read, .. } = serde_json::from_value(written).unwrap() else { panic!("an offer") };
-        assert_eq!(read, sets, "and the sets as they are written now");
     }
 
     #[test]

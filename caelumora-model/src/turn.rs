@@ -12,7 +12,7 @@ use crate::question::QuestionRequest;
 use crate::memory::{MemoryChange, MemoryOrigin};
 use crate::note::NoteChange;
 use crate::plan::PlanState;
-use crate::tool::{Tool, ToolCallState, ToolCallStatus};
+use crate::tool::{ToolCallState, ToolCallStatus};
 use crate::confidentiality::Classification;
 use crate::work::Work;
 use serde::{Deserialize, Serialize};
@@ -74,11 +74,6 @@ pub struct TurnState {
     /// were before work was one type.
     #[serde(flatten)]
     pub work: Work,
-    /// The agent's tools as they were when the turn began (issue 137): what
-    /// its model is offered for every call of the turn, and what its calls
-    /// are labelled and put up for approval by - one set for the whole turn,
-    /// a resumed one included.
-    pub tools: Vec<Tool>,
     /// Changes to the agent's memory, each with where it was made, applied
     /// to the agent's `AgentState` as it is when the turn completes (issue
     /// 62).

@@ -285,8 +285,9 @@ Two stores, configured separately:
     agent's state in each channel, and each agent's own state -, the **`HistoryStore`** reads
     the histories the states hold, in pages, without loading a state, and the
     **`TranscriptStore`** what lies on the older branches of an agent's transcript, which its actor
-    does not hold (see [STORAGE.md](STORAGE.md#histories),
-    [STORAGE.md](STORAGE.md#transcripts)).
+    does not hold, and the prompt texts and tool sets its model was given (see
+    [STORAGE.md](STORAGE.md#histories), [STORAGE.md](STORAGE.md#transcripts),
+    [STORAGE.md](STORAGE.md#prompt-texts-and-tool-sets)).
 
 Every document and every kind of state has exactly **one writer**, which changes it under a lock,
 stores it and only then announces the change. For an entity, that is its manager or its controller,
