@@ -18,6 +18,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [03](03-postgres-entity-store.md) | open | medium | feature | `EntityStore` has only in-memory and JSON-file implementations; a Postgres one is the prerequisite for everything multi-process. |
 | [04](04-postgres-state-store.md) | open | medium | feature | `StateStore` likewise — and it holds the state whose loss is most expensive, including agents suspended on an approval. |
+| [416](416-messages-stored-once-per-holder.md) | open | medium | refactoring | Every history and transcript stores each message it holds in full, so one message said in a channel lies in the store once for the channel and twice for every agent in it, and every change of it as often again. |
 
 ## Sessions and channels
 

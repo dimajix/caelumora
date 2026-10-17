@@ -45,6 +45,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [380](380-transcript-window.md) | done | An agent's transcript holds every branch it ever had in memory, though only the active branch is given to the model and an old branch is read for the context of an old message alone. |
 | [383](383-prompt-texts-and-tool-sets-kept-per-turn.md) | done | Every prompt text and tool set an agent was ever given in a channel is held in memory for the record, though only the current turn's and an old context's are read. |
 | [387](387-agent-history-window-without-compaction.md) | done | An agent that never compacts its context - every external agent - holds its whole history in a channel in memory, since the window of its history begins at its last compaction. |
+| [416](416-messages-stored-once-per-holder.md) | open | Every history and transcript stores each message it holds in full, so one message said in a channel lies in the store once for the channel and twice for every agent in it, and every change of it as often again. |
 
 ## Sessions and channels
 
