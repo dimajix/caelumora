@@ -266,7 +266,7 @@ mod tests {
         // Registering asks for the approvals still to be given.
         let requests = view(&mut turn).register(vec![
             ToolCallState::approved(call("run")),
-            ToolCallState::pending(call("ask"), String::new(), false, ToolMatcher::exact(&call("ask")), None),
+            ToolCallState::pending(call("ask"), String::new(), false, Some(ToolMatcher::exact(&call("ask"))), None),
         ]);
         let [ActorEvent::ApprovalRequested(request)] = requests.as_slice() else { panic!("one approval asked for: {requests:?}") };
         assert_eq!(request.tool_call.function_name, "ask");
@@ -294,7 +294,7 @@ mod tests {
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let mut turn = a_turn();
         let requests = view(&mut turn).register(vec![
-            ToolCallState::pending(call("approved"), String::new(), false, ToolMatcher::exact(&call("approved")), Some(questions_of(alice))),
+            ToolCallState::pending(call("approved"), String::new(), false, Some(ToolMatcher::exact(&call("approved"))), Some(questions_of(alice))),
             ToolCallState::asking(call("asking"), questions_of(alice)),
         ]);
         let [ActorEvent::ApprovalRequested(approval), ActorEvent::QuestionRequested(asked)] = requests.as_slice() else { panic!("an approval first, the questions of the other call: {requests:?}") };

@@ -3,7 +3,9 @@
 // reach and for a while the user picks. Answering the call is the card's;
 // this only says which rule, if any, is to be added with the answer. A
 // command line is offered by the words it begins with (issue 247), of which
-// the user keeps fewer; which words a line has is the server's to read.
+// the user keeps fewer; which words a line has is the server's to read. A
+// value too long for a pattern is offered as it is (issue 400), to keep or
+// to drop. Where no rule can be derived, none is offered.
 
 import React from 'react';
 import type {RuleChoice} from '../approvalRules';
@@ -55,8 +57,12 @@ export const ApprovalRuleOffer: React.FC<ApprovalRuleOfferProps> = ({choice, ini
                   onChange={(e) => setArgument(name, e.target.value)}
                   className={`${field} min-w-0 flex-1 font-mono`}
                 />
-              ) : (
+              ) : 'shell' in argument ? (
                 <ShellWordsChoice name={name} words={argument.shell} offered={suggested[name]} field={field} onChange={(shell) => setArgument(name, {shell})} />
+              ) : (
+                <span className="min-w-0 flex-1 truncate text-gray-500" title={argument.equals}>
+                  exactly this value ({argument.equals.length} characters)
+                </span>
               )}
               <button type="button" onClick={() => dropArgument(name)} className="text-gray-400 hover:text-gray-600" title="Any value of this argument">
                 any
@@ -95,7 +101,7 @@ interface ShellWordsChoiceProps {
 
 /** How many of the words a command line was suggested with the rule keeps: the commands beginning with them. */
 const ShellWordsChoice: React.FC<ShellWordsChoiceProps> = ({name, words, offered, field, onChange}) => {
-  const all = offered !== undefined && typeof offered !== 'string' ? offered.shell : words;
+  const all = offered !== undefined && typeof offered !== 'string' && 'shell' in offered ? offered.shell : words;
   return (
     <select
       aria-label={`Words of ${name}`}

@@ -983,7 +983,7 @@ pub(crate) mod tests {
         let tool_call = ToolCall { id: None, function_name: "write_note".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let ready = ToolCallState::approved(tool_call.clone());
         let done = ToolCallState::answered(tool_call.clone(), ToolCallResult::of(&tool_call, ToolResultStatus::Ok, "done".to_string(), Classification::CHANNEL_DEFAULT));
-        let waiting = ToolCallState::pending(tool_call.clone(), String::new(), false, ToolMatcher::exact(&tool_call), None);
+        let waiting = ToolCallState::pending(tool_call.clone(), String::new(), false, Some(ToolMatcher::exact(&tool_call)), None);
         let state_in = |actor_state: ActorState| AgentChannelState {
             processing_state: actor_state,
             turn: Some(TurnState {

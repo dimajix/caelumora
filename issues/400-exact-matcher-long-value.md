@@ -1,6 +1,6 @@
 # 400 — A rule derived from a call with a long argument cannot be kept
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Tools and approvals
@@ -43,6 +43,50 @@ A first recommendation: `exact` keeps the escaped pattern for a value that fits,
 longer one by its digest; `describeMatcher` and the card show such an argument as "exactly this
 value". To be decided before it is built.
 
+## Decision
+
+Taken on 2026-10-17 by the maintainer: a comparison by equality for a long value, and no rule
+offered beyond its bound. Looked at closer, two things changed the recommendation above:
+
+- **A digest is unreadable.** A person could no longer read in their profile what they allowed -
+  the wrong signal for a rule that allows.
+- **No proposal is not yet "no rule".** Without `suggested`, the card offers every call of the
+  tool (`initialChoice`): a fallback from before there were proposals, wider than the call. It goes;
+  stored data may be deleted.
+
+Raising `MAX_PATTERN_CHARS` was weighed and not taken: every pattern is compiled anew at every
+evaluation, for every rule, and hand-written patterns would grow as well.
+
+## Plan
+
+### A. The model
+
+- `ArgumentMatcher` gets a third variant, `Equals { equals: String }`: the whole value as it is - a
+  string as itself, any other value as its compact JSON -, compared without a regular expression.
+  `check` bounds it by `MAX_EQUALS_CHARS` (10 000 characters, as a command line).
+- `ToolMatcher::exact` keeps the escaped pattern for a value whose pattern fits
+  `MAX_PATTERN_CHARS` - editable on the card - and takes `Equals` for a longer one.
+- `ToolCallStatus::WaitingApproval::suggested` becomes an `Option`: none where no rule can be
+  derived.
+
+### B. The agents
+
+`ToolProviders::matcher` offers a tool's proposal only where it passes `ToolMatcher::check`,
+whoever made it: `Admission::Ask` carries `None` otherwise.
+
+### C. The web UI
+
+- The types gain `{equals}`; `describeMatcher` shows it as `name = "…"`, shortened.
+- The card offers "and from now on" only with a proposal; it shows an `equals` argument as "exactly
+  this value", which the person keeps or drops ("any").
+- `ApprovalRulesDialog` compares an argument also as "is exactly".
+
+### D. Tests and docs
+
+- The model: `exact` of a long value, `Equals` matched and bounded, its form.
+- The agents: a call whose proposal cannot be kept is asked without one.
+- APPROVALS.md (the third form, the proposal of a long value), CONFIGURATION.md, WEB-UI.md.
+
 ## Done when
 
 The rule an approval card offers for any call can be kept, and is never wider than that call.
@@ -51,3 +95,12 @@ The rule an approval card offers for any call can be kept, and is never wider th
 
 - **2026-10-17** — Opened while issue [247](247-tool-own-matcher.md) was worked on: its proposals
   keep a chain of commands exact, which made the bound visible.
+- **2026-10-17** — Decided: equality for a long value, no rule beyond its bound, the card's
+  fallback to every call of the tool removed. A plan in four parts.
+- **2026-10-17** — Done as planned. `ArgumentMatcher::Equals`, bounded by `MAX_EQUALS_CHARS`;
+  `ToolMatcher::exact` takes it where the escaped pattern would exceed `MAX_PATTERN_CHARS`;
+  `ToolProviders::matcher` offers only a proposal that passes `check`, and the waiting call's
+  `suggested` is an `Option`. The card offers a rule only with a proposal and shows a value
+  compared by equality as "exactly this value"; the dialog of a place's rules writes one as "is
+  exactly". Stored data: a turn waiting for an approval keeps its proposal as before; nothing has
+  to be deleted.

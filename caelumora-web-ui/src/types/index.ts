@@ -974,7 +974,7 @@ export interface ApprovalRequest {
   description: string;
   /** A rule of the session or channel asked for this very call to be decided by a person (issue 13); left out when not. */
   explicit?: boolean;
-  /** What other calls are like this one, as its tool says (issue 13): what a rule derived from it is offered with. */
+  /** What other calls are like this one, as its tool says (issue 13): what a rule derived from it is offered with; left out where no rule can be (issue 400). */
   suggested?: ToolMatcher;
 }
 
@@ -986,13 +986,19 @@ export interface ToolMatcher {
 
 /**
  * How the value of one argument is compared (issue 247): a pattern - a regular expression its whole value must
- * match - or, for a bash command line, the words each of its simple commands must begin with.
+ * match -, for a bash command line the words each of its simple commands must begin with, or the whole value as it
+ * is, for one too long for a pattern (issue 400).
  */
-export type ArgumentMatcher = string | ShellWords;
+export type ArgumentMatcher = string | ShellWords | ExactValue;
 
 /** The words each simple command of a bash command line must begin with, as they run. */
 export interface ShellWords {
   shell: string[];
+}
+
+/** The whole value as it is: a string as itself, any other value as its compact JSON. */
+export interface ExactValue {
+  equals: string;
 }
 
 /** What a rule decides of the calls it is about (issue 13). A session or channel only asks or denies. */

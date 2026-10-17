@@ -213,7 +213,7 @@ mod tests {
         turn.push_message(Message { id: MessageId::new(), role: MessageRole::Assistant, tool_calls: calls.clone(), ..Message::new(Classification::CHANNEL_DEFAULT) });
         let states = vec![
             ToolCallState::approved(calls[0].clone()),
-            ToolCallState::pending(calls[1].clone(), String::new(), false, ToolMatcher::exact(&calls[1]), None),
+            ToolCallState::pending(calls[1].clone(), String::new(), false, Some(ToolMatcher::exact(&calls[1])), None),
         ];
         turn.tool_calls().register(states);
         let (id, ran, _) = turn.tool_calls().to_run().remove(0);

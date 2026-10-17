@@ -78,9 +78,9 @@ Beside what a tool says of itself, the places an agent works in restrict its cal
 (`AppConfig::approvals`, see [CONFIGURATION.md](CONFIGURATION.md)), its session and its channel
 (their `approval_rules`, set by whoever may change them). A rule (`ApprovalRule`) names the tool as
 the model calls it, `*` for every tool, and optionally per argument how its value is compared
-(`ArgumentMatcher`): a regular expression its whole value must match, or, for a bash command line,
-the words its commands begin with ([Rules on commands](#rules-on-commands)); it may expire. It
-decides one of two things:
+(`ArgumentMatcher`): a regular expression its whole value must match, for a bash command line the
+words its commands begin with ([Rules on commands](#rules-on-commands)), or the whole value as it
+is, bounded in length; it may expire. It decides one of two things:
 
 *   **`deny`** - the call never runs. It is answered `forbidden` before anyone is asked, and again
     if the rule was set while the call waited for its approval.
@@ -115,7 +115,9 @@ clicked.
 *   **A rule is derived from a call**: the approval card offers "and from now on", with the matcher
     the call's tool suggests - by default derived from its parameters (`ToolMatcher::proposed`):
     every argument exactly, a command line of one command by its first two words, as far as they
-    do not expand. The person answers the call first; the rule is added after.
+    do not expand. Exactly is an escaped pattern, which the person can widen, or for a value too
+    long for one the value as it is. A rule that could not be kept is not offered. The person
+    answers the call first; the rule is added after.
 *   Rules are changed through the user's controller, which stores them first, announces the profile
     and drops those expired. A rule is bound to no agent: whether the person may approve bounds it.
 
