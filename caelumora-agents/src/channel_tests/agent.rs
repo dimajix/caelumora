@@ -22,6 +22,7 @@ use crate::message::testing::given_up_turns;
 use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
 use crate::tool::sleep_tool::SLEEP_TOOL_KIND;
 use crate::tool::stop_tool::STOP_TOOL_KIND;
+use crate::turn::MAX_MODEL_CALLS;
 use futures::stream::BoxStream;
 use serde_json::Value;
 use std::collections::{HashSet, VecDeque};
@@ -740,6 +741,46 @@ async fn a_turn_given_up_is_not_asked_for_again_once_something_followed_it() {
 
     let refused = alice.request_retry_of_turn(ActorId::Agent(agent), failed).await;
     assert!(matches!(refused.expect_err("refused").downcast_ref::<ChannelError>(), Some(ChannelError::TurnNotRetryable { .. })), "the conversation moved on");
+    running.abort();
+}
+
+#[tokio::test]
+async fn a_turn_that_reaches_the_limit_of_model_calls_is_given_up_and_may_be_answered_anew() {
+    // The model calls a tool at every call, as one that does not come to an
+    // end; asked anew, it answers.
+    let (calculate, components) = calculator();
+    let mut answers: VecDeque<Message> = (0..MAX_MODEL_CALLS).map(|_| Message { id: MessageId::new(), ..calculate.clone() }).collect();
+    answers.push_back(Message { role: MessageRole::Assistant, content: Some("going on".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) });
+    let Stuck { channel, context, agent, helper, mut events, running } =
+        with_an_agent(Arc::new(Scripted(Mutex::new(answers))), components).await;
+
+    // The users are told why the turn ended (issue 411).
+    let (turn, reason) = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("the channel is running");
+            if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+            if let ActorEvent::TurnGivenUp { turn_id, reason } = envelope.event { break (turn_id, reason) }
+        }
+    }).await.expect("the turn is given up");
+    assert_eq!(reason, GivenUpReason::CallLimit { calls: MAX_MODEL_CALLS });
+    settled(&helper, ActorState::Idle).await;
+
+    // What its tools did stays, its end follows, and its model is told why.
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    let turns = given_up_turns(&stored);
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].1, GivenUpReason::CallLimit { calls: MAX_MODEL_CALLS }, "kept in the history");
+    let results = turns[0].2.iter().filter(|m| m.role == MessageRole::Tool).count();
+    assert_eq!(results, MAX_MODEL_CALLS as usize, "a result for every call");
+    let told = given_next(&stored, agent).last().and_then(|m| m.content.clone()).unwrap_or_default();
+    assert!(told.contains("because it asked the model as often as one turn may"), "{told}");
+
+    // It may be asked to answer anew.
+    let alice = channel.user_actor(alice_of(&context)).unwrap();
+    alice.request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("its last turn, given up at the limit");
+    assert!(matches!(shown_by(&mut events, agent, "RetryAccepted").await, ActorEvent::RetryAccepted { target } if target == RetryTarget::Turn(turn)));
+    let said: Vec<_> = answered(&mut events, agent).await.into_iter().filter_map(|m| m.content).collect();
+    assert_eq!(said, ["going on"], "answered anew after it");
     running.abort();
 }
 

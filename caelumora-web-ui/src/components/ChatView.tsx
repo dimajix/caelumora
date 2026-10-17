@@ -78,7 +78,7 @@ import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {activityNotice, activityUnderWay, chatMessages, chatRows, commandNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, mergeToolResults, participantNotice, planStepMark} from '../messages';
+import {activityNotice, activityUnderWay, chatMessages, chatRows, commandNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, mayBeAnsweredAgain, mergeToolResults, participantNotice, planStepMark} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -598,12 +598,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   /**
    * Whether the user may ask for an answer anew after the turn given up that
-   * the notice `msg` tells of (issue 259): one that failed or whose channel
-   * was lowered, while it is the last thing in the chat - as `mayRetry` has
-   * it. The agent has the last word here, too.
+   * the notice `msg` tells of (issue 259), one that may be answered again,
+   * while it is the last thing in the chat - as `mayRetry` has it. The agent
+   * has the last word here, too.
    */
   const mayRetryGivenUp = (msg: Message) =>
-    !!msg.turn_id && (msg.givenUp?.kind === 'failed' || msg.givenUp?.kind === 'lowered') && mayRetry(msg);
+    !!msg.turn_id && !!msg.givenUp && mayBeAnsweredAgain(msg.givenUp) && mayRetry(msg);
 
   const retryGivenUp = async (msg: Message) => {
     const uuid = msg.sender_id ? memberUuid(actorKey(msg.sender_id)) : undefined;

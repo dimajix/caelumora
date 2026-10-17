@@ -49,8 +49,11 @@ behind it, in order, then commit once (`AgentBody::take_in`):
 *   **`Planning`** calls the model with the context and the agent's tools and streams the answer.
     With tool calls it registers them for approval where their tool requires it and goes to
     `ExecutingTools`; otherwise to `Reflecting`. A turn makes at most `MAX_MODEL_CALLS` model calls,
-    counted across a restart, then it goes to `Reflecting`. Before a call whose context is too full
-    by its `CompactionPolicy`, it goes to `Busy` instead (see [Compaction](#compaction)).
+    counted across a restart; one that would make another is given up as `CallLimit` (issue 411),
+    its users are told, and the agent may be asked to answer anew. The limit is a safety net
+    against a model that does not come to an end; reaching it is no answer. Before a call whose
+    context is too full by its `CompactionPolicy`, it goes to `Busy` instead (see
+    [Compaction](#compaction)) - not at the limit, where the call would not be made.
 *   **`Busy`** does something of the agent's own accord, besides answering - the counterpart of
     `CarryingOutCommand`, which it does when asked. So far that is compacting its context; it
     tells the users what it does (`ActivityStarted`) and what came of it (`ActivityFinished`), and
@@ -151,11 +154,11 @@ are given their methods (issue 370).
 *   **Taking a turn over** (`Turn::commit`) records its end, `TurnFinished`, after its messages -
     which are in the transcript and history since they were said - applies the changes it staged
     and clears the working state.
-*   **Giving a turn up** (`Turn::give_up`) - failed, left, asked for again - unsays nothing: its
-    messages stay where they were said, and its end follows, `TurnGivenUp` with the reason. Nothing
-    it staged is applied. What its tools did stays done; calls still without a result are answered
-    as not executed. The model is told why the turn ended by a fixed text that says nothing of the
-    conversation.
+*   **Giving a turn up** (`Turn::give_up`) - failed, left, asked for again, at the limit of model
+    calls - unsays nothing: its messages stay where they were said, and its end follows,
+    `TurnGivenUp` with the reason. Nothing it staged is applied. What its tools did stays done;
+    calls still without a result are answered as not executed. The model is told why the turn
+    ended by a fixed text that says nothing of the conversation.
 
 A turn that no longer flows into its channel - the channel was lowered below it - is given up as
 `Lowered`, whatever ended it, and of it the model is given only which tools it called and how they

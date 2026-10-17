@@ -289,7 +289,8 @@ others say in it as the global stream announces it.
 *   **Asking for another answer.** An agent's last message has a retry icon while nothing is being
     generated and its member's `can_retry` allows it - never an external agent's, which never
     answers again. So has an answer under way, once its turn is known, and the notice of a turn
-    given up because it failed or the channel was lowered, while it is the last thing in the chat.
+    given up because it failed, the channel was lowered or it reached the limit of its model calls
+    (`mayBeAnsweredAgain`), while it is the last thing in the chat.
     The agent decides: accepted, its answer is taken back and the new one follows - what a turn
     under way said stays, since what was said is not unsaid; rejected, a notice says why.
 *   **Approvals.** A call that needs approval is shown to everybody, with approve and deny only for

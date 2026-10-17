@@ -1081,7 +1081,8 @@ export type GivenUpReason =
   | {kind: 'failed'; message: string}
   | {kind: 'lowered'; channel: Classification}
   | {kind: 'left'}
-  | {kind: 'retried'};
+  | {kind: 'retried'}
+  | {kind: 'call_limit'; calls: number};
 
 /**
  * An item of a history (issue 258): a message said - `M`, a `Message` of the
