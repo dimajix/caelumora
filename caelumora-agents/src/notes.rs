@@ -82,7 +82,7 @@ impl AgentNotes {
     }
 
     /// Notes `text` in this turn, classified as the turn has seen so far
-    /// (`Turn::label`, issue 168), and returns the note's number: one more
+    /// (`Situation::label`, issue 168), and returns the note's number: one more
     /// than any in the chain or noted earlier in the turn.
     pub fn note(turn: &mut Turn, kind: NoteKind, text: String) -> NoteId {
         let id = Self::effective(turn, kind).next_id();

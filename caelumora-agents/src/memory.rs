@@ -11,7 +11,7 @@
 //! `agent_memory` component uses it for its tools and prompt part; anything
 //! else that works with an agent's memory in a turn uses it too. What it
 //! needs of the session - its privacy, and that of the sessions entries
-//! come from - it reads through the turn's views (`Turn::session`, issue
+//! come from - it reads through the turn's views (`Situation::session`, issue
 //! 163).
 
 use crate::turn::Turn;
@@ -121,7 +121,7 @@ impl AgentMemory {
 
     /// Remembers `text`, as written in the turn's channel, with the privacy
     /// its session has now (issue 134) and classified as the turn has seen
-    /// so far (`Turn::label`, issue 168): taken over when the turn completes.
+    /// so far (`Situation::label`, issue 168): taken over when the turn completes.
     /// Returns its number.
     ///
     /// Unlike a note's, the number is reserved on the agent's shared state
