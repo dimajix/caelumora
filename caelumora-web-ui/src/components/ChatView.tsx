@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {
   AlertTriangle,
   Ban,
@@ -352,7 +352,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     setEarlier(page.earlier);
   };
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  // The scrolling chat, and whether it follows what is said: while the user
+  // is at its end, not while they read further up.
+  const chatRef = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // `@`-completion: the caret position the suggestions were computed for, the
   // highlighted suggestion, and the query the user dismissed with Escape.
@@ -1044,9 +1047,23 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   }, [sessionId, channelId, takesPart, user.id]);
 
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  // A channel opened is shown from its end.
+  useLayoutEffect(() => {
+    following.current = true;
+  }, [channelId]);
+
+  // At once, not smoothly: an answer streaming in grows with every token,
+  // and a scroll still under way would read as the user's own.
+  useLayoutEffect(() => {
+    const chat = chatRef.current;
+    if (chat && following.current) chat.scrollTop = chat.scrollHeight;
   }, [messages, answers]);
+
+  // Whether the user is at the end of the chat, as they scroll.
+  const chatScrolled = () => {
+    const chat = chatRef.current;
+    if (chat) following.current = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 32;
+  };
 
   useEffect(() => {
     saveDraft(channelId, inputText);
@@ -1105,6 +1122,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     const text = inputText;
     setInputText('');
     setIsSending(true);
+    // What the user says is followed by the chat, wherever they read.
+    following.current = true;
 
     // Optimistic update
     //const userMsg: Message = { role: 'User', content: text };
@@ -1699,7 +1718,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   return (
     <div className="flex-1 flex overflow-hidden bg-gray-50 dark:bg-gray-800">
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div ref={chatRef} onScroll={chatScrolled} className="flex-1 overflow-y-auto p-4 space-y-4">
           {earlier !== null && (
             <div className="text-center">
               <button
@@ -1758,7 +1777,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             )];
           })}
           {answers.filter(answer => !inStep(answer) && !continuesLast(answer)).map(answer => renderAnswer(answer))}
-          <div ref={messagesEndRef} />
         </div>
 
         {braveMode && (
