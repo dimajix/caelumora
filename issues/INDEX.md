@@ -265,6 +265,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [331](331-language-default-in-the-frontend.md) | done | The core holds a new channel or session in its creator's preferred language where nothing else is said, a decision that belongs to the frontend. |
 | [384](384-malformed-query-answered-as-plain-text.md) | done | A malformed query string, such as `?limit=abc`, is answered with a plain-text `400` instead of problem details with a `code`, since axum's `Query` extractor is used unwrapped. |
 | [401](401-mention-everyone.md) | done | A user who wants every participant of a channel to respond has to `@`-mention each of them by name; there is no `@all` or `@channel` that addresses them all at once. |
+| [404](404-unread-and-mentions-in-overview.md) | open | The channel list shows only each channel's name, so a user does not see in which channels new messages arrived since they last looked, nor where someone `@`-mentioned them, without opening every channel. |
 
 ## Context and knowledge
 
