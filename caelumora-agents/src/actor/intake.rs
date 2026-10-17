@@ -182,7 +182,7 @@ impl AgentBody {
         let mut state = self.state.lock().await;
         let own = self.id();
         let mut after = from;
-        for message in state.history.all_entries().rev().filter_map(|node| node.entry.said()) {
+        for message in state.history.all_entries().rev().filter_map(|node| node.entry.entry.said()) {
             if let Some(at) = self.runtime.channel_position_of(message.id).await? {
                 after = after.max(at + 1);
                 break;

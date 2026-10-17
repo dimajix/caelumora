@@ -10,7 +10,7 @@ use caelumora_model::approval::ApprovalRule;
 use caelumora_model::chain::Node;
 use caelumora_model::channel::{self, Channel, ChannelId};
 use caelumora_model::event::{Announcing, GlobalEvent};
-use caelumora_model::history::HistoryEntry;
+use caelumora_model::history::{HistoryEntry, Reader};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
@@ -132,21 +132,23 @@ impl ActorRuntime {
     }
 
     /// The position in its channel's history of the entry that said the
-    /// message `id`; `None` if the channel never heard it (issue 379).
+    /// message `id`; `None` if the channel never heard it, or not to this
+    /// actor (issues 379, 417).
     ///
     /// # Errors
     /// Whatever the `HistoryStore` reports.
     pub async fn channel_position_of(&self, id: MessageId) -> Result<Option<u64>> {
-        Ok(self.runtime.runtime_manager.history_store().said(HistoryKey::Channel(self.channel_id), id).await?.map(|(at, _)| at))
+        Ok(self.runtime.runtime_manager.history_store().said(HistoryKey::Channel(self.channel_id), &Reader::Participant(self.actor), id).await?.map(|(at, _)| at))
     }
 
     /// The entries of its channel's history from the position `from` on, as
-    /// they were added (issue 379): what the actor missed of it.
+    /// they were added, as this actor may see them (issues 379, 417): what
+    /// the actor missed of it.
     ///
     /// # Errors
     /// Whatever the `HistoryStore` reports.
     pub async fn channel_entries(&self, from: u64) -> Result<Vec<Node<HistoryEntry>>> {
-        Ok(self.runtime.runtime_manager.history_store().entries(HistoryKey::Channel(self.channel_id), from).await?)
+        Ok(self.runtime.runtime_manager.history_store().entries(HistoryKey::Channel(self.channel_id), &Reader::Participant(self.actor), from).await?)
     }
 
     /// The message `id` as this agent's transcript in its channel holds it,

@@ -887,7 +887,7 @@ mod tests {
         stored_channel(&store, &channel).await;
 
         let said = |t: &str| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        let (question, answer) = (said("question"), Message { turn_id: Some(TurnId::new()), ..said("answer") });
+        let (question, answer) = (said("question"), Message { turn_id: Some(TurnId::new()), sender_id: ActorId::Agent(remote.id), ..said("answer") });
         let mut state = AgentChannelState::default();
         // One call: the question was given, the transcript started anew,
         // and the answer came of it.
@@ -1141,7 +1141,7 @@ mod tests {
     async fn what_a_channel_holds_is_read_through_its_nodes_and_a_participants_context_by_who_may() {
         use caelumora_model::channel::{ChannelState, HistoryLimit, HistoryStart};
         use caelumora_model::ledger::Change;
-        use caelumora_model::message::{Message, MessageId};
+        use caelumora_model::message::{Message, MessageId, MessageRole};
         use caelumora_model::note::{NoteId, NoteOrigin};
         use caelumora_model::store::StateStore;
 
@@ -1155,7 +1155,7 @@ mod tests {
         stored_session(&store, &session).await;
 
         // What was said, of which bob - who joined later - sees the end only.
-        let said = |t: &str| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let said = |t: &str| Message { id: MessageId::new(), role: MessageRole::User, content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let (first, second) = (said("first"), said("second"));
         channel.history_limits.push(HistoryLimit { participant: ActorId::User(bob.id), start: HistoryStart::After(first.id) });
         // And so does the agent, though alice, for whom it acts, sees it all.
@@ -1441,7 +1441,7 @@ mod tests {
         use caelumora_model::channel::ChannelState;
         use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
         use caelumora_model::ledger::Change;
-        use caelumora_model::message::{Message, MessageId};
+        use caelumora_model::message::{Message, MessageId, MessageRole};
         use caelumora_model::note::{NoteId, NoteOrigin};
         use caelumora_model::privacy::SessionPrivacy;
         use caelumora_model::store::StateStore;
@@ -1471,7 +1471,7 @@ mod tests {
         }
 
         // Said and noted in secret: one of each released to everyone.
-        let said = |t: &str, classification: &Classification| Message { id: MessageId::new(), content: Some(t.to_string()), ..Message::new(classification.clone()) };
+        let said = |t: &str, classification: &Classification| Message { id: MessageId::new(), role: MessageRole::User, content: Some(t.to_string()), ..Message::new(classification.clone()) };
         let mut state = ChannelState::new(secret.id);
         let plan = said("the plan", &secret.classification);
         state.history.extend(vec![plan.clone(), said("the date", &public.classification)]);

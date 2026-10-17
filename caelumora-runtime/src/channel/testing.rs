@@ -14,7 +14,7 @@ use crate::session::testing::{bare_session, user};
 use anyhow::{Result, Error};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::{AgentChannelState, AgentId};
-use caelumora_model::history::HistoryEntry;
+use caelumora_model::history::{HistoryEntry, Reader};
 use caelumora_model::message::MessageId;
 use caelumora_model::store::history::{every, HistoryKey};
 use caelumora_model::store::StoreResult;
@@ -197,7 +197,7 @@ impl ChannelLoop {
     /// reads them: who joined or left among them (issue 408).
     pub async fn visible_entries(&self, participant: ActorId) -> Vec<HistoryEntry> {
         let Some(from) = self.visible_from(participant).await.expect("the history is read") else { return Vec::new() };
-        self.history_store.page(HistoryKey::Channel(self.id), from, None, 10_000, &every).await.expect("the history is read").items
+        self.history_store.page(HistoryKey::Channel(self.id), &Reader::Participant(participant), from, None, 10_000, &every).await.expect("the history is read").items
     }
 
     /// Where `participant`'s view of the history begins (`Channel::history_start_of`).
@@ -212,7 +212,7 @@ impl ChannelLoop {
 
     /// The last entry of the history as it was recorded, unfolded.
     pub async fn last_history_entry(&self) -> Option<HistoryEntry> {
-        self.state.lock().await.history.last().map(|node| node.entry.clone())
+        self.state.lock().await.history.last().map(|node| node.entry.entry.clone())
     }
 
     /// The message `id` of the history (`ChannelLoop::message`).

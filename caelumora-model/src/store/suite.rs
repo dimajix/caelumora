@@ -22,12 +22,12 @@ use crate::store::history::{every, HistoryKey, HistoryStore};
 use crate::store::transcript::TranscriptStore;
 use crate::actor::EventContext;
 use crate::context::ModelProfile;
-use crate::tool::ToolSet;
+use crate::tool::{ToolCall, ToolSet, ToolVisibility};
 use std::collections::BTreeMap;
 use crate::chain::Node;
 use crate::digest;
 use crate::transcript::TranscriptEntry;
-use crate::history::{History, HistoryEntry};
+use crate::history::{Audience, History, HistoryEntry, HistoryPage, Reader, Recorded};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
 use crate::removal::{Deletable, Removal};
 use crate::user::{ReadMark, User, UserChannelState, UserId, UserProfile};
@@ -699,7 +699,7 @@ async fn all_pages(histories: &dyn HistoryStore, key: HistoryKey, from: u64, lim
     let mut pages = Vec::new();
     let mut before = None;
     loop {
-        let page = histories.page(key, from, before, limit, &every).await.expect("a page");
+        let page = histories.page(key, &Reader::Channel, from, before, limit, &every).await.expect("a page");
         assert!(page.items.len() <= limit, "no more than asked for");
         pages.push(page.items.iter().map(standing).collect::<Vec<_>>());
         match page.earlier {
@@ -720,8 +720,8 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     use crate::confidentiality::Confidentiality;
     let (channel, agent) = (ChannelId::new(), AgentId::new());
     let key = HistoryKey::Channel(channel);
-    assert!(histories.page(key, 0, None, 10, &every).await.unwrap().items.is_empty(), "no history yet");
-    assert!(histories.said(key, id(1)).await.unwrap().is_none());
+    assert!(histories.page(key, &Reader::Channel, 0, None, 10, &every).await.unwrap().items.is_empty(), "no history yet");
+    assert!(histories.said(key, &Reader::Channel, id(1)).await.unwrap().is_none());
 
     let mut state = ChannelState::new(channel);
     for n in 1..=300 {
@@ -740,20 +740,20 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     let expected: Vec<String> = items_of(&state.history).iter().map(standing).collect();
 
     assert_eq!(all_pages(histories, key, 0, 70).await, expected, "the items as they stand, page by page");
-    let last = histories.page(key, 0, None, 3, &every).await.unwrap();
+    let last = histories.page(key, &Reader::Channel, 0, None, 3, &every).await.unwrap();
     assert_eq!((last.items.iter().map(standing).collect::<Vec<_>>(), last.earlier), (expected[597..].to_vec(), Some(597)));
     let from_middle = all_pages(histories, key, 250, 100).await;
     assert_eq!(from_middle, expected[250..].to_vec(), "none before where a view begins");
-    let (at, first) = histories.said(key, id(1)).await.unwrap().expect("said");
+    let (at, first) = histories.said(key, &Reader::Channel, id(1)).await.unwrap().expect("said");
     assert_eq!((at, first.said().and_then(|m| m.content.as_deref())), (0, Some("changed")), "as it stands, where it was said");
-    assert!(histories.said(key, id(300)).await.unwrap().is_some_and(|(_, item)| item.said().is_some_and(|m| m.revoked.is_some())));
-    assert_eq!(histories.page(key, 0, None, 1, &every).await.unwrap().digest, state.history.digest(), "read from the history as it is");
-    let entries = histories.entries(key, 598).await.unwrap();
+    assert!(histories.said(key, &Reader::Channel, id(300)).await.unwrap().is_some_and(|(_, item)| item.said().is_some_and(|m| m.revoked.is_some())));
+    assert_eq!(histories.page(key, &Reader::Channel, 0, None, 1, &every).await.unwrap().digest, state.history.digest(), "read from the history as it is");
+    let entries = histories.entries(key, &Reader::Channel, 598).await.unwrap();
     assert_eq!(entries.iter().map(|node| node.seq).collect::<Vec<_>>(), state.history.from(598).map(|node| node.seq).collect::<Vec<_>>(), "the chain itself from a position on");
-    assert!(histories.entries(key, 10_000).await.unwrap().is_empty());
+    assert!(histories.entries(key, &Reader::Channel, 10_000).await.unwrap().is_empty());
 
     let revoked = |item: &HistoryEntry| item.said().is_some_and(|m| m.revoked.is_some() || m.content.as_deref() == Some("changed"));
-    let kept = histories.page(key, 0, None, 5, &revoked).await.unwrap();
+    let kept = histories.page(key, &Reader::Channel, 0, None, 5, &revoked).await.unwrap();
     assert_eq!((kept.items.len(), kept.earlier), (2, None), "a page of those kept, read back as far as there are any");
 
     histories.rebuild(key).await.expect("rebuild");
@@ -768,7 +768,30 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     let mut going_on = loaded;
     going_on.history.push(make_message(id(601)), None);
     states.put_channel_state(channel, &mut going_on).await.expect("appended to what was loaded in part");
-    assert_eq!(histories.said(key, id(601)).await.unwrap().map(|(at, _)| at), Some(state.history.end()));
+    assert_eq!(histories.said(key, &Reader::Channel, id(601)).await.unwrap().map(|(at, _)| at), Some(state.history.end()));
+
+    // Read for a reader (issue 417): what went to them and what they sent,
+    // the latter in full; what went to everybody for an outsider.
+    let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+    let speaker = ActorId::Agent(agent);
+    let hidden = ToolCall { id: Some("1".to_string()), function_name: "look".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
+    let answer = Message { sender_id: speaker, role: MessageRole::Assistant, content: Some("found it".to_string()), tool_calls: vec![hidden], ..make_message(id(602)) };
+    let mut more = states.get_channel_state(channel).await.expect("get");
+    more.history.enter(Recorded::new(HistoryEntry::Said { message: answer, context: None }, speaker, Audience::Everybody));
+    more.history.enter(Recorded::new(HistoryEntry::Said { message: Message { sender_id: ActorId::System, ..make_message(id(603)) }, context: None }, ActorId::System, Audience::Only(vec![user])));
+    states.put_channel_state(channel, &mut more).await.expect("put");
+    let calls = |said: Option<(u64, HistoryEntry)>| said.and_then(|(_, item)| item.said().map(|m| m.tool_calls.len()));
+    assert_eq!(calls(histories.said(key, &Reader::Participant(speaker), id(602)).await.unwrap()), Some(1), "its sender reads it in full");
+    assert_eq!(calls(histories.said(key, &Reader::Participant(user), id(602)).await.unwrap()), Some(0), "everyone else as it was published");
+    assert_eq!(calls(histories.said(key, &Reader::Outsider, id(602)).await.unwrap()), Some(0));
+    assert!(histories.said(key, &Reader::Participant(user), id(603)).await.unwrap().is_some(), "what went to them alone");
+    assert!(histories.said(key, &Reader::Participant(other), id(603)).await.unwrap().is_none(), "not to another");
+    assert!(histories.said(key, &Reader::Outsider, id(603)).await.unwrap().is_none(), "nor to an outsider");
+    let last = |page: HistoryPage| page.items.iter().filter_map(HistoryEntry::said).map(|m| m.id).collect::<Vec<_>>();
+    assert_eq!(last(histories.page(key, &Reader::Participant(user), 0, None, 2, &every).await.unwrap()), [id(602), id(603)]);
+    assert_eq!(last(histories.page(key, &Reader::Participant(other), 0, None, 2, &every).await.unwrap()), [id(601), id(602)], "a page is filled with what they may see");
+    let seen = histories.entries(key, &Reader::Participant(other), 600).await.unwrap();
+    assert_eq!(seen.iter().filter_map(|node| node.entry.said()).map(|m| m.id).collect::<Vec<_>>(), [id(601), id(602)], "and so is the chain");
 
     let mut agents = AgentChannelState::default();
     agents.history.push(make_message(id(1)), None);
@@ -778,14 +801,14 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     assert_eq!(states.get_agent_channel_state(agent, channel).await.unwrap().history.digest(), agents.history.digest());
 
     states.delete_channel_state(channel).await.expect("delete");
-    assert!(histories.page(key, 0, None, 10, &every).await.unwrap().items.is_empty(), "the channel's history is gone with its state");
-    assert!(histories.page(agents_key, 0, None, 10, &every).await.unwrap().items.is_empty(), "and its agents'");
+    assert!(histories.page(key, &Reader::Channel, 0, None, 10, &every).await.unwrap().items.is_empty(), "the channel's history is gone with its state");
+    assert!(histories.page(agents_key, &Reader::Channel, 0, None, 10, &every).await.unwrap().items.is_empty(), "and its agents'");
     states.put_agent_channel_state(agent, channel, &mut AgentChannelState { history: History::default(), ..agents.clone() }).await.expect("put");
     let mut again = AgentChannelState::default();
     again.history.push(make_message(id(2)), None);
     states.put_agent_channel_state(agent, ChannelId::new(), &mut again).await.expect("put");
     states.delete_agent_state(agent).await.expect("delete");
-    assert!(histories.page(agents_key, 0, None, 10, &every).await.unwrap().items.is_empty(), "an agent's histories go with it");
+    assert!(histories.page(agents_key, &Reader::Channel, 0, None, 10, &every).await.unwrap().items.is_empty(), "an agent's histories go with it");
 }
 
 /// A transcript kept apart from its state (issue 380): written by the put,

@@ -60,6 +60,12 @@ impl<E> Node<E> {
     fn new(seq: u64, digest: Digest, parent: Option<Digest>, entry: E) -> Self {
         Self { seq, digest, parent, active_child: None, entry }
     }
+
+    /// The node with `entry` in place of its own - what a reader is given of
+    /// it (issue 417) -, at its position, with its digests.
+    pub fn with_entry<F>(&self, entry: F) -> Node<F> {
+        Node { seq: self.seq, digest: self.digest, parent: self.parent, active_child: self.active_child, entry }
+    }
 }
 
 /// A chain as it is stored: its nodes, in the order they were added - the

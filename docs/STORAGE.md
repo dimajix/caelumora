@@ -240,7 +240,9 @@ state's document (issue 379):
 *   **The chain is the truth.** It is only appended to, and a change of a message is an entry after
     it. A store keeps the chain whole, under the history's `HistoryKey` - a channel's, or an agent's
     in a channel -, written by the put of the state that holds it: first the entries added since it
-    was last stored, then the document.
+    was last stored, then the document. Every entry is recorded with the actor whose envelope it was
+    and whom it went to (`Recorded { entry, sender, audience }`, issue 417): everybody, by the rule
+    every channel delivers by, or some alone.
 *   **The items are derived.** Beside the chain the store keeps the items as they stand - every
     message with every change since folded into it by the one rule of folding
     (`HistoryEntry::fold_into`), the marks of turns, steps, commands, activities, compactions and
@@ -251,11 +253,16 @@ state's document (issue 379):
 *   **The read side is the `HistoryStore`**, handed out by the `StoreBackend` beside the
     `StateStore`: a page of items before a position, of those a filter keeps, with the digest it was
     read from; the item that said a message, with what it was produced from; the chain from a
-    position. Whatever reads a history without holding it reads there, whether the channel runs or
-    not: the views - a page over REST, a message, where a participant's view begins, what an agent
-    saw -, the checks before a change, an actor catching up when it joins, the tool that reads
-    another channel. A page is addressed by the position (`seq`) of its oldest item; a client passes
-    it back without computing with it.
+    position. Every read is a reader's (`Reader`): a participant, given what went to them and what
+    they sent - the latter in full; an outsider - a session's owner who takes no part, a reader from
+    another channel -, given what went to everybody; the channel itself, for its own checks. What a
+    reader is given of an entry is decided in one place, `Recorded::as_seen_by`: whether it went
+    to them, and in which form - as it was recorded for its sender, as everybody was given it
+    (`Message::published`) for anyone else. Whatever reads a history without holding it reads
+    there, whether the channel runs or not: the views - a page over REST, a message, where a
+    participant's view begins, what an agent saw -, the checks before a change, an actor catching
+    up when it joins, the tool that reads another channel. A page is addressed by the position
+    (`seq`) of its oldest item; a client passes it back without computing with it.
 *   **The holder keeps a window.** The channel loop and an agent's actor hold their history from
     `history_from` on, a small part of the document: the last `WINDOW` (200) entries, and an agent
     besides everything from the first message of its turn under way on, whatever it compacted - an

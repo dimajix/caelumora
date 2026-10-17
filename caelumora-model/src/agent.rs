@@ -388,7 +388,7 @@ impl AgentChannelState {
     pub fn keep_window(&mut self) {
         let last = self.history.end().saturating_sub(WINDOW);
         let turn = self.turn.as_ref().map(|turn| turn.work.turn_id);
-        let began = turn.and_then(|turn| self.history.all_entries().find(|node| node.entry.said().is_some_and(|m| m.turn_id == Some(turn))).map(|node| node.seq));
+        let began = turn.and_then(|turn| self.history.all_entries().find(|node| node.entry.entry.said().is_some_and(|m| m.turn_id == Some(turn))).map(|node| node.seq));
         self.history.keep_from(began.map_or(last, |began| began.min(last)));
         self.history_from = self.history.base();
         let root = self.transcript.entries().next().map_or(self.transcript.end(), |node| node.seq);
@@ -1191,7 +1191,7 @@ pub(crate) mod tests {
         assert!(state.finish_turn(turn_id, ActorId::default(), vec![note], Vec::new(), None), "a note changed");
         assert_eq!(state.transcript.entries().count(), 4, "the turn's messages, followed by its end");
         assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id));
-        assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id));
+        assert!(matches!(state.history.last().map(|n| &n.entry.entry), Some(HistoryEntry::TurnFinished { turn_id: t, .. }) if *t == turn_id));
         assert_eq!(messages_of(&state.history).iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["add 1 and 2", "thinking", "3"], "an internal step too (issue 258)");
         let turns: Vec<_> = state.transcript.messages().iter().map(|m| m.turn_id).collect();
         assert_eq!(turns, [None, Some(turn_id), Some(turn_id)], "what the turn keeps is the turn's, what was heard no turn's");
@@ -1394,13 +1394,13 @@ pub(crate) mod tests {
         let contents = |messages: Vec<Message>| messages.iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>();
         assert_eq!(contents(state.transcript.messages()), ["mail bob", "mailing"], "what it said is not unsaid");
         assert_eq!(contents(messages_of(&state.history)), ["mail bob", "mailing"]);
-        assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnGivenUp { turn_id: t, reason: GivenUpReason::Left, .. }) if *t == turn_id));
+        assert!(matches!(state.history.last().map(|n| &n.entry.entry), Some(HistoryEntry::TurnGivenUp { turn_id: t, reason: GivenUpReason::Left, .. }) if *t == turn_id));
         assert_eq!(state.transcript.all_entries().count(), state.transcript.entries().count(), "nothing branches");
         assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::TurnGivenUp { turn_id: t, .. }) if *t == turn_id));
 
         let silent = TurnId::new();
         state.give_up_turn(silent, ActorId::default(), GivenUpReason::Left);
-        assert!(matches!(state.history.last().map(|n| &n.entry), Some(HistoryEntry::TurnGivenUp { turn_id: t, .. }) if *t == silent), "a turn that said nothing leaves its end too");
+        assert!(matches!(state.history.last().map(|n| &n.entry.entry), Some(HistoryEntry::TurnGivenUp { turn_id: t, .. }) if *t == silent), "a turn that said nothing leaves its end too");
     }
 
     #[test]

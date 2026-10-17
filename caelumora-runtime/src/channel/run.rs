@@ -5,6 +5,7 @@ use super::{stopped, ActorChange, ChannelActor, ChannelLoop};
 use crate::actor::Answering;
 use crate::logging::envelope_span;
 use crate::moderator::Routing;
+use caelumora_model::history::{Audience, Recorded};
 use crate::transport::{EventSender, TransportError};
 use crate::transport::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
 use anyhow::{anyhow, Result};
@@ -12,7 +13,6 @@ use caelumora_model::channel::ChannelState;
 use caelumora_model::store::StoreResult;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, Rejection, RetryTarget};
 use caelumora_model::confidentiality::ConfidentialityQuestions;
-use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::Message;
 use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use caelumora_model::value::name::Name;
@@ -217,8 +217,22 @@ impl ChannelLoop {
     async fn enter(&self, event: Envelope, running: &HashMap<ActorId, RunningActor>) {
         let event = self.resolve_mentions(event);
         self.record_receive_event(&event).await;
-        self.append_history(&event).await;
-        self.route_event(running, event).await;
+        let routing = self.decide(&event).await;
+        let audience = routing.as_ref().map_or_else(|| Audience::Only(Vec::new()), |routing| routing.audience.clone());
+        self.append_history(&event, audience).await;
+        self.route_event(running, event, routing).await;
+    }
+
+    /// What the moderator decides of `event` (issue 418) - whom it goes to,
+    /// whom to ask, what to tell -, decided before it is recorded, so that
+    /// its entry says whom it went to (issue 417). `None` if it is routed no
+    /// further: too many routings deep.
+    async fn decide(&self, event: &Envelope) -> Option<Routing> {
+        if event.context.span_depth >= self.max_route_decisions {
+            warn!("Too many routings, stopping further propagation");
+            return None;
+        }
+        Some(self.moderator.route(event).await)
     }
 
     /// Starts the tasks of the channel's actors as `run` begins.
@@ -407,7 +421,7 @@ impl ChannelLoop {
         event
     }
 
-    async fn route_event(&self, running: &HashMap<ActorId, RunningActor>, event: Envelope) {
+    async fn route_event(&self, running: &HashMap<ActorId, RunningActor>, event: Envelope, routing: Option<Routing>) {
         // Asked for by an actor - a user's actor asks with every message it
         // sends (issue 90); the channel does not decide by itself.
         if matches!(event.event, ActorEvent::WakeupRequested) {
@@ -420,20 +434,16 @@ impl ChannelLoop {
             self.quiet.store(false, Ordering::SeqCst);
         }
 
-        self.route_event_impl(running, &event).await;
+        if let Some(routing) = routing {
+            self.route_event_impl(running, &event, routing).await;
+        }
         #[cfg(any(test, feature = "test-support"))]
         let _ = self.observed.send(event);
     }
 
-    async fn route_event_impl(&self, running: &HashMap<ActorId, RunningActor>, event: &Envelope) {
-        if event.context.span_depth >= self.max_route_decisions {
-            warn!("Too many routings, stopping further propagation");
-            return
-        }
-
+    async fn route_event_impl(&self, running: &HashMap<ActorId, RunningActor>, event: &Envelope, routing: Routing) {
         let span_id = event.context.span_id;
         let span_depth = event.context.span_depth + 1;
-        let routing = self.moderator.route(event).await;
         let decision = self.deliveries(event, routing);
         let quiet = self.quiet.load(Ordering::SeqCst);
 
@@ -518,8 +528,11 @@ impl ChannelLoop {
     /// event's contexts, with the hops it counted. Whom none of it goes
     /// back to is `route_event_impl`'s to see to.
     fn deliveries(&self, event: &Envelope, routing: Routing) -> Vec<(ActorId, Envelope)> {
-        let Routing { deliver_to, ask, agent_hops, notices } = routing;
-        let deliver_to = deliver_to.unwrap_or_else(|| self.actors.load().keys().copied().filter(|id| event.concerns(*id)).collect());
+        let Routing { audience, ask, agent_hops, notices } = routing;
+        let deliver_to = match audience {
+            Audience::Everybody => self.actors.load().keys().copied().filter(|id| event.concerns(*id)).collect(),
+            Audience::Only(only) => only,
+        };
         let mut deliveries: Vec<(ActorId, Envelope)> = deliver_to.into_iter().map(|id| (id, event.clone())).collect();
         for (recipients, notice) in notices {
             let mut told = event.forward(notice.into());
@@ -533,87 +546,27 @@ impl ChannelLoop {
         deliveries
     }
 
-    async fn append_history(&self, envelope: &Envelope) {
-        // What others hear of it is news to them (issue 404), announced once
-        // it is stored.
-        let said = match &envelope.event {
-            ActorEvent::CompleteMessageGenerated(message) | ActorEvent::IntermediateMessageGenerated(message) => Some(message).filter(|message| message.is_heard()),
-            _ => None,
-        };
+    /// Records `envelope` in the channel's history, if it is something the
+    /// history records (`Envelope::entry`), sent by its sender to
+    /// `audience` (issue 417): what is said as it arrives, a turn's steps
+    /// too - nothing said is unsaid (issue 258) -, where a step of a plan
+    /// begins before the step's messages (issue 263), a turn's end after
+    /// them, a command an agent carried out (issue 269) and what came of
+    /// what it did of its own accord (issue 284) before its turn's end, who
+    /// joined or left where it happened (issue 408), and a change of a
+    /// message, admitted, so that it applies (`admission`, issues 234, 304).
+    /// Stored at once; what others hear of a message is announced as news
+    /// once it is stored (issue 404).
+    async fn append_history(&self, envelope: &Envelope, audience: Audience) {
+        let Some(entry) = envelope.entry() else { return };
+        let said = entry.said().filter(|message| message.is_heard()).cloned();
         let mut state = self.state.lock().await;
-        let changed = match &envelope.event {
-            // What is said is kept as it arrives, a turn's steps too, and
-            // nothing said is unsaid (issue 258); where a step of its plan
-            // begins is recorded before the step's messages (issue 263), a
-            // turn's end after its messages.
-            ActorEvent::CompleteMessageGenerated(message) | ActorEvent::IntermediateMessageGenerated(message) => {
-                state.history.push(message.clone(), None);
-                true
-            }
-            ActorEvent::TurnFinished { turn_id, .. } => {
-                state.history.record(HistoryEntry::TurnFinished { turn_id: *turn_id, actor: envelope.context.sender_id, at: envelope.timestamp });
-                true
-            }
-            ActorEvent::TurnGivenUp { turn_id, reason } => {
-                state.history.record(HistoryEntry::TurnGivenUp { turn_id: *turn_id, actor: envelope.context.sender_id, reason: reason.clone(), at: envelope.timestamp });
-                true
-            }
-            // A command an agent carried out is part of the record (issue
-            // 269), before its turn's end; who asked is the initiator. One
-            // the session ran addresses the system and is not.
-            ActorEvent::CommandExecuted { turn_id: Some(turn_id), command, args, .. } => {
-                state.history.record(HistoryEntry::CommandExecuted {
-                    turn_id: *turn_id,
-                    actor: envelope.context.sender_id,
-                    issuer: envelope.security.initiator_id,
-                    command: command.clone(),
-                    args: args.clone(),
-                    at: envelope.timestamp,
-                });
-                true
-            }
-            // What an agent did of its own accord is part of the record
-            // (issue 284), with what came of it, before its turn's end.
-            ActorEvent::ActivityFinished { turn_id, activity, output } => {
-                state.history.record(HistoryEntry::ActivityFinished {
-                    turn_id: *turn_id,
-                    actor: envelope.context.sender_id,
-                    activity: activity.clone(),
-                    output: output.clone(),
-                    at: envelope.timestamp,
-                });
-                true
-            }
-            // Who joined or left, where it happened (issue 408).
-            event if event.is_announcement() => match envelope.announced() {
-                Some(entry) => {
-                    state.history.record(entry);
-                    true
-                }
-                None => false,
-            },
-            ActorEvent::PlanStepStarted { turn_id, step_index, total_steps, description } => {
-                state.history.record(HistoryEntry::PlanStepStarted {
-                    turn_id: *turn_id,
-                    actor: envelope.context.sender_id,
-                    step_index: *step_index,
-                    total_steps: *total_steps,
-                    description: description.clone(),
-                    at: envelope.timestamp,
-                });
-                true
-            }
-            // Admitted, so they apply (`admission`, issues 234, 304).
-            ActorEvent::MessageModified(modified) => state.history.modify(modified.clone()),
-            ActorEvent::MessageRevoked { message, at } => state.history.revoke(*message, *at),
-            ActorEvent::MessageReclassified { message, classification } => state.history.reclassify(*message, classification.clone()),
-            _ => false,
-        };
+        let changed = state.history.enter(Recorded::new(entry, envelope.context.sender_id, audience));
 
         if changed {
             match self.store_state(&mut state).await {
                 Ok(()) => if let Some(message) = said {
-                    self.channel.announce_said(message);
+                    self.channel.announce_said(&message);
                 },
                 Err(e) => warn!("Cannot store state of channel {}: {}", self.id, e),
             }
@@ -678,6 +631,13 @@ mod tests {
     use crate::moderator::broadcast_policy::BroadcastPolicy;
     use uuid::Uuid;
 
+    /// Routes `event` in `channel` to `running` as the channel does once it
+    /// recorded it: decided by its moderator, then delivered.
+    async fn routed(channel: &ChannelLoop, running: &HashMap<ActorId, RunningActor>, event: Envelope) {
+        let routing = channel.decide(&event).await;
+        channel.route_event(running, event, routing).await;
+    }
+
     #[tokio::test]
     async fn a_users_own_message_is_shown_with_its_mentions_resolved() {
         let (alice, bob) = (user("alice"), user("bob"));
@@ -705,7 +665,7 @@ mod tests {
         async fn route(&self, event: &Envelope) -> Routing {
             let sender = event.context.sender_id;
             let notice = Notice::ChainCutOff { message: MessageId::new(), max_agent_hops: 0, not_asked: Vec::new() };
-            Routing { deliver_to: Some(vec![sender]), notices: vec![(vec![sender], notice)], ..Routing::default() }
+            Routing { audience: Audience::Only(vec![sender]), notices: vec![(vec![sender], notice)], ..Routing::default() }
         }
         fn add_actor(&self, _: Arc<dyn Actor>) {}
         fn remove_actor(&self, _: ActorId) {}
@@ -725,7 +685,7 @@ mod tests {
             ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
         );
 
-        channel.route_event(&actors, said).await;
+        routed(&channel, &actors, said).await;
         let mut kinds = Vec::new();
         while let Ok(envelope) = rx.try_recv() { kinds.push(envelope.event.kind()); }
         assert_eq!(kinds, ["ChainCutOff"], "its own message is not sent back, but what the system tells it is (issue 200)");
@@ -898,14 +858,14 @@ mod tests {
             ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
         );
 
-        channel.route_event(&HashMap::new(), said()).await;
+        routed(&channel, &HashMap::new(), said()).await;
         assert!(asked.woken(), "asked to respond, it is woken to do so");
         assert!(!other.woken(), "not addressed, it sleeps on");
 
         // A quiet channel asks nobody, and wakes nobody.
         asked.sleep();
         channel.cancel(&context).await.expect("permitted");
-        channel.route_event(&HashMap::new(), said()).await;
+        routed(&channel, &HashMap::new(), said()).await;
         assert!(!asked.woken(), "nobody is asked in a quiet channel");
     }
 
@@ -1221,14 +1181,14 @@ mod tests {
         };
 
         channel.cancel(&context).await.expect("permitted");
-        channel.route_event(&actors, said()).await;
+        routed(&channel, &actors, said()).await;
         assert_eq!(delivered(&mut rx), ["TurnFinished"], "what was said still arrives, but nobody is asked");
 
         // A message alone does not wake it: its sender asks for that, as a
         // user's actor does with every message (issue 90).
-        channel.route_event(&actors, from_alice(ActorEvent::WakeupRequested)).await;
+        routed(&channel, &actors, from_alice(ActorEvent::WakeupRequested)).await;
         delivered(&mut rx); // this test's moderator forwards the request, too
-        channel.route_event(&actors, said()).await;
+        routed(&channel, &actors, said()).await;
         assert_eq!(delivered(&mut rx), ["TurnFinished", "ResponseRequested"], "woken, the channel asks again");
     }
 
@@ -1251,7 +1211,7 @@ mod tests {
             EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
             ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] },
         );
-        channel.route_event(&HashMap::new(), said).await;
+        routed(&channel, &HashMap::new(), said).await;
         assert!(other.woken(), "the channel is not quiet: the next message is answered");
 
         let stranger = ActorId::Agent(AgentId::new());
@@ -1259,6 +1219,31 @@ mod tests {
         assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })), "{error}");
         let error = channel.wakeup_actor(&context, stranger).await.expect_err("nor to be woken");
         assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })), "the same error: {error}");
+    }
+
+    /// Issue 417: what enters the channel is recorded with its sender and
+    /// whom the moderator delivered it to - everybody, as every channel
+    /// delivers, or some alone.
+    #[tokio::test]
+    async fn what_enters_is_recorded_with_its_sender_and_whom_it_went_to() {
+        let (alice, bob) = (user("alice"), user("bob"));
+        let said = |text: &str| Envelope::new(
+            SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default()),
+            EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
+            ActorEvent::CompleteMessageGenerated(Message { sender_id: ActorId::User(alice.id), role: MessageRole::User, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }),
+        );
+        let recorded = |channel: Arc<ChannelLoop>| async move {
+            let state = channel.state.lock().await;
+            state.history.last().map(|node| (node.entry.sender, node.entry.audience.clone()))
+        };
+
+        let everybody = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
+        everybody.enter(said("hello"), &HashMap::new()).await;
+        assert_eq!(recorded(Arc::clone(&everybody)).await, Some((ActorId::User(alice.id), Audience::Everybody)), "as every channel delivers");
+
+        let to_bob = channel_moderated_by(&[&alice, &bob], Arc::new(AskBack(ActorId::User(bob.id)))).await;
+        to_bob.enter(said("psst"), &HashMap::new()).await;
+        assert_eq!(recorded(Arc::clone(&to_bob)).await, Some((ActorId::User(alice.id), Audience::Only(vec![ActorId::User(bob.id)]))), "to whom the moderator named");
     }
 
     /// Issue 404: what others hear of a message is announced with the
@@ -1281,7 +1266,7 @@ mod tests {
         let mut rx = runtime.event_bus().subscribe_all();
 
         for message in [&heard, &step, &notice] {
-            channel.append_history(&said(message)).await;
+            channel.append_history(&said(message), Audience::Everybody).await;
         }
 
         let announced: Vec<MessageId> = drain(&mut rx).iter()

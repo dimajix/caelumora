@@ -403,10 +403,9 @@ Each step is reviewable on its own; 1-2 change no behaviour.
 1. **418**, done: the moderator returns a `Routing`; the channel owns the rule of "everybody" and
    builds every envelope.
 2. **The entry and its reader.** `Recorded` with `sender` and `Audience`; `Reader` and
-   `as_seen_by`; every read of the `HistoryStore` names its reader; `position` stamped at delivery,
-   items with `seq`. Everything recorded so far goes to everybody, so every page reads as before;
-   the agents' histories are still kept, as `Chain<Recorded>` with the agent as reader of its own.
-   Store suite and S4 pass as before.
+   `as_seen_by`; every read of the `HistoryStore` names its reader. Everything recorded so far goes
+   to everybody, so every page reads as before; the agents' histories are still kept, as
+   `Chain<Recorded>` with the agent as reader of its own. Store suite and S4 pass as before.
 3. **The full form enters the channel.** `ActorSender::send` without the projection; the channel
    projects for the moderator and delivers through `as_seen_by`; a message of which nothing is for
    others recorded with an audience of nobody; `produced_from`. Security tests for every reader
@@ -418,8 +417,9 @@ Each step is reviewable on its own; 1-2 change no behaviour.
 5. **Joining.** `HistoryShared` recorded at joining and read for the shared range; `HistoryLimit`
    as a position.
 6. **Everything shown is recorded.** The six notices and `ResponseRequested` as entries;
-   `MessageRejected` from `reject`; `CommandExecuted` with its output; the REST items and the web
-   UI render them from the history. Feature: nothing is gone on reload.
+   `MessageRejected` from `reject`; `CommandExecuted` with its output; `position` stamped at
+   delivery, items with `seq`; the REST items and the web UI render them from the history.
+   Feature: nothing is gone on reload.
 7. **Documents**, and 05, 140 and 404's read mark as they stand after this.
 
 ## Done when
@@ -474,3 +474,19 @@ Each step is reviewable on its own; 1-2 change no behaviour.
   transcript. The entry is a struct around the enum (`Recorded`); the steps are reordered so that
   the entry and its reader come first, and the agents' histories go before joining and the
   notices.
+- 2026-10-17: Step 2 done on `issue-417-one-channel-history`. `History = Chain<Recorded>`;
+  `Audience` and `Reader` in `caelumora-model::history`; `Recorded::as_seen_by` is the one rule,
+  applied by both stores to `page`, `said` and `entries`, which take a `&Reader`. The rule of
+  "everybody" read off an entry is `HistoryEntry::concerns`; a test holds it to
+  `Envelope::concerns` for every event the history records. What the history records of an
+  envelope is built in one place, `Envelope::entry`. The channel asks the moderator before it
+  records (`ChannelLoop::decide`), so that the entry carries the moderator's audience, and records
+  through `History::enter`; a `Routing` names its `Audience`, now that the enum exists. The digest
+  of an entry covers its sender and audience. Readers named: a participant's page, message,
+  unread count and read mark as `Participant`; a session's owner without an actor and a reader
+  from another channel as `Outsider`; the channel's own checks and where a view begins as
+  `Channel`; a joining agent as itself; what an agent saw as the agent. Moved to step 6, where the
+  client needs them: the position stamped on a delivered envelope and items with `seq`. One
+  behaviour changes already: an agent reading its own channel through the views - `read_history`
+  naming its own channel - is given what went to it and what it said, no longer the steps and
+  turn ends of other agents; users read as before, since every entry concerns them.

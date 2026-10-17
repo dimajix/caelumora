@@ -12,9 +12,9 @@
 use super::chains::{self, read_chain, read_head, segment_of, SEGMENT};
 use super::{delete_if_exists, read_json_opt, write_json_atomic, JsonFileStore};
 use crate::chain::Node;
-use crate::history::{History, HistoryEntry, HistoryPage};
+use crate::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use crate::message::MessageId;
-use crate::store::history::{page_of, HistoryKey, HistoryStore, Keep, StandingItems};
+use crate::store::history::{every, page_of, seen, seen_nodes, HistoryKey, HistoryStore, Keep, StandingItems};
 use crate::store::{StoreError, StoreResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -69,17 +69,17 @@ impl<'a> ItemSegments<'a> {
     /// item into its segment, a change into the segment that holds the item
     /// it changes - found from the end backwards -, a fitting into every
     /// segment.
-    async fn take(&mut self, node: &Node<HistoryEntry>, end: u64) -> StoreResult<()> {
-        if node.entry.is_item() {
+    async fn take(&mut self, node: &Node<Recorded>, end: u64) -> StoreResult<()> {
+        if node.entry.entry.is_item() {
             let from = segment_of(node.seq);
             self.segment(from).await?.push(node);
             self.changed.insert(from);
             return Ok(());
         }
-        let fitting = matches!(node.entry, HistoryEntry::Fitted { .. });
+        let fitting = matches!(node.entry.entry, HistoryEntry::Fitted { .. });
         let mut from = segment_of(end.saturating_sub(1));
         loop {
-            if self.segment(from).await?.amend(&node.entry) {
+            if self.segment(from).await?.amend(&node.entry.entry) {
                 self.changed.insert(from);
                 if !fitting {
                     return Ok(());
@@ -106,7 +106,7 @@ impl<'a> ItemSegments<'a> {
 /// into the items, and records that it did: after a put, what it added;
 /// after a crash, what was not derived yet. Taking an entry in twice changes
 /// nothing.
-async fn derive_items(dir: &Path, items_end: u64, end: u64, added: &[Node<HistoryEntry>]) -> StoreResult<()> {
+async fn derive_items(dir: &Path, items_end: u64, end: u64, added: &[Node<Recorded>]) -> StoreResult<()> {
     let mut segments = ItemSegments::new(dir);
     for node in added.iter().filter(|node| node.seq >= items_end && node.seq < end) {
         segments.take(node, end).await?;
@@ -164,7 +164,7 @@ impl JsonFileStore {
 
 #[async_trait]
 impl HistoryStore for JsonFileStore {
-    async fn page(&self, key: HistoryKey, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
+    async fn page(&self, key: HistoryKey, reader: &Reader, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
         let dir = self.history_dir(key);
         let head = read_head(&dir).await?;
         let items_end = read_items_end(&dir).await?;
@@ -175,16 +175,16 @@ impl HistoryStore for JsonFileStore {
         }
         let mut segment = segment_of(before - 1);
         loop {
-            newest.extend(read_items(&dir, segment).await?.newest_before(before).filter(|(seq, item)| *seq >= from && keep(item)).cloned());
+            newest.extend(read_items(&dir, segment).await?.newest_before(before).filter(|(seq, _)| *seq >= from).filter_map(|item| seen(reader, keep, item)));
             if newest.len() > limit || segment == 0 || segment <= from {
                 break;
             }
             segment -= SEGMENT;
         }
-        Ok(page_of(newest, from, limit, keep, head.head))
+        Ok(page_of(newest, from, limit, head.head))
     }
 
-    async fn said(&self, key: HistoryKey, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>> {
+    async fn said(&self, key: HistoryKey, reader: &Reader, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>> {
         let dir = self.history_dir(key);
         let items_end = read_items_end(&dir).await?;
         if items_end == 0 {
@@ -193,7 +193,7 @@ impl HistoryStore for JsonFileStore {
         let mut segment = segment_of(items_end - 1);
         loop {
             if let Some(found) = read_items(&dir, segment).await?.said(id) {
-                return Ok(Some(found));
+                return Ok(seen(reader, &every, found));
             }
             if segment == 0 {
                 return Ok(None);
@@ -202,10 +202,11 @@ impl HistoryStore for JsonFileStore {
         }
     }
 
-    async fn entries(&self, key: HistoryKey, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>> {
+    async fn entries(&self, key: HistoryKey, reader: &Reader, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>> {
         let dir = self.history_dir(key);
         let head = read_head(&dir).await?;
-        read_chain(&dir, from, head.end).await
+        let chain: Vec<Node<Recorded>> = read_chain(&dir, from, head.end).await?;
+        Ok(seen_nodes(reader, &chain))
     }
 
     async fn rebuild(&self, key: HistoryKey) -> StoreResult<()> {

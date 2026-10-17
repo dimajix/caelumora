@@ -614,14 +614,50 @@ impl Envelope {
     /// issue 408): who joined or left, by its sender, when it was sent.
     /// `None` for any other event.
     pub fn announced(&self) -> Option<HistoryEntry> {
-        let by = self.context.sender_id;
-        let by_name = self.context.sender_name.clone();
+        self.entry().filter(|_| self.event.is_announcement())
+    }
+
+    /// What a channel's history records of this envelope (issue 417): a
+    /// message said, a step of it included (issue 258); how a turn ended;
+    /// where a step of its plan began (issue 263); a command an agent
+    /// carried out (issue 269) - who asked is the initiator; what came of
+    /// what an agent did of its own accord (issue 284); who joined or left,
+    /// by its sender (issue 408); a change of a message (issue 234). Every
+    /// mark in the name of its sender, when it was sent. `None` for what the
+    /// history does not record: what streams, a beginning whose end is
+    /// recorded, where an actor stands, what only asks, approvals and
+    /// questions, a command of the session.
+    pub fn entry(&self) -> Option<HistoryEntry> {
+        let actor = self.context.sender_id;
         let at = self.timestamp;
-        match &self.event {
-            ActorEvent::ParticipantJoined { participant, name } => Some(HistoryEntry::ParticipantJoined { participant: *participant, name: name.clone(), by, by_name, at }),
-            ActorEvent::ParticipantLeft { participant, name } => Some(HistoryEntry::ParticipantLeft { participant: *participant, name: name.clone(), by, by_name, at }),
-            _ => None,
-        }
+        Some(match &self.event {
+            ActorEvent::CompleteMessageGenerated(message) | ActorEvent::IntermediateMessageGenerated(message) => HistoryEntry::Said { message: message.clone(), context: None },
+            ActorEvent::TurnFinished { turn_id, .. } => HistoryEntry::TurnFinished { turn_id: *turn_id, actor, at },
+            ActorEvent::TurnGivenUp { turn_id, reason } => HistoryEntry::TurnGivenUp { turn_id: *turn_id, actor, reason: reason.clone(), at },
+            ActorEvent::PlanStepStarted { turn_id, step_index, total_steps, description } => {
+                HistoryEntry::PlanStepStarted { turn_id: *turn_id, actor, step_index: *step_index, total_steps: *total_steps, description: description.clone(), at }
+            }
+            ActorEvent::CommandExecuted { turn_id: Some(turn_id), command, args, .. } => {
+                HistoryEntry::CommandExecuted { turn_id: *turn_id, actor, issuer: self.security.initiator_id, command: command.clone(), args: args.clone(), at }
+            }
+            ActorEvent::ActivityFinished { turn_id, activity, output } => HistoryEntry::ActivityFinished { turn_id: *turn_id, actor, activity: activity.clone(), output: output.clone(), at },
+            ActorEvent::ParticipantJoined { participant, name } => {
+                HistoryEntry::ParticipantJoined { participant: *participant, name: name.clone(), by: actor, by_name: self.context.sender_name.clone(), at }
+            }
+            ActorEvent::ParticipantLeft { participant, name } => {
+                HistoryEntry::ParticipantLeft { participant: *participant, name: name.clone(), by: actor, by_name: self.context.sender_name.clone(), at }
+            }
+            ActorEvent::MessageModified(modified) => HistoryEntry::Modified { message: modified.clone() },
+            ActorEvent::MessageRevoked { message, at } => HistoryEntry::Revoked { message: *message, at: *at },
+            ActorEvent::MessageReclassified { message, classification } => HistoryEntry::Reclassified { message: *message, classification: classification.clone() },
+            ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalGranted(_) | ActorEvent::ApprovalDenied(_) | ActorEvent::ApprovalTimedOut(_)
+            | ActorEvent::ApprovalRequestWithdrawn { .. } | ActorEvent::QuestionRequested(_) | ActorEvent::QuestionAnswered { .. }
+            | ActorEvent::QuestionDeclined { .. } | ActorEvent::QuestionClosed { .. } | ActorEvent::ResponseRequested | ActorEvent::ResponseStarted { .. }
+            | ActorEvent::StateChanged(_) | ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_) | ActorEvent::WakeupRequested
+            | ActorEvent::PlanStepFinished { .. } | ActorEvent::CommandRequested { .. } | ActorEvent::NudgeRequested { .. } | ActorEvent::CommandExecuted { turn_id: None, .. }
+            | ActorEvent::CommandStarted { .. } | ActorEvent::CommandFailed { .. } | ActorEvent::ActivityStarted { .. } | ActorEvent::ChainCutOff { .. }
+            | ActorEvent::RetryRequested { .. } | ActorEvent::RetryAccepted { .. } | ActorEvent::RetryRejected { .. } | ActorEvent::MessageRejected { .. } => return None,
+        })
     }
 
     /// Whether the envelope concerns `participant` by the rule every channel

@@ -343,7 +343,7 @@ async fn an_agent_takes_note_of_who_left_without_responding() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the agent takes note of it");
-    assert!(matches!(state.history.last().map(|node| &node.entry), Some(HistoryEntry::ParticipantLeft { participant, by, .. }) if *participant == context.initiator_id && *by == context.initiator_id));
+    assert!(matches!(state.history.last().map(|node| &node.entry.entry), Some(HistoryEntry::ParticipantLeft { participant, by, .. }) if *participant == context.initiator_id && *by == context.initiator_id));
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(model.seen.lock().unwrap().len(), 1, "no turn begins for it");
     running.abort();

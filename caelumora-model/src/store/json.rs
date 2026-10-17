@@ -943,6 +943,7 @@ mod tests {
         assert_eq!(sessions[0].id, s1.id);
     }
 
+    use crate::history::Reader;
     use crate::message::tests::{id, make_message};
     use crate::note::{NoteChange, NoteId};
     use crate::actor::ActorState;
@@ -1100,7 +1101,7 @@ mod tests {
         write("items-head.json", &serde_json::json!({ "end": 1 }));
         let loaded = store.get_channel_state(channel).await.unwrap();
         assert_eq!(loaded.history.end(), 3);
-        assert_eq!(store.page(key, 0, None, 10, &every).await.unwrap().items.len(), 3, "the items are derived anew from the chain");
+        assert_eq!(store.page(key, &Reader::Channel, 0, None, 10, &every).await.unwrap().items.len(), 3, "the items are derived anew from the chain");
         assert_eq!(read("items-head.json")["end"], serde_json::json!(3));
 
         // As if the crash came after the chain, before its head.
@@ -1113,7 +1114,7 @@ mod tests {
         assert_eq!(loaded.history.end(), 3, "what lies past the head is not there");
         loaded.history.push(make_message(id(4)), None);
         store.put_channel_state(channel, &mut loaded).await.unwrap();
-        assert_eq!(store.said(key, id(4)).await.unwrap().map(|(at, _)| at), Some(3), "and the next entry takes its place");
+        assert_eq!(store.said(key, &Reader::Channel, id(4)).await.unwrap().map(|(at, _)| at), Some(3), "and the next entry takes its place");
         assert_eq!(store.get_channel_state(channel).await.unwrap().history.digest(), loaded.history.digest());
     }
 

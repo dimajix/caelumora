@@ -12,7 +12,7 @@ use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextResolver, ResolvedContext};
 use caelumora_model::digest::Digest;
-use caelumora_model::history::HistoryPage;
+use caelumora_model::history::{HistoryPage, Reader};
 use caelumora_model::message::MessageId;
 use caelumora_model::note::Note;
 use caelumora_model::store::history::{every, HistoryKey, HistoryStore};
@@ -72,6 +72,12 @@ impl AgentContextView {
         HistoryKey::Agent(self.agent, self.channel)
     }
 
+    /// As whom what the agent saw is read (issue 417): as the agent - its
+    /// viewer may read its context, so it is given what the agent was.
+    fn reading_as(&self) -> Reader {
+        Reader::Participant(self.actor())
+    }
+
     /// What the agent is given of the conversation as its state holds it:
     /// what its model is given next (issue 50); of an external agent, what
     /// the remote agent is given with the next call (issue 205).
@@ -101,7 +107,7 @@ impl AgentContextView {
     /// resolved any more; `Failed` if the history or the transcript cannot
     /// be read.
     pub async fn context_of(&self, message: MessageId) -> Result<ResolvedContext, AgentContextError> {
-        let said = self.histories.said(self.history(), message).await.map_err(|source| self.failed(message, source))?;
+        let said = self.histories.said(self.history(), &self.reading_as(), message).await.map_err(|source| self.failed(message, source))?;
         let (reference, turn) = said.as_ref().and_then(|(_, item)| item.context())
             .ok_or(AgentContextError::NotRecorded { actor: self.actor(), message })?;
         let unavailable = || AgentContextError::Unavailable { actor: self.actor(), message };
@@ -121,7 +127,7 @@ impl AgentContextView {
     /// # Errors
     /// `Failed` if the history cannot be read.
     pub async fn classification_of(&self, message: MessageId) -> Result<Option<Classification>, AgentContextError> {
-        let said = self.histories.said(self.history(), message).await.map_err(|source| self.failed(message, source))?;
+        let said = self.histories.said(self.history(), &self.reading_as(), message).await.map_err(|source| self.failed(message, source))?;
         Ok(said.and_then(|(_, item)| item.said().map(|m| m.classification.clone())))
     }
 
@@ -135,7 +141,7 @@ impl AgentContextView {
     /// # Errors
     /// `Failed` if the history cannot be read.
     pub async fn history_page(&self, before: Option<u64>, limit: usize) -> Result<HistoryPage, AgentContextError> {
-        self.histories.page(self.history(), 0, before, limit, &every).await
+        self.histories.page(self.history(), &self.reading_as(), 0, before, limit, &every).await
             .map_err(|source| AgentContextError::Failed { actor: self.actor(), message: None, source })
     }
 
@@ -215,7 +221,7 @@ mod tests {
         let actor = ActorId::Agent(AgentId::new());
         let text = |t: &str| Message { id: MessageId::new(), role: MessageRole::User, content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         // What the agent produced, in a turn of its own.
-        let produced = |t: &str| Message { turn_id: Some(TurnId::new()), ..text(t) };
+        let produced = |t: &str| Message { turn_id: Some(TurnId::new()), sender_id: actor, ..text(t) };
         let mut state = AgentChannelState::default();
         let question = text("question");
         state.transcript.push(question.clone());
@@ -280,7 +286,7 @@ mod tests {
         let question = text("question");
         state.transcript.push(question.clone());
         state.history.extend(vec![question.clone()]);
-        let answer = Message { turn_id: Some(TurnId::new()), ..text("answer") };
+        let answer = Message { turn_id: Some(TurnId::new()), sender_id: ActorId::Agent(agent), ..text("answer") };
         let before = state.transcript.push(answer.clone());
         state.history.push(answer.clone(), Some(ContextRef { transcript: before, ..ContextRef::default() }));
         // A branch begun anew, which the state holds alone.

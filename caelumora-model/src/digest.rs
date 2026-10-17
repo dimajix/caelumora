@@ -8,7 +8,7 @@
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
-use crate::history::HistoryEntry;
+use crate::history::{HistoryEntry, Recorded};
 use crate::message::{Message, MessageId};
 use crate::transcript::TranscriptEntry;
 use crate::turn::GivenUpReason;
@@ -303,18 +303,29 @@ fn taking_part(scheme: &str, previous: Option<&Digest>, participant: &ActorId, n
     e.finish()
 }
 
-/// The digest of a history (issue 06) ending in `entry`, whose predecessor
-/// chain has the digest `previous`: a message said as `message_chain`, so
-/// that every digest recorded before issue 197 names what it named; the
-/// channel's classification fitted into (issue 133), a turn's end (issue
-/// 258) and the start of a step of its plan (issue 263) in schemes of their
-/// own - the step by what it says, not when -, a command carried out (issue
-/// 269), a context compacted (issue 16) and a change of who takes part
-/// (issue 408) likewise - by what they say, not when; a message modified,
-/// taken back or
+/// The digest of a history (issue 06) ending in `recorded`, whose
+/// predecessor chain has the digest `previous`: of what the entry says, who
+/// sent it and whom it went to (issue 417). What an entry says is digested
+/// by its kind: a message said as `message_chain`; the channel's
+/// classification fitted into (issue 133), a turn's end (issue 258) and the
+/// start of a step of its plan (issue 263) in schemes of their own - the
+/// step by what it says, not when -, a command carried out (issue 269), a
+/// context compacted (issue 16) and a change of who takes part (issue 408)
+/// likewise - by what they say, not when; a message modified, taken back or
 /// reclassified as `message_modified`, `message_revoked` and
 /// `message_reclassified`.
-pub fn history_chain(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
+pub fn history_chain(previous: Option<&Digest>, recorded: &Recorded) -> Digest {
+    let mut e = Encoder::new("caelumora.history-recorded.v1");
+    e.opt_digest(previous);
+    e.opt_digest(Some(&history_entry(None, &recorded.entry)));
+    e.json(&to_json(&recorded.sender));
+    e.json(&to_json(&recorded.audience));
+    e.finish()
+}
+
+/// The digest of `entry` after `previous`, by what it says: the part of a
+/// history's digest (`history_chain`) that the entry itself contributes.
+fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
     match entry {
         HistoryEntry::Said { message, .. } => message_chain(previous, message),
         HistoryEntry::Modified { message } => message_modified(previous, message),

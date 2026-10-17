@@ -2,7 +2,7 @@ use crate::agent::{AgentChannelState, AgentId, AgentState};
 use crate::chain::Node;
 use crate::channel::{ChannelId, ChannelState};
 use crate::user::{UserChannelState, UserId};
-use crate::history::{History, HistoryEntry, HistoryPage};
+use crate::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
 use crate::component::StoredComponents;
@@ -10,7 +10,7 @@ use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use crate::removal::{Deletable, Removal};
 use crate::security::{ActionType, AllowAllPolicy, SecurityContext, AccessPolicy};
 use crate::store::access::{name_free, Access};
-use crate::store::history::{page_of, HistoryKey, HistoryStore, Keep, StandingItems};
+use crate::store::history::{every, page_of, seen, seen_nodes, HistoryKey, HistoryStore, Keep, StandingItems};
 use crate::store::kept_chain::KeptChain;
 use crate::store::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
 use crate::transcript::{known, Transcript, TranscriptEntry};
@@ -60,7 +60,7 @@ struct KeptGiven {
 /// derived from it.
 #[derive(Debug, Default)]
 struct KeptHistory {
-    chain: KeptChain<HistoryEntry>,
+    chain: KeptChain<Recorded>,
     items: StandingItems,
 }
 
@@ -482,19 +482,19 @@ impl StateStore for MemoryStore {
 
 #[async_trait]
 impl HistoryStore for MemoryStore {
-    async fn page(&self, key: HistoryKey, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
+    async fn page(&self, key: HistoryKey, reader: &Reader, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
         Ok(read_lock(&self.histories, |all| match all.get(&key) {
-            Some(kept) => page_of(kept.items.newest_before(before.unwrap_or(u64::MAX)).cloned(), from, limit, keep, kept.chain.head()),
+            Some(kept) => page_of(kept.items.newest_before(before.unwrap_or(u64::MAX)).filter_map(|item| seen(reader, keep, item)), from, limit, kept.chain.head()),
             None => HistoryPage::default(),
         }))
     }
 
-    async fn said(&self, key: HistoryKey, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>> {
-        Ok(read_lock(&self.histories, |all| all.get(&key).and_then(|kept| kept.items.said(id))))
+    async fn said(&self, key: HistoryKey, reader: &Reader, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>> {
+        Ok(read_lock(&self.histories, |all| all.get(&key).and_then(|kept| kept.items.said(id)).and_then(|item| seen(reader, &every, item))))
     }
 
-    async fn entries(&self, key: HistoryKey, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>> {
-        Ok(read_lock(&self.histories, |all| all.get(&key).map(|kept| kept.chain.from(from).to_vec()).unwrap_or_default()))
+    async fn entries(&self, key: HistoryKey, reader: &Reader, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>> {
+        Ok(read_lock(&self.histories, |all| all.get(&key).map(|kept| seen_nodes(reader, kept.chain.from(from))).unwrap_or_default()))
     }
 
     async fn rebuild(&self, key: HistoryKey) -> StoreResult<()> {

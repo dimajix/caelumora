@@ -16,7 +16,7 @@ use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::confidentiality::Place;
 use caelumora_model::digest::Digest;
-use caelumora_model::history::{HistoryEntry, HistoryPage};
+use caelumora_model::history::{HistoryEntry, HistoryPage, Reader};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::note::Note;
 use caelumora_model::removal::Removal;
@@ -285,7 +285,7 @@ impl ChannelView {
         let page = match self.visible_from().await? {
             Some(from) => {
                 let readable = |item: &HistoryEntry| self.may_read_item(item) && keep(item);
-                self.views().histories().page(HistoryKey::Channel(self.channel.id), from, before, limit, &readable).await
+                self.views().histories().page(HistoryKey::Channel(self.channel.id), &self.reading_as(), from, before, limit, &readable).await
                     .map_err(|e| self.failed_reading(e))?
             }
             None => HistoryPage::default(),
@@ -305,7 +305,7 @@ impl ChannelView {
     /// entry by entry.
     pub async fn message(&self, id: MessageId) -> ViewResult<Message> {
         let from = self.visible_from().await?;
-        let said = self.views().histories().said(HistoryKey::Channel(self.channel.id), id).await.map_err(|e| self.failed_reading(e))?;
+        let said = self.views().histories().said(HistoryKey::Channel(self.channel.id), &self.reading_as(), id).await.map_err(|e| self.failed_reading(e))?;
         let seen = said.filter(|(at, _)| from.is_some_and(|from| *at >= from)).and_then(|(_, item)| item.said().cloned());
         match seen {
             Some(message) if self.may_read_entry(&message.classification) => Ok(message),
@@ -318,6 +318,19 @@ impl ChannelView {
     /// it acts for - its own limit applies, not the owner's.
     fn reader(&self) -> ActorId {
         self.views().viewer().context().caller_id
+    }
+
+    /// As whom the viewer reads the history (issue 417): as the participant
+    /// they are or were, given what went to them and what they sent; as an
+    /// outsider, given what went to everybody, if they take no part in the
+    /// channel or read it from elsewhere, entry by entry.
+    fn reading_as(&self) -> Reader {
+        let reader = self.reader();
+        let took_part = self.lists(reader) || self.channel.former.iter().any(|left| left.participant.actor_id() == reader);
+        match self.readable {
+            ChannelReading::Whole if took_part => Reader::Participant(reader),
+            ChannelReading::Whole | ChannelReading::Released => Reader::Outsider,
+        }
     }
 
     /// The position from which on the viewer sees the history; `None` if
@@ -459,10 +472,11 @@ impl ChannelView {
         let new = |item: &HistoryEntry| self.may_read_item(item) && item.said().is_some_and(|message| message.sender_id != viewer && message.is_heard());
         let mentioning = |item: &HistoryEntry| new(item) && item.said().is_some_and(|message| message.mentions.contains(&viewer));
         let key = HistoryKey::Channel(self.channel.id);
-        let counted = self.views().histories().page(key, from, None, Unread::CAP, &new).await.map_err(|e| self.failed_reading(e))?;
+        let reader = Reader::Participant(viewer);
+        let counted = self.views().histories().page(key, &reader, from, None, Unread::CAP, &new).await.map_err(|e| self.failed_reading(e))?;
         // A mention among those not counted is looked for on its own.
         let mentioned = counted.items.iter().any(mentioning) || (counted.items.len() == Unread::CAP
-            && !self.views().histories().page(key, from, None, 1, &mentioning).await.map_err(|e| self.failed_reading(e))?.items.is_empty());
+            && !self.views().histories().page(key, &reader, from, None, 1, &mentioning).await.map_err(|e| self.failed_reading(e))?.items.is_empty());
         Ok(Some(Unread { messages: counted.items.len(), mentioned, read_up_to }))
     }
 }

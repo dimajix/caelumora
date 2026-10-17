@@ -3,7 +3,9 @@
 //! was produced from, reclassifications (issue 133), changes to what was
 //! said (issue 234), where the steps of a plan began (issue 263), how
 //! turns ended (issue 258) and who joined or left (issue 408) - read into
-//! the messages as they stand (issue 197).
+//! the messages as they stand (issue 197). Every entry is recorded with whom
+//! it was sent by and whom it went to (`Recorded`, issue 417), and read only
+//! for a reader, who is given what of it they may see (`Recorded::as_seen_by`).
 
 use crate::actor::ActorId;
 use crate::chain::{Chain, Node};
@@ -89,6 +91,100 @@ pub enum HistoryEntry {
     ParticipantLeft { participant: ActorId, name: String, by: ActorId, by_name: String, at: DateTime<Utc> },
 }
 
+/// What happened in a channel, recorded (issue 417): the entry, the actor
+/// whose envelope it was - the system for what the channel says itself -,
+/// and whom it went to. The chain's entry of a `History`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Recorded {
+    pub entry: HistoryEntry,
+    pub sender: ActorId,
+    pub audience: Audience,
+}
+
+/// What a range of a history - as recorded, or as a reader is given it -
+/// folds by (`fold`).
+impl AsRef<HistoryEntry> for Recorded {
+    fn as_ref(&self) -> &HistoryEntry {
+        &self.entry
+    }
+}
+
+impl AsRef<HistoryEntry> for HistoryEntry {
+    fn as_ref(&self) -> &HistoryEntry {
+        self
+    }
+}
+
+/// Whom something in a channel went to (issues 417, 418).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Audience {
+    /// Everyone it concerns, by the rule every channel delivers by
+    /// (`Envelope::concerns`, read off an entry as `HistoryEntry::concerns`).
+    #[default]
+    Everybody,
+    /// These alone; nobody if empty.
+    Only(Vec<ActorId>),
+}
+
+/// Who reads a history, and so what of an entry they are given
+/// (`Recorded::as_seen_by`, issue 417). There is no read of a history
+/// without one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reader {
+    /// A participant, now or formerly - or whom may read what an agent saw,
+    /// reading as that agent: what went to them and what they sent, the
+    /// latter in full.
+    Participant(ActorId),
+    /// Someone who may read the channel but takes no part in it - its
+    /// session's owner, a reader from another channel: what went to
+    /// everybody, as everybody was given it.
+    Outsider,
+    /// The channel itself, for its own checks - whether a message can be
+    /// changed, where a view begins: everything, as it was recorded.
+    Channel,
+}
+
+impl Recorded {
+    /// `entry`, sent by `sender` to `audience`.
+    pub fn new(entry: HistoryEntry, sender: ActorId, audience: Audience) -> Self {
+        Self { entry, sender, audience }
+    }
+
+    /// `entry` as every channel delivers it, sent by whom it names
+    /// (`HistoryEntry::named_sender`): what a holder records of what it was
+    /// told, or did itself.
+    fn delivered(entry: HistoryEntry) -> Self {
+        let sender = entry.named_sender();
+        Self::new(entry, sender, Audience::Everybody)
+    }
+
+    /// What `reader` may see of the entry (issue 417): nothing, unless it
+    /// went to them, they sent it, or - for an outsider - it went to
+    /// everybody; then the entry as it was recorded for its sender and the
+    /// channel, and as everybody was given it for anyone else
+    /// (`HistoryEntry::published`), nothing if nothing of it is for them.
+    /// The one rule by which a history is read.
+    pub fn as_seen_by(&self, reader: &Reader) -> Option<HistoryEntry> {
+        let own = match reader {
+            Reader::Channel => return Some(self.entry.clone()),
+            Reader::Participant(actor) => *actor == self.sender,
+            Reader::Outsider => false,
+        };
+        let reaches = own || match (&self.audience, reader) {
+            (Audience::Everybody, Reader::Participant(actor)) => self.entry.concerns(*actor),
+            (Audience::Everybody, _) => self.entry.reaches(true, false),
+            (Audience::Only(only), Reader::Participant(actor)) => only.contains(actor),
+            (Audience::Only(_), _) => false,
+        };
+        match (reaches, own) {
+            (false, _) => None,
+            (true, true) => Some(self.entry.clone()),
+            (true, false) => self.entry.published(),
+        }
+    }
+}
+
 /// The conversation as it happened - a chain like a `Transcript`. What it
 /// records is read from start to end into the messages as they stand: a
 /// reclassification, a modification or a revocation applies to a message on
@@ -96,7 +192,7 @@ pub enum HistoryEntry {
 /// every branch in the order things happened (`fold`). A message taken back
 /// stays, without what it said (`Message::revoked`), so that whatever names
 /// it by id finds it.
-pub type History = Chain<HistoryEntry>;
+pub type History = Chain<Recorded>;
 
 /// The messages `nodes` say - a range of a history, in the order its
 /// entries were added - each with the node that said it, as they stand
@@ -104,18 +200,18 @@ pub type History = Chain<HistoryEntry>;
 /// order they were said. A change always comes after what it changes, so a
 /// range that goes on to the end of its history gives every message in it
 /// as it stands; a change of a message before the range is left out.
-pub fn fold<'a>(nodes: impl IntoIterator<Item = &'a Node<HistoryEntry>>) -> Vec<(&'a Node<HistoryEntry>, Message)> {
-    let mut messages: Vec<(&Node<HistoryEntry>, Message)> = Vec::new();
+pub fn fold<'a, E: AsRef<HistoryEntry> + 'a>(nodes: impl IntoIterator<Item = &'a Node<E>>) -> Vec<(&'a Node<E>, Message)> {
+    let mut messages: Vec<(&Node<E>, Message)> = Vec::new();
     let mut at: HashMap<MessageId, usize> = HashMap::new();
     for node in nodes {
-        match &node.entry {
+        match node.entry.as_ref() {
             HistoryEntry::Said { message, .. } => {
                 at.insert(message.id, messages.len());
                 messages.push((node, message.clone()));
             }
             HistoryEntry::Fitted { .. } => {
                 for (_, message) in &mut messages {
-                    node.entry.fold_into(message);
+                    node.entry.as_ref().fold_into(message);
                 }
             }
             entry => {
@@ -148,7 +244,7 @@ pub struct HistoryPage {
     pub digest: Option<Digest>,
 }
 
-impl Chain<HistoryEntry> {
+impl Chain<Recorded> {
     /// What the turn `turn_id` of `actor` said, as it stands, in the order
     /// it was said (issue 284): its messages recorded with the context they
     /// were produced from - not what it was given, nor what replaced older
@@ -160,7 +256,7 @@ impl Chain<HistoryEntry> {
     pub fn said_in_turn(&self, actor: ActorId, turn_id: TurnId) -> Vec<Message> {
         let Some(began) = self.turn_began(actor, turn_id) else { return Vec::new() };
         fold(self.from(began)).into_iter()
-            .filter(|(node, message)| matches!(&node.entry, HistoryEntry::Said { context: Some(_), .. }) && message.turn_id == Some(turn_id) && message.revoked.is_none())
+            .filter(|(node, message)| matches!(&node.entry.entry, HistoryEntry::Said { context: Some(_), .. }) && message.turn_id == Some(turn_id) && message.revoked.is_none())
             .map(|(_, message)| message)
             .collect()
     }
@@ -176,7 +272,7 @@ impl Chain<HistoryEntry> {
     fn turn_began(&self, actor: ActorId, turn_id: TurnId) -> Option<u64> {
         let mut reached = false;
         for node in self.all_entries().rev() {
-            match &node.entry {
+            match &node.entry.entry {
                 HistoryEntry::TurnFinished { turn_id: ended, actor: of, .. } | HistoryEntry::TurnGivenUp { turn_id: ended, actor: of, .. } if *of == actor => {
                     if *ended == turn_id {
                         reached = true;
@@ -195,7 +291,7 @@ impl Chain<HistoryEntry> {
     /// on the active path (issue 259): what may be asked for anew as long as
     /// nothing followed it.
     pub fn turn_given_up_last(&self, author: ActorId) -> Option<(TurnId, GivenUpReason)> {
-        match self.last().map(|node| &node.entry) {
+        match self.last().map(|node| &node.entry.entry) {
             Some(HistoryEntry::TurnGivenUp { turn_id, actor, reason, .. }) if *actor == author => Some((*turn_id, reason.clone())),
             _ => None,
         }
@@ -207,10 +303,10 @@ impl Chain<HistoryEntry> {
     /// changes it if it names it or fits the channel. Read from where it
     /// was said on, not from the start, and nothing but it is cloned.
     pub fn message(&self, id: MessageId) -> Option<Message> {
-        let said = self.all_entries().rev().find(|node| node.entry.said().is_some_and(|m| m.id == id))?;
-        let mut message = said.entry.said()?.clone();
+        let said = self.all_entries().rev().find(|node| node.entry.entry.said().is_some_and(|m| m.id == id))?;
+        let mut message = said.entry.entry.said()?.clone();
         for node in self.from(said.seq + 1) {
-            node.entry.fold_into(&mut message);
+            node.entry.entry.fold_into(&mut message);
         }
         Some(message)
     }
@@ -218,7 +314,7 @@ impl Chain<HistoryEntry> {
     /// The id of the last message said on the active path,
     /// `MessageId::default()` if none was.
     pub fn last_message_id(&self) -> MessageId {
-        self.entries().rev().find_map(|n| n.entry.said()).map(|m| m.id).unwrap_or_default()
+        self.entries().rev().find_map(|n| n.entry.entry.said()).map(|m| m.id).unwrap_or_default()
     }
 
     /// Appends messages that were not produced from a context of this
@@ -240,11 +336,7 @@ impl Chain<HistoryEntry> {
     /// (`Message::reclassify`); one before what it holds is recorded
     /// (`is_changed`).
     pub fn reclassify(&mut self, id: MessageId, classification: Classification) -> bool {
-        if !self.is_changed(id, |m| m.reclassify(&classification)) {
-            return false;
-        }
-        self.append(HistoryEntry::Reclassified { message: id, classification });
-        true
+        self.enter(Recorded::delivered(HistoryEntry::Reclassified { message: id, classification }))
     }
 
     /// Records that the message `modified.id` - on whichever branch -
@@ -253,11 +345,7 @@ impl Chain<HistoryEntry> {
     /// it stands (`Message::modify`): taken back, or by another sender; one
     /// before what it holds is recorded (`is_changed`).
     pub fn modify(&mut self, modified: Message) -> bool {
-        if !self.is_changed(modified.id, |m| m.modify(&modified)) {
-            return false;
-        }
-        self.append(HistoryEntry::Modified { message: modified });
-        true
+        self.enter(Recorded::delivered(HistoryEntry::Modified { message: modified }))
     }
 
     /// Records that the message `id` - on whichever branch - was taken back
@@ -265,11 +353,7 @@ impl Chain<HistoryEntry> {
     /// such message or it was taken back already; one before what it holds
     /// is recorded (`is_changed`).
     pub fn revoke(&mut self, id: MessageId, at: DateTime<Utc>) -> bool {
-        if !self.is_changed(id, |m| m.revoke(at)) {
-            return false;
-        }
-        self.append(HistoryEntry::Revoked { message: id, at });
-        true
+        self.enter(Recorded::delivered(HistoryEntry::Revoked { message: id, at }))
     }
 
     /// Whether what `change` does to the message `id` is a change to
@@ -291,7 +375,7 @@ impl Chain<HistoryEntry> {
     /// Recorded whether or not it changes a message: telling which would
     /// fold the whole history.
     pub fn fit_into(&mut self, channel: &Classification) {
-        self.append(HistoryEntry::Fitted { channel: channel.clone() });
+        self.enter(Recorded::delivered(HistoryEntry::Fitted { channel: channel.clone() }));
     }
 
     /// Records `item`, what happened that is no change of a message (`is_item`):
@@ -305,12 +389,27 @@ impl Chain<HistoryEntry> {
     /// applies.
     pub fn record(&mut self, item: HistoryEntry) {
         debug_assert!(item.is_item(), "a change is recorded by its own method");
-        self.append(item);
+        self.enter(Recorded::delivered(item));
     }
 
-    /// Appends `entry`, whatever it is, with its digest.
-    fn append(&mut self, entry: HistoryEntry) {
-        self.push_with(entry, digest::history_chain);
+    /// Records `recorded`, as the channel records what enters it (issue
+    /// 417): an item after the last; a change - a modification, a
+    /// revocation, a reclassification - only if it applies, as `modify`,
+    /// `revoke` and `reclassify` say; a fitting always. Returns whether it
+    /// recorded it.
+    pub fn enter(&mut self, recorded: Recorded) -> bool {
+        let applies = match &recorded.entry {
+            HistoryEntry::Modified { message: modified } => self.is_changed(modified.id, |m| m.modify(modified)),
+            HistoryEntry::Revoked { message, at } => self.is_changed(*message, |m| m.revoke(*at)),
+            HistoryEntry::Reclassified { message, classification } => self.is_changed(*message, |m| m.reclassify(classification)),
+            HistoryEntry::Fitted { .. } | HistoryEntry::Said { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
+            | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
+            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => true,
+        };
+        if applies {
+            self.push_with(recorded, digest::history_chain);
+        }
+        applies
     }
 }
 
@@ -374,6 +473,59 @@ impl HistoryEntry {
         }
     }
 
+    /// Whether the entry concerns `participant` by the rule every channel
+    /// delivers by (issue 417): `Envelope::concerns` for what the entry
+    /// records - a message to every user, and to every agent if there is
+    /// something to hear in it; a change of a message and who joined or left
+    /// to every user and agent; how a turn went, what it carried out and
+    /// what came of what it did of its own accord to the users; a
+    /// compaction to nobody. Whether it went back to its sender is not this
+    /// rule's: a reader is given what it sent itself.
+    pub fn concerns(&self, participant: ActorId) -> bool {
+        self.reaches(matches!(participant, ActorId::User(_)), matches!(participant, ActorId::Agent(_)))
+    }
+
+    /// Whether the entry concerns a user, if `user`, or an agent, if
+    /// `agent` (`concerns`).
+    fn reaches(&self, user: bool, agent: bool) -> bool {
+        match self {
+            HistoryEntry::Said { message, .. } => user || (agent && message.is_heard()),
+            HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. }
+            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => user || agent,
+            HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
+            | HistoryEntry::ActivityFinished { .. } => user,
+            HistoryEntry::Compacted { .. } => false,
+        }
+    }
+
+    /// The entry as everybody but its sender may see it (issue 417): a
+    /// message, said or modified, as it is published (`Message::published`),
+    /// `None` if nothing of it is left to show; every other entry as it is.
+    pub fn published(&self) -> Option<HistoryEntry> {
+        match self {
+            HistoryEntry::Said { message, .. } => message.published().map(|message| HistoryEntry::Said { message, context: None }),
+            HistoryEntry::Modified { message } => message.published().map(|message| HistoryEntry::Modified { message }),
+            HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. } | HistoryEntry::TurnFinished { .. }
+            | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. }
+            | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => Some(self.clone()),
+        }
+    }
+
+    /// Whom the entry names as having done what it records: the sender of a
+    /// message said or modified, the actor of a turn's mark, whoever added
+    /// or removed a participant; nobody known for a revocation, a
+    /// reclassification or a fitting. What a holder records as the sender
+    /// of what it was told or did itself (`Recorded::delivered`).
+    fn named_sender(&self) -> ActorId {
+        match self {
+            HistoryEntry::Said { message, .. } | HistoryEntry::Modified { message } => message.sender_id,
+            HistoryEntry::TurnFinished { actor, .. } | HistoryEntry::TurnGivenUp { actor, .. } | HistoryEntry::PlanStepStarted { actor, .. }
+            | HistoryEntry::CommandExecuted { actor, .. } | HistoryEntry::Compacted { actor, .. } | HistoryEntry::ActivityFinished { actor, .. } => *actor,
+            HistoryEntry::ParticipantJoined { by, .. } | HistoryEntry::ParticipantLeft { by, .. } => *by,
+            HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. } => ActorId::None,
+        }
+    }
+
     /// What the message it says was produced from, and in which turn, if
     /// this is one said and both are known: whether what its author saw can
     /// be shown (issue 207).
@@ -394,7 +546,78 @@ mod tests {
     use crate::digest::message_chain;
     use crate::message::tests::{id, make_message};
     use crate::agent::AgentId;
+    use crate::message::MessageRole;
+    use crate::user::UserId;
     use super::testing::{items_of, messages_of, recorded_context};
+
+    /// Issue 417: a reader is given an entry only if it went to them or
+    /// they sent it - an outsider what went to everybody, the channel
+    /// everything -, in full only if they sent it.
+    #[test]
+    fn a_reader_is_given_what_went_to_them_and_what_they_sent_in_full() {
+        use crate::tool::{ToolCall, ToolVisibility};
+        let (agent, other, user, approver) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()), ActorId::Approver(Default::default()));
+        let hidden = ToolCall { id: Some("1".to_string()), function_name: "look".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
+        let answer = Message { sender_id: agent, role: MessageRole::Assistant, content: Some("found it".to_string()), tool_calls: vec![hidden], turn_id: Some(TurnId::new()), ..make_message(id(1)) };
+        let said = Recorded::new(HistoryEntry::Said { message: answer, context: Some(ContextRef::default()) }, agent, Audience::Everybody);
+        let calls = |entry: Option<HistoryEntry>| entry.as_ref().and_then(HistoryEntry::said).map(|m| (m.tool_calls.len(), m.content.clone()));
+
+        assert_eq!(calls(said.as_seen_by(&Reader::Participant(agent))), Some((1, Some("found it".to_string()))), "its sender, in full");
+        assert!(said.as_seen_by(&Reader::Participant(agent)).and_then(|e| e.context().map(|_| ())).is_some(), "with what it was produced from");
+        for reader in [Reader::Participant(user), Reader::Participant(other), Reader::Outsider] {
+            let seen = said.as_seen_by(&reader);
+            assert_eq!(calls(seen.clone()), Some((0, Some("found it".to_string()))), "{reader:?}: as it was published");
+            assert!(seen.and_then(|e| e.context().map(|_| ())).is_none(), "{reader:?}: without what it was produced from");
+        }
+        assert!(said.as_seen_by(&Reader::Participant(approver)).is_none(), "it concerns no approver");
+        assert_eq!(calls(said.as_seen_by(&Reader::Channel)), Some((1, Some("found it".to_string()))), "the channel, as it was recorded");
+
+        let step = Recorded::new(HistoryEntry::Said { message: Message { sender_id: agent, internal: true, ..make_message(id(2)) }, context: None }, agent, Audience::Everybody);
+        assert!(step.as_seen_by(&Reader::Participant(user)).is_some() && step.as_seen_by(&Reader::Participant(other)).is_none(), "a step of a plan: the users', no other agent's");
+        let ended = Recorded::new(HistoryEntry::TurnFinished { turn_id: TurnId::new(), actor: agent, at: Utc::now() }, agent, Audience::Everybody);
+        assert!(ended.as_seen_by(&Reader::Participant(agent)).is_some() && ended.as_seen_by(&Reader::Participant(other)).is_none(), "a turn's end: its own and the users'");
+
+        let to_one = Recorded::new(HistoryEntry::Said { message: make_message(id(3)), context: None }, ActorId::System, Audience::Only(vec![user]));
+        assert!(to_one.as_seen_by(&Reader::Participant(user)).is_some(), "whom it went to");
+        assert!(to_one.as_seen_by(&Reader::Participant(ActorId::User(UserId::new()))).is_none(), "no other user");
+        assert!(to_one.as_seen_by(&Reader::Outsider).is_none(), "nor an outsider: it did not go to everybody");
+        let to_nobody = Recorded::new(HistoryEntry::Said { message: Message { sender_id: agent, ..make_message(id(4)) }, context: None }, agent, Audience::Only(Vec::new()));
+        assert!(to_nobody.as_seen_by(&Reader::Participant(agent)).is_some() && to_nobody.as_seen_by(&Reader::Participant(user)).is_none(), "to nobody: its sender alone");
+    }
+
+    /// Issue 417: what the history records of an envelope concerns whom the
+    /// envelope concerned - one rule, read off the event and off the entry.
+    #[test]
+    fn an_entry_concerns_whom_its_envelope_concerned() {
+        use crate::actor::{ActorEvent, Envelope, EventContext};
+        use crate::security::SecurityContext;
+        let (agent, user) = (ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()));
+        let turn_id = TurnId::new();
+        let heard = Message { sender_id: agent, role: MessageRole::Assistant, content: Some("hello".to_string()), ..make_message(id(1)) };
+        let unheard = Message { internal: true, ..heard.clone() };
+        let events = [
+            ActorEvent::CompleteMessageGenerated(heard.clone()),
+            ActorEvent::IntermediateMessageGenerated(unheard),
+            ActorEvent::TurnFinished { turn_id, messages: vec![heard.clone()] },
+            ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Left },
+            ActorEvent::PlanStepStarted { turn_id, step_index: 0, total_steps: 1, description: "first".to_string() },
+            ActorEvent::CommandExecuted { command: "compact".to_string(), args: String::new(), output: "done".to_string(), to: None, turn_id: Some(turn_id) },
+            ActorEvent::ActivityFinished { turn_id, activity: "compacting".to_string(), output: "done".to_string() },
+            ActorEvent::ParticipantJoined { participant: user, name: "user".to_string() },
+            ActorEvent::ParticipantLeft { participant: user, name: "user".to_string() },
+            ActorEvent::MessageModified(heard.clone()),
+            ActorEvent::MessageRevoked { message: heard.id, at: Utc::now() },
+            ActorEvent::MessageReclassified { message: heard.id, classification: Classification::PUBLIC },
+        ];
+        for event in events {
+            let kind = event.kind();
+            let envelope = Envelope::new(SecurityContext::default(), EventContext { sender_id: agent, ..EventContext::default() }, event);
+            let entry = envelope.entry().unwrap_or_else(|| panic!("{kind} is recorded"));
+            for participant in [user, ActorId::Agent(AgentId::new()), ActorId::Approver(Default::default())] {
+                assert_eq!(entry.concerns(participant), envelope.concerns(participant), "{kind} for {participant}");
+            }
+        }
+    }
 
     #[test]
     fn a_turn_given_up_is_found_while_its_end_is_the_last_thing() {
@@ -545,8 +768,8 @@ mod tests {
 
         let loaded: History = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         let entries: Vec<_> = loaded.all_entries().collect();
-        assert_eq!(entries[0].entry.context(), None, "said by someone else");
-        assert_eq!(entries[1].entry.context(), Some((&reference, turn)), "with the turn it was produced in");
+        assert_eq!(entries[0].entry.entry.context(), None, "said by someone else");
+        assert_eq!(entries[1].entry.entry.context(), Some((&reference, turn)), "with the turn it was produced in");
         assert_eq!(recorded_context(&loaded, id(2)), Some((reference.clone(), turn)), "found by its message");
         assert_eq!(recorded_context(&loaded, id(1)), None);
         assert_eq!(loaded.digest(), history.digest());
