@@ -26,6 +26,11 @@ behind it, in order, then commit once (`AgentBody::take_in`):
     transcript. A failing stage is logged; what was heard stays in the history and is not offered
     again. Perceiving begins no turn and asks nothing of the policy. An external agent perceives by
     the same rule.
+*   **Take note.** That someone joined or left the channel (`ParticipantJoined`, `ParticipantLeft`,
+    issue 408) is recorded as the channel records it, into the history and into the transcript
+    (`AgentChannelState::note_announced`), where it happened among what was heard - also what
+    happened while the agent was not there, as it catches up. It begins no turn: the next one is
+    told of it.
 *   **Begin.** The last request to respond among what was taken in begins one turn; the earlier
     ones are dropped. The one turn answers the conversation as it stands, having heard every
     message, and acts in the contexts of the last request - with the authority of the last who
@@ -534,6 +539,14 @@ keeps its conversation, the first three take `changes_only`: told once, then onl
 with their introductions, read at the start of every turn. A person's introduction is marked as
 written by them, so that it does not read as an instruction of the system, and kept to one line. It
 also says that `@all` addresses all of them, and explains how the others' messages are marked.
+
+That the roster changed is told where it happened: a transcript entry of someone who joined or left
+is given to the model as the channel's notice - "Channel notice: @alice added @bob to the channel.",
+"... joined", "... left", "... was removed", the agent itself as "you" - named in the `sender_style`
+of its profile and unmarked by any participant, as a system message where the model keeps one
+(`SystemMessages`), else as a user message. The ContextResolver words it, so that the transcript
+keeps what happened rather than words; an external agent's remote agent is given the same
+(`ModelProfile::given_messages`).
 
 ### The channel's language
 

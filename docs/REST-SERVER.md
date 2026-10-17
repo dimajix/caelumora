@@ -268,8 +268,9 @@ within a turn - compacting its context - begins with `ActivityStarted` and ends 
 
 A history - the channel's and an agent's - is a list of items in the order they happened: messages
 said, where a step of a plan began, how turns ended, commands an agent carried out, what an agent
-did of its own accord and what came of it (`activity_finished`), and - in an agent's history only -
-compactions of its context. Read from another channel, a history holds only
+did of its own accord and what came of it (`activity_finished`), who joined or left the channel,
+by whose act and named as they were then (`participant_joined`, `participant_left`), and - in an
+agent's history only - compactions of its context. Read from another channel, a history holds only
 the messages released, and neither a turn's end nor the start of a step.
 
 Both histories are read in pages, alike (issue 218): `?limit=` items (50 unless asked, at most 200)

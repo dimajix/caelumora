@@ -136,8 +136,13 @@ impl Moderator for PolicyModerator {
             ActorEvent::QuestionClosed { .. } => {
                 self.actors().route_question_events(event)
             }
-            ActorEvent::TurnGivenUp { .. } | ActorEvent::CommandExecuted { to: None, .. } | ActorEvent::ParticipantRemoved { .. } => {
+            ActorEvent::TurnGivenUp { .. } | ActorEvent::CommandExecuted { to: None, .. } => {
                 self.actors().route_to_users(event)
+            }
+            // Who joined or left (issue 408): everybody, the agents to take
+            // note of it, and also whose name it is told in.
+            ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } => {
+                self.actors().route_to_everybody(event)
             }
             // A command for an agent goes to it alone; that it began to the
             // issuer alone (issue 299), and what it answers too, unless the
@@ -309,6 +314,15 @@ impl ModeratorActors {
         self.user_actors.keys()
             .chain(self.agent_actors.keys())
             .filter(|id| **id != event.context.sender_id)
+            .map(|id| (*id, event.clone()))
+            .collect()
+    }
+
+    /// Forwards `event` to every user and every agent in the channel, its
+    /// sender too: what the channel announces in someone's name (issue 408).
+    fn route_to_everybody(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+        self.user_actors.keys()
+            .chain(self.agent_actors.keys())
             .map(|id| (*id, event.clone()))
             .collect()
     }
@@ -864,17 +878,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn every_moderator_forwards_a_removal_to_the_users_only() {
+    async fn every_moderator_tells_everybody_who_joined_or_left_and_asks_nobody() {
         for moderator in moderators() {
             let agents = add_agents(&moderator);
             let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+            moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
             moderator.add_actor(Arc::new(StandIn::new(other, "test", ActorState::Idle)));
-            let event = envelope(user, ActorEvent::ParticipantRemoved { participant: agents[0] });
+            let added = envelope(user, ActorEvent::ParticipantJoined { participant: other, name: "other".to_string() });
+            let removed = envelope(user, ActorEvent::ParticipantLeft { participant: agents[0], name: "agent".to_string() });
 
-            let decision = moderator.route(&event).await;
+            for event in [added, removed] {
+                let decision = moderator.route(&event).await;
 
-            assert!(decision.iter().all(|(to, _)| !agents.contains(to)), "{:?} must not route a removal to agents", moderator);
-            assert!(decision.iter().any(|(to, _)| *to == other), "{:?} must tell the users", moderator);
+                let told: Vec<ActorId> = decision.iter().map(|(to, _)| *to).collect();
+                assert!(agents[1..].iter().all(|agent| told.contains(agent)), "{:?} must tell the agents (issue 408)", moderator);
+                assert!(told.contains(&other) && told.contains(&user), "{:?} must tell the users, whose name it is told in too", moderator);
+                assert!(responders(&decision).is_empty(), "{:?} must ask nobody to respond", moderator);
+            }
         }
     }
 

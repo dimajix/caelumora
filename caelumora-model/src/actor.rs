@@ -2,6 +2,7 @@ use crate::agent::{AgentId, RetryRefused};
 use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApproverId};
 use crate::channel::ChannelId;
 use crate::confidentiality::Classification;
+use crate::history::HistoryEntry;
 use crate::message::{Message, MessageId};
 use crate::question::{QuestionId, QuestionRequest, Response};
 use crate::security::SecurityContext;
@@ -272,15 +273,30 @@ pub enum ActorEvent {
         activity: String,
         output: String,
     },
-    /// `participant` was removed from the channel (issue 162). The envelope's
-    /// sender is who removed it - the runtime itself, `ActorId::System`, if
-    /// nobody did. Sent by the channel once the participant's actor no longer
-    /// runs in it: nothing of the participant follows, so whatever of it was
-    /// under way - a turn, a call of a tool - has ended.
+    /// `participant`, called `name`, joined the channel (issue 408). The
+    /// envelope's sender is who added it - the participant itself if it
+    /// joined by itself, the runtime, `ActorId::System`, if an agent was
+    /// restored. Sent by the channel alone, as the participant's actor
+    /// starts, so that it is the first thing the newcomer hears.
     ///
-    /// Shown to users and never written to the history.
-    ParticipantRemoved {
+    /// The channel records it in its history (`HistoryEntry::
+    /// ParticipantJoined`), and everybody is told - the agents too, which
+    /// take note of it without responding -, also whose name it is told in.
+    ParticipantJoined {
         participant: ActorId,
+        name: String,
+    },
+    /// `participant`, called `name`, left the channel (issues 162, 408). The
+    /// envelope's sender is who removed it - the runtime itself,
+    /// `ActorId::System`, if nobody did. Sent by the channel alone, once the
+    /// participant's actor no longer runs in it: nothing of the participant
+    /// follows, so whatever of it was under way - a turn, a call of a tool -
+    /// has ended.
+    ///
+    /// Recorded and told as `ParticipantJoined` is.
+    ParticipantLeft {
+        participant: ActorId,
+        name: String,
     },
     /// A chain between agents reached its limit (issue 200): the response
     /// ending in `message` was delivered, but it made nobody respond, since
@@ -433,6 +449,13 @@ impl ActorEvent {
         }
     }
 
+    /// Whether it is the channel's own word, which no actor sends: who
+    /// joined or left (issue 408). It reaches whose name it is told in,
+    /// too - nothing of theirs is echoed back to them.
+    pub fn is_announcement(&self) -> bool {
+        matches!(self, ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. })
+    }
+
     /// The variant's name, for logs - never the payload, which may carry
     /// message content.
     pub fn kind(&self) -> &'static str {
@@ -465,7 +488,8 @@ impl ActorEvent {
             ActorEvent::CommandFailed { .. } => "CommandFailed",
             ActorEvent::ActivityStarted { .. } => "ActivityStarted",
             ActorEvent::ActivityFinished { .. } => "ActivityFinished",
-            ActorEvent::ParticipantRemoved { .. } => "ParticipantRemoved",
+            ActorEvent::ParticipantJoined { .. } => "ParticipantJoined",
+            ActorEvent::ParticipantLeft { .. } => "ParticipantLeft",
             ActorEvent::ChainCutOff { .. } => "ChainCutOff",
             ActorEvent::MessageModified(_) => "MessageModified",
             ActorEvent::MessageRevoked { .. } => "MessageRevoked",
@@ -583,6 +607,21 @@ impl Envelope {
         }
     }
 
+    /// What the channel's history records of this envelope if it is an
+    /// announcement of the channel's own (`ActorEvent::is_announcement`,
+    /// issue 408): who joined or left, by its sender, when it was sent.
+    /// `None` for any other event.
+    pub fn announced(&self) -> Option<HistoryEntry> {
+        let by = self.context.sender_id;
+        let by_name = self.context.sender_name.clone();
+        let at = self.timestamp;
+        match &self.event {
+            ActorEvent::ParticipantJoined { participant, name } => Some(HistoryEntry::ParticipantJoined { participant: *participant, name: name.clone(), by, by_name, at }),
+            ActorEvent::ParticipantLeft { participant, name } => Some(HistoryEntry::ParticipantLeft { participant: *participant, name: name.clone(), by, by_name, at }),
+            _ => None,
+        }
+    }
+
     /// Short, human-readable summary of this envelope's event, used for logging.
     pub fn describe(&self) -> String {
         let ctx = &self.context;
@@ -636,8 +675,11 @@ impl Envelope {
             ActorEvent::CommandFailed { command, to, .. } => {
                 format!("CommandFailed(sender_id={}, sender_name={}, command={}, to={})", ctx.sender_id, ctx.sender_name, command, to)
             }
-            ActorEvent::ParticipantRemoved { participant } => {
-                format!("ParticipantRemoved(sender_id={}, sender_name={}, participant={})", ctx.sender_id, ctx.sender_name, participant)
+            ActorEvent::ParticipantJoined { participant, .. } => {
+                format!("ParticipantJoined(sender_id={}, sender_name={}, participant={})", ctx.sender_id, ctx.sender_name, participant)
+            }
+            ActorEvent::ParticipantLeft { participant, .. } => {
+                format!("ParticipantLeft(sender_id={}, sender_name={}, participant={})", ctx.sender_id, ctx.sender_name, participant)
             }
             ActorEvent::ChainCutOff { message, max_agent_hops, not_asked } => {
                 format!("ChainCutOff(sender_id={}, message={}, max_agent_hops={}, not_asked={})", ctx.sender_id, message, max_agent_hops, not_asked.len())

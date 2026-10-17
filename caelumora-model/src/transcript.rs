@@ -1,9 +1,12 @@
 //! An agent's transcript (issue 50): the chain of messages its context is
 //! built from, their modifications and revocations (issue 234) and how each
-//! of its turns ended (issues 145, 258) and where a compaction's part of a
-//! branch ends (issue 387), as what happened (issue 197).
+//! of its turns ended (issues 145, 258), where a compaction's part of a
+//! branch ends (issue 387) and who joined or left its channel (issue 408), as
+//! what happened (issue 197).
 
 use crate::chain::{Chain, Node};
+use crate::actor::ActorId;
+use crate::history::HistoryEntry;
 use crate::confidentiality::Classification;
 use crate::context::KnowledgeSource;
 use crate::digest::Digest;
@@ -56,6 +59,13 @@ pub enum TranscriptEntry {
     /// stands. A message before it carries the measure of a call made on
     /// another branch (`Message::prompt_tokens`). Gives the model nothing.
     Compacted { at: DateTime<Utc> },
+    /// `participant` joined the channel, as the channel's history records
+    /// it (`HistoryEntry::ParticipantJoined`, issue 408), noted by the agent
+    /// where it was told of it. No message: the model is told of it in the
+    /// words its `ContextResolver` gives it.
+    ParticipantJoined { participant: ActorId, name: String, by: ActorId, by_name: String, at: DateTime<Utc> },
+    /// `participant` left the channel, as `ParticipantJoined` says.
+    ParticipantLeft { participant: ActorId, name: String, by: ActorId, by_name: String, at: DateTime<Utc> },
 }
 
 /// An agent's transcript (issue 50): the sequence of messages its context is
@@ -227,26 +237,43 @@ impl Chain<TranscriptEntry> {
 }
 
 impl TranscriptEntry {
+    /// What the transcript records of `entry` of the channel's history that
+    /// the agent is told of rather than hears (issue 408): who joined or
+    /// left. `None` for any other entry.
+    pub fn of_announced(entry: &HistoryEntry) -> Option<Self> {
+        match entry {
+            HistoryEntry::ParticipantJoined { participant, name, by, by_name, at } => {
+                Some(TranscriptEntry::ParticipantJoined { participant: *participant, name: name.clone(), by: *by, by_name: by_name.clone(), at: *at })
+            }
+            HistoryEntry::ParticipantLeft { participant, name, by, by_name, at } => {
+                Some(TranscriptEntry::ParticipantLeft { participant: *participant, name: name.clone(), by: *by, by_name: by_name.clone(), at: *at })
+            }
+            _ => None,
+        }
+    }
+
     /// The message, if this is one.
     pub fn message(&self) -> Option<&Message> {
         match self {
             TranscriptEntry::Message(message) | TranscriptEntry::Given { message, .. } => Some(message),
             TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. }
-            | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } | TranscriptEntry::Compacted { .. } => None,
+            | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } | TranscriptEntry::Compacted { .. }
+            | TranscriptEntry::ParticipantJoined { .. } | TranscriptEntry::ParticipantLeft { .. } => None,
         }
     }
 
     /// The copy of the entry a compaction keeps on a branch of its own
     /// (issue 16), given `standing`, its message as it stands on its path
     /// (`as_they_stand`): a message as it stands - a change of it is in the
-    /// copy -, none if it was taken back; a turn's end as it is. Nothing of
+    /// copy -, none if it was taken back; a turn's end and a change of who
+    /// takes part as they are. Nothing of
     /// a change, which is in the copy of its message, nor of an earlier
     /// compaction's end, which ends what that compaction wrote.
     pub(crate) fn copy_standing(&self, standing: Option<Message>) -> Option<TranscriptEntry> {
         match (self, standing) {
             (TranscriptEntry::Message(_), Some(message)) => Some(TranscriptEntry::Message(message)),
             (TranscriptEntry::Given { source, .. }, Some(message)) => Some(TranscriptEntry::Given { message, source: *source }),
-            (TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }, _) => Some(self.clone()),
+            (TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } | TranscriptEntry::ParticipantJoined { .. } | TranscriptEntry::ParticipantLeft { .. }, _) => Some(self.clone()),
             (TranscriptEntry::Message(_) | TranscriptEntry::Given { .. }, None)
             | (TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. } | TranscriptEntry::Compacted { .. }, _) => None,
         }
@@ -257,7 +284,7 @@ impl TranscriptEntry {
         match self {
             TranscriptEntry::TurnFinished { turn_id, .. } | TranscriptEntry::TurnGivenUp { turn_id, .. } => Some(*turn_id),
             TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::Modified { .. } | TranscriptEntry::Revoked { .. } | TranscriptEntry::Reclassified { .. }
-            | TranscriptEntry::Compacted { .. } => None,
+            | TranscriptEntry::Compacted { .. } | TranscriptEntry::ParticipantJoined { .. } | TranscriptEntry::ParticipantLeft { .. } => None,
         }
     }
 
@@ -268,7 +295,8 @@ impl TranscriptEntry {
         match self {
             TranscriptEntry::Message(message) | TranscriptEntry::Given { message, .. } | TranscriptEntry::Modified { message } => Some(&message.classification),
             TranscriptEntry::Reclassified { classification, .. } => Some(classification),
-            TranscriptEntry::Revoked { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } | TranscriptEntry::Compacted { .. } => None,
+            TranscriptEntry::Revoked { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } | TranscriptEntry::Compacted { .. }
+            | TranscriptEntry::ParticipantJoined { .. } | TranscriptEntry::ParticipantLeft { .. } => None,
         }
     }
 
@@ -278,7 +306,7 @@ impl TranscriptEntry {
             TranscriptEntry::Modified { message } => Some(message.id),
             TranscriptEntry::Revoked { message, .. } | TranscriptEntry::Reclassified { message, .. } => Some(*message),
             TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }
-            | TranscriptEntry::Compacted { .. } => None,
+            | TranscriptEntry::Compacted { .. } | TranscriptEntry::ParticipantJoined { .. } | TranscriptEntry::ParticipantLeft { .. } => None,
         }
     }
 
@@ -295,7 +323,7 @@ impl TranscriptEntry {
                 message.reclassify(classification);
             }
             TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. }
-            | TranscriptEntry::Compacted { .. } => {}
+            | TranscriptEntry::Compacted { .. } | TranscriptEntry::ParticipantJoined { .. } | TranscriptEntry::ParticipantLeft { .. } => {}
         }
     }
 }

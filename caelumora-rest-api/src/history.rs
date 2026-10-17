@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 /// where a step of a turn's plan began (issue 263) or how a turn ended, and
 /// whose it was. Written as an object named by its kind: `{"said": …}`,
 /// `{"plan_step_started": {…}}`, `{"turn_finished": {…}}`,
-/// `{"turn_given_up": {…}}`, `{"command_executed": {…}}`, `{"compacted": {…}}`.
+/// `{"turn_given_up": {…}}`, `{"command_executed": {…}}`, `{"compacted": {…}}`,
+/// `{"participant_joined": {…}}`, `{"participant_left": {…}}`.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryItemResponse<M> {
@@ -30,6 +31,11 @@ pub enum HistoryItemResponse<M> {
     /// An agent ended an activity of its own accord in its turn, and what
     /// came of it (issue 284).
     ActivityFinished { turn_id: TurnId, actor: ActorId, activity: String, output: String, at: DateTime<Utc> },
+    /// Someone joined the channel, by the act of `by` (issue 408); the
+    /// names as they were then.
+    ParticipantJoined { participant: ActorId, name: String, by: ActorId, by_name: String, at: DateTime<Utc> },
+    /// Someone left the channel, as `ParticipantJoined` says.
+    ParticipantLeft { participant: ActorId, name: String, by: ActorId, by_name: String, at: DateTime<Utc> },
 }
 
 impl<M> HistoryItemResponse<M> {
@@ -45,6 +51,8 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, at } => Some(Self::CommandExecuted { turn_id, actor, issuer, command, args, at }),
             HistoryEntry::Compacted { turn_id, actor, from, to, at } => Some(Self::Compacted { turn_id, actor, from, to, at }),
             HistoryEntry::ActivityFinished { turn_id, actor, activity, output, at } => Some(Self::ActivityFinished { turn_id, actor, activity, output, at }),
+            HistoryEntry::ParticipantJoined { participant, name, by, by_name, at } => Some(Self::ParticipantJoined { participant, name, by, by_name, at }),
+            HistoryEntry::ParticipantLeft { participant, name, by, by_name, at } => Some(Self::ParticipantLeft { participant, name, by, by_name, at }),
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
         }
     }
@@ -144,6 +152,11 @@ mod tests {
         let finished = HistoryItemResponse::<Message>::of(HistoryEntry::ActivityFinished { turn_id: turn, actor, activity: "compacting its context".to_string(), output: "done".to_string(), at: Utc::now() }, |m| m).unwrap();
         let json = serde_json::to_value(finished).unwrap();
         assert_eq!((json["activity_finished"]["activity"].clone(), json["activity_finished"]["output"].clone()), (serde_json::json!("compacting its context"), serde_json::json!("done")));
+        let joined = HistoryItemResponse::<Message>::of(HistoryEntry::ParticipantJoined { participant: issuer, name: "bob".to_string(), by: actor, by_name: "alice".to_string(), at: Utc::now() }, |m| m).unwrap();
+        let json = serde_json::to_value(joined).unwrap();
+        assert_eq!((json["participant_joined"]["name"].clone(), json["participant_joined"]["by_name"].clone()), (serde_json::json!("bob"), serde_json::json!("alice")));
+        let left = HistoryItemResponse::<Message>::of(HistoryEntry::ParticipantLeft { participant: issuer, name: "bob".to_string(), by: issuer, by_name: "bob".to_string(), at: Utc::now() }, |m| m).unwrap();
+        assert_eq!(serde_json::to_value(left).unwrap()["participant_left"]["by"], serde_json::to_value(issuer).unwrap());
         assert!(HistoryItemResponse::<Message>::of(HistoryEntry::Fitted { channel: Classification::PUBLIC }, |m| m).is_none(), "a change is in the message it changed");
     }
 

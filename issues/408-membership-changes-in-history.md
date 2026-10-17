@@ -1,6 +1,6 @@
 # 408 — Who joins or leaves a channel is not recorded in its history
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -141,3 +141,48 @@ Recommended: (a). It follows how the history already records what is not a messa
 ## History
 
 - **2026-10-17** — Issue created.
+- **2026-10-17** — Decided with the maintainer: a change of membership is told in the channel as
+  a pair of `ActorEvent`s, `ParticipantAdded { participant }` beside the existing
+  `ParticipantRemoved { participant }`, sent by the channel itself in the name of whoever acted -
+  the same pattern as `ActivityFinished` or `TurnGivenUp`: the event is the live form, the channel
+  records it in its history (`HistoryEntry::ParticipantAdded`, `HistoryEntry::ParticipantRemoved`),
+  and these two are what the web UI shows. This settles option (a) and the open question about
+  `ParticipantRemoved`: it stays, and is now stored. No kinds for "joined" or "left": the wording
+  follows from the sender and the participant - another sender "has added"/"has removed", the
+  participant itself "has joined"/"has left", `System` "was removed" -, in the web UI as in the
+  `ContextResolver`. What changes against today:
+  - Both events reach the agents as well, not only the users: into their history and transcript,
+    beginning no turn. "Never written to the history" no longer holds for `ParticipantRemoved`.
+  - The stored entry carries the time and the handles and names of the participant and of whoever
+    acted, as of the change, beside their ids; who acted is the sender of the envelope.
+  - `ParticipantRemoved` keeps its other role - the frontend ends what the removed actor left under
+    way - and its moment: once the actor's task has ended, after what it still sent.
+    `ParticipantAdded` is sent once the newcomer's history boundary is fixed and before its actor
+    starts, so that the newcomer hears it first.
+  - The event bus's `UserChannelJoined`/`Left`, `AgentChannelJoined`/`Left` stay, for subscribers
+    outside the channel - a user's list of channels, say.
+- **2026-10-17** — Naming settled with the maintainer, deviating from the entry before: what
+  happened to someone's taking part is named *joined* and *left*, whoever caused it - who did is
+  the sender or `by` -, as the event bus (`channel::JOINED`, `channel::LEFT`) and the views
+  (`FormerParticipant.left`) already say; *added* and *removed* stay the names of the acts
+  (`add_participant`, `remove_participant`). No payload type of its own: "membership" names groups
+  in this code base. The naming that is still uneven - participant and member, the session's
+  `ParticipantAdded` - is issue [409](409-participant-and-member.md).
+- **2026-10-17** — Implemented. `ActorEvent::ParticipantJoined` and `ParticipantLeft` (the latter
+  in place of `ParticipantRemoved`) carry the participant and its name; the channel announces them
+  itself (`ChannelLoop::announce`) in the name of whoever made the change - a join as the
+  newcomer's actor starts, a leave once its task has ended - and `admission` refuses them from any
+  actor (`ActorEvent::is_announcement`). The history records them as
+  `HistoryEntry::ParticipantJoined`/`ParticipantLeft { participant, name, by, by_name, at }`
+  (`Envelope::announced`); the moderator tells everybody, also whose name it is told in, which
+  `route_event_impl` no longer holds back from its sender. Agents note them into history and
+  transcript without beginning a turn (`AgentChannelState::note_announced`), also as they catch up
+  after joining again, in order with what was said; the `ContextResolver` gives the model "Channel
+  notice: @alice added @bob to the channel." and the other forms, the agent itself as "you", and
+  an external agent's remote agent is given the same (`ModelProfile::given_messages`). REST:
+  `participant_joined`/`participant_left` items; the web UI shows them as a line of their own in
+  the chat and in an agent's history panel, the TUI prints them. Not done: a resting agent removed
+  from a channel is not announced (nothing of it runs); `read_history` still gives messages alone;
+  an external agent with a `changes_only` roster is told a join twice - by the roster's "Since you
+  were last told who is here" and by the notice (issue [410](410-roster-changes-told-twice.md)).
+  Stored data need not be deleted: the entries are new variants. Status set to done.

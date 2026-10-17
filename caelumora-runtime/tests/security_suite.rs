@@ -232,6 +232,8 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     let theirs = reach(world.alice).await.unwrap();
     let page = theirs.history_page(None, 1).await.unwrap();
     assert_eq!(texts(&page.items), ["after bob"]);
+    let page = theirs.history_page(page.earlier, 1).await.unwrap();
+    assert!(matches!(page.items.as_slice(), [HistoryEntry::ParticipantJoined { participant, .. }] if *participant == ActorId::User(world.bob)), "where bob joined (issue 408): {:?}", page.items);
     assert_eq!(texts(&theirs.history_page(page.earlier, 1).await.unwrap().items), ["before bob"], "alice reads it all, page by page");
 
     let (his, asked) = world.asked(async {
@@ -241,6 +243,7 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes"]), "reaching the channel, cleared for it; reading in it asks nothing more");
     let (page, refused, read) = his;
     assert_eq!((texts(&page.items), page.earlier), (vec!["after bob".to_string()], None), "bob from where he was taken in");
+    assert!(matches!(page.items.first(), Some(HistoryEntry::ParticipantJoined { participant, .. }) if *participant == ActorId::User(world.bob)), "his own join first");
     assert!(matches!(refused, Err(ViewError::MessageNotFound { .. })), "not what was said before");
     assert_eq!(read.expect("what he sees").id, after);
     assert!(matches!(reach(world.carol).await, Err(ViewError::SessionNotFound(_))), "carol finds nothing of it");

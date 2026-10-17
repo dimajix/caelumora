@@ -804,6 +804,8 @@ impl Actor for AgentActor {
                     | ActorEvent::RetryRequested { .. }
                     | ActorEvent::ResponseRequested
                     | ActorEvent::CommandRequested { .. }
+                    | ActorEvent::ParticipantJoined { .. }
+                    | ActorEvent::ParticipantLeft { .. }
             )
         }
     }

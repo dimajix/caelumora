@@ -2,7 +2,7 @@
 
 import type {ActorId, GivenUpReason, HistoryItem, Message, PlanStep, TokenUsage, ToolResult, ToolVisibility} from './types';
 import {classificationLabel} from './confidentiality';
-import {actorKey} from './mention';
+import {actorKey, handleOf} from './mention';
 
 /** Whether `message` was said by `me` (issue 407); one without a sender is no one's own. */
 export function isOwn(message: Message, me: ActorId): boolean {
@@ -171,13 +171,45 @@ export function activityUnderWay(turnId: string): string {
   return `activity:${turnId}:under-way`;
 }
 
+/** How the chat names someone called `name` in a notice: by handle, as a mention would. */
+function named(name: string): string {
+  const handle = handleOf(name);
+  return handle ? `@${handle}` : name;
+}
+
+/**
+ * The notice that `participant`, called `name`, joined or left the channel
+ * (issue 408), as the chat shows it - live and from the history alike, named
+ * for whom and when so that it is shown once: by their own act, the system's,
+ * or that of `by`, called `byName`.
+ */
+export function participantNotice(change: 'joined' | 'left', participant: ActorId, name: string, by: ActorId, byName: string, at: string): Message {
+  const who = named(name);
+  const joined = change === 'joined';
+  const content = actorKey(by) === actorKey(participant)
+    ? `${who} has ${change} the channel`
+    : actorKey(by) === 'System'
+      ? `${who} was ${joined ? 'added to' : 'removed from'} the channel`
+      : `${named(byName)} has ${joined ? 'added' : 'removed'} ${who} ${joined ? 'to' : 'from'} the channel`;
+  return {
+    id: `participant-${change}:${actorKey(participant)}:${at}`,
+    role: 'System',
+    content,
+    sender_id: by,
+    sender_name: byName,
+    participant: change,
+    timestamp: at,
+  };
+}
+
 /**
  * The chat's messages for `items` of a channel's history (issue 258): each
  * message said, the mark of each step of a plan begun (issue 263), the
  * notice of a turn given up, that of a command an agent carried out
- * (issue 269) and that of what it did of its own accord (issue 284) -
- * whose, as `nameOf` names them. A turn that finished shows
- * nothing of its own.
+ * (issue 269), that of what it did of its own accord (issue 284) -
+ * whose, as `nameOf` names them - and that of who joined or left (issue
+ * 408), named as they were then. A turn that finished shows nothing of its
+ * own.
  */
 export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: ActorId) => string | undefined): Message[] {
   return items.flatMap((item): Message[] => {
@@ -197,6 +229,14 @@ export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: Acto
     if ('activity_finished' in item) {
       const {turn_id, actor, activity, output, at} = item.activity_finished;
       return [activityNotice(turn_id, activity, actor, nameOf(actor), at, output)];
+    }
+    if ('participant_joined' in item) {
+      const {participant, name, by, by_name, at} = item.participant_joined;
+      return [participantNotice('joined', participant, name, by, by_name, at)];
+    }
+    if ('participant_left' in item) {
+      const {participant, name, by, by_name, at} = item.participant_left;
+      return [participantNotice('left', participant, name, by, by_name, at)];
     }
     return [];
   });

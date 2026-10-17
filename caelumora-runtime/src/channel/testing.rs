@@ -190,9 +190,14 @@ impl ChannelLoop {
     /// The messages `participant` sees of the history, read from the store
     /// from where its view begins, as a view reads them (issue 379).
     pub async fn visible_messages(&self, participant: ActorId) -> Vec<Message> {
+        self.visible_entries(participant).await.iter().filter_map(HistoryEntry::said).cloned().collect()
+    }
+
+    /// The entries `participant` sees of the history, as `visible_messages`
+    /// reads them: who joined or left among them (issue 408).
+    pub async fn visible_entries(&self, participant: ActorId) -> Vec<HistoryEntry> {
         let Some(from) = self.visible_from(participant).await.expect("the history is read") else { return Vec::new() };
-        let page = self.history_store.page(HistoryKey::Channel(self.id), from, None, 10_000, &every).await.expect("the history is read");
-        page.items.iter().filter_map(HistoryEntry::said).cloned().collect()
+        self.history_store.page(HistoryKey::Channel(self.id), from, None, 10_000, &every).await.expect("the history is read").items
     }
 
     /// Where `participant`'s view of the history begins (`Channel::history_start_of`).

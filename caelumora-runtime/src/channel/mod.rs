@@ -194,11 +194,14 @@ async fn stopped(tasks: &[TaskTracker]) -> bool {
 /// A change to the actors a running channel runs (issue 46), carried out by
 /// `run`, which owns their tasks.
 enum ActorChange {
-    Start(ChannelActor),
-    /// The actor that leaves, and on whose behalf it was removed - in whose
-    /// name `run` announces it once its task has ended (`ParticipantRemoved`,
-    /// issues 162, 262).
-    Leave(ActorId, SecurityContext),
+    /// The actor that joins, and on whose behalf it was added - in whose
+    /// name `run` announces it as it starts it (`ParticipantJoined`, issue
+    /// 408).
+    Start(ChannelActor, SecurityContext),
+    /// The actor that leaves, what it was called as it left, and on whose
+    /// behalf it was removed - in whose name `run` announces it once its
+    /// task has ended (`ParticipantLeft`, issues 162, 262, 408).
+    Leave(ActorId, Name, SecurityContext),
 }
 
 #[derive(Debug)]
