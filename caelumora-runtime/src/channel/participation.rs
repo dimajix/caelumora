@@ -44,7 +44,7 @@ pub(crate) enum ResolvedKind {
 
 /// The question who takes part in a channel and whether they may, with the
 /// services it is asked with (issue 356): the store of the agents - whether
-/// one exists -, the controllers members are built from, the
+/// one exists -, the controllers participants are built from, the
 /// `AccessPolicy` and the `ConfidentialityPolicy`. One for the instance,
 /// held by the `RuntimeManager`, asked by the session and channel loops and
 /// the `SessionManager` alike - when a channel is created, restored or

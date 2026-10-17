@@ -47,7 +47,7 @@ impl Secured for PublishedEvent {
 impl PublishedEvent {
     /// What a party must be allowed to receive this event: to read the
     /// entity it is about - the same question the `EntityStore` asks. What
-    /// happens to a channel's members and to an agent's state in it is an
+    /// happens to a channel's participants and to an agent's state in it is an
     /// event of the channel, and goes by its attributes (issue 304).
     fn read_action(&self) -> ActionType<'_> {
         ActionType::get(self.event.kind, self.security_attributes())
@@ -301,7 +301,7 @@ impl EventBus {
         if let Some((sid, _)) = event.about::<Session>() {
             topics_to_notify.push(SubscriptionTopic::Session(sid));
         } else if let Some(((sid, cid), _)) = event.about::<Channel>() {
-            // A channel's events, and those of its members, reach the
+            // A channel's events, and those of its participants, reach the
             // session it lies in too (issue 335).
             topics_to_notify.push(SubscriptionTopic::Session(sid));
             topics_to_notify.push(SubscriptionTopic::Channel(cid));
@@ -407,7 +407,7 @@ mod tests {
         }).collect()
     }
 
-    /// Issue 335: a channel's events, and those of its members, reach the
+    /// Issue 335: a channel's events, and those of its participants, reach the
     /// session it lies in and the channel, by what the event names.
     #[tokio::test]
     async fn a_channel_s_events_reach_its_session_and_itself() {

@@ -13,7 +13,7 @@ import type {
   CreateAgentRequest,
   PersonalityResponse,
   ApprovalRule,
-  ChannelMember,
+  ChannelParticipant,
   ChannelResponse,
   Command,
   HistoryPage,
@@ -256,7 +256,7 @@ export const api = {
 
   /** `actorUuid` is the id of the user or agent, without its kind. */
   /** One participant, with what its model calls used (issue 209) and who it is (issue 244). */
-  async getParticipant(sessionId: string, channelId: string, actorUuid: string): Promise<ChannelMember> {
+  async getParticipant(sessionId: string, channelId: string, actorUuid: string): Promise<ChannelParticipant> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}`);
     await ensureOk(res, 'Failed to fetch the participant');
     return res.json();
@@ -519,7 +519,7 @@ export const api = {
 
   /**
    * Deletes an agent (issues 164, 314): it rests in every channel it takes
-   * part in, as a former member, and is kept, marked, until it is purged.
+   * part in, as a former participant, and is kept, marked, until it is purged.
    */
   async deleteAgent(agentUuid: string): Promise<void> {
     const res = await request(`/agents/${agentUuid}`, {method: 'DELETE'});

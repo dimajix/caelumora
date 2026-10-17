@@ -15,7 +15,7 @@
 //! An agent that keeps its conversation itself - an external one (issue
 //! 204) - is told the language once and then only when it changed
 //! (parameter `changes_only`), as the roster is
-//! (`channel_members_prompt_provider`).
+//! (`channel_participants_prompt_provider`).
 
 use caelumora_runtime::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};

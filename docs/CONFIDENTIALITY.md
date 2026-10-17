@@ -216,8 +216,8 @@ called.
 
 The question is `ConfidentialityPolicy::cleared`, asked in the context of whoever admits the
 participant, with the roles the channel resolves the participant to - a user's own, an agent's
-owner's, as the member's controller holds them now. For an agent whose personality limits it, it is
-asked once more with those roles, and both must allow. It is asked
+owner's, as the participant's controller holds them now. For an agent whose personality limits it,
+it is asked once more with those roles, and both must allow. It is asked
 
 *   when a participant is added to a channel - also each agent of a session made from a template,
     once the session is,
@@ -241,7 +241,7 @@ is cleared as a reader of a channel so classified would be:
     channel; L into W, since what was seen in the channel may be written there. Asked as an actor
     putting something into a place is (`may_publish` both ways, in the agent's name), at every use,
     besides the access list. With compartments and a read relation that is not symmetric this is
-    stricter than equality. A member is cleared for L, so nothing else is asked.
+    stricter than equality. A participant is cleared for L, so nothing else is asked.
 
 A storage bounds what may be put into it by its `destination`: making or raising a workspace there
 asks `may_publish` of its classification into the destination, before the clearance. A

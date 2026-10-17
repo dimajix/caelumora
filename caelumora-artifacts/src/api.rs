@@ -63,7 +63,7 @@ pub struct ArtifactVersionResponse {
     pub channel_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub published_by_name: Option<String>,
-    /// Who reads it besides whom the artifact is shared with - the members
+    /// Who reads it besides whom the artifact is shared with - the participants
     /// of the channel it was published in - only for its owner.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub access: Vec<AccessEntry>,

@@ -59,7 +59,7 @@ pub(crate) use participation::{ResolvedParticipant, ResolvedKind, Participation}
 
 /// A participant of a channel, with the handle it is `@`-mentioned by.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ChannelMember {
+pub struct ChannelParticipant {
     pub id: ActorId,
     pub name: Name,
     /// The handle the participant is mentioned by (see `caelumora_model::mention`),

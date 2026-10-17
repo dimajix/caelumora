@@ -101,16 +101,16 @@ async fn an_agent_whose_personality_was_withdrawn_is_left_out_of_its_channel() {
     let helper = world.agent("helper", world.alice, &shared).await;
     let session = world.shared_session(&[helper], &[]).await;
     let channel = session.channels()[0].id();
-    assert!(world.members(world.alice, session.id(), channel).await.contains(&ActorId::Agent(helper)), "it runs while shared");
-    assert!(session.channels()[0].member_ids().contains(&ActorId::Agent(helper)));
+    assert!(world.participants(world.alice, session.id(), channel).await.contains(&ActorId::Agent(helper)), "it runs while shared");
+    assert!(session.channels()[0].participant_ids().contains(&ActorId::Agent(helper)));
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 
     let withdrawn = Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
     world.runtime.entity_stores().personalities.update(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
 
     let reopened = world.manager.open(&World::as_user(world.alice), session.id()).await.expect("the session still opens");
-    assert!(!reopened.channels()[0].member_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
-    assert!(reopened.channels()[0].member_ids().contains(&ActorId::User(world.alice)), "everyone else is");
+    assert!(!reopened.channels()[0].participant_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
+    assert!(reopened.channels()[0].participant_ids().contains(&ActorId::User(world.alice)), "everyone else is");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -126,7 +126,7 @@ async fn an_agent_whose_personality_is_gone_is_left_out_of_its_channel() {
     world.runtime.entity_stores().personalities.delete(&World::as_user(world.bob), bobs.id).await.expect("bob deletes his personality");
 
     let reopened = world.manager.open(&World::as_user(world.alice), session.id()).await.expect("the session still opens");
-    assert!(!reopened.channels()[0].member_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
+    assert!(!reopened.channels()[0].participant_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -177,10 +177,10 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
 
     assert!(world.runtime.entity_stores().personalities.get(&World::as_user(world.bob), hers.id).await.is_err(), "bob may not read the personality");
     let view = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(channel).await.unwrap();
-    let members = view.members().await;
-    let member = members.iter().find(|m| m.id() == ActorId::Agent(helper)).expect("he sees the agent");
-    assert_eq!(member.name(), Some("helper"));
-    assert_eq!(member.introduction().await.unwrap().as_ref().map(|introduction| introduction.as_str()), Some("I am hers."), "and how it introduces itself");
+    let participants = view.participants().await;
+    let participant = participants.iter().find(|m| m.id() == ActorId::Agent(helper)).expect("he sees the agent");
+    assert_eq!(participant.name(), Some("helper"));
+    assert_eq!(participant.introduction().await.unwrap().as_ref().map(|introduction| introduction.as_str()), Some("I am hers."), "and how it introduces itself");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -203,7 +203,7 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
     let personality = asked.iter().position(|line| line == "alice as helper: GetPersonality(alice's) yes").expect("its personality is read in its name");
     let components = asked.iter().position(|line| line == "alice as helper: GetComponents(bob's) yes").expect("and so are the components it includes");
     assert!(personality < components, "first the personality, then what it includes: {asked:?}");
-    assert!(session.channels()[0].member_ids().contains(&ActorId::Agent(helper)), "it runs");
+    assert!(session.channels()[0].participant_ids().contains(&ActorId::Agent(helper)), "it runs");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 
     let withdrawn = StoredComponents { security_attributes: attributes(Some(world.bob), &[]), ..tools };
@@ -211,8 +211,8 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
     let (reopened, asked) = world.asked(world.manager.open(&World::as_user(world.alice), session.id())).await;
     let reopened = reopened.expect("the session still opens: bob cannot stop alice's session so");
     assert!(asked.contains(&"alice as helper: GetComponents(bob's) no".to_string()), "{asked:?}");
-    assert!(!reopened.channels()[0].member_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
-    assert!(reopened.channels()[0].member_ids().contains(&ActorId::User(world.alice)), "everyone else is");
+    assert!(!reopened.channels()[0].participant_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
+    assert!(reopened.channels()[0].participant_ids().contains(&ActorId::User(world.alice)), "everyone else is");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -274,7 +274,7 @@ async fn joining_needs_an_entry_that_lets_one_join() {
         "bob: JoinChannel(alice's) yes",
         "bob: JoinChannel(bob) yes",
     ]), "joining the session and the channel by the entries in his own name, and his clearance - stored in the runtime's");
-    assert!(world.members(world.bob, session.id(), main).await.contains(&ActorId::User(world.bob)), "in the channel");
+    assert!(world.participants(world.bob, session.id(), main).await.contains(&ActorId::User(world.bob)), "in the channel");
     assert!(!session.session().security_attributes.acl.contains(&bob_joins), "his invitation is used up");
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
@@ -308,8 +308,8 @@ async fn cancelling_one_actor_is_for_whoever_may_cancel_the_channel() {
     assert_eq!(asked, checks(&["carol: CancelChannel(alice's) no"]));
 
     let view = world.manager.views(Viewer::new(bob)).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
-    let member = view.member(ActorId::Agent(helper)).await.expect("the agent is a member");
-    let (offered, asked) = world.asked(member.may_cancel()).await;
+    let participant = view.participant(ActorId::Agent(helper)).await.expect("the agent is a participant");
+    let (offered, asked) = world.asked(participant.may_cancel()).await;
     assert!(offered, "offered to him, of the agent");
     assert_eq!(asked, checks(&["bob: CancelChannel(alice's) yes"]), "by the same question");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -389,8 +389,8 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     }).await;
     assert_eq!(asked.first().map(String::as_str), Some(checks(&["bob: RetryMessage(alice's) yes"])[0].as_str()), "his to ask, as a participant - asked by the channel as it admits it");
     let view = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
-    let member = view.member(ActorId::Agent(helper)).await.expect("the agent is a member");
-    let (offered, asked) = world.asked(member.may_retry()).await;
+    let participant = view.participant(ActorId::Agent(helper)).await.expect("the agent is a participant");
+    let (offered, asked) = world.asked(participant.may_retry()).await;
     assert!(offered, "and offered to him, of the agent (issue 242)");
     assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "by the same question");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -444,26 +444,26 @@ async fn what_an_agent_saw_is_its_owners_alone() {
     let helper = world.agent("helper", world.alice, &global).await;
     let session = world.shared_session(&[helper], &[]).await;
     let channel = session.channels()[0].id();
-    let member = |user| {
+    let participant = |user| {
         let world = &world;
         let session = session.id();
         async move {
             let view = world.manager.views(Viewer::new(World::as_user(user))).session(session).await.unwrap().channel(channel).await.unwrap();
-            view.members().await.into_iter().find(|m| m.id() == ActorId::Agent(helper)).expect("the agent is a member")
+            view.participants().await.into_iter().find(|m| m.id() == ActorId::Agent(helper)).expect("the agent is a participant")
         }
     };
 
-    let hers = member(world.alice).await;
+    let hers = participant(world.alice).await;
     assert!(hers.may_read_context().await, "offered to its owner");
     assert!(hers.context().await.is_ok(), "who reads it");
-    let his = member(world.bob).await;
+    let his = participant(world.bob).await;
     assert!(!his.may_read_context().await, "not offered to bob");
     assert!(matches!(his.context().await, Err(ViewError::Forbidden { .. })), "nor read by him");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// An agent's private notes across the channels of a session (issue 233)
-/// are read as what it saw: by its owner, not by another member.
+/// are read as what it saw: by its owner, not by another participant.
 #[tokio::test]
 async fn an_agents_private_notes_are_its_owners_alone() {
     let world = agent_testing::world().await;
@@ -482,35 +482,35 @@ async fn an_agents_private_notes_are_its_owners_alone() {
 }
 
 /// What an agent can do now - its tools (issue 194) - is read by every
-/// member of the channel it works in, not only by its owner; not by
-/// whoever is no member.
+/// participant of the channel it works in, not only by its owner; not by
+/// whoever is no participant.
 #[tokio::test]
-async fn which_tools_an_agent_has_is_read_by_the_members_of_its_channel() {
+async fn which_tools_an_agent_has_is_read_by_the_participants_of_its_channel() {
     let world = agent_testing::world().await;
     let global = world.personality("global", None, &[]).await;
     let helper = world.agent("helper", world.alice, &global).await;
     let session = world.shared_session(&[helper], &[]).await;
     let channel = session.channels()[0].id();
-    let member = |user| {
+    let participant = |user| {
         let world = &world;
         let session = session.id();
         async move {
             let view = world.manager.views(Viewer::new(World::as_user(user))).session(session).await.unwrap().channel(channel).await.unwrap();
-            view.members().await.into_iter().find(|m| m.id() == ActorId::Agent(helper)).expect("the agent is a member")
+            view.participants().await.into_iter().find(|m| m.id() == ActorId::Agent(helper)).expect("the agent is a participant")
         }
     };
 
-    let hers = member(world.alice).await;
+    let hers = participant(world.alice).await;
     let (tools, asked) = world.asked(hers.tool_sets()).await;
     assert!(tools.is_ok(), "read from its running actor");
     assert_eq!(asked, checks(&["alice: ReadAgentTools(alice's) yes"]));
-    let his = member(world.bob).await;
+    let his = participant(world.bob).await;
     assert!(his.may_read_tools().await, "offered to bob, who takes part in the channel");
     let (tools, asked) = world.asked(his.tool_sets()).await;
     assert!(tools.is_ok(), "and read by him");
     assert_eq!(asked, checks(&["bob: ReadAgentTools(alice's) yes"]));
     let theirs = world.manager.views(Viewer::new(World::as_user(world.carol))).session(session.id()).await;
-    assert!(theirs.is_err(), "carol, who is no member, does not even reach the channel");
+    assert!(theirs.is_err(), "carol, who is no participant, does not even reach the channel");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -532,22 +532,22 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
     let helper = world.agent("helper", world.alice, &hers).await;
     let session = world.shared_session(&[helper], &[]).await;
     let channel = session.channels()[0].id();
-    let member = |user| {
+    let participant = |user| {
         let world = &world;
         let session = session.id();
         async move {
             let view = world.manager.views(Viewer::new(World::as_user(user))).session(session).await.unwrap().channel(channel).await.unwrap();
-            view.members().await.into_iter().find(|m| m.id() == ActorId::Agent(helper)).expect("the agent is a member")
+            view.participants().await.into_iter().find(|m| m.id() == ActorId::Agent(helper)).expect("the agent is a participant")
         }
     };
 
-    let hers = member(world.alice).await;
+    let hers = participant(world.alice).await;
     assert!(hers.may_read_components().await, "offered to alice, its owner");
     let (components, asked) = world.asked(hers.components()).await;
     let ids: Vec<String> = components.expect("read from its running actor").component_nodes.into_iter().map(|node| node.id).collect();
     assert_eq!(ids, ["stop", "calculator"], "resolved, as it was built");
     assert_eq!(asked, checks(&["alice: ReadAgentComponents(alice's) yes"]));
-    let his = member(world.bob).await;
+    let his = participant(world.bob).await;
     assert!(!his.may_read_components().await, "not offered to bob");
     let (components, asked) = world.asked(his.components()).await;
     assert!(matches!(components, Err(ViewError::Forbidden { .. })), "nor read by him, though he sees its tools");
@@ -696,7 +696,7 @@ async fn with_a_call_asking_whom(ask: Addressee, sensitive: bool, asker: fn(&Wor
 async fn questions_shown(world: &World, session: SessionId, main: ChannelId, user: UserId) -> Vec<QuestionId> {
     use caelumora_model::snapshot::Detail;
     let view = world.manager.views(Viewer::new(World::as_user(user))).session(session).await.unwrap().channel(main).await.unwrap();
-    view.snapshot(Detail::MEMBERS | Detail::APPROVALS).await.members.into_iter().flat_map(|m| m.pending_questions).map(|q| q.id).collect()
+    view.snapshot(Detail::PARTICIPANTS | Detail::APPROVALS).await.participants.into_iter().flat_map(|m| m.pending_questions).map(|q| q.id).collect()
 }
 
 /// Answering the questions of an agent's call (issue 165) is asked as
@@ -999,7 +999,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
         let channel = main.id();
         async move {
             let view = world.manager.views(Viewer::new(World::as_user(user))).session(session).await.unwrap().channel(channel).await.unwrap();
-            view.members().await.into_iter().find(|m| m.id() == ActorId::Agent(helper)).expect("the agent is a member")
+            view.participants().await.into_iter().find(|m| m.id() == ActorId::Agent(helper)).expect("the agent is a participant")
         }
     };
     let (offered, asked) = world.asked(async { (view(world.alice).await.may_approve().await, view(world.bob).await.may_approve().await) }).await;
@@ -1127,7 +1127,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
 
     let (sets, asked) = world.asked(async {
         let view = world.manager.views(Viewer::new(World::as_user(world.alice))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
-        view.member(ActorId::Agent(helper)).await.unwrap().tool_sets().await.unwrap()
+        view.participant(ActorId::Agent(helper)).await.unwrap().tool_sets().await.unwrap()
     }).await;
     assert!(sets[0].tools.is_empty() && sets[0].unavailable.is_some(), "shown as unavailable: {sets:?}");
     assert!(asked.contains(&"alice as helper: Publish no".to_string()), "as a turn would be offered them, in the agent's own name: {asked:?}");
@@ -1241,7 +1241,7 @@ async fn asked_to_read_side(world: &World, main: &ChannelLoop, line: &str) -> Ve
 /// which he may not read himself - the agent reaches it as alice, asked by
 /// bob (`GetChannel`, issue 264), and copies it as far as the flow rule
 /// lets it into the channel he asked in (`CopyInformation`). What the
-/// decision accepts: her agent, asked without approval, lets every member
+/// decision accepts: her agent, asked without approval, lets every participant
 /// read through it what she may.
 #[tokio::test]
 async fn an_agent_reads_another_channel_with_its_owners_rights_whoever_asked() {
@@ -1842,7 +1842,7 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
 
     let offered = || async {
         let view = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
-        let sets = view.member(ActorId::Agent(helper)).await.unwrap().tool_sets().await.unwrap();
+        let sets = view.participant(ActorId::Agent(helper)).await.unwrap().tool_sets().await.unwrap();
         let mut names: Vec<String> = sets[0].tools.iter().map(|tool| tool.name.clone()).collect();
         names.sort();
         (names, sets[0].unavailable.clone())
@@ -2071,7 +2071,7 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
 #[tokio::test]
 async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
     let (world, session, main, seen, mut his) = with_a_commanded_agent().await;
-    let helper = main.members().into_iter().find(|m| m.name == "helper").expect("helper takes part").id;
+    let helper = main.participants().into_iter().find(|m| m.name == "helper").expect("helper takes part").id;
 
     main.user_actor(world.bob).unwrap().execute_command("mark", "@helper").await.expect("his to ask for");
     shown(&mut his, "CommandExecuted").await;

@@ -2,7 +2,7 @@
 //! them, their owner makes, changes, deletes and restores them. One of a
 //! session's scope is written by an agent in that session, not here. Using
 //! a skill is no request of its own: an agent loads it in a turn, or a
-//! member gives it to an agent with `/skill`. Served behind the core's
+//! participant gives it to an agent with `/skill`. Served behind the core's
 //! login (`RestPlugin`, issue 323), each handler with the `SkillManager`
 //! in its state.
 

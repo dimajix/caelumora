@@ -4,7 +4,7 @@
 // profile, a workspace, a skill, an artifact, a group - and comes in one form
 // (issue 323): `{"kind", "id", "within", "change"}`. `within` is the id of
 // the entity it lies in, for a kind that lies in one: a channel's session
-// (issue 335). What happens to a channel's members is a custom change of the
+// (issue 335). What happens to a channel's participants is a custom change of the
 // channel.
 //
 // The session list follows a session's events by removing the session,
@@ -46,19 +46,19 @@ function channelEvent(event: GlobalEvent): {sessionId: string; channelId: string
 }
 
 /** Whether `change` of a channel is someone joining or leaving it (issue 46). */
-function changesMembers(change: EntityChange): boolean {
+function joinsOrLeaves(change: EntityChange): boolean {
   return dataOf(change, 'joined') !== undefined || dataOf(change, 'left') !== undefined;
 }
 
 /** What the session list does with `event`. */
 export function sessionChange(event: GlobalEvent): SessionChange {
-  // A change of a session's channels or their members: the session is
+  // A change of a session's channels or their participants: the session is
   // fetched again. Their start and stop, and an agent's state in them, do not
   // change what the list shows.
   const channel = channelEvent(event);
   if (channel) {
     const {sessionId, change} = channel;
-    const changesChannels = typeof change === 'string' || updateOf(change) !== undefined || changesMembers(change);
+    const changesChannels = typeof change === 'string' || updateOf(change) !== undefined || joinsOrLeaves(change);
     return changesChannels ? {kind: 'refresh', sessionId} : {kind: 'ignore'};
   }
 
@@ -92,12 +92,12 @@ export function dispatchGlobalEvent(event: GlobalEvent): void {
 
 /**
  * The channel someone joined or left (issue 46), for a channel's `joined` and
- * `left`; `null` for any other event. Whoever shows the members fetches them
+ * `left`; `null` for any other event. Whoever shows the participants fetches them
  * again.
  */
-export function membershipChangedChannel(event: GlobalEvent): string | null {
+export function joinedOrLeftChannel(event: GlobalEvent): string | null {
   const channel = channelEvent(event);
-  return channel && changesMembers(channel.change) ? channel.channelId : null;
+  return channel && joinsOrLeaves(channel.change) ? channel.channelId : null;
 }
 
 /**

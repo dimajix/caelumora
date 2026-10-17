@@ -5,7 +5,7 @@
 
 import React, {useEffect, useState} from 'react';
 import {IdCard, X} from 'lucide-react';
-import type {ChannelMember} from '../types';
+import type {ChannelParticipant} from '../types';
 import {api} from '../api';
 import {actorUuid} from '../mention';
 import {reportError} from '../errors';
@@ -14,13 +14,13 @@ interface ProfilePanelProps {
   sessionId: string;
   channelId: string;
   /** The participant whose profile is shown. */
-  member: ChannelMember;
+  participant: ChannelParticipant;
   onClose: () => void;
 }
 
-export const ProfilePanel: React.FC<ProfilePanelProps> = ({sessionId, channelId, member, onClose}) => {
-  const actor = actorUuid(member.id);
-  const [profile, setProfile] = useState<ChannelMember | null>(null);
+export const ProfilePanel: React.FC<ProfilePanelProps> = ({sessionId, channelId, participant, onClose}) => {
+  const actor = actorUuid(participant.id);
+  const [profile, setProfile] = useState<ChannelParticipant | null>(null);
 
   useEffect(() => {
     if (!actor) return;
@@ -31,14 +31,14 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({sessionId, channelId,
     return () => { current = false; };
   }, [sessionId, channelId, actor]);
 
-  const isAgent = member.kind === 'agent';
+  const isAgent = participant.kind === 'agent';
 
   return (
     <div className="w-full border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex flex-col min-h-0">
       <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-2">
         <div className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
           <IdCard size={18} />
-          <h3 className="font-semibold text-sm flex-1">About {member.name}</h3>
+          <h3 className="font-semibold text-sm flex-1">About {participant.name}</h3>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md" title="Close">
             <X size={16} />
           </button>

@@ -66,8 +66,8 @@ approval follows from that:
     sets a rule of a place that asks for `create_plan`.
 *   **Notes and memory** need none either, although what the agent writes there may rest on a faked
     word and from then on stands in the agent's name. That is accepted: an approval for every note
-    would leave notes unused, a note is shown to every member, and every entry records where it was
-    made (see [MEMORY.md](MEMORY.md)).
+    would leave notes unused, a note is shown to every participant, and every entry records where it
+    was made (see [MEMORY.md](MEMORY.md)).
 
 Whoever approves decides on what the call does, not on the agent's account of why; what was said,
 and by whom, the context panel shows.
@@ -165,7 +165,7 @@ it also in someone else's channel; for an agent of the system, the channel's own
 *   The strategies count only those taking part who may approve, now. An answer of someone who left
     or may no longer approve does not count, either way. With nobody left who may approve, the
     request is denied.
-*   The views offer it with `MemberView::may_approve`, which the web UI shows the buttons by.
+*   The views offer it with `ParticipantView::may_approve`, which the web UI shows the buttons by.
 
 ### Checked before anyone is asked
 

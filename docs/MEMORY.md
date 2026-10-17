@@ -62,7 +62,7 @@ published in the channel.
 *   **Prompt part.** A `BeforeTurnInput` part, empty when nothing is noted: the agent's own notes
     first, then those of the other agents of the channel.
 *   **Clients** get the notes per agent with the channel's snapshot and read them again when the
-    global stream announces a change (see [WEB-UI.md](WEB-UI.md#members-moderator-and-notes)).
+    global stream announces a change (see [WEB-UI.md](WEB-UI.md#participants-moderator-and-notes)).
 
 ## Private notes
 

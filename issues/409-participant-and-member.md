@@ -1,6 +1,6 @@
 # 409 — Taking part in a channel is named "participant" in some places and "member" in others
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -73,3 +73,24 @@ names need no compatibility; the REST API and the web UI change together.
 - **2026-10-17** — Issue created, from the naming discussion of issue
   [408](408-membership-changes-in-history.md), which settled joined/left for what happens to
   someone's taking part and added/removed for the acts on a document.
+- **2026-10-17** — Decided with the maintainer: participant for taking part throughout, in the model,
+  the runtime, the REST API, the web UI, the TUI and the documents; member for groups alone - and
+  for the members of a scope (`ScopeMember`), a third meaning left as it is. The session tells a
+  join as the channel does: `SessionUpdateEvent::ParticipantJoined`.
+- **2026-10-17** — Done. Renamed: `ChannelMember` to `ChannelParticipant`, `MemberView` to
+  `ParticipantView` (module `view/participant.rs`, with `ParticipantState`, `AgentParticipant`,
+  `UserParticipant`, `ApproverParticipant`, `GoneParticipant`), `MemberSnapshot` to
+  `ChannelParticipantSnapshot` (`ParticipantSnapshot` is the session's), `ChannelMemberResponse` to
+  `ChannelParticipantResponse`, `ViewError::MemberNotFound` to `ParticipantNotFound`,
+  `Detail::MEMBERS` to `PARTICIPANTS`; `members()`, `former_members()`, `member()` and
+  `member_ids()` to `participants()`, `former_participants()`, `participant()` and
+  `participant_ids()`; the channel response's and snapshot's `members` and `former_members` to
+  `participants` and `former_participants`; `channel_members_prompt_provider` to
+  `channel_participants_prompt_provider`; `SessionUpdateEvent::ParticipantAdded` to
+  `ParticipantJoined`. The web UI follows with the REST API ("Former participants"), and the
+  documents, comments and test names with the code. Left as group terms: `Memberships`,
+  `members_of`, `GroupUpdateEvent::MembersChanged`, `GroupMemberResponse`,
+  `/groups/{id}/members`, and wherever something is shared with or read by the members of a
+  session's or channel's group. Stored data to delete: personalities that name the component kind
+  `channel_members_prompt_provider` (the seed names the new one), and session journals holding a
+  `ParticipantAdded`.

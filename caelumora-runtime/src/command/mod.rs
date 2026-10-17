@@ -15,7 +15,7 @@ pub mod nudge_command;
 pub mod wakeup_command;
 
 use crate::actor::user::UserActor;
-use crate::channel::{ChannelLoop, ChannelMember};
+use crate::channel::{ChannelLoop, ChannelParticipant};
 use crate::component::{ComponentError, ComponentImpl, ComponentRegistry, ComponentResult};
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, CommandVisibility};
@@ -254,12 +254,12 @@ impl CommandExecutor<dyn ChannelCommandProvider> {
 /// `CommandError::InvalidArguments` naming the handles of the participants,
 /// if `wanted` names none, or those it names, if it names several: nobody
 /// is picked.
-pub(crate) fn named_participant(command: &str, wanted: &str, channel: &ChannelLoop) -> CommandResult<ChannelMember> {
+pub(crate) fn named_participant(command: &str, wanted: &str, channel: &ChannelLoop) -> CommandResult<ChannelParticipant> {
     let invalid = |reason: String| CommandError::InvalidArguments { command: command.to_string(), reason };
     match channel.participants_named(wanted).as_slice() {
         [one] => Ok(one.clone()),
         [] => {
-            let mut handles: Vec<String> = channel.members().into_iter().filter_map(|m| m.handle).map(|h| format!("@{h}")).collect();
+            let mut handles: Vec<String> = channel.participants().into_iter().filter_map(|m| m.handle).map(|h| format!("@{h}")).collect();
             handles.sort();
             Err(invalid(format!("nobody '{}' in this channel; the participants are {}", wanted, names(&handles))))
         }

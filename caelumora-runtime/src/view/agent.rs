@@ -1,4 +1,4 @@
-//! An agent as a viewer reached it on its own, not as a member of a channel
+//! An agent as a viewer reached it on its own, not as a participant of a channel
 //! (issues 164, 227): one they may read (`GetAgent`), with what they may do
 //! with it and the channels it takes part in that they may read.
 
@@ -56,7 +56,7 @@ impl AgentView {
     }
 
     /// The agent as the viewer sees it. Its personality is read in the
-    /// runtime's name, as a member's is: what an agent is made of is no
+    /// runtime's name, as a participant's is: what an agent is made of is no
     /// secret to whoever may read the agent.
     ///
     /// # Errors

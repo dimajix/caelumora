@@ -22,8 +22,8 @@ text, `within` the id of the entity it lies in, and `change` an `EntityChange`:
     the agent's id, and `SAID`, with a message others hear as it was said (see
     [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)).
 
-What happens to a channel's members is a change of the channel: its readers are the ones who hear
-of it, and it carries the member in its data.
+What happens to a channel's participants is a change of the channel: its readers are the ones who
+hear of it, and it carries the participant in its data.
 
 `within` is there for a kind that lies in an entity (issue 335): a channel lies in a session, and
 its events name the session, by which the web UI finds the channel and the event bus picks whom an
@@ -75,7 +75,7 @@ them.
 A subscriber names `SubscriptionTopic`s - everything, or a session, channel, agent or user - and
 receives the matching events through an `EventSubscription`. The runtime subscribes this way, and
 these subscriptions are served directly with everything on their topics. An event about a session,
-an agent or a user goes to its topic; one about a channel - and so about its members - to the
+an agent or a user goes to its topic; one about a channel - and so about its participants - to the
 channel's and to the session's it lies in, which the bus reads from the event's address. Other
 kinds have no topic of their own.
 

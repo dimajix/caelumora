@@ -3,7 +3,7 @@
 //! channels.
 //!
 //! A command in a workspace is its channel's - the scope of its shell - and
-//! runs on only as long as some current member of the channel could start
+//! runs on only as long as some current participant of the channel could start
 //! it there, as `WorkspaceController::shell_in` asks: a task ends every
 //! other command its storage lists, at each event that can change the
 //! answer and besides every `COMMANDS_CHECKED_EVERY`.
@@ -52,7 +52,7 @@ fn channel_of(scope: &str) -> Option<ChannelId> {
 pub(crate) struct CommandReaper {
     sessions: Arc<dyn EntityStore<Session>>,
     channels: Arc<dyn EntityStore<Channel>>,
-    /// Where the contexts of a channel's members are built, with their
+    /// Where the contexts of a channel's participants are built, with their
     /// roles as they are now (issue 304), and the workspaces asked.
     controllers: Arc<ControllerManager>,
     /// The storages, by name, whose commands it ends.
@@ -124,11 +124,11 @@ impl CommandReaper {
         }
     }
 
-    /// Whether some current member of the channel command `key` was started
+    /// Whether some current participant of the channel command `key` was started
     /// in - its scope - could start it there, as `shell_in` asks: a command
     /// is its channel's, not its starter's (issue 254). The session and the
     /// channel are read as they are stored now, in the runtime's name; asked
-    /// in each member's name, with the runtime as initiator: it asks on its
+    /// in each participant's name, with the runtime as initiator: it asks on its
     /// own.
     ///
     /// # Errors
@@ -199,7 +199,7 @@ async fn check_commands(reaper: Weak<CommandReaper>, mut events: broadcast::Rece
 }
 
 /// Whether `event` can change who may run a command in a channel: the
-/// session, the channel, its members, the workspace or who someone is.
+/// session, the channel, its participants, the workspace or who someone is.
 fn changes_who_may_run(event: &GlobalEvent) -> bool {
     match event.change {
         EntityChange::Updated(_) | EntityChange::Deleted => [Session::KIND, Channel::KIND, Agent::KIND, User::KIND, Workspace::KIND].contains(&event.kind),
@@ -248,7 +248,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_command_runs_on_as_long_as_some_member_could_start_it_there() {
+    async fn a_command_runs_on_as_long_as_some_participant_could_start_it_there() {
         let w = session_with_workspace().await;
         let reaper = w.runtime.command_reaper();
         let (shell, id) = running(&w).await;

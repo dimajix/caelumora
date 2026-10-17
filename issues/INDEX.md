@@ -452,7 +452,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [397](397-agent-channel-state-follows-the-transcript.md) | done | Four methods of `AgentChannelState` move the turn's context after the transcript's head each for itself, and `compact` checks for a turn four times. |
 | [398](398-given-means-four-things.md) | done | Around the transcript "given" names a message given to read, which messages the transcript holds, and the directory of the prompt texts and tool sets. |
 | [399](399-turn-and-agent-work-overlap.md) | done | `Turn` passes on nine of `AgentWork`'s methods to read and not the others, and `AgentWork` names its session, its workspace and the workspace's terminal by no common rule and fails in three shapes, so neither the line between the two types nor the one between views and handles can be read off their methods. |
-| [409](409-participant-and-member.md) | open | Who takes part in a session or channel is a participant in the model and its operations, but a member in the views, the REST API and the web UI, and "member" also names who belongs to a group; and that taking part began or ended is told as joined/left on the event bus but as added on the session. |
+| [409](409-participant-and-member.md) | done | Who takes part in a session or channel is a participant in the model and its operations, but a member in the views, the REST API and the web UI, and "member" also names who belongs to a group; and that taking part began or ended is told as joined/left on the event bus but as added on the session. |
 
 ## Integrations
 

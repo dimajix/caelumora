@@ -13,7 +13,7 @@ use caelumora_model::security::{ActionType, SecurityContext};
 use tracing::{info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
-use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelMember, LEAVE_GRACE, ResolvedParticipant};
+use super::{ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelParticipant, LEAVE_GRACE, ResolvedParticipant};
 use caelumora_model::channel::Channel;
 use caelumora_model::store::Stored;
 use caelumora_model::command::Command;
@@ -255,19 +255,19 @@ impl ChannelLoop {
         self.mentions.store(Arc::new(mentions));
     }
 
-    /// The ids of all participants of the channel, as `members` lists them.
-    pub fn member_ids(&self) -> Vec<ActorId> {
+    /// The ids of all participants of the channel, as `participants` lists them.
+    pub fn participant_ids(&self) -> Vec<ActorId> {
         self.actors.load().keys().copied().collect()
     }
 
     /// All participants of the channel, in no particular order.
-    pub fn members(&self) -> Vec<ChannelMember> {
+    pub fn participants(&self) -> Vec<ChannelParticipant> {
         self.actors.load().values()
             .map(|ChannelActor { actor: a, .. }| {
                 let name = a.name();
                 let handle = Some(name.handle())
                     .filter(|h| Self::is_mentionable(a.id()) && !h.is_empty());
-                ChannelMember { id: a.id(), name, handle }
+                ChannelParticipant { id: a.id(), name, handle }
             })
             .collect()
     }
@@ -277,41 +277,41 @@ impl ChannelLoop {
     /// of case and spelling - or, if there are none, those whose handle it
     /// is, with or without its `@`, normalised as a mention is (`handle_of`).
     /// Several if it is ambiguous, none if it names no agent; sorted by name.
-    pub fn agents_named(&self, text: &str) -> Vec<ChannelMember> {
-        Self::named(self.members().into_iter().filter(|m| m.id.as_agent_id().is_some()).collect(), text)
+    pub fn agents_named(&self, text: &str) -> Vec<ChannelParticipant> {
+        Self::named(self.participants().into_iter().filter(|m| m.id.as_agent_id().is_some()).collect(), text)
     }
 
     /// The participants of the channel `text` names - agents, users and
     /// every other actor -, found as `agents_named` finds agents: for a
     /// command that takes anyone taking part, such as `/nudge` (issue 278).
-    pub fn participants_named(&self, text: &str) -> Vec<ChannelMember> {
-        Self::named(self.members(), text)
+    pub fn participants_named(&self, text: &str) -> Vec<ChannelParticipant> {
+        Self::named(self.participants(), text)
     }
 
-    /// Those of `members` that `text` names: by name, or else by handle;
+    /// Those of `participants` that `text` names: by name, or else by handle;
     /// sorted by name.
-    fn named(mut members: Vec<ChannelMember>, text: &str) -> Vec<ChannelMember> {
-        members.sort_by(|l, r| l.name.as_str().cmp(r.name.as_str()));
+    fn named(mut participants: Vec<ChannelParticipant>, text: &str) -> Vec<ChannelParticipant> {
+        participants.sort_by(|l, r| l.name.as_str().cmp(r.name.as_str()));
         if let Ok(name) = Name::new(text) {
-            let named: Vec<_> = members.iter().filter(|m| m.name == name).cloned().collect();
+            let named: Vec<_> = participants.iter().filter(|m| m.name == name).cloned().collect();
             if !named.is_empty() {
                 return named;
             }
         }
         let handle = handle_of(text);
-        members.into_iter().filter(|m| !handle.is_empty() && m.handle.as_deref() == Some(handle.as_str())).collect()
+        participants.into_iter().filter(|m| !handle.is_empty() && m.handle.as_deref() == Some(handle.as_str())).collect()
     }
 
     /// The agents of the channel that carry out commands themselves (issue
     /// 269), each with the commands `issuer` may see of it, by handle; an
     /// agent with none is left out.
-    pub(crate) async fn agent_commands(&self, issuer: &SecurityContext) -> Vec<(ChannelMember, Vec<Command>)> {
+    pub(crate) async fn agent_commands(&self, issuer: &SecurityContext) -> Vec<(ChannelParticipant, Vec<Command>)> {
         let mut found = Vec::new();
-        for member in self.members().into_iter().filter(|m| m.id.as_agent_id().is_some()) {
-            let Some(actor) = self.actor(member.id) else { continue };
+        for participant in self.participants().into_iter().filter(|m| m.id.as_agent_id().is_some()) {
+            let Some(actor) = self.actor(participant.id) else { continue };
             let commands = actor.commands(issuer).await;
             if !commands.is_empty() {
-                found.push((member, commands));
+                found.push((participant, commands));
             }
         }
         found.sort_by(|(l, _), (r, _)| l.handle.cmp(&r.handle));
@@ -323,7 +323,7 @@ impl ChannelLoop {
     /// its participants are mentioned, the agent's owner and whoever caused
     /// the call as `context` names them (`Questions::resolve`).
     pub(crate) fn address_questions(&self, questions: Questions, context: &SecurityContext) -> Result<Questions, QuestionError> {
-        let users: Vec<ActorId> = self.member_ids().into_iter().filter(|id| matches!(id, ActorId::User(_))).collect();
+        let users: Vec<ActorId> = self.participant_ids().into_iter().filter(|id| matches!(id, ActorId::User(_))).collect();
         questions.resolve(&self.mentions.load(), &users, context)
     }
 
@@ -490,7 +490,7 @@ mod tests {
 
         channel.add_participant(&ctx, other, HistoryAccess::LastMessages { count: 1 }).await.expect("a user of the session joins");
 
-        assert!(channel.members().iter().any(|m| m.id == other), "a member now");
+        assert!(channel.participants().iter().any(|m| m.id == other), "a participant now");
         let other_user = match other { ActorId::User(id) => id, _ => unreachable!() };
         assert!(channel.user_actor(other_user).is_some(), "with an actor of their own");
         let visible: Vec<_> = channel.visible_messages(other).await.into_iter().map(|m| m.content).collect();
@@ -607,7 +607,7 @@ mod tests {
 
         channel.remove_participant(&ctx, other).await.expect("removed");
 
-        assert!(!channel.members().iter().any(|m| m.id == other), "no longer a member");
+        assert!(!channel.participants().iter().any(|m| m.id == other), "no longer a participant");
         let stored = runtime.entity_stores().channels.get(&ctx, channel.id()).await.unwrap();
         assert!(!stored.participants.iter().any(|p| p.actor_id() == other), "stored, not only in memory");
         let former = stored.former.iter().find(|f| f.participant.actor_id() == other).expect("kept as a former participant (issue 164)");
@@ -619,7 +619,7 @@ mod tests {
         let refusal = |error: Error| error.downcast::<ChannelError>().expect("a ChannelError");
         let gone = channel.remove_participant(&ctx, other).await.expect_err("not in it any more");
         assert!(matches!(refusal(gone), ChannelError::NotAParticipant { .. }));
-        let approver = channel.member_ids().into_iter().find(|id| matches!(id, ActorId::Approver(_))).expect("an approver");
+        let approver = channel.participant_ids().into_iter().find(|id| matches!(id, ActorId::Approver(_))).expect("an approver");
         let stays = channel.remove_participant(&ctx, approver).await.expect_err("the approver stays");
         assert!(matches!(refusal(stays), ChannelError::ApproverStays { .. }));
 
@@ -648,11 +648,11 @@ mod tests {
         assert!(is_forbidden(&refused), "{refused}");
         let refused = channel.remove_participant(&as_user(bob_id), bob_id).await.expect_err("nor remove anyone");
         assert!(is_forbidden(&refused), "{refused}");
-        assert_eq!(channel.members().len(), 3, "alice, bob and the approver, unchanged");
+        assert_eq!(channel.participants().len(), 3, "alice, bob and the approver, unchanged");
 
         channel.add_participant(&as_user(alice_id), carol_id, HistoryAccess::None).await.expect("the owner may");
         channel.remove_participant(&as_user(alice_id), bob_id).await.expect("the owner may");
-        assert!(channel.members().iter().any(|m| m.id == carol_id) && !channel.members().iter().any(|m| m.id == bob_id));
+        assert!(channel.participants().iter().any(|m| m.id == carol_id) && !channel.participants().iter().any(|m| m.id == bob_id));
         manager.stop(&SecurityContext::system(), running.id()).await.unwrap();
     }
 }

@@ -4,7 +4,7 @@
 // derive handles for completion.
 
 import anyAscii from 'any-ascii';
-import type {ActorId, ChannelMember, Message} from './types';
+import type {ActorId, ChannelParticipant, Message} from './types';
 
 const HANDLE_CHAR = /[\p{L}\p{N}_-]/u;
 
@@ -75,14 +75,14 @@ export function actorUuid(id: ActorId | undefined): string | null {
 export const GROUP_HANDLES = ['all', 'channel'] as const;
 
 /**
- * The handles of the members a message mentions, i.e. the mentions to
+ * The handles of the participants a message mentions, i.e. the mentions to
  * highlight - and the group handles, if the message mentions anyone: the
  * server resolved them to everyone.
  */
-export function mentionedHandles(message: Message, members: ChannelMember[]): Set<string> {
+export function mentionedHandles(message: Message, participants: ChannelParticipant[]): Set<string> {
   const keys = new Set((message.mentions ?? []).map(actorKey));
   const groups = keys.size > 0 ? GROUP_HANDLES : [];
-  return new Set([...groups, ...members.flatMap(m => (m.handle && keys.has(actorKey(m.id)) ? [m.handle] : []))]);
+  return new Set([...groups, ...participants.flatMap(m => (m.handle && keys.has(actorKey(m.id)) ? [m.handle] : []))]);
 }
 
 /**

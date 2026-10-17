@@ -18,13 +18,13 @@ use std::fmt::Debug;
 /// - a session's and an agent's: an agent of user or global scope belongs to
 ///   no session and takes part in several (issue 121); a restored one takes
 ///   part in no channel until it is added again;
-/// - a channel's, and what happens to its members, by the channel's (issue
+/// - a channel's, and what happens to its participants, by the channel's (issue
 ///   304);
 /// - a profile's: only its user, and the runtime (issue 13); it comes as it
 ///   now stands;
 /// - a workspace's (issue 253), a skill's (issue 22) and a group's (issue
 ///   286): its owner and whom its access list grants reading, a group's
-///   members; the participants of a session or channel are announced as they
+///   participants; the participants of a session or channel are announced as they
 ///   join and leave, not as a group;
 /// - an artifact's (issue 271): its owner, and for a version published the
 ///   readers of that version.

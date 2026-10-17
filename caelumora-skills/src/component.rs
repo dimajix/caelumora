@@ -18,8 +18,8 @@
 //!   classification to that, so that nothing the turn saw leaks into it.
 //!   Both are approved unless the parameter `requires_approval` says
 //!   otherwise; only the owner's own skills can be changed (`UpdateSkill`).
-//! - **`/skill @agent <name>`**, a command a member gives the agent: the
-//!   skill's text goes into its transcript as a message in the member's
+//! - **`/skill @agent <name>`**, a command a participant gives the agent: the
+//!   skill's text goes into its transcript as a message in the participant's
 //!   name, read in the command's turn, never into the channel's history;
 //!   **`/skills @agent`** lists what it may load.
 //!
@@ -444,7 +444,7 @@ impl AgentCommandProvider for SkillsComponent {
                 // In the name of who asked, as the channel knows them.
                 let issuer = turn.situation().security_context().initiator_id;
                 let issuer_name = match turn.situation().channel().await {
-                    Ok(Some(channel)) => channel.member(issuer).await.ok().and_then(|m| m.name().map(str::to_string)),
+                    Ok(Some(channel)) => channel.participant(issuer).await.ok().and_then(|m| m.name().map(str::to_string)),
                     Ok(None) | Err(_) => None,
                 };
                 let given = Message {

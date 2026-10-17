@@ -12,7 +12,7 @@
 //! documents keep it, and they follow its mark instead - a running channel
 //! stops its actor and starts it again once it is restored (`SessionLoop`,
 //! `ChannelLoop::follow_agent`), a channel that starts leaves it out, and
-//! the views show it as a former member, removed as its mark says.
+//! the views show it as a former participant, removed as its mark says.
 
 use super::{store_error, AgentError, AgentResult};
 use crate::event::EventBus;
@@ -127,7 +127,7 @@ impl AgentManager {
     /// caller could see.
     ///
     /// The channels it takes part in keep it: it rests in them, without an
-    /// actor, and is shown as a former member until it is restored. A
+    /// actor, and is shown as a former participant until it is restored. A
     /// running channel stops its actor as it learns of the deletion
     /// (`SessionLoop`), a channel that starts leaves it out; what it said
     /// stays in the histories.
@@ -169,7 +169,7 @@ impl AgentManager {
     /// Only what was deleted is purged; the store asks `Purge`. Announces
     /// nothing, as no purge does. What it said stays in the channels'
     /// histories, by an agent that no longer exists; the channels it rested
-    /// in show it as a former member, without when it left. `false` if
+    /// in show it as a former participant, without when it left. `false` if
     /// there was nothing deleted the caller could see.
     ///
     /// # Errors

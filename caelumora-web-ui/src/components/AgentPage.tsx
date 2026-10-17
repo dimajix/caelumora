@@ -1,4 +1,4 @@
-// One agent (issue 227), in the place of a channel, on its own rather than as a member of one:
+// One agent (issue 227), in the place of a channel, on its own rather than as a participant of one:
 // its name, where it lies, its personality and whose it is, and the channels it takes part in
 // that the user may read, each opened from here. Whoever may renames and deletes it from its
 // menu; deleted, it rests in its channels until it is restored from the trash.

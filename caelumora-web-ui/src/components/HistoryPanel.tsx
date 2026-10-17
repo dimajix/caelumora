@@ -11,7 +11,7 @@
 
 import React, {useEffect, useRef, useState} from 'react';
 import {ChevronRight, FoldVertical, History, ScrollText, Undo2, UserMinus, UserPlus, X} from 'lucide-react';
-import type {ActorId, ChannelMember, GivenUpReason, HistoryItem, HistoryMessage, HistoryPage, Message} from '../types';
+import type {ActorId, ChannelParticipant, GivenUpReason, HistoryItem, HistoryMessage, HistoryPage, Message} from '../types';
 import {classificationLabel} from '../confidentiality';
 import {cn} from '../classNames';
 import {api} from '../api';
@@ -24,10 +24,10 @@ interface HistoryPanelProps {
   sessionId: string;
   channelId: string;
   /** The agent whose history is shown. */
-  member: ChannelMember;
+  participant: ChannelParticipant;
   /** Who views it, whose messages are their own (issue 407). */
   me: ActorId;
-  members: ChannelMember[];
+  participants: ChannelParticipant[];
   /** Changes whenever the history may have grown, to load it again. */
   version: number;
   /** Shows the context of one of the agent's messages. */
@@ -106,8 +106,8 @@ function rowsOf(items: HistoryItem<HistoryMessage>[]): Row[] {
   return rows;
 }
 
-export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId, member, me, members, version, onShowContext, onClose}) => {
-  const actor = actorUuid(member.id);
+export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId, participant, me, participants, version, onShowContext, onClose}) => {
+  const actor = actorUuid(participant.id);
   const [items, setItems] = useState<HistoryItem<HistoryMessage>[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // What to read the page before those shown with; `null` once there is none.
@@ -166,7 +166,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
         key={key}
         message={message}
         me={me}
-        members={members}
+        participants={participants}
         className={cn('max-w-full', !passedOn && 'opacity-50')}
         badges={[
           ...(message.internal ? ['internal'] : []),
@@ -204,7 +204,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
   // A command the agent carried out (issue 269): which, on whose word, when.
   const commandView = (row: Extract<Row, {kind: 'command'}>, key: React.Key) => {
     const time = formatTimestamp(row.at);
-    const issuer = members.find(m => actorKey(m.id) === actorKey(row.issuer))?.name ?? 'someone';
+    const issuer = participants.find(m => actorKey(m.id) === actorKey(row.issuer))?.name ?? 'someone';
     return (
       <div key={key} className="flex items-start gap-2 p-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-xs text-gray-700 dark:text-gray-300">
         <ChevronRight size={14} className="mt-0.5 shrink-0" />
@@ -260,7 +260,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
       <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-2">
         <div className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
           <History size={18} />
-          <h3 className="font-semibold text-sm flex-1">What {member.name} heard and said</h3>
+          <h3 className="font-semibold text-sm flex-1">What {participant.name} heard and said</h3>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md" title="Close">
             <X size={16} />
           </button>

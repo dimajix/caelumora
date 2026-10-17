@@ -12,7 +12,7 @@ use caelumora_model::workspace::{CommandStatus, WorkspaceId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// A workspace (issue 253) as its owner, or a member of a channel using
+/// A workspace (issue 253) as its owner, or a participant of a channel using
 /// it, sees it.
 #[derive(Debug, Serialize)]
 pub struct WorkspaceResponse {
@@ -81,7 +81,7 @@ pub struct StorageResponse {
 }
 
 /// The workspace to attach to a session (issue 253), shared with the
-/// session's members as far as `share` says - `read` or `write` -, with
+/// session's participants as far as `share` says - `read` or `write` -, with
 /// nobody if absent (issue 23).
 #[derive(Debug, Deserialize)]
 pub struct AttachWorkspaceRequest {

@@ -7,7 +7,7 @@
 
 import React, {useEffect, useState} from 'react';
 import {Wrench, X} from 'lucide-react';
-import type {ChannelMember, ToolSet} from '../types';
+import type {ChannelParticipant, ToolSet} from '../types';
 import {api} from '../api';
 import {actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
@@ -17,12 +17,12 @@ interface ToolsPanelProps {
   sessionId: string;
   channelId: string;
   /** The agent whose tools are shown. */
-  member: ChannelMember;
+  participant: ChannelParticipant;
   onClose: () => void;
 }
 
-export const ToolsPanel: React.FC<ToolsPanelProps> = ({sessionId, channelId, member, onClose}) => {
-  const actor = actorUuid(member.id);
+export const ToolsPanel: React.FC<ToolsPanelProps> = ({sessionId, channelId, participant, onClose}) => {
+  const actor = actorUuid(participant.id);
   const [sets, setSets] = useState<ToolSet[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -48,7 +48,7 @@ export const ToolsPanel: React.FC<ToolsPanelProps> = ({sessionId, channelId, mem
       <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-2">
         <div className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
           <Wrench size={18} />
-          <h3 className="font-semibold text-sm flex-1">The tools of {member.name}</h3>
+          <h3 className="font-semibold text-sm flex-1">The tools of {participant.name}</h3>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md" title="Close">
             <X size={16} />
           </button>

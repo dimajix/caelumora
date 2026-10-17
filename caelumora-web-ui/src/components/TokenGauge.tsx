@@ -1,5 +1,5 @@
 // How full an agent's context is, and what its model calls in the channel
-// used (issue 209), as the member list shows it.
+// used (issue 209), as the participant list shows it.
 
 import React from 'react';
 import type {TokenUsage} from '../types';

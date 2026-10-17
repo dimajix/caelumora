@@ -30,7 +30,7 @@ pub trait ArtifactViews {
     /// own and those shared with them by name - an entry of the artifact's
     /// list naming them, one of their roles or a team they belong to
     /// (`Views::subjects`) -, each with the versions they may read, if they
-    /// are cleared for it. What they read only as a member of a channel is
+    /// are cleared for it. What they read only as a participant of a channel is
     /// found through that channel (`ArtifactChannelViews::artifacts`), so
     /// the participants of a session or channel are not named. The store
     /// is asked for these alone, in the viewer's name.
@@ -115,7 +115,7 @@ pub trait ArtifactChannelViews {
     /// a reader of the whole channel, since what was published in it is
     /// part of what was said there (issues 271, 23). Reading them goes
     /// through the artifact's list, which publishing granted the channel's
-    /// members (issue 316); the content of a version is reached by the
+    /// participants (issue 316); the content of a version is reached by the
     /// artifact, never through the channel.
     ///
     /// # Errors
@@ -241,8 +241,8 @@ impl ArtifactView {
                 return None;
             }
         };
-        let published_by = match channel.member(version.published_by).await {
-            Ok(member) => member.name().map(str::to_string),
+        let published_by = match channel.participant(version.published_by).await {
+            Ok(participant) => participant.name().map(str::to_string),
             Err(_) => None,
         };
         Some(PublicationSnapshot { session_name: channel.session().name().to_string(), channel_name: channel.name().to_string(), published_by })

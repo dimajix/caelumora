@@ -11,9 +11,9 @@
 //! How much a snapshot holds is the caller's choice (`Detail`): what a
 //! detail costs - reading every agent's state, say - is paid only where it
 //! is shown. A detail is taken where it is asked for and its part is
-//! there, and nothing else: `USAGE` without `MEMBERS` gives no usage, since
-//! there are no members to carry it. A list not asked for is empty. What
-//! a member's details read - its usage, notes and pending approvals - comes
+//! there, and nothing else: `USAGE` without `PARTICIPANTS` gives no usage, since
+//! there are no participants to carry it. A list not asked for is empty. What
+//! a participant's details read - its usage, notes and pending approvals - comes
 //! from its agent's state, read once for all of them; who it is
 //! (`PROFILE`) from its personality, its owner and a user's profile.
 
@@ -45,16 +45,16 @@ bitflags::bitflags! {
     pub struct Detail: u8 {
         /// Of a session: the channels the viewer may read.
         const CHANNELS = 1 << 0;
-        /// Of a channel: its members.
-        const MEMBERS = 1 << 1;
-        /// Of a member: what its model calls used (issue 209).
+        /// Of a channel: its participants.
+        const PARTICIPANTS = 1 << 1;
+        /// Of a participant: what its model calls used (issue 209).
         const USAGE = 1 << 2;
-        /// Of a member: the notes it published (issue 17).
+        /// Of a participant: the notes it published (issue 17).
         const NOTES = 1 << 3;
-        /// Of a member: the approvals its turn waits for (issue 172), and the
+        /// Of a participant: the approvals its turn waits for (issue 172), and the
         /// questions (issue 165).
         const APPROVALS = 1 << 4;
-        /// Of a member: who it is - its introduction, and of an agent its
+        /// Of a participant: who it is - its introduction, and of an agent its
         /// personality and owner (issue 244).
         const PROFILE = 1 << 5;
         /// Of a session or channel: its briefing (issue 245), which may be
@@ -130,7 +130,7 @@ pub struct ChannelSnapshot {
     /// What the channel restricts of tool calls (issue 13) - shown to
     /// everyone who reads it, whose agents it binds.
     pub approval_rules: Vec<ApprovalRule>,
-    /// Whether its members work on the workspace of its session here (issue
+    /// Whether its participants work on the workspace of its session here (issue
     /// 251), where the classifications let them.
     pub uses_workspace: bool,
     /// The session's workspace, if the channel uses it and the viewer may
@@ -141,11 +141,11 @@ pub struct ChannelSnapshot {
     /// participants (`UpdateChannel`, issue 46).
     pub can_change: bool,
     /// Its participants, in the order of the channel - with
-    /// `Detail::MEMBERS`.
-    pub members: Vec<MemberSnapshot>,
+    /// `Detail::PARTICIPANTS`.
+    pub participants: Vec<ChannelParticipantSnapshot>,
     /// Who took part and left (issue 164), in the order they left, each
-    /// with `left` - with `Detail::MEMBERS`, without the other details.
-    pub former_members: Vec<MemberSnapshot>,
+    /// with `left` - with `Detail::PARTICIPANTS`, without the other details.
+    pub former_participants: Vec<ChannelParticipantSnapshot>,
     /// What is new in it to the viewer - with `Detail::UNREAD`, for a user;
     /// `None` without it, for an agent, or if it cannot be read.
     pub unread: Option<Unread>,
@@ -182,7 +182,7 @@ pub struct PublishedNotes {
 
 /// A participant of a channel as the viewer sees it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct MemberSnapshot {
+pub struct ChannelParticipantSnapshot {
     pub id: ActorId,
     /// `None` for a user or agent that no longer exists.
     pub name: Option<String>,
@@ -212,59 +212,59 @@ pub struct MemberSnapshot {
     /// (`CancelChannel`, issues 235, 243) - only ever for agents taking
     /// part, of either kind.
     pub can_cancel: bool,
-    /// The turn of the answer the member is giving now (issue 240), read
+    /// The turn of the answer the participant is giving now (issue 240), read
     /// from the running channel: only an agent run here in a turn that can
     /// still be ended has one - not an external agent, whose answers are its
     /// remote side's. `None` in a channel that does not run. A snapshot of a
     /// channel's stream is kept up by the events that follow it; elsewhere
     /// it says how things stood when it was taken.
     pub turn_under_way: Option<TurnId>,
-    /// Where the member stands now (issue 243), read from the running
+    /// Where the participant stands now (issue 243), read from the running
     /// channel - only ever for agents taking part; `None` in a channel that
     /// does not run. Kept up by `ActorEvent::StateChanged`.
     pub state: Option<ActorState>,
-    /// The commands an agent member carries out itself that the viewer may
+    /// The commands an agent participant carries out itself that the viewer may
     /// see (issue 269), read from the running channel - for completion and
-    /// `/help`. Empty for any other member, and in a channel that does not
+    /// `/help`. Empty for any other participant, and in a channel that does not
     /// run, where nothing could carry them out.
     pub commands: Vec<Command>,
-    /// What an agent member's model calls in the channel used (issue 209),
-    /// with `Detail::USAGE`; `None` also for a member whose calls report
+    /// What an agent participant's model calls in the channel used (issue 209),
+    /// with `Detail::USAGE`; `None` also for a participant whose calls report
     /// no tokens (an external agent, a user), before its first call, and if
     /// the agent's state could not be read.
     pub usage: Option<TokenUsage>,
-    /// The notes an agent member published in the channel (issue 17) - of
+    /// The notes an agent participant published in the channel (issue 17) - of
     /// a channel read entry by entry, those released to where the viewer
     /// reads from - with `Detail::NOTES`.
     pub notes: Vec<Note>,
-    /// The approvals an agent member's turn waits for (issue 172), for a
+    /// The approvals an agent participant's turn waits for (issue 172), for a
     /// viewer who takes part in the channel as a user and reads all of it -
     /// with `Detail::APPROVALS`.
     pub pending_approvals: Vec<ApprovalRequest>,
-    /// The questions an agent member's turn waits for the answers to (issue
+    /// The questions an agent participant's turn waits for the answers to (issue
     /// 165), for the same viewer - sensitive ones only if they are asked -
     /// with `Detail::APPROVALS`.
     pub pending_questions: Vec<QuestionRequest>,
-    /// Who removed a former member and when (issue 164); `None` for one that
+    /// Who removed a former participant and when (issue 164); `None` for one that
     /// takes part.
     pub left: Option<Removal>,
-    /// Whether the viewer may delete this member - only ever an agent, its
+    /// Whether the viewer may delete this participant - only ever an agent, its
     /// owner (`DeleteAgent`, issue 164).
     pub can_delete: bool,
-    /// How the member is introduced (issue 176) - an agent by its
+    /// How the participant is introduced (issue 176) - an agent by its
     /// personality, a user by themselves - with `Detail::PROFILE`. Public,
-    /// like the name; `None` also for an approver, a member that no longer
+    /// like the name; `None` also for an approver, a participant that no longer
     /// exists, and one whose introduction could not be read.
     pub introduction: Option<String>,
-    /// The name of an agent member's personality, without its scope (issue
+    /// The name of an agent participant's personality, without its scope (issue
     /// 244) - with `Detail::PROFILE`. Public, like the introduction; not
     /// the personality itself, which stays its readers'.
     pub personality: Option<String>,
-    /// Whether an agent member runs here or elsewhere (issue 244) - with
+    /// Whether an agent participant runs here or elsewhere (issue 244) - with
     /// `Detail::PROFILE`: what an external agent is given leaves the
     /// system.
     pub personality_kind: Option<PersonalityKind>,
-    /// Who owns an agent member (issue 244): whose authority it acts with
+    /// Who owns an agent participant (issue 244): whose authority it acts with
     /// and who answers for its tool calls - with `Detail::PROFILE`.
     pub owner: Option<ActorId>,
     /// The owner's name - also where they share no session with the
@@ -300,7 +300,7 @@ pub struct GroupSnapshot {
     pub owner: ActorId,
     /// Who belongs to it, each with their name where it is known.
     pub members: Vec<(ActorId, Option<String>)>,
-    /// Whether the viewer may rename it, change its members and delete it
+    /// Whether the viewer may rename it, change its participants and delete it
     /// (`UpdateGroup`): the owner of a team. The participants of a session
     /// or channel are changed by taking part, never here.
     pub can_change: bool,
@@ -375,7 +375,7 @@ pub enum CandidateRefusal {
     CannotRun,
 }
 
-/// An agent as the viewer sees it on its own, not as a member of a channel
+/// An agent as the viewer sees it on its own, not as a participant of a channel
 /// (issues 164, 227).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentSnapshot {

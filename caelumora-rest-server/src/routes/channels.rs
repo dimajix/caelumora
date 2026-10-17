@@ -17,7 +17,7 @@ use caelumora_model::question::QuestionId;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::Detail;
-use caelumora_rest_api::channel::{AddParticipantRequest, AnswerQuestionsRequest, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest, MessageRequest, PublishedNotesResponse, ReadRequest, SendApprovalRequest, TurnRequest};
+use caelumora_rest_api::channel::{AddParticipantRequest, AnswerQuestionsRequest, ChannelParticipantResponse, ChannelResponse, ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest, MessageRequest, PublishedNotesResponse, ReadRequest, SendApprovalRequest, TurnRequest};
 use caelumora_rest_api::context::{AgentComponentsResponse, AgentToolsResponse, KnowledgeRefResponse, MessageContextResponse, SeenItemResponse};
 use caelumora_rest_api::history::{HistoryMessageResponse, HistoryPageResponse, HistoryQuery};
 use caelumora_rest_api::session::DescriptionRequest;
@@ -27,7 +27,7 @@ use caelumora_runtime::actor::Shown;
 use caelumora_runtime::actor::user::{ChannelWatch, UserActor};
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::ChannelSpec;
-use caelumora_runtime::view::{ChannelView, MemberView, Reached, SessionView, Viewer};
+use caelumora_runtime::view::{ChannelView, ParticipantView, Reached, SessionView, Viewer};
 use futures::stream::{self, Stream, StreamExt};
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -56,7 +56,7 @@ pub async fn list_channels(
     }
     let mut channels: Vec<ChannelResponse> = Vec::new();
     for channel in session.channels().await {
-        channels.push(channel.snapshot(Detail::MEMBERS | Detail::UNREAD).await.into());
+        channels.push(channel.snapshot(Detail::PARTICIPANTS | Detail::UNREAD).await.into());
     }
     Ok(Json(channels).into_response())
 }
@@ -203,7 +203,7 @@ async fn channel_snapshot(state: &AppState, session_id: SessionId, channel_id: C
         }
     };
     // The conversation can be shown without what of it cannot be read.
-    let channel = view.snapshot(Detail::MEMBERS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS | Detail::BRIEFING | Detail::UNREAD).await;
+    let channel = view.snapshot(Detail::PARTICIPANTS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS | Detail::BRIEFING | Detail::UNREAD).await;
     Some(ChannelSnapshot::of(channel, HistoryPageResponse::of(page, |message, _| message)))
 }
 
@@ -320,10 +320,10 @@ pub async fn get_participant(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
-) -> Result<Json<ChannelMemberResponse>, ApiError> {
+) -> Result<Json<ChannelParticipantResponse>, ApiError> {
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let member = member_of(&channel, aid).await?.snapshot(Detail::USAGE | Detail::PROFILE).await;
-    ChannelMemberResponse::of(member).map(Json)
+    let participant = participant_of(&channel, aid).await?.snapshot(Detail::USAGE | Detail::PROFILE).await;
+    ChannelParticipantResponse::of(participant).map(Json)
         .ok_or_else(|| ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid)))
 }
 
@@ -426,20 +426,20 @@ pub async fn revoke_message(
 /// The actor of `channel` whose id is `id`, whatever kind it is - a path
 /// names an actor by its UUID alone.
 fn actor_in(channel: &ChannelLoop, id: Uuid) -> Option<ActorId> {
-    channel.member_ids().into_iter().find(|actor| actor.id() == id)
+    channel.participant_ids().into_iter().find(|actor| actor.id() == id)
 }
 
-/// The member of `channel` whose id is `id`, whatever kind it is - or a
-/// former member (issue 164), whose history and context stay readable.
-async fn member_of(channel: &ChannelView, id: Uuid) -> Result<MemberView, ApiError> {
-    let mut members = channel.members().await;
-    members.extend(channel.former_members().await);
-    if let Some(member) = members.into_iter().find(|member| member.id().id() == id) {
-        return Ok(member);
+/// The participant of `channel` whose id is `id`, whatever kind it is - or a
+/// former participant (issue 164), whose history and context stay readable.
+async fn participant_of(channel: &ChannelView, id: Uuid) -> Result<ParticipantView, ApiError> {
+    let mut participants = channel.participants().await;
+    participants.extend(channel.former_participants().await);
+    if let Some(participant) = participants.into_iter().find(|participant| participant.id().id() == id) {
+        return Ok(participant);
     }
     // An agent that left before the channel kept who left is known by what
     // it said.
-    Ok(channel.member(ActorId::Agent(AgentId(id))).await?)
+    Ok(channel.participant(ActorId::Agent(AgentId(id))).await?)
 }
 
 /// The actor the authenticated user acts through in `channel` (issue 30).
@@ -619,8 +619,8 @@ pub async fn message_context(
     user: AuthenticatedUser,
 ) -> Result<Json<MessageContextResponse>, ApiError> {
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let member = member_of(&channel, aid).await?;
-    let view = member.context().await?;
+    let participant = participant_of(&channel, aid).await?;
+    let view = participant.context().await?;
     let seen = view.context_of(MessageId(mid)).await?;
     // What set the message's label, of the parts classified (issue 170).
     let label = view.classification_of(MessageId(mid)).await?.unwrap_or_default();
@@ -641,7 +641,7 @@ pub async fn message_context(
     }
     Ok(Json(MessageContextResponse {
         message_id: MessageId(mid),
-        actor_id: member.id(),
+        actor_id: participant.id(),
         transcript_digest: seen.reference.transcript,
         items: seen.items.into_iter().map(|item| SeenItemResponse::of(item, &causes)).collect(),
         knowledge,
@@ -674,7 +674,7 @@ async fn knowledge_response(session: &SessionView, knowledge: &KnowledgeRef, cau
         _ => None,
     };
     let agent_name = match (agent_id, &channel) {
-        (Some(id), Some(channel)) => channel.member(id).await.ok().and_then(|m| m.name().map(str::to_string)),
+        (Some(id), Some(channel)) => channel.participant(id).await.ok().and_then(|m| m.name().map(str::to_string)),
         _ => None,
     };
     KnowledgeRefResponse {
@@ -704,7 +704,7 @@ pub async fn agent_history(
     user: AuthenticatedUser,
 ) -> Result<Json<HistoryPageResponse<HistoryMessageResponse>>, ApiError> {
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let view = member_of(&channel, aid).await?.context().await?;
+    let view = participant_of(&channel, aid).await?.context().await?;
     let page = view.history_page(query.before, query.limit()).await?;
     let heard: Vec<MessageId> = page.items.iter().filter_map(|item| item.said().map(|m| m.id)).collect();
     let passed_on = view.in_transcript(&heard).await?;
@@ -719,7 +719,7 @@ pub async fn agent_tools(
     user: AuthenticatedUser,
 ) -> Result<Json<AgentToolsResponse>, ApiError> {
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let tool_sets = member_of(&channel, aid).await?.tool_sets().await?;
+    let tool_sets = participant_of(&channel, aid).await?.tool_sets().await?;
     Ok(Json(AgentToolsResponse { tool_sets }))
 }
 
@@ -732,7 +732,7 @@ pub async fn agent_components(
     user: AuthenticatedUser,
 ) -> Result<Json<AgentComponentsResponse>, ApiError> {
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let components = member_of(&channel, aid).await?.components().await?;
+    let components = participant_of(&channel, aid).await?.components().await?;
     Ok(Json(AgentComponentsResponse { components }))
 }
 

@@ -35,9 +35,9 @@ as when it is deleted alone (issues 319, 316). Personalities and session templat
 none, are members by their store (`Unowned`), which marks them and announces nothing.
 
 The groups of the participants of a session and of its channels lie in its scope as well, but are
-not among what lies there: they belong to the session or channel itself, and its members reach it by
-them (issue 348). They go and come back with its mark, in the runtime's name, whoever deletes or
-restores it - all of them or none (`GroupManager::delete_participants`, `restore_participants`),
+not among what lies there: they belong to the session or channel itself, and its participants reach
+it by them (issue 348). They go and come back with its mark, in the runtime's name, whoever deletes
+or restores it - all of them or none (`GroupManager::delete_participants`, `restore_participants`),
 announced as a team. Deleting deletes them last, once nothing else of the scope is left, so that a
 session kept keeps its members; if they cannot go, the mark is taken away again, and they stay.
 Restoring restores them first, with the mark; if they cannot come back, the session or channel is
@@ -359,7 +359,7 @@ naming a message or a turn.
     given, and nothing here takes the answer back from it.
 
 Whether a retry was accepted is told to the users and never written to the history. Whether a viewer
-may ask is part of each member's snapshot - the viewer's `RetryMessage`, of an agent whose kind
+may ask is part of each participant's snapshot - the viewer's `RetryMessage`, of an agent whose kind
 answers again - so a client offers it only where it is permitted and can succeed.
 
 ## Participants
@@ -406,7 +406,7 @@ themselves or their own agent, never someone else.
     themselves back in; an entry for a role, a group or everyone stays. Who joins a channel by
     themselves sees all of its history: whoever let them join let them read it.
 *   **What follows**: the session's document gains the participant, the group of its participants
-    follows before it is announced (`SessionUpdateEvent::ParticipantAdded`), so that the new one
+    follows before it is announced (`SessionUpdateEvent::ParticipantJoined`), so that the new one
     hears of it, too, and a running session follows an agent taken in as it follows those it started
     with.
 
@@ -416,8 +416,8 @@ could not be taken in - coarsely, never which clearance is missing. Only whoever
 session searches: a search tells who exists.
 
 A removed participant is kept as a former one, with who removed it and when, not among those who
-take part now - so nothing that reads them changes. The views reach former members, so what an agent
-said and saw stays readable for whoever may read its context.
+take part now - so nothing that reads them changes. The views reach former participants, so what an
+agent said and saw stays readable for whoever may read its context.
 
 Deleting an agent (`AgentManager::delete`) marks it and changes no channel: it rests in every
 channel it takes part in until it is restored. The channels follow its mark instead:
@@ -427,8 +427,8 @@ channel it takes part in until it is restored. The channels follow its mark inst
 *   a channel that starts leaves it out, as any participant that no longer exists -
     `Participation::resolve` asks the store whether it exists, not the controllers, which keep an
     agent's controller while an actor of it still runs;
-*   the views show it as a former member, removed as its mark says, and keep its name, so that what
-    it said keeps its sender.
+*   the views show it as a former participant, removed as its mark says, and keep its name, so that
+    what it said keeps its sender.
 
 A running session subscribes to the events of its agents, and looks at all of them again as it
 starts and after it lost events, so that a deletion or a restore it did not hear of is not missed.
@@ -438,8 +438,8 @@ takes part again in every channel it rested in: a running session builds its act
 the part of the history it may see, as when it joined, and announces it as a join. Removing a
 resting agent from a channel changes the document alone, and the agent does not come back there.
 Purging it removes its document and its state, its own and in every channel; in the channels it
-rested in it stays a former member, without when it left. An agent of a session's or a channel's
-scope goes with that session or channel (see [Sessions](#sessions)).
+rested in it stays a former participant, without when it left. An agent of a session's or a
+channel's scope goes with that session or channel (see [Sessions](#sessions)).
 
 ### How much history a newcomer sees
 

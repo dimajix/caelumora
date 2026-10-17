@@ -56,15 +56,15 @@ pub async fn open_channel(state: &Arc<AppState>, user: &AuthenticatedUser, sessi
 /// the user (issue 404). Described by the runtime, which decides what the
 /// user may read and do; does not start the session.
 pub async fn channel_view(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, channel_id: ChannelId) -> Result<ChannelResponse, ApiError> {
-    Ok(channel_of(state, user, session_id, channel_id).await?.snapshot(Detail::MEMBERS | Detail::BRIEFING | Detail::UNREAD).await.into())
+    Ok(channel_of(state, user, session_id, channel_id).await?.snapshot(Detail::PARTICIPANTS | Detail::BRIEFING | Detail::UNREAD).await.into())
 }
 
 /// Session `session_id` as `user` sees it now, with its channels and their
-/// members, the briefings (issue 245) and what is new to the user in each
+/// participants, the briefings (issue 245) and what is new to the user in each
 /// (issue 404) - what `GET` of one session and every change of one answer.
 pub async fn session_view(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId) -> Result<SessionSnapshot, ApiError> {
     let session = views(state, user).session(session_id).await?;
-    Ok(session.snapshot(Detail::CHANNELS | Detail::MEMBERS | Detail::BRIEFING | Detail::UNREAD).await.into())
+    Ok(session.snapshot(Detail::CHANNELS | Detail::PARTICIPANTS | Detail::BRIEFING | Detail::UNREAD).await.into())
 }
 
 /// Channel `channel_id` of session `session_id` as `user` reaches it

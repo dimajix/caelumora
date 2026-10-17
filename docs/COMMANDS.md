@@ -124,7 +124,7 @@ external agent alike.
     channel's history and the agent's - not what it answered, which may have been the issuer's
     alone. A command refused or failed did nothing and leaves no entry.
 *   **Listed.** `/help` lists the agents' commands after the channel's, each with the handles of the
-    agents that carry it out; the member snapshots carry them for completion.
+    agents that carry it out; the participant snapshots carry them for completion.
 
 ## Built-in commands
 

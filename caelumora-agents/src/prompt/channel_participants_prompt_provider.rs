@@ -1,4 +1,4 @@
-//! The `channel_members_prompt_provider` component (issue 176): tells the
+//! The `channel_participants_prompt_provider` component (issue 176): tells the
 //! agent who it is and who else is in its channel - every current user and
 //! agent, by name, `@` handle and introduction. A prompt part of its own
 //! rather than a variant of `static_system_prompt_provider`, so that the
@@ -26,17 +26,17 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::value::text::Introduction;
 use std::sync::{Arc, Mutex};
 
-pub const CHANNEL_MEMBERS_PROMPT_PROVIDER_KIND: &str = "channel_members_prompt_provider";
+pub const CHANNEL_PARTICIPANTS_PROMPT_PROVIDER_KIND: &str = "channel_participants_prompt_provider";
 
 #[derive(Debug)]
-pub struct ChannelMembersPromptProvider {
+pub struct ChannelParticipantsPromptProvider {
     pub position: PromptPosition,
     /// Whether it tells only of changes: then what it told last, `None`
     /// before it told anything. A plain lock, never held across an await.
     told: Option<Mutex<Option<String>>>,
 }
 
-impl ChannelMembersPromptProvider {
+impl ChannelParticipantsPromptProvider {
     /// The roster at `position`, told every time it is asked.
     pub fn new(position: PromptPosition) -> Self {
         Self { position, told: None }
@@ -64,7 +64,7 @@ impl ChannelMembersPromptProvider {
 
 
 #[async_trait]
-impl PromptProvider for ChannelMembersPromptProvider {
+impl PromptProvider for ChannelParticipantsPromptProvider {
     fn position(&self) -> PromptPosition {
         self.position
     }
@@ -75,14 +75,14 @@ impl PromptProvider for ChannelMembersPromptProvider {
         let own = ActorId::Agent(situation.agent_id());
         let mut me = None;
         let mut others = Vec::new();
-        for member in channel.members().await {
+        for participant in channel.participants().await {
             // Approvers are no participants in this sense, and who no
             // longer exists cannot be addressed.
-            if !matches!(member.id(), ActorId::User(_) | ActorId::Agent(_)) {
+            if !matches!(participant.id(), ActorId::User(_) | ActorId::Agent(_)) {
                 continue;
             }
-            let Some(entry) = member.describe().await? else { continue };
-            if member.id() == own {
+            let Some(entry) = participant.describe().await? else { continue };
+            if participant.id() == own {
                 me = Some(entry);
             } else {
                 others.push(entry);
@@ -119,11 +119,11 @@ fn render(me: Option<&ActorDescription>, others: &[ActorDescription], explanatio
     } else {
         text.push_str("The others - mention all of them with @all to address them:\n");
     }
-    for member in others {
-        let line = match (member.is_person(), member.introduction.as_ref().map(one_line)) {
-            (true, Some(introduction)) => format!("{} In their own words: \"{introduction}\"", described(member)),
-            (false, Some(introduction)) => format!("{} {introduction}", described(member)),
-            (_, None) => described(member),
+    for participant in others {
+        let line = match (participant.is_person(), participant.introduction.as_ref().map(one_line)) {
+            (true, Some(introduction)) => format!("{} In their own words: \"{introduction}\"", described(participant)),
+            (false, Some(introduction)) => format!("{} {introduction}", described(participant)),
+            (_, None) => described(participant),
         };
         text.push_str(&format!("- {line}\n"));
     }
@@ -133,18 +133,18 @@ fn render(me: Option<&ActorDescription>, others: &[ActorDescription], explanatio
     titled("Who is in this channel", &text)
 }
 
-/// A member with its handle and whether it is a person or an agent:
+/// A participant with its handle and whether it is a person or an agent:
 /// `Kaya (@kaya), a person.`
-fn described(member: &ActorDescription) -> String {
-    let kind = if member.is_person() { "a person" } else { "an agent" };
-    format!("{}, {kind}.", named(member))
+fn described(participant: &ActorDescription) -> String {
+    let kind = if participant.is_person() { "a person" } else { "an agent" };
+    format!("{}, {kind}.", named(participant))
 }
 
-/// A member's name with its handle, if it has one: `Kaya (@kaya)`.
-fn named(member: &ActorDescription) -> String {
-    match member.handle() {
-        Some(handle) => format!("{} (@{handle})", member.name),
-        None => member.name.to_string(),
+/// A participant's name with its handle, if it has one: `Kaya (@kaya)`.
+fn named(participant: &ActorDescription) -> String {
+    match participant.handle() {
+        Some(handle) => format!("{} (@{handle})", participant.name),
+        None => participant.name.to_string(),
     }
 }
 
@@ -155,11 +155,11 @@ fn one_line(introduction: &Introduction) -> String {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(CHANNEL_MEMBERS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
+        ComponentKind::new(CHANNEL_PARTICIPANTS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
         |descriptor, _context| {
             let position = PromptPosition::of_params(&descriptor.params)?;
             let changes_only = flag_of_params(&descriptor.params, "changes_only")?;
-            let provider = if changes_only { ChannelMembersPromptProvider::changes_only(position) } else { ChannelMembersPromptProvider::new(position) };
+            let provider = if changes_only { ChannelParticipantsPromptProvider::changes_only(position) } else { ChannelParticipantsPromptProvider::new(position) };
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(provider));
             Ok(facets)
@@ -192,15 +192,15 @@ mod tests {
     use chrono::Utc;
     use uuid::Uuid;
 
-    fn member(name: &str, person: bool, introduction: Option<&str>) -> ActorDescription {
+    fn participant(name: &str, person: bool, introduction: Option<&str>) -> ActorDescription {
         let id = if person { ActorId::User(UserId::new()) } else { ActorId::Agent(AgentId::new()) };
         ActorDescription { id, name: Name::new(name).unwrap(), introduction: introduction.map(|text| Introduction::new(text).unwrap()) }
     }
 
     #[test]
     fn the_agent_is_named_first_and_people_speak_in_their_own_words() {
-        let me = member("Jonathan", false, Some("A quiz master."));
-        let others = [member("Kaya", true, Some("I run the budget.")), member("Sassy", false, None)];
+        let me = participant("Jonathan", false, Some("A quiz master."));
+        let others = [participant("Kaya", true, Some("I run the budget.")), participant("Sassy", false, None)];
         let text = render(Some(&me), &others, None);
         assert_eq!(text, "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
@@ -214,15 +214,15 @@ mod tests {
 
     #[test]
     fn telling_only_of_changes_tells_the_roster_again_only_when_it_changed() {
-        let changes = ChannelMembersPromptProvider::changes_only(PromptPosition::Start);
+        let changes = ChannelParticipantsPromptProvider::changes_only(PromptPosition::Start);
         let roster = |others: &[ActorDescription]| render(None, others, None);
-        let (kaya, bob) = (member("Kaya", true, None), member("Bob", true, None));
+        let (kaya, bob) = (participant("Kaya", true, None), participant("Bob", true, None));
         let first = roster(std::slice::from_ref(&kaya));
         assert_eq!(changes.text(first.clone()), first, "told the first time");
         assert_eq!(changes.text(first.clone()), "", "not again unchanged");
         let both = roster(&[kaya, bob]);
         assert_eq!(changes.text(both.clone()), both, "all of it again, without an account of what changed (issue 410)");
-        assert_eq!(ChannelMembersPromptProvider::new(PromptPosition::Start).text(first.clone()), first, "told every time without it");
+        assert_eq!(ChannelParticipantsPromptProvider::new(PromptPosition::Start).text(first.clone()), first, "told every time without it");
     }
 
     #[test]
@@ -256,7 +256,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_members_of_the_channel_are_read_with_their_introductions() {
+    async fn the_participants_of_the_channel_are_read_with_their_introductions() {
         let store = Arc::new(MemoryStore::new());
         let runtime = TestRuntime { store: Arc::clone(&store), plugins: vec![&TestAgents], ..Default::default() }.build();
         let system = SecurityContext::system();
@@ -301,7 +301,7 @@ mod tests {
         state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Default::default());
         let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(jonathan.id))).expect("a turn was begun");
 
-        let prompt = ChannelMembersPromptProvider::new(PromptPosition::Start).get_prompt(&turn.situation()).await.unwrap();
+        let prompt = ChannelParticipantsPromptProvider::new(PromptPosition::Start).get_prompt(&turn.situation()).await.unwrap();
         assert_eq!(prompt.text, "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
             About you: A quiz master.\n\
@@ -325,7 +325,7 @@ mod tests {
         state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), context, channel.classification(), Default::default());
         let turn = Turn::of(outsider, "outsider".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(channel, ActorId::Agent(outsider))).expect("a turn was begun");
         assert!(matches!(turn.situation().session().await, Err(ViewError::SessionNotFound(_))), "reached, but not to be read (issue 399)");
-        let failed = ChannelMembersPromptProvider::new(PromptPosition::Start).get_prompt(&turn.situation()).await;
+        let failed = ChannelParticipantsPromptProvider::new(PromptPosition::Start).get_prompt(&turn.situation()).await;
         assert!(matches!(failed, Err(ContextError::View(ViewError::SessionNotFound(_)))), "left to its fail policy: {failed:?}");
     }
 }

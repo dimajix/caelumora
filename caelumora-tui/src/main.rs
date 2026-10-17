@@ -151,7 +151,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
     let me = ActorId::User(user);
     let mut open_questions: Vec<QuestionRequest> = Vec::new();
     let mut answering: Option<(QuestionRequest, Vec<Response>)> = None;
-    let handles: HashMap<ActorId, String> = channel.members()
+    let handles: HashMap<ActorId, String> = channel.participants()
         .into_iter()
         .filter_map(|m| Some((m.id, m.handle?)))
         .collect();

@@ -1,17 +1,17 @@
-//! What a member of a channel is, as its kind makes it: a user, an agent run
+//! What a participant of a channel is, as its kind makes it: a user, an agent run
 //! here, an external agent (issue 179), an approver - or one that no longer
-//! exists. A `MemberView` asks the `MemberState` that fits; whether the
+//! exists. A `ParticipantView` asks the `ParticipantState` that fits; whether the
 //! viewer may see something, and which of it is released to them, stays the
-//! member view's, in one place for every kind.
+//! participant view's, in one place for every kind.
 //!
 //! Only agents have a state in the channel worth reading - notes, approvals
-//! waited for, what they saw. That is the `AgentMember` a member state
+//! waited for, what they saw. That is the `AgentParticipant` a participant state
 //! hands out if it is an agent, so that no other kind has to answer for
 //! what it does not have. Both kinds of agent keep the same state (issue
 //! 206): which kind it is does not matter here. Its personality is read
 //! for its introduction, whether it answers again (issue 242) and what
 //! its profile shows (issue 244), when first asked for, not for every
-//! member looked at (issue 189).
+//! participant looked at (issue 189).
 
 use super::context::AgentContextView;
 use super::{ViewError, ViewResult, Views};
@@ -35,9 +35,9 @@ use std::sync::Arc;
 use tokio::sync::OnceCell;
 use tracing::warn;
 
-/// A member of a channel, as its kind makes it.
+/// A participant of a channel, as its kind makes it.
 #[async_trait]
-pub(super) trait MemberState: Send + Sync + Debug {
+pub(super) trait ParticipantState: Send + Sync + Debug {
     /// Its name; `None` for a user or agent that no longer exists.
     fn name(&self) -> Option<&str>;
 
@@ -55,7 +55,7 @@ pub(super) trait MemberState: Send + Sync + Debug {
         Ok(None)
     }
 
-    /// What of it is public to everyone in the channel, as member `id`
+    /// What of it is public to everyone in the channel, as participant `id`
     /// (issue 403); `None` for one that no longer exists.
     ///
     /// # Errors
@@ -65,19 +65,19 @@ pub(super) trait MemberState: Send + Sync + Debug {
     }
 
     /// An agent's attributes: what `ReadAgentContext` is asked about.
-    /// `None` for a member that is no agent.
+    /// `None` for a participant that is no agent.
     fn attributes(&self) -> Option<&SecurityAttributes> {
         None
     }
 
-    /// The member as an agent, if it is one that exists.
-    fn agent(&self) -> Option<&AgentMember> {
+    /// The participant as an agent, if it is one that exists.
+    fn agent(&self) -> Option<&AgentParticipant> {
         None
     }
 
     /// An agent's personality, read once when first asked for: what it is
     /// introduced as, what kind of agent it is (issues 176, 242, 244).
-    /// `None` for a member that is no agent, and for an agent whose
+    /// `None` for a participant that is no agent, and for an agent whose
     /// personality is gone.
     ///
     /// # Errors
@@ -87,40 +87,40 @@ pub(super) trait MemberState: Send + Sync + Debug {
     }
 }
 
-/// The member `participant` of channel `channel`, as `views` read it: its
+/// The participant `participant` of channel `channel`, as `views` read it: its
 /// document now, and the rest - an agent's personality too - when it is
 /// asked for. Read in the runtime's name: taking part in a session makes a
 /// name known to everybody in it (issue 120), introductions are public,
 /// and an agent's kind decides how its state is read, not what the viewer
 /// may see.
-pub(super) async fn member_state(views: &Views, participant: &Participant, channel: ChannelId) -> Arc<dyn MemberState> {
+pub(super) async fn participant_state(views: &Views, participant: &Participant, channel: ChannelId) -> Arc<dyn ParticipantState> {
     match participant {
         Participant::User(id) => match views.stores().users.get(&SecurityContext::system(), *id).await {
-            Ok(user) => Arc::new(UserMember { id: *id, name: user.username, profiles: Arc::clone(&views.stores().user_profiles), introduction: OnceCell::new() }),
-            Err(StoreError::NotFound { .. }) => Arc::new(GoneMember { name: None }),
+            Ok(user) => Arc::new(UserParticipant { id: *id, name: user.username, profiles: Arc::clone(&views.stores().user_profiles), introduction: OnceCell::new() }),
+            Err(StoreError::NotFound { .. }) => Arc::new(GoneParticipant { name: None }),
             Err(e) => {
                 warn!("Cannot read user {}: {:#}", id, e);
-                Arc::new(GoneMember { name: None })
+                Arc::new(GoneParticipant { name: None })
             }
         },
-        Participant::Approver(_) => Arc::new(ApproverMember { name: participant.actor_id().fixed_name() }),
+        Participant::Approver(_) => Arc::new(ApproverParticipant { name: participant.actor_id().fixed_name() }),
         Participant::Agent(id) => match views.agent_of(*id).await {
-            Some(agent) => Arc::new(AgentMemberState {
-                member: AgentMember(StateRef { agent: agent.id, channel, store: Arc::clone(views.states()), histories: Arc::clone(views.histories()), transcripts: Arc::clone(views.transcripts()) }),
+            Some(agent) => Arc::new(AgentParticipantState {
+                participant: AgentParticipant(StateRef { agent: agent.id, channel, store: Arc::clone(views.states()), histories: Arc::clone(views.histories()), transcripts: Arc::clone(views.transcripts()) }),
                 agent,
                 personalities: Arc::clone(&views.stores().personalities),
                 personality: OnceCell::new(),
             }),
             // A deleted agent keeps its name (issue 164), nothing else.
-            None => Arc::new(GoneMember { name: views.deleted_agent_name(*id).await }),
+            None => Arc::new(GoneParticipant { name: views.deleted_agent_name(*id).await }),
         },
     }
 }
 
 /// A user: their name, and how they introduce themselves, read once when
-/// it is first asked for - most who look at a member do not.
+/// it is first asked for - most who look at a participant do not.
 #[derive(Debug)]
-struct UserMember {
+struct UserParticipant {
     id: UserId,
     name: Name,
     profiles: Arc<dyn EntityStore<UserProfile>>,
@@ -128,7 +128,7 @@ struct UserMember {
 }
 
 #[async_trait]
-impl MemberState for UserMember {
+impl ParticipantState for UserParticipant {
     fn name(&self) -> Option<&str> {
         Some(self.name.as_str())
     }
@@ -149,12 +149,12 @@ impl MemberState for UserMember {
 
 /// An approver: a name of its own, and nothing to mention or introduce.
 #[derive(Debug)]
-struct ApproverMember {
+struct ApproverParticipant {
     name: Option<&'static str>,
 }
 
 #[async_trait]
-impl MemberState for ApproverMember {
+impl ParticipantState for ApproverParticipant {
     fn name(&self) -> Option<&str> {
         self.name
     }
@@ -172,11 +172,11 @@ impl MemberState for ApproverMember {
 /// of it is known - but the name of an agent that was deleted, not purged
 /// (issue 164).
 #[derive(Debug)]
-struct GoneMember {
+struct GoneParticipant {
     name: Option<String>,
 }
 
-impl MemberState for GoneMember {
+impl ParticipantState for GoneParticipant {
     fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
@@ -212,15 +212,15 @@ impl StateRef {
 /// which says how it is introduced and whether it answers again, read once,
 /// when that is first needed (issue 189) - `None` if it is gone.
 #[derive(Debug)]
-struct AgentMemberState {
+struct AgentParticipantState {
     agent: Agent,
-    member: AgentMember,
+    participant: AgentParticipant,
     personalities: Arc<dyn EntityStore<Personality>>,
     personality: OnceCell<Option<Personality>>,
 }
 
 #[async_trait]
-impl MemberState for AgentMemberState {
+impl ParticipantState for AgentParticipantState {
     fn name(&self) -> Option<&str> {
         Some(self.agent.name.as_str())
     }
@@ -247,20 +247,20 @@ impl MemberState for AgentMemberState {
         Some(&self.agent.security_attributes)
     }
 
-    fn agent(&self) -> Option<&AgentMember> {
-        Some(&self.member)
+    fn agent(&self) -> Option<&AgentParticipant> {
+        Some(&self.participant)
     }
 }
 
-/// An agent member's state in the channel, of either kind (issues 179,
+/// An agent participant's state in the channel, of either kind (issues 179,
 /// 206): its notes, its turn, what it saw. Of an external agent, which
 /// writes no notes and has no turn, those parts are empty.
 #[derive(Debug)]
-pub(super) struct AgentMember(StateRef);
+pub(super) struct AgentParticipant(StateRef);
 
-impl AgentMember {
+impl AgentParticipant {
     /// Its state in the channel as stored, read anew on every call - what
-    /// a member's details are taken from, read once for all of them.
+    /// a participant's details are taken from, read once for all of them.
     pub(super) async fn stored(&self) -> ViewResult<AgentChannelState> {
         let place = &self.0;
         place.store.get_agent_channel_state(place.agent, place.channel).await.map_err(|e| place.failed(e))

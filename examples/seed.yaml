@@ -25,8 +25,8 @@ components:
 # Who is in the channel, which language it speaks and what it is about.
 - id: channel-context
   components:
-  - id: channel-members
-    kind: channel_members_prompt_provider
+  - id: channel-participants
+    kind: channel_participants_prompt_provider
     fail_policy: FailClosed
   - id: channel-language
     kind: channel_language_prompt_provider
@@ -140,8 +140,8 @@ personalities:
   roles:
   - staff
   components:
-  - id: channel-members
-    kind: channel_members_prompt_provider
+  - id: channel-participants
+    kind: channel_participants_prompt_provider
     params:
       changes_only: true
     fail_policy: FailClosed

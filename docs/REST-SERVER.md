@@ -75,10 +75,10 @@ A handler translates; it does not decide. Every handler derives its `SecurityCon
 *   **It acts through the user's actor.** Writing, approving and running commands go through
     `user_actor_of`, the user's own actor in the channel. Someone who is not a participant has none
     and is refused with `403`. See [CHANNELS.md](CHANNELS.md#acting-in-a-channel).
-*   **It reads through the views.** What a client lists and offers - sessions, channels, members,
-    `can_change`, `can_read_context` - a handler reaches through the runtime's views as the user and
-    answers with their snapshots, which `caelumora-rest-api` maps to responses. The server asks the
-    `AccessPolicy` nothing itself. See [SECURITY.md](SECURITY.md#views).
+*   **It reads through the views.** What a client lists and offers - sessions, channels,
+    participants, `can_change`, `can_read_context` - a handler reaches through the runtime's views
+    as the user and answers with their snapshots, which `caelumora-rest-api` maps to responses. The
+    server asks the `AccessPolicy` nothing itself. See [SECURITY.md](SECURITY.md#views).
 
 ## Endpoints
 
@@ -100,14 +100,14 @@ its handler's doc comment.
 | `PUT /sessions/{id}/privacy`, `…/description`, `…/approval-rules`; `PUT`, `DELETE /sessions/{id}/workspace` | Change whom the session lets read what was said, what it is for, what it restricts of tool calls; attach or take away its workspace |
 | `POST /sessions/{id}/participants`, `…/join`; `GET /sessions/{id}/candidates?prefix=&channel=` | Take a user or agent into the session - and a channel at once; join it by one's own act; search whom to take in by the beginning of their name, with whether they take part and why they cannot be taken in |
 | `GET /sessions/{id}/actors/{aid}/private_notes` | The private notes an agent wrote in the channels of the session the user may read |
-| `GET`, `POST /agents`; `GET`, `PATCH`, `DELETE /agents/{id}`; `POST /agents/{id}/restore`, `…/purge`; `GET /personalities` | Agents: list, make one of a personality in the user's scope, the global one or a session's or channel's they may read, fetch with the channels it takes part in that the user may read, rename, delete (it rests in its channels as a former member), restore (back into them), purge; the personalities the user may make an agent of |
+| `GET`, `POST /agents`; `GET`, `PATCH`, `DELETE /agents/{id}`; `POST /agents/{id}/restore`, `…/purge`; `GET /personalities` | Agents: list, make one of a personality in the user's scope, the global one or a session's or channel's they may read, fetch with the channels it takes part in that the user may read, rename, delete (it rests in its channels as a former participant), restore (back into them), purge; the personalities the user may make an agent of |
 | `GET`, `POST /workspaces`; `GET /workspaces/storages`; `GET`, `PATCH`, `DELETE /workspaces/{id}`; `PUT /workspaces/{id}/access`, `…/description`, `…/classification`; `POST /workspaces/{id}/restore`, `…/purge` | Workspaces: list, make, the storages they can be made in, fetch, rename, delete, share, describe, reclassify, restore, purge |
 | `GET /workspaces/{id}/files?path=`; `GET`, `PUT`, `DELETE /workspaces/{id}/files/{path}` | List a directory of a workspace, download, upload or delete a file |
 | `GET`, `POST /skills`; `GET`, `PATCH`, `DELETE /skills/{id}`; `PUT /skills/{id}/description`, `…/body`, `…/classification`; `POST /skills/{id}/restore`, `…/purge` | Skills, served by the plugin `caelumora-skills`: list without bodies, make, fetch with body, rename, delete, change, restore, purge |
 | `GET`, `POST /groups`; `GET`, `PATCH`, `DELETE /groups/{id}`; `PUT /groups/{id}/members`; `POST /groups/{id}/restore`, `…/purge` | Teams, and the groups of the participants of a session or channel the user reads: list, make, fetch, rename, delete, set a team's members, restore, purge |
 | `GET /artifacts`; `GET`, `DELETE /artifacts/{id}`; `PUT /artifacts/{id}/scope`, `…/description`, `…/access`; `POST /artifacts/{id}/restore`, `…/purge` | Artifacts, served by the plugin `caelumora-artifacts`: list the user's own and those shared with them, fetch, delete, keep beyond the session, describe, share, restore, purge |
 | `GET /artifacts/{id}/versions/{n}/content` | Download a version's content (the plugin's) |
-| `GET`, `POST …/channels`; `GET`, `DELETE …/channels/{cid}`; `POST …/channels/{cid}/restore` | Channels: list, create, fetch (with its former members), delete, restore |
+| `GET`, `POST …/channels`; `GET`, `DELETE …/channels/{cid}`; `POST …/channels/{cid}/restore` | Channels: list, create, fetch (with its former participants), delete, restore |
 | `PUT …/channels/{cid}/classification`, `…/language`, `…/description`, `…/uses-workspace`, `…/approval-rules` | Change a channel: reclassify it, its language, what it is for, whether it uses the session's workspace, what it restricts of tool calls |
 | `GET …/channels/{cid}/artifacts` | The artifacts with a version published in the channel (the plugin's) |
 | `POST …/channels/{cid}/commands/{command_id}/kill` | End a command of the workspace's shell started in the channel, with what it started |
@@ -141,8 +141,8 @@ Some rules hold across the endpoints:
     retry, the answers to questions. Whether the channel lets it in arrives on the stream (see [Who
     follows a channel](#who-follows-a-channel)).
 *   **What costs, or concerns one thing, is given where one thing is fetched**, not where things are
-    listed: what a member's model calls used, a briefing, an artifact's places of publication. An
-    access list is given to the owner alone. What is new in a channel to the user (`unread`) is
+    listed: what a participant's model calls used, a briefing, an artifact's places of publication.
+    An access list is given to the owner alone. What is new in a channel to the user (`unread`) is
     given wherever channels are, listed or fetched: it is what a list is read for.
 *   **What a client offers it reads from flags** (`can_change`, `can_retry`, `can_cancel`,
     `can_read_context`, ...) the views decide for the user, not from rules of its own.
@@ -197,7 +197,7 @@ every restart logs everybody out.
 ## Errors
 
 Errors are answered as RFC 9457 problem details (`application/problem+json`) with two extension
-members:
+participants:
 
 *   `code`, a stable identifier, also the last segment of `type` (`urn:caelumora:problem:<code>`);
     a client decides by it rather than by the text;
@@ -209,8 +209,9 @@ the field (`ValueError`), wherever it is found out. A name that another of its k
 space - a channel's in its session, an agent's in its scope - is `409 name_taken`, for every kind
 alike. Something the user may not read is answered as absent (`404`), like something that does not
 exist. A request that cannot be read at all is answered so too, by the extractors `Json`, `Path`
-and `Query` of `error.rs` in place of axum's: a malformed body is `invalid_request_body`, a malformed
-path `invalid_path`, a malformed query string - `?limit=abc` - `400 invalid_query` (issue 384).
+and `Query` of `error.rs` in place of axum's: a malformed body is `invalid_request_body`, a
+malformed path `invalid_path`, a malformed query string - `?limit=abc` - `400 invalid_query` (issue
+384).
 
 Every error answers itself, by its type and its variant, not by what the handler was doing (issue
 323): each error type that reaches a handler implements `From<…> for ApiError` in `error.rs` - or,
@@ -300,12 +301,12 @@ nothing to follow until then, and a stopped session stays stopped while browsers
 open. The outbox outlives the actor: while the channel does not run, the stream waits on it, and
 the actor of the next run shows to it again. Where a run begins and where it ends, after
 everything it showed, the stream reaches the channel through the views again and starts anew from
-its state: with `?snapshot=true` a snapshot - at a stop without a member's state or an answer under
-way -, without, a named `started` or `stopped` event. So what the user says to start the channel
-comes after the state it started from. The stream ends when the user is no longer a participant -
-they left the channel or were removed, or it or its session was deleted while it ran - or may no
-longer read it. A session deleted while it does not run has no actor to tell its followers: their
-stream ends with its token, and the reconnect is answered `404`.
+its state: with `?snapshot=true` a snapshot - at a stop without a participant's state or an answer
+under way -, without, a named `started` or `stopped` event. So what the user says to start the
+channel comes after the state it started from. The stream ends when the user is no longer a
+participant - they left the channel or were removed, or it or its session was deleted while it ran -
+or may no longer read it. A session deleted while it does not run has no actor to tell its
+followers: their stream ends with its token, and the reconnect is answered `404`.
 
 Anyone else who may read the channel - its session's owner, say - reads its history over REST but
 does not follow it.
@@ -326,15 +327,15 @@ starting a stopped session.
 Both streams accept `?snapshot=true` and then begin with a named `snapshot` event describing the
 state they start from:
 
-*   for a channel - at the start, and again whenever it stops or starts -, its members, the last
-    page of its history with `earlier` (older ones over REST, from there on) and the notes its
+*   for a channel - at the start, and again whenever it stops or starts -, its participants, the
+    last page of its history with `earlier` (older ones over REST, from there on) and the notes its
     agents published; for a participant, also the approvals and questions its agents wait for, read
     from their stored turns, so that one asked before the client connected or before a restart is
-    shown - a sensitive question only to whom it was asked. A member giving an answer carries its
-    turn (`turn_under_way`) and an agent member where it stands (`state`), both read from the
-    running channel - none of a channel that does not run - and kept up by the stream; a client that
-    connects during an answer shows it as under way. Only here, not where channels are listed, do
-    members carry what their model calls used, since that reads every agent's state;
+    shown - a sensitive question only to whom it was asked. A participant giving an answer carries
+    its turn (`turn_under_way`) and an agent participant where it stands (`state`), both read from
+    the running channel - none of a channel that does not run - and kept up by the stream; a client
+    that connects during an answer shows it as under way. Only here, not where channels are listed,
+    do participants carry what their model calls used, since that reads every agent's state;
 *   for the global stream, every session with its channels.
 
 The order matters: the server subscribes *first* and reads the state afterwards, so nothing that

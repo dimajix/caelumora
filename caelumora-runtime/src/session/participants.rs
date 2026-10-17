@@ -184,12 +184,12 @@ mod tests {
 
         session.add_participant(&as_user(&alice), bob_id, Some((main.id(), HistoryAccess::All))).await.expect("the owner may");
         assert!(session.session().participants.iter().any(|p| p.actor_id() == bob_id), "in the session");
-        assert!(main.members().iter().any(|m| m.id == bob_id), "and in the channel");
+        assert!(main.participants().iter().any(|m| m.id == bob_id), "and in the channel");
         let members = store.entity_stores().groups.get(&SecurityContext::system(), GroupId::of_session(session.id())).await.unwrap().members;
         assert!(members.contains(&bob_id), "the group of its participants follows");
         assert!(manager.views(Viewer::new(as_user(&bob))).session(session.id()).await.is_ok(), "so he reads it now");
         assert!(drain(&mut events).iter().any(|e| matches!(e.about::<Session>(), Some((id, change)) if id == session.id()
-            && matches!(change.update::<SessionUpdateEvent>(), Some(SessionUpdateEvent::ParticipantAdded(p)) if p.actor_id() == bob_id))), "announced");
+            && matches!(change.update::<SessionUpdateEvent>(), Some(SessionUpdateEvent::ParticipantJoined(p)) if p.actor_id() == bob_id))), "announced");
 
         let again = session.add_participant(&as_user(&alice), bob_id, None).await.expect_err("in it already");
         assert!(matches!(again.downcast_ref::<SessionError>(), Some(SessionError::AlreadyParticipant { .. })), "{again}");
@@ -219,7 +219,7 @@ mod tests {
 
         session.join(&as_user(&bob), bob_id, Some(main.id())).await.expect("bob is invited");
         assert!(session.session().participants.iter().any(|p| p.actor_id() == bob_id), "in the session");
-        assert!(main.members().iter().any(|m| m.id == bob_id), "and in the channel");
+        assert!(main.participants().iter().any(|m| m.id == bob_id), "and in the channel");
         let invitation = AclEntry { subject: Subject::Actor(bob_id), grant: Grant::Join };
         assert!(!session.session().security_attributes.acl.contains(&invitation), "his invitation is used up");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
@@ -246,15 +246,15 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         session.add_participant(&ctx, actor, Some((main.id(), HistoryAccess::All))).await.expect("taken in");
-        assert!(main.member_ids().contains(&actor), "it runs in the channel");
+        assert!(main.participant_ids().contains(&actor), "it runs in the channel");
         // Once the session took in its own announcement, it follows the agent.
         let announced = |events: &[GlobalEvent]| events.iter().any(|e| matches!(e.about::<Session>().and_then(|(_, change)| change.update::<SessionUpdateEvent>()),
-            Some(SessionUpdateEvent::ParticipantAdded(p)) if p.actor_id() == actor));
+            Some(SessionUpdateEvent::ParticipantJoined(p)) if p.actor_id() == actor));
         assert!(announced(&drain(&mut events)), "announced");
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         assert!(runtime.agent_manager().delete(&ctx, helper.id).await.expect("deleted"));
-        let stopped = async { while main.member_ids().contains(&actor) { tokio::time::sleep(Duration::from_millis(10)).await } };
+        let stopped = async { while main.participant_ids().contains(&actor) { tokio::time::sleep(Duration::from_millis(10)).await } };
         tokio::time::timeout(Duration::from_secs(2), stopped).await.expect("its actor stops: the session heard of it");
         manager.stop(&system, session.id()).await.unwrap();
     }

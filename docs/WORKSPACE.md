@@ -127,10 +127,10 @@ anything.
 
 **Commands live with the storage**, not with a call or a turn: a command handed back to an agent as
 running outlives the call that started it. A command is its channel's, not its starter's: it runs on
-as long as some current member of the channel could start it there, and an agent removed from the
-channel leaves its command to the members who remain. Whoever ends a command reaches the shell bound
-to the channel (`ChannelLoop::workspace_shell`), so that who may end a command is who could have
-started it there.
+as long as some current participant of the channel could start it there, and an agent removed from
+the channel leaves its command to the participants who remain. Whoever ends a command reaches the
+shell bound to the channel (`ChannelLoop::workspace_shell`), so that who may end a command is who
+could have started it there.
 
 A command nobody ends is ended by the runtime:
 
@@ -139,10 +139,10 @@ A command nobody ends is ended by the runtime:
     first;
 *   once nobody may run it any longer where it was started. The `CommandReaper`, woken by the events
     that can change who may use a workspace in a channel and besides every minute, asks for each
-    command whether some current member of its channel could start it there, in that member's name
-    with the runtime as initiator, of the session and the channel as they are stored. A command
-    whose question cannot be answered for now is kept. It also ends the commands of a stopped
-    session.
+    command whether some current participant of its channel could start it there, in that
+    participant's name with the runtime as initiator, of the session and the channel as they are
+    stored. A command whose question cannot be answered for now is kept. It also ends the commands
+    of a stopped session.
 
 The list of commands lives in memory, so what a restart leaves running is named, not closed:
 `open_terminal_docker` stops at start what an earlier run left; a command of an earlier run in an

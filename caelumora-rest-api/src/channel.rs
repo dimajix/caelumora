@@ -1,4 +1,4 @@
-//! Channels and what is done in them: making and changing one, its members, messages,
+//! Channels and what is done in them: making and changing one, its participants, messages,
 //! approvals, answers to questions and commands.
 
 use crate::history::{HistoryItemResponse, HistoryPageResponse};
@@ -22,7 +22,7 @@ use caelumora_model::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// The state of a channel when a stream connects: its members and the last
+/// The state of a channel when a stream connects: its participants and the last
 /// page of its history, as items - messages and how turns ended (issue 258).
 /// Older ones are fetched over REST, from `earlier` on (issue 218) - `null`
 /// if there are none.
@@ -47,19 +47,19 @@ pub struct ChannelSnapshot {
 }
 
 impl ChannelSnapshot {
-    /// The snapshot of a channel's stream: `channel`, whose agent members
-    /// carry their notes and pending approvals - listed beside the channel,
-    /// as the API has them - and the last page of its history.
+    /// The snapshot of a channel's stream: `channel`, whose agents carry
+    /// their notes and pending approvals - listed beside the channel, as the
+    /// API has them - and the last page of its history.
     pub fn of(mut channel: snapshot::ChannelSnapshot, history: HistoryPageResponse<Message>) -> Self {
         let mut notes = Vec::new();
         let (mut pending_approvals, mut pending_questions) = (Vec::new(), Vec::new());
-        for member in &mut channel.members {
-            if matches!(member.id, ActorId::Agent(_)) {
-                let name = member.name.clone().unwrap_or_default();
-                notes.push(PublishedNotesResponse { agent_id: member.id, name, notes: std::mem::take(&mut member.notes) });
+        for participant in &mut channel.participants {
+            if matches!(participant.id, ActorId::Agent(_)) {
+                let name = participant.name.clone().unwrap_or_default();
+                notes.push(PublishedNotesResponse { agent_id: participant.id, name, notes: std::mem::take(&mut participant.notes) });
             }
-            pending_approvals.append(&mut member.pending_approvals);
-            pending_questions.append(&mut member.pending_questions);
+            pending_approvals.append(&mut participant.pending_approvals);
+            pending_questions.append(&mut participant.pending_questions);
         }
         Self { channel: channel.into(), items: history.items, earlier: history.earlier, notes, pending_approvals, pending_questions }
     }
@@ -112,7 +112,7 @@ pub struct CreateChannelRequest {
     /// none in particular if absent (issue 331).
     #[serde(default)]
     pub language: Option<String>,
-    /// Whether its members work on the session's workspace in it (issue
+    /// Whether its participants work on the session's workspace in it (issue
     /// 253); yes if absent.
     #[serde(default)]
     pub uses_workspace: Option<bool>,
@@ -131,9 +131,9 @@ pub struct ChannelResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub briefing: Option<Briefing>,
     /// All participants, in no particular order, with the handles they are
-    /// `@`-mentioned by - used by the web UI for the member list, completion
-    /// and to render the `mentions` of a message.
-    pub members: Vec<ChannelMemberResponse>,
+    /// `@`-mentioned by - used by the web UI for the list of participants,
+    /// completion and to render the `mentions` of a message.
+    pub participants: Vec<ChannelParticipantResponse>,
     /// The kind of the moderator, e.g. `policy_moderator` (issue 174);
     /// `null` if it is a preconfigured component.
     pub moderator: Option<String>,
@@ -149,7 +149,7 @@ pub struct ChannelResponse {
     /// What it restricts of the tool calls made in it (issue 13): rules that
     /// ask or deny.
     pub approval_rules: Vec<ApprovalRule>,
-    /// Whether its members work on the session's workspace here (issue
+    /// Whether its participants work on the session's workspace here (issue
     /// 251), where the classifications let them.
     pub uses_workspace: bool,
     /// The session's workspace, if the channel uses it and you may read it:
@@ -161,7 +161,7 @@ pub struct ChannelResponse {
     pub can_change: bool,
     /// Who took part and left (issue 164), in the order they left, each
     /// with `left`: who removed them and when.
-    pub former_members: Vec<ChannelMemberResponse>,
+    pub former_participants: Vec<ChannelParticipantResponse>,
     /// What is new in it to the requesting user (issue 404), as they open
     /// or list it.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -202,8 +202,8 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             name: view.name,
             summary: view.summary,
             briefing: view.briefing,
-            // Every member is a user, an agent or an approver.
-            members: view.members.into_iter().filter_map(ChannelMemberResponse::of).collect(),
+            // Every participant is a user, an agent or an approver.
+            participants: view.participants.into_iter().filter_map(ChannelParticipantResponse::of).collect(),
             moderator: view.moderator,
             responder_policy: view.responder_policy,
             classification: view.classification,
@@ -212,14 +212,14 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             uses_workspace: view.uses_workspace,
             workspace_id: view.workspace_id,
             can_change: view.can_change,
-            former_members: view.former_members.into_iter().filter_map(ChannelMemberResponse::of).collect(),
+            former_participants: view.former_participants.into_iter().filter_map(ChannelParticipantResponse::of).collect(),
             unread: view.unread.map(UnreadResponse::from),
         }
     }
 }
 
 #[derive(Debug, Serialize)]
-pub struct ChannelMemberResponse {
+pub struct ChannelParticipantResponse {
     pub id: ActorId,
     pub name: String,
     /// `None` if the participant cannot be mentioned.
@@ -255,13 +255,13 @@ pub struct ChannelMemberResponse {
     /// asked for alone, not where channels are listed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
-    /// For a former member (issue 164): who removed it and when.
+    /// For a former participant (issue 164): who removed it and when.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub left: Option<Removal>,
-    /// Whether the requesting user may delete this member - only ever an
+    /// Whether the requesting user may delete this participant - only ever an
     /// agent, its owner (issue 164).
     pub can_delete: bool,
-    /// The turn of the answer the member is giving now (issue 240): what a
+    /// The turn of the answer the participant is giving now (issue 240): what a
     /// client that connects during an answer shows as under way, as if it
     /// had seen `ResponseStarted`. Absent if none - also for an external
     /// agent, which answers without a turn here.
@@ -302,9 +302,9 @@ pub struct ChannelMemberResponse {
     pub owner_name: Option<String>,
 }
 
-impl ChannelMemberResponse {
+impl ChannelParticipantResponse {
     /// `view` as the API shows it; `None` for an id that is no participant.
-    pub fn of(view: snapshot::MemberSnapshot) -> Option<Self> {
+    pub fn of(view: snapshot::ChannelParticipantSnapshot) -> Option<Self> {
         Some(Self {
             id: view.id,
             kind: ParticipantKind::of(view.id)?,
@@ -404,7 +404,7 @@ mod tests {
     #[test]
     fn a_channel_view_is_answered_with_kinds_and_a_name_for_the_deleted() {
         let (alice, approver) = (ActorId::User(UserId::new()), ActorId::Approver(ApproverId(Uuid::new_v4())));
-        let member = |id, name: Option<&str>| snapshot::MemberSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+        let participant = |id, name: Option<&str>| snapshot::ChannelParticipantSnapshot { id, name: name.map(str::to_string), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
         let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None,
             uses_workspace: true,
             id: ChannelId::new(),
@@ -414,15 +414,15 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
             can_change: true,
-            members: vec![member(alice, None), member(approver, Some("Approver")), member(ActorId::System, Some("system"))],
-            former_members: Vec::new(),
+            participants: vec![participant(alice, None), participant(approver, Some("Approver")), participant(ActorId::System, Some("system"))],
+            former_participants: Vec::new(),
             unread: None,
         };
 
         let response = ChannelResponse::from(view);
 
         assert!(response.can_change);
-        let kinds: Vec<_> = response.members.iter().map(|m| (m.kind, m.name.as_str())).collect();
+        let kinds: Vec<_> = response.participants.iter().map(|m| (m.kind, m.name.as_str())).collect();
         assert_eq!(kinds, [(ParticipantKind::User, UNKNOWN), (ParticipantKind::Approver, "Approver")], "the system is no participant");
     }
 
@@ -430,7 +430,7 @@ mod tests {
     fn what_a_place_is_for_is_left_out_where_nothing_was_said_or_read() {
         let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None, id: ChannelId::new(), name: "main".to_string(),
             uses_workspace: true,
-            moderator: None, responder_policy: None, classification: Classification::CHANNEL_DEFAULT, language: None, can_change: false, members: Vec::new(), former_members: Vec::new(), unread: None };
+            moderator: None, responder_policy: None, classification: Classification::CHANNEL_DEFAULT, language: None, can_change: false, participants: Vec::new(), former_participants: Vec::new(), unread: None };
         let json = serde_json::to_value(ChannelResponse::from(view.clone())).unwrap();
         assert!(json.get("summary").is_none() && json.get("briefing").is_none(), "{json}");
         let described = snapshot::ChannelSnapshot { summary: Some(Summary::new("Planning").unwrap()), briefing: Some(Briefing::new("Dates in UTC.").unwrap()), ..view.clone() };
@@ -456,7 +456,7 @@ mod tests {
             after: Default::default(),
             written_at: Utc::now(),
         };
-        let member = |id, name: &str, notes: Vec<Note>| snapshot::MemberSnapshot {
+        let participant = |id, name: &str, notes: Vec<Note>| snapshot::ChannelParticipantSnapshot {
             id, name: Some(name.to_string()), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes, pending_approvals: Vec::new(), pending_questions: Vec::new(),
             left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(),
             introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None,
@@ -470,8 +470,8 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
             can_change: false,
-            members: vec![member(alice, "alice", Vec::new()), member(helper, "Helper", vec![note])],
-            former_members: Vec::new(),
+            participants: vec![participant(alice, "alice", Vec::new()), participant(helper, "Helper", vec![note])],
+            former_participants: Vec::new(),
             unread: None,
         };
 
@@ -481,14 +481,14 @@ mod tests {
         assert_eq!(json["notes"][0]["name"], "Helper");
         assert_eq!(json["notes"][0]["notes"][0]["id"], 1);
         assert_eq!(json["pending_approvals"], serde_json::json!([]));
-        assert!(json["channel"]["members"][1].get("notes").is_none(), "not repeated at the member");
+        assert!(json["channel"]["participants"][1].get("notes").is_none(), "not repeated at the participant");
     }
 
     #[test]
-    fn a_former_member_is_answered_apart_with_who_removed_it_and_when() {
+    fn a_former_participant_is_answered_apart_with_who_removed_it_and_when() {
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
         let left = Removal::now(alice);
-        let member = |id, left| snapshot::MemberSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+        let participant = |id, left| snapshot::ChannelParticipantSnapshot { id, name: Some("x".to_string()), handle: None, can_read_context: true, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
         let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None,
             uses_workspace: true,
             id: ChannelId::new(),
@@ -498,53 +498,53 @@ mod tests {
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
             can_change: true,
-            members: vec![member(alice, None)],
-            former_members: vec![member(helper, Some(left.clone()))],
+            participants: vec![participant(alice, None)],
+            former_participants: vec![participant(helper, Some(left.clone()))],
             unread: None,
         };
         let json = serde_json::to_value(ChannelResponse::from(view)).unwrap();
-        assert!(json["members"][0].get("left").is_none(), "a member has not left");
-        assert_eq!(json["former_members"][0]["id"], serde_json::to_value(helper).unwrap());
-        assert_eq!(json["former_members"][0]["left"]["by"], serde_json::to_value(alice).unwrap());
-        assert_eq!(json["former_members"][0]["can_read_context"], true, "what it saw may still be read");
+        assert!(json["participants"][0].get("left").is_none(), "a participant has not left");
+        assert_eq!(json["former_participants"][0]["id"], serde_json::to_value(helper).unwrap());
+        assert_eq!(json["former_participants"][0]["left"]["by"], serde_json::to_value(alice).unwrap());
+        assert_eq!(json["former_participants"][0]["can_read_context"], true, "what it saw may still be read");
     }
 
     #[test]
     fn what_a_participant_used_is_answered_only_where_it_was_read() {
         let usage = TokenUsage { calls: 2, prompt_tokens: 300, completion_tokens: 20, context_size: Some(8192), context_tokens: 120 };
-        let member = |usage| snapshot::MemberSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+        let participant = |usage| snapshot::ChannelParticipantSnapshot { id: ActorId::User(UserId::new()), name: Some("alice".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
 
-        let json = serde_json::to_value(ChannelMemberResponse::of(member(Some(usage))).unwrap()).unwrap();
+        let json = serde_json::to_value(ChannelParticipantResponse::of(participant(Some(usage))).unwrap()).unwrap();
         assert_eq!(json["usage"], serde_json::json!({ "calls": 2, "prompt_tokens": 300, "completion_tokens": 20, "context_size": 8192, "context_tokens": 120 }));
-        let json = serde_json::to_value(ChannelMemberResponse::of(member(None)).unwrap()).unwrap();
+        let json = serde_json::to_value(ChannelParticipantResponse::of(participant(None)).unwrap()).unwrap();
         assert!(json.get("usage").is_none());
         assert!(json.get("turn_under_way").is_none(), "no answer under way, nothing said of one");
         let turn = TurnId::new();
-        let json = serde_json::to_value(ChannelMemberResponse::of(snapshot::MemberSnapshot { turn_under_way: Some(turn), ..member(None) }).unwrap()).unwrap();
+        let json = serde_json::to_value(ChannelParticipantResponse::of(snapshot::ChannelParticipantSnapshot { turn_under_way: Some(turn), ..participant(None) }).unwrap()).unwrap();
         assert_eq!(json["turn_under_way"], serde_json::json!(turn.to_string()), "the turn its messages carry");
         assert!(json.get("state").is_none(), "where nothing runs, no state");
-        let json = serde_json::to_value(ChannelMemberResponse::of(snapshot::MemberSnapshot { state: Some(ActorState::WaitingForUser), ..member(None) }).unwrap()).unwrap();
+        let json = serde_json::to_value(ChannelParticipantResponse::of(snapshot::ChannelParticipantSnapshot { state: Some(ActorState::WaitingForUser), ..participant(None) }).unwrap()).unwrap();
         assert_eq!(json["state"], serde_json::json!("WaitingForUser"), "named as `StateChanged` names it (issue 243)");
         assert!(json.get("commands").is_none(), "absent without commands");
         let mark = Command { name: "mark".to_string(), description: "Marks.".to_string(), usage: None, owners_only: false };
-        let json = serde_json::to_value(ChannelMemberResponse::of(snapshot::MemberSnapshot { commands: vec![mark], ..member(None) }).unwrap()).unwrap();
+        let json = serde_json::to_value(ChannelParticipantResponse::of(snapshot::ChannelParticipantSnapshot { commands: vec![mark], ..participant(None) }).unwrap()).unwrap();
         assert_eq!(json["commands"][0]["name"], "mark", "an agent's commands, as `GET …/commands` gives the channel's (issue 269)");
     }
 
     #[test]
     fn a_participants_profile_is_answered_only_where_it_was_read() {
         let carol = UserId::new();
-        let member = snapshot::MemberSnapshot { id: ActorId::Agent(AgentId::new()), name: Some("Helper".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
+        let participant = snapshot::ChannelParticipantSnapshot { id: ActorId::Agent(AgentId::new()), name: Some("Helper".to_string()), handle: None, can_read_context: false, can_read_tools: false, can_read_components: false, can_approve: false, can_retry: false, can_cancel: false, usage: None, notes: Vec::new(), pending_approvals: Vec::new(), pending_questions: Vec::new(), left: None, can_delete: false, turn_under_way: None, state: None, commands: Vec::new(), introduction: None, personality: None, personality_kind: None, owner: None, owner_name: None };
 
-        let json = serde_json::to_value(ChannelMemberResponse::of(member.clone()).unwrap()).unwrap();
+        let json = serde_json::to_value(ChannelParticipantResponse::of(participant.clone()).unwrap()).unwrap();
         for field in ["introduction", "personality", "personality_kind", "owner", "owner_name"] {
             assert!(json.get(field).is_none(), "{field}: not read, not said");
         }
-        let profiled = snapshot::MemberSnapshot {
+        let profiled = snapshot::ChannelParticipantSnapshot {
             introduction: Some("Answers questions.".to_string()), personality: Some("plain".to_string()), personality_kind: Some(PersonalityKind::External),
-            owner: Some(ActorId::User(carol)), owner_name: Some("carol".to_string()), ..member
+            owner: Some(ActorId::User(carol)), owner_name: Some("carol".to_string()), ..participant
         };
-        let json = serde_json::to_value(ChannelMemberResponse::of(profiled).unwrap()).unwrap();
+        let json = serde_json::to_value(ChannelParticipantResponse::of(profiled).unwrap()).unwrap();
         assert_eq!(json["introduction"], "Answers questions.");
         assert_eq!((&json["personality"], &json["personality_kind"]), (&serde_json::json!("plain"), &serde_json::json!("external")));
         assert_eq!(json["owner"], serde_json::to_value(ActorId::User(carol)).unwrap(), "as every actor is named");

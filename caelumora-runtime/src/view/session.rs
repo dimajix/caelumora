@@ -330,7 +330,7 @@ impl SessionView {
     /// the viewer reaches (`all_channels`, issues 51 and 233), each with
     /// its channel and the digest of its chain, sorted by the channel's
     /// name; channels without any are left out. Each is read as
-    /// `MemberView::private_notes` reads it: for a viewer who may read what
+    /// `ParticipantView::private_notes` reads it: for a viewer who may read what
     /// the agent saw, of a channel read entry by entry what was released.
     /// A channel whose notes cannot be read is left out, so that one broken
     /// state does not hide the others.
@@ -340,9 +340,9 @@ impl SessionView {
     pub async fn private_notes_of(&self, agent: AgentId) -> ViewResult<Vec<(ChannelView, Vec<Note>, Option<Digest>)>> {
         let mut found = Vec::new();
         for channel in self.all_channels().await {
-            // Not a member there: nothing noted there.
-            let Ok(member) = channel.member(ActorId::Agent(agent)).await else { continue };
-            match member.private_notes().await {
+            // Not a participant there: nothing noted there.
+            let Ok(participant) = channel.participant(ActorId::Agent(agent)).await else { continue };
+            match participant.private_notes().await {
                 Ok((notes, digest)) if !notes.is_empty() => found.push((channel, notes, digest)),
                 Ok(_) => {}
                 Err(e @ ViewError::Forbidden { .. }) => return Err(e),

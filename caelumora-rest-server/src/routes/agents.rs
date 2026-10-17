@@ -64,7 +64,7 @@ pub async fn rename_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uui
 }
 
 /// Deletes agent `id`: it rests in the channels it takes part in, as a
-/// former member, and is kept marked until it is purged.
+/// former participant, and is kept marked until it is purged.
 pub async fn delete_agent(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>, user: AuthenticatedUser) -> Result<StatusCode, ApiError> {
     let agent_id = AgentId(id);
     let deleted = state.runtime_manager.agent_manager().delete(&user.security_context(), agent_id).await?;

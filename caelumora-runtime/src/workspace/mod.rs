@@ -12,7 +12,7 @@
 //!   `GetWorkspace`, and the caller cleared for its classification (issue
 //!   23);
 //! - *in a channel* of the session it is attached to
-//!   (`WorkspaceController::terminal_in`): by a current member of the
+//!   (`WorkspaceController::terminal_in`): by a current participant of the
 //!   channel, if the channel uses the workspace and the workspace and the
 //!   channel flow both ways - what a command prints reaches the channel,
 //!   and what was seen there may go into a command.

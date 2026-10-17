@@ -84,11 +84,11 @@ export const AddParticipantDialog: React.FC<AddParticipantDialogProps> = ({sessi
   const [onlyHere, setOnlyHere] = useState(false);
 
   useEffect(() => {
-    const members = new Set(channel.members.map(m => actorKey(m.id)));
+    const participants = new Set(channel.participants.map(m => actorKey(m.id)));
     api.getSession(sessionId)
       .then(session => {
         const outside = (session.participants ?? [])
-          .filter(p => p.kind !== 'approver' && !members.has(actorKey(p.id)))
+          .filter(p => p.kind !== 'approver' && !participants.has(actorKey(p.id)))
           .sort((l, r) => l.name.localeCompare(r.name));
         setCandidates(outside);
         setCanSearch(session.can_change);
