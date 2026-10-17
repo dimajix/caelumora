@@ -26,6 +26,7 @@ use caelumora_model::store::EntityStore;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::user::User;
 use caelumora_model::user_provider::accept_any::AcceptAnyConfig;
+use caelumora_model::user_provider::file::FileUserConfig;
 use caelumora_model::user_provider::UserProvider;
 use serde::Deserialize;
 use std::any::{Any, TypeId};
@@ -65,7 +66,7 @@ impl Backends {
     }
 
     /// The core's backends: the storages of `terminal`, the secrets of a
-    /// file and of the environment, and `accept_any`.
+    /// file and of the environment, and the users of a file and `accept_any`.
     pub fn built_in() -> Self {
         let mut backends = Self::new();
         register_backends(&mut backends);
@@ -76,6 +77,12 @@ impl Backends {
         backends.register::<dyn SecretProvider, _>("env", |_, params, _| {
             config_of_params::<NoParams>(params)?;
             Ok(Arc::new(EnvSecretProvider::new()))
+        });
+        backends.register::<dyn UserProvider, _>("file", |_, params, services| {
+            let config: FileUserConfig = config_of_params(params)?;
+            let roles = service_of::<dyn ConfidentialityPolicy>(services)?.roles();
+            let provider = config.provider(roles).map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+            Ok(Arc::new(provider))
         });
         backends.register::<dyn UserProvider, _>("accept_any", |_, params, services| {
             let config: AcceptAnyConfig = config_of_params(params)?;
@@ -166,6 +173,7 @@ mod tests {
     use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::secret::SecretManager;
     use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::user::UserId;
     use caelumora_model::user_provider::{Credential, UserManager};
     use serde_json::json;
 
@@ -233,6 +241,30 @@ mod tests {
         std::env::remove_var("CAELUMORA_TEST_BACKEND_ENV");
         let misspelt = Backends::built_in().make_chain::<dyn SecretProvider>("secret provider", &[BackendConfig::new("env", json!({ "prefix": "X" }))], &Services::empty());
         assert!(misspelt.is_err(), "env takes no parameters");
+    }
+
+    #[tokio::test]
+    async fn the_users_of_a_file_log_in_with_the_roles_it_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("users.yaml");
+        let alice = UserId::new();
+        // The hash of "wonderland", made cheaply.
+        let hash = "$argon2id$v=19$m=8,t=1,p=1$Y2FlbHVtb3JhLXRlc3RzIQ$O5O4BCrndw3DwlDMCkis9v7MtqH5yH38HhXnJ6aRr2M";
+        std::fs::write(&file, format!("users:\n  - id: {alice}\n    username: alice\n    roles: [hr]\n    password_hash: \"{hash}\"\n")).unwrap();
+        let users = Arc::new(MemoryStore::new()).entity_stores().users;
+        let hr = RoleId::new();
+        let roles = Roles::new([(hr, "hr".to_string(), vec![])]).unwrap();
+        let confidentiality: Arc<dyn ConfidentialityPolicy> = Arc::new(ConfidentialityRules::default().with_roles(roles));
+        let services = Services::empty().with(Arc::clone(&users)).with(confidentiality);
+        let configs = [BackendConfig::new("file", json!({ "path": file }))];
+        let providers = Backends::built_in().make_chain::<dyn UserProvider>("user provider", &configs, &services).unwrap();
+        let manager = UserManager::new(providers, users, Arc::new(()));
+        let found = manager.authenticate("alice", &Credential::Password("wonderland")).await.expect("her password");
+        assert_eq!((found.id, found.roles), (alice, vec![hr]));
+
+        let missing = [BackendConfig::new("file", json!({ "path": dir.path().join("nobody.yaml") }))];
+        let refused = Backends::built_in().make_chain::<dyn UserProvider>("user provider", &missing, &services).map(|_| ()).unwrap_err().to_string();
+        assert!(refused.contains("the user provider 1 (file)"), "a file that is not there is refused at startup: {refused}");
     }
 
     #[tokio::test]

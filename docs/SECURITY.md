@@ -610,12 +610,30 @@ The user chain fails differently from the secret chain:
     through.
 *   An unknown user is reported exactly like a wrong password.
 
-There is no default provider. The only built-in one so far, `accept_any`, is a development stand-in:
-it accepts any username, with any password or none (`Credential::Trusted`), and finds users in the
-`EntityStore`. It must be enabled
-explicitly and warns at startup. It gives users the roles its configuration names for them, which
-must be configured roles - refused when it is made otherwise; what
-roles grant - clearances - is described in [CONFIDENTIALITY.md](CONFIDENTIALITY.md#clearances).
+There is no default provider. Two are built in:
+
+*   **`file`** reads the users from a YAML file written by hand: per user an `id`, a `username`, an
+    optional `email`, `roles` by their names and the `password_hash` - an Argon2 hash as a PHC
+    string, never the password. The id is written down, not derived from the name, so that a user
+    keeps it when renamed. The file is read anew at every question, so that a user added or
+    removed counts without a restart, and once when the provider is made: a file that is missing,
+    unreadable or invalid - an unknown field, a name or id twice, a role not configured, a hash
+    that is no Argon2 hash - is refused at startup, and later denies every login rather than
+    knowing nobody. A file that others may read, or others than its owner change, is warned of at
+    startup.
+*   **`accept_any`** is a development stand-in: it accepts any username, with any password or
+    none, and finds users in the `EntityStore`. It must be enabled explicitly and warns at
+    startup.
+
+The roles a provider gives must be configured roles - refused when it is made otherwise; what roles
+grant - clearances - is described in [CONFIDENTIALITY.md](CONFIDENTIALITY.md#clearances).
+
+A user of the file is added by hand. The id is any new UUID (`uuidgen`), the hash is made with the
+`argon2` command line tool, from a salt of its own for each user, e.g.:
+
+```sh
+read -rs PASSWORD; printf %s "$PASSWORD" | argon2 "$(openssl rand -base64 12)" -id -t 2 -m 15 -p 1 -e; unset PASSWORD
+```
 
 ## Authentication
 
@@ -625,8 +643,9 @@ login as a short-lived signed token in a cookie, renewed by use and bounded in i
 it cannot be revoked (see [REST-SERVER.md](REST-SERVER.md#authentication)). The TUI acts for the
 user its `--user` names, through the same `UserManager`, but without a password: it runs in the
 runtime's own process and holds the stores itself, so it vouches for whom it acts for
-(`Credential::Trusted`). A provider that verifies a secret refuses that for a user it knows, so the
-chain does not pass them on to one that takes them without.
+(`Credential::Trusted`) - a secret would keep out nobody it does not already let in. Every provider
+takes that for the users it knows, so that the chain answers it for a user where it would answer a
+password.
 
 ## Secrets
 

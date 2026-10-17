@@ -107,7 +107,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [12](12-user-and-agent-permissions.md) | done | When an agent acts for a user, two sets of rights are involved and there is no rule for combining them. |
 | [23](23-acls-in-security-attributes.md) | done | Who may reach a workspace's files or an artifact follows from the channel one stands in, not from the thing: `SecurityAttributes` can name no reader but the owner and a hand-written list. |
 | [24](24-opa-security-manager.md) | rejected | `DummySecurityManager` is the only implementation; deployment-specific policy has no home outside the compiled binary. |
-| [25](25-file-user-backend.md) | in progress | There is no source of identities to authenticate against; a hand-edited user file is the smallest one, and defines the provider seam. |
+| [25](25-file-user-backend.md) | done | There is no source of identities to authenticate against; a hand-edited user file is the smallest one, and defines the provider seam. |
 | [26](26-database-user-backend.md) | open | A file cannot serve several processes or an existing corporate user table; no database-backed user provider exists. |
 | [27](27-ldap-user-backend.md) | open | Where identities are managed in a directory, the system has no way to authenticate against it or read its groups. |
 | [31](31-session-renewal-from-ui.md) | done | The session token is only renewed by requests, so a web UI that is open but only receiving events is logged out after 15 minutes and loses the typed input. |

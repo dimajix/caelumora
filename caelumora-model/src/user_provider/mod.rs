@@ -8,6 +8,7 @@
 //! "no such user".
 
 pub mod accept_any;
+pub mod file;
 mod manager;
 
 pub use manager::UserManager;
@@ -25,13 +26,11 @@ use std::fmt::Debug;
 #[non_exhaustive]
 pub enum Credential<'a> {
     Password(&'a str),
-    /// No secret: a frontend that runs in the runtime's own process - the
-    /// TUI - vouches for whom it acts for. It holds the stores itself, so a
-    /// secret would keep out nobody it does not already let in. A provider
-    /// that verifies a secret refuses it for a user it knows, as it refuses
-    /// a wrong one, so that the chain does not pass them on to one that
-    /// would take them without. It never reaches the REST server's login,
-    /// which takes a password.
+    /// No secret: a frontend that runs in the runtime's own process - the TUI - vouches for whom
+    /// it acts for. It holds the stores itself, so a secret would keep out nobody it does not
+    /// already let in. Every provider takes it for the users it knows, also one that verifies a
+    /// secret otherwise, so that the chain answers it for a user where it answers a password. It
+    /// never reaches the REST server's login, which takes a password.
     Trusted,
 }
 
@@ -99,6 +98,7 @@ pub trait UserProvider: Debug + Send + Sync {
     /// `Err(AuthError::InvalidCredentials)` if the user is known here but the
     /// credential is wrong — which ends the chain, so that a second provider
     /// knowing the same name cannot be used to bypass the first.
+    /// `Credential::Trusted` it takes for every user it knows.
     async fn authenticate(&self, username: &str, credential: &Credential<'_>) -> AuthResult<Option<User>>;
 }
 
