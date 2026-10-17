@@ -237,6 +237,9 @@ others say in it as the global stream announces it.
     opened, and stays there while the user reads; where the message last read lies before the pages
     shown, or nothing was read, it stands at the top.
 
+*   **Following the conversation.** A channel opens at its end, and the chat follows what is said
+    while the user is there; one who scrolled up to read stays where they are, until they scroll
+    back down or send something themselves.
 *   **History.** The snapshot holds the last page of the history; "Load earlier messages" puts the
     page before those shown in front of them, until there is none (issue 218). One who does not take
     part is shown the last page the same way. A reclassification of the channel shows its last page
