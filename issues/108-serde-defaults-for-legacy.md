@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Persistence
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** Stored state carries `#[serde(default)]` only so that documents from before a field existed still load, although no such documents need to.
 
 ## The problem
 

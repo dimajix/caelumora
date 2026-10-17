@@ -1,7 +1,8 @@
 # 284 — Automatic context compaction
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** An agent's context is compacted only when somebody asks for it; nothing compacts it before a model call that would not fit, least of all within the turn that makes it.
 
 ## The problem
 

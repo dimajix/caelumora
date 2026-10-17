@@ -32,7 +32,7 @@ Next to the workspace, **`caelumora-web-ui`** is the browser frontend (React, Ty
 
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: The design of the system, modules, and data flow, with the detailed documents in [docs/](docs/).
 - **[AGENTS.md](AGENTS.md)**: Guidelines for AI coding agents and contributors.
-- **[issues/INDEX.md](issues/INDEX.md)**: Open issues — one line per issue, with the reasoning in `issues/<number>-<slug>.md`.
+- **[issues/INDEX.md](issues/INDEX.md)**: Every issue, one line each, by area; [issues/OPEN.md](issues/OPEN.md) those still open. The reasoning is in `issues/<number>-<slug>.md`, how issues are kept in [issues/README.md](issues/README.md).
 
 ## Getting Started
 

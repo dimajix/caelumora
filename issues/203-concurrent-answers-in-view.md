@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The chat view keeps one answer under way per channel, so the streamed answers of agents answering at once run into each other or vanish.
 
 ## The problem
 

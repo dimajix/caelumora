@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Persistence
+**Epic:** [378](378-resource-management-epic.md)
+**Summary:** A page of a channel's or an agent's history costs folding the whole chain, however far back and however small the page is, though the history is read almost only in pages.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** `Turn` is the agent's handle on its state between turns, the components' API and the turn's logic at once, the two kinds of agent publish and catch up through code written twice, and an `OpenTask` keeps less of its contexts than a `TurnState`.
 
 ## The problem
 

@@ -1,7 +1,8 @@
 # 48 — History and context duplicate one structure, and notes would be a third copy
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** History and context duplicate one digest-chained structure, and notes would become a third copy that branching would have to change separately.
 
 ## The problem
 

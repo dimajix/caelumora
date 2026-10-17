@@ -1,7 +1,8 @@
 # 302 — A note cannot be changed, only revoked and written again
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** A note cannot be changed, only revoked and written again under a new number, and `note` is not named after what it does like `revoke_note` and `read_notes`.
 
 ## The problem
 

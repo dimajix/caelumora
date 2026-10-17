@@ -1,7 +1,10 @@
 # 307 — Nothing measures how Caelumora behaves under load
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Observability and operations
+**Summary:** Nothing measures how Caelumora behaves under load, so its bottlenecks are guessed at, and a real model would hide them behind its own latency.
 
 ## The problem
 

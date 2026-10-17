@@ -1,7 +1,10 @@
 # 143 — Whoever joins a channel later sees what it read from other sessions
 
 **Status:** open
+**Type:** bug
+**Priority:** low
 **Area:** Sessions and channels
+**Summary:** A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them.
 
 ## The problem
 

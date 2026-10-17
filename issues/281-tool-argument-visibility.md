@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Tools and approvals
+**Summary:** A tool's arguments share one visibility flag with its result, so a call cannot publish what it was asked and hide what it returned.
 
 ## The problem
 

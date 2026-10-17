@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** `ChannelLoop` keeps its actors in two tables kept in step by a queue.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** A facet's trait and the components that provide it live in two sibling modules, `foo` and `foo_impl`, with no rule for what goes where.
 
 ## The problem
 

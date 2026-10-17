@@ -1,7 +1,10 @@
 # 139 — An MCP server cannot classify its results one by one
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Tools and approvals
+**Summary:** An MCP server cannot classify its results one by one, only be configured with one classification for all of them.
 
 ## The problem
 

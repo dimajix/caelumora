@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Integrations
+**Summary:** An external agent's task taken up again by a later call keeps the work of the call that began it - its authority, envelope, bound and context - unless the remote agent tells the task as begun again.
 
 ## The problem
 

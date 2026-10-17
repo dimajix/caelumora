@@ -1,7 +1,10 @@
 # 340 — Only a person owns anything: no team can, as a company owns what is done in its name
 
 **Status:** open
+**Type:** question
+**Priority:** low
 **Area:** Identity and access management
+**Summary:** Only a person owns anything: no team can own what is done in its name, as a company does, so what is a team's result is one member's and goes with them.
 
 This is a memo, not yet an issue with a direction: it collects thoughts on owning things together,
 so that they are not lost. Nothing in it is decided, not even whether to do it.

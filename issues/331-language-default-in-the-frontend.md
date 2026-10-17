@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The core holds a new channel or session in its creator's preferred language where nothing else is said, a decision that belongs to the frontend.
 
 ## The problem
 

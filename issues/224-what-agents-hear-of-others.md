@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Context and knowledge
+**Summary:** What an agent hears of others is shaped by the moderator and again by the external agent, and an agent run here that joins takes others' answers from the history unshaped, as if they were its own.
 
 ## The problem
 

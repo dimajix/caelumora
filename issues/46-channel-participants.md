@@ -1,7 +1,8 @@
 # 46 — Participants cannot be added to or removed from a channel
 
 **Status:** done
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Summary:** The participants of a channel are fixed when it is built; nobody can be added to or removed from a running channel.
 
 ## The problem
 

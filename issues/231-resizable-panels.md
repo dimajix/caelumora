@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The panels of the web UI - sidebar, channel members, an agent's context and history - have a fixed width that cannot be changed.
 
 ## The problem
 

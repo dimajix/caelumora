@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Maintenance
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** Doc comments and ARCHITECTURE.md name types and behaviour that the code does not have.
 
 ## The problem
 

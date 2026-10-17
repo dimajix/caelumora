@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Tools and approvals
+**Summary:** An agent's tools reach the model and the UI as a flat list without the grouping and purpose of the provider they come from, and the UI shows them only per message, not for the agent.
 
 ## The problem
 

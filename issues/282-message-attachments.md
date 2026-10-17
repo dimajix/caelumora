@@ -1,7 +1,10 @@
 # 282 — A user cannot attach an image or a file to a message
 
 **Status:** open
+**Type:** feature
+**Priority:** high
 **Area:** User interaction
+**Summary:** A user cannot attach an image or a file to a message, so a model that can see, such as Gemma 4, is never shown one.
 
 ## The problem
 

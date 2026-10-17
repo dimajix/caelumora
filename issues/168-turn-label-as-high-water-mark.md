@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** A turn writes under its channel's classification even when everything it saw was classified lower, so what it remembers is lost to lower channels.
 
 ## The problem
 

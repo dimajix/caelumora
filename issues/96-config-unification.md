@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Maintenance
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** `AppConfig` mixes tagged and untagged enums and `Option` with `default`.
 
 ## The problem
 

@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** Rules of the model - what an approval strategy decides, what a history limit shows, how a stored agent state is made fit to resume, how an update event applies - are computed in the runtime.
 
 ## The problem
 

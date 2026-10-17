@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Maintenance
+**Summary:** The configuration is parsed with `serde_yaml`, which is deprecated and will receive no further fixes.
 
 ## The problem
 

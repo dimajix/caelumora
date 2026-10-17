@@ -1,7 +1,8 @@
 # 135 — The model is not told who said what
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** In a channel with several participants the model sees their messages as `user` messages without their senders, so it cannot tell who said what.
 
 ## The problem
 

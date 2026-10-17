@@ -1,7 +1,10 @@
 # 343 — A user cannot bring a secret of their own
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Identity and access management
+**Summary:** A user cannot bring a secret of their own: every secret is the operator's, put into the configured providers, so an agent of one's own cannot reach a remote system with its owner's credential.
 
 ## The problem
 

@@ -1,7 +1,9 @@
 # 75 — A resumed turn cannot tell a crash from a deliberate stop, and re-runs its tools
 
 **Status:** done
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** An agent stopped on purpose mid-turn resumes that turn like after a crash, and a resume in `ExecutingTools` re-runs its tools.
 
 ## The problem
 

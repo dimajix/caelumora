@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later.
 
 ## The problem
 

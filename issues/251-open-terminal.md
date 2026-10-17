@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Integrations
+**Summary:** Agents have no workspace to run commands and keep files in, and Open Terminal, which offers one, is reachable only as an MCP server without approval by kind of tool, interruption or a channel's scope.
 
 ## The problem
 

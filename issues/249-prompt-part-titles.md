@@ -1,7 +1,8 @@
 # 249 — Some prompt parts have no title, others one that is a paragraph
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** Some prompt parts have no title and run into the others, and some have one that is a paragraph.
 
 ## The problem
 

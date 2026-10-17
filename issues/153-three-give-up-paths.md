@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [151](151-agent-refactoring-epic.md)
+**Summary:** A turn is given up along three paths that do the same, with two enums carrying one classification.
 
 ## The problem
 

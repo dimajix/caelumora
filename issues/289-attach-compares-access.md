@@ -2,6 +2,7 @@
 
 **Status:** rejected
 **Area:** Identity and access management
+**Summary:** Attaching a workspace to a session shares it with that one session by an entry of its own, even where its access list already reaches everyone the session may take in.
 
 ## The problem
 

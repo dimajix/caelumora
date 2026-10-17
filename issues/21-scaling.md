@@ -1,7 +1,9 @@
 # 21 — Scaling
 
 **Status:** done
-**Area:** Open architecture questions
+**Type:** question
+**Area:** Observability and operations
+**Summary:** The runtime is single-process by design; which of the three scaling axes actually matters has never been decided.
 
 ## The question
 

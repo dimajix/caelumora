@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** `security.rs` holds the actions, the attributes, the context, the access policy and its implementations, without a description, in one file of 1331 lines.
 
 ## The problem
 

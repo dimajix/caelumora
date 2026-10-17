@@ -1,7 +1,8 @@
 # 234 — A message once said can be neither changed nor taken back, and an answer not asked for again
 
 **Status:** done
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Summary:** A message once said can be neither changed nor taken back by its author, and an agent cannot be asked to answer again, so a mistake keeps influencing every later turn.
 
 ## The problem
 

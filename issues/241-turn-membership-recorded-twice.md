@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** Which messages belong to a turn is recorded twice - as the turn's id on each message and as a count in its `ContextRef` - and read by different rules.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Integrations
+**Summary:** An external agent takes in the remote agent's events in two places that do the same with differences of no stated reason.
 
 ## The problem
 

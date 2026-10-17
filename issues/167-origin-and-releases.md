@@ -2,6 +2,7 @@
 
 **Status:** rejected
 **Area:** Identity and access management
+**Summary:** A classification says who may read something but not where it was written: a release overwrites the origin, releases cannot be told apart, and there is no rule for writing.
 
 ## The problem
 

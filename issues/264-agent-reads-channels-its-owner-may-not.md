@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** An agent reads another channel of its session by the flow rule alone, so it reads channels its owner may not, and membership hides nothing from a session's agents.
 
 ## The problem
 

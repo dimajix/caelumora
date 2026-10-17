@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Tools and approvals
+**Summary:** A turn that fails, is stopped or is given up leaves no record in the store of the tool calls it made, though their effects remain.
 
 ## The problem
 

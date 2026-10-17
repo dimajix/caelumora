@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Maintenance
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** Six helper functions in five modules define the default confidentiality level.
 
 ## The problem
 

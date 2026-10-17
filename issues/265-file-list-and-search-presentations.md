@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The web UI shows a listing and a search of the workspace as raw JSON, while reading, writing and replacing in a file are shown as what they do.
 
 ## The problem
 

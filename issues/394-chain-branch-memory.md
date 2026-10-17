@@ -2,8 +2,8 @@
 
 **Status:** rejected
 **Area:** Code structure
-
-Part of [391](391-history-and-transcript-review-epic.md).
+**Epic:** [391](391-history-and-transcript-review-epic.md)
+**Summary:** `Chain` remembers the branch last taken from every entry and the stores take in nodes changed in their place, for a switch between branches that nothing makes since 08 was rejected.
 
 ## The problem
 

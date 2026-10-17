@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Observability and operations
+**Summary:** Caelumora ends without an orderly shutdown: a signal ends turns mid-step, breaks off streams and leaves the `local` shell's commands running.
 
 ## The problem
 

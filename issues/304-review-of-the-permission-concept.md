@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** Four kinds of permission - ownership, flow rules, actions, reachability - are checked in many places and several layers, and nobody has reviewed where each is asked, in which order, and whether the checks that mix two of them do so on purpose.
 
 ## The problem
 

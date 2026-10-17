@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Tools and approvals
+**Summary:** A command an agent's call handed back as running can be ended only by the model; a user who sees it hang has no way to end it.
 
 ## The problem
 

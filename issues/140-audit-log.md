@@ -1,7 +1,10 @@
 # 140 — There is no audit log of security-relevant acts
 
 **Status:** open
-**Area:** Identity and access management
+**Type:** feature
+**Priority:** medium
+**Area:** Audit
+**Summary:** Acts that change who may see what - releases, participants, approvals, deletions - leave no record of who did them and when.
 
 ## The problem
 

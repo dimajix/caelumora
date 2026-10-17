@@ -1,7 +1,10 @@
 # 384 — A malformed query string is answered in plain text
 
 **Status:** open
+**Type:** bug
+**Priority:** medium
 **Area:** User interaction
+**Summary:** A malformed query string, such as `?limit=abc`, is answered with a plain-text `400` instead of problem details with a `code`, since axum's `Query` extractor is used unwrapped.
 
 ## The problem
 

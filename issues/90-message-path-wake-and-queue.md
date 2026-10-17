@@ -1,7 +1,9 @@
 # 90 — Sending a message: the frontends wake the channel, the `UserActor` queues for nothing, and `perceive` begins a turn
 
 **Status:** done
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** Frontends must wake the channel before sending, the `UserActor` queues every message once more than needed, and perceiving a message begins a turn.
 
 ## The problem
 

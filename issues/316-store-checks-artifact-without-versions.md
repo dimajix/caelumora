@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** The store checks an artifact against its own access list only, not its versions', so the views list and read artifacts in the runtime's name and decide themselves who may read them.
 
 ## The problem
 

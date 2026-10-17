@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** A user cannot ask an agent to respond to the conversation as it stands without writing a message, such as an empty `@sassy?`.
 
 ## The problem
 

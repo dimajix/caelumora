@@ -1,7 +1,10 @@
 # 182 — Definitions are read from the store again for every use
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Persistence
+**Summary:** Personalities, agents and users are read from the store again for every use - for every member of a channel, on every turn - though they change rarely.
 
 ## The problem
 

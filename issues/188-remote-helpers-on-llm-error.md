@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Integrations
+**Summary:** What remote integrations share - redacting the endpoint, describing errors, the endpoint's configuration - is not in `remote`, and MCP errors show the URL unredacted.
 
 ## The problem
 

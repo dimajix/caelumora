@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Integrations
+**Summary:** An external agent without streaming may not deliver tasks longer than its request timeout, and a streamed request can wait forever.
 
 ## The problem
 

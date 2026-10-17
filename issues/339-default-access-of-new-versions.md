@@ -1,7 +1,10 @@
 # 339 — Whom a new version of an artifact reaches cannot be set, nor a version's list changed
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Identity and access management
+**Summary:** Whom a new version of an artifact reaches is fixed to the channel it is published in, and neither a default for new versions nor a version's own list can be changed.
 
 ## The problem
 

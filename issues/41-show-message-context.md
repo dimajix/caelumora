@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The web UI offers no way to see what an agent's model saw when it produced a message, although the server can answer it.
 
 ## The problem
 

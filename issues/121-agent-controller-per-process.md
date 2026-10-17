@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** An agent that takes part in several running sessions has one controller in each, so its document has more than one writer.
 
 ## The problem
 

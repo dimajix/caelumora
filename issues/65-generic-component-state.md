@@ -1,7 +1,8 @@
 # 65 — Component state is hard-wired into the agent state and the turn
 
 **Status:** rejected
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** The state of notes is hard-wired into the agent state, the turn, the stores and REST, so every further kind of component state needs changes to the core and branching must be taught each one.
 
 ## The problem
 

@@ -1,7 +1,10 @@
 # 385 — An actor's inbox is lost on a restart
 
 **Status:** open
+**Type:** bug
+**Priority:** medium
 **Area:** Sessions and channels
+**Summary:** An actor's inbox is a queue in memory, so a restart loses what was routed to it and not yet taken in - a change to a message, a request, a command - for good.
 
 ## The problem
 

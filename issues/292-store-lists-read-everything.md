@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Persistence
+**Summary:** A list of what a user may read is made by reading every entity of the kind and asking the policy of each - for artifacts, of which there may be hundreds of thousands, per version too.
 
 ## The problem
 

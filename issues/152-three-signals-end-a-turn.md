@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [151](151-agent-refactoring-epic.md)
+**Summary:** A turn is ended by three signals - a state switched from outside, a token and a flag - that the run loop reconciles with a precedence rule.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Tools and approvals
+**Summary:** When two components of an agent provide a tool of the same name, the first one silently wins and the other is unreachable.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Integrations
+**Summary:** What an external agent was given for one of its messages is not recorded, so the web UI cannot show it, and its transcript ties no answer to the call it answered.
 
 ## The problem
 

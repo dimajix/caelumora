@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** Every actor is given its channel's controller as a parameter beside its `ActorRuntime`, its interface to that channel, so the two can disagree and every actor's constructor carries both.
 
 ## The problem
 

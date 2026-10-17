@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** Whether one is cleared for a classified entity is asked by the views, three managers and the event bus each, besides the store, so that what a reader forgets to ask is found, and the deleted are reached by other rules than the live.
 
 ## The problem
 

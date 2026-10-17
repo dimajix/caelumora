@@ -1,7 +1,8 @@
 # 176 — An agent is not told who it is and who else is in the channel
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** An agent is told neither its own name nor who else is in its channel, and neither agents nor users have a description that says who they are.
 
 ## The problem
 

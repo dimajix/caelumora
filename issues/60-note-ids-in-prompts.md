@@ -1,7 +1,8 @@
 # 60 — An agent cannot revoke every note of its own it is shown
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** Notes of its own that an agent is shown from other channels carry no usable id, so it cannot revoke them, and ids from other chains are ambiguous.
 
 ## The problem
 

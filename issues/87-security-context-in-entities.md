@@ -1,7 +1,9 @@
 # 87 — Stored entities carry a `SecurityContext`
 
 **Status:** done
-**Area:** Identity & access
+**Area:** Identity and access management
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** Stored agents and users carry a `SecurityContext` that the actors overwrite at start.
 
 ## The problem
 

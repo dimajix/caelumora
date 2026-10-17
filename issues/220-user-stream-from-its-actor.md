@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** A user's stream is the channel's broadcast, not what their actor receives, so the moderator cannot decide what a user sees and a cut-off chain never reaches the web UI.
 
 ## The problem
 

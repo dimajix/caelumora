@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The message field of the web UI is a single line: a long message scrolls sideways instead of wrapping, and no line break can be entered.
 
 ## The problem
 

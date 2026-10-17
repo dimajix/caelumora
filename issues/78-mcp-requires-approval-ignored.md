@@ -1,7 +1,9 @@
 # 78 — `McpToolConfig.requires_approval` has no effect
 
 **Status:** done
-**Area:** Tools & approvals
+**Area:** Tools and approvals
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** `McpToolConfig.requires_approval` is never read; every discovered MCP tool runs without approval.
 
 ## The problem
 

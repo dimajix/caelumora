@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Maintenance
+**Epic:** [151](151-agent-refactoring-epic.md)
+**Summary:** Around the agent actor, methods without callers, duplicated steps and stale comments are left from earlier changes.
 
 ## The problem
 

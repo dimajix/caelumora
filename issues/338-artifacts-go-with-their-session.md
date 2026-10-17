@@ -1,7 +1,10 @@
 # 338 — An artifact is published into its session's scope and goes with the session
 
 **Status:** open
+**Type:** feature
+**Priority:** high
 **Area:** Context and knowledge
+**Summary:** An artifact is published into its session's scope and is deleted with the session unless its owner keeps it elsewhere, though it is meant to outlive the conversation.
 
 ## The problem
 

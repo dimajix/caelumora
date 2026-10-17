@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** The view of a workspace, which is for reading, hands out its terminal for writing and publishes and ends commands with it, while the scope of a command is made by every caller of its shell.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** Text fields are `String`s checked by whoever writes them, if at all, so a field can hold what its rules forbid and a new writer has to remember the check.
 
 ## The problem
 

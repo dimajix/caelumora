@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Observability and operations
+**Summary:** The core turns an error into what a person is told by the error types it knows, so what a plugin's error says is shown as a failure wherever it travels inside an `anyhow`.
 
 ## The problem
 

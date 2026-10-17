@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** The tests of the views and of sessions have fixtures of the same names and different signatures, so four tests of the views live with the sessions.
 
 ## The problem
 

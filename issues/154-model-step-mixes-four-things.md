@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [151](151-agent-refactoring-epic.md)
+**Summary:** The model step mixes stamping messages, plan mode, streaming and plan progress in one function of 120 lines.
 
 ## The problem
 

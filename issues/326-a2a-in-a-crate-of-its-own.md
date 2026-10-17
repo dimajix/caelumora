@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** The A2A protocol is part of the runtime crate, though the core reaches external agents only through the `ExternalAgent` facet and names no protocol.
 
 ## The problem
 

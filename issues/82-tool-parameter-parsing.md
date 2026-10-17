@@ -1,7 +1,9 @@
 # 82 — `create_plan` reports parse errors with the wrong status
 
 **Status:** done
-**Area:** Tools & approvals
+**Area:** Tools and approvals
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** `create_plan` answers malformed arguments with "the tool failed" instead of "correct the arguments".
 
 ## The problem
 

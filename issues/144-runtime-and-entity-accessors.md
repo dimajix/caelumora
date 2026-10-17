@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** Runtimes forward attributes of their own and of the entity above in several ways, with no rule for what the runtime answers and what the entity answers itself.
 
 ## The problem
 

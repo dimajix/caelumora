@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Maintenance
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** `FilteringEventSender::send` drops a filtered envelope silently while `try_send` reports it as an error.
 
 ## The problem
 

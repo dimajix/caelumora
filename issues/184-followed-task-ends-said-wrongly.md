@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Integrations
+**Summary:** When a task an external agent follows fails or its stream breaks, the agent records a message nobody saw or publishes a half answer.
 
 ## The problem
 

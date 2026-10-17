@@ -1,7 +1,9 @@
 # 101 — The three chain components repeat their helpers, and `AgentNotes`/`AgentMemory` are structs for no reason
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** The three chain components copy their helpers, and `AgentNotes`/`AgentMemory` are constructed only to be called once.
 
 ## The problem
 

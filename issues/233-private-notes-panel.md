@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** An agent's private notes can be read only inside the context of one of its messages, as they stood then, not on their own, current and for every channel of the session.
 
 ## The problem
 

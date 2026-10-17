@@ -1,7 +1,10 @@
 # 05 — Postgres event recorder
 
 **Status:** open
-**Area:** Persistence / Audit
+**Type:** question
+**Priority:** medium
+**Area:** Audit
+**Summary:** The `Recorder` hook is wired into every channel, but `BlackholeRecorder` is the only implementation, so nothing is recorded.
 
 ## The problem
 

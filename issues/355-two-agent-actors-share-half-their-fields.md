@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** The two agent actors and `AgentCommands` hold the same half of an agent three times, and what both kinds of agent do alike is written twice.
 
 ## The problem
 

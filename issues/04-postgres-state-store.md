@@ -1,7 +1,10 @@
 # 04 — Postgres implementation of the `StateStore`
 
 **Status:** open
+**Type:** feature
+**Priority:** medium
 **Area:** Persistence
+**Summary:** `StateStore` likewise — and it holds the state whose loss is most expensive, including agents suspended on an approval.
 
 ## The problem
 

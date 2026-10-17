@@ -1,7 +1,8 @@
 # 01 — Improve logging
 
 **Status:** done
-**Area:** Observability
+**Area:** Observability and operations
+**Summary:** Two logging frontends (`log` and `tracing`) are used side by side, and the REST handlers, session loop and event bus are nearly silent.
 
 ## The problem
 

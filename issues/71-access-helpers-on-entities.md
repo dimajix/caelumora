@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Maintenance
+**Summary:** Pure access questions such as `may_be_read_by`, `may_be_changed_by` and `history_visible_to` are public methods of the entities and bloat their interfaces.
 
 ## The problem
 

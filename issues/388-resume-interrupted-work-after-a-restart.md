@@ -1,7 +1,10 @@
 # 388 — Work interrupted by a restart waits until someone acts in its session
 
 **Status:** open
+**Type:** feature
+**Priority:** medium
 **Area:** Sessions and channels
+**Summary:** Work interrupted by a restart - a turn stopped mid-step at the shutdown - waits until someone acts in its session, since nothing starts the session again.
 
 ## The problem
 

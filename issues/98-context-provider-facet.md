@@ -1,7 +1,9 @@
 # 98 — `ContextProvider` is a facet with one implementation and undefined behaviour for two
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** `ContextProvider` is a facet with one implementation, and a second one would silently overwrite the first.
 
 ## The problem
 

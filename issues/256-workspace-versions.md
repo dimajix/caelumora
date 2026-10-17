@@ -1,7 +1,10 @@
 # 256 — A workspace has no versions: an agent's bad change cannot be taken back
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Context and knowledge
+**Summary:** A workspace has no versions: what a person, a file tool or a command overwrote cannot be taken back, and who changed what is not recorded.
 
 ## The problem
 

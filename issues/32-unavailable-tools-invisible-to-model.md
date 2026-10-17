@@ -1,7 +1,8 @@
 # 32 — Tools that failed to load are invisible to the model
 
 **Status:** done
-**Area:** Tools & approvals
+**Area:** Tools and approvals
+**Summary:** A tool source that failed to load (e.g. an unreachable MCP server) leaves no trace in the model's context, so the agent acts as if the tools never existed.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** What an agent is given besides the conversation is decided in a component, a free function and, for an external agent, its actor - and the component's facet writes into the turn instead of answering.
 
 ## The problem
 

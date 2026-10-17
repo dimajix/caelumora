@@ -1,7 +1,8 @@
 # 14 — Who is allowed to approve
 
 **Status:** done
-**Area:** Tools & approvals
+**Area:** Tools and approvals
+**Summary:** Any user in the channel can approve any tool call; ineligible responses cannot be ignored because eligibility does not exist.
 
 ## The problem
 

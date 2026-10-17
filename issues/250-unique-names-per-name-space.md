@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Persistence
+**Summary:** No kind keeps its names unique in its name space as a whole: channels check it by hand when created, not when renamed; agents, personalities, templates and users not at all.
 
 ## The problem
 

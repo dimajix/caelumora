@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** A session's or channel's deletion that fails half-way, or a restoring that does not reach its groups, leaves the group of its participants in the trash while it is there, and its members lose it.
 
 ## The problem
 

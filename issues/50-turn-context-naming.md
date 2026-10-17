@@ -1,7 +1,8 @@
 # 50 — `TurnContext` calls the model input "context"
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** `TurnContext` calls both the stored context and the input of one model call "context".
 
 ## The problem
 

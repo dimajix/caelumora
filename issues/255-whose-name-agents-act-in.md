@@ -1,7 +1,8 @@
 # 255 — Agents read in their owner's name and act in the name of whoever asked them
 
 **Status:** done
-**Area:** Identity & access management
+**Area:** Identity and access management
+**Summary:** An agent reads in its owner's name and acts in the name of whoever asked it, one call often in both, and which applies follows from where the code sits rather than from a rule.
 
 ## The problem
 

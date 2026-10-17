@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** The lifecycle events of a channel are announced at ten places, each assembling the key, the attributes and the classification by hand.
 
 ## The problem
 

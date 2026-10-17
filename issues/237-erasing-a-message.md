@@ -1,7 +1,10 @@
 # 237 — A message written by mistake cannot be erased
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Context and knowledge
+**Summary:** A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it.
 
 ## The problem
 

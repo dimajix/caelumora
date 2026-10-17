@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** User interaction
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** Small inconsistencies in the REST server: hand-built responses, raw model types on the wire, stale docs, unused state.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** There is no moderator under which every agent answers a person's message but no agent's message makes another agent answer.
 
 ## The problem
 

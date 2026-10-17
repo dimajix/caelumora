@@ -1,7 +1,8 @@
 # 34 — An event stream starts in the middle: no snapshot, and a gap before it
 
 **Status:** done
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Summary:** Event streams deliver only what happens after they connect, so a client cannot learn the current state and loses whatever happens while it connects.
 
 ## The problem
 

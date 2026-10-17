@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** An agent's kind is decided from its personality in two places, by different rules for a missing personality.
 
 ## The problem
 

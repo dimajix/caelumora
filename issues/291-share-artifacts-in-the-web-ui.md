@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The web UI has no page of an artifact: its owner can neither see nor change whom it and its versions are shared with.
 
 ## The problem
 

@@ -1,7 +1,9 @@
 # 81 — The approver issues two ids per approval, and the agent detours through `ExecutingTools` to wait
 
 **Status:** done
-**Area:** Tools & approvals
+**Area:** Tools and approvals
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** The approver gives every approval a second id it never uses, and the agent passes through `ExecutingTools` only to start waiting.
 
 ## The problem
 

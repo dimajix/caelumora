@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** An agent cannot ask the user a question and wait for the answer - yes/no, a choice, free text - and the web UI has no way to show a tool call other than generically.
 
 ## The problem
 

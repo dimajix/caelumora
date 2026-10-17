@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** The ledger appends every change while the message chains amend entries in place, and six types stand between a chain and what it stores.
 
 ## The problem
 

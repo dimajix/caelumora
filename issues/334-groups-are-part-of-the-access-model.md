@@ -2,6 +2,7 @@
 
 **Status:** rejected
 **Area:** Code structure
+**Summary:** Groups are the participants of sessions and channels and the teams users make in one kind, which the policy reads, so only teams could become a plugin.
 
 ## The problem
 

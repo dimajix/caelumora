@@ -1,7 +1,9 @@
 # 74 — Refactoring epic: the structure review of 2026-09-28
 
 **Status:** done
+**Type:** epic
 **Area:** Maintenance
+**Summary:** Epic for the structure review of 2026-09-28: the bracket around issues 75–117 and their recommended order.
 
 ## The problem
 

@@ -1,7 +1,10 @@
 # 290 — A model is offered tools it may not call where it is
 
 **Status:** open
+**Type:** feature
+**Priority:** high
 **Area:** Tools and approvals
+**Summary:** A model is offered every tool of its components in every turn, also those it may not call where it is - a workspace's tools where there is none, or where its list grants reading alone.
 
 ## The problem
 

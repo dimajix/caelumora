@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** The agent's state machine has a state that only forwards and two handlers that differ in one branch.
 
 ## The problem
 

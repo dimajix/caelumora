@@ -1,7 +1,8 @@
 # 300 — A compaction keeps a long turn whole and summarises almost nothing
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** A compaction keeps the turn its newest messages reach into whole, so that a long plan is never summarised and almost nothing is freed.
 
 ## The problem
 

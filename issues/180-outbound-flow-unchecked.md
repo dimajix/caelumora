@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Tools and approvals
+**Summary:** What an agent writes into the arguments of a remote MCP tool leaves the system with no confidentiality rule asked; only what comes back is checked.
 
 ## The problem
 

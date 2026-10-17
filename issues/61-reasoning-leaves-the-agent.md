@@ -1,7 +1,8 @@
 # 61 — An agent's reasoning is published with its messages
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** An agent's reasoning travels with its messages to every user, and can disclose what a hidden tool call or private knowledge withholds.
 
 ## The problem
 

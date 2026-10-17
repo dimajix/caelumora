@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** Every moderator makes some agent answer every message; there is none under which agents respond only when they are `@`-mentioned.
 
 ## The problem
 

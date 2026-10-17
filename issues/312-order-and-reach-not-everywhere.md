@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** Some operations ask about others before their own verb, or reach an object by id with fewer questions than the views, so a refusal tells more than it may and "by id" is not "by navigation".
 
 ## The problem
 

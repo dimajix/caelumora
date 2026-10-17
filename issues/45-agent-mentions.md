@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** An `@`-mention written by an agent does not make the mentioned agent respond, so agents cannot hand questions to each other.
 
 ## The problem
 

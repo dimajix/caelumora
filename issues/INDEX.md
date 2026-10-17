@@ -1,55 +1,10 @@
-# Open Issues — Index
+# Issues — Index
 
-One line of status and one sentence per issue. The reasoning, the discussion and the decision live
-in the file next to it — there it may be as long as it needs to be, here it may not.
-
-Why the split: this index is read every time anyone looks; an issue file only when someone works on
-that issue. Keeping both in one file meant either the overview drowned in the detail, or the detail
-was never written down. But the detail is the valuable part: why something is open, what already
-argues against it, and what came out of the last attempt.
-
-## How this is maintained
-
-- **One issue is two places:** a line here, and a file `issues/<number>-<slug>.md`. They are created
-  together and neither one ever disappears.
-- **Numbers are never reused** and never reassigned. A new issue gets the next free number, even if
-  issues before it are closed. Numbers are referred to — from commits, from code comments, from the
-  other documents; a number that moves eventually points at something else. Numbers are written with
-  **two digits** (`01`, not `1`) so the file listing sorts correctly; from `100` onwards, three.
-- **When an issue is resolved, the status changes** — here *and* at the top of the file. Nothing
-  else: no deleting, no rewriting of the description. What was once open and how it turned out is
-  exactly the information a deleted line no longer gives.
-- **What happened goes under "History"** at the end of the issue file, with a date, as a new
-  paragraph. The existing text stays, even once it is outdated — it is the record of the problem,
-  not of the solution.
-- **Status:** `open` · `in progress` · `done` · `rejected`. `rejected` means: looked at and
-  deliberately not done, with the reason attached — because that reason is otherwise worked out
-  again from scratch six months later.
-- **The index line is one sentence.** It says what is wrong, not how it will be fixed. Everything
-  longer belongs in the issue file.
-- **[OPEN.md](OPEN.md) is generated, never edited:** the lines of this index that are `open` or `in
-  progress`, under the same sections, written by `issues/open.sh`. The pre-commit hook
-  (`.githooks/pre-commit`) runs it whenever this index is committed and adds the result to the
-  commit; it is enabled once per clone with `git config core.hooksPath .githooks`. Without the hook,
-  run the script after changing a status.
-
-### Creating a new issue
-
-A new issue is opened on `main` alone, from its newest version, in a commit of its own that is
-pushed at once; its branch comes only with its implementation. Why, and how exactly, is in
-[AGENTS.md](../AGENTS.md#branches-and-commits): a number is taken where everybody takes them, and is
-published before anyone else can take it.
-
-1. Check this index first — an issue for it may already exist, in which case add to that file's `##
-   History` rather than opening a second one.
-2. Take the next free number and create `issues/<number>-<slug>.md` with the status header, the
-   problem, why it matters, the considerations (options and their trade-offs), a "done when", and a
-   first `## History` entry.
-3. Add one line to the matching section below. If no section fits, add one.
-4. Cross-reference related issues by number, e.g. `[19](19-memory-tiers.md)`, where one genuinely
-   blocks or overlaps another.
-
----
+Every issue, one line each, under its area and by number. Generated from the field lines of the
+issue files by `issues/generate.sh` - never edit it by hand: change the issue file, and the
+pre-commit hook (`.githooks/pre-commit`) or a run of the script brings this file up to date. How
+issues are kept is described in [README.md](README.md); those open or in progress are listed in
+[OPEN.md](OPEN.md).
 
 ## Observability and operations
 
@@ -57,6 +12,7 @@ published before anyone else can take it.
 |---|---|---|
 | [01](01-improve-logging.md) | done | Two logging frontends (`log` and `tracing`) are used side by side, and the REST handlers, session loop and event bus are nearly silent. |
 | [02](02-better-error-messages.md) | done | Failures lose the context that would make them actionable — which component, which endpoint, which parameter. |
+| [21](21-scaling.md) | done | The runtime is single-process by design; which of the three scaling axes actually matters has never been decided. |
 | [122](122-several-instances.md) | open | The server cannot run in several instances: everything live is in one process, and nothing keeps agents and users in step between processes. |
 | [130](130-llm-configuration.md) | done | The language model is configured through environment variables, not in the configuration file like everything else. |
 | [209](209-token-usage.md) | done | The tokens of each model call are recorded per message but summed up nowhere, and the model's context size is unknown, so nobody sees how full an agent's context is. |
@@ -70,13 +26,11 @@ published before anyone else can take it.
 |---|---|---|
 | [03](03-postgres-entity-store.md) | open | `EntityStore` has only in-memory and JSON-file implementations; a Postgres one is the prerequisite for everything multi-process. |
 | [04](04-postgres-state-store.md) | open | `StateStore` likewise — and it holds the state whose loss is most expensive, including agents suspended on an approval. |
-| [05](05-postgres-event-recorder.md) | open | The `Recorder` hook is wired into every channel, but `BlackholeRecorder` is the only implementation, so nothing is recorded. |
-| [06](06-context-in-message-for-auditability.md) | done | For a past message there is no way to reconstruct what the agent actually saw when it wrote it. |
+| [20](20-transactional-effects.md) | rejected | A cognitive turn persists state, runs tools and emits events with no boundary around them; a crash mid-tool re-executes it on restart. |
 | [62](62-json-store-concurrent-writes.md) | done | Concurrent writes of the same JSON store file share one temporary file, so one fails and the newest state can be lost. |
 | [77](77-template-swallows-store-errors.md) | done | `ParticipantTemplate::instantiate` treats every store error as "not found" and creates a second agent. |
 | [93](93-entity-store-dialects.md) | done | The `EntityStore` offers a different set of methods for every entity kind, and templates are stored by name but deleted by id. |
 | [108](108-serde-defaults-for-legacy.md) | done | Stored state carries `#[serde(default)]` only so that documents from before a field existed still load, although no such documents need to. |
-| [164](164-soft-deletion-and-former-members.md) | done | Deleting a session, channel or agent and removing a participant erase them from the store, so nothing can say later that they were there, who removed them or when. |
 | [178](178-scoped-lookup-by-name.md) | done | Definitions cannot be looked up by name within their scope, and the one lookup that uses a scope - a template's agents - finds too much and ignores the personality. |
 | [182](182-entity-reads-not-cached.md) | open | Personalities, agents and users are read from the store again for every use - for every member of a channel, on every turn - though they change rarely. |
 | [193](193-external-state-rewritten-whole.md) | done | Every state the `StateStore` keeps is rewritten whole for everything that happens in it - an agent's for every message heard and every step of a turn - so the writes grow with the square of a channel's length. |
@@ -96,19 +50,17 @@ published before anyone else can take it.
 
 | No. | Status | Issue |
 |---|---|---|
-| [07](07-session-deletion-audit.md) | in progress | Deletion works since `540e482`; what remains open is whether and how a deletion is recorded. |
 | [08](08-retry-and-edit-past-answers.md) | rejected | A conversation is append-only — no retry, no correcting a past message, so a derailed turn keeps influencing every later one. |
 | [09](09-creating-channels.md) | done | Channels exist only as instantiated from a session template; there is no create, no close, and no way to add a participant afterwards. |
-| [46](46-channel-participants.md) | done | The participants of a channel are fixed when it is built; nobody can be added to or removed from a running channel. |
-| [70](70-channels-as-entities.md) | done | Channels are stored inside the session document, so every change to a channel has to go through the session and renaming a channel is not stored at all. |
-| [73](73-watch-leaving-duplicates-events.md) | done | `ChannelLoop::watch_leaving` is a second channel for the fact that someone left, which the `EventBus` already announces as `UserChannelLeft`/`AgentChannelLeft`. |
-| [67](67-change-channel-level.md) | done | A channel's confidentiality level can only be set when the channel is created, not changed afterwards. |
-| [134](134-session-privacy.md) | done | Once classification no longer keeps sessions apart, nothing expresses that a session's participants have not agreed to be read from another. |
+| [30](30-user-actor-for-authenticated-user.md) | done | Messages and approvals from the REST API go through the channel's first `UserActor`, so they are recorded in the name of someone other than the authenticated sender. |
 | [34](34-snapshot-on-stream-connect.md) | done | Event streams deliver only what happens after they connect, so a client cannot learn the current state and loses whatever happens while it connects. |
 | [38](38-global-stream-loses-events-silently.md) | done | A client of the global event stream that falls behind loses events without being told, and its session list stays wrong until a reload. |
 | [39](39-global-events-not-filtered.md) | done | The global event stream sends every user the events of every session, including the ids and new names of sessions they may not see. |
-| [30](30-user-actor-for-authenticated-user.md) | done | Messages and approvals from the REST API go through the channel's first `UserActor`, so they are recorded in the name of someone other than the authenticated sender. |
 | [42](42-export-import-chats.md) | open | Chats cannot be exported or imported, so a conversation cannot leave the server it happened on or be brought into another. |
+| [46](46-channel-participants.md) | done | The participants of a channel are fixed when it is built; nobody can be added to or removed from a running channel. |
+| [67](67-change-channel-level.md) | done | A channel's confidentiality level can only be set when the channel is created, not changed afterwards. |
+| [70](70-channels-as-entities.md) | done | Channels are stored inside the session document, so every change to a channel has to go through the session and renaming a channel is not stored at all. |
+| [73](73-watch-leaving-duplicates-events.md) | done | `ChannelLoop::watch_leaving` is a second channel for the fact that someone left, which the `EventBus` already announces as `UserChannelLeft`/`AgentChannelLeft`. |
 | [75](75-agent-resumes-half-turn.md) | done | An agent stopped on purpose mid-turn resumes that turn like after a crash, and a resume in `ExecutingTools` re-runs its tools. |
 | [76](76-channel-cancel-flag.md) | done | The channel's own cancel flag suppresses the final response of a cancelled turn, so the other agents' transcripts diverge from the history. |
 | [79](79-user-actor-exits-on-send-error.md) | done | A `UserActor` ends itself when one forward fails, and the three actor run loops differ only in how they handle errors. |
@@ -116,6 +68,7 @@ published before anyone else can take it.
 | [120](120-participant-copies.md) | done | Sessions and channels store full copies of their participants' user records, which go stale and disclose email and roles to every participant. |
 | [121](121-agent-controller-per-process.md) | done | An agent that takes part in several running sessions has one controller in each, so its document has more than one writer. |
 | [124](124-observer-participants.md) | open | Nobody can join a channel just to watch it: joining makes a participant who can write, and without joining it cannot be followed live. |
+| [134](134-session-privacy.md) | done | Once classification no longer keeps sessions apart, nothing expresses that a session's participants have not agreed to be read from another. |
 | [141](141-turn-during-reclassification.md) | done | A turn running while its channel's classification is lowered classifies its answer above the channel, and the channel drops it. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 | [171](171-readded-while-still-stopping.md) | done | A participant removed and added again within seconds gets a new actor while the old one still stops, and both write its state. |
@@ -127,7 +80,6 @@ published before anyone else can take it.
 | [221](221-adding-session-participants.md) | done | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
 | [222](222-queued-requests-answered-one-by-one.md) | done | An agent - run here or external - asked while it answers works through every queued request afterwards, one answer each, to a conversation that has moved on. |
 | [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
-| [385](385-inbox-lost-on-restart.md) | open | An actor's inbox is a queue in memory, so a restart loses what was routed to it and not yet taken in - a change to a message, a request, a command - for good. |
 | [234](234-modify-revoke-and-retry-messages.md) | done | A message once said can be neither changed nor taken back by its author, and an agent cannot be asked to answer again, so a mistake keeps influencing every later turn. |
 | [235](235-retry-of-an-answer-under-way.md) | done | An answer still being generated cannot be asked for again; only stopping every agent of the channel gets there. |
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
@@ -142,6 +94,7 @@ published before anyone else can take it.
 | [377](377-stopping-a-session-aborts-its-actors.md) | done | Stopping or deleting a session aborts its actors at once, so a turn ends mid-step, a tool is cut off and a deleted session's external agents keep their remote tasks. |
 | [381](381-inactive-channels-held-in-memory.md) | open | A channel nobody has spoken in for days keeps its loop, its actors and their states in memory until its session is stopped, and nothing notices that it is idle. |
 | [382](382-agents-held-without-a-session.md) | open | An agent stays loaded with its memory while nothing uses it, and what still holds it once its sessions are unloaded has not been checked. |
+| [385](385-inbox-lost-on-restart.md) | open | An actor's inbox is a queue in memory, so a restart loses what was routed to it and not yet taken in - a change to a message, a request, a command - for good. |
 | [386](386-actor-state-after-a-stop.md) | done | Whoever follows a channel keeps an agent's last state and its answer under way after the session stops, and the follower's reconnect starts the session again. |
 | [388](388-resume-interrupted-work-after-a-restart.md) | open | Work interrupted by a restart - a turn stopped mid-step at the shutdown - waits until someone acts in its session, since nothing starts the session again. |
 
@@ -160,46 +113,56 @@ published before anyone else can take it.
 | [31](31-session-renewal-from-ui.md) | done | The session token is only renewed by requests, so a web UI that is open but only receiving events is logged out after 15 minutes and loses the typed input. |
 | [33](33-sse-outlives-its-token.md) | done | An open server-sent event stream is authenticated once, when it connects, and keeps delivering after its token has expired or its user was removed. |
 | [64](64-confidentiality-compartments.md) | done | Confidentiality has ordered levels only; information that may be shared between the channels of one topic or group but not others cannot be expressed. |
+| [69](69-scoped-actor-runtime.md) | done | Every actor's `ActorRuntime` hands out the process-wide services unrestricted, so it cannot be given to components without letting them read around the confidentiality rules. |
 | [87](87-security-context-in-entities.md) | done | Stored agents and users carry a `SecurityContext` that the actors overwrite at start. |
 | [94](94-users-unchecked-in-store.md) | done | The store checks access for every entity kind except users, where a placeholder comment stands in for the check. |
 | [95](95-require-for-security-manager.md) | done | The runtime asks the `SecurityManager` for permission in four different ways with four different log lines. |
 | [125](125-invisible-admin.md) | rejected | There is no administrator who may see and follow every channel without taking part in it. |
 | [133](133-classification-model.md) | done | The confidentiality levels say how far information may travel, not how sensitive it is, so topics cannot be told apart and a tool cannot classify its results one by one. |
 | [138](138-confidentiality-policy-in-ownership.md) | done | The confidentiality rules are applied by the ownership policy, so any other policy has to re-implement them or leave them out. |
-| [140](140-audit-log.md) | open | Acts that change who may see what - releases, participants, approvals, deletions - leave no record of who did them and when. |
 | [142](142-roles.md) | in progress | Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them. |
-| [181](181-where-roles-decide.md) | open | Nobody has reviewed where a user's roles - and soon an agent's - enter a permission check; today only the clearance at a channel's door asks for them. |
-| [306](306-user-records-have-no-writer.md) | done | A user's record is written by whichever provider authenticates, without an event, so the `UserController` never learns that roles changed and every check reads them from the store. |
-| [308](308-artifacts-shared-with-a-team-not-listed.md) | done | An artifact shared with a team is read by its members but not listed among their artifacts, since the list asks the store only for artifacts naming the viewer or their roles. |
 | [149](149-special-tokens-in-content.md) | done | Special tokens typed into a message, or contained in a tool result, reach an Ollama model as real control tokens, so the content can open a fake system or agent turn. |
 | [150](150-impersonation-towards-the-agent.md) | done | A participant can write another participant's sender marker into their own message, and models believe it, so the agent may act on a consent nobody gave. |
-| [228](228-envelope-sender-not-enforced.md) | done | Each actor sets the sender and security context of its own envelopes, and the channel takes them as given, so an actor could act in someone else's name. |
 | [158](158-publish-question-built-five-times.md) | done | Whether something may flow into a channel is asked of the policy in five places by hand, not as an access question. |
 | [167](167-origin-and-releases.md) | rejected | A classification says who may read something but not where it was written: a release overwrites the origin, releases cannot be told apart, and there is no rule for writing. |
 | [168](168-turn-label-as-high-water-mark.md) | done | A turn writes under its channel's classification even when everything it saw was classified lower, so what it remembers is lost to lower channels. |
 | [169](169-changing-classified-content.md) | open | Nothing says who may change something classified once it is written, or that what the writer has seen must fit into its classification. |
+| [181](181-where-roles-decide.md) | open | Nobody has reviewed where a user's roles - and soon an agent's - enter a permission check; today only the clearance at a channel's door asks for them. |
 | [198](198-security-scenarios.md) | done | Nothing says, end to end, which permissions an action needs; a member whose personality was withdrawn locks everyone out of its session, and some actions look at others before the actor's own permission. |
+| [228](228-envelope-sender-not-enforced.md) | done | Each actor sets the sender and security context of its own envelopes, and the channel takes them as given, so an actor could act in someone else's name. |
 | [255](255-whose-name-agents-act-in.md) | done | An agent reads in its owner's name and acts in the name of whoever asked it, one call often in both, and which applies follows from where the code sits rather than from a rule. |
 | [264](264-agent-reads-channels-its-owner-may-not.md) | done | An agent reads another channel of its session by the flow rule alone, so it reads channels its owner may not, and membership hides nothing from a session's agents. |
 | [286](286-groups-as-subjects.md) | done | A workspace or an artifact cannot be shared with a team that users make themselves, only with people one by one, a role, or the members of a session or channel. |
 | [287](287-memberships-cache.md) | open | Every check of a membership or a role in an access list reads the entity store, for every event of a session or channel and every subscriber. |
 | [289](289-attach-compares-access.md) | rejected | Attaching a workspace to a session shares it with that one session by an entry of its own, even where its access list already reaches everyone the session may take in. |
 | [304](304-review-of-the-permission-concept.md) | done | Four kinds of permission - ownership, flow rules, actions, reachability - are checked in many places and several layers, and nobody has reviewed where each is asked, in which order, and whether the checks that mix two of them do so on purpose. |
+| [306](306-user-records-have-no-writer.md) | done | A user's record is written by whichever provider authenticates, without an event, so the `UserController` never learns that roles changed and every check reads them from the store. |
+| [308](308-artifacts-shared-with-a-team-not-listed.md) | done | An artifact shared with a team is read by its members but not listed among their artifacts, since the list asks the store only for artifacts naming the viewer or their roles. |
 | [310](310-secrets-have-no-owner.md) | open | Any secret can be named by whoever writes a component: secrets have no owner and no access list, and the policy allows every `ReadSecret`. |
 | [312](312-order-and-reach-not-everywhere.md) | done | Some operations ask about others before their own verb, or reach an object by id with fewer questions than the views, so a refusal tells more than it may and "by id" is not "by navigation". |
-| [316](316-store-checks-artifact-without-versions.md) | done | The store checks an artifact against its own access list only, not its versions', so the views list and read artifacts in the runtime's name and decide themselves who may read them.
-| [317](317-teams-listed-by-a-scan.md) | done | `Views::groups` lists the viewer's teams by reading every group and asking the policy of each, while `Views::artifacts` finds them by a query.
-| [339](339-default-access-of-new-versions.md) | open | Whom a new version of an artifact reaches is fixed to the channel it is published in, and neither a default for new versions nor a version's own list can be changed. |
-| [340](340-teams-as-owners.md) | open | Only a person owns anything: no team can own what is done in its name, as a company does, so what is a team's result is one member's and goes with them. |
-| [341](341-identity-ownership-delegation.md) | done | A security context cannot tell an agent's owner from the one it acts for: `principal_id` stands for both, so a check that means the owner silently asks whoever it acts for once they differ. |
-| [343](343-users-bring-their-own-secrets.md) | open | A user cannot bring a secret of their own: every secret is the operator's, put into the configured providers, so an agent of one's own cannot reach a remote system with its owner's credential. |
+| [316](316-store-checks-artifact-without-versions.md) | done | The store checks an artifact against its own access list only, not its versions', so the views list and read artifacts in the runtime's name and decide themselves who may read them. |
+| [317](317-teams-listed-by-a-scan.md) | done | `Views::groups` lists the viewer's teams by reading every group and asking the policy of each, while `Views::artifacts` finds them by a query. |
 | [319](319-scoped-artifact-events-miss-version-readers.md) | done | An artifact deleted or restored with its session or channel is announced by its own access list only, so whoever reads it by a version's list does not hear of it. |
 | [320](320-scoped-deletion-in-the-runtimes-name.md) | done | What lies in a session's or channel's scope is deleted and restored with it in the runtime's name, so the store asks nothing, another's things go without their owner being asked, and the deletion is recorded as the system's. |
 | [321](321-channel-components-in-the-owners-name.md) | done | A channel's components act in its owner's name with the roles of when the channel was built, a context nobody decided on, so what they may read or use depends on when the channel was last built. |
 | [322](322-clearance-decided-outside-the-store.md) | done | Whether one is cleared for a classified entity is asked by the views, three managers and the event bus each, besides the store, so that what a reader forgets to ask is found, and the deleted are reached by other rules than the live. |
 | [332](332-policy-as-a-predicate.md) | open | The policy decides entity by entity, so a store filters a list after reading it and no database could put who may read into its query. |
+| [339](339-default-access-of-new-versions.md) | open | Whom a new version of an artifact reaches is fixed to the channel it is published in, and neither a default for new versions nor a version's own list can be changed. |
+| [340](340-teams-as-owners.md) | open | Only a person owns anything: no team can own what is done in its name, as a company does, so what is a team's result is one member's and goes with them. |
+| [341](341-identity-ownership-delegation.md) | done | A security context cannot tell an agent's owner from the one it acts for: `principal_id` stands for both, so a check that means the owner silently asks whoever it acts for once they differ. |
+| [343](343-users-bring-their-own-secrets.md) | open | A user cannot bring a secret of their own: every secret is the operator's, put into the configured providers, so an agent of one's own cannot reach a remote system with its owner's credential. |
 | [347](347-entries-naming-purged-groups.md) | done | An access list keeps its entries for a group once the group is purged - a session long over, a team removed -, so lists grow by entries that name nobody and are cleaned up by hand. |
 | [348](348-participants-groups-out-of-step-with-their-holder.md) | done | A session's or channel's deletion that fails half-way, or a restoring that does not reach its groups, leaves the group of its participants in the trash while it is there, and its members lose it. |
+
+## Audit
+
+| No. | Status | Issue |
+|---|---|---|
+| [05](05-postgres-event-recorder.md) | open | The `Recorder` hook is wired into every channel, but `BlackholeRecorder` is the only implementation, so nothing is recorded. |
+| [06](06-context-in-message-for-auditability.md) | done | For a past message there is no way to reconstruct what the agent actually saw when it wrote it. |
+| [07](07-session-deletion-audit.md) | in progress | Deletion works since `540e482`; what remains open is whether and how a deletion is recorded. |
+| [140](140-audit-log.md) | open | Acts that change who may see what - releases, participants, approvals, deletions - leave no record of who did them and when. |
+| [164](164-soft-deletion-and-former-members.md) | done | Deleting a session, channel or agent and removing a participant erase them from the store, so nothing can say later that they were there, who removed them or when. |
 
 ## Tools and approvals
 
@@ -209,9 +172,9 @@ published before anyone else can take it.
 | [14](14-approval-privilege.md) | done | Any user in the channel can approve any tool call; ineligible responses cannot be ignored because eligibility does not exist. |
 | [15](15-disallowed-tool-errors-to-llm.md) | done | A refused tool call does not reach the model as something it can act on, so the agent retries or proceeds as if it had succeeded. |
 | [32](32-unavailable-tools-invisible-to-model.md) | done | A tool source that failed to load (e.g. an unreachable MCP server) leaves no trace in the model's context, so the agent acts as if the tools never existed. |
+| [37](37-tool-name-collisions.md) | done | When two components of an agent provide a tool of the same name, the first one silently wins and the other is unreachable. |
 | [49](49-plan-step-system-messages.md) | done | Plan step instructions are system messages in the middle of a turn, which some models move into the system prompt, losing their place and the prompt cache. |
 | [52](52-split-tool-providers.md) | done | All built-in tool providers live in one file, and tools added later went to other places, so there is no rule for where a tool goes. |
-| [37](37-tool-name-collisions.md) | done | When two components of an agent provide a tool of the same name, the first one silently wins and the other is unreachable. |
 | [78](78-mcp-requires-approval-ignored.md) | done | `McpToolConfig.requires_approval` is never read; every discovered MCP tool runs without approval. |
 | [81](81-approver-double-id.md) | done | The approver gives every approval a second id it never uses, and the agent passes through `ExecutingTools` only to start waiting. |
 | [82](82-tool-parameter-parsing.md) | done | `create_plan` answers malformed arguments with "the tool failed" instead of "correct the arguments". |
@@ -245,15 +208,14 @@ published before anyone else can take it.
 | No. | Status | Issue |
 |---|---|---|
 | [28](28-user-commands.md) | done | Everything a user types goes to the agents; there is no way to address the system itself with slash commands such as `/help`, `/wakeup` or `/compact`. |
+| [29](29-mentions.md) | done | In a multi-agent channel the user cannot choose who answers; the moderator alone decides, and an `@name` in the text means nothing to it. |
 | [35](35-sidebar-live-updates.md) | done | The web UI's session list is loaded once and never updated, so sessions and channels created or deleted elsewhere stay invisible until a reload. |
 | [40](40-choose-session-template.md) | done | A new session in the web UI always uses the first template of an unordered list, and the user cannot choose another. |
 | [41](41-show-message-context.md) | done | The web UI offers no way to see what an agent's model saw when it produced a message, although the server can answer it. |
 | [43](43-message-time-and-statistics.md) | done | The web UI shows neither when a message was written nor the token counts and durations recorded for it. |
-| [29](29-mentions.md) | done | In a multi-agent channel the user cannot choose who answers; the moderator alone decides, and an `@name` in the text means nothing to it. |
 | [44](44-mentions-only-moderator.md) | done | Every moderator makes some agent answer every message; there is none under which agents respond only when they are `@`-mentioned. |
 | [45](45-agent-mentions.md) | done | An `@`-mention written by an agent does not make the mentioned agent respond, so agents cannot hand questions to each other. |
 | [56](56-response-language.md) | done | Agents often answer in English, and a user has no way to choose the language the agents of a channel answer in. |
-| [331](331-language-default-in-the-frontend.md) | done | The core holds a new channel or session in its creator's preferred language where nothing else is said, a decision that belongs to the frontend. |
 | [80](80-stored-channel-response.md) | done | A channel that is not running is reported as not changeable and its agents' context as not readable, because the REST server picks and asks the access questions itself, in response builders spread over three modules. |
 | [102](102-rest-channel-lookup.md) | done | The REST server repeats the session/channel lookup twelve times and decides itself what a viewer may see. |
 | [103](103-rest-error-mappers.md) | done | Six REST functions map runtime errors to problem details with the same pattern. |
@@ -297,6 +259,7 @@ published before anyone else can take it.
 | [299](299-command-under-way-not-shown.md) | done | A command an agent carries out, such as `/compact`, is shown only once it is done: nothing tells that the agent began, and it is shown idle meanwhile. |
 | [301](301-skill-list-presentation.md) | done | The skills an agent lists with `list_skills` are shown in the web UI as raw JSON, while loading, writing and changing a skill are shown as what they do. |
 | [303](303-note-and-memory-presentations.md) | done | The web UI shows writing, changing, revoking and reading notes, private notes and memory entries as raw JSON, so a call that names an entry by number does not say which one. |
+| [331](331-language-default-in-the-frontend.md) | done | The core holds a new channel or session in its creator's preferred language where nothing else is said, a decision that belongs to the frontend. |
 | [384](384-malformed-query-answered-as-plain-text.md) | open | A malformed query string, such as `?limit=abc`, is answered with a plain-text `400` instead of problem details with a `code`, since axum's `Query` extractor is used unwrapped. |
 
 ## Context and knowledge
@@ -307,6 +270,7 @@ published before anyone else can take it.
 | [17](17-information-sharing-within-session.md) | done | Agents in one session share nothing but routed messages — there is no scratchpad one can write to and another read. |
 | [18](18-knowledge-sharing.md) | done | Sessions are sealed: nothing an agent learns outlives the session, and cross-agent sharing is a harder question again. |
 | [19](19-memory-tiers.md) | done | The four memory tiers from `TODO.md` are named but undefined — scope, lifetime, readers and invalidation are all open. |
+| [22](22-skill-management.md) | done | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
 | [47](47-prompt-parts-with-provenance.md) | done | What a model is given besides the conversation is placed and recorded on two separate paths, and can only be a system prompt, whose every change invalidates the prompt cache. |
 | [48](48-shared-digest-chain.md) | done | History and context duplicate one digest-chained structure, and notes would become a third copy that branching would have to change separately. |
 | [50](50-turn-context-naming.md) | done | `TurnContext` calls both the stored context and the input of one model call "context". |
@@ -320,35 +284,35 @@ published before anyone else can take it.
 | [61](61-reasoning-leaves-the-agent.md) | done | An agent's reasoning travels with its messages to every user, and can disclose what a hidden tool call or private knowledge withholds. |
 | [63](63-reasoning-in-model-input.md) | done | Every model call gets the reasoning of all earlier messages back, other agents' included, although several reasoning models document that it must not be. |
 | [65](65-generic-component-state.md) | rejected | The state of notes is hard-wired into the agent state, the turn, the stores and REST, so every further kind of component state needs changes to the core and branching must be taught each one. |
-| [131](131-agent-memory-bypasses-policy.md) | done | Agent memory decides with the built-in rule which entries may be recalled in a channel, instead of asking the `SecurityManager` like the other reads across channels. |
 | [66](66-channel-level-in-prompt.md) | done | Private notes and results of tools the channel does not see are not marked as private for the model, which may quote them in its always-published answer. |
-| [72](72-history-digest-ignores-limit.md) | done | What `read_history` records as read names the whole history of the channel, although a reader who joined later with a limit saw only part of it. |
 | [68](68-notes-in-agent-state.md) | done | An agent's notes are bound to one of its channels, although much of what it notes is knowledge of the agent itself, across channels and sessions. |
-| [22](22-skill-management.md) | done | Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn. |
+| [72](72-history-digest-ignores-limit.md) | done | What `read_history` records as read names the whole history of the channel, although a reader who joined later with a limit saw only part of it. |
 | [92](92-ledger-for-notes-and-memory.md) | done | `NoteChain` and `MemoryChain` are the same type written twice. |
-| [156](156-notes-and-memory-staged-scans.md) | done | Notes and memory answer "the chain with this turn's changes" with eight hand-written scans instead of the fold the chains already have. |
-| [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
-| [253](253-workspace.md) | done | Nothing in Caelumora holds a file: agents and people have no workspace to keep, share and work on files in, and an executor would have to own them. |
-| [256](256-workspace-versions.md) | open | A workspace has no versions: what a person, a file tool or a command overwrote cannot be taken back, and who changed what is not recorded. |
-| [271](271-publishing-artifacts.md) | done | An agent cannot offer a file for download, and nothing it hands over outlives the workspace it lies in. |
-| [272](272-artifacts-in-s3.md) | open | Artifacts can be kept only on the server's own disk, not in S3 or another object storage. |
-| [338](338-artifacts-go-with-their-session.md) | open | An artifact is published into its session's scope and is deleted with the session unless its owner keeps it elsewhere, though it is meant to outlive the conversation. |
 | [98](98-context-provider-facet.md) | done | `ContextProvider` is a facet with one implementation, and a second one would silently overwrite the first. |
 | [101](101-chain-component-helpers.md) | done | The three chain components copy their helpers, and `AgentNotes`/`AgentMemory` are constructed only to be called once. |
 | [117](117-message-prev-id.md) | done | `Message::prev_id` is excluded from the digest because the chain owns it, yet two places still set it. |
 | [119](119-seen-item-and-context-item.md) | done | What a model saw when it produced a message and what its turn gave it are two types of the same thing. |
+| [131](131-agent-memory-bypasses-policy.md) | done | Agent memory decides with the built-in rule which entries may be recalled in a channel, instead of asking the `SecurityManager` like the other reads across channels. |
 | [135](135-sender-names-in-model-input.md) | done | In a channel with several participants the model sees their messages as `user` messages without their senders, so it cannot tell who said what. |
 | [136](136-virtual-transcript.md) | done | A turn under way is resolved through another method, another reference type and another kind of placement than a recorded message, only because its messages have no digests yet. |
 | [137](137-tools-in-recorded-context.md) | done | Which tools a model was offered, and how they were described to it, is recorded nowhere, so what an agent saw cannot be told in full. |
+| [156](156-notes-and-memory-staged-scans.md) | done | Notes and memory answer "the chain with this turn's changes" with eight hand-written scans instead of the fold the chains already have. |
+| [163](163-navigable-views.md) | done | There is no model to navigate from a session to what is in it: every read of history, notes, contexts or memory is put together anew, with its own conditions, by the REST server, the channel loop, the actors and `SessionReader`. |
+| [166](166-memory-as-topic-documents.md) | open | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 | [176](176-participants-in-system-prompt.md) | done | An agent is told neither its own name nor who else is in its channel, and neither agents nor users have a description that says who they are. |
 | [224](224-what-agents-hear-of-others.md) | done | What an agent hears of others is shaped by the moderator and again by the external agent, and an agent run here that joins takes others' answers from the history unshaped, as if they were its own. |
 | [237](237-erasing-a-message.md) | open | A message written by mistake can be taken back but not erased: it stays in every participant's record and in the contexts built on it. |
 | [249](249-prompt-part-titles.md) | done | Some prompt parts have no title and run into the others, and some have one that is a paragraph. |
+| [253](253-workspace.md) | done | Nothing in Caelumora holds a file: agents and people have no workspace to keep, share and work on files in, and an executor would have to own them. |
+| [256](256-workspace-versions.md) | open | A workspace has no versions: what a person, a file tool or a command overwrote cannot be taken back, and who changed what is not recorded. |
+| [271](271-publishing-artifacts.md) | done | An agent cannot offer a file for download, and nothing it hands over outlives the workspace it lies in. |
+| [272](272-artifacts-in-s3.md) | open | Artifacts can be kept only on the server's own disk, not in S3 or another object storage. |
 | [279](279-agents-md-in-workspace.md) | done | An agent is not told of an `AGENTS.md` in its workspace, and there is no skill that helps it write one for an existing project. |
 | [284](284-automatic-context-compaction.md) | done | An agent's context is compacted only when somebody asks for it; nothing compacts it before a model call that would not fit, least of all within the turn that makes it. |
 | [300](300-compaction-keeps-long-turns-whole.md) | done | A compaction keeps the turn its newest messages reach into whole, so that a long plan is never summarised and almost nothing is freed. |
 | [302](302-update-note.md) | done | A note cannot be changed, only revoked and written again under a new number, and `note` is not named after what it does like `revoke_note` and `read_notes`. |
 | [305](305-skill-versions.md) | open | A skill keeps only its current text: every change overwrites what it said, nobody sees what changed, and an earlier version cannot be made current again. |
+| [338](338-artifacts-go-with-their-session.md) | open | An artifact is published into its session's scope and is deleted with the session unless its owner keeps it elsewhere, though it is meant to outlive the conversation. |
 | [389](389-knowledge-read-in-the-transcript.md) | done | A compaction finds what the agent read, to give it again, in the history, although the model's input is to be built from the transcript alone. |
 | [390](390-context-gauge-profile-from-history.md) | done | How full an agent's context is between turns is estimated with the model profile of a message from its history, not with the rules of the model it is run with now. |
 
@@ -357,27 +321,27 @@ published before anyone else can take it.
 | No. | Status | Issue |
 |---|---|---|
 | [36](36-replace-serde-yaml.md) | done | The configuration is parsed with `serde_yaml`, which is deprecated and will receive no further fixes. |
-| [71](71-access-helpers-on-entities.md) | done | Pure access questions such as `may_be_read_by`, `may_be_changed_by` and `history_visible_to` are public methods of the entities and bloat their interfaces. |
 | [53](53-facet-trait-placement.md) | done | The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits. |
+| [71](71-access-helpers-on-entities.md) | done | Pure access questions such as `may_be_read_by`, `may_be_changed_by` and `history_visible_to` are public methods of the entities and bloat their interfaces. |
 | [74](74-refactoring-epic.md) | done | Epic for the structure review of 2026-09-28: the bracket around issues 75–117 and their recommended order. |
-| [151](151-agent-refactoring-epic.md) | done | Epic for the review of the agent actor of 2026-09-30: the bracket around issues 152–160 and 92, and their recommended order. |
-| [160](160-agent-small-cleanups.md) | done | Around the agent actor, methods without callers, duplicated steps and stale comments are left from earlier changes. |
 | [96](96-config-unification.md) | done | `AppConfig` mixes tagged and untagged enums and `Option` with `default`. |
 | [97](97-small-model-unifications.md) | done | Six helper functions in five modules define the default confidentiality level. |
+| [105](105-seed-data-twice.md) | done | The demo data is seeded by both the REST server and the TUI, from two different definitions. |
+| [109](109-code-hygiene.md) | done | `unwrap`, `unsafe`, infallible `Result`s, idle locks and per-chunk clones outside tests. |
+| [110](110-docs-contradicting-code.md) | done | Doc comments and ARCHITECTURE.md name types and behaviour that the code does not have. |
 | [112](112-id-types.md) | done | `ToolId` and `SessionTemplateId` are written by hand, and `ActorId::Approver` holds a bare `Uuid`. |
 | [113](113-error-shapes.md) | done | "Forbidden" and "not found" have three shapes across the domain errors, and `ChannelError` lives in a crate that never constructs it. |
 | [114](114-moderator-details.md) | done | `ModeratorActors` uses a concurrent map behind `&mut self`, downcasts for a kind the id already tells, and clones every message twice. |
 | [115](115-filtering-event-sender.md) | done | `FilteringEventSender::send` drops a filtered envelope silently while `try_send` reports it as an error. |
-| [105](105-seed-data-twice.md) | done | The demo data is seeded by both the REST server and the TUI, from two different definitions. |
-| [109](109-code-hygiene.md) | done | `unwrap`, `unsafe`, infallible `Result`s, idle locks and per-chunk clones outside tests. |
-| [110](110-docs-contradicting-code.md) | done | Doc comments and ARCHITECTURE.md name types and behaviour that the code does not have. |
 | [129](129-documentation-structure.md) | done | AGENTS.md and ARCHITECTURE.md hold everything in two long files, so the architecture draws no overall picture and the details of one subject are hard to find. |
 | [132](132-rest-and-web-ui-docs.md) | done | The REST server and the web UI have no document of their own; what they do is scattered across the documents of other subjects. |
+| [151](151-agent-refactoring-epic.md) | done | Epic for the review of the agent actor of 2026-09-30: the bracket around issues 152–160 and 92, and their recommended order. |
+| [160](160-agent-small-cleanups.md) | done | Around the agent actor, methods without callers, duplicated steps and stale comments are left from earlier changes. |
 | [192](192-issue-179-small-duplicates.md) | done | Small duplicates were left from issue 179 in the member views, the reader's place, "not found means none" and `unheard`. |
 | [313](313-docs-too-detailed.md) | done | The documents in `docs/` have about 130,000 tokens, mostly code retold - variants, fields, call orders - and inline issue history, so the concepts and rules are hard to find and every change has a second place to update. |
 | [349](349-core-review-epic.md) | done | Epic for the review of agents, sessions and channels of 2026-10-14: the bracket around issues 350–361 and their recommended order. |
-| [391](391-history-and-transcript-review-epic.md) | done | Epic for the review of the history and the transcript of 2026-10-16: the bracket around issues 392–398 and their recommended order. |
 | [378](378-resource-management-epic.md) | open | Epic for resource management: the bracket around 376, 379–383 and 218, which reduce what the server holds in memory, and their recommended order. |
+| [391](391-history-and-transcript-review-epic.md) | done | Epic for the review of the history and the transcript of 2026-10-16: the bracket around issues 392–398 and their recommended order. |
 
 ## Code structure
 
@@ -394,6 +358,7 @@ published before anyone else can take it.
 | [107](107-public-interface.md) | done | Many `pub` items of the three crates have no caller, or one, outside their file. |
 | [116](116-session-loop-channel-tables.md) | done | `SessionLoop` describes the one set of its channels with two tables and a queue. |
 | [123](123-session-handle-in-channel-runtime.md) | done | The channel runtime carries a handle to the session that only the channel needs, filled in a second step outside the session. |
+| [128](128-actor-runtime-in-components.md) | done | Components are given their actor's whole `ActorRuntime` and could store its state or act as it past the turn. |
 | [144](144-runtime-and-entity-accessors.md) | done | Runtimes forward attributes of their own and of the entity above in several ways, with no rule for what the runtime answers and what the entity answers itself. |
 | [147](147-actor-control-unchecked.md) | done | `Actor::cancel`, `wakeup` and `stop` check no permission, and `ChannelLoop::actor_by_id` hands them to any frontend, which could call them unchecked. |
 | [152](152-three-signals-end-a-turn.md) | done | A turn is ended by three signals - a state switched from outside, a token and a flag - that the run loop reconciles with a precedence rule. |
@@ -493,13 +458,3 @@ published before anyone else can take it.
 | [236](236-external-agent-not-told-of-changes.md) | done | A remote agent is not told when a message it was given is modified or taken back, so it goes on answering the old version. |
 | [251](251-open-terminal.md) | done | Agents have no workspace to run commands and keep files in, and Open Terminal, which offers one, is reachable only as an MCP server without approval by kind of tool, interruption or a channel's scope. |
 | [288](288-compaction-of-external-agents.md) | rejected | A personality of an external agent that lists `compaction` is given a default model and compacts what its remote agent is to be given next; nothing refuses it. |
-
-## Open architecture questions
-
-| No. | Status | Issue |
-|---|---|---|
-| [20](20-transactional-effects.md) | rejected | A cognitive turn persists state, runs tools and emits events with no boundary around them; a crash mid-tool re-executes it on restart. |
-| [21](21-scaling.md) | done | The runtime is single-process by design; which of the three scaling axes actually matters has never been decided. |
-| [69](69-scoped-actor-runtime.md) | done | Every actor's `ActorRuntime` hands out the process-wide services unrestricted, so it cannot be given to components without letting them read around the confidentiality rules. |
-| [128](128-actor-runtime-in-components.md) | done | Components are given their actor's whole `ActorRuntime` and could store its state or act as it past the turn. |
-| [163](163-navigable-views.md) | done | There is no model to navigate from a session to what is in it: every read of history, notes, contexts or memory is put together anew, with its own conditions, by the REST server, the channel loop, the actors and `SessionReader`. |

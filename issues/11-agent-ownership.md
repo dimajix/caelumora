@@ -1,7 +1,8 @@
 # 11 — Agent ownership
 
 **Status:** done
-**Area:** Identity & access management
+**Area:** Identity and access management
+**Summary:** `SecurityAttributes` carries an `owner_id` that nothing enforces — every agent, session and template is effectively global.
 
 ## The problem
 

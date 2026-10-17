@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Context and knowledge
+**Summary:** A compaction finds what the agent read, to give it again, in the history, although the model's input is to be built from the transcript alone.
 
 ## The problem
 

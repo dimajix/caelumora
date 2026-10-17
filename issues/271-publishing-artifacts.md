@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Context and knowledge
+**Summary:** An agent cannot offer a file for download, and nothing it hands over outlives the workspace it lies in.
 
 ## The problem
 

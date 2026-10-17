@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** A page loaded while an agent answers does not know the answer is under way, so it offers neither stop nor retry for it until its next message.
 
 ## The problem
 

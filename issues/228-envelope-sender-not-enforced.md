@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** Each actor sets the sender and security context of its own envelopes, and the channel takes them as given, so an actor could act in someone else's name.
 
 ## The problem
 

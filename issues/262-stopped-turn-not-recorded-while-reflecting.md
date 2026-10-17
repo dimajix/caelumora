@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** An agent removed while its turn ends leaves the turn's messages in the channel's history without an end.
 
 ## The problem
 

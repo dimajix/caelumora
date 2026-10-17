@@ -1,7 +1,10 @@
 # 166 — Agent memory is a flat list of short entries, all of it in every prompt
 
 **Status:** open
-**Area:** Context & knowledge
+**Type:** feature
+**Priority:** medium
+**Area:** Context and knowledge
+**Summary:** Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic.
 
 ## The problem
 

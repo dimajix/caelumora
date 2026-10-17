@@ -1,7 +1,10 @@
 # 42 — Chats cannot be exported or imported
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Sessions and channels
+**Summary:** Chats cannot be exported or imported, so a conversation cannot leave the server it happened on or be brought into another.
 
 ## The problem
 

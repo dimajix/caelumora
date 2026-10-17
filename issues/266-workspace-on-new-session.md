@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** A new session's workspace cannot be chosen when it is made, and one for that session alone cannot be made without a template naming it.
 
 ## The problem
 

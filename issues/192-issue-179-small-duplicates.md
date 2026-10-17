@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Maintenance
+**Summary:** Small duplicates were left from issue 179 in the member views, the reader's place, "not found means none" and `unheard`.
 
 ## The problem
 

@@ -1,7 +1,8 @@
 # 39 — The global event stream is not filtered by what a user may see
 
 **Status:** done
-**Area:** Identity & access management
+**Area:** Sessions and channels
+**Summary:** The global event stream sends every user the events of every session, including the ids and new names of sessions they may not see.
 
 ## The problem
 

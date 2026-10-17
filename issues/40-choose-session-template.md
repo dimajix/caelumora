@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** A new session in the web UI always uses the first template of an unordered list, and the user cannot choose another.
 
 ## The problem
 

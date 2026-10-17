@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The web UI does not show the turns an agent gave up, so what their tools did can be read only through the API.
 
 ## The problem
 

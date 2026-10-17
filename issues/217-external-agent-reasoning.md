@@ -2,6 +2,7 @@
 
 **Status:** rejected
 **Area:** Integrations
+**Summary:** What an external agent reports while it works is dropped, so its messages carry no reasoning and the chat shows nothing until it answers.
 
 ## The problem
 

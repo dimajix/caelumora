@@ -1,7 +1,8 @@
 # 54 — Private notes are visible to users
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** Private notes meant for the agent alone are visible to users, in the context panel and as the tool call in the chat.
 
 ## The problem
 

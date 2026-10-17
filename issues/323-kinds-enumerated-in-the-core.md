@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** Every stored kind is enumerated in the core - `ActionType`, `EntityKind`, `EntityStore`, `GlobalEvent`, the scope, the seed, `ApiError` and the routes - so a subject such as skills cannot be moved into a crate of its own.
 
 ## The problem
 

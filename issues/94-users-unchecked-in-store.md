@@ -1,7 +1,9 @@
 # 94 — The store does not check access to users
 
 **Status:** done
-**Area:** Identity & access
+**Area:** Identity and access management
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** The store checks access for every entity kind except users, where a placeholder comment stands in for the check.
 
 ## The problem
 

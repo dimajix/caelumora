@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** `ChannelRuntime` forwards ten services of the `RuntimeManager` it never uses itself, each read once by `ChannelLoop::new`; what 89 rejected, on code that has changed since.
 
 ## The problem
 

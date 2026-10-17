@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The web UI's session list is loaded once and never updated, so sessions and channels created or deleted elsewhere stay invisible until a reload.
 
 ## The problem
 

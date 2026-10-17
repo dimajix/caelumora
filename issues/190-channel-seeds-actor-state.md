@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** The channel writes each actor kind's private state itself when a participant joins.
 
 ## The problem
 

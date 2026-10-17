@@ -1,7 +1,9 @@
 # 95 — Four ways to ask the `SecurityManager` for permission
 
 **Status:** done
-**Area:** Identity & access
+**Area:** Identity and access management
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** The runtime asks the `SecurityManager` for permission in four different ways with four different log lines.
 
 ## The problem
 

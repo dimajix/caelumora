@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** User interaction
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** Both SSE handlers build their stream the same way, and the channel stream's membership loop is runtime knowledge in a handler.
 
 ## The problem
 

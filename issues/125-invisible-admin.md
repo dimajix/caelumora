@@ -2,6 +2,7 @@
 
 **Status:** rejected
 **Area:** Identity and access management
+**Summary:** There is no administrator who may see and follow every channel without taking part in it.
 
 ## The problem
 

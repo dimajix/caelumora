@@ -2,6 +2,7 @@
 
 **Status:** rejected
 **Area:** Sessions and channels
+**Summary:** `TurnFinished` carries the answer the channel already has from the messages said, only for the moderator to decide whom to ask.
 
 ## The problem
 

@@ -1,7 +1,8 @@
 # 52 — All built-in tools live in one file
 
 **Status:** done
-**Area:** Tools & approvals
+**Area:** Tools and approvals
+**Summary:** All built-in tool providers live in one file, and tools added later went to other places, so there is no rule for where a tool goes.
 
 ## The problem
 

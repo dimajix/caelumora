@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The web UI shows no participant's introduction, so a user learns of an agent in a channel only its name.
 
 ## The problem
 

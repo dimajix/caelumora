@@ -1,7 +1,10 @@
 # 126 — An MCP server's tools are discovered once, when the agent is built
 
 **Status:** open
+**Type:** feature
+**Priority:** high
 **Area:** Tools and approvals
+**Summary:** An MCP server's tools are discovered once, when the agent is built, so a replaced or temporarily unreachable server is not followed.
 
 ## The problem
 

@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Maintenance
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** "Forbidden" and "not found" have three shapes across the domain errors, and `ChannelError` lives in a crate that never constructs it.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** The runtime's tests implement `Actor` four times beside the scripted agent, each writing the trait out again for a test or two.
 
 ## The problem
 

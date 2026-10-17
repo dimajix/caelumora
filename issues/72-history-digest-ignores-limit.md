@@ -1,7 +1,8 @@
 # 72 — The recorded read of a history ignores the reader's limit
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** What `read_history` records as read names the whole history of the channel, although a reader who joined later with a limit saw only part of it.
 
 ## The problem
 

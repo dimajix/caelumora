@@ -1,7 +1,8 @@
 # 70 — Channels are stored inside the session document
 
 **Status:** done
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Summary:** Channels are stored inside the session document, so every change to a channel has to go through the session and renaming a channel is not stored at all.
 
 ## The problem
 

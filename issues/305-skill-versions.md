@@ -1,7 +1,10 @@
 # 305 — A skill has no versions: a change overwrites what it said
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Context and knowledge
+**Summary:** A skill keeps only its current text: every change overwrites what it said, nobody sees what changed, and an earlier version cannot be made current again.
 
 ## The problem
 

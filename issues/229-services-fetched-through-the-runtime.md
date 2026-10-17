@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** Central services - the `SecurityManager`, the stores, the event bus - are fetched through the runtime at every use, often through long chains, so no type says what it depends on.
 
 ## The problem
 

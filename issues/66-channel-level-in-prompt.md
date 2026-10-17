@@ -1,7 +1,8 @@
 # 66 — Private content is not marked as such for the model
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** Private notes and results of tools the channel does not see are not marked as private for the model, which may quote them in its always-published answer.
 
 ## The problem
 

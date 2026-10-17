@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Context and knowledge
+**Summary:** Nothing in Caelumora holds a file: agents and people have no workspace to keep, share and work on files in, and an executor would have to own them.
 
 ## The problem
 

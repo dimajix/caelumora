@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Tools and approvals
+**Summary:** A turn cancelled while tool calls are pending is taken over with the calls but without results, so the transcript holds calls never answered.
 
 ## The problem
 

@@ -1,7 +1,9 @@
 # 349 — Refactoring epic: the review of agents, sessions and channels of 2026-10-14
 
 **Status:** done
+**Type:** epic
 **Area:** Maintenance
+**Summary:** Epic for the review of agents, sessions and channels of 2026-10-14: the bracket around issues 350–361 and their recommended order.
 
 ## The problem
 

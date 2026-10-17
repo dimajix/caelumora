@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** The moderator is a name mapped to four built-in policies, not a component of the channel, so it can be neither configured nor extended.
 
 ## The problem
 

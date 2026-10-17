@@ -1,7 +1,10 @@
 # 346 — The event bus has topics only for the kinds of the core
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Code structure
+**Summary:** The event bus has subscription topics only for sessions, channels, agents and users, so a plugin cannot follow a single entity - an artifact, say - without reading every event.
 
 ## The problem
 

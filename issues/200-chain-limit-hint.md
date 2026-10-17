@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** When a chain between agents reaches its limit and the moderator asks nobody to respond, the users are not told, so the mentioned agent looks as if it ignored the question.
 
 ## The problem
 

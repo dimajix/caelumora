@@ -1,7 +1,9 @@
 # 163 — There is no model to navigate from a session to what is in it
 
 **Status:** done
-**Area:** Architecture
+**Type:** question
+**Area:** Context and knowledge
+**Summary:** There is no model to navigate from a session to what is in it: every read of history, notes, contexts or memory is put together anew, with its own conditions, by the REST server, the channel loop, the actors and `SessionReader`.
 
 ## The problem
 

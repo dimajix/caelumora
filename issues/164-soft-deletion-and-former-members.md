@@ -1,7 +1,8 @@
 # 164 — The store forgets what was deleted and who left
 
 **Status:** done
-**Area:** Persistence
+**Area:** Audit
+**Summary:** Deleting a session, channel or agent and removing a participant erase them from the store, so nothing can say later that they were there, who removed them or when.
 
 ## The problem
 

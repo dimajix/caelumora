@@ -1,7 +1,10 @@
 # 247 — A rule can match an argument that is a language only by its exact text
 
 **Status:** open
-**Area:** Tools & approvals
+**Type:** bug
+**Priority:** high
+**Area:** Tools and approvals
+**Summary:** A rule on tool calls can match an argument that is a language - a shell command, SQL - only by its text, which a chained command slips past.
 
 ## The problem
 

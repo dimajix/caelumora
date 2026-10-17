@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** `runtime.rs` holds the runtime, how it is built, and what a channel and an actor are given of it, interleaved in one file of 847 lines.
 
 ## The problem
 

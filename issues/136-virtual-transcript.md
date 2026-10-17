@@ -1,7 +1,8 @@
 # 136 — A turn under way is resolved differently from a recorded message
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** A turn under way is resolved through another method, another reference type and another kind of placement than a recorded message, only because its messages have no digests yet.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** The A2A agent is one file of 925 lines holding the protocol's types, their translation, the HTTP transport and the component, with what is sent built from untyped JSON.
 
 ## The problem
 

@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** A module's manager lives in `manager.rs` in some modules, in `mod.rs` or a flat file in others, and its error type now beside it, now in `mod.rs`.
 
 ## The problem
 

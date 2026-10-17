@@ -1,7 +1,8 @@
 # 08 — "Retry" and changing past answers
 
 **Status:** rejected
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Summary:** A conversation is append-only — no retry, no correcting a past message, so a derailed turn keeps influencing every later one.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The chat shows a plan only as the raw arguments of its call and its steps' messages as one block, without saying which message belongs to which step.
 
 ## The problem
 

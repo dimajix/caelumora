@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** The backends of a service - the storages of workspaces and of artifacts, the user and secret providers, the stores - are each a closed `enum` of the configuration, so none can be added from a crate of its own.
 
 ## The problem
 

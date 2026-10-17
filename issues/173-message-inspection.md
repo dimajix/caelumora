@@ -1,7 +1,10 @@
 # 173 — Nothing can examine what a message says before the channel routes it
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Sessions and channels
+**Summary:** Nothing examines what a message says before the channel routes it, so content that should be classified stricter, redacted or refused reaches every participant.
 
 ## The problem
 

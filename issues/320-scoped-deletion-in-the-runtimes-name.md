@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** What lies in a session's or channel's scope is deleted and restored with it in the runtime's name, so the store asks nothing, another's things go without their owner being asked, and the deletion is recorded as the system's.
 
 ## The problem
 

@@ -1,7 +1,9 @@
 # 69 — The ActorRuntime hands out more than an actor needs
 
 **Status:** done
-**Area:** Open architecture questions
+**Type:** question
+**Area:** Identity and access management
+**Summary:** Every actor's `ActorRuntime` hands out the process-wide services unrestricted, so it cannot be given to components without letting them read around the confidentiality rules.
 
 ## The problem
 

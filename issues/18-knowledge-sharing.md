@@ -1,7 +1,8 @@
 # 18 — Knowledge sharing between sessions
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** Sessions are sealed: nothing an agent learns outlives the session, and cross-agent sharing is a harder question again.
 
 ## The problem
 

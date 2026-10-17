@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** `component.rs` holds the registry, the container, the context of a factory and 550 lines of their tests in one file of 1541 lines.
 
 ## The problem
 

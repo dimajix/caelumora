@@ -1,7 +1,9 @@
 # 118 — A tool call with invalid arguments is put up for approval before it fails
 
 **Status:** done
-**Area:** Tools & approvals
+**Area:** Tools and approvals
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** A tool call with invalid arguments is put up for approval as "No description" and fails only after a user approved it.
 
 ## The problem
 

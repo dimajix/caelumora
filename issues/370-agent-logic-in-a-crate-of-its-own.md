@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** The runtime crate holds the environment agents run in and the agents' own logic - the turn, the tools, the model, the prompts, both actors - in one crate, so nothing enforces that an agent reaches the channel through `ActorRuntime` alone, and the channel cannot be tested without an agent.
 
 ## The problem
 

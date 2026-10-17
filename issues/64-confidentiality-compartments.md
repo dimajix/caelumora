@@ -1,7 +1,8 @@
 # 64 — Confidentiality has levels only, no compartments
 
 **Status:** done
-**Area:** Identity & access management
+**Area:** Identity and access management
+**Summary:** Confidentiality has ordered levels only; information that may be shared between the channels of one topic or group but not others cannot be expressed.
 
 ## The problem
 

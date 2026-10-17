@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Persistence
+**Epic:** [378](378-resource-management-epic.md)
+**Summary:** Every prompt text and tool set an agent was ever given in a channel is held in memory for the record, though only the current turn's and an old context's are read.
 
 ## The problem
 

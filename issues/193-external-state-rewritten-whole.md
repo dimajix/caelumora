@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Persistence
+**Summary:** Every state the `StateStore` keeps is rewritten whole for everything that happens in it - an agent's for every message heard and every step of a turn - so the writes grow with the square of a channel's length.
 
 ## The problem
 

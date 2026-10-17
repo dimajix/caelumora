@@ -1,7 +1,8 @@
 # 127 — The tool executor is fixed in the runtime and cannot be replaced by a component
 
 **Status:** done
-**Area:** Tools & approvals
+**Area:** Tools and approvals
+**Summary:** The tool executor is fixed in the runtime, so how tools are executed cannot be tried out by configuring a different component.
 
 ## The problem
 

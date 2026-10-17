@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Tools and approvals
+**Summary:** Pending approvals live only in the approver's memory and in the event stream, so a restart or a reload leaves a turn waiting for a decision nobody can give.
 
 ## The problem
 

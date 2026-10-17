@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Maintenance
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** `unwrap`, `unsafe`, infallible `Result`s, idle locks and per-chunk clones outside tests.
 
 ## The problem
 

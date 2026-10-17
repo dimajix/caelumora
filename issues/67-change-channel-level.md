@@ -1,7 +1,8 @@
 # 67 — A channel's confidentiality level cannot be changed after creation
 
 **Status:** done
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Summary:** A channel's confidentiality level can only be set when the channel is created, not changed afterwards.
 
 ## The problem
 

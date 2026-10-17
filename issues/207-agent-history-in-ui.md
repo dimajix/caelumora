@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** An agent's history - all that was offered to it and what it said - cannot be shown; neither the views, the REST API nor the web UI hand it out.
 
 ## The problem
 

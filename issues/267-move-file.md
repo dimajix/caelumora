@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Tools and approvals
+**Summary:** Agents cannot move or rename a file of the workspace, although both storages can, except by reading, writing and deleting it or through a shell.
 
 ## The problem
 

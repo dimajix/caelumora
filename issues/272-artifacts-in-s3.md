@@ -1,7 +1,10 @@
 # 272 — Artifacts can be kept only on the server's own disk, not in S3 or the like
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Context and knowledge
+**Summary:** Artifacts can be kept only on the server's own disk, not in S3 or another object storage.
 
 ## The problem
 
