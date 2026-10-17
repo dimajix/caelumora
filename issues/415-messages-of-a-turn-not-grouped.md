@@ -1,6 +1,6 @@
 # 415 — The chat does not show which messages belong to the same turn
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -83,3 +83,5 @@ done.
 hidden, they took their room all the same, and none showed while the turn went on -, and a turn of
 more than one message is indented as a whole, its frame on hover flush with the messages alone and
 as far from its messages as they are from their content.
+
+**2026-10-17:** Done: the maintainer accepted A and D as adjusted; B and C stay in reserve.
