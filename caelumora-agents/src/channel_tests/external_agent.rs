@@ -1238,8 +1238,8 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     assert!(first[0].contains("- alice (@alice), a person.") && !first[0].contains("bob"), "{}", first[0]);
     let second = &sent[1].1.prompts;
     assert_eq!(second.len(), 1, "{second:?}");
-    assert!(second[0].contains("- bob (@bob), a person.\n"), "the whole roster again: {}", second[0]);
-    assert!(second[0].ends_with("Since you were last told who is here:\n- Joined: bob (@bob), a person."), "{}", second[0]);
+    assert!(second[0].ends_with("- alice (@alice), a person.\n- bob (@bob), a person."), "the whole roster again: {}", second[0]);
+    assert!(!second[0].contains("Since you were last told"), "what changed is told by the notice alone (issue 410): {}", second[0]);
     let told = |call: usize| sent[call].1.said.iter().map(|said| said.text.clone()).collect::<Vec<_>>();
     assert_eq!(told(1), ["Channel notice: @alice added @bob to the channel.", "bob is here"], "and told that bob joined, where it happened (issue 408)");
 

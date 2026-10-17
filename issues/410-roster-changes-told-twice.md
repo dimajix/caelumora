@@ -1,6 +1,6 @@
 # 410 — An external agent is told twice that someone joined or left
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Context and knowledge
@@ -66,3 +66,8 @@ roster's changes predate it.
 
 - **2026-10-17** — Issue created, found while implementing issue
   [408](408-membership-changes-in-history.md), which introduced the notices.
+- **2026-10-17** — Done as recommended: `render_changes` is gone, and with `changes_only` the roster
+  is told again as a whole when it changed; what changed is told by the notices alone. The
+  component now remembers the text it told last and compares it, as
+  `channel_briefing_prompt_provider` does, rather than the members it named - so a changed
+  explanation of how senders are marked is told again, too.

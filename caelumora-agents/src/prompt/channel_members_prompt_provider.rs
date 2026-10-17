@@ -11,10 +11,11 @@
 //!
 //! An agent that keeps its conversation itself - an external one (issue
 //! 204) - is told the roster once and then only when it changed (parameter
-//! `changes_only`): the whole of it again, with who joined and who left
-//! since it was last told, which helps a model take a change in. The
-//! component remembers what it told while it lives - it is built for each
-//! actor, so for each channel - and tells all of it again after a restart.
+//! `changes_only`): the whole of it again. Who joined or left, by whose act,
+//! it is told where it happened, as the channel's notice in what was said
+//! (issues 408, 410). The component remembers what it told while it lives -
+//! it is built for each actor, so for each channel - and tells all of it
+//! again after a restart.
 
 use caelumora_runtime::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
@@ -29,10 +30,9 @@ pub const CHANNEL_MEMBERS_PROMPT_PROVIDER_KIND: &str = "channel_members_prompt_p
 #[derive(Debug)]
 pub struct ChannelMembersPromptProvider {
     pub position: PromptPosition,
-    /// Whether it tells only of changes: then the agent itself and the
-    /// others it named last, `None` before it named any. A plain lock,
-    /// never held across an await.
-    told: Option<Mutex<Option<Roster>>>,
+    /// Whether it tells only of changes: then what it told last, `None`
+    /// before it told anything. A plain lock, never held across an await.
+    told: Option<Mutex<Option<String>>>,
 }
 
 impl ChannelMembersPromptProvider {
@@ -42,19 +42,28 @@ impl ChannelMembersPromptProvider {
     }
 
     /// The roster at `position`, told the first time it is asked and then
-    /// only when it changed, with the change (issue 204).
+    /// only when it changed (issue 204).
     pub fn changes_only(position: PromptPosition) -> Self {
         Self { position, told: Some(Mutex::new(None)) }
     }
+
+    /// What the agent is to be told now, the roster rendered as `text`: all
+    /// of it, or - telling only of changes - nothing if it is what it told
+    /// last.
+    fn text(&self, text: String) -> String {
+        let Some(told) = &self.told else { return text };
+        let mut told = told.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if told.as_deref() == Some(text.as_str()) {
+            return String::new();
+        }
+        *told = Some(text.clone());
+        text
+    }
 }
 
-/// The agent itself, if it is a member, and the others.
-type Roster = (Option<Member>, Vec<Member>);
-
 /// A member of the channel as the prompt part names it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 struct Member {
-    id: ActorId,
     name: String,
     handle: Option<String>,
     person: bool,
@@ -82,32 +91,15 @@ impl PromptProvider for ChannelMembersPromptProvider {
                 _ => continue,
             };
             let Some(name) = member.name() else { continue };
-            let entry = Member { id: member.id(), name: name.to_string(), handle: member.handle(), person, introduction: one_line(member.introduction().await?) };
+            let entry = Member { name: name.to_string(), handle: member.handle(), person, introduction: one_line(member.introduction().await?) };
             if member.id() == own {
                 me = Some(entry);
             } else {
                 others.push(entry);
             }
         }
-        let roster = (me, others);
         let explanation = situation.profile().sender_explanation();
-        let explanation = explanation.as_deref();
-        let text = match &self.told {
-            None => render(roster.0.as_ref(), &roster.1, explanation),
-            Some(told) => {
-                let mut told = told.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                if told.as_ref() == Some(&roster) {
-                    String::new()
-                } else {
-                    let mut text = render(roster.0.as_ref(), &roster.1, explanation);
-                    if let Some((_, before)) = told.as_ref() {
-                        text.push_str(&render_changes(before, &roster.1));
-                    }
-                    *told = Some(roster);
-                    text
-                }
-            }
-        };
+        let text = self.text(render(me.as_ref(), &others, explanation.as_deref()));
         // Names and introductions are public (issue 176).
         Ok(Prompt::classified(text, Classification::PUBLIC))
     }
@@ -149,21 +141,6 @@ fn render(me: Option<&Member>, others: &[Member], explanation: Option<&str>) -> 
         text.push_str(&format!("{explanation}\n"));
     }
     titled("Who is in this channel", &text)
-}
-
-/// Who of the others joined and who left since `before` was told, as an
-/// addition to the roster `render` makes of `others`; empty if nobody did.
-/// Told apart by who they are, not by their names, which may change.
-fn render_changes(before: &[Member], others: &[Member]) -> String {
-    let joined = others.iter().filter(|m| !before.iter().any(|b| b.id == m.id));
-    let left = before.iter().filter(|b| !others.iter().any(|m| m.id == b.id));
-    let lines: Vec<String> = joined.map(|m| format!("- Joined: {}\n", described(m)))
-        .chain(left.map(|m| format!("- Left: {}\n", described(m))))
-        .collect();
-    if lines.is_empty() {
-        return String::new();
-    }
-    format!("Since you were last told who is here:\n{}", lines.concat())
 }
 
 /// A member with its handle and whether it is a person or an agent:
@@ -228,7 +205,7 @@ mod tests {
     use uuid::Uuid;
 
     fn member(name: &str, person: bool, introduction: Option<&str>) -> Member {
-        Member { id: ActorId::None, name: name.to_string(), handle: Some(name.to_lowercase()), person, introduction: introduction.map(str::to_string) }
+        Member { name: name.to_string(), handle: Some(name.to_lowercase()), person, introduction: introduction.map(str::to_string) }
     }
 
     #[test]
@@ -247,14 +224,16 @@ mod tests {
     }
 
     #[test]
-    fn who_joined_and_who_left_is_told_by_who_they_are() {
-        let with_id = |name: &str, person: bool| Member { id: ActorId::User(UserId::new()), ..member(name, person, None) };
-        let (kaya, sassy, bob) = (with_id("Kaya", true), with_id("Sassy", false), with_id("Bob", true));
-        let renamed = Member { name: "Kaya K.".to_string(), ..kaya.clone() };
-        assert_eq!(render_changes(&[kaya.clone(), sassy], &[renamed, bob]), "Since you were last told who is here:\n\
-            - Joined: Bob (@bob), a person.\n\
-            - Left: Sassy (@sassy), an agent.\n", "a new name is no new member");
-        assert_eq!(render_changes(std::slice::from_ref(&kaya), std::slice::from_ref(&kaya)), "", "nobody came or went");
+    fn telling_only_of_changes_tells_the_roster_again_only_when_it_changed() {
+        let changes = ChannelMembersPromptProvider::changes_only(PromptPosition::Start);
+        let roster = |others: &[Member]| render(None, others, None);
+        let (kaya, bob) = (member("Kaya", true, None), member("Bob", true, None));
+        let first = roster(std::slice::from_ref(&kaya));
+        assert_eq!(changes.text(first.clone()), first, "told the first time");
+        assert_eq!(changes.text(first.clone()), "", "not again unchanged");
+        let both = roster(&[kaya, bob]);
+        assert_eq!(changes.text(both.clone()), both, "all of it again, without an account of what changed (issue 410)");
+        assert_eq!(ChannelMembersPromptProvider::new(PromptPosition::Start).text(first.clone()), first, "told every time without it");
     }
 
     #[test]
