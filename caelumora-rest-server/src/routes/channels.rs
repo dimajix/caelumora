@@ -1,10 +1,10 @@
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
-use crate::error::{Json, Path};
+use crate::error::{Json, Path, Query};
 use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
-use axum::{extract::{Query, State}, http::StatusCode};
+use axum::{extract::State, http::StatusCode};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse, ApprovalRule};
@@ -912,6 +912,22 @@ mod tests {
         state.session_manager.stop(&SecurityContext::system(), session).await.unwrap();
         read_until(&mut stream, &mut read, |read| read.contains("event: stopped")).await;
         assert!(!read.contains("event: snapshot"), "{read}");
+    }
+
+    /// Issue 384: a malformed query string is answered as problem details,
+    /// like a malformed body or path.
+    #[tokio::test]
+    async fn a_malformed_query_is_answered_as_problem_details() {
+        let state = state();
+        let (api, cookie, session, channel) = stopped_session_of_alice(&state).await;
+        let uri = format!("/sessions/{}/channels/{}/history?limit=abc", session.0, channel.0);
+        let response = api.oneshot(Request::get(uri).header(COOKIE, &cookie).body(Body::empty()).unwrap()).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.headers()[CONTENT_TYPE], "application/problem+json");
+        let json: Value = serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(json["code"], "invalid_query");
+        assert!(json["detail"].as_str().unwrap().contains("limit"), "the detail says what is wrong: {}", json["detail"]);
     }
 
     /// Who takes no part in a channel cannot follow it, whether it runs or

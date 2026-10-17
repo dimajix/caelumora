@@ -9,7 +9,7 @@
 //! would otherwise run in the web UI's origin (issue 208).
 
 use crate::auth::AuthenticatedUser;
-use crate::error::{ApiError, Json, Path};
+use crate::error::{ApiError, Json, Path, Query};
 use caelumora_rest_api::access::AccessEntry;
 use caelumora_rest_api::channel::ChannelResponse;
 use caelumora_rest_api::scope::ItemDescriptionRequest;
@@ -18,7 +18,7 @@ use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use caelumora_rest_api::workspace::{AttachWorkspaceRequest, CommandResponse, CreateWorkspaceRequest, FileResponse, FilesQuery, RenameWorkspaceRequest, StorageResponse, UsesWorkspaceRequest, WorkspaceResponse};
 use crate::state::AppState;
 use axum::body::Body;
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use caelumora_model::confidentiality::Classification;

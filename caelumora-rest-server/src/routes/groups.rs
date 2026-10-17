@@ -5,11 +5,11 @@
 //! participants of a session or a channel are a group too, read here but
 //! changed only by taking part.
 use crate::auth::AuthenticatedUser;
-use crate::error::{ApiError, Json, Path};
+use crate::error::{ApiError, Json, Path, Query};
 use caelumora_rest_api::group::{CreateGroupRequest, GroupResponse, RenameGroupRequest};
 use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use caelumora_model::group::GroupId;

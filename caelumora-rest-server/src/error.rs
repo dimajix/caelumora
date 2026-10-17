@@ -36,7 +36,7 @@ use serde::Serialize;
 use std::borrow::Cow;
 use uuid::Uuid;
 use anyhow::Error;
-use axum::extract::rejection::{JsonRejection, PathRejection};
+use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
 use tracing::Span;
 
 tokio::task_local! {
@@ -438,6 +438,12 @@ impl<T: Serialize> IntoResponse for Json<T> {
 #[from_request(via(axum::extract::Path), rejection(ApiError))]
 pub struct Path<T>(pub T);
 
+/// `axum::extract::Query`, but rejecting a malformed query string (e.g.
+/// `?limit=abc`) with a problem details document (issue 384).
+#[derive(FromRequestParts)]
+#[from_request(via(axum::extract::Query), rejection(ApiError))]
+pub struct Query<T>(pub T);
+
 impl From<JsonRejection> for ApiError {
     fn from(rejection: JsonRejection) -> Self {
         Self::new(rejection.status(), "invalid_request_body", rejection.body_text())
@@ -447,6 +453,12 @@ impl From<JsonRejection> for ApiError {
 impl From<PathRejection> for ApiError {
     fn from(rejection: PathRejection) -> Self {
         Self::new(rejection.status(), "invalid_path", rejection.body_text())
+    }
+}
+
+impl From<QueryRejection> for ApiError {
+    fn from(rejection: QueryRejection) -> Self {
+        Self::new(rejection.status(), "invalid_query", rejection.body_text())
     }
 }
 

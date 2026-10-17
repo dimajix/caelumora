@@ -16,7 +16,7 @@ frontend built on it is described in [WEB-UI.md](WEB-UI.md), the policy behind t
 | `auth.rs` | Login, logout, renewal, and the middleware `require_auth` and `require_stream_auth` |
 | `routes/` | The handlers, by resource, and `routes::api`, the router of all of them and of the plugins' routes |
 | `plugin.rs` | `RestPlugin`, a plugin that serves routes of its own |
-| `error.rs` | `ApiError` and the problem details it answers with; the `Json` and `Path` extractors |
+| `error.rs` | `ApiError` and the problem details it answers with; the `Json`, `Path` and `Query` extractors |
 | `sse.rs` | What both event streams have in common |
 
 The request and response types are not the server's: they lie in the crate `caelumora-rest-api`,
@@ -206,7 +206,9 @@ long, of whitespace alone, of several lines where one is asked for - is `400 inv
 the field (`ValueError`), wherever it is found out. A name that another of its kind has in its name
 space - a channel's in its session, an agent's in its scope - is `409 name_taken`, for every kind
 alike. Something the user may not read is answered as absent (`404`), like something that does not
-exist.
+exist. A request that cannot be read at all is answered so too, by the extractors `Json`, `Path`
+and `Query` of `error.rs` in place of axum's: a malformed body is `invalid_request_body`, a malformed
+path `invalid_path`, a malformed query string - `?limit=abc` - `400 invalid_query` (issue 384).
 
 Every error answers itself, by its type and its variant, not by what the handler was doing (issue
 323): each error type that reaches a handler implements `From<…> for ApiError` in `error.rs` - or,

@@ -4,11 +4,11 @@
 //! personalities an agent can be made of.
 
 use crate::auth::AuthenticatedUser;
-use crate::error::{ApiError, Json, Path};
+use crate::error::{ApiError, Json, Path, Query};
 use caelumora_rest_api::agent::{AgentChannelResponse, AgentResponse, CreateAgentRequest, PersonalityResponse, RenameAgentRequest};
 use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use caelumora_model::agent::AgentId;
