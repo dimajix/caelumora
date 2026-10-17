@@ -2,12 +2,14 @@ use crate::actor::ActorId;
 use crate::agent::AgentId;
 use crate::channel::ChannelId;
 use crate::session::SessionId;
-use crate::tool::ToolCall;
+use crate::tool::{ArgumentLanguage, ToolCall, ToolParameters};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use regex::{Regex, RegexBuilder};
+
+mod shell;
 
 define_id!(ApproverId);
 
@@ -192,22 +194,58 @@ impl Reach {
 }
 
 /// What calls a rule is about: the tool by the name the model calls it by -
-/// `*` for every tool - and, per argument named, a regular expression its
-/// value must match as a whole: a string as it is, any other value as its
-/// compact JSON. An argument the call lacks does not match. Reliable for
-/// arguments with a structure of their own (a channel, an id, a domain), not
-/// for one that is a language (a shell command, SQL), which a pattern cannot
-/// tell the meaning of.
+/// `*` for every tool - and, per argument named, how its value is compared
+/// (`ArgumentMatcher`). An argument the call lacks does not match.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolMatcher {
     pub tool: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub arguments: BTreeMap<String, String>,
+    pub arguments: BTreeMap<String, ArgumentMatcher>,
+}
+
+/// How the value of one argument of a call is compared (issue 247), written as a string for a
+/// pattern and as an object naming the language for the others.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum ArgumentMatcher {
+    /// A regular expression the value must match as a whole: a string as it is, any other value
+    /// as its compact JSON. Reliable for an argument with a structure of its own (a channel, an
+    /// id, a domain), not for one that is a language (a shell command, SQL), whose meaning a
+    /// pattern cannot tell: `ls.*` matches `ls; rm x`.
+    Pattern(String),
+    /// A bash command line, read into its simple commands (`shell::simple_commands`): a simple
+    /// command matches if it begins with the words `shell`, as they run. A line that cannot be
+    /// judged, or a value that is no string, is unjudgeable.
+    Shell { shell: Vec<String> },
+}
+
+/// How much of a call a matcher is about, from least to most; of several arguments, the least
+/// counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Coverage {
+    /// Not the call.
+    Nothing,
+    /// A command line it compares cannot be judged.
+    Unjudgeable,
+    /// Some, not all, of the simple commands of a command line it compares.
+    Part,
+    /// The whole call.
+    Whole,
 }
 
 /// The longest pattern of an argument, in characters.
 pub const MAX_PATTERN_CHARS: usize = 500;
+
+/// The most words a shell argument names.
+pub const MAX_SHELL_WORDS: usize = 20;
+
+/// The longest word a shell argument names, in characters.
+pub const MAX_WORD_CHARS: usize = 500;
+
+/// How many words of a command a rule derived from it is proposed with: the program and the first
+/// word after it - `cargo test`, `git status`, `ls -la`.
+pub const PROPOSED_SHELL_WORDS: usize = 2;
 
 /// How large a compiled pattern may grow, in bytes: a short pattern can
 /// still compile to a large automaton (`a{1000}{1000}`).
@@ -223,6 +261,12 @@ pub enum RuleError {
     PatternTooLong(String),
     #[error("the pattern of argument `{argument}` is no regular expression: {reason}")]
     InvalidPattern { argument: String, reason: String },
+    #[error("the shell argument `{0}` must belong to a named tool, not to `*`")]
+    ShellOfEveryTool(String),
+    #[error("the shell argument `{0}` must name between 1 and {MAX_SHELL_WORDS} words")]
+    ShellWords(String),
+    #[error("the words of the shell argument `{0}` must not be longer than {MAX_WORD_CHARS} characters")]
+    WordTooLong(String),
     #[error("a session, a channel or the system may only ask or deny, everywhere within it")]
     NotRestricting,
     #[error("a rule of a person allows or denies; asking is what happens without one")]
@@ -249,7 +293,7 @@ impl ToolMatcher {
             Value::Object(arguments) => arguments.iter()
                 .map(|(name, value)| {
                     let text = match value { Value::String(text) => text.clone(), other => other.to_string() };
-                    (name.clone(), regex::escape(&text))
+                    (name.clone(), ArgumentMatcher::Pattern(regex::escape(&text)))
                 })
                 .collect(),
             _ => BTreeMap::new(),
@@ -257,46 +301,125 @@ impl ToolMatcher {
         Self { tool: call.function_name.clone(), arguments }
     }
 
+    /// The calls like `call` as the parameters `parameters` of its tool tell (issue 247): every
+    /// argument as `exact` takes it, but a shell line of one simple command by its first
+    /// `PROPOSED_SHELL_WORDS` words, as far as they do not expand - a rule the call itself
+    /// matches. A chain of commands, or a line that cannot be judged, keeps its exact pattern: a
+    /// rule for that line alone.
+    pub fn proposed(call: &ToolCall, parameters: &ToolParameters) -> Self {
+        let mut matcher = Self::exact(call);
+        for (argument, proposed) in &mut matcher.arguments {
+            let shell = match (parameters.language_of(argument), call.arguments.get(argument)) {
+                (Some(ArgumentLanguage::Shell), Some(Value::String(line))) => ArgumentMatcher::first_words(line),
+                _ => None,
+            };
+            if let Some(shell) = shell.filter(|shell| shell.check(argument, &call.function_name).is_ok()) {
+                *proposed = shell;
+            }
+        }
+        matcher
+    }
+
     /// Whether it is about every call of every tool.
     pub fn is_everything(&self) -> bool {
         self.tool == "*" && self.arguments.is_empty()
     }
 
-    /// Nothing if every pattern is one that can be matched.
+    /// Nothing if it names a tool and every argument is one that can be matched.
     ///
     /// # Errors
-    /// `RuleError` naming the first that is not, or a missing tool.
+    /// `RuleError` naming the first argument that is not, or a missing tool.
     pub fn check(&self) -> Result<(), RuleError> {
         if self.tool.trim().is_empty() {
             return Err(RuleError::NoTool);
         }
-        for (argument, pattern) in &self.arguments {
-            compile(argument, pattern)?;
+        for (argument, matcher) in &self.arguments {
+            matcher.check(argument, &self.tool)?;
         }
         Ok(())
     }
 
-    /// Whether `call` is one of the calls this matcher is about.
+    /// How much of `call` this matcher is about: `Nothing` for another tool, otherwise the least
+    /// of what its arguments say.
     ///
     /// # Errors
-    /// `RuleError` if a pattern cannot be matched - only for a matcher that
-    /// was never checked.
-    pub fn matches(&self, call: &ToolCall) -> Result<bool, RuleError> {
+    /// `RuleError` if an argument cannot be matched - only for a matcher
+    /// that was never checked.
+    pub fn matches(&self, call: &ToolCall) -> Result<Coverage, RuleError> {
         if self.tool != "*" && self.tool != call.function_name {
-            return Ok(false);
+            return Ok(Coverage::Nothing);
         }
-        for (argument, pattern) in &self.arguments {
-            let regex = compile(argument, pattern)?;
-            let matched = match call.arguments.get(argument) {
-                Some(Value::String(text)) => regex.is_match(text),
-                Some(value) => regex.is_match(&value.to_string()),
-                None => false,
-            };
-            if !matched {
-                return Ok(false);
+        let mut coverage = Coverage::Whole;
+        for (argument, matcher) in &self.arguments {
+            coverage = coverage.min(matcher.matches(argument, call.arguments.get(argument))?);
+            if coverage == Coverage::Nothing {
+                break;
             }
         }
-        Ok(true)
+        Ok(coverage)
+    }
+}
+
+impl ArgumentMatcher {
+    /// The shell argument of the first `PROPOSED_SHELL_WORDS` words of `line`, as far as they do
+    /// not expand; `None` unless it is one simple command.
+    fn first_words(line: &str) -> Option<Self> {
+        let [words]: [Vec<shell::Word>; 1] = shell::simple_commands(line).ok()?.try_into().ok()?;
+        let shell = words.iter().take(PROPOSED_SHELL_WORDS).map_while(shell::Word::literal).map(str::to_string).collect();
+        Some(ArgumentMatcher::Shell { shell })
+    }
+
+    /// Nothing if it can be matched as the argument `argument` of the tool `tool`: a pattern that
+    /// compiles, a shell argument of a named tool with as many and as long words as allowed.
+    ///
+    /// # Errors
+    /// `RuleError` saying why not.
+    fn check(&self, argument: &str, tool: &str) -> Result<(), RuleError> {
+        match self {
+            ArgumentMatcher::Pattern(pattern) => compile(argument, pattern).map(drop),
+            ArgumentMatcher::Shell { shell } => {
+                if tool == "*" {
+                    return Err(RuleError::ShellOfEveryTool(argument.to_string()));
+                }
+                if shell.is_empty() || shell.len() > MAX_SHELL_WORDS {
+                    return Err(RuleError::ShellWords(argument.to_string()));
+                }
+                if shell.iter().any(|word| word.chars().count() > MAX_WORD_CHARS) {
+                    return Err(RuleError::WordTooLong(argument.to_string()));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// How much of the value `value` of the argument `argument` it is about.
+    ///
+    /// # Errors
+    /// `RuleError` for a pattern that cannot be matched, or a shell argument without words, which
+    /// would be about every command - only for a matcher that was never checked.
+    fn matches(&self, argument: &str, value: Option<&Value>) -> Result<Coverage, RuleError> {
+        let matched = match (self, value) {
+            (_, None) => false,
+            (ArgumentMatcher::Pattern(pattern), Some(value)) => {
+                let regex = compile(argument, pattern)?;
+                match value {
+                    Value::String(text) => regex.is_match(text),
+                    value => regex.is_match(&value.to_string()),
+                }
+            }
+            (ArgumentMatcher::Shell { shell }, _) if shell.is_empty() => return Err(RuleError::ShellWords(argument.to_string())),
+            (ArgumentMatcher::Shell { shell }, Some(Value::String(line))) => {
+                let Ok(commands) = shell::simple_commands(line) else { return Ok(Coverage::Unjudgeable) };
+                let beginning = commands.iter().filter(|words| shell::begins_with(words, shell)).count();
+                return Ok(match beginning {
+                    0 => Coverage::Nothing,
+                    n if n == commands.len() => Coverage::Whole,
+                    _ => Coverage::Part,
+                });
+            }
+            (ArgumentMatcher::Shell { .. }, Some(_)) => return Ok(Coverage::Unjudgeable),
+        };
+        Ok(if matched { Coverage::Whole } else { Coverage::Nothing })
     }
 }
 
@@ -354,26 +477,40 @@ impl ApprovalRule {
         self.expires_at.is_some_and(|at| at <= now)
     }
 
-    /// Whether the rule applies to `call`, made in the channel `channel_id`
-    /// of session `session_id` at `now`: within its reach, not expired, and
-    /// about the call. A rule whose matcher cannot be matched applies if it
-    /// restricts and does not if it allows: a broken rule never opens
-    /// anything.
-    pub fn applies(&self, call: &ToolCall, session_id: SessionId, channel_id: ChannelId, now: DateTime<Utc>) -> bool {
+    /// What the rule decides of `call`, made in the channel `channel_id` of session `session_id`
+    /// at `now`; `None` where it does not apply - outside its reach, expired, or not about the
+    /// call (`ToolMatcher::matches`). A rule that allows applies to a call it is about as a whole;
+    /// one that asks or denies also to one it is about in part - a simple command of a command
+    /// line. Where a command line cannot be judged, a rule that allows does not apply, and one
+    /// that asks or denies asks: it opens nothing, and refuses nothing unseen. A rule whose
+    /// matcher cannot be matched restricts and never allows: a broken rule never opens anything.
+    pub fn decision_for(&self, call: &ToolCall, session_id: SessionId, channel_id: ChannelId, now: DateTime<Utc>) -> Option<RuleDecision> {
         if !self.reach.covers(session_id, channel_id) || self.is_expired(now) {
-            return false;
+            return None;
         }
-        self.matcher.matches(call).unwrap_or(self.decision != RuleDecision::Allow)
+        let coverage = match self.matcher.matches(call) {
+            Ok(coverage) => coverage,
+            Err(_) if self.decision == RuleDecision::Allow => return None,
+            Err(_) => return Some(self.decision),
+        };
+        match (coverage, self.decision) {
+            (Coverage::Nothing, _) => None,
+            (Coverage::Whole, decision) => Some(decision),
+            (_, RuleDecision::Allow) => None,
+            (Coverage::Part, decision) => Some(decision),
+            (Coverage::Unjudgeable, _) => Some(RuleDecision::Ask),
+        }
     }
 
     /// The rule that decides `call`, made in the channel `channel_id` of
-    /// session `session_id` at `now`: of those in `rules` that apply, the
-    /// strongest (`Deny` before `Ask` before `Allow`), the first of them if
-    /// several are as strong. `None` if none applies.
-    pub fn decide<'r>(rules: impl IntoIterator<Item = &'r ApprovalRule>, call: &ToolCall, session_id: SessionId, channel_id: ChannelId, now: DateTime<Utc>) -> Option<&'r ApprovalRule> {
+    /// session `session_id` at `now`, with what it decides of it
+    /// (`decision_for`): of those in `rules` that apply, the one that decides
+    /// the strongest (`Deny` before `Ask` before `Allow`), the first of them
+    /// if several decide as strongly. `None` if none applies.
+    pub fn decide<'r>(rules: impl IntoIterator<Item = &'r ApprovalRule>, call: &ToolCall, session_id: SessionId, channel_id: ChannelId, now: DateTime<Utc>) -> Option<(&'r ApprovalRule, RuleDecision)> {
         rules.into_iter()
-            .filter(|rule| rule.applies(call, session_id, channel_id, now))
-            .reduce(|strongest, rule| if rule.decision > strongest.decision { rule } else { strongest })
+            .filter_map(|rule| Some((rule, rule.decision_for(call, session_id, channel_id, now)?)))
+            .reduce(|strongest, decided| if decided.1 > strongest.1 { decided } else { strongest })
     }
 }
 
@@ -426,7 +563,18 @@ mod tests {
     }
 
     fn matcher(tool: &str, arguments: &[(&str, &str)]) -> ToolMatcher {
-        ToolMatcher { tool: tool.to_string(), arguments: arguments.iter().map(|(a, p)| (a.to_string(), p.to_string())).collect() }
+        ToolMatcher { tool: tool.to_string(), arguments: arguments.iter().map(|(a, p)| (a.to_string(), ArgumentMatcher::Pattern(p.to_string()))).collect() }
+    }
+
+    /// The calls of `tool` whose `command` is a command line of simple commands beginning with
+    /// `words`.
+    fn shell(tool: &str, words: &[&str]) -> ToolMatcher {
+        let shell = ArgumentMatcher::Shell { shell: words.iter().map(|word| word.to_string()).collect() };
+        ToolMatcher { tool: tool.to_string(), arguments: BTreeMap::from([("command".to_string(), shell)]) }
+    }
+
+    fn run(command: &str) -> ToolCall {
+        call("run_command", json!({ "command": command }))
     }
 
     fn rule(matcher: ToolMatcher, decision: RuleDecision) -> ApprovalRule {
@@ -436,18 +584,18 @@ mod tests {
     #[test]
     fn a_matcher_matches_the_tool_and_every_argument_it_names_as_a_whole() {
         let ls = matcher("shell", &[("command", "ls( .*)?")]);
-        assert!(ls.matches(&call("shell", json!({ "command": "ls -l", "cwd": "/" }))).unwrap(), "other arguments do not matter");
-        assert!(ls.matches(&call("shell", json!({ "command": "ls" }))).unwrap());
-        assert!(!ls.matches(&call("shell", json!({ "command": "rm -rf / ; ls" }))).unwrap(), "the whole value, not a part of it");
-        assert!(!ls.matches(&call("shell", json!({ "command": "ls\nrm -rf /" }))).unwrap(), "nor a line of it");
-        assert!(!ls.matches(&call("shell", json!({}))).unwrap(), "an argument the call lacks");
-        assert!(!ls.matches(&call("shell", Value::Null)).unwrap(), "a call published without its content");
-        assert!(!ls.matches(&call("other", json!({ "command": "ls" }))).unwrap(), "another tool");
+        assert_eq!(ls.matches(&call("shell", json!({ "command": "ls -l", "cwd": "/" }))).unwrap(), Coverage::Whole, "other arguments do not matter");
+        assert_eq!(ls.matches(&call("shell", json!({ "command": "ls" }))).unwrap(), Coverage::Whole);
+        assert_eq!(ls.matches(&call("shell", json!({ "command": "rm -rf / ; ls" }))).unwrap(), Coverage::Nothing, "the whole value, not a part of it");
+        assert_eq!(ls.matches(&call("shell", json!({ "command": "ls\nrm -rf /" }))).unwrap(), Coverage::Nothing, "nor a line of it");
+        assert_eq!(ls.matches(&call("shell", json!({}))).unwrap(), Coverage::Nothing, "an argument the call lacks");
+        assert_eq!(ls.matches(&call("shell", Value::Null)).unwrap(), Coverage::Nothing, "a call published without its content");
+        assert_eq!(ls.matches(&call("other", json!({ "command": "ls" }))).unwrap(), Coverage::Nothing, "another tool");
 
         let note = matcher("note", &[("id", "[0-9]+")]);
-        assert!(note.matches(&call("note", json!({ "id": 42 }))).unwrap(), "a number as its JSON");
-        assert!(ToolMatcher::everything().matches(&call("anything", json!({ "x": 1 }))).unwrap());
-        assert!(matcher("note", &[]).matches(&call("note", Value::Null)).unwrap(), "a tool alone, whatever its arguments");
+        assert_eq!(note.matches(&call("note", json!({ "id": 42 }))).unwrap(), Coverage::Whole, "a number as its JSON");
+        assert_eq!(ToolMatcher::everything().matches(&call("anything", json!({ "x": 1 }))).unwrap(), Coverage::Whole);
+        assert_eq!(matcher("note", &[]).matches(&call("note", Value::Null)).unwrap(), Coverage::Whole, "a tool alone, whatever its arguments");
     }
 
     #[test]
@@ -460,6 +608,77 @@ mod tests {
     }
 
     #[test]
+    fn a_shell_argument_matches_the_simple_commands_beginning_with_its_words() {
+        let ls = shell("run_command", &["ls"]);
+        let covered = |command| ls.matches(&run(command)).unwrap();
+        assert_eq!(covered("ls"), Coverage::Whole);
+        assert_eq!(covered("ls -la src"), Coverage::Whole);
+        assert_eq!(covered("ls && ls src | ls"), Coverage::Whole, "every part");
+        assert_eq!(covered("ls; rm x"), Coverage::Part);
+        assert_eq!(covered("rm x"), Coverage::Nothing);
+        assert_eq!(covered("lsof"), Coverage::Nothing, "a word, not a prefix of letters");
+        assert_eq!(covered("ls $(rm x)"), Coverage::Unjudgeable);
+        assert_eq!(ls.matches(&call("run_command", json!({ "command": 42 }))).unwrap(), Coverage::Unjudgeable, "no line");
+        assert_eq!(ls.matches(&call("run_command", json!({}))).unwrap(), Coverage::Nothing, "an argument the call lacks");
+        assert_eq!(ls.matches(&call("other", json!({ "command": "ls" }))).unwrap(), Coverage::Nothing, "another tool");
+
+        let git_status = shell("run_command", &["git", "status"]);
+        assert_eq!(git_status.matches(&run("git status -s")).unwrap(), Coverage::Whole);
+        assert_eq!(git_status.matches(&run("git -C x status")).unwrap(), Coverage::Nothing, "word by word");
+        assert_eq!(git_status.matches(&run("git")).unwrap(), Coverage::Nothing);
+    }
+
+    #[test]
+    fn of_several_arguments_the_least_counts() {
+        let mut in_main = shell("run_command", &["git"]);
+        in_main.arguments.insert("cwd".to_string(), ArgumentMatcher::Pattern("main".to_string()));
+        let covered = |command, cwd| in_main.matches(&call("run_command", json!({ "command": command, "cwd": cwd }))).unwrap();
+        assert_eq!(covered("git status", "main"), Coverage::Whole);
+        assert_eq!(covered("git status; rm x", "main"), Coverage::Part);
+        assert_eq!(covered("git $(x)", "main"), Coverage::Unjudgeable);
+        assert_eq!(covered("git $(x)", "other"), Coverage::Nothing, "an unjudgeable line does not make the other argument match");
+        assert_eq!(covered("git status", "other"), Coverage::Nothing);
+    }
+
+    #[test]
+    fn a_rule_on_commands_decides_by_how_much_of_the_line_it_is_about() {
+        let (session, channel) = (SessionId::new(), ChannelId::new());
+        let now = Utc::now();
+        let decided = |rule: &ApprovalRule, command| rule.decision_for(&run(command), session, channel, now);
+
+        let allow_ls = rule(shell("run_command", &["ls"]), RuleDecision::Allow);
+        assert_eq!(decided(&allow_ls, "ls -la"), Some(RuleDecision::Allow));
+        assert_eq!(decided(&allow_ls, "ls && ls src"), Some(RuleDecision::Allow), "every part");
+        for line in ["ls; rm x", "ls $(rm x)", "ls > f", "FOO=1 ls", "rm x"] {
+            assert_eq!(decided(&allow_ls, line), None, "{line}");
+        }
+
+        let deny_rm = rule(shell("run_command", &["rm"]), RuleDecision::Deny);
+        assert_eq!(decided(&deny_rm, "ls && rm x"), Some(RuleDecision::Deny), "a part");
+        assert_eq!(decided(&deny_rm, "ls"), None);
+        assert_eq!(decided(&deny_rm, "echo $HOME"), Some(RuleDecision::Ask), "what it cannot judge it asks for");
+        let ask_rm = rule(shell("run_command", &["rm"]), RuleDecision::Ask);
+        assert_eq!(decided(&ask_rm, "ls | rm x"), Some(RuleDecision::Ask));
+        assert_eq!(decided(&ask_rm, "ls > f"), Some(RuleDecision::Ask));
+
+        let deny_all = rule(matcher("run_command", &[]), RuleDecision::Deny);
+        let decide = |rules: &[&ApprovalRule], command| ApprovalRule::decide(rules.iter().copied(), &run(command), session, channel, now).map(|(rule, decision)| (rule.id, decision));
+        assert_eq!(decide(&[&deny_rm, &deny_all], "ls > f"), Some((deny_all.id, RuleDecision::Deny)), "by what a rule decides of the call");
+        assert_eq!(decide(&[&allow_ls, &deny_rm], "ls > f"), Some((deny_rm.id, RuleDecision::Ask)));
+        assert_eq!(decide(&[&allow_ls, &deny_rm], "ls -la"), Some((allow_ls.id, RuleDecision::Allow)));
+    }
+
+    #[test]
+    fn a_shell_argument_that_cannot_be_matched_is_refused() {
+        let command = || "command".to_string();
+        assert!(shell("run_command", &["git", "status"]).check().is_ok());
+        assert_eq!(shell("*", &["ls"]).check(), Err(RuleError::ShellOfEveryTool(command())));
+        assert_eq!(shell("run_command", &[]).check(), Err(RuleError::ShellWords(command())));
+        assert_eq!(shell("run_command", &["x"; MAX_SHELL_WORDS + 1]).check(), Err(RuleError::ShellWords(command())));
+        assert_eq!(shell("run_command", &[&"x".repeat(MAX_WORD_CHARS + 1)]).check(), Err(RuleError::WordTooLong(command())));
+    }
+
+    #[test]
     fn the_strongest_rule_that_applies_decides() {
         let (session, channel) = (SessionId::new(), ChannelId::new());
         let now = Utc::now();
@@ -469,11 +688,11 @@ mod tests {
         let deny = rule(matcher("*", &[]), RuleDecision::Deny);
         let other = rule(matcher("note", &[]), RuleDecision::Deny);
 
-        assert_eq!(ApprovalRule::decide([&allow, &ask], &ls, session, channel, now).map(|r| r.id), Some(ask.id), "ask before allow");
-        assert_eq!(ApprovalRule::decide([&ask, &deny, &allow], &ls, session, channel, now).map(|r| r.id), Some(deny.id), "deny before ask");
-        assert_eq!(ApprovalRule::decide([&other], &ls, session, channel, now), None, "about another tool");
+        assert_eq!(ApprovalRule::decide([&allow, &ask], &ls, session, channel, now).map(|(r, _)| r.id), Some(ask.id), "ask before allow");
+        assert_eq!(ApprovalRule::decide([&ask, &deny, &allow], &ls, session, channel, now).map(|(r, _)| r.id), Some(deny.id), "deny before ask");
+        assert!(ApprovalRule::decide([&other], &ls, session, channel, now).is_none(), "about another tool");
         let first = rule(matcher("shell", &[]), RuleDecision::Ask);
-        assert_eq!(ApprovalRule::decide([&first, &ask], &ls, session, channel, now).map(|r| r.id), Some(first.id), "the first of the strongest");
+        assert_eq!(ApprovalRule::decide([&first, &ask], &ls, session, channel, now).map(|(r, _)| r.id), Some(first.id), "the first of the strongest");
     }
 
     #[test]
@@ -482,14 +701,14 @@ mod tests {
         let now = Utc::now();
         let ls = call("shell", json!({ "command": "ls" }));
         let within = |reach| ApprovalRule::new(matcher("shell", &[]), RuleDecision::Deny, reach, None).unwrap();
-        assert!(within(Reach::Session(session)).applies(&ls, session, channel, now));
-        assert!(!within(Reach::Session(SessionId::new())).applies(&ls, session, channel, now), "another session");
-        assert!(within(Reach::Channel(channel)).applies(&ls, session, channel, now));
-        assert!(!within(Reach::Channel(ChannelId::new())).applies(&ls, session, channel, now), "another channel");
+        assert!(within(Reach::Session(session)).decision_for(&ls, session, channel, now).is_some());
+        assert!(within(Reach::Session(SessionId::new())).decision_for(&ls, session, channel, now).is_none(), "another session");
+        assert!(within(Reach::Channel(channel)).decision_for(&ls, session, channel, now).is_some());
+        assert!(within(Reach::Channel(ChannelId::new())).decision_for(&ls, session, channel, now).is_none(), "another channel");
 
         let until = |at| ApprovalRule::new(matcher("shell", &[]), RuleDecision::Deny, Reach::Everywhere, Some(at)).unwrap();
-        assert!(until(now + Duration::minutes(1)).applies(&ls, session, channel, now));
-        assert!(!until(now).applies(&ls, session, channel, now), "expired");
+        assert!(until(now + Duration::minutes(1)).decision_for(&ls, session, channel, now).is_some());
+        assert!(until(now).decision_for(&ls, session, channel, now).is_none(), "expired");
     }
 
     #[test]
@@ -497,10 +716,12 @@ mod tests {
         let (session, channel) = (SessionId::new(), ChannelId::new());
         let ls = call("shell", json!({ "command": "ls" }));
         // As it could be read from a document written by hand: never checked.
-        let broken = |decision| ApprovalRule { id: ApprovalRuleId::new(), matcher: matcher("shell", &[("command", "(")]), decision, reach: Reach::Everywhere, expires_at: None };
-        assert!(broken(RuleDecision::Deny).applies(&ls, session, channel, Utc::now()));
-        assert!(!broken(RuleDecision::Allow).applies(&ls, session, channel, Utc::now()));
-        assert!(!broken(RuleDecision::Deny).applies(&call("note", json!({})), session, channel, Utc::now()), "only for its tool");
+        let broken = |matcher, decision| ApprovalRule { id: ApprovalRuleId::new(), matcher, decision, reach: Reach::Everywhere, expires_at: None };
+        for unmatchable in [matcher("shell", &[("command", "(")]), shell("shell", &[])] {
+            assert_eq!(broken(unmatchable.clone(), RuleDecision::Deny).decision_for(&ls, session, channel, Utc::now()), Some(RuleDecision::Deny), "{unmatchable:?}");
+            assert_eq!(broken(unmatchable.clone(), RuleDecision::Allow).decision_for(&ls, session, channel, Utc::now()), None, "{unmatchable:?}");
+            assert_eq!(broken(unmatchable, RuleDecision::Deny).decision_for(&call("note", json!({})), session, channel, Utc::now()), None, "only for its tool");
+        }
     }
 
     #[test]
@@ -508,11 +729,33 @@ mod tests {
         let ls = call("shell", json!({ "command": "ls -l *.rs", "depth": 2 }));
         let exact = ToolMatcher::exact(&ls);
         assert!(exact.check().is_ok());
-        assert!(exact.matches(&ls).unwrap(), "itself");
-        assert!(!exact.matches(&call("shell", json!({ "command": "ls -l main.rs", "depth": 2 }))).unwrap(), "a `*` is no wildcard in it");
-        assert!(!exact.matches(&call("shell", json!({ "command": "ls -l *.rs", "depth": 3 }))).unwrap(), "every argument counts");
+        assert_eq!(exact.matches(&ls).unwrap(), Coverage::Whole, "itself");
+        assert_eq!(exact.matches(&call("shell", json!({ "command": "ls -l main.rs", "depth": 2 }))).unwrap(), Coverage::Nothing, "a `*` is no wildcard in it");
+        assert_eq!(exact.matches(&call("shell", json!({ "command": "ls -l *.rs", "depth": 3 }))).unwrap(), Coverage::Nothing, "every argument counts");
         assert_eq!(ToolMatcher::exact(&call("stop", Value::Null)), matcher("stop", &[]), "a call without arguments: its tool");
         assert!(ToolMatcher::everything().is_everything() && !exact.is_everything());
+    }
+
+    #[test]
+    fn a_command_line_proposes_the_rule_for_the_commands_beginning_as_it_begins() {
+        let parameters = ToolParameters::object([("command", ToolParameters::shell("a line")), ("cwd", ToolParameters::string("where"))], ["command"]);
+        let running = |command: &str| call("run_command", json!({ "command": command, "cwd": "main" }));
+        let proposed = |command: &str| ToolMatcher::proposed(&running(command), &parameters);
+        let shell = |words: &[&str]| ArgumentMatcher::Shell { shell: words.iter().map(|word| word.to_string()).collect() };
+
+        let ls = proposed("ls -la src");
+        assert_eq!(ls.arguments["command"], shell(&["ls", "-la"]));
+        assert_eq!(ls.arguments["cwd"], ArgumentMatcher::Pattern("main".to_string()), "the others exactly");
+        assert!(ls.check().is_ok());
+        assert_eq!(ls.matches(&running("ls -la src")).unwrap(), Coverage::Whole, "itself");
+        assert_eq!(proposed("ls").arguments["command"], shell(&["ls"]));
+        assert_eq!(proposed("ls *.rs -l").arguments["command"], shell(&["ls"]), "up to a word that expands");
+        assert_eq!(proposed("'my tool' x y").arguments["command"], shell(&["my tool", "x"]), "words as they run");
+        for line in ["ls && rm x", "ls $(rm x)"] {
+            assert_eq!(proposed(line).arguments["command"], ArgumentMatcher::Pattern(regex::escape(line)), "{line}: that line alone");
+        }
+        let plain = ToolParameters::object([("command", ToolParameters::string("plain"))], ["command"]);
+        assert_eq!(ToolMatcher::proposed(&running("ls"), &plain), ToolMatcher::exact(&running("ls")), "a string in no language");
     }
 
     #[test]
@@ -542,5 +785,16 @@ mod tests {
         let reach: Reach = serde_json::from_value(json!({ "session": SessionId::new() })).unwrap();
         assert!(matches!(reach, Reach::Session(_)));
         assert!(serde_json::from_value::<ApprovalRule>(json!({ "matcher": { "tool": "shell" }, "decison": "deny" })).is_err(), "a misspelt key");
+    }
+
+    #[test]
+    fn an_argument_is_written_as_a_pattern_or_as_its_language() {
+        let written = json!({ "tool": "run_command", "arguments": { "command": { "shell": ["git", "status"] }, "cwd": "main" } });
+        let matcher: ToolMatcher = serde_json::from_value(written.clone()).unwrap();
+        assert_eq!(matcher.arguments["command"], ArgumentMatcher::Shell { shell: vec!["git".to_string(), "status".to_string()] });
+        assert_eq!(matcher.arguments["cwd"], ArgumentMatcher::Pattern("main".to_string()));
+        assert_eq!(serde_json::to_value(&matcher).unwrap(), written);
+        let misspelt = json!({ "tool": "run_command", "arguments": { "command": { "shell": ["git"], "shel": ["x"] } } });
+        assert!(serde_json::from_value::<ToolMatcher>(misspelt).is_err(), "a misspelt key");
     }
 }

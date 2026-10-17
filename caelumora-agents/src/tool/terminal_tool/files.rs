@@ -24,7 +24,7 @@ use crate::turn::Turn;
 use caelumora_runtime::terminal::{ByteStream, FileEntry, Terminal, TerminalError, WorkspacePath};
 use crate::tool::{arguments, ToolError, ToolResult};
 use caelumora_model::workspace::Workspace;
-use caelumora_model::approval::ToolMatcher;
+use caelumora_model::approval::{ArgumentMatcher, ToolMatcher};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation};
 use futures::StreamExt;
@@ -324,7 +324,7 @@ pub(super) fn matcher(name: &str, params: &Value) -> Option<ToolMatcher> {
     }
     let keys: &[&str] = if name == MOVE_FILE { &["from", "to"] } else { &["path"] };
     let arguments = keys.iter()
-        .map(|key| Some((key.to_string(), regex::escape(params.get(key)?.as_str()?))))
+        .map(|key| Some((key.to_string(), ArgumentMatcher::Pattern(regex::escape(params.get(key)?.as_str()?)))))
         .collect::<Option<BTreeMap<_, _>>>()?;
     Some(ToolMatcher { tool: name.to_string(), arguments })
 }
@@ -744,12 +744,12 @@ mod tests {
         assert_eq!(tool.describe(REPLACE_IN_FILE, &replace).unwrap(), "Replace in 'a.md' in the workspace, once:\n--- old\nx\n+++ new\ny");
         let matcher = tool.matcher(WRITE_FILE, &write);
         assert_eq!((matcher.tool.as_str(), matcher.arguments.keys().map(String::as_str).collect::<Vec<_>>()), (WRITE_FILE, vec!["path"]), "not what is written");
-        assert_eq!(matcher.arguments["path"], regex::escape("docs/a.md"));
+        assert_eq!(matcher.arguments["path"], ArgumentMatcher::Pattern(regex::escape("docs/a.md")));
         let moving = json!({ "from": "docs/a.md", "to": "docs/b.md" });
         assert_eq!(tool.describe(MOVE_FILE, &moving).unwrap(), "Rename 'docs/a.md' to 'docs/b.md' in the workspace");
         assert_eq!(tool.describe(MOVE_FILE, &json!({ "from": "docs/a.md", "to": "archive/a.md" })).unwrap(), "Move 'docs/a.md' to 'archive/a.md' in the workspace");
         let matcher = tool.matcher(MOVE_FILE, &moving);
-        assert_eq!(matcher.arguments, BTreeMap::from([("from".to_string(), regex::escape("docs/a.md")), ("to".to_string(), regex::escape("docs/b.md"))]), "that move, both of its places");
+        assert_eq!(matcher.arguments, BTreeMap::from([("from".to_string(), ArgumentMatcher::Pattern(regex::escape("docs/a.md"))), ("to".to_string(), ArgumentMatcher::Pattern(regex::escape("docs/b.md")))]), "that move, both of its places");
         assert_eq!(tool.describe(PUBLISH_FILE, &json!({ "path": "out/r.csv", "name": "Report.csv" })).unwrap(), "Offer 'out/r.csv' in the workspace for download as 'Report.csv'");
         let reading = tool.matcher(READ_FILE, &json!({ "path": "a.md", "start_line": 2 }));
         assert_eq!(reading.arguments.len(), 2, "a read is alike when exactly alike");

@@ -177,7 +177,7 @@ impl From<ToolParameters> for OllamaFunctionParameters {
                     .collect(),
                 required,
             },
-            ToolParameters::String { description } => {
+            ToolParameters::String { description, .. } => {
                 OllamaFunctionParameters::String { description }
             }
             ToolParameters::Number { description } => {

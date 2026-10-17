@@ -229,11 +229,12 @@ fn schema_to_tool_parameters(schema: &Value) -> ToolParameters {
                 description,
             }
         }
-        Some("string") => ToolParameters::String { description },
+        Some("string") => ToolParameters::String { description, language: None },
         Some("number") | Some("integer") => ToolParameters::Number { description },
         Some("boolean") => ToolParameters::Boolean { description },
         _ => ToolParameters::String {
             description: Some(description.unwrap_or_else(|| "Unrecognized parameter schema".to_string())),
+            language: None,
         },
     }
 }

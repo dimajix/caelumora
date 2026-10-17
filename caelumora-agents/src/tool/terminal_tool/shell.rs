@@ -134,7 +134,7 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
             ),
             ToolParameters::object(
                 [
-                    ("command", ToolParameters::string("The command line, as bash reads it")),
+                    ("command", ToolParameters::shell("The command line, as bash reads it")),
                     ("wait_secs", ToolParameters::number(format!("How long to wait for it to end, at most {most} seconds; {most} unless given"))),
                 ],
                 ["command"],
@@ -214,6 +214,8 @@ mod tests {
     use crate::tool::terminal_tool::TerminalTool;
     use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::agent::AgentChannelState;
+    use caelumora_model::approval::ArgumentMatcher;
+    use std::collections::BTreeMap;
 
     fn the_tool(world: &WithWorkspace) -> TerminalTool {
         terminal_tool(world, json!({ "max_wait_secs": 10 }))
@@ -266,11 +268,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_approver_reads_the_command_whole() {
+    async fn the_approver_reads_the_command_whole_and_a_rule_covers_its_first_words() {
         let world = session_with_workspace().await;
         let tool = the_tool(&world);
         assert_eq!(tool.describe(RUN_COMMAND, &json!({ "command": "rm -rf build && make" })).unwrap(), "Run in the workspace:\nrm -rf build && make");
         assert!(tool.tools().iter().filter(|t| TOOLS.contains(&t.name.as_str())).all(|t| t.presentation == SHELL_PRESENTATION));
+
+        let matcher = tool.matcher(RUN_COMMAND, &json!({ "command": "cargo test -p x", "wait_secs": 30 }));
+        let first_words = ArgumentMatcher::Shell { shell: vec!["cargo".to_string(), "test".to_string()] };
+        assert_eq!(matcher.arguments, BTreeMap::from([("command".to_string(), first_words)]), "however long it waits");
+        let chained = tool.matcher(RUN_COMMAND, &json!({ "command": "ls && rm x" }));
+        assert_eq!(chained.arguments["command"], ArgumentMatcher::Pattern(regex::escape("ls && rm x")), "a chain, alone");
     }
 
     #[test]
