@@ -164,6 +164,69 @@ async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_tak
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// C1 (issue 417): what only an agent's owner sees of its answer - its
+/// reasoning, here - enters the channel and is recorded with it, and
+/// reaches nobody else: not bob live, not bob on a page, not an agent that
+/// joins later and catches up. Read as the agent - what its owner reads of
+/// what it saw -, the record holds it.
+#[tokio::test]
+async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
+    use caelumora_model::history::{HistoryEntry, Reader};
+    use caelumora_model::message::MessageRole;
+    use caelumora_model::store::history::HistoryKey;
+    let answer = Message { role: MessageRole::Assistant, content: Some("an answer".to_string()), reasoning: Some("weighing".to_string()), ..Message::new(Classification::PUBLIC) };
+    let world = World::with(&[&TestAgents], |registry| register_once(registry, "answering", answer)).await;
+    let owners = Personality {
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "answering")] },
+        reasoning_visibility: Visibility::Owner,
+        ..world.personality("answering", None, &[]).await
+    };
+    world.runtime.entity_stores().personalities.update(&World::system(), &owners).await.unwrap();
+    let (helper, other) = (world.agent("helper", world.alice, &owners).await, world.agent("other", world.alice, &owners).await);
+    let session = world.shared_session(&[helper], &[other]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let mut his = main.user_actor(world.bob).expect("he takes part").watch();
+
+    main.user_actor(world.alice).expect("she takes part").send_message("@helper hello".to_string(), None).await.expect("sent");
+    let answered = loop {
+        let ActorEvent::CompleteMessageGenerated(answered) = shown(&mut his, "CompleteMessageGenerated").await else { unreachable!() };
+        if answered.sender_id == ActorId::Agent(helper) {
+            break answered;
+        }
+    };
+    assert_eq!((answered.content.as_deref(), answered.reasoning.as_deref()), (Some("an answer"), None), "bob is given the answer live, not its owner's reasoning");
+
+    let histories = world.runtime.history_store();
+    let key = HistoryKey::Channel(main.id());
+    let recorded = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some((_, entry)) = histories.said(key, &Reader::Participant(ActorId::Agent(helper)), answered.id).await.unwrap() {
+                break entry;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("recorded");
+    assert_eq!(recorded.said().and_then(|m| m.reasoning.as_deref()), Some("weighing"), "the record holds it, for the agent");
+    let for_bob = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
+    let page = for_bob.history_page(None, 10).await.unwrap();
+    let on_his_page = page.items.iter().filter_map(HistoryEntry::said).find(|m| m.id == answered.id).expect("on bob's page");
+    assert_eq!(on_his_page.reasoning, None, "nor on a page");
+    assert_eq!(for_bob.message(answered.id).await.unwrap().reasoning, None, "nor read by its id");
+
+    main.add_participant(&World::as_user(world.alice), ActorId::Agent(other), HistoryAccess::All).await.expect("it may run");
+    let caught_up = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let state = world.runtime.state_store().get_agent_channel_state(other, main.id()).await.unwrap();
+            if let Some(message) = state.transcript.messages().into_iter().find(|m| m.id == answered.id) {
+                break message;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("caught up with");
+    assert_eq!((caught_up.content.as_deref(), caught_up.reasoning), (Some("an answer"), None), "an agent that joins later is given what everybody was");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// P6: what of a personality is public - how its agents introduce
 /// themselves - reaches whoever sees the agent, though they may not read
 /// the personality.

@@ -660,6 +660,15 @@ impl Envelope {
         })
     }
 
+    /// The envelope as everybody but its sender may see it (issues 54, 133,
+    /// 417): its messages without what only their owner sees
+    /// (`ActorEvent::published`); `None` if it carried a single message of
+    /// which nothing is left to show. What a channel gives its moderator and
+    /// delivers.
+    pub fn published(&self) -> Option<Envelope> {
+        self.event.clone().published().map(|event| Envelope { event, ..self.clone() })
+    }
+
     /// Whether the envelope concerns `participant` by the rule every channel
     /// delivers by (issue 418): whom it goes to unless a moderator decides
     /// otherwise. A message to every user, and to every agent if there is

@@ -214,13 +214,23 @@ impl ChannelLoop {
 
     /// Lets `event` enter the channel, admitted or the channel's own: its
     /// mentions resolved, recorded, appended to the history and routed.
+    /// What its sender's owner alone sees is recorded with it, and given to
+    /// nobody else (issue 417): the moderator decides on what everybody may
+    /// see of it, and that is what is delivered; of an event with nothing
+    /// left to show, nothing is, and its entry went to nobody.
     async fn enter(&self, event: Envelope, running: &HashMap<ActorId, RunningActor>) {
         let event = self.resolve_mentions(event);
         self.record_receive_event(&event).await;
-        let routing = self.decide(&event).await;
+        let shown = event.published();
+        let routing = match &shown {
+            Some(shown) => self.decide(shown).await,
+            None => None,
+        };
         let audience = routing.as_ref().map_or_else(|| Audience::Only(Vec::new()), |routing| routing.audience.clone());
         self.append_history(&event, audience).await;
-        self.route_event(running, event, routing).await;
+        if let Some(shown) = shown {
+            self.route_event(running, shown, routing).await;
+        }
     }
 
     /// What the moderator decides of `event` (issue 418) - whom it goes to,
@@ -555,11 +565,11 @@ impl ChannelLoop {
     /// what it did of its own accord (issue 284) before its turn's end, who
     /// joined or left where it happened (issue 408), and a change of a
     /// message, admitted, so that it applies (`admission`, issues 234, 304).
-    /// Stored at once; what others hear of a message is announced as news
-    /// once it is stored (issue 404).
+    /// Stored at once; what others hear of a message, as everybody may see
+    /// it, is announced as news once it is stored (issue 404).
     async fn append_history(&self, envelope: &Envelope, audience: Audience) {
         let Some(entry) = envelope.entry() else { return };
-        let said = entry.said().filter(|message| message.is_heard()).cloned();
+        let said = entry.published().and_then(|entry| entry.said().cloned()).filter(Message::is_heard);
         let mut state = self.state.lock().await;
         let changed = state.history.enter(Recorded::new(entry, envelope.context.sender_id, audience));
 
@@ -1244,6 +1254,58 @@ mod tests {
         let to_bob = channel_moderated_by(&[&alice, &bob], Arc::new(AskBack(ActorId::User(bob.id)))).await;
         to_bob.enter(said("psst"), &HashMap::new()).await;
         assert_eq!(recorded(Arc::clone(&to_bob)).await, Some((ActorId::User(alice.id), Audience::Only(vec![ActorId::User(bob.id)]))), "to whom the moderator named");
+    }
+
+    /// Issue 417: what only its sender's owner sees enters the channel and is
+    /// recorded with it, and reaches nobody else - neither the moderator,
+    /// which decides on what everybody may see, nor a participant; a message
+    /// of which nothing is left to show is recorded as gone to nobody.
+    #[tokio::test]
+    async fn what_only_its_owner_sees_is_recorded_and_given_to_nobody_else() {
+        use caelumora_model::confidentiality::Visibility;
+        use caelumora_model::tool::ToolVisibility;
+        /// Asks nobody, and keeps what it was given.
+        #[derive(Debug, Default)]
+        struct Told(Mutex<Vec<Envelope>>);
+        #[async_trait::async_trait]
+        impl Moderator for Told {
+            async fn route(&self, event: &Envelope) -> Routing {
+                self.0.lock().unwrap().push(event.clone());
+                Routing::default()
+            }
+            fn add_actor(&self, _: Arc<dyn Actor>) {}
+            fn remove_actor(&self, _: ActorId) {}
+        }
+        let alice = user("alice");
+        let told = Arc::new(Told::default());
+        let channel = channel_moderated_by(&[&alice], Arc::<Told>::clone(&told)).await;
+        let (tx, mut rx) = mpsc::channel(8);
+        let hers = ActorId::User(alice.id);
+        let abort_handle = tokio::spawn(async {}).abort_handle();
+        let running = HashMap::from([(hers, RunningActor { id: hers, abort_handle, task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(tx))), leaving: None })]);
+        let agent = ActorId::Agent(AgentId::new());
+        let hidden = ToolCall { id: Some("1".to_string()), function_name: "look".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
+        let thinking = Message { sender_id: agent, role: MessageRole::Assistant, reasoning: Some("weighing".to_string()), reasoning_visibility: Visibility::Owner, tool_calls: vec![hidden], ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let said = |message: Message| Envelope::new(SecurityContext::default(), EventContext { sender_id: agent, ..EventContext::default() }, ActorEvent::CompleteMessageGenerated(message));
+        let parts = |event: &ActorEvent| match event {
+            ActorEvent::CompleteMessageGenerated(m) => (m.content.clone(), m.reasoning.clone(), m.tool_calls.len()),
+            other => panic!("expected a message, got {}", other.kind()),
+        };
+        let recorded = || async {
+            let state = channel.state.lock().await;
+            let last = state.history.last().expect("recorded").entry.clone();
+            (last.entry.said().map(|m| (m.content.clone(), m.reasoning.clone(), m.tool_calls.len())), last.audience)
+        };
+
+        channel.enter(said(Message { content: Some("found it".to_string()), ..thinking.clone() }), &running).await;
+        assert_eq!(parts(&rx.try_recv().expect("delivered").event), (Some("found it".to_string()), None, 0), "alice is given what everybody may see");
+        assert_eq!(told.0.lock().unwrap().iter().map(|e| parts(&e.event)).collect::<Vec<_>>(), [(Some("found it".to_string()), None, 0)], "and so is the moderator");
+        assert_eq!(recorded().await, (Some((Some("found it".to_string()), Some("weighing".to_string()), 1)), Audience::Everybody), "the channel records it whole");
+
+        channel.enter(said(thinking), &running).await;
+        assert!(rx.try_recv().is_err(), "nothing of it is left to show");
+        assert_eq!(told.0.lock().unwrap().len(), 1, "nor to decide on");
+        assert_eq!(recorded().await, (Some((None, Some("weighing".to_string()), 1)), Audience::Only(Vec::new())), "recorded whole, as gone to nobody");
     }
 
     /// Issue 404: what others hear of a message is announced with the

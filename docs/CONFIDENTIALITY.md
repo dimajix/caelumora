@@ -302,7 +302,7 @@ one that lets fewer takes back what it let go. How an agent reads other channels
 Beside the classification there is a second axis: whether anyone but the agent's owner sees
 something at all. That is ownership, not sensitivity, and a flag of its own (`Visibility`):
 `channel` - published to the channel - or `owner` - never published; the agent sees it, and its
-owner in the context panel.
+owner in the context panel. The channel records it, and gives it to nobody else (issue 417).
 
 ### Tool calls
 
@@ -374,17 +374,20 @@ What a model is given of reasoning is a separate question from who may read it (
 
 ### Redaction
 
-The agent keeps the full calls in its context. What it publishes is redacted in one place
-(`Message::published`, applied as the turn sends):
+The agent keeps the full calls in its context, and sends what it says as it is: the channel records
+it whole (issue 417). What anyone else is given of it is redacted by one rule
+(`Message::published`):
 
 *   a call whose `call` is the owner's is left out;
 *   a call whose `arguments` are the owner's has them set to `null`;
 *   a result that is the owner's is emptied, the record of the answers to its questions included;
 *   reasoning that is the owner's is dropped;
-*   a message with nothing left is not sent.
+*   of a message with nothing left, nothing is given: it is recorded as gone to nobody.
 
-The channel history is built from these events, so the history, REST, the event stream,
-`read_history` and the moderator only ever see the published form. The context panel
+The channel applies it as the event enters: the moderator decides on the published form, and that
+is what is delivered and announced. Every read of the history applies it too, for a reader who is
+not the sender (`Recorded::as_seen_by`, see [STORAGE.md](STORAGE.md#histories)): REST, the
+snapshot, `read_history` and an agent catching up are given the published form. The context panel
 (`ReadAgentContext`) shows the agent's own, full view.
 
 Approval requests are not redacted: the approvers see the arguments of a call they are asked to

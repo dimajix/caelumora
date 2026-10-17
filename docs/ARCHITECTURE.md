@@ -339,7 +339,7 @@ Two questions are kept apart:
     a classification - a level from `public` to `strictly_confidential` and an audience of
     compartments, which the administrator configures - and one flow rule decides whether a channel
     may read another. Apart from that, the parts of a message are flagged if only the agent's owner
-    may see them, and are never published then.
+    may see them: the channel records them, and gives them to nobody else.
 
 Details: [SECURITY.md](SECURITY.md), [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 

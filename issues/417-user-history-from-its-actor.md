@@ -408,9 +408,10 @@ Each step is reviewable on its own; 1-2 change no behaviour.
    `Chain<Recorded>` with the agent as reader of its own. Store suite and S4 pass as before.
 3. **The full form enters the channel.** `ActorSender::send` without the projection; the channel
    projects for the moderator and delivers through `as_seen_by`; a message of which nothing is for
-   others recorded with an audience of nobody; `produced_from`. Security tests for every reader
-   that must not see the full form, and for the one that must.
-4. **The agents' histories go.** `MessageGiven`, `ContextCompacted`; `AgentChannelState` without a
+   others recorded with an audience of nobody. Security tests for every reader that must not see
+   the full form, and for the one that must.
+4. **The agents' histories go.** `MessageGiven`, `ContextCompacted`, `produced_from`;
+   `AgentChannelState` without a
    history; readers moved to the transcript; `catch_up` as the agent's reader; `AgentContextView`
    over the channel's history; `HistoryKey` to `ChannelId`; the stores without the agents'
    histories; the `Recorder` removed.
@@ -490,3 +491,12 @@ Each step is reviewable on its own; 1-2 change no behaviour.
   behaviour changes already: an agent reading its own channel through the views - `read_history`
   naming its own channel - is given what went to it and what it said, no longer the steps and
   turn ends of other agents; users read as before, since every entry concerns them.
+- 2026-10-17: Step 3 done. `ActorSender::send` sends an event as it is; the channel projects it
+  once as it enters (`Envelope::published`): the moderator decides on the published form, which
+  is what is delivered and announced on the event bus (`channel::SAID`); the history records the
+  event whole, and an event with nothing left to show as gone to nobody, without asking the
+  moderator. Tested in the channel - the moderator and a participant live are given the
+  published form, the record holds the whole -, and in the agents' security suite (C1) with an
+  agent whose reasoning is its owner's: not to bob live, on a page or by its id, not to an agent
+  that joins later; the record holds it for the agent. `produced_from` moved to step 4, where the
+  context of a message is first read from the channel.
