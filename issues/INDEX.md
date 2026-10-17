@@ -270,6 +270,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [404](404-unread-and-mentions-in-overview.md) | done | The channel list shows only each channel's name, so a user does not see in which channels new messages arrived since they last looked, nor where someone `@`-mentioned them, without opening every channel. |
 | [405](405-gauge-stale-after-compact-command.md) | done | After an agent compacted its context on `/compact`, the web UI's gauge still shows how full the context was before, until the page is loaded again. |
 | [407](407-own-messages-by-role.md) | done | The web UI puts a message on the right, in the colour of one's own, whenever its role is `User`, so in a channel with several people the messages of all of them look like the viewer's own. |
+| [411](411-call-limit-ends-turn-silently.md) | open | When a turn has asked its model `MAX_MODEL_CALLS` times, it ends as if it were done - no message, no reason, only a warning in the server's log - so the users see an agent stop in the middle of its work, and a plan under way is lost with the turn. |
 
 ## Context and knowledge
 
@@ -325,6 +326,8 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [389](389-knowledge-read-in-the-transcript.md) | done | A compaction finds what the agent read, to give it again, in the history, although the model's input is to be built from the transcript alone. |
 | [390](390-context-gauge-profile-from-history.md) | done | How full an agent's context is between turns is estimated with the model profile of a message from its history, not with the rules of the model it is run with now. |
 | [410](410-roster-changes-told-twice.md) | done | An external agent whose roster is told `changes_only` learns of a join or a leave twice - from the roster's "Since you were last told who is here" and from the channel's notice in what it is given - and the two can disagree. |
+| [412](412-plan-budget.md) | open | A plan is carried out within one turn, and a turn may ask its model 25 times at most, so a plan of nine steps has fewer than three calls per step - too few for a step that writes a file, finds its mistake and writes it again - and a plan that runs out ends unfinished. |
+| [413](413-compaction-restores-unused-skills.md) | open | After a compaction, the `skills` component gives the agent again every skill loaded in the part that was summarised, whether the work still needs it or not, so a context just made smaller is filled with instructions from an earlier task. |
 
 ## Maintenance
 

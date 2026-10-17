@@ -9,6 +9,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [223](223-full-inbox-drops-events.md) | open | high | bug | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
+| [411](411-call-limit-ends-turn-silently.md) | open | high | bug | When a turn has asked its model `MAX_MODEL_CALLS` times, it ends as if it were done - no message, no reason, only a warning in the server's log - so the users see an agent stop in the middle of its work, and a plan under way is lost with the turn. |
 | [385](385-inbox-lost-on-restart.md) | open | medium | bug | An actor's inbox is a queue in memory, so a restart loses what was routed to it and not yet taken in - a change to a message, a request, a command - for good. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 
@@ -68,6 +69,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [55](55-notes-by-reflection.md) | open | medium | feature | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |
 | [57](57-prompt-catalogue.md) | open | medium | question | The prompts the runtime gives models are English constants spread through the code, in one variant for every language and model. |
 | [166](166-memory-as-topic-documents.md) | open | medium | feature | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
+| [412](412-plan-budget.md) | open | medium | feature | A plan is carried out within one turn, and a turn may ask its model 25 times at most, so a plan of nine steps has fewer than three calls per step - too few for a step that writes a file, finds its mistake and writes it again - and a plan that runs out ends unfinished. |
 
 ## Maintenance
 
@@ -105,3 +107,4 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [343](343-users-bring-their-own-secrets.md) | open | low | feature | A user cannot bring a secret of their own: every secret is the operator's, put into the configured providers, so an agent of one's own cannot reach a remote system with its owner's credential. |
 | [346](346-subscription-topics-for-every-kind.md) | open | low | feature | The event bus has subscription topics only for sessions, channels, agents and users, so a plugin cannot follow a single entity - an artifact, say - without reading every event. |
 | [409](409-participant-and-member.md) | open | low | refactoring | Who takes part in a session or channel is a participant in the model and its operations, but a member in the views, the REST API and the web UI, and "member" also names who belongs to a group; and that taking part began or ended is told as joined/left on the event bus but as added on the session. |
+| [413](413-compaction-restores-unused-skills.md) | open | low | feature | After a compaction, the `skills` component gives the agent again every skill loaded in the part that was summarised, whether the work still needs it or not, so a context just made smaller is filled with instructions from an earlier task. |
