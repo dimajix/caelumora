@@ -2,7 +2,7 @@
 //! another channel of its session - the latest messages, or those that
 //! contain a text. Only channels the agent's channel may read by their
 //! classifications can be read - as the turn's views answer
-//! (`Turn::session`, issues 133, 163); every read is recorded as a
+//! (`Situation::session`, issues 133, 163); every read is recorded as a
 //! `KnowledgeRef` with the turn's messages.
 
 use crate::turn::Turn;
