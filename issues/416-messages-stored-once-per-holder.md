@@ -1,6 +1,6 @@
 # 416 — A message is stored whole in every chain that holds it
 
-**Status:** open
+**Status:** rejected
 **Type:** refactoring
 **Priority:** medium
 **Area:** Persistence
@@ -112,3 +112,9 @@ on a channel that is not its own.
 - 2026-10-17: Opened, as the step before [417](417-user-history-from-its-actor.md): a history of the
   user's own is only affordable once messages are kept once. The two recommendations above - forms
   kept as stored, kept per channel - are to be confirmed before it is built.
+- 2026-10-17: Rejected the same day, with the redesign of 417: the copies this issue is about are
+  the agents' histories, which 417 removes - the channel keeps the one history, with the
+  recipients of every entry, and no user gets one. What remains is the copy of what others said in
+  every agent's transcript, as it was given to the model, which is the transcript's own and not
+  worth a store of its own. If that ever changes, the design above - every form once by digest,
+  the chains naming it - still applies to transcripts.
