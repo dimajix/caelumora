@@ -20,7 +20,6 @@ use crate::view::{SessionView, ViewResult, Viewer};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{SecurityContext, AccessPolicy};
 use caelumora_model::session::Session;
-use caelumora_model::store::history::HistoryKey;
 use caelumora_model::store::StoreResult;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Place};
 use caelumora_model::question::{QuestionError, Questions};
@@ -138,7 +137,7 @@ impl ActorRuntime {
     /// # Errors
     /// Whatever the `HistoryStore` reports.
     pub async fn channel_position_of(&self, id: MessageId) -> Result<Option<u64>> {
-        Ok(self.runtime.runtime_manager.history_store().said(HistoryKey::Channel(self.channel_id), &Reader::Participant(self.actor), id).await?.map(|(at, _)| at))
+        Ok(self.runtime.runtime_manager.history_store().said(self.channel_id, &Reader::Participant(self.actor), id).await?.map(|(at, _)| at))
     }
 
     /// The entries of its channel's history from the position `from` on, as
@@ -148,7 +147,7 @@ impl ActorRuntime {
     /// # Errors
     /// Whatever the `HistoryStore` reports.
     pub async fn channel_entries(&self, from: u64) -> Result<Vec<Node<HistoryEntry>>> {
-        Ok(self.runtime.runtime_manager.history_store().entries(HistoryKey::Channel(self.channel_id), &Reader::Participant(self.actor), from).await?)
+        Ok(self.runtime.runtime_manager.history_store().entries(self.channel_id, &Reader::Participant(self.actor), from).await?)
     }
 
     /// The message `id` as this agent's transcript in its channel holds it,

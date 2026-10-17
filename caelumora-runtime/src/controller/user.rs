@@ -7,7 +7,7 @@ use caelumora_model::value::language::Language;
 use caelumora_model::security::{Secured, SecurityContext};
 use caelumora_model::store::{EntityStore, EntityStores, StateStore, StoreError, StoreResult};
 use caelumora_model::history::Reader;
-use caelumora_model::store::history::{HistoryKey, HistoryStore};
+use caelumora_model::store::history::HistoryStore;
 use caelumora_model::user::{ReadMark, User, UserId, UserProfile};
 use caelumora_model::channel::Channel;
 use caelumora_model::message::MessageId;
@@ -200,7 +200,7 @@ impl UserController {
         }
         let not_seen = || StoreError::NotFound { entity: "message", id: message_id.to_string() };
         let from = visible_from(self.histories.as_ref(), channel_id, channel.history_start_of(reader)).await?.ok_or_else(not_seen)?;
-        let (position, _) = self.histories.said(HistoryKey::Channel(channel_id), &Reader::Participant(reader), message_id).await?
+        let (position, _) = self.histories.said(channel_id, &Reader::Participant(reader), message_id).await?
             .filter(|(at, _)| *at >= from)
             .ok_or_else(not_seen)?;
         let _guard = self.read_lock.lock().await;

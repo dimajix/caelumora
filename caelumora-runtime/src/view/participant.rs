@@ -272,9 +272,10 @@ impl AgentParticipant {
         Ok((state.private_notes.current(), state.private_notes.digest()))
     }
 
-    /// What it saw (issue 41).
-    pub(super) async fn context(&self) -> ViewResult<AgentContextView> {
+    /// What it saw (issue 41), its view of its channel's history beginning
+    /// at `from` - nowhere if `None`.
+    pub(super) async fn context(&self, from: Option<u64>) -> ViewResult<AgentContextView> {
         let place = &self.0;
-        Ok(AgentContextView::of(place.agent, place.channel, self.stored().await?, Arc::clone(&place.histories), Arc::clone(&place.transcripts)))
+        Ok(AgentContextView::of(place.agent, place.channel, self.stored().await?, from, Arc::clone(&place.histories), Arc::clone(&place.transcripts)))
     }
 }

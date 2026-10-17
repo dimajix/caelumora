@@ -173,7 +173,6 @@ async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_tak
 async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
     use caelumora_model::history::{HistoryEntry, Reader};
     use caelumora_model::message::MessageRole;
-    use caelumora_model::store::history::HistoryKey;
     let answer = Message { role: MessageRole::Assistant, content: Some("an answer".to_string()), reasoning: Some("weighing".to_string()), ..Message::new(Classification::PUBLIC) };
     let world = World::with(&[&TestAgents], |registry| register_once(registry, "answering", answer)).await;
     let owners = Personality {
@@ -197,7 +196,7 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
     assert_eq!((answered.content.as_deref(), answered.reasoning.as_deref()), (Some("an answer"), None), "bob is given the answer live, not its owner's reasoning");
 
     let histories = world.runtime.history_store();
-    let key = HistoryKey::Channel(main.id());
+    let key = main.id();
     let recorded = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if let Some((_, entry)) = histories.said(key, &Reader::Participant(ActorId::Agent(helper)), answered.id).await.unwrap() {

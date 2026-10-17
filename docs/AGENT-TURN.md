@@ -17,18 +17,18 @@ turn](#a-command-turn)).
 `Idle` and `Sleeping` wait for the next event, and take it in together with everything queued
 behind it, in order, then commit once (`AgentBody::take_in`):
 
-*   **Perceive.** A complete message of another participant is appended to the agent's history as
-    it was said - all that was offered to it, live or caught up with on joining. What the agent
-    *hears* of it are the sender's words (`Message::as_heard`): a `user` or `assistant` message with
+*   **Perceive.** A complete message of another participant - all that was offered to it, live or
+    caught up with on joining, which its channel's history records as gone to it (issue 417) -
+    is heard as the sender's words (`Message::as_heard`): a `user` or `assistant` message with
     text, as a `user` message without its tool calls and results, which were the sender's; nothing
     of a tool message, an empty one or a `system` one. That is offered to the agent's
     `PerceiveInProcessor`s, which may drop, change or add messages; what passes is appended to the
-    transcript. A failing stage is logged; what was heard stays in the history and is not offered
-    again. Perceiving begins no turn and asks nothing of the policy. An external agent perceives by
-    the same rule.
+    transcript. A failing stage is logged; what was heard stays in the channel's history and is not
+    offered again. Perceiving begins no turn and asks nothing of the policy. An external agent
+    perceives by the same rule.
 *   **Take note.** That someone joined or left the channel (`ParticipantJoined`, `ParticipantLeft`,
-    issue 408) is recorded as the channel records it, into the history and into the transcript
-    (`AgentChannelState::note_announced`), where it happened among what was heard - also what
+    issue 408) is recorded into the transcript (`AgentChannelState::note_announced`), where it
+    happened among what was heard - also what
     happened while the agent was not there, as it catches up. It begins no turn: the next one is
     told of it.
 *   **Begin.** The last request to respond among what was taken in begins one turn; the earlier
@@ -316,23 +316,18 @@ side may take for an injection. An agent run here tells nobody.
 
 ### What is held in memory
 
-An agent's actor holds its history only from its window on: the last 200 entries, and during a turn
-everything from the turn's first message on; the store holds all of it (see
-[STORAGE.md](STORAGE.md#histories), issues 379, 387). The window is the same for both kinds of agent
-and does not follow the transcript or its compactions: nothing that builds what the model is given
-reads the history. What reads it in memory is informational, reads from the end, and lies in the
-window:
-
-*   what a turn said (`History::said_in_turn`), its answer, read from where the turn began;
-*   which of the messages a request to answer again takes back were said, to announce them;
-*   its last message, whether its last turn was given up, and the digest an entry pushed again is
-    found by.
-
-A change of a message before the window is recorded all the same, and the store applies it to the
-message. What reads further back - what the agent saw when it produced an old message, a page of its
-history - reads the store, through the views. Catching up when it joins looks for the last message
-it holds that the channel's history has, within the window; finding none, it takes in what it may
-see from where its view begins.
+An agent keeps no history of its own (issue 417): what it was offered and what it said is its
+channel's history, which records every message it says - in full, with what it was produced from
+(`Message::produced_from`) - and what it was given to read and when it compacted, as gone to
+nobody. Its actor tells the channel the latter after every step (`AgentChannelState::to_tell`,
+`MessageGiven`, `ContextCompacted`). What a turn said is its answer, kept with the turn as it is
+said (`TurnState::answer`), since a compaction in the middle of it may leave nothing of it on the
+transcript's active branch. What reads further back - what the agent saw when it produced an old
+message, a page of what it was offered and said - reads the channel's history in the store, as
+the agent, through the views. Catching up when it joins goes on after the last message it took in
+- heard, said or given -, which its state remembers (`AgentChannelState::last_message`), since the
+active branch begins anew with every compaction and every call of an external agent; without one,
+it takes in what it may see from where its view begins.
 
 Of its transcript the actor holds the active branch alone, from its root on (`transcript_from`,
 issue 380): right after the transcript began anew - a compaction, an external agent's call -,
@@ -454,8 +449,8 @@ old one but does not continue it:
     turn's input as well as the step of a plan. A plan whose instructions were replaced is named
     again where its current step stood: its steps, which are done and which is under way, then the
     instruction (`Turn::compact`).
-*   **The turn's answer is what it said**, read from the history (`History::said_in_turn`),
-    not from the transcript, of which a part may have been summarised.
+*   **The turn's answer is what it said**, kept with the turn (`TurnState::answer`), not read
+    from the transcript, of which a part may have been summarised.
 *   **Where its part ends** is an entry of the transcript, `TranscriptEntry::Compacted`, after the
     replacement and the copies: what comes before it on the branch was written by the compaction
     and carries the measures of calls made on another branch, what comes after was added where it
@@ -604,9 +599,10 @@ What the model is given is not stored; it is resolved from what is (`caelumora_m
 
 *   **The turn's context** is the `ContextRef` of its next message: references only, the turn keeps
     no copy of the transcript.
-*   **What a turn says** goes into the transcript at once, and into the history with the context it
-    was produced from; the context moves on to the transcript's new head
-    (`AgentChannelState::said`). Nothing waits for the turn's end, a turn given up included.
+*   **What a turn says** goes into the transcript at once, and to the channel with the context it
+    was produced from (`Message::produced_from`), which its history records; the context moves on
+    to the transcript's new head (`AgentChannelState::said`). Nothing waits for the turn's end, a
+    turn given up included.
 *   **Prompt parts** are kept once per digest; their references go into the turn's context, where
     they count for the messages produced from then on.
 *   **Resolving** - the `ContextResolver` resolves a reference against the transcript, the prompt
@@ -622,22 +618,22 @@ implementation, and therefore cannot diverge.
 ## Asking what an agent saw
 
 What an agent saw is read through the views (`caelumora_runtime::view`), from the participant of the
-channel that produced the message: the same message is in every participant's history, but only one
-of them produced it.
+channel that produced the message: the channel's history holds it once, and only its sender is
+given what it was produced from.
 
 *   `ParticipantView::context()` asks `ReadAgentContext`. Under the ownership policy only the
     agent's owner may, since a context holds more than the conversation: the system prompt, internal
     steps, tool results. It reads the agent's stored state, the same for both kinds of agent.
-*   `context_of(message_id)` resolves what the message was produced from, as the message's item in
-    the agent's history records it, read from the store, against the path of the transcript it
-    names, loaded from the store on whichever branch it lies. For an external agent it is what its
-    remote agent was given in the call that produced it, without prompt parts or tools, which are
-    the remote agent's own.
-*   `history_page(before, limit)` is a page of all that was offered to the agent and what it said,
-    as the messages stand now - which may differ from what the channel shows, for an agent that
-    joined late or was asleep -, read from the store. `in_transcript` tells which of a page's
-    messages reached the transcript, on whichever branch - not those the perceive processors
-    dropped -, asked of the store once for the page.
+*   `context_of(message_id)` resolves what the message was produced from, as the channel's history
+    records it with the message (`Message::produced_from`), read from the store as the agent,
+    against the path of the transcript it names, loaded from the store on whichever branch it
+    lies. For an external agent it is what its remote agent was given in the call that produced
+    it, without prompt parts or tools, which are the remote agent's own.
+*   `history_page(before, limit)` is a page of the channel's history as the agent saw it - what
+    went to it, what it said in full, what it was given and when it compacted -, as the messages
+    stand now, from where its view begins, read from the store as the agent (issue 417).
+    `in_transcript` tells which of a page's messages reached the transcript, on whichever branch -
+    not those the perceive processors dropped -, asked of the store once for the page.
 
 REST exposes it as `GET …/actors/{aid}/messages/{mid}/context` (see
 [REST-SERVER.md](REST-SERVER.md)), the web UI in its context panel (see

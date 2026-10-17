@@ -4,7 +4,6 @@
 //! the agents' logic into a crate of its own (issue 370); what they share
 //! with the runtime's tests is `channel::testing`.
 
-use caelumora_model::history::testing::messages_of;
 use caelumora_runtime::channel::*;
 use caelumora_runtime::channel::testing::*;
 use caelumora_runtime::session::testing::user;
@@ -229,14 +228,15 @@ impl MessageProcessor for NoSecrets {
 impl PerceiveInProcessor for NoSecrets {}
 
 /// A prompt part that changes with every message the agent hears: how
-/// many its history holds.
+/// many entries its transcript was given, on every branch - also an
+/// external agent's, which begins anew with every call.
 #[derive(Debug)]
 struct Heard;
 
 #[async_trait::async_trait]
 impl PromptProvider for Heard {
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        Ok(Prompt::from(format!("[Heard]\n{}", messages_of(&situation.agent_channel_state().history).len())))
+        Ok(Prompt::from(format!("[Heard]\n{}", situation.agent_channel_state().transcript.end())))
     }
 }
 

@@ -540,7 +540,6 @@ mod tests {
         state.history.mark_stored();
         state.keep_window();
         assert_eq!((state.history.base(), state.history.end(), state.history_from), (50, 250, 50), "the last entries");
-        assert_eq!(state.history.last_message_id(), id(250));
     }
 
     #[test]

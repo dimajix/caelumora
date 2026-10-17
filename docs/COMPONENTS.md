@@ -100,7 +100,7 @@ facet trait lives next to the code that uses it, not among the implementations.
 
 `PerceiveInProcessor` and `EmitOutProcessor` have no built-in implementation; they are extension
 points. A processor returns what is to be processed - it may drop, change or add messages - and
-records nothing: the actor keeps all it was offered in its history, and what passes in its
+records nothing: what the actor was offered is in its channel's history, and what passes in its
 transcript.
 
 ## Wiring

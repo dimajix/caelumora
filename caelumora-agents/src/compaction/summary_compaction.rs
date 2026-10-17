@@ -464,18 +464,18 @@ mod tests {
         let skill = WorkspaceId::new();
         let heard = |text: &str| Message { content: Some(text.to_string()), ..Message::new(Classification::PUBLIC) };
         let u1 = heard("u1");
-        state.perceive(vec![u1.clone()], vec![u1]);
+        state.perceive(vec![u1]);
         let mut turn = workspace_turn(world, state);
         turn.give(Message { content: Some(GIVEN.to_string()), ..Message::new(Classification::general(Confidentiality::Internal)) }, Some(knowledge(world, skill)));
         drop(turn);
         let given = state.turn.take().unwrap().work.turn_id;
-        state.finish_turn(given, ActorId::Agent(world.agent), Vec::new(), Vec::new(), None);
+        state.finish_turn(given, Vec::new(), Vec::new());
         drop(workspace_turn(world, state));
         state.said(Message { sender_id: ActorId::Agent(world.agent), role: MessageRole::Assistant, ..heard("a1") });
         let answered = state.turn.take().unwrap().work.turn_id;
-        state.finish_turn(answered, ActorId::Agent(world.agent), Vec::new(), Vec::new(), None);
+        state.finish_turn(answered, Vec::new(), Vec::new());
         let u2 = heard("u2");
-        state.perceive(vec![u2.clone()], vec![u2]);
+        state.perceive(vec![u2]);
         skill
     }
 
@@ -540,7 +540,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let u1 = Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
-        state.perceive(vec![u1.clone()], vec![u1]);
+        state.perceive(vec![u1]);
         let before = state.transcript.digest();
         let model = Arc::new(Summariser::default());
         let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: DEFAULT_KEEP, restorers: Vec::new() };
@@ -559,7 +559,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let u1 = Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
-        state.perceive(vec![u1.clone()], vec![u1]);
+        state.perceive(vec![u1]);
         let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep: 0.1, restorers: Vec::new() };
         let mut turn = workspace_turn(&world, &mut state);
         let said = |content: &str, role| Message { sender_id: ActorId::Agent(world.agent), role, content: Some(content.repeat(40)), ..Message::new(Classification::PUBLIC) };
@@ -585,7 +585,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let u1 = Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
-        state.perceive(vec![u1.clone()], vec![u1]);
+        state.perceive(vec![u1]);
         let skill = WorkspaceId::new();
         let strategy = SummaryCompaction { llm_client: Arc::new(Summariser::default()), keep: 0.1, restorers: vec![Arc::new(Restorer(Some(skill)))] };
         let mut turn = workspace_turn(&world, &mut state);
@@ -611,7 +611,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let u1 = Message { content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
-        state.perceive(vec![u1.clone()], vec![u1]);
+        state.perceive(vec![u1]);
         let model = Arc::new(Summariser::default());
         let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: 0.1, restorers: vec![Arc::new(Restorer(None))] };
         let mut turn = workspace_turn(&world, &mut state);

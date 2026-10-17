@@ -200,11 +200,11 @@ impl<'a> Turn<'a> {
 
     /// Gives the agent `message` to read in this turn (issue 22) - a skill
     /// loaded for it - as the knowledge `knowledge`, if it is knowledge
-    /// (issue 389): into its transcript and history, as what it was given,
-    /// not what it said, and the knowledge recorded
-    /// (`AgentChannelState::given`). Not published. Written at once, as what
-    /// a turn says is (issue 260), so a component gives only once nothing
-    /// can fail any more.
+    /// (issue 389): into its transcript, as what it was given, not what it
+    /// said, and the knowledge recorded (`AgentChannelState::given`); its
+    /// channel is told after the step, for its history (issue 417). Not
+    /// published. Written at once, as what a turn says is (issue 260), so a
+    /// component gives only once nothing can fail any more.
     pub fn give(&mut self, message: Message, knowledge: Option<KnowledgeRef>) {
         self.agent_channel_state.given(message, knowledge);
     }
@@ -227,9 +227,10 @@ impl<'a> Turn<'a> {
     }
 
     /// Records `message` as said by the turn: into the agent's transcript
-    /// and history at once (`AgentChannelState::said`, issue 260).
-    pub(crate) fn push_message(&mut self, message: Message) {
-        self.agent_channel_state.said(message);
+    /// at once (`AgentChannelState::said`, issue 260). Returns it as it is
+    /// sent: with what it was produced from (issue 417).
+    pub(crate) fn push_message(&mut self, message: Message) -> Message {
+        self.agent_channel_state.said(message)
     }
 
     /// Whether the turn may still call its model: not once it made
@@ -342,8 +343,8 @@ impl<'a> Turn<'a> {
     /// abandoned. Kept before it is sent, so that a failed send loses
     /// nothing of the turn.
     pub(crate) async fn say(&mut self, message: Message, output: &dyn EventSender) -> Result<()> {
-        self.push_message(message.clone());
-        self.send_event(event_for(message, false), output).await
+        let said = self.push_message(message);
+        self.send_event(event_for(said, false), output).await
     }
 
     /// Shows `partial`, a message still streaming in: published, not kept.
@@ -367,7 +368,6 @@ fn event_for(message: Message, partial: bool) -> ActorEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::history::testing::recorded_context;
     use caelumora_model::actor::EventContext;
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::context::{ContextItem, ContextResolver, PromptPart};
@@ -389,10 +389,12 @@ mod tests {
         Message { id: MessageId::new(), role: MessageRole::User, ..Message::new(classification.clone()) }
     }
 
-    /// What `state` says its agent `agent` saw when it produced message `id`.
-    pub(super) fn seen(state: &AgentChannelState, agent: AgentId, id: MessageId) -> Option<Vec<ContextItem>> {
-        let (reference, turn) = recorded_context(&state.history, id)?;
-        Some(ContextResolver::of(state).resolve(&reference, turn, ActorId::Agent(agent))?.items)
+    /// What its agent `agent` saw when it produced `said`, as it sent it -
+    /// with what it was produced from (issue 417) -, resolved against
+    /// `state`; `None` for a message it did not produce.
+    pub(super) fn seen(state: &AgentChannelState, agent: AgentId, said: &Message) -> Option<Vec<ContextItem>> {
+        let (reference, turn) = (said.produced_from.as_ref()?, said.turn_id?);
+        Some(ContextResolver::of(state).resolve(reference, turn, ActorId::Agent(agent))?.items)
     }
 
     #[test]
@@ -460,7 +462,7 @@ mod tests {
 
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: Some(Classification::PUBLIC), source: None }], Vec::new());
         assert_eq!(turn.situation().label(), Classification::PUBLIC);
-        state.perceive(Vec::new(), vec![said(&internal, "Our numbers are good.")]);
+        state.perceive(vec![said(&internal, "Our numbers are good.")]);
         let mut turn = Turn::under_way(AgentId::new(), &mut state);
         assert_eq!(turn.situation().label(), internal, "what others said during the turn");
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }], Vec::new());

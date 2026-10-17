@@ -31,9 +31,15 @@ pub mod testing;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryEntry {
-    /// A message said and, for one this agent produced, what it was
-    /// produced from.
-    Said { message: Message, context: Option<ContextRef> },
+    /// A message said, with what it was produced from if a turn of its
+    /// sender produced it (`Message::produced_from`, issue 417).
+    Said { message: Message },
+    /// A message an agent was given to read (issues 22, 417) - a skill
+    /// loaded for it, what a compaction gave again -: what the agent read,
+    /// not what anyone said, so no message said in the channel, found by
+    /// no id and changed by nobody. Gone to nobody: its record, read by
+    /// whom may read what the agent saw.
+    Given { message: Message },
     /// The message `message` - on whichever branch - is classified
     /// `classification` from here on (issue 133).
     Reclassified { message: MessageId, classification: Classification },
@@ -245,48 +251,6 @@ pub struct HistoryPage {
 }
 
 impl Chain<Recorded> {
-    /// What the turn `turn_id` of `actor` said, as it stands, in the order
-    /// it was said (issue 284): its messages recorded with the context they
-    /// were produced from - not what it was given, nor what replaced older
-    /// messages in a compaction -, on every branch, none taken back. Its
-    /// answer, whatever a compaction left of it in the transcript.
-    ///
-    /// Read from where the turn began (`turn_began`) to the end, not from
-    /// the start: what is read grows with how long ago the turn was.
-    pub fn said_in_turn(&self, actor: ActorId, turn_id: TurnId) -> Vec<Message> {
-        let Some(began) = self.turn_began(actor, turn_id) else { return Vec::new() };
-        fold(self.from(began)).into_iter()
-            .filter(|(node, message)| matches!(&node.entry.entry, HistoryEntry::Said { context: Some(_), .. }) && message.turn_id == Some(turn_id) && message.revoked.is_none())
-            .map(|(_, message)| message)
-            .collect()
-    }
-
-    /// The position from which on everything the turn `turn_id` of `actor`
-    /// recorded lies: after the end of the turn of `actor` before it, where
-    /// what is held begins (`base`) if none came before there - the end
-    /// before may lie before a window (issue 387). An actor is in one turn at a time, and a turn
-    /// answered again is a new turn (issue 259), so nothing of the turn lies
-    /// before that end. Read from the end backwards, up to the turn and the
-    /// end before it; `None` if the turn recorded nothing - neither a message
-    /// nor its end.
-    fn turn_began(&self, actor: ActorId, turn_id: TurnId) -> Option<u64> {
-        let mut reached = false;
-        for node in self.all_entries().rev() {
-            match &node.entry.entry {
-                HistoryEntry::TurnFinished { turn_id: ended, actor: of, .. } | HistoryEntry::TurnGivenUp { turn_id: ended, actor: of, .. } if *of == actor => {
-                    if *ended == turn_id {
-                        reached = true;
-                    } else if reached {
-                        return Some(node.seq + 1);
-                    }
-                }
-                HistoryEntry::Said { message, .. } if message.turn_id == Some(turn_id) => reached = true,
-                _ => {}
-            }
-        }
-        reached.then_some(self.base())
-    }
-
     /// The turn of `author` given up, and why, if its end is the last thing
     /// on the active path (issue 259): what may be asked for anew as long as
     /// nothing followed it.
@@ -311,23 +275,16 @@ impl Chain<Recorded> {
         Some(message)
     }
 
-    /// The id of the last message said on the active path,
-    /// `MessageId::default()` if none was.
-    pub fn last_message_id(&self) -> MessageId {
-        self.entries().rev().find_map(|n| n.entry.entry.said()).map(|m| m.id).unwrap_or_default()
-    }
-
-    /// Appends messages that were not produced from a context of this
-    /// history's owner - what others said.
+    /// Appends `msgs`, each as `push` does.
     pub fn extend(&mut self, msgs: Vec<Message>) {
         for m in msgs {
-            self.push(m, None);
+            self.push(m);
         }
     }
 
-    /// Appends `msg` with what it was produced from, if known.
-    pub fn push(&mut self, msg: Message, context: Option<ContextRef>) {
-        self.record(HistoryEntry::Said { message: msg, context });
+    /// Appends `msg`, said - with what it was produced from, if it says.
+    pub fn push(&mut self, msg: Message) {
+        self.record(HistoryEntry::Said { message: msg });
     }
 
     /// Records that message `id` - on whichever branch - is classified
@@ -402,7 +359,7 @@ impl Chain<Recorded> {
             HistoryEntry::Modified { message: modified } => self.is_changed(modified.id, |m| m.modify(modified)),
             HistoryEntry::Revoked { message, at } => self.is_changed(*message, |m| m.revoke(*at)),
             HistoryEntry::Reclassified { message, classification } => self.is_changed(*message, |m| m.reclassify(classification)),
-            HistoryEntry::Fitted { .. } | HistoryEntry::Said { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
+            HistoryEntry::Fitted { .. } | HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
             | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => true,
         };
@@ -421,7 +378,7 @@ impl HistoryEntry {
     /// change being in the message it changes.
     pub(crate) fn is_item(&self) -> bool {
         match self {
-            HistoryEntry::Said { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
+            HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
             | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => true,
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => false,
@@ -431,8 +388,8 @@ impl HistoryEntry {
     /// The message, if this is one said.
     pub fn said(&self) -> Option<&Message> {
         match self {
-            HistoryEntry::Said { message, .. } => Some(message),
-            HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
+            HistoryEntry::Said { message } => Some(message),
+            HistoryEntry::Given { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
             | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => None,
         }
@@ -456,7 +413,7 @@ impl HistoryEntry {
                 standing.classification = fitted;
                 changed
             }
-            HistoryEntry::Said { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. }
+            HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
             | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => false,
         }
@@ -467,7 +424,7 @@ impl HistoryEntry {
         match self {
             HistoryEntry::Modified { message } => Some(message.id),
             HistoryEntry::Revoked { message, .. } | HistoryEntry::Reclassified { message, .. } => Some(*message),
-            HistoryEntry::Said { .. } | HistoryEntry::Fitted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
+            HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::Fitted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
             | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => None,
         }
@@ -478,8 +435,8 @@ impl HistoryEntry {
     /// records - a message to every user, and to every agent if there is
     /// something to hear in it; a change of a message and who joined or left
     /// to every user and agent; how a turn went, what it carried out and
-    /// what came of what it did of its own accord to the users; a
-    /// compaction to nobody. Whether it went back to its sender is not this
+    /// what came of what it did of its own accord to the users; what an
+    /// agent was given and a compaction to nobody. Whether it went back to its sender is not this
     /// rule's: a reader is given what it sent itself.
     pub fn concerns(&self, participant: ActorId) -> bool {
         self.reaches(matches!(participant, ActorId::User(_)), matches!(participant, ActorId::Agent(_)))
@@ -489,22 +446,24 @@ impl HistoryEntry {
     /// `agent` (`concerns`).
     fn reaches(&self, user: bool, agent: bool) -> bool {
         match self {
-            HistoryEntry::Said { message, .. } => user || (agent && message.is_heard()),
+            HistoryEntry::Said { message } => user || (agent && message.is_heard()),
             HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => user || agent,
             HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
             | HistoryEntry::ActivityFinished { .. } => user,
-            HistoryEntry::Compacted { .. } => false,
+            HistoryEntry::Compacted { .. } | HistoryEntry::Given { .. } => false,
         }
     }
 
     /// The entry as everybody but its sender may see it (issue 417): a
     /// message, said or modified, as it is published (`Message::published`),
-    /// `None` if nothing of it is left to show; every other entry as it is.
+    /// `None` if nothing of it is left to show; nothing of what an agent was
+    /// given; every other entry as it is.
     pub fn published(&self) -> Option<HistoryEntry> {
         match self {
-            HistoryEntry::Said { message, .. } => message.published().map(|message| HistoryEntry::Said { message, context: None }),
+            HistoryEntry::Said { message } => message.published().map(|message| HistoryEntry::Said { message }),
             HistoryEntry::Modified { message } => message.published().map(|message| HistoryEntry::Modified { message }),
+            HistoryEntry::Given { .. } => None,
             HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. } | HistoryEntry::TurnFinished { .. }
             | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. }
             | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => Some(self.clone()),
@@ -518,7 +477,7 @@ impl HistoryEntry {
     /// of what it was told or did itself (`Recorded::delivered`).
     fn named_sender(&self) -> ActorId {
         match self {
-            HistoryEntry::Said { message, .. } | HistoryEntry::Modified { message } => message.sender_id,
+            HistoryEntry::Said { message } | HistoryEntry::Given { message } | HistoryEntry::Modified { message } => message.sender_id,
             HistoryEntry::TurnFinished { actor, .. } | HistoryEntry::TurnGivenUp { actor, .. } | HistoryEntry::PlanStepStarted { actor, .. }
             | HistoryEntry::CommandExecuted { actor, .. } | HistoryEntry::Compacted { actor, .. } | HistoryEntry::ActivityFinished { actor, .. } => *actor,
             HistoryEntry::ParticipantJoined { by, .. } | HistoryEntry::ParticipantLeft { by, .. } => *by,
@@ -531,8 +490,8 @@ impl HistoryEntry {
     /// be shown (issue 207).
     pub fn context(&self) -> Option<(&ContextRef, TurnId)> {
         match self {
-            HistoryEntry::Said { message, context } => Some((context.as_ref()?, message.turn_id?)),
-            HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
+            HistoryEntry::Said { message } => Some((message.produced_from.as_ref()?, message.turn_id?)),
+            HistoryEntry::Given { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
             | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => None,
         }
@@ -558,8 +517,8 @@ mod tests {
         use crate::tool::{ToolCall, ToolVisibility};
         let (agent, other, user, approver) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()), ActorId::Approver(Default::default()));
         let hidden = ToolCall { id: Some("1".to_string()), function_name: "look".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
-        let answer = Message { sender_id: agent, role: MessageRole::Assistant, content: Some("found it".to_string()), tool_calls: vec![hidden], turn_id: Some(TurnId::new()), ..make_message(id(1)) };
-        let said = Recorded::new(HistoryEntry::Said { message: answer, context: Some(ContextRef::default()) }, agent, Audience::Everybody);
+        let answer = Message { sender_id: agent, role: MessageRole::Assistant, content: Some("found it".to_string()), tool_calls: vec![hidden], turn_id: Some(TurnId::new()), produced_from: Some(ContextRef::default()), ..make_message(id(1)) };
+        let said = Recorded::new(HistoryEntry::Said { message: answer }, agent, Audience::Everybody);
         let calls = |entry: Option<HistoryEntry>| entry.as_ref().and_then(HistoryEntry::said).map(|m| (m.tool_calls.len(), m.content.clone()));
 
         assert_eq!(calls(said.as_seen_by(&Reader::Participant(agent))), Some((1, Some("found it".to_string()))), "its sender, in full");
@@ -572,16 +531,16 @@ mod tests {
         assert!(said.as_seen_by(&Reader::Participant(approver)).is_none(), "it concerns no approver");
         assert_eq!(calls(said.as_seen_by(&Reader::Channel)), Some((1, Some("found it".to_string()))), "the channel, as it was recorded");
 
-        let step = Recorded::new(HistoryEntry::Said { message: Message { sender_id: agent, internal: true, ..make_message(id(2)) }, context: None }, agent, Audience::Everybody);
+        let step = Recorded::new(HistoryEntry::Said { message: Message { sender_id: agent, internal: true, ..make_message(id(2)) } }, agent, Audience::Everybody);
         assert!(step.as_seen_by(&Reader::Participant(user)).is_some() && step.as_seen_by(&Reader::Participant(other)).is_none(), "a step of a plan: the users', no other agent's");
         let ended = Recorded::new(HistoryEntry::TurnFinished { turn_id: TurnId::new(), actor: agent, at: Utc::now() }, agent, Audience::Everybody);
         assert!(ended.as_seen_by(&Reader::Participant(agent)).is_some() && ended.as_seen_by(&Reader::Participant(other)).is_none(), "a turn's end: its own and the users'");
 
-        let to_one = Recorded::new(HistoryEntry::Said { message: make_message(id(3)), context: None }, ActorId::System, Audience::Only(vec![user]));
+        let to_one = Recorded::new(HistoryEntry::Said { message: make_message(id(3)) }, ActorId::System, Audience::Only(vec![user]));
         assert!(to_one.as_seen_by(&Reader::Participant(user)).is_some(), "whom it went to");
         assert!(to_one.as_seen_by(&Reader::Participant(ActorId::User(UserId::new()))).is_none(), "no other user");
         assert!(to_one.as_seen_by(&Reader::Outsider).is_none(), "nor an outsider: it did not go to everybody");
-        let to_nobody = Recorded::new(HistoryEntry::Said { message: Message { sender_id: agent, ..make_message(id(4)) }, context: None }, agent, Audience::Only(Vec::new()));
+        let to_nobody = Recorded::new(HistoryEntry::Said { message: Message { sender_id: agent, ..make_message(id(4)) } }, agent, Audience::Only(Vec::new()));
         assert!(to_nobody.as_seen_by(&Reader::Participant(agent)).is_some() && to_nobody.as_seen_by(&Reader::Participant(user)).is_none(), "to nobody: its sender alone");
     }
 
@@ -624,12 +583,12 @@ mod tests {
         let (agent, other) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()));
         let turn = TurnId::new();
         let mut history = History::default();
-        history.push(make_message(id(1)), None);
+        history.push(make_message(id(1)));
         assert_eq!(history.turn_given_up_last(agent), None, "no turn ended");
         history.record(HistoryEntry::TurnGivenUp { turn_id: turn, actor: agent, reason: GivenUpReason::Left, at: Utc::now() });
         assert_eq!(history.turn_given_up_last(agent), Some((turn, GivenUpReason::Left)));
         assert_eq!(history.turn_given_up_last(other), None, "another agent's");
-        history.push(make_message(id(2)), None);
+        history.push(make_message(id(2)));
         assert_eq!(history.turn_given_up_last(agent), None, "something followed it");
     }
 
@@ -638,12 +597,12 @@ mod tests {
         let (finished, given_up) = (TurnId::new(), TurnId::new());
         let at = Utc::now();
         let mut history = History::default();
-        history.push(make_message(id(1)), None);
+        history.push(make_message(id(1)));
         history.record(HistoryEntry::PlanStepStarted { turn_id: finished, actor: ActorId::default(), step_index: 0, total_steps: 1, description: "first".to_string(), at });
-        history.push(Message { turn_id: Some(finished), ..make_message(id(2)) }, None);
+        history.push(Message { turn_id: Some(finished), ..make_message(id(2)) });
         history.record(HistoryEntry::TurnFinished { turn_id: finished, actor: ActorId::default(), at });
         history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
-        history.push(Message { turn_id: Some(given_up), ..make_message(id(3)) }, None);
+        history.push(Message { turn_id: Some(given_up), ..make_message(id(3)) });
         history.record(HistoryEntry::TurnGivenUp { turn_id: given_up, actor: ActorId::default(), reason: GivenUpReason::Left, at });
         history.fit_into(&Classification::CHANNEL_DEFAULT);
 
@@ -675,54 +634,6 @@ mod tests {
     }
 
     #[test]
-    fn what_a_turn_said_is_what_it_produced_as_it_stands() {
-        let turn = TurnId::new();
-        let of_turn = |n: u128| Message { turn_id: Some(turn), ..make_message(id(n)) };
-        let mut history = History::default();
-        history.push(make_message(id(1)), None);
-        history.push(of_turn(2), Some(ContextRef::default()));
-        // Given to it, or replacing older messages in a compaction: no context.
-        history.push(of_turn(3), None);
-        history.push(of_turn(4), Some(ContextRef::default()));
-        history.push(Message { turn_id: Some(TurnId::new()), ..make_message(id(5)) }, Some(ContextRef::default()));
-        history.push(of_turn(6), Some(ContextRef::default()));
-        history.modify(Message { content: Some("changed".to_string()), ..of_turn(2) });
-        assert!(history.revoke(id(4), Utc::now()));
-
-        let said: Vec<(MessageId, Option<String>)> = history.said_in_turn(ActorId::default(), turn).into_iter().map(|m| (m.id, m.content)).collect();
-        assert_eq!(said, [(id(2), Some("changed".to_string())), (id(6), make_message(id(6)).content)], "its own, as they stand, none taken back");
-    }
-
-    #[test]
-    fn what_a_turn_said_is_read_from_the_end_of_its_actors_turn_before() {
-        let (agent, other) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()));
-        let (before, turn, theirs) = (TurnId::new(), TurnId::new(), TurnId::new());
-        let at = Utc::now();
-        let said = |turn: TurnId, n: u128| Message { turn_id: Some(turn), ..make_message(id(n)) };
-        let ended = |turn_id, actor| HistoryEntry::TurnFinished { turn_id, actor, at };
-        let mut history = History::default();
-        history.push(said(before, 1), Some(ContextRef::default()));
-        history.record(ended(before, agent));
-        let began = history.end();
-        assert!(history.said_in_turn(agent, turn).is_empty(), "nothing said yet");
-
-        history.push(said(turn, 2), Some(ContextRef::default()));
-        history.push(said(theirs, 3), Some(ContextRef::default()));
-        // Another actor's turn ends in between: no end of this actor's.
-        history.record(ended(theirs, other));
-        history.push(said(turn, 4), Some(ContextRef::default()));
-        assert_eq!(history.turn_began(agent, turn), Some(began), "after the end of its turn before");
-        assert_eq!(history.said_in_turn(agent, turn).iter().map(|m| m.id).collect::<Vec<_>>(), [id(2), id(4)], "past the other actor's turn end");
-
-        history.record(ended(turn, agent));
-        history.push(said(TurnId::new(), 5), Some(ContextRef::default()));
-        history.record(ended(TurnId::new(), agent));
-        assert!(history.revoke(id(2), at), "changed after later turns");
-        assert_eq!(history.said_in_turn(agent, turn).iter().map(|m| m.id).collect::<Vec<_>>(), [id(4)], "an older turn, as it stands");
-        assert_eq!(history.said_in_turn(agent, before).iter().map(|m| m.id).collect::<Vec<_>>(), [id(1)], "the first, from the start");
-    }
-
-    #[test]
     fn a_range_folded_gives_its_messages_as_the_whole_history_does() {
         let public = Classification::general(Confidentiality::Public);
         let mut history = History::default();
@@ -748,7 +659,7 @@ mod tests {
         let at = Utc::now();
         let mut message = make_message(id(1));
         assert!(!HistoryEntry::Revoked { message: id(2), at }.fold_into(&mut message), "another message");
-        assert!(!HistoryEntry::Said { message: make_message(id(1)), context: None }.fold_into(&mut message), "says, changes nothing");
+        assert!(!HistoryEntry::Said { message: make_message(id(1)) }.fold_into(&mut message), "says, changes nothing");
         assert!(HistoryEntry::Modified { message: Message { content: Some("changed".to_string()), ..make_message(id(1)) } }.fold_into(&mut message));
         assert_eq!(message.content.as_deref(), Some("changed"));
         let fitted = HistoryEntry::Fitted { channel: Classification::general(Confidentiality::Public) };
@@ -764,7 +675,7 @@ mod tests {
         let turn = TurnId::new();
         let mut history = History::default();
         history.extend(vec![make_message(id(1))]);
-        history.push(Message { turn_id: Some(turn), ..make_message(id(2)) }, Some(reference.clone()));
+        history.push(Message { turn_id: Some(turn), produced_from: Some(reference.clone()), ..make_message(id(2)) });
 
         let loaded: History = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         let entries: Vec<_> = loaded.all_entries().collect();
@@ -803,7 +714,6 @@ mod tests {
         history.fit_into(&public);
         assert_eq!(history.all_entries().len(), entries + 2, "recorded, also when nothing is left to fit");
         assert!(messages_of(&history).iter().chain(history.message(id(2)).iter()).all(|m| m.classification == public));
-        assert_eq!(history.last_message_id(), id(3), "the last message said, not the last entry");
 
         let loaded: History = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         assert_eq!(messages_of(&loaded).iter().map(|m| &m.classification).collect::<Vec<_>>(), [&public, &public]);
@@ -851,7 +761,6 @@ mod tests {
         assert_eq!((messages[0].content.as_deref(), messages[0].modified), (Some("corrected"), Some(at)));
         let revoked = history.message(id(2)).expect("a message taken back is still found");
         assert!(revoked.content.is_none() && revoked.revoked == Some(at));
-        assert_eq!(history.last_message_id(), id(3), "a change is no message said");
 
         let loaded: History = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         assert_eq!(messages_of(&loaded)[0].content.as_deref(), Some("corrected"));

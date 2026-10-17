@@ -4,7 +4,6 @@ pub mod moderator;
 pub mod runtime;
 pub mod remote;
 pub mod logging;
-pub mod recorder;
 pub mod error;
 pub mod event;
 pub mod actor;

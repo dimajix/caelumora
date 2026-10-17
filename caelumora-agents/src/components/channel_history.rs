@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn a_message_with_text_containing_the_query_is_wanted_ignoring_case() {
-        let said = |content: &str| HistoryEntry::Said { message: text(content), context: None };
+        let said = |content: &str| HistoryEntry::Said { message: text(content) };
         assert!(wanted(&said("Tea time"), Some("tea")) && wanted(&said("More TEA"), Some("tea")));
         assert!(!wanted(&said("coffee"), Some("tea")));
         assert!(wanted(&said("coffee"), None), "any text without a query");

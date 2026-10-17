@@ -873,6 +873,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_context_of_an_external_agent_is_what_the_remote_agent_was_given() {
+        use caelumora_model::channel::ChannelState;
         use caelumora_model::message::{Message, MessageId};
         use caelumora_model::store::StateStore;
 
@@ -895,10 +896,11 @@ mod tests {
         let given = ContextRef { transcript: state.transcript.start_anew(), ..Default::default() };
         let later = said("later");
         state.transcript.extend(vec![later.clone()]);
-        state.history.extend(vec![question.clone()]);
-        state.history.push(answer.clone(), Some(given));
-        state.history.extend(vec![later]);
         store.put_agent_channel_state(remote.id, channel.id, &mut state).await.unwrap();
+        // Its channel's history, as it records what was said (issue 417).
+        let mut channel_state = ChannelState::new(channel.id);
+        channel_state.history.extend(vec![question.clone(), Message { produced_from: Some(given), ..answer.clone() }, later]);
+        store.put_channel_state(channel.id, &mut channel_state).await.unwrap();
 
         let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
         let participant = for_alice.participant(ActorId::Agent(remote.id)).await.unwrap();

@@ -12,9 +12,10 @@
 use super::chains::{self, read_chain, read_head, segment_of, SEGMENT};
 use super::{delete_if_exists, read_json_opt, write_json_atomic, JsonFileStore};
 use crate::chain::Node;
+use crate::channel::ChannelId;
 use crate::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use crate::message::MessageId;
-use crate::store::history::{every, page_of, seen, seen_nodes, HistoryKey, HistoryStore, Keep, StandingItems};
+use crate::store::history::{every, page_of, seen, seen_nodes, HistoryStore, Keep, StandingItems};
 use crate::store::{StoreError, StoreResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -118,54 +119,55 @@ async fn derive_items(dir: &Path, items_end: u64, end: u64, added: &[Node<Record
 /// The items of the history in `dir` derived up to the end of its chain: a
 /// crash between the chain and the items is repaired here. Returns where
 /// the chain ends.
-async fn derive_missing(dir: &Path, key: HistoryKey) -> StoreResult<u64> {
+async fn derive_missing(dir: &Path, channel: ChannelId) -> StoreResult<u64> {
     let end = read_head(dir).await?.end;
     let items_end = read_items_end(dir).await?;
     if items_end < end {
-        warn!("The items of {} were derived up to position {} of {}; deriving the rest", key, items_end, end);
+        warn!("The items of the history of channel {} were derived up to position {} of {}; deriving the rest", channel, items_end, end);
         let missing = read_chain(dir, items_end, end).await?;
         derive_items(dir, items_end, end, &missing).await?;
     }
     Ok(end)
 }
 
+/// The history of `channel`, as an error names it.
+fn history_of(channel: ChannelId) -> String {
+    format!("the history of channel {channel}")
+}
+
 impl JsonFileStore {
-    /// The directory of the history `key` names, beside its state's
+    /// The directory of the history of `channel`, beside its state's
     /// snapshot.
-    pub(super) fn history_dir(&self, key: HistoryKey) -> PathBuf {
-        let state = match key {
-            HistoryKey::Channel(channel) => self.channel_state_path(channel),
-            HistoryKey::Agent(agent, channel) => self.agent_channel_state_path(agent, channel),
-        };
-        state.with_extension("history")
+    pub(super) fn history_dir(&self, channel: ChannelId) -> PathBuf {
+        self.channel_state_path(channel).with_extension("history")
     }
 
-    /// Appends what `history`, the history `key` names as a state holds it,
+    /// Appends what `history`, that of `channel` as its state holds it,
     /// added since it was last stored, derives the items of it, and marks it
     /// stored.
-    pub(super) async fn append_history(&self, key: HistoryKey, history: &mut History) -> StoreResult<()> {
+    pub(super) async fn append_history(&self, channel: ChannelId, history: &mut History) -> StoreResult<()> {
         let Some(changes) = history.changes() else { return Ok(()) };
-        let dir = self.history_dir(key);
-        let items_end = derive_missing(&dir, key).await?;
-        let (head, added) = chains::append(&dir, key, changes).await?;
+        let dir = self.history_dir(channel);
+        let items_end = derive_missing(&dir, channel).await?;
+        let (head, added) = chains::append(&dir, history_of(channel), changes).await?;
         derive_items(&dir, items_end, head.end, &added).await?;
         history.mark_stored();
         Ok(())
     }
 
-    /// The history `key` names from the position `from` on, as a holder
+    /// The history of `channel` from the position `from` on, as a holder
     /// keeps it; empty if none is kept.
-    pub(super) async fn load_history(&self, key: HistoryKey, from: u64) -> StoreResult<History> {
-        let dir = self.history_dir(key);
-        derive_missing(&dir, key).await?;
-        chains::load(&dir, key, from).await
+    pub(super) async fn load_history(&self, channel: ChannelId, from: u64) -> StoreResult<History> {
+        let dir = self.history_dir(channel);
+        derive_missing(&dir, channel).await?;
+        chains::load(&dir, history_of(channel), from).await
     }
 }
 
 #[async_trait]
 impl HistoryStore for JsonFileStore {
-    async fn page(&self, key: HistoryKey, reader: &Reader, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
-        let dir = self.history_dir(key);
+    async fn page(&self, channel: ChannelId, reader: &Reader, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
+        let dir = self.history_dir(channel);
         let head = read_head(&dir).await?;
         let items_end = read_items_end(&dir).await?;
         let before = before.map_or(items_end, |before| before.min(items_end));
@@ -184,8 +186,8 @@ impl HistoryStore for JsonFileStore {
         Ok(page_of(newest, from, limit, head.head))
     }
 
-    async fn said(&self, key: HistoryKey, reader: &Reader, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>> {
-        let dir = self.history_dir(key);
+    async fn said(&self, channel: ChannelId, reader: &Reader, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>> {
+        let dir = self.history_dir(channel);
         let items_end = read_items_end(&dir).await?;
         if items_end == 0 {
             return Ok(None);
@@ -202,15 +204,15 @@ impl HistoryStore for JsonFileStore {
         }
     }
 
-    async fn entries(&self, key: HistoryKey, reader: &Reader, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>> {
-        let dir = self.history_dir(key);
+    async fn entries(&self, channel: ChannelId, reader: &Reader, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>> {
+        let dir = self.history_dir(channel);
         let head = read_head(&dir).await?;
         let chain: Vec<Node<Recorded>> = read_chain(&dir, from, head.end).await?;
         Ok(seen_nodes(reader, &chain))
     }
 
-    async fn rebuild(&self, key: HistoryKey) -> StoreResult<()> {
-        let dir = self.history_dir(key);
+    async fn rebuild(&self, channel: ChannelId) -> StoreResult<()> {
+        let dir = self.history_dir(channel);
         let end = read_head(&dir).await?.end;
         let mut segment = 0;
         while segment < end.max(read_items_end(&dir).await?) {

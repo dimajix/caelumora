@@ -97,7 +97,7 @@ mod tests {
         let policy = ThresholdCompactionPolicy::new(0.8);
         let heard = Message { content: Some("hello".to_string()), ..Message::new(Classification::PUBLIC) };
         let mut state = AgentChannelState::default();
-        state.perceive(vec![heard.clone()], vec![heard]);
+        state.perceive(vec![heard]);
         let mut turn = workspace_turn(&world, &mut state);
         assert!(!policy.is_due(&turn.situation()), "nothing measured");
 

@@ -1,7 +1,6 @@
 //! The external agent actor in a running channel: what it is given, how it answers, and the remote
 //! tasks it keeps open.
 
-use caelumora_model::history::testing::messages_of;
 use crate::plugin::AgentsPlugin;
 use super::*;
 use caelumora_model::value::name::Name;
@@ -143,7 +142,7 @@ async fn an_external_agent_that_joins_keeps_what_it_may_see_and_on_joining_again
     let own = message(ActorId::Agent(agent), "mine");
     let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
     let kept = || async {
-        messages_of(&channel.stored_agent_channel_state(agent).await.unwrap().history).into_iter().map(|m| m.content.unwrap()).collect::<Vec<_>>()
+        channel.stored_agent_channel_state(agent).await.unwrap().transcript.messages().into_iter().map(|m| m.content.unwrap()).collect::<Vec<_>>()
     };
 
     channel.record_said(vec![one, two]).await;
@@ -198,12 +197,12 @@ async fn what_an_external_agents_perceive_processors_drop_is_kept_but_never_give
     alice.send_message("the secret is 42".to_string(), None).await.unwrap();
     assert!(answered(&mut events, agent).await.is_empty(), "nothing new reached it, so it is not asked");
 
-    let state = channel.stored_agent_channel_state(agent).await.unwrap();
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
-    assert_eq!(contents(messages_of(&state.history)), vec!["hello", "Hello, alice.", "the secret is 42"], "its history keeps all it was offered");
-    let offered: Vec<MessageId> = messages_of(&state.history).iter().map(|m| m.id).collect();
+    let seen = channel.visible_messages(ActorId::Agent(agent)).await;
+    assert_eq!(contents(seen.clone()), vec!["hello", "Hello, alice.", "the secret is 42"], "the channel's history holds all it was offered, and what it said");
+    let offered: Vec<MessageId> = seen.iter().map(|m| m.id).collect();
     let given = channel.agent_context(agent).await.in_transcript(&offered).await.expect("read");
-    let given: Vec<Message> = messages_of(&state.history).into_iter().filter(|m| given.contains(&m.id)).collect();
+    let given: Vec<Message> = seen.into_iter().filter(|m| given.contains(&m.id)).collect();
     assert_eq!(contents(given), vec!["hello"], "its transcript what it was given, on whichever branch");
     assert_eq!(remote.sent.lock().unwrap().len(), 1, "the secret was not given to the remote agent");
 
@@ -273,11 +272,12 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(state.remote.conversation, Some(conversation));
     assert!(state.remote.open_tasks.is_empty(), "both tasks ended");
-    let kept: Vec<_> = messages_of(&state.history).into_iter().filter_map(|m| m.content).collect();
-    assert_eq!(kept, vec!["hello", "Hello, alice.", "How are you?", "Fine."], "what it heard and what it answered");
-    let offered: Vec<MessageId> = messages_of(&state.history).iter().map(|m| m.id).collect();
+    let seen = channel.visible_messages(ActorId::Agent(agent)).await;
+    let kept: Vec<_> = seen.iter().filter_map(|m| m.content.clone()).collect();
+    assert_eq!(kept, vec!["hello", "Hello, alice.", "How are you?", "Fine."], "what it heard and what it answered, in the channel's history");
+    let offered: Vec<MessageId> = seen.iter().map(|m| m.id).collect();
     let passed_on = channel.agent_context(agent).await.in_transcript(&offered).await.expect("read");
-    let given: Vec<_> = messages_of(&state.history).into_iter().filter(|m| passed_on.contains(&m.id)).filter_map(|m| m.content).collect();
+    let given: Vec<_> = seen.into_iter().filter(|m| passed_on.contains(&m.id)).filter_map(|m| m.content).collect();
     assert_eq!(given, vec!["hello", "How are you?"], "what the remote agent was given, on whichever branch");
     assert!(state.transcript.messages().is_empty(), "all of it sent: nothing to give next");
     // The context of each answer is what was given in its call (issue 205).
@@ -316,9 +316,8 @@ async fn an_external_agent_tells_its_remote_agent_of_a_message_it_was_given_that
     let said = |text: &str| Said { sender: "alice".to_string(), text: text.to_string() };
     assert_eq!(sent[1].1.said, vec![said("@alice: [changed an earlier message \"hello\"; it now reads:] hello, corrected"), said("@alice: And?")], "told before what was said since");
     assert_eq!(sent[2].1.said, vec![said("@alice: [took back an earlier message \"And?\"; it no longer stands.]"), said("@alice: Well?")]);
-    let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(given_for(&channel, agent, &second[0]).await, ["@alice: [changed an earlier message \"hello\"; it now reads:] hello, corrected", "@alice: And?"], "what its answer was given, word for word");
-    assert!(messages_of(&state.history).iter().all(|m| m.notice_of.is_none()), "a notice is never in the history");
+    assert!(channel.visible_messages(ActorId::Agent(agent)).await.iter().all(|m| m.notice_of.is_none()), "a notice is never in the channel's history");
     running.abort();
 }
 
@@ -404,8 +403,7 @@ async fn an_external_agent_s_answer_carries_the_turn_its_start_announced() {
     let started = started.expect("its answer announced itself");
     assert_eq!(partial, Some(started), "what it streams is of the turn");
     assert_eq!(answer.iter().map(|m| m.turn_id).collect::<Vec<_>>(), [Some(started)], "and what it answers");
-    let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert_eq!(messages_of(&state.history).last().and_then(|m| m.turn_id), Some(started), "kept so in its history");
+    assert_eq!(channel.visible_messages(ActorId::Agent(agent)).await.last().and_then(|m| m.turn_id), Some(started), "recorded so in the channel's history");
     running.abort();
 }
 
@@ -528,7 +526,7 @@ async fn an_external_agent_is_given_its_prompt_parts_first_and_again_only_when_t
     let sent = remote.sent.lock().unwrap().clone();
     let prompts = &sent[0].1.prompts;
     assert_eq!(prompts, &["[Frame]\nBe brief.", "[Heard]\n1"], "first, in the order of the configuration, whatever their position");
-    assert_eq!(sent[1].1.prompts, ["[Heard]\n3"], "again only what changed");
+    assert_eq!(sent[1].1.prompts, ["[Heard]\n2"], "again only what changed");
 
     // What it was given is the context of its answer (issue 205).
     let seen = channel.agent_context(agent).await;
@@ -590,9 +588,9 @@ async fn after_a_restart_an_external_agent_sends_what_it_heard_but_had_not_sent(
 
     let said = |text: &str| Message { role: MessageRole::User, sender_name: "bob".to_string(), content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
     let mut stored = AgentChannelState::default();
-    stored.perceive(vec![said("sent before")], vec![said("sent before")]);
+    stored.perceive(vec![said("sent before")]);
     stored.transcript.start_anew();
-    stored.perceive(vec![said("heard, then the crash")], vec![said("heard, then the crash")]);
+    stored.perceive(vec![said("heard, then the crash")]);
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Message("Noted.".to_string())), Ok(ExternalEvent::Completed)],
     ]));
@@ -830,7 +828,7 @@ async fn an_open_task_whose_answer_broke_off_is_followed_and_its_end_said_unaske
     assert_eq!(said[0].content.as_deref(), Some("Here it is."));
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "the task ended");
-    assert_eq!(messages_of(&state.history).last().and_then(|m| m.content.clone()).as_deref(), Some("Here it is."), "kept as said");
+    assert_eq!(channel.visible_messages(ActorId::Agent(agent)).await.last().and_then(|m| m.content.clone()).as_deref(), Some("Here it is."), "recorded as said");
     assert_eq!(given_for(&channel, agent, &said[0]).await, ["hello"], "with what the call that began the task was given (issue 205)");
     running.abort();
 }
@@ -884,9 +882,8 @@ async fn an_answer_that_broke_off_is_said_once_in_full_when_its_task_ends() {
         let said = answered(&mut events, agent).await;
         assert_eq!(said.len(), 1);
         assert_eq!(said[0].content.as_deref(), Some(expected), "said once, in full");
-        let state = channel.stored_agent_channel_state(agent).await.unwrap();
-        let own: Vec<_> = messages_of(&state.history).into_iter().filter(|m| m.sender_id == ActorId::Agent(agent)).filter_map(|m| m.content).collect();
-        assert_eq!(own, vec![expected.to_string()], "and kept once");
+        let own: Vec<_> = channel.visible_messages(ActorId::Agent(agent)).await.into_iter().filter(|m| m.sender_id == ActorId::Agent(agent)).filter_map(|m| m.content).collect();
+        assert_eq!(own, vec![expected.to_string()], "and recorded once");
         running.abort();
     }
 }
@@ -1069,7 +1066,7 @@ async fn lowering_the_channel_gives_up_an_external_agents_answer_under_way() {
     assert_eq!(remote.cancelled.lock().unwrap().as_slice(), &[task("t-1")], "the remote task is cancelled");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "and forgotten");
-    assert!(messages_of(&state.history).iter().all(|m| m.sender_id != ActorId::Agent(agent)), "nothing of the answer is kept");
+    assert!(channel.visible_messages(ActorId::Agent(agent)).await.iter().all(|m| m.sender_id != ActorId::Agent(agent)), "nothing of the answer is recorded");
     running.abort();
 }
 
@@ -1142,7 +1139,7 @@ async fn a_followed_task_that_fails_says_so_and_keeps_nothing_of_what_came_befor
     assert!(failed.contains("hermes could not finish: out of coffee"), "{failed}");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "the failed task ended");
-    assert!(messages_of(&state.history).is_empty(), "nothing the channel never saw is kept as said");
+    assert!(channel.visible_messages(ActorId::Agent(agent)).await.iter().all(|m| m.sender_id != ActorId::Agent(agent)), "nothing the channel never saw is recorded as said");
     running.abort();
 }
 
@@ -1163,7 +1160,7 @@ async fn a_followed_task_whose_stream_breaks_says_nothing_and_stays_open() {
     assert!(!said_anything(&mut events, agent), "no half answer is published");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(state.remote.open_tasks.iter().map(|t| (t.task.clone(), t.state)).collect::<Vec<_>>(), vec![(task("t-1"), OpenTaskState::Working)], "left open, to be followed again");
-    assert!(messages_of(&state.history).is_empty(), "nothing is kept as said");
+    assert!(channel.visible_messages(ActorId::Agent(agent)).await.iter().all(|m| m.sender_id != ActorId::Agent(agent)), "nothing is recorded as said");
     running.abort();
 }
 

@@ -44,7 +44,9 @@ impl<M> HistoryItemResponse<M> {
     /// is not given - a change, which the message it changed holds.
     pub fn of(entry: HistoryEntry, said: impl FnOnce(Message) -> M) -> Option<Self> {
         match entry {
-            HistoryEntry::Said { message, .. } => Some(Self::Said(said(message))),
+            // What an agent was given reads, in its history, as it did
+            // before its history was its channel's (issue 417).
+            HistoryEntry::Said { message } | HistoryEntry::Given { message } => Some(Self::Said(said(message))),
             HistoryEntry::TurnFinished { turn_id, actor, at } => Some(Self::TurnFinished { turn_id, actor, at }),
             HistoryEntry::TurnGivenUp { turn_id, actor, reason, at } => Some(Self::TurnGivenUp { turn_id, actor, reason, at }),
             HistoryEntry::PlanStepStarted { turn_id, actor, step_index, total_steps, description, at } => Some(Self::PlanStepStarted { turn_id, actor, step_index, total_steps, description, at }),
@@ -130,7 +132,7 @@ mod tests {
     fn a_history_is_given_as_its_messages_and_how_turns_ended() {
         use caelumora_model::turn::GivenUpReason;
         let (turn, actor) = (TurnId::new(), ActorId::default());
-        let said = HistoryItemResponse::of(HistoryEntry::Said { message: Message::new(Classification::CHANNEL_DEFAULT), context: None }, |m| m).unwrap();
+        let said = HistoryItemResponse::of(HistoryEntry::Said { message: Message::new(Classification::CHANNEL_DEFAULT) }, |m| m).unwrap();
         assert!(serde_json::to_value(said).unwrap()["said"]["id"].is_string(), "the message itself");
         let given_up = HistoryItemResponse::<Message>::of(HistoryEntry::TurnGivenUp { turn_id: turn, actor, reason: GivenUpReason::Failed { message: "boom".to_string() }, at: Utc::now() }, |m| m).unwrap();
         let json = serde_json::to_value(given_up).unwrap();

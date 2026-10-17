@@ -72,25 +72,21 @@ where
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
-    use caelumora_model::history::testing::items_of;
     use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::history::HistoryEntry;
+    use caelumora_model::transcript::{as_they_stand, TranscriptEntry};
     use caelumora_model::turn::GivenUpReason;
     use caelumora_model::work::TurnId;
 
-    /// The turns the agent of `state` gave up, as its history records them
-    /// (issue 258): each with why, and the messages before its end that
-    /// carry its id.
+    /// The turns the agent of `state` gave up, as its transcript records
+    /// them on its active path (issue 258): each with why, and the messages
+    /// before its end that carry its id.
     pub(crate) fn given_up_turns(state: &AgentChannelState) -> Vec<(TurnId, GivenUpReason, Vec<Message>)> {
-        let items = items_of(&state.history);
-        items.iter().enumerate()
-            .filter_map(|(at, item)| {
-                let HistoryEntry::TurnGivenUp { turn_id, reason, .. } = item else { return None };
-                let messages = items[..at].iter()
-                    .filter_map(|item| match item {
-                        HistoryEntry::Said { message, .. } if message.turn_id == Some(*turn_id) => Some(message.clone()),
-                        _ => None,
-                    })
+        let path: Vec<_> = as_they_stand(state.transcript.entries()).collect();
+        path.iter().enumerate()
+            .filter_map(|(at, (node, _))| {
+                let TranscriptEntry::TurnGivenUp { turn_id, reason, .. } = &node.entry else { return None };
+                let messages = path[..at].iter()
+                    .filter_map(|(_, message)| message.clone().filter(|message| message.turn_id == Some(*turn_id)))
                     .collect();
                 Some((*turn_id, reason.clone(), messages))
             })

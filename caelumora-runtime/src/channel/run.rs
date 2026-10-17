@@ -213,14 +213,13 @@ impl ChannelLoop {
     }
 
     /// Lets `event` enter the channel, admitted or the channel's own: its
-    /// mentions resolved, recorded, appended to the history and routed.
+    /// mentions resolved, appended to the history and routed.
     /// What its sender's owner alone sees is recorded with it, and given to
     /// nobody else (issue 417): the moderator decides on what everybody may
     /// see of it, and that is what is delivered; of an event with nothing
     /// left to show, nothing is, and its entry went to nobody.
     async fn enter(&self, event: Envelope, running: &HashMap<ActorId, RunningActor>) {
         let event = self.resolve_mentions(event);
-        self.record_receive_event(&event).await;
         let shown = event.published();
         let routing = match &shown {
             Some(shown) => self.decide(shown).await,
@@ -314,7 +313,9 @@ impl ChannelLoop {
     /// - what the channel records of a turn besides its messages - where a
     ///   step of its plan began, a command or an activity it carried out,
     ///   how it ended - and the start of an activity come from an agent in
-    ///   its own name (issue 284): nobody else has turns;
+    ///   its own name (issue 284): nobody else has turns; so does what an
+    ///   agent was given to read and a compaction of its context (issue
+    ///   417), what it was given classified so that it may flow in;
     /// - who joined or left is the channel's own word (`announce`, issue
     ///   408), never an actor's.
     async fn admission(&self, event: &Envelope) -> Result<(), Rejection> {
@@ -378,7 +379,13 @@ impl ChannelLoop {
                 (event.context.sender_id.as_user_id().is_some() && *participant != event.context.sender_id && self.actor(*participant).is_some())
                     .then_some(()).ok_or(Rejection::Invalid)
             }
+            ActorEvent::MessageGiven { message } => {
+                let sender = event.context.sender_id;
+                (sender.as_agent_id().is_some() && context.caller_id == sender).then_some(()).ok_or(Rejection::Invalid)?;
+                self.confidentiality.require_publish(context, &message.classification, &classification, || Rejection::ClassificationRefused)
+            }
             ActorEvent::PlanStepStarted { .. }
+            | ActorEvent::ContextCompacted { .. }
             | ActorEvent::CommandExecuted { turn_id: Some(_), .. }
             | ActorEvent::ActivityStarted { .. }
             | ActorEvent::ActivityFinished { .. }
@@ -519,7 +526,6 @@ impl ChannelLoop {
             // Not to an actor that is leaving: its inbox is closed.
             if let Some(sender) = running.get(&target_id).and_then(|actor| actor.sender.as_ref()) {
                 debug!(to = %target_id, "Forwarding {}", event_desc);
-                self.record_send_event(&target_event).await;
                 if let Err(e) = sender.try_send(target_event) {
                     match e {
                         TransportError::Full => warn!("Queue full for actor {}", target_id),
@@ -593,16 +599,6 @@ impl ChannelLoop {
         self.state_store.put_channel_state(self.id, state).await?;
         state.keep_window();
         Ok(())
-    }
-    async fn record_send_event(&self, event: &Envelope) {
-        let mut recorder = self.recorder.lock().await;
-        recorder.record_send(event).await;
-        drop(recorder);
-    }
-    async fn record_receive_event(&self, event: &Envelope) {
-        let mut recorder = self.recorder.lock().await;
-        recorder.record_receive(event).await;
-        drop(recorder);
     }
 }
 

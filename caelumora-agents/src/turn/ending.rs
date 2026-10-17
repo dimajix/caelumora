@@ -9,7 +9,6 @@ use super::Turn;
 use caelumora_runtime::actor::Answering;
 use crate::turn::tool_calls::ToolCalls;
 use caelumora_runtime::transport::EventSender;
-use caelumora_model::actor::ActorId;
 use caelumora_model::turn::TurnState;
 use caelumora_model::message::Message;
 use caelumora_model::tool::ToolCallState;
@@ -36,14 +35,13 @@ pub(crate) struct CommittedTurn {
 impl Turn<'_> {
     /// Takes the completed turn over and ends it (issues 06, 17, 47, 62, 65):
     ///
-    /// - its answer is what it said that is not internal, read from the
-    ///   history, where each message went as it was said with what it was
-    ///   produced from (`push_message`, issue 260) - not from the
-    ///   transcript, of which a compaction may have summarised a part
-    ///   (`History::said_in_turn`, issue 284);
+    /// - its answer is what it said that is not internal, kept with the turn
+    ///   as it was said (`TurnState::answer`, issue 417) - not read from the
+    ///   transcript, of which a compaction may have summarised a part (issue
+    ///   284);
     /// - records its end, `TurnFinished`;
     /// - applies the changes staged to its state in this channel, anchored at
-    ///   the turn's last message in the history;
+    ///   the last message of its transcript;
     /// - applies the changes staged to its own state to that state as it is
     ///   now. The answer is already out, so a state that cannot be stored
     ///   costs the turn's memory, not the turn: it is logged.
@@ -59,13 +57,12 @@ impl Turn<'_> {
         let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let turn_id = turn.work.turn_id;
-        // What it said is in the history already (issue 260), whatever a
-        // compaction left of it in the transcript (issue 284).
-        let final_messages = self.agent_channel_state.history.said_in_turn(ActorId::Agent(self.agent_id), turn_id).into_iter().filter(|m| !m.internal).collect();
-        // Every part is used up exactly once.
-        let TurnState { memory, notes, private_notes, command, .. } = turn;
-        let channel_state_changed = self.agent_channel_state.finish_turn(turn_id, ActorId::Agent(self.agent_id), notes, private_notes, command);
-        if let Err(e) = self.agent_state.apply(memory, self.agent_channel_state.history.last_message_id()).await {
+        // Every part is used up exactly once; what it said is its answer
+        // (issue 417), whatever a compaction left of it in the transcript
+        // (issue 284).
+        let TurnState { memory, notes, private_notes, answer: final_messages, .. } = turn;
+        let channel_state_changed = self.agent_channel_state.finish_turn(turn_id, notes, private_notes);
+        if let Err(e) = self.agent_state.apply(memory, self.agent_channel_state.last_message.unwrap_or_default()).await {
             warn!("Agent {}: the changes of its turn to its own state are lost: {:#}", self.agent_id, e);
         }
         CommittedTurn { final_messages, channel_state_changed, answering, abandoned_calls }
@@ -73,9 +70,10 @@ impl Turn<'_> {
 
     /// Gives the turn up after it failed or was stopped, for `reason`
     /// (issues 145, 258): what it said stays where it was said - in the
-    /// transcript and the history since it said it (issue 260) - followed by
-    /// its end, `TurnGivenUp`. Nothing it staged is applied. A step whose calls do not
-    /// all have their result yet is ended first (`abandon_tool_calls`).
+    /// transcript since it said it (issue 260), and in its channel's
+    /// history -, followed by its end, `TurnGivenUp`. Nothing it staged is
+    /// applied. A step whose calls do not all have their result yet is ended
+    /// first (`abandon_tool_calls`).
     ///
     /// What its tools did stays done, and its calls stand in its messages;
     /// the model is told why the turn ended where its end stands, and of a
@@ -88,7 +86,7 @@ impl Turn<'_> {
         let abandoned_calls = self.abandon_tool_calls(reason.cause(), output).await;
         let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
-        self.agent_channel_state.give_up_turn(turn.work.turn_id, ActorId::Agent(self.agent_id), reason);
+        self.agent_channel_state.give_up_turn(turn.work.turn_id, reason);
         (answering, abandoned_calls)
     }
 
@@ -118,7 +116,6 @@ impl Turn<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::history::testing::messages_of;
     use crate::notes::NoteKind;
     use crate::turn::tests::message;
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -151,8 +148,7 @@ mod tests {
     fn a_state_with(content: &str) -> AgentChannelState {
         let mut state = AgentChannelState::default();
         let message = Message { id: MessageId::new(), role: MessageRole::User, content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        state.transcript.push(message.clone());
-        state.history.push(message, None);
+        state.transcript.push(message);
         state
     }
 
@@ -164,7 +160,6 @@ mod tests {
 
         assert!(state.turn.is_none(), "the turn is over");
         assert_eq!(state.transcript.messages().len(), 3, "what it said is not unsaid (issue 258)");
-        assert_eq!(messages_of(&state.history).len(), 3, "in the history as well");
         assert_eq!(state.transcript.all_entries().count(), 4, "followed by its end, and nothing branches");
         let turns = given_up_turns(&state);
         assert_eq!(turns.len(), 1);

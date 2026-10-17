@@ -16,7 +16,7 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::history::{HistoryEntry, Reader};
 use caelumora_model::message::MessageId;
-use caelumora_model::store::history::{every, HistoryKey};
+use caelumora_model::store::history::every;
 use caelumora_model::store::StoreResult;
 use caelumora_model::work::TurnId;
 use caelumora_model::channel::{Channel, ChannelId, HistoryStart, Participant, moderation_components};
@@ -197,7 +197,7 @@ impl ChannelLoop {
     /// reads them: who joined or left among them (issue 408).
     pub async fn visible_entries(&self, participant: ActorId) -> Vec<HistoryEntry> {
         let Some(from) = self.visible_from(participant).await.expect("the history is read") else { return Vec::new() };
-        self.history_store.page(HistoryKey::Channel(self.id), &Reader::Participant(participant), from, None, 10_000, &every).await.expect("the history is read").items
+        self.history_store.page(self.id, &Reader::Participant(participant), from, None, 10_000, &every).await.expect("the history is read").items
     }
 
     /// Where `participant`'s view of the history begins (`Channel::history_start_of`).
@@ -247,11 +247,12 @@ impl ChannelLoop {
     }
 
     /// What `agent` saw in the channel, as a viewer who may read it is shown
-    /// it: its state, its history and its transcript as stored
-    /// (`AgentContextView`).
+    /// it: its state and its transcript as stored, and the channel's history
+    /// as it saw it, from where its view begins (`AgentContextView`).
     pub async fn agent_context(&self, agent: AgentId) -> AgentContextView {
         let state = self.stored_agent_channel_state(agent).await.expect("the state is read");
-        AgentContextView::of(agent, self.id, state, Arc::clone(&self.history_store), Arc::clone(self.runtime.transcript_store()))
+        let from = self.visible_from(ActorId::Agent(agent)).await.expect("the history is read");
+        AgentContextView::of(agent, self.id, state, from, Arc::clone(&self.history_store), Arc::clone(self.runtime.transcript_store()))
     }
 
     /// The runtime of this channel built again, as after a restart

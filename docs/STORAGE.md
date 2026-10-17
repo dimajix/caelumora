@@ -190,11 +190,12 @@ it is.
 The `StateStore` (in `caelumora-model`) stores the runtime state of channels and agents:
 
 *   **`ChannelState`**: the channel's history (see [Histories](#histories)).
-*   **`AgentChannelState`**: an agent in one channel, of either kind - processing state, history,
+*   **`AgentChannelState`**: an agent in one channel, of either kind - processing state,
     transcript, notes, prompt texts and tool sets, and the turn under way (see
-    [AGENT-TURN.md](AGENT-TURN.md)); its history, its transcript, its prompt texts and its tool sets
-    kept apart (see [Histories](#histories), [Transcripts](#transcripts),
-    [Prompt texts and tool sets](#prompt-texts-and-tool-sets)).
+    [AGENT-TURN.md](AGENT-TURN.md)); its transcript, its prompt texts and its tool sets kept apart
+    (see [Transcripts](#transcripts), [Prompt texts and tool sets](#prompt-texts-and-tool-sets)). It
+    keeps no history of its own: what it was offered and said is its channel's history, as it saw
+    it (issue 417).
     An external agent keeps instead what it keeps of the remote side: the remote conversation and
     the tasks not yet ended.
 *   **`AgentState`**: the agent itself, across its channels and sessions - so far its memory (see
@@ -233,16 +234,15 @@ dropped, and a journal that survived its snapshot replays onto it without effect
 
 ### Histories
 
-A channel's history and an agent's history in a channel (`History`, a chain of `HistoryEntry`) grow
-with the channel, without a bound, and are read almost only in pages. They are kept apart from their
-state's document (issue 379):
+A channel's history (`History`, a chain of `HistoryEntry`) grows with the channel, without a bound,
+and is read almost only in pages. It is the one record of what happened in the channel, for every
+participant (issue 417), and is kept apart from the channel state's document (issue 379):
 
 *   **The chain is the truth.** It is only appended to, and a change of a message is an entry after
-    it. A store keeps the chain whole, under the history's `HistoryKey` - a channel's, or an agent's
-    in a channel -, written by the put of the state that holds it: first the entries added since it
-    was last stored, then the document. Every entry is recorded with the actor whose envelope it was
-    and whom it went to (`Recorded { entry, sender, audience }`, issue 417): everybody, by the rule
-    every channel delivers by, or some alone.
+    it. A store keeps the chain whole, under the channel's id, written by the put of the channel's
+    state: first the entries added since it was last stored, then the document. Every entry is
+    recorded with the actor whose envelope it was and whom it went to (`Recorded { entry, sender,
+    audience }`, issue 417): everybody, by the rule every channel delivers by, or some alone.
 *   **The items are derived.** Beside the chain the store keeps the items as they stand - every
     message with every change since folded into it by the one rule of folding
     (`HistoryEntry::fold_into`), the marks of turns, steps, commands, activities, compactions and
@@ -263,11 +263,8 @@ state's document (issue 379):
     participant's view begins, what an agent saw -, the checks before a change, an actor catching
     up when it joins, the tool that reads another channel. A page is addressed by the position
     (`seq`) of its oldest item; a client passes it back without computing with it.
-*   **The holder keeps a window.** The channel loop and an agent's actor hold their history from
-    `history_from` on, a small part of the document: the last `WINDOW` (200) entries, and an agent
-    besides everything from the first message of its turn under way on, whatever it compacted - an
-    agent's history is informational, nothing that builds its model's input reads it (issue 387).
-    After every put they let go of what
+*   **The holder keeps a window.** The channel loop holds the history from `history_from` on, a
+    small part of the document: the last `WINDOW` (200) entries. After every put it lets go of what
     lies before (`keep_window`, `Chain::keep_from`), and a state is loaded from there. What a holder
     reads in memory reads from the end and stays within its window (see
     [AGENT-TURN.md](AGENT-TURN.md#what-is-held-in-memory)); a change of a message before the window

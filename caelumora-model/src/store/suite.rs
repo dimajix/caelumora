@@ -18,7 +18,7 @@ use crate::scope::{Scoped, Scope};
 use crate::security::{AclEntry, Secured, SecurityAttributes, SecurityContext};
 use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityKind, EntityStore, EntityStores, Journaled, NoEntity, StateStore, StoreError, Stored};
-use crate::store::history::{every, HistoryKey, HistoryStore};
+use crate::store::history::{every, HistoryStore};
 use crate::store::transcript::TranscriptStore;
 use crate::actor::EventContext;
 use crate::context::ModelProfile;
@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use crate::chain::Node;
 use crate::digest;
 use crate::transcript::TranscriptEntry;
-use crate::history::{Audience, History, HistoryEntry, HistoryPage, Reader, Recorded};
+use crate::history::{Audience, HistoryEntry, HistoryPage, Reader, Recorded};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
 use crate::removal::{Deletable, Removal};
 use crate::user::{ReadMark, User, UserChannelState, UserId, UserProfile};
@@ -623,26 +623,24 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
     store.put_agent_channel_state(agent, other_channel, &mut in_turn).await.expect("put agent channel state");
     assert!(store.get_agent_channel_state(agent, channel).await.expect("get agent channel state").turn.is_some(), "the stored state comes back");
 
-    // An external agent's: its history, its transcript and its remote part.
+    // An external agent's: its transcript and its remote part.
     let mut talking = AgentChannelState::default();
     talking.remote.conversation = Some(ConversationId("c-1".to_string()));
     let hello = Message { content: Some("hello".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-    let answer = Message { content: Some("hi".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-    talking.history.extend(vec![hello.clone(), answer]);
     talking.transcript.extend(vec![hello]);
     store.put_agent_channel_state(remote_agent, channel, &mut talking).await.expect("put agent channel state");
     store.put_agent_channel_state(remote_agent, other_channel, &mut talking).await.expect("put agent channel state");
     let stored = store.get_agent_channel_state(remote_agent, channel).await.expect("get");
     assert_eq!(stored.remote, talking.remote, "the stored state comes back");
     assert_eq!(serde_json::to_value(talking.changes()).expect("json"), serde_json::to_value(stored.changes()).expect("json"), "what was put is marked stored: nothing pending beyond what a loaded state has");
-    assert_eq!((stored.history.digest(), stored.transcript.digest()), (talking.history.digest(), talking.transcript.digest()), "with its history and its transcript");
+    assert_eq!(stored.transcript.digest(), talking.transcript.digest(), "with its transcript");
     // Stored in a second put, as what changed since the first (issue 376).
-    talking.history.extend(vec![Message { content: Some("and more".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }]);
+    talking.transcript.extend(vec![Message { content: Some("and more".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }]);
     store.put_agent_channel_state(remote_agent, channel, &mut talking).await.expect("put agent channel state");
     let stored = store.get_agent_channel_state(remote_agent, channel).await.expect("get");
-    let positions = |state: &AgentChannelState| state.history.all_entries().map(|node| (node.seq, node.digest)).collect::<Vec<_>>();
+    let positions = |state: &AgentChannelState| state.transcript.all_entries().map(|node| (node.seq, node.digest)).collect::<Vec<_>>();
     assert_eq!(positions(&stored), positions(&talking), "every entry where it was added");
-    assert_eq!(stored.history.end(), 3);
+    assert_eq!(stored.transcript.end(), 2);
 
     store.put_agent_state(agent, &mut AgentState::default()).await.expect("put agent state");
     store.get_agent_state(agent).await.expect("get agent state");
@@ -695,7 +693,7 @@ fn standing(item: &HistoryEntry) -> String {
 
 /// Every page of `key` from `from` on, read backwards from the end and put
 /// together, oldest first.
-async fn all_pages(histories: &dyn HistoryStore, key: HistoryKey, from: u64, limit: usize) -> Vec<String> {
+async fn all_pages(histories: &dyn HistoryStore, key: ChannelId, from: u64, limit: usize) -> Vec<String> {
     let mut pages = Vec::new();
     let mut before = None;
     loop {
@@ -713,24 +711,25 @@ async fn all_pages(histories: &dyn HistoryStore, key: HistoryKey, from: u64, lim
 /// The histories a store keeps with the states (issue 379): written by the
 /// puts, read as they stand, in pages, by message, by position; the items
 /// derived from the chain, after changes, after a fitting, after a rebuild;
-/// loaded from where a state holds its history; deleted with the states.
-/// More entries than a segment of the JSON store holds.
+/// loaded from where a state holds its history; read for a reader (issue
+/// 417); deleted with the channel's state. More entries than a segment of
+/// the JSON store holds.
 pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &dyn HistoryStore) {
     use crate::message::tests::{id, make_message};
     use crate::confidentiality::Confidentiality;
     let (channel, agent) = (ChannelId::new(), AgentId::new());
-    let key = HistoryKey::Channel(channel);
+    let key = channel;
     assert!(histories.page(key, &Reader::Channel, 0, None, 10, &every).await.unwrap().items.is_empty(), "no history yet");
     assert!(histories.said(key, &Reader::Channel, id(1)).await.unwrap().is_none());
 
     let mut state = ChannelState::new(channel);
     for n in 1..=300 {
-        state.history.push(make_message(id(n)), None);
+        state.history.push(make_message(id(n)));
     }
     states.put_channel_state(channel, &mut state).await.expect("put");
     assert!(state.history.changes().is_none(), "the history is marked stored");
     for n in 301..=600 {
-        state.history.push(make_message(id(n)), None);
+        state.history.push(make_message(id(n)));
     }
     state.history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
     assert!(state.history.revoke(id(300), Utc::now()));
@@ -766,7 +765,7 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     let loaded = states.get_channel_state(channel).await.expect("get");
     assert_eq!((loaded.history.base(), loaded.history.end(), loaded.history.digest()), (590, state.history.end(), state.history.digest()), "from where the state holds it");
     let mut going_on = loaded;
-    going_on.history.push(make_message(id(601)), None);
+    going_on.history.push(make_message(id(601)));
     states.put_channel_state(channel, &mut going_on).await.expect("appended to what was loaded in part");
     assert_eq!(histories.said(key, &Reader::Channel, id(601)).await.unwrap().map(|(at, _)| at), Some(state.history.end()));
 
@@ -777,8 +776,8 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     let hidden = ToolCall { id: Some("1".to_string()), function_name: "look".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
     let answer = Message { sender_id: speaker, role: MessageRole::Assistant, content: Some("found it".to_string()), tool_calls: vec![hidden], ..make_message(id(602)) };
     let mut more = states.get_channel_state(channel).await.expect("get");
-    more.history.enter(Recorded::new(HistoryEntry::Said { message: answer, context: None }, speaker, Audience::Everybody));
-    more.history.enter(Recorded::new(HistoryEntry::Said { message: Message { sender_id: ActorId::System, ..make_message(id(603)) }, context: None }, ActorId::System, Audience::Only(vec![user])));
+    more.history.enter(Recorded::new(HistoryEntry::Said { message: answer }, speaker, Audience::Everybody));
+    more.history.enter(Recorded::new(HistoryEntry::Said { message: Message { sender_id: ActorId::System, ..make_message(id(603)) } }, ActorId::System, Audience::Only(vec![user])));
     states.put_channel_state(channel, &mut more).await.expect("put");
     let calls = |said: Option<(u64, HistoryEntry)>| said.and_then(|(_, item)| item.said().map(|m| m.tool_calls.len()));
     assert_eq!(calls(histories.said(key, &Reader::Participant(speaker), id(602)).await.unwrap()), Some(1), "its sender reads it in full");
@@ -793,22 +792,8 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     let seen = histories.entries(key, &Reader::Participant(other), 600).await.unwrap();
     assert_eq!(seen.iter().filter_map(|node| node.entry.said()).map(|m| m.id).collect::<Vec<_>>(), [id(601), id(602)], "and so is the chain");
 
-    let mut agents = AgentChannelState::default();
-    agents.history.push(make_message(id(1)), None);
-    states.put_agent_channel_state(agent, channel, &mut agents).await.expect("put");
-    let agents_key = HistoryKey::Agent(agent, channel);
-    assert_eq!(all_pages(histories, agents_key, 0, 10).await.len(), 1, "an agent's history apart from its channel's");
-    assert_eq!(states.get_agent_channel_state(agent, channel).await.unwrap().history.digest(), agents.history.digest());
-
     states.delete_channel_state(channel).await.expect("delete");
     assert!(histories.page(key, &Reader::Channel, 0, None, 10, &every).await.unwrap().items.is_empty(), "the channel's history is gone with its state");
-    assert!(histories.page(agents_key, &Reader::Channel, 0, None, 10, &every).await.unwrap().items.is_empty(), "and its agents'");
-    states.put_agent_channel_state(agent, channel, &mut AgentChannelState { history: History::default(), ..agents.clone() }).await.expect("put");
-    let mut again = AgentChannelState::default();
-    again.history.push(make_message(id(2)), None);
-    states.put_agent_channel_state(agent, ChannelId::new(), &mut again).await.expect("put");
-    states.delete_agent_state(agent).await.expect("delete");
-    assert!(histories.page(agents_key, &Reader::Channel, 0, None, 10, &every).await.unwrap().items.is_empty(), "an agent's histories go with it");
 }
 
 /// A transcript kept apart from its state (issue 380): written by the put,

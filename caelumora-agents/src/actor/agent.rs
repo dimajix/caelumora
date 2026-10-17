@@ -300,9 +300,9 @@ impl AgentActor {
     /// can be answered again, its answer being gone already; another turn
     /// is over (`Ended`); a message can be if it is the agent's last answer
     /// (`AgentChannelState::retried`). If it can, the agent says so with
-    /// `RetryAccepted`, takes back what the retry replaces - in its own
-    /// state, and announced with `MessageRevoked` for what its history
-    /// holds, the rest being internal steps nobody else saw - and returns
+    /// `RetryAccepted`, takes back what the retry replaces - in its
+    /// transcript, and announced with `MessageRevoked`, since its channel's
+    /// history holds every message it said (issue 417) - and returns
     /// `true`: a turn is to begin, given the transcript as it stands.
     /// Otherwise it says why with `RetryRejected`.
     async fn retry(&self, state: &mut AgentChannelState, request: &Envelope, given_up_for: Option<TurnId>, output: &dyn EventSender) -> Result<bool> {
@@ -325,12 +325,8 @@ impl AgentActor {
         answering.send(ActorEvent::RetryAccepted { target }, output).await?;
         let at = Utc::now();
         for id in taken_back {
-            let said = state.history.message(id).is_some();
-            state.history.revoke(id, at);
             state.transcript.revoke(id, at);
-            if said {
-                answering.send(ActorEvent::MessageRevoked { message: id, at }, output).await?;
-            }
+            answering.send(ActorEvent::MessageRevoked { message: id, at }, output).await?;
         }
         Ok(true)
     }
@@ -866,8 +862,10 @@ impl Actor for AgentActor {
         // it so.
         let mut given_up_for: Option<TurnId> = None;
         loop {
-            // Every step announces what the steps before moved it to.
+            // Every step announces what the steps before moved it to, and
+            // tells its channel what they recorded of what it saw.
             self.body.announce_state(&*output).await;
+            self.body.tell_recorded(&mut state, &*output).await;
             let current_state = self.body.control.state();
 
             // Idle/WaitingForUser/Sleep may consume no event before the actor's

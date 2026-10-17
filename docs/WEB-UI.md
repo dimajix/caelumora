@@ -437,10 +437,11 @@ wording holds for both kinds of agent, since the REST API does not tell them apa
 changes, so what was fetched once is kept. See
 [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw).
 
-The history panel shows all that was offered to the agent in the channel and what it said itself,
-which may differ from what the channel shows. What its perceive processors did not pass on is
-greyed out and marked "not passed on"; a message whose context is recorded opens it in the context
-panel. Where a turn was given up, a command carried out or the context compacted, it is marked where
-it happened, with why, on whose word, and when; what replaced the older messages in a compaction
-follows its mark. It is read in pages like the chat; when the history grew, the pages shown are read
-again from the end, back to the oldest shown, so that the messages stand as they do now.
+The history panel shows the channel's history as the agent saw it (issue 417): what was offered to
+it and what it said itself, in full, which may differ from what the channel shows. What its
+perceive processors did not pass on is greyed out and marked "not passed on"; a message whose
+context is recorded opens it in the context panel. Where a turn was given up, a command carried
+out or the context compacted, it is marked where it happened, with why, on whose word, and when;
+what replaced the older messages in a compaction follows its mark. It is read in pages like the
+chat; when the history grew, the pages shown are read again from the end, back to the oldest shown,
+so that the messages stand as they do now.

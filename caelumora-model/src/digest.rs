@@ -327,7 +327,13 @@ pub fn history_chain(previous: Option<&Digest>, recorded: &Recorded) -> Digest {
 /// history's digest (`history_chain`) that the entry itself contributes.
 fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
     match entry {
-        HistoryEntry::Said { message, .. } => message_chain(previous, message),
+        HistoryEntry::Said { message } => message_chain(previous, message),
+        HistoryEntry::Given { message } => {
+            let mut e = Encoder::new("caelumora.history-given.v1");
+            e.opt_digest(previous);
+            e.opt_digest(Some(&message_chain(None, message)));
+            e.finish()
+        }
         HistoryEntry::Modified { message } => message_modified(previous, message),
         HistoryEntry::Revoked { message, .. } => message_revoked(previous, *message),
         HistoryEntry::Reclassified { message, classification } => message_reclassified(previous, *message, classification),

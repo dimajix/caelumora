@@ -2,7 +2,8 @@
 //! 234), the same for both kinds of agent - the `AgentActor` and the
 //! `ExternalAgentActor`: what others said, as it passes the agent's perceive
 //! processors, a message modified or taken back since, and what it missed
-//! of its channel while it was not there. Its body's (`AgentBody`).
+//! of its channel while it was not there - into its transcript; what it was
+//! offered is its channel's history (issue 417). Its body's (`AgentBody`).
 
 use super::body::AgentBody;
 use crate::message::apply_stage_processors;
@@ -19,20 +20,21 @@ use tracing::{debug, trace, warn, Instrument};
 
 impl AgentBody {
     /// Takes what others said, `heard`, into the agent's `state` (issues
-    /// 196, 206, 224), the same for both kinds of agent and every way in: all
-    /// of it into its history, as it was said; what it hears of it -
-    /// `Message::as_heard` - as it passes its perceive processors, into its
-    /// transcript. A failing stage is logged and leaves the transcript as it
-    /// was: what was heard stays in the history, and is not offered again.
+    /// 196, 206, 224), the same for both kinds of agent and every way in:
+    /// what it hears of it - `Message::as_heard` - as it passes its perceive
+    /// processors, into its transcript. A failing stage is logged and leaves
+    /// the transcript as it was: what was heard stays in the channel's
+    /// history, and is not offered again.
     ///
     /// What is heard is never the agent's own: the channel delivers nothing
     /// back to its sender (`ChannelLoop::route_event_impl`), every message an
     /// envelope carries is its sender's (`OriginEventSender`), and what an
     /// agent catches up with is rid of its own first (`catch_up`).
     async fn perceive(&self, state: &mut AgentChannelState, heard: Vec<Message>) {
-        if heard.is_empty() {
+        let Some(last) = heard.last() else {
             return;
-        }
+        };
+        state.last_message = Some(last.id);
         let offered = heard.iter().filter_map(Message::as_heard).collect();
         let perceived = match apply_stage_processors(&self.perceive_in_processors, offered, &self.security_context()).await {
             Ok(perceived) => perceived,
@@ -41,16 +43,15 @@ impl AgentBody {
                 Vec::new()
             }
         };
-        state.perceive(heard, perceived);
+        state.perceive(perceived);
     }
 
     /// Takes in that a message of another reads as `modified` from now on
     /// (issue 234), the same for both kinds of agent - never its own, as
-    /// nothing heard is (`perceive`): as it was modified into its history, if
-    /// that holds the message; as the agent hears it - `Message::as_heard`,
-    /// through its perceive processors, as everything heard - into its
-    /// transcript, if the message is on its active path, as what its
-    /// processors made of it under the message's id. Where nothing is left
+    /// nothing heard is (`perceive`): as the agent hears it -
+    /// `Message::as_heard`, through its perceive processors, as everything
+    /// heard - into its transcript, if the message is on its active path,
+    /// as what its processors made of it under the message's id. Where nothing is left
     /// under it, or the stage fails, the message is taken back there: the
     /// version given before does not stand any more. Returns the change the
     /// transcript did not take, as the agent hears it - a modification of
@@ -67,7 +68,6 @@ impl AgentBody {
                 }
             },
         };
-        state.history.modify(modified);
         let taken = match &perceived {
             Some(perceived) => state.transcript.modify(perceived.clone()),
             None => state.transcript.revoke(id, at),
@@ -86,16 +86,14 @@ impl AgentBody {
     /// already behind it, in order. What others said is perceived as it comes
     /// (`perceive`), and so is a message
     /// modified or taken back since (issue 234); a reclassification is recorded
-    /// as it is (issue 239), in the history and the transcript where they hold
-    /// the message, the transcript on its active path, and so is who joined
-    /// or left (issue 408). Of the requests to respond the last is returned -
+    /// as it is (issue 239), in the transcript where it holds the message on
+    /// its active path, and so is who joined or left (issue 408). Of the requests to respond the last is returned -
     /// one answer to the conversation as it stands, in the authority of the
     /// last who asked - and the others are dropped, as is
     /// every other event but the requests to answer again (issue 234), which
     /// are returned in order, each to be answered. A modification or revocation
-    /// is recorded in the history and in the transcript where they hold the
-    /// message - the transcript on its active path; one the transcript did not
-    /// take is handed over (`AgentBody::hand_over`) where it came (issue 236) - so in order
+    /// is recorded in the transcript where it holds the message on its active
+    /// path; one it did not take is handed over (`AgentBody::hand_over`) where it came (issue 236) - so in order
     /// with what was said - as the agent hears it, a modification of which
     /// nothing passes as taken back: for an actor that gave its transcript
     /// elsewhere to tell. A command it is asked to carry out (issue 269) ends
@@ -127,14 +125,12 @@ impl AgentBody {
                         None
                     }
                     ActorEvent::MessageRevoked { message, at } => {
-                        state.history.revoke(message, at);
                         if !state.transcript.revoke(message, at) {
                             (self.hand_over)(&self.runtime, state, TranscriptEntry::Revoked { message, at }).await;
                         }
                         None
                     }
                     ActorEvent::MessageReclassified { message, classification } => {
-                        state.history.reclassify(message, classification.clone());
                         state.transcript.reclassify(message, classification);
                         None
                     }
@@ -163,18 +159,17 @@ impl AgentBody {
     /// Takes in what an actor of an agent missed of its channel as what it
     /// hears (issues 190, 196, 206): the messages said in the channel from
     /// the position `from` on - where the part of the channel's history it
-    /// may see begins - and after the last message its history has that the
-    /// channel's has, as they stand, through `perceive`, and who joined or
-    /// left meanwhile, where it happened (issue 408), and stores its state
-    /// with them. Read from the store (issue 379): the agent's history from
-    /// its end backwards until a message of it is found in the channel's,
-    /// then the channel's entries after it. The one way in that does not
+    /// may see begins - and after the last message it took in
+    /// (`AgentChannelState::last_message`), as they stand and as it may see
+    /// them (issue 417), through `perceive`, and who joined or left
+    /// meanwhile, where it happened (issue 408), and stores its state with
+    /// them. Read from the store (issue 379). The one way in that does not
     /// pass the channel's routing, so the agent's own messages are left out
-    /// here: they are in its history already, unless its state was lost, and
-    /// then they are not what it heard. Older messages that a wider view
+    /// here: they are in its transcript already, unless its state was lost,
+    /// and then they are not what it heard. Older messages that a wider view
     /// grants on joining again would land after its own later answers; they
-    /// are left out, and its history stays in the order things were said.
-    /// Called once, before its actor runs.
+    /// are left out, and its transcript stays in the order things were
+    /// said. Called once, before its actor runs.
     ///
     /// # Errors
     /// If the channel's history cannot be read, or its state not be stored.
@@ -182,10 +177,9 @@ impl AgentBody {
         let mut state = self.state.lock().await;
         let own = self.id();
         let mut after = from;
-        for message in state.history.all_entries().rev().filter_map(|node| node.entry.entry.said()) {
-            if let Some(at) = self.runtime.channel_position_of(message.id).await? {
+        if let Some(last) = state.last_message {
+            if let Some(at) = self.runtime.channel_position_of(last).await? {
                 after = after.max(at + 1);
-                break;
             }
         }
         let entries = self.runtime.channel_entries(after).await?;
@@ -195,13 +189,16 @@ impl AgentBody {
         // (issue 408).
         let mut said = fold(&entries).into_iter().peekable();
         let mut heard = Vec::new();
-        let mut missed = false;
+        let (mut missed, mut taken) = (false, state.last_message);
         for node in &entries {
             if matches!(node.entry, HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. }) {
                 self.perceive(&mut state, mem::take(&mut heard)).await;
                 state.note_announced(node.entry.clone());
                 missed = true;
             } else if let Some((_, message)) = said.next_if(|(said, _)| said.seq == node.seq) {
+                // Taken in, also what it does not hear, so that it is not
+                // offered again.
+                taken = Some(message.id);
                 if message.sender_id != own && message.is_heard() {
                     heard.push(message);
                     missed = true;
@@ -212,6 +209,7 @@ impl AgentBody {
             return Ok(());
         }
         self.perceive(&mut state, heard).await;
+        state.last_message = taken;
         self.runtime.store_channel_state(&mut state).await
     }
 }
@@ -239,7 +237,6 @@ impl TakenIn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::history::testing::messages_of;
     use caelumora_runtime::component::ComponentImpl;
     use crate::message::testing::Without;
     use crate::message::PerceiveInProcessor;
@@ -270,7 +267,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn all_it_hears_is_kept_and_what_others_said_with_text_is_given_once() {
+    async fn what_others_said_with_text_is_given_once() {
         let alice = ActorId::User(UserId::new());
         let of_alice = |text: &str| Message { id: MessageId::new(), sender_id: alice, sender_name: "alice".to_string(), ..said(text) };
         let (first, second) = (of_alice("hello"), of_alice("how are you?"));
@@ -284,7 +281,6 @@ mod tests {
         assert_eq!(ids(state.transcript.messages()), vec![first.id], "never sent anything: what others said");
         state.transcript.start_anew();
         body.perceive(&mut state, vec![empty.clone(), step.clone(), second.clone()]).await;
-        assert_eq!(ids(messages_of(&state.history)), vec![first.id, empty.id, step.id, second.id], "all it heard is kept");
         assert_eq!(ids(state.transcript.messages()), vec![second.id], "after what was sent, with text");
         state.transcript.start_anew();
         assert!(state.transcript.messages().is_empty(), "nothing new");
@@ -340,14 +336,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_change_is_recorded_where_the_chains_hold_the_message_and_handed_over_where_the_transcript_does_not() {
+    async fn a_change_is_recorded_where_the_transcript_holds_the_message_and_handed_over_where_it_does_not() {
         let (tx, rx) = tokio::sync::mpsc::channel(8);
         let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
         let mut state = AgentChannelState::default();
         let (given, kept) = (Message { id: MessageId::new(), ..said("given") }, Message { id: MessageId::new(), ..said("kept") });
-        state.perceive(vec![given.clone()], vec![given.clone()]);
+        state.perceive(vec![given.clone()]);
         state.transcript.start_anew();
-        state.perceive(vec![kept.clone()], vec![kept.clone()]);
+        state.perceive(vec![kept.clone()]);
         let modified = |message: &Message, text: &str| envelope(ActorEvent::MessageModified(Message { content: Some(text.to_string()), ..message.clone() }));
         let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(Message { id: MessageId::new(), ..said(text) }));
         // Writes down what it is handed, where it is handed it.
@@ -370,24 +366,25 @@ mod tests {
 
         assert_eq!(texts(&state.transcript.messages()), ["kept, corrected", "modified: given, corrected", "and then", "taken back", "taken back"],
             "on the active path the transcript takes it; off it, it is handed over where it came - also what the agent never held: whether that is anything to tell is the actor's to see");
-        assert_eq!(state.history.message(kept.id).and_then(|m| m.content).as_deref(), Some("kept, corrected"), "the history holds both as they stand");
-        assert!(state.history.message(given.id).is_some_and(|m| m.revoked.is_some()));
 
         // A modification of which nothing passes the processors takes the
-        // message back in the transcript; the history keeps what was said.
+        // message back in the transcript; the channel's history keeps what
+        // was said (issue 417).
         let stages: Vec<ComponentImpl<dyn PerceiveInProcessor>> = vec![ComponentImpl { id: "no-spam".to_string(), fail_policy: ComponentFailPolicy::FailClosed, facet: Arc::new(Without(Some("spam"))) }];
         AgentBody::detached(stages).handing_over(noted).take_in(&mut state, modified(&kept, "kept, spam"), &mut rx).await;
         assert_eq!(texts(&state.transcript.messages()), ["modified: given, corrected", "and then", "taken back", "taken back"], "no longer given, and nothing handed over");
-        assert_eq!(state.history.message(kept.id).and_then(|m| m.content).as_deref(), Some("kept, spam"));
 
-        // A reclassification is recorded where the chains hold the message,
-        // and handed over nowhere: a remote agent knows no labels.
+        // A reclassification is recorded where the transcript holds the
+        // message, and handed over nowhere: a remote agent knows no labels.
         let earlier = Message { id: MessageId::new(), ..said("earlier") };
-        state.perceive(vec![earlier.clone()], vec![earlier.clone()]);
+        state.perceive(vec![earlier.clone()]);
         state.transcript.start_anew();
         let (public, before) = (Classification::PUBLIC, state.transcript.all_entries().len());
         noting.take_in(&mut state, envelope(ActorEvent::MessageReclassified { message: earlier.id, classification: public.clone() }), &mut rx).await;
-        assert_eq!(state.history.message(earlier.id).map(|m| m.classification), Some(public), "in the history");
         assert_eq!(state.transcript.all_entries().len(), before, "off the transcript's path: nothing recorded, nothing handed over");
+        let mut on_path = AgentChannelState::default();
+        on_path.perceive(vec![earlier.clone()]);
+        noting.take_in(&mut on_path, envelope(ActorEvent::MessageReclassified { message: earlier.id, classification: public.clone() }), &mut rx).await;
+        assert_eq!(on_path.transcript.messages().first().map(|m| m.classification.clone()), Some(public), "on it, recorded");
     }
 }

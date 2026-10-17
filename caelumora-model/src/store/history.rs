@@ -7,7 +7,6 @@
 //! is given what of each entry they may see (`Recorded::as_seen_by`, issue
 //! 417).
 
-use crate::agent::AgentId;
 use crate::chain::Node;
 use crate::channel::ChannelId;
 use crate::digest::Digest;
@@ -17,38 +16,7 @@ use crate::store::StoreResult;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fmt::{self, Debug, Display};
-
-/// Whose history: a channel's, or an agent's in a channel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum HistoryKey {
-    Channel(ChannelId),
-    Agent(AgentId, ChannelId),
-}
-
-impl HistoryKey {
-    /// Whether it is a history of the channel `channel`: the channel's own,
-    /// or that of an agent in it.
-    pub fn in_channel(&self, channel: ChannelId) -> bool {
-        match self {
-            HistoryKey::Channel(of) | HistoryKey::Agent(_, of) => *of == channel,
-        }
-    }
-
-    /// Whether it is a history of the agent `agent`, in whichever channel.
-    pub fn of_agent(&self, agent: AgentId) -> bool {
-        matches!(self, HistoryKey::Agent(of, _) if *of == agent)
-    }
-}
-
-impl Display for HistoryKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            HistoryKey::Channel(channel) => write!(f, "the history of channel {channel}"),
-            HistoryKey::Agent(agent, channel) => write!(f, "the history of agent {agent} in channel {channel}"),
-        }
-    }
-}
+use std::fmt::Debug;
 
 /// Which items a page holds (`HistoryStore::page`): a viewer reading a
 /// channel entry by entry keeps what was released to it, a search what it
@@ -60,10 +28,10 @@ pub fn every(_: &HistoryEntry) -> bool {
     true
 }
 
-/// The read side of the histories a store keeps (issue 379). A history is
-/// written with the state that holds it (`StateStore::put_channel_state`,
-/// `put_agent_channel_state`); what is read here is as fresh as what was
-/// put. Positions are those of the chain (`Node::seq`); a history no store
+/// The read side of the histories a store keeps (issue 379), one per channel
+/// (issue 417). A history is written with the state that holds it
+/// (`StateStore::put_channel_state`); what is read here is as fresh as what
+/// was put. Positions are those of the chain (`Node::seq`); a history no store
 /// holds reads as empty.
 #[async_trait]
 pub trait HistoryStore: Debug + Send + Sync {
@@ -74,23 +42,23 @@ pub trait HistoryStore: Debug + Send + Sync {
     /// an older item from `from` on is kept, and the digest of the history
     /// as it was read. Read backwards in the cost of the page and of what it
     /// passes over.
-    async fn page(&self, key: HistoryKey, reader: &Reader, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage>;
+    async fn page(&self, channel: ChannelId, reader: &Reader, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage>;
 
     /// The item that said the message `id` - `HistoryEntry::Said`, its
     /// message as it stands, with what it was produced from - and its
     /// position, as `reader` may see it; `None` if it was never said in the
     /// history, or not to them.
-    async fn said(&self, key: HistoryKey, reader: &Reader, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>>;
+    async fn said(&self, channel: ChannelId, reader: &Reader, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>>;
 
     /// The entries of the chain from the position `from` on that `reader`
     /// may see, as they may see them, in the order they were added: what was
     /// added since an entry before `from` was. Each keeps its node's
     /// position and digest, the chain's.
-    async fn entries(&self, key: HistoryKey, reader: &Reader, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>>;
+    async fn entries(&self, channel: ChannelId, reader: &Reader, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>>;
 
     /// Derives the items anew from the chain: what repairs them, and what
     /// shows that they are derived.
-    async fn rebuild(&self, key: HistoryKey) -> StoreResult<()>;
+    async fn rebuild(&self, channel: ChannelId) -> StoreResult<()>;
 }
 
 /// Items of a history as they stand, each at the position of the entry that
@@ -243,10 +211,10 @@ mod tests {
     #[test]
     fn items_derived_entry_by_entry_are_the_history_folded() {
         let mut history = History::default();
-        history.push(make_message(id(1)), None);
-        history.push(make_message(id(2)), None);
+        history.push(make_message(id(1)));
+        history.push(make_message(id(2)));
         history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
-        history.push(make_message(id(3)), None);
+        history.push(make_message(id(3)));
         assert!(history.revoke(id(2), Utc::now()));
         history.fit_into(&Classification::CHANNEL_DEFAULT);
         assert!(history.reclassify(id(3), Classification::CHANNEL_DEFAULT));
@@ -271,7 +239,7 @@ mod tests {
 
     #[test]
     fn a_page_is_cut_from_the_newest_items() {
-        let newest = |n: u64| (0..n).rev().map(|seq| (seq, HistoryEntry::Said { message: make_message(id(seq as u128 + 1)), context: None }));
+        let newest = |n: u64| (0..n).rev().map(|seq| (seq, HistoryEntry::Said { message: make_message(id(seq as u128 + 1)) }));
         let page = page_of(newest(5), 0, 2, None);
         assert_eq!((page.items.iter().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(1).unwrap().1), label(&newest(5).next().unwrap().1)], Some(3)));
         let page = page_of(newest(5), 3, 5, None);

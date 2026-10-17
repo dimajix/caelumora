@@ -452,12 +452,13 @@ their view begins (issue 379): over REST, in the snapshot, for `read_history` (s
 [MEMORY.md](MEMORY.md)) and for what a joining actor is given.
 
 *   A **joining actor** is given the position where its view begins and takes in what was said
-    from there as what it hears, read from the store: an agent keeps all of it in its history and
-    what passes its perceive processors in its transcript. Users and approvers keep nothing.
-*   A **rejoining actor** keeps only what was said after the last message it has. The history is
-    only ever appended to, so older messages that a wider grant makes visible would land after the
-    agent's own later answers; the agent reaches them through `read_history`, and what it keeps
-    stays in the order things were said.
+    from there as what it hears, read from the store as the participant it is: an agent keeps what
+    passes its perceive processors in its transcript. Users and approvers keep nothing.
+*   A **rejoining actor** takes in only what was said after the last message it took in, which an
+    agent's state remembers (`AgentChannelState::last_message`). The transcript is only ever
+    appended to, so older messages
+    that a wider grant makes visible would land after the agent's own later answers; the agent
+    reaches them through `read_history`, and what it keeps stays in the order things were said.
 
 Notes stay visible to everyone in the channel: they are written on paper, not part of the
 conversation.
@@ -638,9 +639,9 @@ An **actor** is anything that sends and receives events in a channel.
 ### External agents
 
 An external agent has no turn and no tools here. It hears what others say and takes it in as an
-agent does: all of it into its history, what it hears through its perceive processors into its
-transcript. When it is asked to respond - once for all it took in together, in the contexts of the
-last request - it gives its remote agent:
+agent does: what it hears through its perceive processors into its transcript. When it is asked to
+respond - once for all it took in together, in the contexts of the last request - it gives its
+remote agent:
 
 *   **the prompt parts** its `ContextProvider` assembles, as an agent's does for a turn - by default
     each part on its own, in the order of the configuration. The remote agent keeps its
@@ -831,8 +832,8 @@ only through a `ref` to preconfigured components, while a template may write it.
 
 What the channel delivers is what its rule and the moderator's `Routing` say, and nothing else; it
 has no broadcast of its own. Nothing goes back to the actor that sent an event but why it was
-refused: an agent takes its own messages into its history and transcript itself, and a user's actor
-shows what its user says itself.
+refused: an agent takes its own messages into its transcript itself, and a user's actor shows what
+its user says itself.
 
 ### Chains between agents
 

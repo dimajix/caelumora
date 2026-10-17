@@ -674,7 +674,6 @@ fn participant_notice(entry: &TranscriptEntry, digest: &Digest, agent: ActorId, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::history::testing::recorded_context;
     use crate::agent::AgentId;
     use crate::digest::prompt;
     use crate::message::{MessageId, TokenUsage};
@@ -912,11 +911,9 @@ mod tests {
         // Instructions of the runtime among the turn's messages: one before
         // them, one after the first.
         place(&mut state, MessageRole::User, "step 1");
-        let first = own("first");
-        state.said(first.clone());
+        let first = state.said(own("first"));
         place(&mut state, MessageRole::User, "step 2");
-        let second = own("second");
-        state.said(second.clone());
+        let second = state.said(own("second"));
 
         let (next, turn_id) = state.turn.as_ref().map(|t| (t.work.context.clone(), t.work.turn_id)).unwrap();
         let current = ContextResolver::of(&state).resolve(&next, turn_id, agent).expect("the transcript holds the turn's messages");
@@ -924,12 +921,12 @@ mod tests {
         let reasoning = current.items.iter().map(|item| matches!(item, ContextItem::Conversation { message } if message.reasoning.is_some())).collect::<Vec<_>>();
         assert_eq!(reasoning, [false, false, false, true, false, true], "the turn's own reasoning, not an earlier turn's");
 
-        // What each message was produced from, recorded with it as it was
-        // said (issue 260), resolves to what the model was given for it -
+        // What each message was produced from, sent with it as it was said
+        // (issues 260, 417), resolves to what the model was given for it -
         // while the turn is under way and once it ended.
         let seen = |state: &AgentChannelState, message: &Message| {
-            let (context, turn) = recorded_context(&state.history, message.id).expect("recorded as it was said");
-            contents(&ContextResolver::of(state).resolve(&context, turn, agent).expect("everything it names is here").items)
+            let context = message.produced_from.as_ref().expect("sent with what it was produced from");
+            contents(&ContextResolver::of(state).resolve(context, turn_id, agent).expect("everything it names is here").items)
         };
         assert_eq!(seen(&state, &second), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
         assert_eq!(state.transcript.digest(), next.transcript, "the turn's context names the transcript's head");
@@ -956,7 +953,7 @@ mod tests {
         state.said(call(agent, 100, 10, Some(4096)));
         // Heard: it carries its sender's tokens.
         let heard = call(ActorId::Agent(AgentId::new()), 5000, 500, Some(8192));
-        state.perceive(vec![heard.clone()], vec![heard]);
+        state.perceive(vec![heard]);
         let before_given = state.transcript.digest();
         state.said(call(agent, 200, 20, Some(4096)));
         state.transcript.record(TranscriptEntry::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Left, at: Utc::now() });

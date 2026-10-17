@@ -500,3 +500,27 @@ Each step is reviewable on its own; 1-2 change no behaviour.
   agent whose reasoning is its owner's: not to bob live, on a page or by its id, not to an agent
   that joins later; the record holds it for the agent. `produced_from` moved to step 4, where the
   context of a message is first read from the channel.
+- 2026-10-17: Step 4 done. `AgentChannelState` keeps no history; `HistoryKey` is gone, the
+  `HistoryStore` is keyed by `ChannelId`; both stores keep no agents' histories; the `Recorder`
+  is removed. An agent's own message carries what it was produced from (`Message::produced_from`,
+  set on what `AgentChannelState::said` returns for sending, not on what the transcript keeps,
+  withheld by `Message::published`); `HistoryEntry::Said` lost its `context`. What an agent was
+  given and its compactions are told to the channel after every step (`AgentChannelState::to_tell`,
+  sent by `AgentBody::tell_recorded`, and before a command's answer) as `MessageGiven` and
+  `ContextCompacted`, admitted only from the agent in its own name - what it was given only if its
+  classification may flow in -, recorded as gone to nobody. `AgentContextView` reads the channel's
+  history as the agent, from where its view begins. Four things differ from the design above:
+  - **The turn's answer is kept with the turn** (`TurnState::answer`), not read from the transcript
+    across its branches: the agent holds only the transcript's active branch, so a compaction in
+    the middle of a turn leaves the turn's earlier messages nowhere it could read them.
+  - **What an agent was given is an entry of its own** (`HistoryEntry::Given`), not `Said`: as a
+    message said, it would be found by its id, and its sender - a skill's issuer - could modify or
+    revoke it over REST. `Given` is no message said: found by no id, changed by nobody, read only
+    by whom may read what the agent saw; REST shows it in an agent's history as before.
+  - **`MessageGiven` carries no knowledge**: the channel's record does not need it; the turn
+    records the knowledge it read in its context, as before.
+  - **An agent remembers the last message it took in** (`AgentChannelState::last_message`), heard,
+    said or given: `catch_up` goes on after it, and a turn's changes to the agent's state are
+    anchored at it. The transcript cannot tell: its active branch begins anew with every call of
+    an external agent and every compaction, so an agent joining again was given what it had
+    heard before.

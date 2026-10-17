@@ -2,6 +2,7 @@ use crate::agent::{AgentId, RetryRefused};
 use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApproverId};
 use crate::channel::ChannelId;
 use crate::confidentiality::Classification;
+use crate::digest::Digest;
 use crate::history::HistoryEntry;
 use crate::message::{Message, MessageId};
 use crate::question::{QuestionId, QuestionRequest, Response};
@@ -366,6 +367,19 @@ pub enum ActorEvent {
         target: RetryTarget,
         reason: RetryRefused,
     },
+    /// The agent was given `message` to read (issues 22, 417) - a skill
+    /// loaded for it, what a compaction gave again -, as its transcript
+    /// records it: sent by the agent alone, so that its channel's history
+    /// holds what it read where it read it. The message is the agent's
+    /// record, not one it said - its sender is whoever gave it -, so it is
+    /// no message the event carries (`messages`). Delivered to nobody.
+    MessageGiven { message: Message },
+    /// The agent replaced its context `from` by `to` in its turn `turn_id`
+    /// (issues 16, 417): what its transcript records, told to its channel's
+    /// history; what replaced the older messages follows as what it was
+    /// given (`MessageGiven`). Delivered to nobody - the users are told what
+    /// came of it (`ActivityFinished`).
+    ContextCompacted { turn_id: TurnId, from: Digest, to: Digest },
     /// The channel did not let in an event of the receiver's own (issue
     /// 304): `rejected` names its kind (`ActorEvent::kind`), `message` the
     /// message it was or was about, if any, and `reason` is one of a known
@@ -417,6 +431,8 @@ impl ActorEvent {
                 turn_id,
                 messages: messages.iter().filter_map(Message::published).collect(),
             }),
+            // The agent's record of what it read and did to its context.
+            ActorEvent::MessageGiven { .. } | ActorEvent::ContextCompacted { .. } => None,
             other => Some(other),
         }
     }
@@ -500,6 +516,8 @@ impl ActorEvent {
             ActorEvent::RetryAccepted { .. } => "RetryAccepted",
             ActorEvent::RetryRejected { .. } => "RetryRejected",
             ActorEvent::MessageRejected { .. } => "MessageRejected",
+            ActorEvent::MessageGiven { .. } => "MessageGiven",
+            ActorEvent::ContextCompacted { .. } => "ContextCompacted",
         }
     }
 }
@@ -622,7 +640,8 @@ impl Envelope {
     /// where a step of its plan began (issue 263); a command an agent
     /// carried out (issue 269) - who asked is the initiator; what came of
     /// what an agent did of its own accord (issue 284); who joined or left,
-    /// by its sender (issue 408); a change of a message (issue 234). Every
+    /// by its sender (issue 408); a change of a message (issue 234); what an
+    /// agent was given and a compaction of its context (issue 417). Every
     /// mark in the name of its sender, when it was sent. `None` for what the
     /// history does not record: what streams, a beginning whose end is
     /// recorded, where an actor stands, what only asks, approvals and
@@ -631,7 +650,9 @@ impl Envelope {
         let actor = self.context.sender_id;
         let at = self.timestamp;
         Some(match &self.event {
-            ActorEvent::CompleteMessageGenerated(message) | ActorEvent::IntermediateMessageGenerated(message) => HistoryEntry::Said { message: message.clone(), context: None },
+            ActorEvent::CompleteMessageGenerated(message) | ActorEvent::IntermediateMessageGenerated(message) => HistoryEntry::Said { message: message.clone() },
+            ActorEvent::MessageGiven { message } => HistoryEntry::Given { message: message.clone() },
+            ActorEvent::ContextCompacted { turn_id, from, to } => HistoryEntry::Compacted { turn_id: *turn_id, actor, from: *from, to: *to, at },
             ActorEvent::TurnFinished { turn_id, .. } => HistoryEntry::TurnFinished { turn_id: *turn_id, actor, at },
             ActorEvent::TurnGivenUp { turn_id, reason } => HistoryEntry::TurnGivenUp { turn_id: *turn_id, actor, reason: reason.clone(), at },
             ActorEvent::PlanStepStarted { turn_id, step_index, total_steps, description } => {
@@ -671,7 +692,8 @@ impl Envelope {
 
     /// Whether the envelope concerns `participant` by the rule every channel
     /// delivers by (issue 418): whom it goes to unless a moderator decides
-    /// otherwise. A message to every user, and to every agent if there is
+    /// otherwise. What an agent read and did to its context concerns
+    /// nobody. A message to every user, and to every agent if there is
     /// something to hear in it (`Message::is_heard`, issues 224, 258); a
     /// change of a message to every user and agent (issue 234); who joined
     /// or left to every user and agent (issue 408); how an answer comes
@@ -718,7 +740,8 @@ impl Envelope {
             ActorEvent::QuestionRequested(request) => sender.as_agent_id().is_some() && user && request.shown_to().is_none_or(|only| only.contains(&participant)),
             ActorEvent::QuestionClosed { shown_to, .. } => sender.as_agent_id().is_some() && user && shown_to.as_ref().is_none_or(|only| only.contains(&participant)),
             ActorEvent::QuestionAnswered { agent_id, .. } | ActorEvent::QuestionDeclined { agent_id, .. } => sender.as_user_id().is_some() && participant == ActorId::Agent(*agent_id),
-            ActorEvent::ResponseRequested | ActorEvent::NudgeRequested { .. } | ActorEvent::WakeupRequested | ActorEvent::ChainCutOff { .. } | ActorEvent::MessageRejected { .. } => false,
+            ActorEvent::ResponseRequested | ActorEvent::NudgeRequested { .. } | ActorEvent::WakeupRequested | ActorEvent::ChainCutOff { .. } | ActorEvent::MessageRejected { .. }
+            | ActorEvent::MessageGiven { .. } | ActorEvent::ContextCompacted { .. } => false,
         }
     }
 

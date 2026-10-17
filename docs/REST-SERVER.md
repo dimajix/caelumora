@@ -267,12 +267,13 @@ message carries none: it is said outside of any turn. A turn ends with `TurnFini
 within a turn - compacting its context - begins with `ActivityStarted` and ends with
 `ActivityFinished`, which says what came of it, or with the turn's being given up.
 
-A history - the channel's and an agent's - is a list of items in the order they happened: messages
-said, where a step of a plan began, how turns ended, commands an agent carried out, what an agent
-did of its own accord and what came of it (`activity_finished`), who joined or left the channel,
-by whose act and named as they were then (`participant_joined`, `participant_left`), and - in an
-agent's history only - compactions of its context. Read from another channel, a history holds only
-the messages released, and neither a turn's end nor the start of a step.
+A history - the channel's, and an agent's, which is the channel's as the agent saw it (issue 417) -
+is a list of items in the order they happened: messages said, where a step of a plan began, how
+turns ended, commands an agent carried out, what an agent did of its own accord and what came of it
+(`activity_finished`), who joined or left the channel, by whose act and named as they were then
+(`participant_joined`, `participant_left`), and - in an agent's history only - compactions of its
+context and what it was given to read, as said items. Read from another channel, a history holds
+only the messages released, and neither a turn's end nor the start of a step.
 
 Both histories are read in pages, alike (issue 218): `?limit=` items (50 unless asked, at most 200)
 before `?before=`, the last ones without it, as `{"items": […], "earlier": …}`. `earlier` is the

@@ -20,7 +20,7 @@ pub fn items_of(history: &History) -> Vec<HistoryEntry> {
     let mut folded: HashMap<u64, Message> = fold(history.all_entries()).into_iter().map(|(node, message)| (node.seq, message)).collect();
     history.entries()
         .filter_map(|node| match &node.entry.entry {
-            HistoryEntry::Said { context, .. } => folded.remove(&node.seq).map(|message| HistoryEntry::Said { message, context: context.clone() }),
+            HistoryEntry::Said { .. } => folded.remove(&node.seq).map(|message| HistoryEntry::Said { message }),
             entry => entry.is_item().then(|| entry.clone()),
         })
         .collect()

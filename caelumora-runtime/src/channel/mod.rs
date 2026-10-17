@@ -8,7 +8,6 @@ use crate::actor::user::UserActor;
 use crate::component::{ComponentContainer, ComponentContext, ComponentError, ComponentImpl};
 use crate::moderator::Moderator;
 use crate::session::SessionError;
-use crate::recorder::Recorder;
 use crate::runtime::ChannelRuntime;
 use anyhow::{Result, Error};
 use arc_swap::{ArcSwap, Guard};
@@ -236,7 +235,6 @@ pub struct ChannelLoop {
     /// Actors for `run` to start or stop; `run` takes the receiver.
     changes_tx: mpsc::UnboundedSender<ActorChange>,
     changes_rx: Mutex<mpsc::UnboundedReceiver<ActorChange>>,
-    recorder: Mutex<Box<dyn Recorder>>,
     state: Mutex<ChannelState>,
     state_store: Arc<dyn StateStore>,
     /// The read side of the histories (issue 379): the channel's own, as it
@@ -295,7 +293,6 @@ impl ChannelLoop {
         };
         let state = Mutex::new(state);
 
-        let recorder = runtime.new_recorder()?;
 
         let (changes_tx, changes_rx) = mpsc::unbounded_channel();
         let channel_loop = Arc::new(Self {
@@ -314,7 +311,6 @@ impl ChannelLoop {
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             changes_tx,
             changes_rx: Mutex::new(changes_rx),
-            recorder: Mutex::new(recorder),
             state,
             state_store,
             history_store,

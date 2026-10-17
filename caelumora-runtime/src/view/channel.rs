@@ -23,7 +23,7 @@ use caelumora_model::removal::Removal;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement};
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{ChannelSnapshot, Detail, ChannelParticipantSnapshot, PublishedNotes, Unread};
-use caelumora_model::store::history::{every, HistoryKey, Keep};
+use caelumora_model::store::history::{every, Keep};
 use caelumora_model::store::{StoreError, StoreResultExt};
 use caelumora_model::tool::ToolSet;
 use caelumora_model::value::language::Language;
@@ -285,7 +285,7 @@ impl ChannelView {
         let page = match self.visible_from().await? {
             Some(from) => {
                 let readable = |item: &HistoryEntry| self.may_read_item(item) && keep(item);
-                self.views().histories().page(HistoryKey::Channel(self.channel.id), &self.reading_as(), from, before, limit, &readable).await
+                self.views().histories().page(self.channel.id, &self.reading_as(), from, before, limit, &readable).await
                     .map_err(|e| self.failed_reading(e))?
             }
             None => HistoryPage::default(),
@@ -305,7 +305,7 @@ impl ChannelView {
     /// entry by entry.
     pub async fn message(&self, id: MessageId) -> ViewResult<Message> {
         let from = self.visible_from().await?;
-        let said = self.views().histories().said(HistoryKey::Channel(self.channel.id), &self.reading_as(), id).await.map_err(|e| self.failed_reading(e))?;
+        let said = self.views().histories().said(self.channel.id, &self.reading_as(), id).await.map_err(|e| self.failed_reading(e))?;
         let seen = said.filter(|(at, _)| from.is_some_and(|from| *at >= from)).and_then(|(_, item)| item.said().cloned());
         match seen {
             Some(message) if self.may_read_entry(&message.classification) => Ok(message),
@@ -336,7 +336,13 @@ impl ChannelView {
     /// The position from which on the viewer sees the history; `None` if
     /// they see nothing of it - the message their view begins at is gone.
     async fn visible_from(&self) -> ViewResult<Option<u64>> {
-        visible_from(self.views().histories().as_ref(), self.channel.id, self.history_start()).await.map_err(|e| self.failed_reading(e))
+        self.visible_from_of(self.reader()).await
+    }
+
+    /// The position from which on `participant` sees the history, as
+    /// `visible_from` says.
+    pub(super) async fn visible_from_of(&self, participant: ActorId) -> ViewResult<Option<u64>> {
+        visible_from(self.views().histories().as_ref(), self.channel.id, self.channel.history_start_of(participant)).await.map_err(|e| self.failed_reading(e))
     }
 
     /// That the history could not be read: `error`, logged.
@@ -471,7 +477,7 @@ impl ChannelView {
         let from = visible.max(state.unread_from());
         let new = |item: &HistoryEntry| self.may_read_item(item) && item.said().is_some_and(|message| message.sender_id != viewer && message.is_heard());
         let mentioning = |item: &HistoryEntry| new(item) && item.said().is_some_and(|message| message.mentions.contains(&viewer));
-        let key = HistoryKey::Channel(self.channel.id);
+        let key = self.channel.id;
         let reader = Reader::Participant(viewer);
         let counted = self.views().histories().page(key, &reader, from, None, Unread::CAP, &new).await.map_err(|e| self.failed_reading(e))?;
         // A mention among those not counted is looked for on its own.
@@ -792,7 +798,8 @@ impl ParticipantView {
             let attributes = self.state.attributes().ok_or(ViewError::NoContext { actor: self.id() })?;
             return Err(ViewError::Forbidden { actor: self.id(), refused: ActionType::ReadAgentContext(attributes).refused() });
         }
-        agent.context().await
+        let from = self.channel.visible_from_of(self.id()).await?;
+        agent.context(from).await
     }
 
     /// The participant as an agent whose context the viewer may read.
