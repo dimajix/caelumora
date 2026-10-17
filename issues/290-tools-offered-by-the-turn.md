@@ -1,6 +1,6 @@
 # 290 — A model is offered tools it may not call where it is
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** high
 **Area:** Tools and approvals
@@ -63,3 +63,16 @@ caller. Whether a tool can be called *here* is learnt only when it is called:
 - **2026-10-10** — Opened at the maintainer's request with step 2 of issue 23, which agreed to
   offer an agent only the workspace tools its list grants and could not: `ToolProvider::tools`
   knows no turn.
+- **2026-10-17** — Done. Decided with the maintainer: a turn is begun without its tools
+  (`AgentChannelState::begin_turn`) and offered them right after, before its context is built
+  (`offer_tools`), so that a provider is asked as a prompt part is - given the turn's work
+  (`ToolProvider::offered(&AgentWork)`), not the `Turn`, since offering is a question. `offered`
+  replaces `unavailable()`: `Err` with why is an unavailable set; `tools()` stays for finding a
+  call's provider and the check of names. `ToolExecutor::tool_sets` takes the work; what an agent
+  would be offered (`Actor::tool_sets`, the web UI) is asked of work in its own name with its
+  stored state. `terminal_tool` offers no tool where there is no workspace to use, none that
+  changes where its list grants reading and no shell tool where its storage gives none
+  (`needs`, shared with the call's own check); `artifact_tool` is offered where a workspace is
+  used and an artifact storage is configured. `AgentWork::workspace` serves them and the
+  workspace prompt part. The `ToolExecutor` lives in `caelumora-agents` meanwhile, and
+  TOOLS-AND-COMMANDS.md is `docs/TOOLS.md`, which describes it.

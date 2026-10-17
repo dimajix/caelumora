@@ -23,7 +23,8 @@ use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Co
 use caelumora_model::security::{ActionType, Enforcement, AccessPolicy};
 use caelumora_model::question::{Answers, Questions};
 use caelumora_runtime::runtime::ActorRuntime;
-use caelumora_runtime::view::ViewError;
+use caelumora_runtime::view::{ViewError, WorkspaceView};
+use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus, ToolParameters};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -364,6 +365,22 @@ pub trait ToolProvider: Send + Sync + Debug {
         }
         else {
             Err(ToolError::UnknownTool(name.to_string()))
+        }
+    }
+}
+
+/// The workspace the tools of a set on it may be offered on in `work`
+/// (issue 290): the one of the agent's session the work may use in its
+/// channel (`AgentWork::workspace`). `Err` with why the set is unavailable,
+/// in general terms: there is none, or it cannot be read now - which is
+/// logged.
+pub async fn usable_workspace(work: &AgentWork<'_>) -> Result<WorkspaceView, String> {
+    match work.workspace().await {
+        Ok(Some(workspace)) => Ok(workspace),
+        Ok(None) => Err(WorkspaceError::NotUsableInChannel.to_string()),
+        Err(error) => {
+            warn!("Reading the workspace an agent may use in its channel failed: {error}");
+            Err("its workspace cannot be read now".to_string())
         }
     }
 }

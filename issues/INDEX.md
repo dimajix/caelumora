@@ -200,7 +200,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [275](275-publish-file-without-approval.md) | done | `publish_file` asks for approval like the other file tools, though it changes nothing and gives the file to nobody who could not download it already. |
 | [276](276-interrupt-one-tool-call.md) | done | A tool call that hangs can be interrupted only by ending its whole turn or agent, not on its own so that the agent goes on with the turn. |
 | [281](281-tool-argument-visibility.md) | done | A tool's arguments share one visibility flag with its result, so a call cannot publish what it was asked and hide what it returned. |
-| [290](290-tools-offered-by-the-turn.md) | open | A model is offered every tool of its components in every turn, also those it may not call where it is - a workspace's tools where there is none, or where its list grants reading alone. |
+| [290](290-tools-offered-by-the-turn.md) | done | A model is offered every tool of its components in every turn, also those it may not call where it is - a workspace's tools where there is none, or where its list grants reading alone. |
 | [294](294-user-ends-a-command.md) | done | A command an agent's call handed back as running can be ended only by the model; a user who sees it hang has no way to end it. |
 
 ## User interaction

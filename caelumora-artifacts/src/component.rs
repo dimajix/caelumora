@@ -8,8 +8,11 @@
 //! The workspace is reached as `terminal_tool` reaches it, through the
 //! turn's channel (`Turn::workspace_terminal`, issue 344), for
 //! reading; the file read is handed to the `ArtifactManager` (issue 296),
-//! the service its kind uses. Without an artifact storage configured, a call fails and says so. The result is
-//! classified as the artifact, which is classified as the workspace.
+//! the service its kind uses. Its tool is offered where a file can be
+//! published (issue 290): where the turn may use a workspace in its
+//! channel, and an artifact storage is configured; a call is checked again
+//! all the same, and fails and says so. The result is classified as the
+//! artifact, which is classified as the workspace.
 
 use crate::manager::{ArtifactError, ArtifactManager};
 use async_trait::async_trait;
@@ -18,9 +21,10 @@ use caelumora_model::security::Grant;
 use caelumora_model::store::StoreError;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_agents::turn::Turn;
+use caelumora_agents::work::AgentWork;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
 use caelumora_runtime::terminal::WorkspacePath;
-use caelumora_agents::tool::{arguments, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_agents::tool::{arguments, usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -113,6 +117,17 @@ impl ToolProvider for ArtifactTool {
             classification: None,
             presentation: ARTIFACT_PUBLISH_PRESENTATION,
         }]
+    }
+
+    /// Its tool where a file can be published: where the work may use a
+    /// workspace in its channel, and a storage of artifacts is configured
+    /// (issue 290).
+    async fn offered(&self, work: &AgentWork<'_>) -> Result<Vec<Tool>, String> {
+        if !self.artifacts.is_configured() {
+            return Err("no storage of artifacts is configured".to_string());
+        }
+        usable_workspace(work).await?;
+        Ok(self.tools())
     }
 
     /// What an approver reads: which file is published as what.

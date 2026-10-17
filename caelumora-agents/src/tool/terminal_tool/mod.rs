@@ -14,8 +14,12 @@
 //!   What was read is recorded as the turn's knowledge
 //!   (`KnowledgeSource::Workspace`).
 //!
-//! The workspace is reached through the turn's channel on every call
-//! (`Turn::workspace_terminal`, issue 344), before anything is sent,
+//! A turn is offered the tools that may be called on the workspace its
+//! channel may use (issue 290): none where there is none, none that change
+//! where its access list grants reading alone, no shell where its storage
+//! gives none. The workspace is reached through the turn's channel on every
+//! call all the same (`Turn::workspace_terminal`, issue 344), before
+//! anything is sent,
 //! in its context (issue 296): as a member of the channel, where the channel uses it, its access
 //! list lets the agent read it - change it, for the shell and the tools that
 //! write (issue 23) - and it and the channel flow both ways. A result is
@@ -28,10 +32,11 @@ mod files;
 mod shell;
 
 use crate::turn::Turn;
+use crate::work::AgentWork;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::workspace::{WorkspaceError, WorkspaceManager};
-use crate::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::question::Answers;
@@ -112,6 +117,20 @@ fn unusable(error: WorkspaceError) -> ToolError {
     ToolError::ExecutionFailed(error.to_string())
 }
 
+/// What a call of the tool `name` needs of the workspace, both to be offered
+/// (issue 290) and to run: what its access list must grant (issue 23) -
+/// reading for the tools that only read files, changing for the others -
+/// and whether a shell; a command may change anything its place reaches.
+/// `None` for a name that is none of its tools.
+fn needs(name: &str) -> Option<(Grant, bool)> {
+    match name {
+        _ if shell::TOOLS.contains(&name) => Some((Grant::Write, true)),
+        _ if files::read_only(name) => Some((Grant::Read, false)),
+        _ if files::TOOLS.contains(&name) => Some((Grant::Write, false)),
+        _ => None,
+    }
+}
+
 #[async_trait]
 impl ToolProvider for TerminalTool {
     fn description(&self) -> String {
@@ -125,6 +144,18 @@ impl ToolProvider for TerminalTool {
         let mut tools = shell::tools(&self.config);
         tools.extend(files::tools(&self.config));
         tools
+    }
+
+    /// The tools that may be called on the workspace the work may use in
+    /// its channel (issue 290): none where there is none, none that change
+    /// where its list grants reading alone, no shell where its storage gives
+    /// none.
+    async fn offered(&self, work: &AgentWork<'_>) -> Result<Vec<Tool>, String> {
+        let workspace = usable_workspace(work).await?;
+        let (writable, has_shell) = (workspace.may_write().await, workspace.has_shell());
+        Ok(self.tools().into_iter()
+            .filter(|tool| needs(&tool.name).is_some_and(|(grant, shell)| (grant == Grant::Read || writable) && (!shell || has_shell)))
+            .collect())
     }
 
     /// What an approver reads: the command, or the change, whole.
@@ -145,11 +176,12 @@ impl ToolProvider for TerminalTool {
         })
     }
 
+    /// Checked again as it runs, whatever was offered: the workspace, and
+    /// what its list grants, may have changed since the turn began.
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
-        let is_shell = shell::TOOLS.contains(&name);
-        if !is_shell && !files::TOOLS.contains(&name) {
+        let Some((need, is_shell)) = needs(name) else {
             return Err(ToolError::UnknownTool(name.to_string()));
-        }
+        };
         let (workspace, value) = match is_shell {
             true => {
                 let (workspace, shell) = turn.workspace_shell().await.map_err(unusable)?;
@@ -157,8 +189,6 @@ impl ToolProvider for TerminalTool {
                 (workspace, shell::execute(&self.config, name, params, shell).await?)
             }
             false => {
-                // What only reads needs only reading (issue 23).
-                let need = if files::read_only(name) { Grant::Read } else { Grant::Write };
                 let (workspace, terminal) = turn.workspace_terminal(need).await.map_err(unusable)?;
                 let value = files::execute(&self.config, name, params, terminal.as_ref(), &workspace, self.workspaces.max_file_bytes(), turn).await?;
                 (workspace, value)
@@ -198,13 +228,22 @@ mod tests {
         TerminalTool { config: serde_json::from_value(params).unwrap(), workspaces: Arc::clone(world.runtime.workspace_manager()) }
     }
 
+    /// Issue 290: offered where the channel uses the workspace - every tool,
+    /// where the agent may change its files and its storage gives a shell -
+    /// and not where it does not; a call is refused there all the same.
     #[tokio::test]
-    async fn no_workspace_is_used_where_the_channel_does_not_use_it() {
+    async fn no_workspace_is_offered_nor_used_where_the_channel_does_not_use_it() {
         let world = session_with_workspace().await;
+        let tool = tool(&world, json!({}));
+        let mut state = AgentChannelState::default();
+        let offered = tool.offered(&workspace_turn(&world, &mut state).work()).await.expect("offered where it is used");
+        assert_eq!(offered.len(), shell::TOOLS.len() + files::TOOLS.len(), "every tool: {offered:?}");
+
         world.session.channels()[0].update_uses_workspace(&SecurityContext::system(), false).await.unwrap();
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = tool(&world, json!({}));
+        let unavailable = tool.offered(&turn.work()).await;
+        assert_eq!(unavailable, Err("there is no workspace you can use in this channel".to_string()), "none, saying why");
         for (name, params) in [(RUN_COMMAND, json!({ "command": "touch here" })), (WRITE_FILE, json!({ "path": "here", "content": "x" }))] {
             let refused = tool.execute(name, &params, None, &mut turn).await;
             assert!(matches!(&refused, Err(ToolError::ExecutionFailed(why)) if why.contains("no workspace")), "{name}: {refused:?}");

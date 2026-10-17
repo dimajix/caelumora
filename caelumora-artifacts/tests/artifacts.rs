@@ -146,6 +146,27 @@ async fn a_file_is_published_as_versions_of_an_artifact_kept_apart_from_the_work
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// Issue 290: the tool is offered where a file can be published - where
+/// the turn may use a workspace in its channel - and not where it may not,
+/// saying why.
+#[tokio::test]
+async fn the_tool_is_offered_where_the_channel_uses_a_workspace() {
+    let world = world().await;
+    let (session, helper, _, tool) = with_the_tool(&world, json!({})).await;
+    let mut state = AgentChannelState::default();
+    let turn = agent_testing::turn(&session, helper, world.alice, &mut state);
+    assert_eq!(tool.offered(&turn.work()).await.map(|tools| tools.len()), Ok(1), "offered where it is used");
+    drop(turn);
+
+    let alice = World::as_user(world.alice);
+    session.channels()[0].update_uses_workspace(&alice, false).await.unwrap();
+    let mut state = AgentChannelState::default();
+    let turn = agent_testing::turn(&session, helper, world.alice, &mut state);
+    assert_eq!(tool.offered(&turn.work()).await, Err("there is no workspace you can use in this channel".to_string()), "not where the channel uses none");
+    drop(turn);
+    world.manager.stop(&alice, session.id()).await.unwrap();
+}
+
 #[tokio::test]
 async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
     let world = world().await;

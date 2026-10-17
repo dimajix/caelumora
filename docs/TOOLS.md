@@ -187,14 +187,16 @@ cancel or a stop while a tool runs.
 ### The workspace
 
 `terminal_tool` gives an agent its session's workspace, where its channel may use it
-([CHANNELS.md](CHANNELS.md#its-workspace)): its files, and a shell where its storage gives one. The
-workspace is reached through the turn's views on every call, before anything is sent; a call where
-there is none, or a command where its storage has no shell, fails and says so. What its access list
-grants decides the rest: the tools that only read files need reading (`GetWorkspace`), the others
-and every shell tool changing (`WriteWorkspace`) - a command may change anything its place reaches.
-Every tool is offered, and one that changes fails where the list grants reading alone; the prompt
-part says so beforehand ([AGENT-TURN.md](AGENT-TURN.md#its-workspace)). Which calls need approval is
-configured as for `mcp_tool`: all - the default -, none, or all but those that only read files.
+([CHANNELS.md](CHANNELS.md#its-workspace)): its files, and a shell where its storage gives one. What
+its access list grants decides which of its tools may be called: the tools that only read files need
+reading (`GetWorkspace`), the others and every shell tool changing (`WriteWorkspace`) - a command
+may change anything its place reaches. A turn is offered those it may call: none where there is no
+workspace it may use in its channel - the set is unavailable, saying so -, none that change where
+the list grants reading alone, and no shell tool where its storage gives none; the prompt part says
+the same ([AGENT-TURN.md](AGENT-TURN.md#its-workspace)). The workspace is reached through the turn's
+views on every call all the same, before anything is sent: a call where there is none, or one the
+list does not grant, fails and says so. Which calls need approval is configured as for `mcp_tool`:
+all - the default -, none, or all but those that only read files.
 
 **Files.** The file tools work over the workspace's `Terminal`, whatever its storage, without a
 shell. A path is relative to the workspace's top; one that leaves the workspace is the model's to
@@ -238,16 +240,17 @@ artifact storage beyond the workspace, downloaded at the message that published 
 offers a link to a file as it is now; a model is told the difference in their descriptions - a link
 for a look now, an artifact for a result to be kept.
 
-The file is read from the workspace as the file tools read it and handed to the `ArtifactManager`.
-It publishes in the name of whoever the agent acts for: its owner, who makes the artifact
-(`CreateArtifact`) or adds a version where the artifact's list lets them (`WriteArtifact`), asked
-before anything is kept. The members of the channel it is published in read the version, and the
-artifact, which reading a version needs as well (issue 316). An
-artifact is published into the session's scope under its name, made with its first version and given
-one more by every later publication under that name. It is classified as the workspace, fixed with
-its first version; a later version from a workspace classified otherwise is refused. A storage takes
-nothing above its `destination`. Publishing changes what is kept, so it is approved where changes
-are; the approver reads which file is published as which artifact.
+It is offered where a file can be published: where the turn may use a workspace in its channel and
+an artifact storage is configured. The file is read from the workspace as the file tools read it and
+handed to the `ArtifactManager`. It publishes in the name of whoever the agent acts for: its owner,
+who makes the artifact (`CreateArtifact`) or adds a version where the artifact's list lets them
+(`WriteArtifact`), asked before anything is kept. The members of the channel it is published in read
+the version, and the artifact, which reading a version needs as well (issue 316). An artifact is
+published into the session's scope under its name, made with its first version and given one more by
+every later publication under that name. It is classified as the workspace, fixed with its first
+version; a later version from a workspace classified otherwise is refused. A storage takes nothing
+above its `destination`. Publishing changes what is kept, so it is approved where changes are; the
+approver reads which file is published as which artifact.
 
 The members of the channel download the version published there, wherever they act; whom the owner
 shares the artifact with read the versions there are as they share it; its owner reads every version,

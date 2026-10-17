@@ -1657,6 +1657,71 @@ async fn an_agent_reaches_the_workspace_of_a_session_its_owner_does_not_take_par
     assert!(asked.contains(&"carol as helper, asked by bob: GetSession(alice's) yes".to_string()), "the session it takes part in: {asked:?}");
 }
 
+/// What an agent is offered of a workspace (issue 290): the tools its list
+/// lets the agent call in its channel - in a turn, as its owner's - those
+/// that only read files where it grants reading, a
+/// call of another refused as unknown before anything is asked of it; every
+/// one where it grants changing; none where the channel uses no workspace,
+/// saying why. A call of one offered is checked again as it runs (the
+/// tool's own tests, and the runtime's suite for what the list grants).
+#[tokio::test]
+async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_channel() {
+    use caelumora_model::tool::ToolResultStatus;
+
+    let write = calling("write_file", serde_json::json!({ "path": "notes/a.md", "content": "written" }));
+    let world = World::with(&[&TestAgents], |registry| register_once(registry, ONCE_MODEL_KIND, write)).await;
+    let working = Personality {
+        components: ComponentConfig { component_nodes: vec![
+            ComponentDescriptor::new("model", ONCE_MODEL_KIND),
+            ComponentDescriptor { params: serde_json::json!({ "requires_approval": false }), ..ComponentDescriptor::new("workspace", TERMINAL_TOOL_KIND) },
+        ] },
+        ..world.personality("working", None, &[]).await
+    };
+    world.runtime.entity_stores().personalities.update(&World::system(), &working).await.unwrap();
+    let helper = world.agent("helper", world.bob, &working).await;
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "shell", None, Classification::general(Confidentiality::Internal)).await.unwrap();
+    let session = world.shared_session(&[helper], &[]).await;
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Read)).await.unwrap();
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open(&bob, session.id()).await.expect("he opens it");
+    let mut watch = main.user_actor(world.bob).expect("he takes part").watch();
+
+    let (answered, asked) = world.asked(async {
+        main.user_actor(world.bob).unwrap().send_message("@helper write it".to_string(), None).await.expect("sent");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let ActorEvent::CompleteMessageGenerated(message) = watch.recv().await.expect("the channel runs").event {
+                    if let Some(result) = message.tool_results.first() {
+                        break (result.status, result.content.clone());
+                    }
+                }
+            }
+        }).await.expect("the call is answered")
+    }).await;
+    let (status, content) = answered;
+    assert_eq!(status, ToolResultStatus::UnknownTool, "not offered where the list grants reading: {content}");
+    assert!(content.contains("read_file") && !content.contains("run_command"), "it names what it was offered: {content}");
+    assert!(asked.contains(&"bob as helper: WriteWorkspace(alice's) no".to_string()), "asked as the turn began, as its owner's: {asked:?}");
+    assert!(!asked.iter().any(|line| line.contains("CallTool")), "refused before anything is asked of the call: {asked:?}");
+    assert!(!world.files.path().join("shell").join(docs.id.to_string()).join("notes/a.md").exists(), "nothing written");
+
+    let offered = || async {
+        let view = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
+        let sets = view.member(ActorId::Agent(helper)).await.unwrap().tool_sets().await.unwrap();
+        let mut names: Vec<String> = sets[0].tools.iter().map(|tool| tool.name.clone()).collect();
+        names.sort();
+        (names, sets[0].unavailable.clone())
+    };
+    assert_eq!(offered().await, (["grep_files", "list_files", "publish_file", "read_file"].map(String::from).to_vec(), None), "what only reads");
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
+    let (changing, unavailable) = offered().await;
+    assert_eq!((changing.len(), unavailable), (11, None), "every one where it grants changing: {changing:?}");
+    main.update_uses_workspace(&alice, false).await.unwrap();
+    assert_eq!(offered().await, (Vec::new(), Some("there is no workspace you can use in this channel".to_string())), "none where the channel uses none");
+    world.manager.stop(&alice, session.id()).await.unwrap();
+}
+
 /// A template of the system whose sessions have a workspace "files" in
 /// `scope`, in `storage`.
 async fn template_with_workspace(world: &World, scope: ScopeTemplate, storage: &str) -> SessionTemplateId {
