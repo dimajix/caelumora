@@ -102,7 +102,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 
 | No. | Status | Issue |
 |---|---|---|
-| [10](10-user-authentication.md) | in progress | There is no authentication at all; the REST server fabricates its own `SecurityContext` and `DummySecurityManager` approves everything. |
+| [10](10-user-authentication.md) | done | There is no authentication at all; the REST server fabricates its own `SecurityContext` and `DummySecurityManager` approves everything. |
 | [11](11-agent-ownership.md) | done | `SecurityAttributes` carries an `owner_id` that nothing enforces — every agent, session and template is effectively global. |
 | [12](12-user-and-agent-permissions.md) | done | When an agent acts for a user, two sets of rights are involved and there is no rule for combining them. |
 | [23](23-acls-in-security-attributes.md) | done | Who may reach a workspace's files or an artifact follows from the channel one stands in, not from the thing: `SecurityAttributes` can name no reader but the owner and a hand-written list. |
