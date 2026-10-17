@@ -1,6 +1,6 @@
 # 403 — No responder policy decides by what a message says
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -216,3 +216,33 @@ deleted agent that is still a participant is no longer named in the roster of th
 part - it has no description, as it can no longer be addressed. Still to decide before the policy
 itself: `choice` or `noul`, `destination` judged per message, and where the endpoint may be
 configured.
+
+2026-10-17: The open points decided with the maintainer, each as recommended: one `choice` over the
+candidates and "nobody" up to 25 candidates, one `noul` per candidate up to 64; `destination`
+(`public` unless configured) judged per message sent; and the policy configured by an operator
+alone. For the last, a kind may now be declared `ComponentKind::operator_only`: a request that
+writes one itself is refused (`ComponentError::OperatorOnly`, asked in
+`ComponentRegistry::require_acceptable`), and names one only through a `ref`; templates,
+personalities and preconfigured components, which only the seed writes, may write it. The API was
+checked against ollama.com/library/nimble: a `noul` answer is the probability of yes.
+
+2026-10-17: Done. `ResponderPolicy::choose` takes the event routed in place of its sender, so that
+the policy asks in its context - the flow of what it sends, the endpoint's credential - as a
+component asks in the context of the act it serves. The crate `caelumora-decision` holds the client
+(`DecisionClient`, errors `DecisionError`) and the policy; both binaries list its plugin. The
+timeout is the endpoint's, 5 s unless written, rather than a parameter of its own. The most probable
+option is asked even below `threshold`, and nobody if "nobody" is most probable. Who decides is
+logged with `warn!` when the model does not, without anything that was said. The web UI explains
+the policy but does not offer it for a new channel. Tests against a fake server cover the request,
+the answers, threshold and limit, `noul` beyond 25, the fallback and what may not be sent; the
+runtime's security suite covers the refusal of an operator's kind written in a request. Not done:
+anything said before the message as context for the model, and a measurement of how well `nimble`
+chooses among agents (LLM-MODELS.md says so).
+
+2026-10-17: At the maintainer's request, a session of the example seed uses it: `team-session`,
+with a coder, a reviewer and a planner, `nimble:9b` at the local Ollama, `max_responders: 2`, and
+`destination: strictly_confidential`, since the server is local. The model was chosen by measuring
+the decision models the local Ollama 0.40.6 has (`work/decision_models/`, LLM-MODELS.md): nimble:9b
+chose right in 16 of 16 cases, as sure as a 27B model at half its latency. Loading it took 81 s
+once, so the seed keeps it loaded for an hour (`keep_alive`). A test of `caelumora-app` now builds
+every channel of the example seed's templates, as one already built every personality.

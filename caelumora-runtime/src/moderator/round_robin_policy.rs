@@ -4,7 +4,7 @@
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::moderator::ResponderPolicy;
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorDescription, ActorId};
+use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::message::Message;
 use std::sync::{Arc, Mutex};
 
@@ -18,7 +18,7 @@ pub struct RoundRobinPolicy {
 
 #[async_trait]
 impl ResponderPolicy for RoundRobinPolicy {
-    async fn choose(&self, _sender: ActorId, _messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId> {
+    async fn choose(&self, _event: &Envelope, _messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId> {
         let mut next_agent_index = self.next_agent_index.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut candidates: Vec<ActorId> = candidates.into_iter().map(|candidate| candidate.id).collect();
         if candidates.is_empty() {

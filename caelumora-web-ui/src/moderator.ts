@@ -13,10 +13,14 @@ const RESPONDER_POLICIES: Record<string, ResponderPolicyInfo> = {
   random_policy: {label: 'Random', description: 'One agent, chosen at random, answers each message.'},
   round_robin_policy: {label: 'Round robin', description: 'The agents take turns answering.'},
   user_driven_policy: {label: 'Only to you', description: 'Every agent answers your messages; one answers another only when @-mentioned.'},
+  decision_policy: {label: 'By content', description: 'A decision model chooses, by what a message says and how each agent is introduced, which agent answers.'},
 };
 
-/** The policy kinds this UI knows, for choosing one (issue 09). */
-export const RESPONDER_POLICY_KINDS = Object.keys(RESPONDER_POLICIES);
+/** Policies only an operator configures (issue 403): explained, but not offered for a new channel. */
+const OPERATOR_ONLY_POLICIES = new Set(['decision_policy']);
+
+/** The policy kinds this UI knows and a new channel may be given (issue 09). */
+export const RESPONDER_POLICY_KINDS = Object.keys(RESPONDER_POLICIES).filter(kind => !OPERATOR_ONLY_POLICIES.has(kind));
 
 /** The policy of a channel that names none - the server's default. */
 export const DEFAULT_RESPONDER_POLICY = 'round_robin_policy';

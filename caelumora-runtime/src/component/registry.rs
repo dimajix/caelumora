@@ -28,11 +28,23 @@ pub struct ComponentKind {
     provides: Vec<TypeKey>,
     uses: Vec<TypeKey>,
     needs: Vec<TypeKey>,
+    operator_only: bool,
 }
 
 impl ComponentKind {
     pub fn new(name: &str) -> Self {
-        Self { name: name.to_string(), provides: Vec::new(), uses: Vec::new(), needs: Vec::new() }
+        Self { name: name.to_string(), provides: Vec::new(), uses: Vec::new(), needs: Vec::new(), operator_only: false }
+    }
+
+    /// Declares that components of this kind are configured by an operator
+    /// alone (issue 403): their params are trusted - where they send what
+    /// they are given, what that is cleared for -, so they are written only
+    /// where an operator writes, in the templates, personalities and
+    /// preconfigured components of the seed. A request names one only
+    /// through a `ref` (`require_acceptable`).
+    pub fn operator_only(mut self) -> Self {
+        self.operator_only = true;
+        self
     }
 
     /// Declares that components of this kind provide `T`.
@@ -66,7 +78,15 @@ pub(super) struct Registration {
     provides: Vec<TypeKey>,
     pub(super) uses: Vec<TypeKey>,
     pub(super) needs: Vec<TypeKey>,
+    operator_only: bool,
     factory: ComponentFactory,
+}
+
+impl Registration {
+    fn of(kind: ComponentKind, factory: ComponentFactory) -> (String, Self) {
+        let ComponentKind { name, provides, uses, needs, operator_only } = kind;
+        (name, Self { provides, uses, needs, operator_only, factory })
+    }
 }
 
 /// A facet of which there is exactly one per container, with the kind that
@@ -145,7 +165,8 @@ impl ComponentRegistry {
             let built = factory(&descriptor, &context);
             Box::pin(std::future::ready(built))
         });
-        self.kinds.insert(kind.name, Registration { provides: kind.provides, uses: kind.uses, needs: kind.needs, factory });
+        let (name, registration) = Registration::of(kind, factory);
+        self.kinds.insert(name, registration);
     }
 
     /// Registers `kind` with a factory that waits: for a remote system, or
@@ -156,7 +177,8 @@ impl ComponentRegistry {
         Fut: Future<Output = ComponentResult<ComponentFacets>> + Send + 'static,
     {
         let factory: ComponentFactory = Box::new(move |descriptor, context| Box::pin(factory(descriptor, context)));
-        self.kinds.insert(kind.name, Registration { provides: kind.provides, uses: kind.uses, needs: kind.needs, factory });
+        let (name, registration) = Registration::of(kind, factory);
+        self.kinds.insert(name, registration);
     }
 
     /// Makes `T` a facet of which there is exactly one per container, built
@@ -287,19 +309,25 @@ impl ComponentRegistry {
 
     /// Whether a container built for an owner that asks for the facets
     /// `asked` would accept `config`, its `ref`s resolved in the name
-    /// `context`: for whoever writes a configuration, before the verb (issue
-    /// 337), and builds it in someone else's name - the components of a
-    /// channel, built in its owner's (issue 321) -, so that they name only
-    /// what they may read themselves. Nothing is built.
+    /// `context`: for whoever writes a configuration in a request, before
+    /// the verb (issue 337), and builds it in someone else's name - the
+    /// components of a channel, built in its owner's (issue 321) -, so that
+    /// they name only what they may read themselves, and a kind an operator
+    /// configures alone only through a `ref` (issue 403). Nothing is built.
     ///
     /// # Errors
     /// As `ComponentContainer::from_config` before it builds anything:
     /// `ComponentError::Unavailable`, wrapped with the `ref`, for one
     /// `context` may not read; `ComponentError::DuplicateId`,
     /// `ComponentError::UnsupportedKind`, `ComponentError::InvalidConfig` for
-    /// two components of a single or one nobody asks for.
+    /// two components of a single or one nobody asks for; and
+    /// `ComponentError::OperatorOnly`, wrapped with the component, for one
+    /// of a kind only an operator configures, written in `config` itself.
     pub async fn require_acceptable(&self, config: &ComponentConfig, asked: &[TypeKey], context: &SecurityContext) -> ComponentResult<()> {
         let planned = self.plan(config, context).await?;
+        if let Some(written) = planned.iter().find(|p| p.brought_by.is_none() && self.kinds.get(&p.descriptor.kind).is_some_and(|r| r.operator_only)) {
+            return Err(ComponentError::of_component(&written.descriptor, ComponentError::OperatorOnly(written.descriptor.kind.clone())));
+        }
         self.require_asked(&planned, &HashMap::new(), asked)
     }
 

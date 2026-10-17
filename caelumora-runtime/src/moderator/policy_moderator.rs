@@ -84,7 +84,7 @@ impl PolicyModerator {
         // the policy is not consulted, so a rotation is left as it is.
         let responders = match mentioned {
             Some(mentioned) => mentioned,
-            None => self.policy.choose(event.context.sender_id, messages, candidates).await,
+            None => self.policy.choose(event, messages, candidates).await,
         };
         let mut request = event.forward(ActorEvent::ResponseRequested);
         request.context.agent_hops = agent_hops;
@@ -523,7 +523,7 @@ mod tests {
 
     #[async_trait]
     impl ResponderPolicy for Recording {
-        async fn choose(&self, _sender: ActorId, messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId> {
+        async fn choose(&self, _event: &Envelope, messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId> {
             let said = messages.iter().filter_map(|message| message.content.clone()).collect();
             self.0.lock().unwrap().push((said, candidates));
             Vec::new()

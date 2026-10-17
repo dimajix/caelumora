@@ -398,6 +398,7 @@ dependencies = [
  "caelumora-a2a",
  "caelumora-agents",
  "caelumora-artifacts",
+ "caelumora-decision",
  "caelumora-logging",
  "caelumora-mcp",
  "caelumora-model",
@@ -439,6 +440,24 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tower",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "caelumora-decision"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "caelumora-model",
+ "caelumora-runtime",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
  "tracing",
  "uuid",
 ]
@@ -650,6 +669,7 @@ dependencies = [
  "caelumora-a2a",
  "caelumora-agents",
  "caelumora-artifacts",
+ "caelumora-decision",
  "caelumora-logging",
  "caelumora-mcp",
  "caelumora-model",

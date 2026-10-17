@@ -41,10 +41,12 @@ pub(crate) trait Moderator : Send + Sync + Debug {
 #[async_trait]
 pub trait ResponderPolicy: Send + Sync + Debug {
     /// The agents of `candidates` to ask to respond to `messages`, what
-    /// `sender` said - a message, or the messages of a turn. The candidates
-    /// are the agents that are awake and did not say them, in no particular
-    /// order, as they are described to everyone in the channel (issue 403).
-    async fn choose(&self, sender: ActorId, messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId>;
+    /// `event` said - a message, or the messages of a turn -, by its sender
+    /// and in its context, in which whatever the policy asks is asked. The
+    /// candidates are the agents that are awake and did not say them, in no
+    /// particular order, as they are described to everyone in the channel
+    /// (issue 403).
+    async fn choose(&self, event: &Envelope, messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId>;
 }
 
 /// Registers the moderator and policy kinds with `registry`, and the

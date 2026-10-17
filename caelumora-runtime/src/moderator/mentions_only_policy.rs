@@ -4,7 +4,7 @@
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::moderator::ResponderPolicy;
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorDescription, ActorId};
+use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::message::Message;
 use std::sync::Arc;
 
@@ -17,7 +17,7 @@ pub struct MentionsOnlyPolicy;
 
 #[async_trait]
 impl ResponderPolicy for MentionsOnlyPolicy {
-    async fn choose(&self, _sender: ActorId, _messages: &[Message], _candidates: Vec<ActorDescription>) -> Vec<ActorId> {
+    async fn choose(&self, _event: &Envelope, _messages: &[Message], _candidates: Vec<ActorDescription>) -> Vec<ActorId> {
         Vec::new()
     }
 }

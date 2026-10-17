@@ -4,7 +4,7 @@
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::moderator::ResponderPolicy;
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorDescription, ActorId};
+use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::message::Message;
 use std::sync::Arc;
 
@@ -19,8 +19,8 @@ pub struct UserDrivenPolicy;
 
 #[async_trait]
 impl ResponderPolicy for UserDrivenPolicy {
-    async fn choose(&self, sender: ActorId, _messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId> {
-        match sender {
+    async fn choose(&self, event: &Envelope, _messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId> {
+        match event.context.sender_id {
             ActorId::User(_) => candidates.into_iter().map(|candidate| candidate.id).collect(),
             _ => Vec::new(),
         }

@@ -34,7 +34,9 @@ use caelumora_model::store::{ComponentStore, StoreError, Stored};
 use caelumora_model::user::{UserId, UserProfile, User};
 use caelumora_runtime::agent::AgentError;
 use caelumora_runtime::channel::{ChannelError, ChannelLoop};
-use caelumora_runtime::component::PRECONFIGURED_REF_KIND;
+use caelumora_runtime::component::{ComponentFacets, ComponentKind, PRECONFIGURED_REF_KIND};
+use caelumora_runtime::moderator::ResponderPolicy;
+use caelumora_runtime::moderator::broadcast_policy::BroadcastPolicy;
 use caelumora_runtime::testing::{attributes, checks, denied, file, not_found, quiet, read, shown, workspace, World, STAFF};
 use caelumora_runtime::session::{ChannelSpec, SessionError};
 use caelumora_runtime::terminal::{CommandState, TerminalError, WorkspacePath};
@@ -889,6 +891,39 @@ async fn a_channel_is_refused_a_tool_before_anything_is_built() {
     assert!(refused.is_some_and(|e| e.to_string().contains("'tools'")), "named by the ref that brings it");
     assert_eq!(asked, checks(&["alice: GetComponents(bob's) yes"]), "only the list read as she names it");
     assert!(session.channel_named("tooled").is_none(), "nothing is created");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// A component of a kind only an operator configures (issue 403) - whose
+/// params say where what it is given goes - is refused in a request that
+/// writes it, before anything is asked, and taken where the request names it
+/// through a `ref` to preconfigured components the creator may read.
+#[tokio::test]
+async fn a_new_channel_names_a_component_only_an_operator_configures_through_a_ref() {
+    let world = World::with(&[], |registry| {
+        registry.register(ComponentKind::new("operated_policy").provides::<dyn ResponderPolicy>().operator_only(), |_, _| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ResponderPolicy>(Arc::new(BroadcastPolicy));
+            Ok(facets)
+        });
+    }).await;
+    let operated = StoredComponents::new("operated", ComponentConfig { component_nodes: vec![ComponentDescriptor::new("policy", "operated_policy")] }, attributes(None, &[world.alice]));
+    world.store.create_components(&World::system(), &operated).await.expect("the operator's");
+    let session = world.shared_session(&[], &[]).await;
+    let spec = |name: &str, policy: ComponentDescriptor| ChannelSpec {
+        name: name.to_string(),
+        components: ComponentConfig { component_nodes: vec![policy] },
+        participants: vec![], classification: None, language: None, uses_workspace: None,
+    };
+
+    let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec("written", ComponentDescriptor::new("policy", "operated_policy")))).await;
+    let refused = refused.err().and_then(|e| e.downcast::<SessionError>().ok());
+    assert!(matches!(&refused, Some(SessionError::InvalidComponents(_))), "{refused:?}");
+    assert!(asked.is_empty(), "nothing asked: {asked:?}");
+    assert!(session.channel_named("written").is_none(), "nothing is created");
+
+    let named = ComponentDescriptor { params: json!({ "id": "operated" }), ..ComponentDescriptor::new("policy", PRECONFIGURED_REF_KIND) };
+    session.create_channel(&World::as_user(world.alice), spec("named", named)).await.expect("named through a ref");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

@@ -744,11 +744,45 @@ A new way of choosing who answers is a new policy:
 | `random_policy` | one agent, chosen at random |
 | `mentions_only_policy` | nobody: agents respond only when someone mentions them |
 | `user_driven_policy` | every agent if a user wrote, nobody if an agent did |
+| `decision_policy` | whom a decision model chooses by what was said (see below) |
 
 Under the first three, an agent's answer makes other agents answer too: the agents can discuss with
 each other. Under `user_driven_policy` the agents answer when a person writes and are quiet in
 between: an agent's message is still delivered to the other agents, but starts no turn. Loops come
 from asking to respond, not from delivering.
+
+### Choosing by what was said
+
+`decision_policy`, of the plugin `caelumora-decision` (issue 403), asks a decision model which of
+the agents should respond: a model that answers typed questions about a text with probabilities,
+served by Ollama since 0.35 at `/v1/systemone` (see [LLM-MODELS.md](LLM-MODELS.md#decision-models)).
+It is given what was said and the candidates as they are introduced. Up to 25 candidates it asks one
+`choice` over their handles and "nobody": the most probable is asked to respond - nobody, if that is
+most probable - and every other at or above `threshold` besides, at most `max_responders`. Beyond 25
+it asks whether each should respond, up to 64, and asks those at or above `threshold`.
+
+The channel waits for the decision before it routes anything else, so it is bounded by the
+endpoint's timeout, 5 s unless written. What keeps the model from choosing - a timeout, an error,
+an answer naming no option, more than 64 candidates - asks whom `on_failure` says: `all` (the
+default), so that nothing said is left unanswered in silence, or `none`. It is logged without
+anything that was said.
+
+What was said leaves the system where the endpoint lies outside it. The policy sends it only if
+every message may flow to the endpoint's `destination` - `public` unless configured, as for an MCP
+server - asked in the context of the event routed, in which the endpoint's credential is resolved
+too; otherwise it asks as on failure. Since its parameters say where what it is given goes, an
+operator configures it alone (`ComponentKind::operator_only`): a channel created on request names it
+only through a `ref` to preconfigured components, while a template may write it.
+
+| Parameter | Meaning | Default |
+|---|---|---|
+| `endpoint` | The server, its credential and `timeout_secs` (see [COMPONENTS.md](COMPONENTS.md#remote-endpoints)) | `url: http://127.0.0.1:11434`, 5 s |
+| `model` | The decision model | `nimble` |
+| `keep_alive` | How long the model stays loaded after a decision | the server's |
+| `threshold` | How probable it must be that a candidate fits | `0.3` |
+| `max_responders` | How many are asked at most | `1` |
+| `on_failure` | Whom to ask when the model does not choose: `all` or `none` | `all` |
+| `destination` | What the server is cleared for | `public` |
 
 What a moderator decides is all a participant is told: `Moderator::route` returns whom an event is
 delivered to and as what, and the channel delivers exactly that; it has no broadcast of its own.
