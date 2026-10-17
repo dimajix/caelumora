@@ -106,7 +106,7 @@ impl<'a> Situation<'a> {
     }
 
     /// The agent's channel as the work reads it from there (`session`,
-    /// `SessionView::channel`, issue 399): its members, its notes, its
+    /// `SessionView::channel`, issue 399): its participants, its notes, its
     /// workspace. `None` where the work reaches no session.
     ///
     /// # Errors

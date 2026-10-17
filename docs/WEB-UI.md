@@ -90,7 +90,7 @@ session are handled in one place:
     the session (`GET /auth/me`), whose `401` brings up the login page if that was the cause.
 *   A channel's stream stays open while its channel stops and starts again, and opening a channel
     does not start it (issue 386). The snapshot sent at each stop and start replaces what was shown,
-    so a member's state and an answer under way are gone with the channel that ran them.
+    so a participant's state and an answer under way are gone with the channel that ran them.
 
 Messages can arrive twice, in the snapshot and as an event; they are dropped by id.
 
@@ -122,10 +122,10 @@ reload shows the same.
 
 The sidebar lists the user's sessions with their channels and follows the global stream: it takes
 its state from the snapshot and fetches a session again on any event that changes it, its channels
-or their members. Starting and stopping are ignored. An event about an entity is read by its kind
-(`entityEvent` in `globalEvents.ts`): the lists of workspaces, skills, artifacts, teams and agents
-are loaded again on any event of their kind, and the trash on any deletion or restoring, whatever
-the kind.
+or their participants. Starting and stopping are ignored. An event about an entity is read by its
+kind (`entityEvent` in `globalEvents.ts`): the lists of workspaces, skills, artifacts, teams and
+agents are loaded again on any event of their kind, and the trash on any deletion or restoring,
+whatever the kind.
 
 What is new in a channel (issue 404) is shown beside it: how many messages of others came since the
 user last read it, and an `@` where one of them mentions them; a folded session shows the sum of its
@@ -169,7 +169,8 @@ not offered: the REST API lists neither.
 The lists of workspaces, skills, artifacts, teams and agents in the sidebar are one component
 (`PageList`).
 A page shown in the place of a channel is closed when the list it was listed in loses its entry; one
-the list never had - an artifact read only as a member of a channel, opened from the chat - stays.
+the list never had - an artifact read only as a participant of a channel, opened from the chat -
+stays.
 
 The file browser downloads a file through a plain link - the cookie goes with it, and the server
 sends it as an attachment - and uploads and deletes only for whoever may change the files
@@ -192,8 +193,8 @@ text a skill loaded gave the agent.
 ### Artifacts
 
 The artifacts the user may read - their own and those shared with them by name - are listed below
-the skills. Nothing is made there: an artifact is published by an agent. One read only as a member
-of the channel it was published in is not listed, but opened from its card in the chat.
+the skills. Nothing is made there: an artifact is published by an agent. One read only as a
+participant of the channel it was published in is not listed, but opened from its card in the chat.
 
 An artifact's page shows what it is, where it lies, its classification, and its versions the user
 may read, each with where and by whom it was published - by name for whoever may read that channel,
@@ -287,7 +288,7 @@ others say in it as the global stream announces it.
     channel decides whether it enters. A message refused is marked so, with why; a refused change of
     a message is undone by reading the message back (`GET …/messages/{mid}`).
 *   **Asking for another answer.** An agent's last message has a retry icon while nothing is being
-    generated and its member's `can_retry` allows it - never an external agent's, which never
+    generated and its participant's `can_retry` allows it - never an external agent's, which never
     answers again. So has an answer under way, once its turn is known, and the notice of a turn
     given up because it failed or the channel was lowered, while it is the last thing in the chat.
     The agent decides: accepted, its answer is taken back and the new one follows - what a turn
@@ -314,7 +315,7 @@ others say in it as the global stream announces it.
     call alone, and the agent goes on. A command a call handed back as still running can be ended by
     whoever may change the workspace's files.
 *   **Input.** A line starting with `/` is sent as a command, `//` as a literal slash. Typing `@`
-    completes the members' handles, `/` the commands the user may see - the channel's, and the
+    completes the participants' handles, `/` the commands the user may see - the channel's, and the
     agents' with each handle that carries one out. An unsent draft survives a forced re-login. A
     message can be sent while an agent answers: the agent hears it once its turn ends and answers in
     a turn of its own, if asked to. `Enter` sends, `Shift+Enter` breaks the line. A user's message
@@ -322,8 +323,8 @@ others say in it as the global stream announces it.
 
 ### Classification
 
-The channel's classification is shown above the member list. Next to the input, a user can release
-the next message to a lower level or further compartments; it offers only what may enter the
+The channel's classification is shown above the participant list. Next to the input, a user can
+release the next message to a lower level or further compartments; it offers only what may enter the
 channel, the server decides, and a release is for one message. Messages whose classification
 differs from the channel's carry a badge.
 
@@ -361,7 +362,7 @@ channel uses it and the user may read it - and its files, by the workspace; or t
 used here, without why. The files are loaded again when a tool call of the channel ended, when the
 user ended a command, and when the channel's switch to use the workspace changes.
 
-### Members, moderator and notes
+### Participants, moderator and notes
 
 Under each agent, a gauge shows how full its context is: the tokens its last call measured, or a
 compaction estimated (`context_tokens`), against the size of its context, coloured as it fills;
@@ -378,7 +379,7 @@ changes: idle, working, carrying out a command, busy with something of its own -
 activity says -, waiting for an approval, sleeping, or nothing running. Users and approvers have
 none.
 
-The member list is sorted by name and uses the members' handles for `@` completion and for
+The participant list is sorted by name and uses the participants' handles for `@` completion and for
 highlighting mentions; participants that cannot be mentioned, such as approvers, have none. The
 completion offers `@all` and `@channel` as well, and both are highlighted in a message that
 mentions anyone. Who
@@ -386,14 +387,14 @@ answers - the channel's responder policy - is shown above it as its moderator, a
 `mentions_only_policy` the input says that agents answer only when mentioned. `decision_policy`
 is explained, but not offered for a new channel: an operator configures it alone.
 
-What can be done with a member is in its menu, each entry only where the member offers it: its
-profile, its history, its private notes, its tools, removing it from the channel (where `can_change`
-is set, which also offers adding a participant of the session with how much of the history they
-may see - and, for whoever may change the session, someone found by the beginning of their name who
-is not in it yet, marked so and taken into it as well; whoever cannot be added is shown with why;
-or a new agent of a personality, made and then taken in - the user's own, or for this session
-alone, as they choose or as a personality of the session or the channel requires, and deleted again
-if it cannot be taken in),
+What can be done with a participant is in its menu, each entry only where the participant offers it:
+its profile, its history, its private notes, its tools, removing it from the channel (where
+`can_change` is set, which also offers adding a participant of the session with how much of the
+history they may see - and, for whoever may change the session, someone found by the beginning of
+their name who is not in it yet, marked so and taken into it as well; whoever cannot be added is
+shown with why; or a new agent of a personality, made and then taken in - the user's own, or for
+this session alone, as they choose or as a personality of the session or the channel requires, and
+deleted again if it cannot be taken in),
 and deleting the agent - which asks once more, since the agent leaves every channel it
 takes part in, not only this one, until it is restored.
 
@@ -408,8 +409,8 @@ takes part in, not only this one, until it is restored.
     in the session changes. Who may read an agent's context sees them there anyway; the panel shows
     them current and on their own.
 
-Below the members, "Former members" lists who took part and left, with history and private notes
-where `can_read_context`, so that what a removed agent did - the turn it gave up when removed
+Below the participants, "Former participants" lists who took part and left, with history and private
+notes where `can_read_context`, so that what a removed agent did - the turn it gave up when removed
 included - can still be read. A "Notes" tab shows the notes the channel's agents published.
 
 ### What an agent saw

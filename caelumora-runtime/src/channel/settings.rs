@@ -47,7 +47,7 @@ impl ChannelLoop {
         Ok(self.channel.update_description(context, summary, briefing).await?)
     }
 
-    /// Sets whether the channel's members work on the workspace of its
+    /// Sets whether the channel's participants work on the workspace of its
     /// session here (issue 251) on behalf of `context`: stored first, which
     /// is where the permission is checked (`UpdateChannel`). It permits
     /// nothing the classifications refuse; it takes effect with the next

@@ -1191,12 +1191,12 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
 
     let (alice, bob) = (user("alice"), user("bob"));
     let participants = record_users(&manager, &[&alice, &bob]).await;
-    let mut members = ComponentDescriptor::new("members", "channel_members_prompt_provider");
-    members.params = serde_json::json!({ "changes_only": true });
+    let mut roster = ComponentDescriptor::new("participants", "channel_participants_prompt_provider");
+    roster.params = serde_json::json!({ "changes_only": true });
     let personality = Personality {
         id: PersonalityId::new(), name: ScopedName::new("remote", Default::default()).unwrap(), kind: PersonalityKind::External,
         roles: None, description: None, introduction: None,
-        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("remote", "test_remote"), members] },
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("remote", "test_remote"), roster] },
         security_attributes: Default::default(), reasoning_visibility: Default::default(),
         deleted: None,
     };

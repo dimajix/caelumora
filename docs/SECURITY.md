@@ -169,7 +169,7 @@ list. This is the one place ownership and access are recorded; see [Access lists
     name of its personality - not the personality itself, which stays its readers' -, whether it
     runs here or elsewhere, and who owns it, by name, also when they share no session with the
     owner: the agent acts with its owner's authority, and who talks to it should know whose. All of
-    it is read in the runtime's name, like the names of members.
+    it is read in the runtime's name, like the names of participants.
 
 ### The ownership policy
 
@@ -181,7 +181,7 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     the questions of an agent's call (`AnswerQuestion` - whether they were asked is the agent's to
     check, not the policy's). What belongs to the system, everybody may read and use.
 *   An agent reads (`Get`) what its owner may read, and what it takes part in itself - as the
-    caller, a member of the channel or session. Everything else it does, it does as its owner:
+    caller, a participant of the channel or session. Everything else it does, it does as its owner:
     changing, deleting, cancelling and the rest are the principal's.
 *   Creating is only allowed with oneself as owner; changing and deleting only for the owner.
 *   What was deleted is the owner's to read (`ReadDeleted`) and to restore (`Restore`). Removing it
@@ -190,9 +190,9 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
 *   A message is its author's to modify and to take back: whoever said it - the context's caller, an
     agent for its own message even when it acts for its owner - not the channel's owner.
 *   A command an agent carries out itself is seen and asked for (`ShowAgentCommand`,
-    `ExecuteAgentCommand`) by whoever may write in the channel - its members -, unless the command
-    is for the agent's owners alone: then by whoever answers for the agent, as `ApproveToolCall` is
-    granted. Who may not run one does not see it.
+    `ExecuteAgentCommand`) by whoever may write in the channel - its participants -, unless the
+    command is for the agent's owners alone: then by whoever answers for the agent, as
+    `ApproveToolCall` is granted. Who may not run one does not see it.
 *   A command of the session is decided alike, by the channel it is run in (`ShowCommand`,
     `ExecuteCommand`): by whoever reads the channel, or for a command for the owners alone by the
     channel's owner.
@@ -369,15 +369,15 @@ rights. In three parts:
 Whoever asked stays in the context as its initiator - the root of the chain, the agent itself when
 nobody asked: for the record, and for which request a turn answers - never for rights. The questions
 a tool puts to the agent's owner go to the owner, not to whoever asked. What the runtime asks in
-someone's name on its own - whether a member of a channel could still start a command there - has
-the system as its initiator.
+someone's name on its own - whether a participant of a channel could still start a command there -
+has the system as its initiator.
 
 There is no delegation chain. An agent that mentions another does not delegate to it: the other
 answers for its own owner, bounded by the channel, with whoever began the conversation as its
 initiator. A chain is reconsidered when there are subagents.
 
 **What this accepts.** An owner who puts an agent into a channel without requiring approval lets
-every member read through it whatever the agent may read - within the channel's classification,
+every participant read through it whatever the agent may read - within the channel's classification,
 since nothing flows above it. That is the consequence of the owner's check, not a gap in the rule;
 the answer is approval, rules of the place and limiting roles, not the asker's rights. Who may ask
 an agent at all could later be decided by its owner, as an action of its own. The security suite
@@ -532,9 +532,9 @@ is shown.
 ## Views
 
 What a frontend reads, it reads through the runtime's **views** (`caelumora_runtime::view`): the
-sessions, their channels and their members as one viewer navigates them. A view is a node the viewer
-stands on; its methods are the edges to the next ones, and each edge asks its own access question,
-in the viewer's name:
+sessions, their channels and their participants as one viewer navigates them. A view is a node the
+viewer stands on; its methods are the edges to the next ones, and each edge asks its own access
+question, in the viewer's name:
 
 *   `SessionManager::views(viewer)` is the root, from which the sessions the viewer may read are
     reached. An agent's root is its own session, through its turn; it reads from its channel by the
@@ -542,10 +542,10 @@ in the viewer's name:
 *   A session reaches the channels the viewer may read - a user cleared for their classification, an
     agent also by its own taking part and as far as they may be copied into its channel - and, for
     an agent, its own private notes of the session's other channels through itself.
-*   A channel reaches its members, also an agent that took part and left, so that what it saw stays
-    readable.
-*   A member answers what may be read of it: an agent's context to whom may read it
-    (`ReadAgentContext`); its tools to whoever reads the agent and every member of the channel,
+*   A channel reaches its participants, also an agent that took part and left, so that what it saw
+    stays readable.
+*   A participant answers what may be read of it: an agent's context to whom may read it
+    (`ReadAgentContext`); its tools to whoever reads the agent and every participant of the channel,
     since what an agent can do there is no secret among those it works with (`ReadAgentTools`); what
     it was built from to its owner alone, since that is configuration and its preconfigured
     components may have been shared with its owner alone (`ReadAgentComponents`).

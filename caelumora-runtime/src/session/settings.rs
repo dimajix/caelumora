@@ -70,8 +70,8 @@ impl SessionLoop {
     /// in another session's scope. Taking it away shares nothing and asks
     /// no more. Its channels use it as their classifications and switches
     /// let them, from their next use - and as its access list lets each
-    /// member (issue 23): attaching shares nothing by itself, unless `share`
-    /// says how far the session's members may use it, which adds an entry
+    /// participant (issue 23): attaching shares nothing by itself, unless `share`
+    /// says how far the session's participants may use it, which adds an entry
     /// for them. Taking it away leaves the list as it is: it is the
     /// workspace's, and its owner's to change.
     ///

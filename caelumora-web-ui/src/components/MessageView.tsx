@@ -3,7 +3,7 @@
 
 import React, {useState} from 'react';
 import {Brain, Check, ChevronDown, ChevronRight, Copy, EyeOff, Info} from 'lucide-react';
-import type {ActorId, ChannelMember, Message, ToolCall} from '../types';
+import type {ActorId, ChannelParticipant, Message, ToolCall} from '../types';
 import type {ChannelArtifacts, WorkspaceFiles} from '../api';
 import type {Page} from '../page';
 import {cn} from '../classNames';
@@ -133,8 +133,8 @@ interface MessageViewProps {
   message: Message;
   /** Who views it: their own messages stand on the right, in a colour of their own (issue 407). */
   me: ActorId;
-  /** The channel's members, for highlighting `@`-mentions. */
-  members: ChannelMember[];
+  /** The channel's participants, for highlighting `@`-mentions. */
+  participants: ChannelParticipant[];
   /** Labels shown next to the sender, e.g. "internal". */
   badges?: string[];
   /** Further icons for the footer, e.g. showing the message's context. */
@@ -156,7 +156,7 @@ interface MessageViewProps {
   endedCommands?: ReadonlySet<string>;
 }
 
-export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, members, badges, actions, className, files, filesVersion, artifacts, onSelectPage, onInterruptCall, onKillCommand, endedCommands}) => {
+export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, participants, badges, actions, className, files, filesVersion, artifacts, onSelectPage, onInterruptCall, onKillCommand, endedCommands}) => {
   const own = isOwn(msg, me);
   return (
     <div
@@ -182,7 +182,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, membe
           content={msg.content}
           invert={own}
           hardBreaks={msg.role === 'User'}
-          mentions={mentionedHandles(msg, members)}
+          mentions={mentionedHandles(msg, participants)}
         />
       )}
 

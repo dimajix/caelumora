@@ -98,7 +98,7 @@ impl WorkspaceController {
     /// The workspace, if the caller of `ctx` may use it in `channel` of
     /// `session` (issue 251, decision 10): it is the session's, the channel
     /// is the session's and uses it, the caller is one of its current
-    /// members, its access list lets `ctx` read it (`GetWorkspace`, issue
+    /// participants, its access list lets `ctx` read it (`GetWorkspace`, issue
     /// 23) and the workspace and the channel flow both ways - asked as the
     /// policy asks what an actor puts into a channel
     /// (`ConfidentialityPolicy::may_publish`). `None` otherwise, also when
@@ -109,8 +109,8 @@ impl WorkspaceController {
     /// # Errors
     /// Whatever reading the workspace reports, other than its absence.
     pub(crate) async fn usable_in(&self, ctx: &SecurityContext, session: &Session, channel: &Channel) -> WorkspaceResult<Option<Workspace>> {
-        let member = channel.participants.iter().any(|participant| participant.actor_id() == ctx.caller_id);
-        if session.workspace != Some(self.id()) || channel.session_id != session.id || !channel.uses_workspace || !member {
+        let takes_part = channel.participants.iter().any(|participant| participant.actor_id() == ctx.caller_id);
+        if session.workspace != Some(self.id()) || channel.session_id != session.id || !channel.uses_workspace || !takes_part {
             return Ok(None);
         }
         let Some(workspace) = self.workspace.reached(&SecurityContext::system()).await.optional()? else {

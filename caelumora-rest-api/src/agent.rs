@@ -1,4 +1,4 @@
-//! Agents on their own, not as members of a channel (issues 164, 227), and
+//! Agents on their own, not as participants of a channel (issues 164, 227), and
 //! the personalities they are made of.
 
 use crate::scope::ScopeKind;

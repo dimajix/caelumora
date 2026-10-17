@@ -1,7 +1,7 @@
 //! Error responses of the REST API (issue 02).
 //!
 //! Every error is answered with an `application/problem+json` body as defined
-//! by RFC 9457, extended by two members: `code`, a stable machine-readable
+//! by RFC 9457, extended by two participants: `code`, a stable machine-readable
 //! identifier (also the last segment of `type`), and `request_id`, which is
 //! the `request_id` field of the request's log span and the `x-request-id`
 //! response header - the way from a failure in the UI to its details in the
@@ -218,7 +218,7 @@ impl From<ViewError> for ApiError {
         match error {
             ViewError::SessionNotFound(_) => Self::not_found("session_not_found", detail),
             ViewError::ChannelNotFound { .. } | ViewError::NoChannelNamed(_) => Self::not_found("channel_not_found", detail),
-            ViewError::MemberNotFound { .. } => Self::not_found("actor_not_found", detail),
+            ViewError::ParticipantNotFound { .. } => Self::not_found("actor_not_found", detail),
             ViewError::MessageNotFound { .. } => Self::not_found("message_not_found", detail),
             ViewError::WorkspaceNotFound(_) => Self::not_found("workspace_not_found", detail),
             ViewError::GroupNotFound(_) => Self::not_found("group_not_found", detail),

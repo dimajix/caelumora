@@ -35,7 +35,7 @@ pub enum ActionType<'a> {
     ///   artifact's: reading a version needs both (issue 316), as a file in
     ///   HDFS needs its directory. Adding a version is `WRITE`.
     /// - a group (issue 286): who belongs to it, granted to its owner and,
-    ///   by its own access list, to its members. The participants of a
+    ///   by its own access list, to its participants. The participants of a
     ///   session or channel are changed only by the runtime.
     /// - a user: receiving the events about them; a stored user belongs to
     ///   the system (issue 94). A profile belongs to its user (issue 176).
@@ -102,7 +102,7 @@ pub enum ActionType<'a> {
     /// the command is for is the command's own word (`Command::owners_only`).
     ExecuteCommand { command: &'a Command, channel: &'a SecurityAttributes },
     /// Seeing that an agent carries out `command` (issue 269) - in `/help`,
-    /// in completion, in the member's snapshot. Carries the agent's
+    /// in completion, in the participant's snapshot. Carries the agent's
     /// attributes and those of the channel it is asked in.
     ShowAgentCommand { command: &'a Command, agent: &'a SecurityAttributes, channel: &'a SecurityAttributes },
     /// Asking the agent to carry out `command` (issue 269), alike. Whom the

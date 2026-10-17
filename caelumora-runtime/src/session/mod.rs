@@ -358,7 +358,7 @@ impl SessionLoop {
     fn agent_taken_in(&self, global_event: &GlobalEvent) -> Option<AgentId> {
         let (id, change) = global_event.about::<Session>()?;
         match change.update::<SessionUpdateEvent>() {
-            Some(SessionUpdateEvent::ParticipantAdded(Participant::Agent(agent))) if id == self.id => Some(agent),
+            Some(SessionUpdateEvent::ParticipantJoined(Participant::Agent(agent))) if id == self.id => Some(agent),
             _ => None,
         }
     }

@@ -44,8 +44,8 @@ fn agent_signature(command: &Command) -> String {
 /// see (issue 269), by name, each with the handles of the agents that do.
 async fn agents_commands(context: &CommandContext<'_>) -> BTreeMap<String, (Command, Vec<String>)> {
     let mut by_name: BTreeMap<String, (Command, Vec<String>)> = BTreeMap::new();
-    for (member, commands) in context.channel.agent_commands(&context.issuer.security_context()).await {
-        let Some(handle) = member.handle else { continue };
+    for (agent, commands) in context.channel.agent_commands(&context.issuer.security_context()).await {
+        let Some(handle) = agent.handle else { continue };
         for command in commands {
             by_name.entry(command.name.clone()).or_insert_with(|| (command, Vec::new())).1.push(format!("@{handle}"));
         }

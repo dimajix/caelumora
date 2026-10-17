@@ -282,7 +282,7 @@ impl ArtifactManager {
             }
         };
 
-        // Read by the members of the channel it is published in (issues 23,
+        // Read by the participants of the channel it is published in (issues 23,
         // 316) - the group of its participants (issue 286) -, who read the
         // artifact for it: a draft published where few are reaches nobody
         // who reads a later version published where many are.

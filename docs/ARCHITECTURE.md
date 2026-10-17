@@ -146,23 +146,24 @@ them in as anyone is taken into a running session; if that fails, the session is
 (`SessionManager::create_from_template`). REST and the TUI both create sessions this way.
 
 A session may have a **workspace** attached: a tree of files that belongs to a user, with one
-classification, used by the members of those channels of the session where it and the channel flow
-both ways. Its files lie in a configured storage and are reached through a `Terminal`. What an agent
-hands over to keep it publishes as an **artifact** (the plugin `caelumora-artifacts`): a fixed copy
-of a file, in a version of an artifact that belongs to a user, kept in an artifact storage beyond
-the workspace and downloaded where it was published. Details: [WORKSPACE.md](WORKSPACE.md),
+classification, used by the participants of those channels of the session where it and the channel
+flow both ways. Its files lie in a configured storage and are reached through a `Terminal`. What an
+agent hands over to keep it publishes as an **artifact** (the plugin `caelumora-artifacts`): a fixed
+copy of a file, in a version of an artifact that belongs to a user, kept in an artifact storage
+beyond the workspace and downloaded where it was published. Details: [WORKSPACE.md](WORKSPACE.md),
 [TOOLS.md](TOOLS.md#artifacts).
 
 Sessions and channels hold their users and agents by reference - `Participant::User(UserId)`,
 `Participant::Agent(AgentId)` - not as copies. The records live in the `EntityStore`; a channel
 leaves out a participant whose record no longer exists, and runs without it. A deleted agent rests
-in its channels so: they keep it, show it as a former member and run it again once it is restored.
-What of an actor outlives its run - the outbox a user follows a channel through, while the channel
-is stopped too - is the `ActorManager`'s (issue 386). Making, deleting, restoring and purging an
-agent are the `AgentManager`'s - a template's agents too, which the template only finds -, renaming
-it its `AgentController`'s. What lies in a session's or a channel's scope goes with it, deleted,
-restored and purged by the manager of its kind; so an agent is made there only by whoever may read
-the session or the channel. An approver has no record of its own and is held whole.
+in its channels so: they keep it, show it as a former participant and run it again once it is
+restored. What of an actor outlives its run - the outbox a user follows a channel through, while the
+channel is stopped too - is the `ActorManager`'s (issue 386). Making, deleting, restoring and
+purging an agent are the `AgentManager`'s - a template's agents too, which the template only
+finds -, renaming it its `AgentController`'s. What lies in a session's or a channel's scope goes
+with it, deleted, restored and purged by the manager of its kind; so an agent is made there only by
+whoever may read the session or the channel. An approver has no record of its own and is held
+whole.
 
 Details: [CHANNELS.md](CHANNELS.md).
 
@@ -253,18 +254,18 @@ Details: [MEMORY.md](MEMORY.md), [AGENT-TURN.md](AGENT-TURN.md).
 What an agent knows how to do need not be built into its personality: a **skill** is a procedure
 written down - instructions only, no tools - that a user owns, shares and edits like a document,
 kept in the `EntityStore`. An agent with the `skills` component is shown a catalogue of the skills
-it may load where it is - name and description - and loads one when a task calls for it; a member
-can give it one with `/skill`. Either way the skill's text goes into the agent's own transcript,
-never into the system prompt or the channel's history, and loading it is a decision of its own
-(`UseSkill`), besides whether its classification may flow into the channel. An agent may also write
-a skill down, for its owner, with approval.
+it may load where it is - name and description - and loads one when a task calls for it; a
+participant can give it one with `/skill`. Either way the skill's text goes into the agent's own
+transcript, never into the system prompt or the channel's history, and loading it is a decision of
+its own (`UseSkill`), besides whether its classification may flow into the channel. An agent may
+also write a skill down, for its owner, with approval.
 
 Details: [SKILLS.md](SKILLS.md).
 
 ## Reading what is there
 
 What is in the system is read through one navigation, the **views** (`caelumora_runtime::view`):
-from a session to its channels, from a channel to its history, notes and members, from an agent
+from a session to its channels, from a channel to its history, notes and participants, from an agent
 among them to what it saw - its transcript, its private notes, the context of each of its messages,
 the turns it gave up. Each step asks its own access question, in the name of whoever reads; a node
 is data that was allowed to be reached and decides nothing, so an operation still checks its own

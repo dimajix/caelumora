@@ -76,7 +76,7 @@ async fn an_agent_whose_personality_was_withdrawn_cannot_join_a_channel() {
 
     let refused = main.add_participant(&World::as_user(world.alice), ActorId::Agent(helper), HistoryAccess::All).await.expect_err("it may not run");
     assert!(denied(&refused), "{refused:#}");
-    assert!(!main.member_ids().contains(&ActorId::Agent(helper)), "the channel is as it was");
+    assert!(!main.participant_ids().contains(&ActorId::Agent(helper)), "the channel is as it was");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -120,7 +120,7 @@ async fn a_stranger_finds_nothing_of_a_session() {
 /// act -, not by a list copied when it was made: a participant removed is
 /// told of it, and reads it no more.
 #[tokio::test]
-async fn a_channel_is_read_by_its_members_wherever_they_act_and_no_more_once_removed() {
+async fn a_channel_is_read_by_its_participants_wherever_they_act_and_no_more_once_removed() {
     let world = World::new().await;
     let session = world.session_of(&[world.bob, world.carol], &[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -151,7 +151,7 @@ async fn a_participant_takes_part_but_changes_nothing() {
     let bob = World::as_user(world.bob);
 
     world.manager.open(&bob, session.id()).await.expect("he opens it");
-    assert!(world.members(world.bob, session.id(), main.id()).await.contains(&ActorId::User(world.alice)), "and sees who is in it");
+    assert!(world.participants(world.bob, session.id(), main.id()).await.contains(&ActorId::User(world.alice)), "and sees who is in it");
     main.user_actor(world.bob).expect("he takes part").send_message("hello".to_string(), None).await.expect("and writes into it");
     main.cancel(&bob).await.expect("and may cancel what runs in it");
 
@@ -370,7 +370,7 @@ async fn taking_someone_in_is_for_whoever_may_change_the_session_and_the_channel
         "alice: UpdateChannel(alice's) yes",
     ]), "changing the session and the channel, reading carol and whether she is cleared - then the store and the channel ask again as they store");
     assert!(world.manager.open(&World::as_user(world.carol), session.id()).await.is_ok(), "carol reads the session now");
-    assert!(world.members(world.carol, session.id(), main.id()).await.contains(&carol), "and takes part in the channel");
+    assert!(world.participants(world.carol, session.id(), main.id()).await.contains(&carol), "and takes part in the channel");
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
@@ -606,8 +606,8 @@ async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session
     let session = world.shared_session(&[], &[]).await;
     let channel = session.channels()[0].id();
     let view = world.manager.views(Viewer::new(bob)).session(session.id()).await.unwrap().channel(channel).await.unwrap();
-    let members = view.members().await;
-    let hers = members.iter().find(|m| m.id() == ActorId::User(world.alice)).unwrap();
+    let participants = view.participants().await;
+    let hers = participants.iter().find(|m| m.id() == ActorId::User(world.alice)).unwrap();
     assert_eq!(hers.introduction().await.unwrap().as_ref().map(|introduction| introduction.as_str()), Some("I run the team."), "bob reads how she introduces herself");
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
@@ -1228,7 +1228,7 @@ async fn a_storage_holds_no_workspace_above_its_destination() {
 
 /// Attaching a workspace is its owner's act, into a session they may change
 /// (issue 251, decision 12); it shares the workspace with the session's
-/// members only where asked to, by an entry of its access list (issue 23).
+/// participants only where asked to, by an entry of its access list (issue 23).
 /// Taking it away needs changing the session alone, and leaves the list.
 #[tokio::test]
 async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
@@ -1269,12 +1269,12 @@ async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
 }
 
 /// In a session, a workspace is used through the channels (issue 251,
-/// decisions 10, 11): by a current member - not its owner alone - whom its
+/// decisions 10, 11): by a current participant - not its owner alone - whom its
 /// access list lets (issue 23), where the channel uses it and it and the
 /// channel flow both ways; nobody else, and nothing says why. What the list
 /// grants is reading, or changing the files too.
 #[tokio::test]
-async fn a_workspace_is_used_in_a_channel_by_its_members_as_its_list_lets_them_where_both_flow() {
+async fn a_workspace_is_used_in_a_channel_by_its_participants_as_its_list_lets_them_where_both_flow() {
     let world = World::new().await;
     let workspaces = world.runtime.workspace_manager();
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
@@ -1315,11 +1315,11 @@ async fn a_workspace_is_used_in_a_channel_by_its_members_as_its_list_lets_them_w
 }
 
 /// Issue 254: a command is its channel's, and runs on only as long as some
-/// current member could start it there. The runtime asks so on its own, in
-/// each member's name, at every event that can change the answer - the
-/// first member who may suffices; once nobody may, it ends the command.
+/// current participant could start it there. The runtime asks so on its own, in
+/// each participant's name, at every event that can change the answer - the
+/// first participant who may suffices; once nobody may, it ends the command.
 #[tokio::test]
-async fn a_command_runs_on_only_while_some_member_could_start_it_in_its_channel() {
+async fn a_command_runs_on_only_while_some_participant_could_start_it_in_its_channel() {
     let world = World::new().await;
     let workspaces = world.runtime.workspace_manager();
     let alice = World::as_user(world.alice);
@@ -1330,7 +1330,7 @@ async fn a_command_runs_on_only_while_some_member_could_start_it_in_its_channel(
     let shell = shell.expect("a shell");
     let id = shell.start("sleep 30").await.unwrap();
 
-    // Asked again at a change, of the members in turn: alice may.
+    // Asked again at a change, of the participants in turn: alice may.
     let (_, asked) = world.recorded(async {
         workspace(&world, docs.id).await.update_description(&alice, Some("Drafts")).await.unwrap();
         while !world.access_policy.asked.lock().unwrap().iter().any(|line| line.contains("WriteWorkspace")) {
@@ -1456,7 +1456,7 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
 
 /// G1 (issue 286): a team's members read what is shared with it, wherever
 /// they act; who leaves it no longer does, and a stranger never did. Its
-/// owner changes it; a member reads it but changes nothing, and finds it
+/// owner changes it; a participant reads it but changes nothing, and finds it
 /// among his teams, which are asked for alone (issue 317).
 #[tokio::test]
 async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_members() {

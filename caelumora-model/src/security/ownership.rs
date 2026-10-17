@@ -15,7 +15,7 @@ use super::{AccessPolicy, ActionType, Grant, Memberships, NoMemberships, Reclass
 ///   the owner, to whom an entry of the access list grants it, and to
 ///   everybody for entities owned by the system or by no one. An agent
 ///   reads what its owner may read, and what it takes part in itself - a
-///   member as the caller (issue 264); everything else it does, it does as
+///   participant as the caller (issue 264); everything else it does, it does as
 ///   its owner.
 /// - Creating is allowed only with oneself as owner.
 /// - Changing, deleting and stopping are the owner's alone, and so is reading what an
@@ -149,18 +149,18 @@ impl AccessPolicy for OwnershipPolicy {
             | ActionType::RetryMessage(a)
             | ActionType::AnswerQuestion(a) => self.granted(a, Grant::Read, context, false).await,
             // What an agent can do is read by whoever reads the agent, and by
-            // every member of the channel it works in with them.
+            // every participant of the channel it works in with them.
             ActionType::ReadAgentTools { agent, channel } => {
                 self.granted(agent, Grant::Read, context, false).await || self.granted(channel, Grant::Read, context, false).await
             }
             ActionType::ApproveToolCall { agent, channel } => self.answers_for(agent, channel, context).await,
             // A command of an agent is run by whoever may write in the
-            // channel - its members -, unless the command is for the agent's
+            // channel - its participants -, unless the command is for the agent's
             // owners alone, as approving its calls is (issue 269).
             ActionType::ShowAgentCommand { command, agent, channel } | ActionType::ExecuteAgentCommand { command, agent, channel } => {
                 if command.owners_only { self.answers_for(agent, channel, context).await } else { self.granted(channel, Grant::Read, context, false).await }
             }
-            // A command of the session alike (issue 304): its members, or
+            // A command of the session alike (issue 304): its participants, or
             // for the owners alone, whoever may change the channel.
             ActionType::ShowCommand { command, channel } | ActionType::ExecuteCommand { command, channel } => {
                 if command.owners_only { owns(channel) } else { self.granted(channel, Grant::Read, context, false).await }

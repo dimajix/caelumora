@@ -1,4 +1,4 @@
-// The actions on something in a list - a session, a channel, a member of a
+// The actions on something in a list - a session, a channel, a participant of a
 // channel (issue 230): one button with three dots, opening a menu of what
 // may be done with it, so that the actions take no room beside its name.
 

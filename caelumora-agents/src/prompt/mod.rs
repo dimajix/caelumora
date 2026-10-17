@@ -8,7 +8,7 @@
 
 pub mod channel_briefing_prompt_provider;
 pub mod channel_language_prompt_provider;
-pub mod channel_members_prompt_provider;
+pub mod channel_participants_prompt_provider;
 pub mod external_context_provider;
 pub mod static_system_prompt_provider;
 pub mod tool_sets_prompt_provider;
@@ -228,7 +228,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 
     channel_briefing_prompt_provider::register(registry);
     channel_language_prompt_provider::register(registry);
-    channel_members_prompt_provider::register(registry);
+    channel_participants_prompt_provider::register(registry);
     external_context_provider::register(registry);
     static_system_prompt_provider::register(registry);
     tool_sets_prompt_provider::register(registry);

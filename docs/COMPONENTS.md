@@ -42,7 +42,7 @@ kept once, as preconfigured components, and each personality includes it with a 
 components:                      # of the seed: kept in the ComponentStore
 - id: channel-context
   components:
-  - { id: channel-members, kind: channel_members_prompt_provider }
+  - { id: channel-participants, kind: channel_participants_prompt_provider }
   - { id: channel-language, kind: channel_language_prompt_provider }
 personalities:
 - name: jonathan-assistant
@@ -250,7 +250,7 @@ by the agents' plugin (`caelumora_agents::plugin::register_components`, issue 37
 |---|---|
 | `tool/` | tool providers (`calculator_tool`, `terminal_tool`, ...) |
 | `command/` | command providers (`help_command`, `wakeup_command`, `nudge_command`) |
-| `prompt/` | prompt providers (`static_system_prompt_provider`, `channel_members_prompt_provider`, ...) and the context providers (`turn_context_provider`, `external_context_provider`), with what their parts share (`Prompt`, `Section`, `titled`) |
+| `prompt/` | prompt providers (`static_system_prompt_provider`, `channel_participants_prompt_provider`, ...) and the context providers (`turn_context_provider`, `external_context_provider`), with what their parts share (`Prompt`, `Section`, `titled`) |
 | `llm/` | the facet through which an agent asks its model, the defusing of control tokens any kind may use, and no kind: each model provider is a plugin (`ollama_client` in `caelumora-ollama`) |
 | `moderator/` | the moderator and its responder policies |
 | `compaction/` | `/compact` (`compaction`, in `command.rs`, since a module cannot hold a file of its own name) and the compaction policies (`threshold_compaction_policy`) and strategies (`summary_compaction`) |
@@ -326,7 +326,7 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `static_system_prompt_provider` | `PromptProvider` | `prompt` (required), `title` (none), `position` (`start`), `classification` (public) | A fixed prompt part, under `[title]` if one is named. |
 | `channel_briefing_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent what its session and channel are for, as their owners wrote it ([AGENT-TURN.md](AGENT-TURN.md#what-the-session-and-channel-are-for)). |
 | `channel_language_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent the language its channel's conversation is held in ([AGENT-TURN.md](AGENT-TURN.md#the-channels-language)). |
-| `channel_members_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent its own name and handle and who else is in its channel, with their introductions ([AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). |
+| `channel_participants_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent its own name and handle and who else is in its channel, with their introductions ([AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). |
 | `workspace_prompt_provider` | `PromptProvider` | `position` (`start`), `instruction_files` (`["AGENTS.md", "CLAUDE.md"]`) | Tells the agent the workspace it may use in its channel, and which instruction files lie at its root, to be read first - or that there is none ([AGENT-TURN.md](AGENT-TURN.md#its-workspace)). |
 | `tool_sets_prompt_provider` | `PromptProvider` | `position` (`start`) | Tells the model which of its tool sets are unavailable and why, nothing while all are available ([TOOLS.md](TOOLS.md#tool-sets)). |
 | `turn_context_provider` | `ContextProvider` | - | The default context provider of an agent run here: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |

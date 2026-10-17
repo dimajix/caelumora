@@ -439,10 +439,10 @@ impl World {
         self.manager.open(&Self::as_user(self.alice), session.id).await.expect("alice opens her session")
     }
 
-    /// The ids of the members of `channel` as `user` sees them.
-    pub async fn members(&self, user: UserId, session: SessionId, channel: ChannelId) -> Vec<ActorId> {
+    /// The ids of the participants of `channel` as `user` sees them.
+    pub async fn participants(&self, user: UserId, session: SessionId, channel: ChannelId) -> Vec<ActorId> {
         let view = self.manager.views(Viewer::new(Self::as_user(user))).session(session).await.unwrap().channel(channel).await.unwrap();
-        view.members().await.iter().map(|m| m.id()).collect()
+        view.participants().await.iter().map(|m| m.id()).collect()
     }
 }
 

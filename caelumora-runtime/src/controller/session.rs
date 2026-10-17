@@ -105,7 +105,7 @@ impl SessionController {
     /// # Errors
     /// See [`Self::update`].
     pub async fn add_participant(&self, ctx: &SecurityContext, participant: Participant) -> StoreResult<()> {
-        let event = SessionUpdateEvent::ParticipantAdded(participant);
+        let event = SessionUpdateEvent::ParticipantJoined(participant);
         let writing = self.session.write().await;
         let session = writing.apply(ctx, &event).await?;
         self.keep_participants(&session).await;

@@ -59,7 +59,7 @@ export type ParticipantKind = 'user' | 'agent' | 'approver';
 /** Whether an agent runs here or elsewhere (issues 179, 244). */
 export type PersonalityKind = 'internal' | 'external';
 
-/** Where an agent stands (issue 243), as `StateChanged` and a member's `state` name it. */
+/** Where an agent stands (issue 243), as `StateChanged` and a participant's `state` name it. */
 export type ActorState = 'Idle' | 'Sleeping' | 'Planning' | 'ExecutingTools' | 'WaitingForUser' | 'Reflecting' | 'Cancelling' | 'CarryingOutCommand' | 'Busy';
 
 /** A participant of a channel. */
@@ -79,7 +79,7 @@ export interface TokenUsage {
   context_tokens: number;
 }
 
-export interface ChannelMember {
+export interface ChannelParticipant {
   id: ActorId;
   name: string;
   /** The handle it is `@`-mentioned by, or null if it cannot be mentioned. */
@@ -125,10 +125,10 @@ export interface ChannelMember {
   /**
    * What its model calls used (issue 209): sent with the channel stream's
    * snapshot and by `getParticipant`, not where channels are listed; absent
-   * for a member whose calls report no tokens.
+   * for a participant whose calls report no tokens.
    */
   usage?: TokenUsage;
-  /** For a former member (issue 164): who removed it and when. */
+  /** For a former participant (issue 164): who removed it and when. */
   left?: Removal;
   /** Whether you may delete it - only ever an agent of yours (issue 164). */
   can_delete: boolean;
@@ -177,7 +177,7 @@ export interface ChannelResponse {
    */
   briefing?: string;
   /** All participants, in no particular order. */
-  members: ChannelMember[];
+  participants: ChannelParticipant[];
   /** The kind of the moderator, e.g. `policy_moderator`; `null` if preconfigured (issue 174). */
   moderator: string | null;
   /** The kind of the policy in the moderator's slot - who answers - e.g. `round_robin_policy` or `mentions_only_policy` (issues 44, 174); `null` if preconfigured. */
@@ -188,14 +188,14 @@ export interface ChannelResponse {
   language: string | null;
   /** What it restricts of the tool calls made in it (issue 13): rules that ask or deny. */
   approval_rules: ApprovalRule[];
-  /** Whether its members work on the session's workspace here (issue 251), where the classifications let them. */
+  /** Whether its participants work on the session's workspace here (issue 251), where the classifications let them. */
   uses_workspace: boolean;
   /** The session's workspace, if the channel uses it and you may read it (issue 23). */
   workspace_id?: string;
   /** Whether you may rename it, add or remove participants (issue 46) and set its approval rules. */
   can_change: boolean;
   /** Who took part and left (issue 164), in the order they left, each with `left`. */
-  former_members: ChannelMember[];
+  former_participants: ChannelParticipant[];
   /** What is new in it to you (issue 404), as you open or list it. */
   unread?: Unread;
 }
@@ -434,7 +434,7 @@ export interface CreateGroupRequest {
   scope?: 'user' | 'global';
 }
 
-/** An agent the user may read (issues 164, 227), on its own rather than as a member of a channel. */
+/** An agent the user may read (issues 164, 227), on its own rather than as a participant of a channel. */
 export interface AgentResponse {
   id: string;
   name: string;
@@ -897,7 +897,7 @@ export interface CreateChannelRequest {
   classification?: Classification;
   /** The language its conversation is held in (issue 56); none in particular if absent (issue 331). */
   language?: string;
-  /** Whether its members work on the session's workspace in it (issue 253); yes if absent. */
+  /** Whether its participants work on the session's workspace in it (issue 253); yes if absent. */
   uses_workspace?: boolean;
 }
 

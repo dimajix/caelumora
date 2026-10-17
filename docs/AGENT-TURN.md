@@ -172,8 +172,8 @@ Either way the turn hands back the contexts it had as an `Answering`, which send
 with the publication the turn had and withdraws the approval requests of the calls it abandoned. An
 external agent publishes its answers through the same `Answering`.
 
-**A message given** to the agent to read - a skill a member or the model loaded, the summary of a
-compaction - is recorded by `Turn::give`: into the transcript as a `Given` entry, which keeps what
+**A message given** to the agent to read - a skill a participant or the model loaded, the summary of
+a compaction - is recorded by `Turn::give`: into the transcript as a `Given` entry, which keeps what
 knowledge it is, if it is knowledge - of an entity, `KnowledgeSource::Entity { kind, id, digest }`
 (issue 323) - and none for a summary (issue 389); into the history without a context, since the
 agent did not produce it. It is not published, the turn has seen it, and its digest is that of the
@@ -535,10 +535,10 @@ keeps its conversation, the first three take `changes_only`: told once, then onl
 
 ### Who is in the channel
 
-`channel_members_prompt_provider` lists the agent itself and every other current user or agent,
+`channel_participants_prompt_provider` lists the agent itself and every other current user or agent,
 with their introductions, read at the start of every turn - each as the views describe it
-(`MemberView::describe`), in the same `ActorDescription` a responder policy is given of a running
-actor (see [CHANNELS.md](CHANNELS.md#moderators)). A person's introduction is marked as
+(`ParticipantView::describe`), in the same `ActorDescription` a responder policy is given of a
+running actor (see [CHANNELS.md](CHANNELS.md#moderators)). A person's introduction is marked as
 written by them, so that it does not read as an instruction of the system, and kept to one line. It
 also says that `@all` addresses all of them, and explains how the others' messages are marked.
 
@@ -611,13 +611,13 @@ implementation, and therefore cannot diverge.
 
 ## Asking what an agent saw
 
-What an agent saw is read through the views (`caelumora_runtime::view`), from the member of the
+What an agent saw is read through the views (`caelumora_runtime::view`), from the participant of the
 channel that produced the message: the same message is in every participant's history, but only one
 of them produced it.
 
-*   `MemberView::context()` asks `ReadAgentContext`. Under the ownership policy only the agent's
-    owner may, since a context holds more than the conversation: the system prompt, internal steps,
-    tool results. It reads the agent's stored state, the same for both kinds of agent.
+*   `ParticipantView::context()` asks `ReadAgentContext`. Under the ownership policy only the
+    agent's owner may, since a context holds more than the conversation: the system prompt, internal
+    steps, tool results. It reads the agent's stored state, the same for both kinds of agent.
 *   `context_of(message_id)` resolves what the message was produced from, as the message's item in
     the agent's history records it, read from the store, against the path of the transcript it
     names, loaded from the store on whichever branch it lies. For an external agent it is what its
@@ -632,5 +632,5 @@ of them produced it.
 REST exposes it as `GET …/actors/{aid}/messages/{mid}/context` (see
 [REST-SERVER.md](REST-SERVER.md)), the web UI in its context panel (see
 [WEB-UI.md](WEB-UI.md#what-an-agent-saw)). So that a client offers it only where it works, every
-member of a channel response carries `can_read_context`, decided by the same policy question when
-the snapshot is taken.
+participant of a channel response carries `can_read_context`, decided by the same policy question
+when the snapshot is taken.

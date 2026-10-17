@@ -540,7 +540,7 @@ impl SessionManager {
         // `context` may delete it (issue 320). Its agents take part in no
         // other session (`Scope::admits`): they leave nothing. Then the
         // groups of its participants and its channels' go, in the runtime's
-        // name (issue 348) - last, since its members reach it by them while
+        // name (issue 348) - last, since its participants reach it by them while
         // it is kept: all of them or none. If something is left, or the
         // groups cannot go, the deletion is rolled back, its mark taken away
         // again - in the runtime's name: the deletion was permitted - and the
@@ -598,7 +598,7 @@ impl SessionManager {
         let session = self.stores.sessions.restore(context, id).await.map_err(store_error(id))?;
         if let Some(since) = deleted_at {
             // The groups of its participants first, with it: whatever fails
-            // later, its members reach it (issue 348). If they cannot come
+            // later, its participants reach it (issue 348). If they cannot come
             // back, the restoring is rolled back: the session is deleted
             // again, in the runtime's name, as its restoring was permitted.
             let scope = Scope::SessionScope { session_id: id };
@@ -656,7 +656,7 @@ impl SessionManager {
     }
 
     /// The root of the views (issue 163): every session `viewer` may
-    /// read, and from there their channels and members, running or not.
+    /// read, and from there their channels and participants, running or not.
     pub fn views(self: &Arc<Self>, viewer: Viewer) -> Views {
         Views::new(&self.runtime_manager, Arc::<SessionManager>::clone(self), viewer)
     }
@@ -916,35 +916,35 @@ mod tests {
         runtime.entity_stores().channels.create(&system, &Channel { participants: vec![Participant::Agent(helper.id)], ..main_channel(&stopped) }).await.unwrap();
 
         assert!(agents.delete(&ctx, helper.id).await.expect("deleted"));
-        until(|| !talk.member_ids().contains(&actor), "its actor stops in the running channel").await;
+        until(|| !talk.participant_ids().contains(&actor), "its actor stops in the running channel").await;
         let rests = |channel: &Channel| channel.participants.iter().any(|p| p.actor_id() == actor) && !channel.former.iter().any(|f| f.participant.actor_id() == actor);
         assert!(rests(&talk.channel()), "it rests in the running channel");
         assert!(rests(&runtime.entity_stores().channels.get(&system, stopped.channels[0]).await.unwrap()), "and in the stopped one");
         assert!(runtime.entity_stores().agents.get(&system, helper.id).await.is_err(), "it is not there");
         let views = manager.views(Viewer::new(ctx.clone()));
         let reached = views.channel_of(running.id(), talk.id()).await.unwrap().there().unwrap();
-        let former = reached.member(actor).await.unwrap();
+        let former = reached.participant(actor).await.unwrap();
         assert!(former.former() && former.name() == Some("helper"), "what it said keeps its sender");
         assert_eq!(former.left().map(|left| left.by), Some(ctx.caller_id), "left as its mark says");
-        assert!(!reached.members().await.iter().any(|m| m.id() == actor), "no member");
-        assert!(reached.former_members().await.iter().any(|m| m.id() == actor), "but a former one");
+        assert!(!reached.participants().await.iter().any(|m| m.id() == actor), "no participant");
+        assert!(reached.former_participants().await.iter().any(|m| m.id() == actor), "but a former one");
 
         // A session that starts meanwhile leaves it out.
         let opened = manager.open(&ctx, stopped.id).await.unwrap();
         let main = opened.channel(stopped.channels[0]).unwrap();
-        assert!(!main.member_ids().contains(&actor), "not run where it rests");
+        assert!(!main.participant_ids().contains(&actor), "not run where it rests");
 
         agents.restore(&ctx, helper.id).await.expect("restored");
-        until(|| talk.member_ids().contains(&actor), "it runs again in the running channel").await;
-        until(|| main.member_ids().contains(&actor), "and in the one started meanwhile").await;
+        until(|| talk.participant_ids().contains(&actor), "it runs again in the running channel").await;
+        until(|| main.participant_ids().contains(&actor), "and in the one started meanwhile").await;
         let reached = views.channel_of(running.id(), talk.id()).await.unwrap().there().unwrap();
-        assert!(!reached.member(actor).await.unwrap().former(), "a member again");
+        assert!(!reached.participant(actor).await.unwrap().former(), "a participant again");
         assert!(agents.restore(&ctx, helper.id).await.is_err(), "not deleted");
         assert!(!agents.purge(&ctx, helper.id).await.unwrap(), "only what was deleted is purged");
 
         // Removed from a channel while it rests: restored, it is not back there.
         assert!(agents.delete(&ctx, helper.id).await.unwrap());
-        until(|| !main.member_ids().contains(&actor), "its actor stops").await;
+        until(|| !main.participant_ids().contains(&actor), "its actor stops").await;
         main.remove_participant(&ctx, actor).await.expect("removed while it rests");
         assert!(main.channel().former.iter().any(|f| f.participant.actor_id() == actor), "a former participant there");
 
@@ -954,11 +954,11 @@ mod tests {
         let taken = agents.restore(&ctx, helper.id).await.expect_err("its name is taken");
         assert!(matches!(taken, AgentError::Store(StoreError::NameTaken { entity: "agent" })), "{taken}");
 
-        // Purged: a former member still, not knowing when it left.
+        // Purged: a former participant still, not knowing when it left.
         assert!(agents.purge(&ctx, helper.id).await.expect("purged"));
         assert!(runtime.entity_stores().agents.get_deleted(&system, helper.id).await.is_err(), "nothing left to restore");
         let reached = views.channel_of(running.id(), talk.id()).await.unwrap().there().unwrap();
-        let purged = reached.member(actor).await.unwrap();
+        let purged = reached.participant(actor).await.unwrap();
         assert!(purged.former() && purged.left().is_none(), "former, without when");
         assert!(!agents.delete(&ctx, helper.id).await.unwrap(), "nothing to delete");
         manager.stop(&system, running.id()).await.unwrap();
@@ -987,17 +987,17 @@ mod tests {
         let talk = session.create_channel(&ctx, spec("talk", vec![actor])).await.unwrap();
 
         // Deleted with nothing announced, as if the session lost the event.
-        assert!(talk.member_ids().contains(&actor));
+        assert!(talk.participant_ids().contains(&actor));
         let mut rx = runtime.event_bus().subscribe_all();
         runtime.entity_stores().agents.delete(&system, helper.id).await.unwrap();
         session.follow_agents(None).await;
-        assert!(!talk.member_ids().contains(&actor), "looking again, it stops the actor");
+        assert!(!talk.participant_ids().contains(&actor), "looking again, it stops the actor");
         let announced = drain(&mut rx);
         assert!(announced.iter().any(|e| matches!(e.about::<Channel>(), Some((address, change)) if address == (session.id(), talk.id()) && change.data::<ActorId>(channel::LEFT) == Some(ActorId::Agent(helper.id)))), "as a leave: {announced:?}");
 
         runtime.entity_stores().agents.restore(&system, helper.id).await.unwrap();
         session.follow_agents(None).await;
-        assert!(talk.member_ids().contains(&actor), "and starts it again");
+        assert!(talk.participant_ids().contains(&actor), "and starts it again");
         let announced = drain(&mut rx);
         assert!(announced.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, c), change)) if c == talk.id() && change.data::<ActorId>(channel::JOINED) == Some(ActorId::Agent(helper.id)))), "as a join: {announced:?}");
         manager.stop(&system, session.id()).await.unwrap();

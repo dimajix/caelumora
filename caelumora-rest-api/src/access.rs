@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// An entry of an access list (issue 23) as it is written and shown: whom
-/// it grants `read`, `write` or `join` - a user, a role, or the members of a
+/// it grants `read`, `write` or `join` - a user, a role, or the participants of a
 /// session or a channel, by `kind` and `id`, or everyone, without an id
 /// (issue 221) -, and how whom is called where it is shown and known.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

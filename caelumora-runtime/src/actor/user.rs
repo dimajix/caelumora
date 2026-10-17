@@ -578,7 +578,7 @@ impl UserActor {
     async fn request_command(&self, channel: &ChannelLoop, name: &str, args: &str) -> Result<CommandReply> {
         let understanding: Vec<_> = channel.agent_commands(&self.security_context()).await.into_iter()
             .filter(|(_, commands)| commands.iter().any(|c| c.name == name))
-            .map(|(member, _)| member)
+            .map(|(agent, _)| agent)
             .collect();
         if understanding.is_empty() {
             return Err(CommandError::Unknown(name.to_string()).into());
@@ -602,8 +602,8 @@ impl UserActor {
             return Err(invalid(format!("{whom} does not carry it out here; name {}, or @all", handles.join(", "))).into());
         }
         let span_id = Uuid::new_v4();
-        for member in targets {
-            let event = ActorEvent::CommandRequested { command: name.to_string(), args: rest.trim().to_string(), agent: member.id };
+        for agent in targets {
+            let event = ActorEvent::CommandRequested { command: name.to_string(), args: rest.trim().to_string(), agent: agent.id };
             self.send(self.envelope(event, span_id)).await?;
         }
         Ok(CommandReply { command: name.to_string(), output: None, visibility: CommandVisibility::Private, span_id: Some(span_id) })

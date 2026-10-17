@@ -314,7 +314,7 @@ async fn publish(world: &World, ctx: &SecurityContext, session: SessionId, chann
 }
 
 /// G4 (issue 308): an artifact shared with a team is among the artifacts
-/// of its members while they are members - with its versions where it was
+/// of its participants while they are participants - with its versions where it was
 /// shared with them, without where it was not, since reading a version
 /// needs its own list besides the artifact's (issue 316). What was
 /// published in a channel is shared with the channel's participants and
@@ -394,7 +394,7 @@ async fn read_version(world: &World, ctx: &SecurityContext, id: ArtifactId, numb
 /// in the name of whoever publishes - its owner, who makes it
 /// (`CreateArtifact`), or whom its list lets add a version
 /// (`WriteArtifact`, issue 23) -, into the session's scope. Its owner reads
-/// every version; a version is read by the members of the channel it was
+/// every version; a version is read by the participants of the channel it was
 /// published in, by the artifact, wherever they act; only its owner shares
 /// and keeps it beyond the session, and what is not kept goes with the
 /// session, its content too.
@@ -549,7 +549,7 @@ async fn an_artifact_comes_back_with_its_session_as_far_as_whoever_restores_it_m
 }
 
 /// Issue 319: what is said of an artifact as a whole reaches whoever reads
-/// it, however it went or came back - here with its session, to a member of
+/// it, however it went or came back - here with its session, to a participant of
 /// the channel a version was published in, whom publishing let read it
 /// (issue 316). And the groups of the participants, deleted
 /// and restored with the session, are announced as a team is.
@@ -578,7 +578,7 @@ async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_i
     hears(&mut bobs, [GlobalEvent::restored::<Artifact>(&id), GlobalEvent::restored::<Group>(&of_session), GlobalEvent::restored::<Group>(&of_channel)]).await;
 }
 
-/// Issues 23, 316: a version is read by the members of the channel it was
+/// Issues 23, 316: a version is read by the participants of the channel it was
 /// published in, of those who read the artifact - publishing lets them read
 /// it -, so drafts published where alice works alone reach nobody who
 /// reads the version she published to the team, nor does what she said of

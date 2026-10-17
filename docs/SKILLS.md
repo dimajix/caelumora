@@ -54,8 +54,8 @@ that may not be used is answered as one that does not exist.
 
 Through the agent's own transcript, and nowhere else: not through the system prompt - that would
 break the prompt cache from there on and leave nothing in the record of what the model saw but a
-prompt part -, and not as a message of the channel's history, which would hand its text to members
-who may not read the skill.
+prompt part -, and not as a message of the channel's history, which would hand its text to
+participants who may not read the skill.
 
 *   **The catalogue** is a prompt part, `[Skills you can load]`: a line per usable skill, its name
     and description, and how to load one. In the system prompt by default: it changes rarely, and
@@ -66,10 +66,10 @@ who may not read the skill.
     gives it (`Turn::give`), after the results of the step: in the agent's name, as a `Given` entry
     that names the skill (issue 389). The channel sees which skill was loaded, not what it says,
     and the model is told not to quote it.
-*   **`/skill @agent <name>`** - a member gives one to an agent, a command the agent carries out
-    itself. In its command turn the skill's text is given to the agent (`Turn::give`): into its
-    transcript in the member's name and role, as a `Given` entry that names the skill, and into its
-    history, unpublished. The channel's history records the command, not the text.
+*   **`/skill @agent <name>`** - a participant gives one to an agent, a command the agent carries
+    out itself. In its command turn the skill's text is given to the agent (`Turn::give`): into its
+    transcript in the participant's name and role, as a `Given` entry that names the skill, and into
+    its history, unpublished. The channel's history records the command, not the text.
 *   **`list_skills`** gives the catalogue as a tool, for a model whose prompt was built before a
     skill appeared; **`/skills @agent`** lists, privately, what the agent may load here - for its
     owner, as it answers for its owner, so the issuer learns the names and descriptions of the

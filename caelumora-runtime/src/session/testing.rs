@@ -149,7 +149,7 @@ pub fn make_session(name: &str, owner: ActorId) -> Session {
 
 /// The channel `session` lists, as a document of its own (issue 70) and as
 /// `Channel::build` makes one: "main", belonging to whom the session belongs
-/// to, read by its members - the session's participants.
+/// to, read by its participants - the session's participants.
 pub fn main_channel(session: &Session) -> Channel {
     let id = session.channels[0];
     Channel {

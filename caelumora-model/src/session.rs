@@ -32,7 +32,7 @@ pub enum SessionUpdateEvent {
     WorkspaceChanged(Option<WorkspaceId>),
     /// Someone was taken in after it was built (issue 221): by whoever may
     /// change it, or by themselves, where an entry let them join.
-    ParticipantAdded(Participant),
+    ParticipantJoined(Participant),
 }
 
 define_id!(SessionId);
@@ -115,7 +115,7 @@ impl Updatable for Session {
             SessionUpdateEvent::ApprovalRulesChanged(rules) => self.approval_rules = rules.clone(),
             SessionUpdateEvent::DescriptionChanged { summary, briefing } => self.describe(summary.as_deref(), briefing.as_deref())?,
             SessionUpdateEvent::WorkspaceChanged(workspace) => self.workspace = *workspace,
-            SessionUpdateEvent::ParticipantAdded(participant) => self.take_in(participant.clone()),
+            SessionUpdateEvent::ParticipantJoined(participant) => self.take_in(participant.clone()),
         }
         Ok(())
     }
@@ -232,7 +232,7 @@ mod tests {
         };
         session.apply(&SessionUpdateEvent::NameChanged("planning".to_string())).unwrap();
         session.apply(&SessionUpdateEvent::DescriptionChanged { summary: Some("What we plan".to_string()), briefing: None }).unwrap();
-        session.apply(&SessionUpdateEvent::ParticipantAdded(Participant::User(alice))).unwrap();
+        session.apply(&SessionUpdateEvent::ParticipantJoined(Participant::User(alice))).unwrap();
         assert_eq!((session.name.as_str(), session.summary.as_ref().map(|s| s.as_str())), ("planning", Some("What we plan")));
         assert_eq!(session.participants.len(), 1, "taken in as `take_in` does: once");
 

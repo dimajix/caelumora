@@ -458,7 +458,7 @@ mod tests {
     }
 
     /// The world's agent heard `u1`, was given `release-notes` - as a
-    /// member gives a skill with `/skill` -, answered `a1` in a turn of its
+    /// participant gives a skill with `/skill` -, answered `a1` in a turn of its
     /// own, then heard `u2`.
     async fn an_agent_with_a_skill_given(world: &WithWorkspace, state: &mut AgentChannelState) -> WorkspaceId {
         let skill = WorkspaceId::new();

@@ -126,7 +126,7 @@ impl ChannelController {
         }
         let channel = writing.store(ctx, channel).await?;
         self.keep_participants(&channel).await;
-        if let Some(event) = self.membership_event(id, true) {
+        if let Some(event) = self.joined_or_left_event(id, true) {
             writing.announce(event, &channel);
         }
         Ok(())
@@ -136,7 +136,7 @@ impl ChannelController {
     /// and returns it, like [`Self::add_participant`]. It is kept as a
     /// former participant, with who removed it and when (issue 164). The
     /// announcement (`channel::LEFT`) is delivered to whoever was
-    /// removed besides the members (issue 23): they are no member any more
+    /// removed besides the participants (issue 23): they are no participant any more
     /// when it is delivered.
     ///
     /// # Errors
@@ -153,7 +153,7 @@ impl ChannelController {
         channel.former.push(FormerParticipant { participant: removed.clone(), left: Removal::now(ctx.caller_id) });
         let channel = writing.store(ctx, channel).await?;
         self.keep_participants(&channel).await;
-        if let Some(event) = self.membership_event(participant, false) {
+        if let Some(event) = self.joined_or_left_event(participant, false) {
             writing.announce_also_to(event, &channel, Subject::Actor(participant));
         }
         Ok(removed)
@@ -173,10 +173,10 @@ impl ChannelController {
 
     /// Announces that agent `agent` left the channel, or came back to it,
     /// without the document changing (issue 314): deleted, it rests in the
-    /// channel as a former member; restored, it takes part again. Announced
+    /// channel as a former participant; restored, it takes part again. Announced
     /// as a leave or a join is, to whoever reads the channel.
     pub(crate) fn announce_resting(&self, agent: AgentId, resting: bool) {
-        if let Some(event) = self.membership_event(ActorId::Agent(agent), !resting) {
+        if let Some(event) = self.joined_or_left_event(ActorId::Agent(agent), !resting) {
             self.channel.announce(event);
         }
     }
@@ -189,7 +189,7 @@ impl ChannelController {
     }
 
     /// The event announcing that `participant` joined or left.
-    fn membership_event(&self, participant: ActorId, joined: bool) -> Option<GlobalEvent> {
+    fn joined_or_left_event(&self, participant: ActorId, joined: bool) -> Option<GlobalEvent> {
         let name = if joined { channel::JOINED } else { channel::LEFT };
         match participant {
             ActorId::Agent(_) | ActorId::User(_) => Some(GlobalEvent::custom::<Channel>(self.channel.address(), name, &participant)),

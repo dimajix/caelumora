@@ -20,7 +20,7 @@
 //! gives none. The workspace is reached through the turn's channel on every
 //! call all the same (`Turn::workspace_terminal`, issue 344), before
 //! anything is sent,
-//! in its context (issue 296): as a member of the channel, where the channel uses it, its access
+//! in its context (issue 296): as a participant of the channel, where the channel uses it, its access
 //! list lets the agent read it - change it, for the shell and the tools that
 //! write (issue 23) - and it and the channel flow both ways. A result is
 //! classified as the workspace. Which calls need approval is configured as for `mcp_tool`

@@ -35,7 +35,7 @@ pub struct CreateSessionRequest {
 pub enum SessionWorkspaceRequest {
     /// None, whatever the template names.
     None,
-    /// One of the user's own, shared with the session's members as far as
+    /// One of the user's own, shared with the session's participants as far as
     /// `share` says - `read` or `write` -, with nobody if absent (issue 23).
     Existing {
         workspace_id: WorkspaceId,

@@ -4,8 +4,8 @@ Which settings of `ollama_client` suit which model, as far as it was measured. T
 themselves are described in [CONFIGURATION.md](CONFIGURATION.md#the-model); the rules they set, in
 [AGENT-TURN.md](AGENT-TURN.md). `ollama_client` is the kind of the plugin `caelumora-ollama`, which
 `caelumora-app` and `caelumora-tui` name as their default model where `component_defaults` names
-none (issue 329); the core names no model. What is not measured is said so: a setting without a measurement is
-the default, not a recommendation.
+none (issue 329); the core names no model. What is not measured is said so: a setting without a
+measurement is the default, not a recommendation.
 
 The measurements are in `work/sender_names/` (`RESULTS.md`, scripts and summaries); they ran
 against Ollama 0.34.2 with a temperature of 0.7 and few runs per variant - enough to tell a model
@@ -56,7 +56,7 @@ granite4.2, phi4 and gemma3; for qwen3 `prefix` by `name`. llama2 cannot tell se
 format. Only gemma4 was measured again with exactly what Caelumora sends (findings 19-20).
 
 Every model needs the format explained, which the roster part does
-(`channel_members_prompt_provider`); without the explanation some imitate the marker in their
+(`channel_participants_prompt_provider`); without the explanation some imitate the marker in their
 answers. Whatever the format, a marker is a claim: a participant can write another's into their own
 message, and the models measured believe it (findings 8 and 12-18). Nothing with
 consequences may rest on whom the model believes said something.

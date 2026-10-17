@@ -199,7 +199,7 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
             <span>
               <span className="block">Use the session's workspace</span>
               <span className="block text-xs text-gray-500">
-                Its members work on the session's files here - where the workspace and the channel are classified alike. Can be changed later.
+                Its participants work on the session's files here - where the workspace and the channel are classified alike. Can be changed later.
               </span>
             </span>
           </label>

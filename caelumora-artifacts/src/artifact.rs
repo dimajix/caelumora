@@ -141,7 +141,7 @@ pub struct ArtifactVersion {
     pub published_at: DateTime<Utc>,
     /// Who reads this version, of those who read the artifact (issues 23,
     /// 316): reading it needs both lists, as a file in HDFS needs its
-    /// directory's. As it is published, the members of the channel it was
+    /// directory's. As it is published, the participants of the channel it was
     /// published in. Grants reading alone; the artifact's owner and its list
     /// are the artifact's.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

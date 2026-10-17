@@ -7,7 +7,7 @@
 
 import React, {useEffect, useState} from 'react';
 import {Lock, X} from 'lucide-react';
-import type {ChannelMember, PrivateNotes} from '../types';
+import type {ChannelParticipant, PrivateNotes} from '../types';
 import {api} from '../api';
 import {actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
@@ -19,12 +19,12 @@ interface PrivateNotesPanelProps {
   sessionId: string;
   channelId: string;
   /** The agent whose private notes are shown. */
-  member: ChannelMember;
+  participant: ChannelParticipant;
   onClose: () => void;
 }
 
-export const PrivateNotesPanel: React.FC<PrivateNotesPanelProps> = ({sessionId, channelId, member, onClose}) => {
-  const agent = actorUuid(member.id);
+export const PrivateNotesPanel: React.FC<PrivateNotesPanelProps> = ({sessionId, channelId, participant, onClose}) => {
+  const agent = actorUuid(participant.id);
   const [found, setFound] = useState<PrivateNotes[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -59,7 +59,7 @@ export const PrivateNotesPanel: React.FC<PrivateNotesPanelProps> = ({sessionId, 
       <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-2">
         <div className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
           <Lock size={18} />
-          <h3 className="font-semibold text-sm flex-1">The private notes of {member.name}</h3>
+          <h3 className="font-semibold text-sm flex-1">The private notes of {participant.name}</h3>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md" title="Close">
             <X size={16} />
           </button>

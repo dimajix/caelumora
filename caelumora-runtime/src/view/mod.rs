@@ -1,4 +1,4 @@
-//! Views: the sessions, their channels and their members, as one viewer
+//! Views: the sessions, their channels and their participants, as one viewer
 //! navigates them (issue 163). A view is a node the viewer stands on; its
 //! methods are the edges to the next ones, and each edge asks its own
 //! access question, in the viewer's name. A node is data the viewer was
@@ -29,12 +29,12 @@ mod agent;
 mod channel;
 mod context;
 mod group;
-mod member;
+mod participant;
 mod session;
 mod workspace;
 
 pub use agent::AgentView;
-pub use channel::{ChannelView, MemberView};
+pub use channel::{ChannelView, ParticipantView};
 pub use context::{AgentContextView, AgentContextError};
 pub use group::GroupView;
 pub use session::{PrivateNotesElsewhere, SessionView};
@@ -124,8 +124,8 @@ pub enum ViewError {
     /// nothing in it that can be read from where the viewer reads.
     #[error("there is no channel named \"{0}\" that can be read from here")]
     NoChannelNamed(String),
-    #[error("Channel {channel} has no member {actor}")]
-    MemberNotFound { channel: ChannelId, actor: ActorId },
+    #[error("Channel {channel} has no participant {actor}")]
+    ParticipantNotFound { channel: ChannelId, actor: ActorId },
     /// Not in the history, or not in the part of it the viewer sees.
     #[error("Channel {channel} has no message {message}")]
     MessageNotFound { channel: ChannelId, message: MessageId },
@@ -841,7 +841,7 @@ mod tests {
     }
 
     /// Another channel like `template`, named `name`: an id of its own,
-    /// read by its own members.
+    /// read by its own participants.
     fn like(template: &Channel, name: &str) -> Channel {
         let id = ChannelId::new();
         let security_attributes = SecurityAttributes::owned_by(template.security_attributes.owner_id).granting(Subject::Group(GroupId::of_channel(id)), Grant::Read);
@@ -901,8 +901,8 @@ mod tests {
         store.put_agent_channel_state(remote.id, channel.id, &mut state).await.unwrap();
 
         let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
-        let member = for_alice.member(ActorId::Agent(remote.id)).await.unwrap();
-        let seen = member.context().await.expect("alice made the agent");
+        let participant = for_alice.participant(ActorId::Agent(remote.id)).await.unwrap();
+        let seen = participant.context().await.expect("alice made the agent");
         let texts = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
         assert_eq!(texts(seen.transcript().messages()), ["later"], "what it is given next, not what it was given or answered");
         assert_eq!(seen.private_notes(), (Vec::new(), None), "an external agent writes none");
@@ -912,11 +912,11 @@ mod tests {
         assert!(matches!(&context.items[0], ContextItem::Conversation { message } if message.id == question.id));
         assert!(context.tool_sets.is_empty(), "and no tools: those are the remote agent's");
         assert_eq!(seen.classification_of(answer.id).await.unwrap(), Some(Classification::CHANNEL_DEFAULT), "its answer is in its history");
-        assert_eq!(member.private_notes().await.unwrap(), (Vec::new(), None));
-        assert!(member.notes().await.unwrap().expect("an agent").notes.is_empty(), "it writes none");
+        assert_eq!(participant.private_notes().await.unwrap(), (Vec::new(), None));
+        assert!(participant.notes().await.unwrap().expect("an agent").notes.is_empty(), "it writes none");
         assert!(for_alice.notes().await.unwrap().iter().all(|published| published.notes.is_empty()));
-        assert!(!member.may_retry().await, "it runs elsewhere and does not answer again (issue 242)");
-        assert!(!member.snapshot(Detail::empty()).await.can_retry);
+        assert!(!participant.may_retry().await, "it runs elsewhere and does not answer again (issue 242)");
+        assert!(!participant.snapshot(Detail::empty()).await.can_retry);
     }
 
     #[tokio::test]
@@ -947,18 +947,18 @@ mod tests {
 
                 let main = for_alice.channel(for_alice.channels().await[0].id()).await.unwrap();
                 assert!(main.may_change().await, "{state}: the owner changes the channel");
-                let agent = main.member(ActorId::Agent(helper.id)).await.expect("the agent is a member");
+                let agent = main.participant(ActorId::Agent(helper.id)).await.expect("the agent is a participant");
                 assert_eq!(agent.handle().as_deref(), Some("helper"), "{state}");
                 assert!(agent.may_read_context().await, "{state}: alice made the agent");
                 assert!(agent.may_cancel().await, "{state}: she may end its answer (issue 243)");
                 assert_eq!(agent.state().is_some(), state == "running", "{state}: where it stands, only while it runs");
                 let main = &for_bob.channels().await[0];
                 assert!(!main.may_change().await, "{state}: a participant does not change it");
-                for member in main.members().await {
-                    assert!(!member.may_read_context().await, "{state}: bob reads no agent's context");
-                    assert_eq!(member.may_retry().await, member.id() == ActorId::Agent(helper.id), "{state}: a participant asks an agent to answer again, nobody else");
-                    assert_eq!(member.may_cancel().await, member.id() == ActorId::Agent(helper.id), "{state}: and ends its answer, nobody else's");
-                    assert!(member.id() == ActorId::Agent(helper.id) || member.state().is_none(), "{state}: only an agent stands somewhere");
+                for participant in main.participants().await {
+                    assert!(!participant.may_read_context().await, "{state}: bob reads no agent's context");
+                    assert_eq!(participant.may_retry().await, participant.id() == ActorId::Agent(helper.id), "{state}: a participant asks an agent to answer again, nobody else");
+                    assert_eq!(participant.may_cancel().await, participant.id() == ActorId::Agent(helper.id), "{state}: and ends its answer, nobody else's");
+                    assert!(participant.id() == ActorId::Agent(helper.id) || participant.state().is_none(), "{state}: only an agent stands somewhere");
                 }
 
                 let hidden = for_bob.channel(hers).await.expect_err("not bob's to read");
@@ -994,12 +994,12 @@ mod tests {
         stored_session(&store, &session).await;
         stored_channel(&store, &channel).await;
 
-        let view = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap().snapshot(Detail::MEMBERS).await;
-        let [alice, gone, approver] = view.members.as_slice() else { panic!("three members, in order: {view:?}") };
+        let view = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap().snapshot(Detail::PARTICIPANTS).await;
+        let [alice, gone, approver] = view.participants.as_slice() else { panic!("three participants, in order: {view:?}") };
         assert_eq!((alice.name.as_deref(), alice.handle.as_deref()), (Some("Alice Example"), Some("alice-example")));
         assert_eq!((gone.name.as_deref(), gone.handle.as_deref()), (None, None), "a deleted user is listed, but cannot be mentioned");
         assert!(approver.handle.is_none(), "an approver cannot be mentioned");
-        assert!(view.members.iter().all(|m| !m.can_read_context), "no member is an agent");
+        assert!(view.participants.iter().all(|m| !m.can_read_context), "no participant is an agent");
     }
 
     #[tokio::test]
@@ -1023,7 +1023,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_members_profile_says_who_it_is_to_everybody_in_the_channel() {
+    async fn a_participants_profile_says_who_it_is_to_everybody_in_the_channel() {
         use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
         use caelumora_model::user::UserProfile;
 
@@ -1048,11 +1048,11 @@ mod tests {
         stored_channel(&store, &channel).await;
 
         let for_bob = manager.views(as_user(bob.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
-        let plain = for_bob.snapshot(Detail::MEMBERS).await;
-        assert!(plain.members.iter().all(|m| m.introduction.is_none() && m.personality.is_none() && m.owner.is_none()), "only with PROFILE: {plain:?}");
+        let plain = for_bob.snapshot(Detail::PARTICIPANTS).await;
+        assert!(plain.participants.iter().all(|m| m.introduction.is_none() && m.personality.is_none() && m.owner.is_none()), "only with PROFILE: {plain:?}");
 
-        let view = for_bob.snapshot(Detail::MEMBERS | Detail::PROFILE).await;
-        let [alice_seen, bob_seen, agent, approver_seen] = view.members.as_slice() else { panic!("four members, in order: {view:?}") };
+        let view = for_bob.snapshot(Detail::PARTICIPANTS | Detail::PROFILE).await;
+        let [alice_seen, bob_seen, agent, approver_seen] = view.participants.as_slice() else { panic!("four participants, in order: {view:?}") };
         assert_eq!(alice_seen.introduction.as_deref(), Some("I run the project."), "as she introduces herself");
         assert_eq!((alice_seen.personality.as_deref(), alice_seen.owner), (None, None), "a user has neither personality nor owner");
         assert_eq!(bob_seen.introduction, None, "bob did not introduce himself");
@@ -1061,8 +1061,8 @@ mod tests {
         assert_eq!((agent.owner, agent.owner_name.as_deref()), (Some(ActorId::User(carol.id)), Some("carol")), "named although carol is not in the session");
         assert_eq!((&approver_seen.introduction, &approver_seen.personality, approver_seen.owner), (&None, &None, None), "an approver is nobody to introduce");
 
-        let alone = for_bob.member(ActorId::Agent(remote.id)).await.unwrap().snapshot(Detail::PROFILE).await;
-        assert_eq!(&alone, agent, "a member asked for alone is shown as in the list");
+        let alone = for_bob.participant(ActorId::Agent(remote.id)).await.unwrap().snapshot(Detail::PROFILE).await;
+        assert_eq!(&alone, agent, "a participant asked for alone is shown as in the list");
     }
 
     /// Issue 404: what is new to a user is what others said that they hear,
@@ -1138,7 +1138,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn what_a_channel_holds_is_read_through_its_nodes_and_a_members_context_by_who_may() {
+    async fn what_a_channel_holds_is_read_through_its_nodes_and_a_participants_context_by_who_may() {
         use caelumora_model::channel::{ChannelState, HistoryLimit, HistoryStart};
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId};
@@ -1197,16 +1197,16 @@ mod tests {
         assert_eq!(notes.len(), 1);
         assert_eq!((notes[0].agent, notes[0].name.as_str(), notes[0].notes[0].text.as_str()), (ActorId::Agent(helper.id), "Helper", "noted"));
 
-        let agent = for_alice.member(ActorId::Agent(helper.id)).await.unwrap();
+        let agent = for_alice.participant(ActorId::Agent(helper.id)).await.unwrap();
         let seen = agent.context().await.expect("alice made the agent");
         assert_eq!(seen.private_notes().0[0].text, "mine");
         assert_eq!(seen.transcript().messages().len(), 1);
         assert!(matches!(seen.context_of(first.id).await, Err(AgentContextError::NotRecorded { .. })), "the agent did not produce it");
-        let refused = reach(as_user(bob.id)).await.member(ActorId::Agent(helper.id)).await.unwrap().context().await.expect_err("not bob's to read");
+        let refused = reach(as_user(bob.id)).await.participant(ActorId::Agent(helper.id)).await.unwrap().context().await.expect_err("not bob's to read");
         assert!(matches!(refused, ViewError::Forbidden { .. }), "{refused}");
-        let none = for_alice.member(ActorId::User(bob.id)).await.unwrap().context().await.expect_err("a user saw nothing");
+        let none = for_alice.participant(ActorId::User(bob.id)).await.unwrap().context().await.expect_err("a user saw nothing");
         assert!(matches!(none, ViewError::NoContext { .. }), "{none}");
-        assert!(matches!(for_alice.member(ActorId::System).await, Err(ViewError::MemberNotFound { .. })));
+        assert!(matches!(for_alice.participant(ActorId::System).await, Err(ViewError::ParticipantNotFound { .. })));
     }
 
     /// An agent reads another channel of its session only where its owner
@@ -1334,14 +1334,14 @@ mod tests {
         assert!(store.entity_stores().personalities.delete(&system, helper.personality_id).await.unwrap());
 
         let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
-        let member = for_alice.member(ActorId::Agent(helper.id)).await.unwrap();
-        assert_eq!((member.name(), member.handle().as_deref()), (Some("Helper"), Some("helper")));
-        assert!(member.may_read_context().await, "a question of its document, not of its kind");
-        assert_eq!(member.introduction().await.unwrap(), None, "its personality introduced it");
-        let notes = member.notes().await.unwrap().expect("still an agent");
+        let participant = for_alice.participant(ActorId::Agent(helper.id)).await.unwrap();
+        assert_eq!((participant.name(), participant.handle().as_deref()), (Some("Helper"), Some("helper")));
+        assert!(participant.may_read_context().await, "a question of its document, not of its kind");
+        assert_eq!(participant.introduction().await.unwrap(), None, "its personality introduced it");
+        let notes = participant.notes().await.unwrap().expect("still an agent");
         assert_eq!(notes.notes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["kept"], "what it kept is read");
         assert_eq!(for_alice.notes().await.unwrap().len(), 1, "and counts among the channel's notes");
-        assert!(member.context().await.is_ok(), "as what it saw");
+        assert!(participant.context().await.is_ok(), "as what it saw");
     }
 
     #[tokio::test]
@@ -1384,7 +1384,7 @@ mod tests {
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId, TokenUsage};
         use caelumora_model::note::{NoteId, NoteOrigin};
-        use caelumora_model::snapshot::MemberSnapshot;
+        use caelumora_model::snapshot::ChannelParticipantSnapshot;
         use caelumora_model::store::StateStore;
         use caelumora_model::tool::{ToolCall, ToolCallState};
         use caelumora_model::turn::TurnState;
@@ -1421,19 +1421,19 @@ mod tests {
         let main = views.session(session.id).await.unwrap().channel(channel.id).await.unwrap();
         // As counted: the last call's measure, read as it is stored (issue 390).
         let expected = TokenUsage { calls: 1, prompt_tokens: 1000, completion_tokens: 50, context_size: Some(8192), context_tokens: 1050 };
-        let details = |member: &MemberSnapshot| (member.usage, member.notes.len(), member.pending_approvals.len());
+        let details = |participant: &ChannelParticipantSnapshot| (participant.usage, participant.notes.len(), participant.pending_approvals.len());
 
-        let all = main.snapshot(Detail::MEMBERS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS).await;
-        let [user, agent] = all.members.as_slice() else { panic!("two members: {all:?}") };
+        let all = main.snapshot(Detail::PARTICIPANTS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS).await;
+        let [user, agent] = all.participants.as_slice() else { panic!("two participants: {all:?}") };
         assert_eq!(details(user), (None, 0, 0), "a user has none of them");
         assert_eq!(details(agent), (Some(expected), 1, 1), "an agent's, from its state");
-        let alone = main.member(ActorId::Agent(helper.id)).await.unwrap().snapshot(Detail::USAGE).await;
+        let alone = main.participant(ActorId::Agent(helper.id)).await.unwrap().snapshot(Detail::USAGE).await;
         assert_eq!(details(&alone), (Some(expected), 0, 0), "only what was asked for");
-        let plain = main.snapshot(Detail::MEMBERS).await;
-        assert!(plain.members.iter().all(|m| details(m) == (None, 0, 0)), "none asked for");
-        assert!(main.snapshot(Detail::USAGE).await.members.is_empty(), "no members to carry it");
+        let plain = main.snapshot(Detail::PARTICIPANTS).await;
+        assert!(plain.participants.iter().all(|m| details(m) == (None, 0, 0)), "none asked for");
+        assert!(main.snapshot(Detail::USAGE).await.participants.is_empty(), "no participants to carry it");
         let listed = views.session(session.id).await.unwrap().snapshot(Detail::CHANNELS).await;
-        assert!(!listed.channels.is_empty() && listed.channels.iter().all(|c| c.members.is_empty()), "only what was asked for");
+        assert!(!listed.channels.is_empty() && listed.channels.iter().all(|c| c.participants.is_empty()), "only what was asked for");
     }
 
     #[tokio::test]
@@ -1508,7 +1508,7 @@ mod tests {
         assert!(matches!(secret_from_team.message(plan.id).await, Err(ViewError::NoChannelNamed(_))), "what was not released is not found");
         let notes = secret_from_team.notes().await.unwrap();
         assert_eq!(notes[0].notes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["noted openly"]);
-        let refused = secret_from_team.member(ActorId::Agent(helper.id)).await.unwrap().context().await.expect_err("not as a whole");
+        let refused = secret_from_team.participant(ActorId::Agent(helper.id)).await.unwrap().context().await.expect_err("not as a whole");
         assert!(matches!(refused, ViewError::Forbidden { .. }), "{refused}");
         let hr_from_team = from_team.channel_named("hr").await.unwrap();
         assert!(matches!(whole(&hr_from_team).await, Err(ViewError::NoChannelNamed(name)) if name == "hr"), "nothing released: as if it did not exist");
@@ -1523,11 +1523,11 @@ mod tests {
         let history = whole(&itself).await.unwrap();
         assert_eq!(history.items.len(), 3, "its messages, and how its turns ended (issue 258)");
         assert_eq!(texts(history), ["the plan", "the date"], "a channel reads itself as a whole");
-        assert!(itself.member(ActorId::Agent(helper.id)).await.unwrap().context().await.is_ok());
+        assert!(itself.participant(ActorId::Agent(helper.id)).await.unwrap().context().await.is_ok());
     }
 
     #[tokio::test]
-    async fn a_member_that_left_is_still_reached_by_what_it_said_and_a_gone_channel_is_told_from_one_never_there() {
+    async fn a_participant_that_left_is_still_reached_by_what_it_said_and_a_gone_channel_is_told_from_one_never_there() {
         use caelumora_model::channel::ChannelState;
         use caelumora_model::message::{Message, MessageId};
         use caelumora_model::store::StateStore;
@@ -1547,11 +1547,11 @@ mod tests {
 
         let views = manager.views(as_user(alice.id));
         let reached = views.channel_of(session.id, channel.id).await.unwrap().there().expect("there");
-        let former = reached.member(ActorId::Agent(helper.id)).await.expect("known by what it said");
+        let former = reached.participant(ActorId::Agent(helper.id)).await.expect("known by what it said");
         assert!(former.former() && former.name() == Some("Helper"));
         assert!(former.context().await.is_ok(), "what it saw is still the owner's to read");
-        assert!(reached.members().await.iter().all(|m| m.id() != ActorId::Agent(helper.id)), "not listed among the members");
-        assert!(matches!(reached.member(ActorId::User(UserId::new())).await, Err(ViewError::MemberNotFound { .. })), "a user who never took part");
+        assert!(reached.participants().await.iter().all(|m| m.id() != ActorId::Agent(helper.id)), "not listed among the participants");
+        assert!(matches!(reached.participant(ActorId::User(UserId::new())).await, Err(ViewError::ParticipantNotFound { .. })), "a user who never took part");
 
         // Never there: another channel, another session - nor for a stranger.
         assert!(matches!(views.channel_of(session.id, ChannelId::new()).await.unwrap(), Reached::Never));
@@ -1633,7 +1633,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn who_left_is_a_former_member_with_who_removed_them_also_without_a_word() {
+    async fn who_left_is_a_former_participant_with_who_removed_them_also_without_a_word() {
         use caelumora_model::channel::FormerParticipant;
         use caelumora_model::removal::Removal;
 
@@ -1655,18 +1655,18 @@ mod tests {
         stored_channel(&store, &channel).await;
 
         let reached = manager.views(as_user(alice.id)).channel_of(session.id, channel.id).await.unwrap().there().expect("there");
-        let former = reached.member(ActorId::Agent(helper.id)).await.expect("kept as having left");
+        let former = reached.participant(ActorId::Agent(helper.id)).await.expect("kept as having left");
         assert!(former.former() && former.left() == Some(&removed));
         assert!(former.context().await.is_ok(), "what it saw is still the owner's to read");
-        let bob_left = reached.member(ActorId::User(bob.id)).await.expect("a user too");
+        let bob_left = reached.participant(ActorId::User(bob.id)).await.expect("a user too");
         assert!(bob_left.former() && bob_left.name() == Some("bob"));
-        assert_eq!(reached.former_members().await.iter().map(MemberView::id).collect::<Vec<_>>(), [ActorId::User(bob.id), ActorId::Agent(helper.id)], "in the order they left");
-        assert!(reached.members().await.iter().all(|m| !m.former()), "not among the members");
+        assert_eq!(reached.former_participants().await.iter().map(ParticipantView::id).collect::<Vec<_>>(), [ActorId::User(bob.id), ActorId::Agent(helper.id)], "in the order they left");
+        assert!(reached.participants().await.iter().all(|m| !m.former()), "not among the participants");
 
-        let snapshot = reached.snapshot(Detail::MEMBERS).await;
-        assert_eq!(snapshot.former_members.len(), 2);
-        assert!(snapshot.former_members.iter().all(|m| m.left.as_ref() == Some(&removed)), "each with who removed it, and when");
-        assert!(snapshot.members.iter().all(|m| m.left.is_none()));
+        let snapshot = reached.snapshot(Detail::PARTICIPANTS).await;
+        assert_eq!(snapshot.former_participants.len(), 2);
+        assert!(snapshot.former_participants.iter().all(|m| m.left.as_ref() == Some(&removed)), "each with who removed it, and when");
+        assert!(snapshot.participants.iter().all(|m| m.left.is_none()));
     }
 
     #[tokio::test]
@@ -1795,7 +1795,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_member_s_answer_under_way_is_in_the_snapshot_of_its_channel() {
+    async fn a_participant_s_answer_under_way_is_in_the_snapshot_of_its_channel() {
         use caelumora_model::actor::{ActorEvent, ActorId};
 
         let store = Arc::new(MemoryStore::new());
@@ -1835,21 +1835,21 @@ mod tests {
                 }).await.unwrap_or_else(|_| panic!("the agent sends {wanted}"))
             }
         };
-        let member = || async {
+        let participant = || async {
             let view = manager.views(Viewer::new(alice_ctx.clone())).session(session.id()).await.unwrap().channel(channel.id()).await.unwrap();
-            view.snapshot(Detail::MEMBERS).await.members.into_iter().find(|m| m.id == agent).expect("a member")
+            view.snapshot(Detail::PARTICIPANTS).await.participants.into_iter().find(|m| m.id == agent).expect("a participant")
         };
-        assert_eq!(member().await.turn_under_way, None, "nothing under way yet");
+        assert_eq!(participant().await.turn_under_way, None, "nothing under way yet");
 
         let started = shown(&mut events, "ResponseStarted");
         channel.user_actor(alice.id).unwrap().send_message("hello".to_string(), None).await.unwrap();
         let ActorEvent::ResponseStarted { turn_id } = started.await else { unreachable!() };
-        assert_eq!(member().await.turn_under_way, Some(turn_id), "the turn its start announced");
+        assert_eq!(participant().await.turn_under_way, Some(turn_id), "the turn its start announced");
 
         let ended = shown(&mut events, "TurnFinished");
         channel.cancel_actor(&alice_ctx, agent).await.unwrap();
         ended.await;
-        assert_eq!(member().await.turn_under_way, None, "over once it ended");
+        assert_eq!(participant().await.turn_under_way, None, "over once it ended");
         manager.stop(&system, session.id()).await.unwrap();
     }
 

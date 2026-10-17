@@ -61,7 +61,7 @@ pub struct Workspace {
     pub classification: Classification,
     /// Owned by the user it was made for (issue 251, decision 12), and
     /// reached by whom its access list grants it (issue 23): one made for a
-    /// session is read and written by the session's members; one of its
+    /// session is read and written by the session's participants; one of its
     /// owner's grants nobody anything until they share it.
     pub security_attributes: SecurityAttributes,
     pub created_at: DateTime<Utc>,
@@ -76,7 +76,7 @@ pub struct Workspace {
 impl Workspace {
     /// A new workspace of `owner`, of `name` where it lies, in `storage`,
     /// classified `classification`, without a description. One that lies
-    /// in a session's scope is the session's to work on: its members read
+    /// in a session's scope is the session's to work on: its participants read
     /// and write it (issue 23) - the group of the session's participants
     /// (issue 304); any other grants nobody anything.
     pub fn new(name: ScopedName, storage: impl Into<String>, classification: Classification, owner: UserId) -> Self {
@@ -188,7 +188,7 @@ pub enum WorkspaceChoice {
     None,
     /// One of its maker's own, attached as to a running session - theirs to
     /// share and of no other session's scope -, shared with the session's
-    /// members as far as `share` says, if it says anything (issue 23).
+    /// participants as far as `share` says, if it says anything (issue 23).
     Existing { id: WorkspaceId, share: Option<Grant> },
     /// One made for the session alone, in its scope and named as it is, as
     /// a template's of the session's scope is made.
@@ -235,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn a_workspace_belongs_to_a_user_and_a_sessions_is_its_members_to_work_on() {
+    fn a_workspace_belongs_to_a_user_and_a_sessions_is_its_participants_to_work_on() {
         let alice = UserId::new();
         let workspace = Workspace::new(named(Scope::GlobalScope), "main", Classification::CHANNEL_DEFAULT, alice);
         assert_eq!(workspace.owner(), Some(alice));

@@ -37,7 +37,7 @@ import type {
   RetryRefused,
   ApprovalRequest,
   ApprovalRule,
-  ChannelMember,
+  ChannelParticipant,
   ChannelResponse,
   ChannelSnapshot,
   Command,
@@ -69,7 +69,7 @@ import {MessageEditor} from './MessageEditor';
 import {LanguageDialog} from './LanguageDialog';
 import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {languageLabel} from '../language';
-import {approvalRulesChangedChannel, changedChannel, descriptionChangedChannel, languageChangedChannel, membershipChangedChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel, saidInChannel} from '../globalEvents';
+import {approvalRulesChangedChannel, changedChannel, descriptionChangedChannel, languageChangedChannel, joinedOrLeftChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel, saidInChannel} from '../globalEvents';
 import {isOthers, markRead} from '../unread';
 import {api} from '../api';
 import type {Page} from '../page';
@@ -103,7 +103,7 @@ import {commandQueryAt, parseInput} from '../command';
 import {openEventStream} from '../stream';
 import {loadDraft, saveDraft} from '../session';
 
-/** The menu button of a member's row: shown while the row is hovered or the button focused. */
+/** The menu button of a participant's row: shown while the row is hovered or the button focused. */
 const ROW_MENU = 'text-gray-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700';
 
 /** Why an agent did not answer again (issue 234), as this page words it. */
@@ -146,7 +146,7 @@ function rejectedText(kind: string): string {
   }
 }
 
-type MentionableMember = ChannelMember & {handle: string};
+type MentionableParticipant = ChannelParticipant & {handle: string};
 
 /** What an agent works at, in the states that count as working (issue 243). */
 const WORKING: Partial<Record<ActorState, string>> = {
@@ -162,17 +162,17 @@ const WORKING: Partial<Record<ActorState, string>> = {
 const INTERRUPTIBLE: ActorState[] = ['Planning', 'ExecutingTools', 'WaitingForUser', 'Busy'];
 
 /**
- * The dot that shows where a member stands (issue 243): an agent's state as
+ * The dot that shows where a participant stands (issue 243): an agent's state as
  * a colour, the state itself as its title - `Busy` with what it does of its
  * own accord, `activity`, as it said it last (issue 284). A user or an
  * approver has none.
  */
-function stateDot(member: ChannelMember, activity?: string): {className: string; title: string} | null {
-  if (member.kind !== 'agent') return null;
-  const working = member.state === 'Busy' && activity ? `Working: ${activity}` : member.state && WORKING[member.state];
+function stateDot(participant: ChannelParticipant, activity?: string): {className: string; title: string} | null {
+  if (participant.kind !== 'agent') return null;
+  const working = participant.state === 'Busy' && activity ? `Working: ${activity}` : participant.state && WORKING[participant.state];
   // A command pulses in orange (issue 299), an answer in green.
-  if (working) return {className: member.state === 'CarryingOutCommand' ? 'bg-orange-500 animate-command' : 'bg-green-500 animate-working', title: working};
-  switch (member.state) {
+  if (working) return {className: participant.state === 'CarryingOutCommand' ? 'bg-orange-500 animate-command' : 'bg-green-500 animate-working', title: working};
+  switch (participant.state) {
     case 'Idle': return {className: 'bg-green-500', title: 'Idle'};
     case 'WaitingForUser': return {className: 'bg-amber-500', title: 'Waiting for a person'};
     case 'Sleeping': return {className: 'bg-indigo-500', title: 'Asleep'};
@@ -180,13 +180,13 @@ function stateDot(member: ChannelMember, activity?: string): {className: string;
   }
 }
 
-/** An entry of the completion list: a member or everyone to mention, or a command to run. */
+/** An entry of the completion list: a participant or everyone to mention, or a command to run. */
 // A group: a handle that mentions every participant (issue 401). A command
 // suggested: one of the channel, or one an agent carries out (issue 269),
 // with the handle it is written with - `all` for every agent that carries it
 // out.
 type Suggestion =
-  | {kind: 'mention'; member: MentionableMember}
+  | {kind: 'mention'; participant: MentionableParticipant}
   | {kind: 'group'; handle: string}
   | {kind: 'command'; command: Command; handle?: string};
 
@@ -236,11 +236,11 @@ function withCall(usage: TokenUsage | undefined, message: Message): TokenUsage |
  * end if it has none, so that answers keep the order they began in.
  */
 /**
- * Whose name an actor has in `channel` - a member's, or one's that left
+ * Whose name an actor has in `channel` - a participant's, or one's that left
  * (issue 164) - to name whose turn was given up (issue 258).
  */
 function nameIn(channel: ChannelResponse | null): (actor: ActorId) => string | undefined {
-  return actor => [...(channel?.members ?? []), ...(channel?.former_members ?? [])]
+  return actor => [...(channel?.participants ?? []), ...(channel?.former_participants ?? [])]
     .find(m => actorKey(m.id) === actorKey(actor))?.name;
 }
 
@@ -284,8 +284,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   const channelArtifacts = useMemo(() => api.channelArtifacts(sessionId, channelId), [sessionId, channelId]);
   // The widths of the channel panel and of the panel showing an agent's
   // context, history or tools (issue 231). The channel panel keeps the key
-  // it had as the members panel (issue 245), so that its width stays.
-  const channelPanel = usePanelWidth('members');
+  // it had as the participants panel (issue 245), so that its width stays.
+  const channelPanel = usePanelWidth('participants');
   const detailPanel = usePanelWidth('detail');
   // Restored from session storage, so a forced re-login does not lose it.
   const [inputText, setInputText] = useState(() => loadDraft(channelId));
@@ -368,14 +368,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   const [revoking, setRevoking] = useState<string | null>(null);
   // The agent whose history is shown, with the channel it belongs to (issue
   // 207); a context opened from it is shown on top and returns to it.
-  const [historyOf, setHistoryOf] = useState<{channelId: string; member: ChannelMember} | null>(null);
-  // What is shown of one member: its tools (issue 194), its private notes
+  const [historyOf, setHistoryOf] = useState<{channelId: string; participant: ChannelParticipant} | null>(null);
+  // What is shown of one participant: its tools (issue 194), its private notes
   // (issue 233) or who it is (issue 244) - one at a time.
-  const [memberPanel, setMemberPanel] = useState<{channelId: string; member: ChannelMember; shows: 'tools' | 'privateNotes' | 'profile'} | null>(null);
-  // Whether one of them takes the place of the members panel.
+  const [participantPanel, setParticipantPanel] = useState<{channelId: string; participant: ChannelParticipant; shows: 'tools' | 'privateNotes' | 'profile'} | null>(null);
+  // Whether one of them takes the place of the participants panel.
   const detailShown = contextOf?.channelId === channelId || historyOf?.channelId === channelId
-    || memberPanel?.channelId === channelId;
-  // Whether the former members of the channel are unfolded (issue 164).
+    || participantPanel?.channelId === channelId;
+  // Whether the former participants of the channel are unfolded (issue 164).
   const [showFormer, setShowFormer] = useState(false);
   // The commands this user may run here, for `/` completion (issue 28).
   const [commands, setCommands] = useState<Command[]>([]);
@@ -389,12 +389,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   const [isShowingRules, setIsShowingRules] = useState(false);
   const [reclassifying, setReclassifying] = useState<{kind: 'channel'} | {kind: 'message'; message: Message} | null>(null);
 
-  // The server returns members in no particular order.
-  const members: ChannelMember[] = [...(channel?.members ?? [])].sort((l, r) => l.name.localeCompare(r.name));
+  // The server returns participants in no particular order.
+  const participants: ChannelParticipant[] = [...(channel?.participants ?? [])].sort((l, r) => l.name.localeCompare(r.name));
   // What the channel's agents used, summed over those it shows (issue 209);
   // null while none reported anything.
-  const channelUsage = members.reduce<{calls: number; prompt: number; completion: number} | null>((sum, member) => {
-    const used = usage[actorKey(member.id)];
+  const channelUsage = participants.reduce<{calls: number; prompt: number; completion: number} | null>((sum, participant) => {
+    const used = usage[actorKey(participant.id)];
     if (!used) return sum;
     const base = sum ?? {calls: 0, prompt: 0, completion: 0};
     return {calls: base.calls + used.calls, prompt: base.prompt + used.prompt_tokens, completion: base.completion + used.completion_tokens};
@@ -407,11 +407,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // handles of the agents that do: one is suggested for each of them, and
   // for `@all` where several do.
   const agentCommands = new Map<string, {command: Command; handles: string[]}>();
-  for (const member of members) {
-    if (!member.handle || member.left) continue;
-    for (const command of member.commands ?? []) {
+  for (const participant of participants) {
+    if (!participant.handle || participant.left) continue;
+    for (const command of participant.commands ?? []) {
       const entry = agentCommands.get(command.name) ?? {command, handles: []};
-      entry.handles.push(member.handle);
+      entry.handles.push(participant.handle);
       agentCommands.set(command.name, entry);
     }
   }
@@ -424,20 +424,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       ? [...commands.map((command): Suggestion => ({kind: 'command', command})), ...agentSuggestions]
           .filter(s => s.kind === 'command' && s.command.name.startsWith(commandQuery.toLowerCase()))
       : [
-          ...members
-            .filter((m): m is MentionableMember =>
+          ...participants
+            .filter((m): m is MentionableParticipant =>
               !!m.handle && (m.handle.startsWith(handleOf(mentionText)) || m.name.toLowerCase().includes(mentionText)))
-            .map((member): Suggestion => ({kind: 'mention', member})),
+            .map((participant): Suggestion => ({kind: 'mention', participant})),
           ...GROUP_HANDLES
             .filter(handle => handle.startsWith(handleOf(mentionText)))
             .map((handle): Suggestion => ({kind: 'group', handle})),
         ];
 
   // Whether the logged-in user takes part in this channel; `undefined` until
-  // the channel is known. Joining or leaving changes it (the members follow
+  // the channel is known. Joining or leaving changes it (the participants follow
   // the global stream), and the view follows.
-  const participant = channel?.id === channelId
-    ? channel.members.some(m => typeof m.id !== 'string' && m.id.User === user.id)
+  const takesPart = channel?.id === channelId
+    ? channel.participants.some(m => typeof m.id !== 'string' && m.id.User === user.id)
     : undefined;
 
   // The compartments a message may be released to; none if they cannot be
@@ -499,12 +499,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     });
   }, [sessionId, channelId]);
 
-  // The members follow the global stream as well: someone joined or left, and
+  // The participants follow the global stream as well: someone joined or left, and
   // the channel is fetched again (issue 46). Whoever was removed can no
   // longer fetch it and keeps what they saw until they leave the channel.
   useEffect(() => {
     return onGlobalEvent(event => {
-      if (membershipChangedChannel(event) !== channelId) return;
+      if (joinedOrLeftChannel(event) !== channelId) return;
       api.getChannel(sessionId, channelId)
         .then(setChannel)
         .catch(error => {
@@ -518,13 +518,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // through the global stream (issue 404), as it is stored; a participant
   // follows it through their own actor.
   useEffect(() => {
-    if (participant !== false) return;
+    if (takesPart !== false) return;
     return onGlobalEvent(event => {
       const said = saidInChannel(event);
       if (!said || said.channelId !== channelId) return;
       setMessages(prev => prev.some(m => m.id === said.message.id) ? prev : [...prev, said.message]);
     });
-  }, [channelId, participant]);
+  }, [channelId, takesPart]);
 
   // A reclassified channel follows the global stream (issue 133): it may
   // have changed its messages too, which are fetched again. A reclassified
@@ -562,7 +562,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
    * - only a participant has an actor to change it through.
    */
   const mayChange = (msg: Message) =>
-    !!participant && !!msg.id && !msg.revoked && isOwn(msg, me);
+    !!takesPart && !!msg.id && !msg.revoked && isOwn(msg, me);
 
   const saveEdit = async (msg: Message, content: string) => {
     try {
@@ -573,8 +573,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   };
 
-  /** Whether the user may ask `sender` to answer again: a member whose `can_retry` allows it (issue 242). */
-  const mayRetryOf = (sender: string) => members.some(m => actorKey(m.id) === sender && m.can_retry);
+  /** Whether the user may ask `sender` to answer again: a participant whose `can_retry` allows it (issue 242). */
+  const mayRetryOf = (sender: string) => participants.some(m => actorKey(m.id) === sender && m.can_retry);
 
   /**
    * Whether the user may ask the agent that said `msg` to answer again (issue
@@ -583,7 +583,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
    * offer, not a promise.
    */
   const mayRetry = (msg: Message) => {
-    if (!participant || answers.length > 0 || !msg.id || !msg.sender_id || !mayRetryOf(actorKey(msg.sender_id))) return false;
+    if (!takesPart || answers.length > 0 || !msg.id || !msg.sender_id || !mayRetryOf(actorKey(msg.sender_id))) return false;
     const last = [...messages].reverse().find(m => m.id && !m.revoked);
     return last?.id === msg.id && !msg.internal;
   };
@@ -606,7 +606,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     !!msg.turn_id && (msg.givenUp?.kind === 'failed' || msg.givenUp?.kind === 'lowered') && mayRetry(msg);
 
   const retryGivenUp = async (msg: Message) => {
-    const uuid = msg.sender_id ? memberUuid(actorKey(msg.sender_id)) : undefined;
+    const uuid = msg.sender_id ? participantUuid(actorKey(msg.sender_id)) : undefined;
     if (!uuid || !msg.turn_id) return;
     try {
       await api.retryAnswer(sessionId, channelId, uuid, msg.turn_id);
@@ -641,64 +641,64 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   };
 
-  /** Deletes the agent `member` (issues 164, 314): it leaves every channel, this one too, until it is restored. */
-  const deleteAgent = async (member: ChannelMember) => {
-    const uuid = actorUuid(member.id);
+  /** Deletes the agent `participant` (issues 164, 314): it leaves every channel, this one too, until it is restored. */
+  const deleteAgent = async (participant: ChannelParticipant) => {
+    const uuid = actorUuid(participant.id);
     if (!uuid) return;
     try {
       await api.deleteAgent(uuid);
     } catch (error) {
-      reportError(`Failed to delete ${member.name}`, error);
+      reportError(`Failed to delete ${participant.name}`, error);
     }
   };
 
-  /** Shows `shows` of `member` in place of the members panel, closing its history. */
-  const showOf = (member: ChannelMember, shows: 'tools' | 'privateNotes' | 'profile') => {
+  /** Shows `shows` of `participant` in place of the participants panel, closing its history. */
+  const showOf = (participant: ChannelParticipant, shows: 'tools' | 'privateNotes' | 'profile') => {
     setHistoryOf(null);
-    setMemberPanel({channelId, member, shows});
+    setParticipantPanel({channelId, participant, shows});
   };
 
-  /** What can be done with `member` of the channel: what it offers (issue 230). */
-  const memberActions = (member: ChannelMember): MenuAction[] => [
+  /** What can be done with `participant` of the channel: what it offers (issue 230). */
+  const participantActions = (participant: ChannelParticipant): MenuAction[] => [
     // Who it is is public (issue 244); an approver is nobody to introduce.
-    ...(member.kind !== 'approver' ? [{
-      label: 'Show profile', icon: IdCard, title: `Show who ${member.name} is`,
-      onSelect: () => showOf(member, 'profile'),
+    ...(participant.kind !== 'approver' ? [{
+      label: 'Show profile', icon: IdCard, title: `Show who ${participant.name} is`,
+      onSelect: () => showOf(participant, 'profile'),
     }] : []),
-    ...contextActions(member),
-    ...(member.can_read_tools ? [{
-      label: 'Show tools', icon: Wrench, title: `Show the tools of ${member.name}`,
-      onSelect: () => showOf(member, 'tools'),
+    ...contextActions(participant),
+    ...(participant.can_read_tools ? [{
+      label: 'Show tools', icon: Wrench, title: `Show the tools of ${participant.name}`,
+      onSelect: () => showOf(participant, 'tools'),
     }] : []),
     // The approver belongs to every channel and cannot be removed.
-    ...(channel?.can_change && member.kind !== 'approver' ? [{
-      label: 'Remove from channel', icon: UserMinus, danger: true, title: `Remove ${member.name} from the channel`,
-      onSelect: () => void removeParticipant(member),
+    ...(channel?.can_change && participant.kind !== 'approver' ? [{
+      label: 'Remove from channel', icon: UserMinus, danger: true, title: `Remove ${participant.name} from the channel`,
+      onSelect: () => void removeParticipant(participant),
     }] : []),
-    ...(member.can_delete ? [{
+    ...(participant.can_delete ? [{
       label: 'Delete agent', icon: Trash2, danger: true, confirm: 'Delete agent? It leaves every channel until it is restored',
-      title: `${member.name} leaves every channel it takes part in, not only this one`,
-      onSelect: () => void deleteAgent(member),
+      title: `${participant.name} leaves every channel it takes part in, not only this one`,
+      onSelect: () => void deleteAgent(participant),
     }] : []),
   ];
 
-  /** Reading what `member` heard, said and kept to itself - for a former member too - where it may be read. */
-  const contextActions = (member: ChannelMember): MenuAction[] => member.can_read_context ? [{
-    label: 'Show history', icon: History, title: `Show what ${member.name} heard and said`,
-    onSelect: () => setHistoryOf({channelId, member}),
+  /** Reading what `participant` heard, said and kept to itself - for a former participant too - where it may be read. */
+  const contextActions = (participant: ChannelParticipant): MenuAction[] => participant.can_read_context ? [{
+    label: 'Show history', icon: History, title: `Show what ${participant.name} heard and said`,
+    onSelect: () => setHistoryOf({channelId, participant}),
   }, {
-    label: 'Show private notes', icon: Lock, title: `Show what ${member.name} noted for itself in this session`,
-    onSelect: () => showOf(member, 'privateNotes'),
+    label: 'Show private notes', icon: Lock, title: `Show what ${participant.name} noted for itself in this session`,
+    onSelect: () => showOf(participant, 'privateNotes'),
   }] : [];
 
-  const removeParticipant = async (member: ChannelMember) => {
-    const uuid = actorUuid(member.id);
+  const removeParticipant = async (participant: ChannelParticipant) => {
+    const uuid = actorUuid(participant.id);
     if (!uuid) return;
     try {
       await api.removeParticipant(sessionId, channelId, uuid);
-      setChannel(prev => prev && {...prev, members: prev.members.filter(m => actorKey(m.id) !== actorKey(member.id))});
+      setChannel(prev => prev && {...prev, participants: prev.participants.filter(m => actorKey(m.id) !== actorKey(participant.id))});
     } catch (error) {
-      reportError(`Failed to remove ${member.name}`, error);
+      reportError(`Failed to remove ${participant.name}`, error);
     }
   };
 
@@ -708,7 +708,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         const snapshot: ChannelSnapshot = JSON.parse(data);
         setMessages(chatMessages(snapshot.items, nameIn(snapshot.channel)));
         setChannel(snapshot.channel);
-        setUsage(Object.fromEntries(snapshot.channel.members.flatMap(m => m.usage ? [[actorKey(m.id), m.usage]] : [])));
+        setUsage(Object.fromEntries(snapshot.channel.participants.flatMap(m => m.usage ? [[actorKey(m.id), m.usage]] : [])));
         countedCalls.current = new Set(snapshot.items.flatMap(item => 'said' in item && item.said.id ? [item.said.id] : []));
         setNotes(snapshot.notes ?? []);
         setPendingApprovals(snapshot.pending_approvals ?? []);
@@ -716,7 +716,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         setEarlier(snapshot.earlier);
         // The answers under way as the snapshot found them (issue 240): what
         // streamed before is not kept, what follows streams in.
-        setAnswers(snapshot.channel.members.flatMap(m => m.turn_under_way
+        setAnswers(snapshot.channel.participants.flatMap(m => m.turn_under_way
           ? [{sender: actorKey(m.id), name: m.name, turnId: m.turn_under_way, reasoning: '', content: '', internal: false}]
           : []));
       } catch (e) {
@@ -739,7 +739,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           const uuid = typeof agent === 'object' && 'Agent' in agent ? actorUuid(agent) : null;
           if (!uuid) return;
           api.getParticipant(sessionId, channelId, uuid)
-            .then(member => { if (member.usage) setUsage(prev => ({...prev, [answerer]: member.usage!})); })
+            .then(participant => { if (participant.usage) setUsage(prev => ({...prev, [answerer]: participant.usage!})); })
             .catch(error => reportError('Failed to read what the agent used', error));
         };
         if (actorEvent === 'ResponseRequested') {
@@ -763,7 +763,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         } else if (actorEvent.StateChanged) {
           // Where an agent stands now (issue 243), shown by its dot.
           const state = actorEvent.StateChanged;
-          setChannel(prev => prev && {...prev, members: prev.members.map(m => actorKey(m.id) === answerer ? {...m, state} : m)});
+          setChannel(prev => prev && {...prev, participants: prev.participants.map(m => actorKey(m.id) === answerer ? {...m, state} : m)});
         } else if (actorEvent.PartialMessageGenerated || actorEvent.IntermediatePartialGenerated) {
           // A step of a plan streams in as the answer does (issue 258).
           const partial = (actorEvent.PartialMessageGenerated ?? actorEvent.IntermediatePartialGenerated)!;
@@ -1015,7 +1015,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     };
 
     // Not known yet: the channel is fetched first, and this runs again.
-    if (participant === undefined) {
+    if (takesPart === undefined) {
       let cancelled = false;
       api.getChannel(sessionId, channelId)
         .then(found => { if (!cancelled) setChannel(found); })
@@ -1024,7 +1024,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
     // Only a participant follows a channel live, through their own actor
     // (issue 104); anyone else who may read it sees its history as it is.
-    if (!participant) {
+    if (!takesPart) {
       let cancelled = false;
       // With the channel as it is now, which names whose turns ended.
       Promise.all([api.getChannel(sessionId, channelId), api.getHistory(sessionId, channelId)])
@@ -1039,7 +1039,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       onSnapshot: handleSnapshot,
       onEvent: handleMessage,
     });
-  }, [sessionId, channelId, participant, user.id]);
+  }, [sessionId, channelId, takesPart, user.id]);
 
 
   useEffect(() => {
@@ -1160,7 +1160,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   const selectSuggestion = (suggestion: Suggestion) => {
     if (suggestion.kind === 'command') selectCommand(suggestion.command, suggestion.handle);
-    else selectMention(suggestion.kind === 'group' ? suggestion.handle : suggestion.member.handle);
+    else selectMention(suggestion.kind === 'group' ? suggestion.handle : suggestion.participant.handle);
   };
 
   const selectMention = (handle: string) => {
@@ -1206,8 +1206,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   /** What a chain cut off at its limit says (issue 200), naming the agents mentioned as they are known now. */
   const chainCutOffText = ({maxAgentHops, notAsked}: {maxAgentHops: number; notAsked: ActorId[]}): string => {
     const names = notAsked.map(id => {
-      const member = members.find(m => actorKey(m.id) === actorKey(id));
-      return member?.handle ? `@${member.handle}` : (member?.name ?? 'an agent');
+      const participant = participants.find(m => actorKey(m.id) === actorKey(id));
+      return participant?.handle ? `@${participant.handle}` : (participant?.name ?? 'an agent');
     });
     const whom = names.length > 0 ? `${names.join(', ')} ${names.length === 1 ? 'was' : 'were'} not asked` : 'no agent was asked';
     return `The chain between agents reached its limit of ${maxAgentHops} ${maxAgentHops === 1 ? 'hop' : 'hops'}, so ${whom} to respond. A message from a user starts a new chain.`;
@@ -1217,7 +1217,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   const mayShowContext = (msg: Message): boolean => {
     if (!msg.id || !msg.sender_id) return false;
     const sender = actorKey(msg.sender_id);
-    return members.some(m => actorKey(m.id) === sender && m.can_read_context);
+    return participants.some(m => actorKey(m.id) === sender && m.can_read_context);
   };
 
   const handleStopGeneration = async () => {
@@ -1228,15 +1228,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   };
 
-  /** The id the REST API addresses the member `sender` (an `actorKey`) by. */
-  const memberUuid = (sender: string) => actorUuid(members.find(m => actorKey(m.id) === sender)?.id);
+  /** The id the REST API addresses the participant `sender` (an `actorKey`) by. */
+  const participantUuid = (sender: string) => actorUuid(participants.find(m => actorKey(m.id) === sender)?.id);
 
-  /** Whether the user may end the answer of `sender`: a member whose `can_cancel` allows it (issues 235, 243). */
-  const mayCancelOf = (sender: string) => members.some(m => actorKey(m.id) === sender && m.can_cancel);
+  /** Whether the user may end the answer of `sender`: a participant whose `can_cancel` allows it (issues 235, 243). */
+  const mayCancelOf = (sender: string) => participants.some(m => actorKey(m.id) === sender && m.can_cancel);
 
   /** Stops the answer of the agent `sender` alone (issue 235); the others go on. */
   const stopAnswer = async (sender: string) => {
-    const uuid = memberUuid(sender);
+    const uuid = participantUuid(sender);
     if (!uuid) return;
     try {
       await api.cancelParticipant(sessionId, channelId, uuid);
@@ -1253,12 +1253,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   const mayInterruptCallsOf = (msg: Message) => {
     if (!msg.turn_id || !msg.sender_id) return false;
     const sender = actorKey(msg.sender_id);
-    return members.some(m => actorKey(m.id) === sender && m.can_cancel && m.state === 'ExecutingTools');
+    return participants.some(m => actorKey(m.id) === sender && m.can_cancel && m.state === 'ExecutingTools');
   };
 
   /** Interrupts the call `call` of `msg` alone; the agent's turn goes on (issue 276). */
   const interruptCall = async (msg: Message, call: ToolCall) => {
-    const uuid = msg.sender_id ? memberUuid(actorKey(msg.sender_id)) : undefined;
+    const uuid = msg.sender_id ? participantUuid(actorKey(msg.sender_id)) : undefined;
     if (!uuid || !msg.turn_id || !call.id) return;
     try {
       await api.interruptToolCall(sessionId, channelId, uuid, msg.turn_id, call.id);
@@ -1299,7 +1299,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
    * meanwhile; the retry icon on its last message is then the way.
    */
   const retryAnswer = async (answer: Answer) => {
-    const uuid = memberUuid(answer.sender);
+    const uuid = participantUuid(answer.sender);
     if (!uuid || !answer.turnId) return;
     try {
       await api.retryAnswer(sessionId, channelId, uuid, answer.turnId);
@@ -1324,7 +1324,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // Only who may approve the agent's calls is asked (issue 14); everybody
   // else sees what it waits for.
   const mayApprove = (approval: ApprovalRequest) =>
-    members.some(m => actorKey(m.id) === actorKey({Agent: approval.agent_id}) && m.can_approve);
+    participants.some(m => actorKey(m.id) === actorKey({Agent: approval.agent_id}) && m.can_approve);
 
   // The answer first - the person decides this call now - then the rule
   // they chose to derive from it (issue 13); if the rule fails, the answer
@@ -1540,7 +1540,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       key={key}
       message={msg}
       me={me}
-      members={members}
+      participants={participants}
       files={workspaceFiles ?? undefined}
       filesVersion={workspaceVersion}
       artifacts={channelArtifacts}
@@ -1734,7 +1734,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                 key={request.id}
                 request={request}
                 asked={askedOf(request).includes(actorKey(me))}
-                askedNames={askedOf(request).map(key => members.find(m => actorKey(m.id) === key)?.name ?? key)}
+                askedNames={askedOf(request).map(key => participants.find(m => actorKey(m.id) === key)?.name ?? key)}
                 answered={answeredQuestions.includes(request.id)}
                 onAnswer={responses => answerQuestions(request, responses)}
               />
@@ -1808,7 +1808,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         )}
 
         <div className="p-4 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700">
-          {participant === false ? (
+          {takesPart === false ? (
             <p className="text-sm text-gray-500 dark:text-gray-400 text-center p-2">
               You do not take part in this channel: its history is shown as it is, not followed live, and you cannot write here.
             </p>
@@ -1840,7 +1840,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                       ? [`/${suggestion.command.name}`, [suggestion.handle && `@${suggestion.handle}`, suggestion.command.usage].filter(Boolean).join(' '), suggestion.command.description]
                       : suggestion.kind === 'group'
                         ? ['Everyone', `@${suggestion.handle}`, 'Every participant of this channel']
-                        : [suggestion.member.name, `@${suggestion.member.handle}`, null];
+                        : [suggestion.participant.name, `@${suggestion.participant.handle}`, null];
                     return (
                       <li
                         key={`${suggestion.kind}:${label}:${suggestion.kind !== 'mention' ? suggestion.handle ?? '' : ''}`}
@@ -1987,44 +1987,44 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           channelId={channelId}
           message={contextOf.message}
           me={me}
-          members={members}
+          participants={participants}
           onClose={() => setContextOf(null)}
         />
       ) : historyOf && historyOf.channelId === channelId ? (
         <HistoryPanel
-          key={actorKey(historyOf.member.id)}
+          key={actorKey(historyOf.participant.id)}
           sessionId={sessionId}
           channelId={channelId}
-          member={historyOf.member}
+          participant={historyOf.participant}
           me={me}
-          members={members}
+          participants={participants}
           version={messages.length}
           onShowContext={message => setContextOf({channelId, message})}
           onClose={() => setHistoryOf(null)}
         />
-      ) : memberPanel && memberPanel.channelId === channelId && memberPanel.shows === 'tools' ? (
+      ) : participantPanel && participantPanel.channelId === channelId && participantPanel.shows === 'tools' ? (
         <ToolsPanel
-          key={actorKey(memberPanel.member.id)}
+          key={actorKey(participantPanel.participant.id)}
           sessionId={sessionId}
           channelId={channelId}
-          member={memberPanel.member}
-          onClose={() => setMemberPanel(null)}
+          participant={participantPanel.participant}
+          onClose={() => setParticipantPanel(null)}
         />
-      ) : memberPanel && memberPanel.channelId === channelId && memberPanel.shows === 'privateNotes' ? (
+      ) : participantPanel && participantPanel.channelId === channelId && participantPanel.shows === 'privateNotes' ? (
         <PrivateNotesPanel
-          key={actorKey(memberPanel.member.id)}
+          key={actorKey(participantPanel.participant.id)}
           sessionId={sessionId}
           channelId={channelId}
-          member={memberPanel.member}
-          onClose={() => setMemberPanel(null)}
+          participant={participantPanel.participant}
+          onClose={() => setParticipantPanel(null)}
         />
-      ) : memberPanel && memberPanel.channelId === channelId && memberPanel.shows === 'profile' ? (
+      ) : participantPanel && participantPanel.channelId === channelId && participantPanel.shows === 'profile' ? (
         <ProfilePanel
-          key={actorKey(memberPanel.member.id)}
+          key={actorKey(participantPanel.participant.id)}
           sessionId={sessionId}
           channelId={channelId}
-          member={memberPanel.member}
-          onClose={() => setMemberPanel(null)}
+          participant={participantPanel.participant}
+          onClose={() => setParticipantPanel(null)}
         />
         ) : null}
         </div>
@@ -2122,7 +2122,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           {channel && (
             <div
               className="flex items-center gap-2 mb-4 -mt-2 text-xs text-gray-500 dark:text-gray-400"
-              title="Whether its members work on the session's workspace here - where it and the channel are classified alike."
+              title="Whether its participants work on the session's workspace here - where it and the channel are classified alike."
             >
               <HardDrive size={14} />
               <span>Workspace:</span>
@@ -2178,36 +2178,36 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             </HoverCard>
           )}
           <div className="space-y-2">
-            {members.map(member => {
-              const dot = stateDot(member, activities[actorKey(member.id)]);
-              const stoppable = member.can_cancel && member.state !== undefined && INTERRUPTIBLE.includes(member.state);
+            {participants.map(participant => {
+              const dot = stateDot(participant, activities[actorKey(participant.id)]);
+              const stoppable = participant.can_cancel && participant.state !== undefined && INTERRUPTIBLE.includes(participant.state);
               return (
-                <div key={actorKey(member.id)} className="group flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                <div key={actorKey(participant.id)} className="group flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
                   {dot
                     ? <div className={cn("w-2 h-2 rounded-full shrink-0", dot.className)} title={dot.title} role="img" aria-label={dot.title} />
                     : <div className="w-2 h-2 shrink-0" />}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center space-x-2">
-                      <span className="text-sm text-gray-700 dark:text-gray-300 truncate">{member.name}</span>
-                      {member.handle && <span className="text-xs font-mono text-gray-400 dark:text-gray-500 truncate">@{member.handle}</span>}
+                      <span className="text-sm text-gray-700 dark:text-gray-300 truncate">{participant.name}</span>
+                      {participant.handle && <span className="text-xs font-mono text-gray-400 dark:text-gray-500 truncate">@{participant.handle}</span>}
                     </div>
-                    {usage[actorKey(member.id)] && <TokenGauge usage={usage[actorKey(member.id)]} />}
+                    {usage[actorKey(participant.id)] && <TokenGauge usage={usage[actorKey(participant.id)]} />}
                   </div>
                   {stoppable && (
                     <button
                       type="button"
-                      onClick={() => void stopAnswer(actorKey(member.id))}
+                      onClick={() => void stopAnswer(actorKey(participant.id))}
                       className="p-0.5 rounded-sm text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                      title={`Stop ${member.name}`}
-                      aria-label={`Stop ${member.name}`}
+                      title={`Stop ${participant.name}`}
+                      aria-label={`Stop ${participant.name}`}
                     >
                       <Square size={12} fill="currentColor" />
                     </button>
                   )}
                   <ActionMenu
-                    label={`Options of ${member.name}`}
+                    label={`Options of ${participant.name}`}
                     className={ROW_MENU}
-                    actions={memberActions(member)}
+                    actions={participantActions(participant)}
                   />
                 </div>
               );
@@ -2222,7 +2222,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
               <span>Add participant</span>
             </button>
           )}
-          {(channel?.former_members?.length ?? 0) > 0 && (
+          {(channel?.former_participants?.length ?? 0) > 0 && (
             <div className="mt-4">
               <button
                 onClick={() => setShowFormer(shown => !shown)}
@@ -2230,23 +2230,23 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                 aria-expanded={showFormer}
               >
                 {showFormer ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                <span>Former members ({channel!.former_members.length})</span>
+                <span>Former participants ({channel!.former_participants.length})</span>
               </button>
               {showFormer && (
                 <div className="space-y-2 mt-1">
-                  {channel!.former_members.map(member => {
-                    const left = formatTimestamp(member.left?.at);
+                  {channel!.former_participants.map(participant => {
+                    const left = formatTimestamp(participant.left?.at);
                     return (
-                      <div key={actorKey(member.id)} className="group flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                      <div key={actorKey(participant.id)} className="group flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
                         <div className="w-2 h-2 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm text-gray-500 dark:text-gray-400 truncate">{member.name}</div>
+                          <div className="text-sm text-gray-500 dark:text-gray-400 truncate">{participant.name}</div>
                           {left && <div className="text-[11px] text-gray-400 dark:text-gray-500" title={left.full}>left {left.short}</div>}
                         </div>
                         <ActionMenu
-                          label={`Options of ${member.name}`}
+                          label={`Options of ${participant.name}`}
                           className={ROW_MENU}
-                          actions={contextActions(member)}
+                          actions={contextActions(participant)}
                         />
                       </div>
                     );

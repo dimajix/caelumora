@@ -9,7 +9,7 @@
 
 import React, {useEffect, useState} from 'react';
 import {Copy, ScrollText, X} from 'lucide-react';
-import type {ActorId, ChannelMember, KnowledgeRef, Message, MessageContextResponse, SeenMessage, SeenPrompt, ToolSet} from '../types';
+import type {ActorId, ChannelParticipant, KnowledgeRef, Message, MessageContextResponse, SeenMessage, SeenPrompt, ToolSet} from '../types';
 import {type Classification, classificationDescription, classificationLabel} from '../confidentiality';
 import {cn} from '../classNames';
 import {api} from '../api';
@@ -202,11 +202,11 @@ interface ContextPanelProps {
   message: Message;
   /** Who views it, whose messages are their own (issue 407). */
   me: ActorId;
-  members: ChannelMember[];
+  participants: ChannelParticipant[];
   onClose: () => void;
 }
 
-export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId, message, me, members, onClose}) => {
+export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId, message, me, participants, onClose}) => {
   const actor = actorUuid(message.sender_id);
   const key = `${actor}:${message.id}`;
   const [context, setContext] = useState<MessageContextResponse | null>(() => cache.get(key) ?? null);
@@ -291,7 +291,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
                 key={row.message.id ?? idx}
                 message={row.message}
                 me={me}
-                members={members}
+                participants={participants}
                 className={cn('max-w-full', row.sets_label && 'ring-2 ring-amber-400 dark:ring-amber-500')}
                 badges={[
                   ...(row.message.internal ? ['internal'] : []),

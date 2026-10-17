@@ -34,7 +34,7 @@ pub trait AccessQuestions {
     async fn may_read_session(&self, context: &SecurityContext, session: &SecurityAttributes) -> bool;
 
     /// Whether `context` may read the channel with `channel` attributes -
-    /// its members, its history, its events (`GetChannel`).
+    /// its participants, its history, its events (`GetChannel`).
     async fn may_read_channel(&self, context: &SecurityContext, channel: &SecurityAttributes) -> bool;
 
     /// Whether `context` may change the channel with `channel` attributes -

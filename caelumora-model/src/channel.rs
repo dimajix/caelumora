@@ -125,7 +125,7 @@ pub struct Channel {
     /// rules that ask or deny, set by whoever may change the channel.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub approval_rules: Vec<ApprovalRule>,
-    /// Whether its members work on the workspace of its session here (issue
+    /// Whether its participants work on the workspace of its session here (issue
     /// 251, decision 11): what it is for, set by whoever may change it. It
     /// permits nothing the classifications refuse - the workspace is used
     /// here only where it and the channel flow both ways.
@@ -306,7 +306,7 @@ impl Secured for Channel {
 impl Channel {
     /// A new channel of `participants`, owned by `owner`, as every channel is
     /// built - from a template or on request (issue 09): with an approver
-    /// added if there is none, and read by its members (issue 23): every
+    /// added if there is none, and read by its participants (issue 23): every
     /// user and agent in it, whoever they are at the time - the group of its
     /// participants (issue 304), which whoever stores the channel stores
     /// with it (`Group::of_channel`). Held in

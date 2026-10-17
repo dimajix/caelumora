@@ -41,7 +41,7 @@ pub struct ChannelSpec {
     /// in particular. Offering the one its creator prefers is the
     /// frontend's (issue 331).
     pub language: Option<String>,
-    /// Whether its members work on the session's workspace in it (issue
+    /// Whether its participants work on the session's workspace in it (issue
     /// 253); `None` for the default, as in a template.
     pub uses_workspace: Option<bool>,
 }
@@ -113,7 +113,7 @@ impl SessionLoop {
     /// (issue 321). In the order of issue 304: what `spec` asks for is
     /// validated - the preconfigured components it names read in the name
     /// of `context`, who names them -, then creating the channel is asked,
-    /// then its members' admission, and the store asks again as it stores
+    /// then its participants' admission, and the store asks again as it stores
     /// (issue 312).
     ///
     /// # Errors
@@ -300,7 +300,7 @@ impl SessionLoop {
         let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         let channel = self.stores.channels.restore(context, channel_id).await?;
         // The group of its participants first, with it, in the runtime's
-        // name (issue 348): whatever fails later, its members reach it.
+        // name (issue 348): whatever fails later, its participants reach it.
         let listed = async {
             if let Some(since) = deleted_at {
                 self.groups.restore_participants(&scope, since).await?;
@@ -394,9 +394,9 @@ mod tests {
         let channel = session.create_channel(&ctx, spec("side", vec![other])).await.expect("the channel is created");
 
         assert_eq!(channel.name(), "side");
-        let members = channel.member_ids();
-        assert_eq!(members.iter().filter(|id| matches!(id, ActorId::User(_))).count(), 2, "the creator and the other user: {members:?}");
-        assert!(members.iter().any(|id| matches!(id, ActorId::Approver(_))), "an approver is added: {members:?}");
+        let participants = channel.participant_ids();
+        assert_eq!(participants.iter().filter(|id| matches!(id, ActorId::User(_))).count(), 2, "the creator and the other user: {participants:?}");
+        assert!(participants.iter().any(|id| matches!(id, ActorId::Approver(_))), "an approver is added: {participants:?}");
         assert!(session.channel(channel.id()).is_some());
         let names: Vec<String> = session.channels().iter().map(|c| c.name().to_string()).collect();
         assert_eq!(names, ["main", "side"], "in the order of the session");
