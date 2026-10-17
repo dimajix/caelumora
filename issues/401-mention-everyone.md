@@ -1,6 +1,6 @@
 # 401 — A message cannot address everyone in the channel at once
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -114,3 +114,11 @@ both alongside the participants' handles. The TUI has no completion of mentions 
 
 - 2026-10-17: Opened at the maintainer's request: all participants of a channel should be
   addressable by `@all` or `@channel`.
+- 2026-10-17: The maintainer agreed to every recommendation. Done: `caelumora_model::mention` has
+  the group handles (`GROUP_HANDLES`, `is_group_handle`), and `MentionDirectory::lookup` answers
+  every participant for them, so mentions, the moderator and the questions of an agent follow
+  without a change of their own; a participant whose handle is one of them is reported by
+  `ambiguous`. The roster prompt and `ask_user` name `@all`; the TUI and the web UI highlight both
+  handles, and the web UI completes them. A command of an agent addressed to `@all` already existed
+  (issue 269) with `"all"` written out in `UserActor::request_command`; it now asks the same
+  `is_group_handle`, so `@channel` addresses every agent there too.

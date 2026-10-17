@@ -131,10 +131,11 @@ fn render(me: Option<&Member>, others: &[Member], explanation: Option<&str>) -> 
         text.push_str("Nobody else is in this channel.\n");
         return titled("Who is in this channel", &text);
     }
+    // `@all` addresses every one of them, with a handle or without (issue 401).
     if others.iter().any(|m| m.handle.is_some()) {
-        text.push_str("The others - mention one by their @handle to address them:\n");
+        text.push_str("The others - mention one by their @handle to address them, or all of them with @all:\n");
     } else {
-        text.push_str("The others:\n");
+        text.push_str("The others - mention all of them with @all to address them:\n");
     }
     for member in others {
         let line = match (member.person, &member.introduction) {
@@ -238,7 +239,7 @@ mod tests {
         assert_eq!(text, "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
             About you: A quiz master.\n\
-            The others - mention one by their @handle to address them:\n\
+            The others - mention one by their @handle to address them, or all of them with @all:\n\
             - Kaya (@kaya), a person. In their own words: \"I run the budget.\"\n\
             - Sassy (@sassy), an agent.\n");
         assert!(render(Some(&me), &[], Some("Marked.")).ends_with("Nobody else is in this channel.\n"), "nothing to explain without others");
@@ -337,7 +338,7 @@ mod tests {
         assert_eq!(prompt.text, "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
             About you: A quiz master.\n\
-            The others - mention one by their @handle to address them:\n\
+            The others - mention one by their @handle to address them, or all of them with @all:\n\
             - Kaya (@kaya), a person. In their own words: \"I run the budget.\"\n\
             - Sassy (@sassy), an agent.\n\
             - Bob (@bob), a person.\n", "no approver, nobody who no longer exists");

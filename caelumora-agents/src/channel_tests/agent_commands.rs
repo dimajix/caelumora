@@ -137,6 +137,8 @@ async fn a_command_of_an_agent_names_its_agent() {
     assert!(matches!(command_error(&unknown), CommandError::Unknown(name) if name == "nonsense"), "{unknown}");
     let all = actor.execute_command("mark", "@all").await.expect("every agent that carries it out");
     assert!(all.span_id.is_some() && all.output.is_none(), "all of them asked: {all:?}");
+    let channel_wide = actor.execute_command("mark", "@channel").await.expect("a group handle, as a mention (issue 401)");
+    assert!(channel_wide.span_id.is_some(), "all of them asked: {channel_wide:?}");
     running.abort();
 }
 

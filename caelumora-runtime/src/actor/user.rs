@@ -12,6 +12,7 @@ use caelumora_model::approval::{ApprovalRequest, ApprovalResponse, ApprovalRule,
 use caelumora_model::channel::ChannelId;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::message::{Message, MessageId, MessageRole};
+use caelumora_model::mention::{handle_of, is_group_handle};
 use caelumora_model::question::{QuestionError, QuestionId, QuestionRequest, Response};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext, AccessPolicy};
@@ -558,8 +559,9 @@ impl UserActor {
     }
 
     /// Asks agents of `channel` to carry out the command `name` (issue 269).
-    /// `args` begins with whom: `@handle` names one agent, `@all` every
-    /// agent here that carries the command out; the rest is the command's.
+    /// `args` begins with whom: `@handle` names one agent, `@all` - or
+    /// another group handle, as a mention (issue 401) - every agent here that
+    /// carries the command out; the rest is the command's.
     /// Whom it names is found among the agents that carry it out as this
     /// user sees them (`ChannelLoop::agent_commands`, `ShowAgentCommand`) -
     /// offering, which asks nothing of the agent's queue. Whether this user
@@ -585,7 +587,7 @@ impl UserActor {
         let invalid = |reason: String| CommandError::InvalidArguments { command: name.to_string(), reason };
         let (whom, rest) = args.split_once(char::is_whitespace).unwrap_or((args, ""));
         let targets: Vec<_> = match whom.strip_prefix('@') {
-            Some("all") => understanding,
+            Some(group) if is_group_handle(&handle_of(group)) => understanding,
             Some(agent) => {
                 let named = channel.agents_named(agent);
                 if named.len() > 1 {
