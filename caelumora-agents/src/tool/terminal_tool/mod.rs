@@ -36,12 +36,12 @@ use crate::work::AgentWork;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::workspace::{WorkspaceError, WorkspaceManager};
-use crate::tool::{usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{proposed_matcher, usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::question::Answers;
 use caelumora_model::security::Grant;
-use caelumora_model::tool::{Tool, ToolCall, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -169,10 +169,14 @@ impl ToolProvider for TerminalTool {
 
     /// For a change of a file, its path: a rule derived from an approved
     /// write covers the file, whatever is written into it; one derived from
-    /// a move, that move.
+    /// a move, that move. For a command, as its parameters tell
+    /// (`proposed_matcher`): the commands beginning with its first words,
+    /// however long a call waits for them.
     fn matcher(&self, name: &str, params: &Value) -> ToolMatcher {
         files::matcher(name, params).unwrap_or_else(|| {
-            ToolMatcher::exact(&ToolCall { id: None, function_name: name.to_string(), arguments: params.clone(), visibility: ToolVisibility::SHOWN, presentation: Default::default() })
+            let mut matcher = proposed_matcher(&self.tools(), name, params);
+            matcher.arguments.remove("wait_secs");
+            matcher
         })
     }
 

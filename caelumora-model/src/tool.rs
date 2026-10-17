@@ -20,6 +20,10 @@ pub enum ToolParameters {
     String {
         #[serde(skip_serializing_if = "Option::is_none")]
         description: Option<String>,
+        /// The language the value is written in, if it is one (issue 247): what a rule derived
+        /// from a call compares it by. The model is not told of it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        language: Option<ArgumentLanguage>,
     },
     Number {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -36,10 +40,28 @@ pub enum ToolParameters {
     },
 }
 
+/// A language an argument of a tool is written in (issue 247), whose meaning a pattern cannot
+/// tell: a rule compares it as the language reads it (`ArgumentMatcher`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArgumentLanguage {
+    /// A bash command line.
+    Shell,
+}
+
 impl ToolParameters {
     pub fn string(description: impl Into<String>) -> Self {
         Self::String {
             description: Some(description.into()),
+            language: None,
+        }
+    }
+
+    /// A string that is a bash command line.
+    pub fn shell(description: impl Into<String>) -> Self {
+        Self::String {
+            description: Some(description.into()),
+            language: Some(ArgumentLanguage::Shell),
         }
     }
 
@@ -72,6 +94,17 @@ impl ToolParameters {
                 .map(|(k, v)| (k.into(), v))
                 .collect(),
             required: required.into_iter().map(|s| s.into()).collect(),
+        }
+    }
+
+    /// The language of the property `name` of an object, if it is a string written in one.
+    pub fn language_of(&self, name: &str) -> Option<ArgumentLanguage> {
+        match self {
+            ToolParameters::Object { properties, .. } => match properties.get(name)? {
+                ToolParameters::String { language, .. } => *language,
+                _ => None,
+            },
+            _ => None,
         }
     }
 }

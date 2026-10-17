@@ -492,18 +492,23 @@ impl UserActor {
     /// carries (issue 13), as an envelope of this user's - the way a click
     /// would be sent, carrying the rule. `None` if the approver did not ask,
     /// a rule of a place asked for the user's own decision (`explicit`), no
-    /// rule of theirs applies, or they may not approve the agent's calls
-    /// here - the approver would leave their answer out. That is offering,
+    /// rule of theirs applies, one only asks - a rule that denies, of a command
+    /// line it cannot judge (issue 247) -, or they may not approve the agent's
+    /// calls here - the approver would leave their answer out. That is offering,
     /// as a client asks it to show its buttons, not permitting: the approver
     /// asks it again as it counts the answer (issue 304, rule 5).
     async fn answer_by_rule(&self, envelope: &Envelope, request: &ApprovalRequest) -> Option<Envelope> {
         if request.explicit || !matches!(envelope.context.sender_id, ActorId::Approver(_)) {
             return None;
         }
-        let rule = {
+        let (rule_id, decision) = {
             let profile = self.user.profile();
-            ApprovalRule::decide(profile.approval_rules(), &request.tool_call, request.session_id, request.channel_id, Utc::now())?.clone()
+            let (rule, decision) = ApprovalRule::decide(profile.approval_rules(), &request.tool_call, request.session_id, request.channel_id, Utc::now())?;
+            (rule.id, decision)
         };
+        if decision == RuleDecision::Ask {
+            return None;
+        }
         let agent = match self.actor_runtime.agent_attributes(request.agent_id).await {
             Ok(attributes) => attributes,
             Err(e) => {
@@ -513,12 +518,12 @@ impl UserActor {
         };
         let channel = self.channel.load().security_attributes.clone();
         if !self.access_policy.may_approve(&self.security_context(), &agent, &channel).await {
-            debug!(rule = %rule.id, "UserActor {} may not approve the calls of agent {}; its rule does not answer", self.id(), request.agent_id);
+            debug!(rule = %rule_id, "UserActor {} may not approve the calls of agent {}; its rule does not answer", self.id(), request.agent_id);
             return None;
         }
-        let approved = rule.decision == RuleDecision::Allow;
-        info!(rule = %rule.id, approved, "UserActor {} answers approval {} by a rule", self.id(), request.id);
-        let response = ApprovalResponse { by_rule: Some(rule.id), ..ApprovalResponse::new(request.id, request.agent_id) };
+        let approved = decision == RuleDecision::Allow;
+        info!(rule = %rule_id, approved, "UserActor {} answers approval {} by a rule", self.id(), request.id);
+        let response = ApprovalResponse { by_rule: Some(rule_id), ..ApprovalResponse::new(request.id, request.agent_id) };
         Some(self.envelope(Self::answer(response, approved), envelope.context.span_id))
     }
 

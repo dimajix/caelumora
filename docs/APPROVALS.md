@@ -77,8 +77,10 @@ and by whom, the context panel shows.
 Beside what a tool says of itself, the places an agent works in restrict its calls: the system
 (`AppConfig::approvals`, see [CONFIGURATION.md](CONFIGURATION.md)), its session and its channel
 (their `approval_rules`, set by whoever may change them). A rule (`ApprovalRule`) names the tool as
-the model calls it, `*` for every tool, and optionally a regular expression per argument that its
-whole value must match; it may expire. It decides one of two things:
+the model calls it, `*` for every tool, and optionally per argument how its value is compared
+(`ArgumentMatcher`): a regular expression its whole value must match, or, for a bash command line,
+the words its commands begin with ([Rules on commands](#rules-on-commands)); it may expire. It
+decides one of two things:
 
 *   **`deny`** - the call never runs. It is answered `forbidden` before anyone is asked, and again
     if the rule was set while the call waited for its approval.
@@ -86,11 +88,11 @@ whole value must match; it may expire. It decides one of two things:
     and rules a person sets for themselves do not answer it.
 
 A place cannot allow: there is nobody at a place who would stand for an approval. Of the rules of
-all three places that apply to a call, the strongest decides - `deny` before `ask`. The
-`ToolExecutor` reads them as they stand at every call; the approver is not involved. Patterns are
-matched without backtracking and bounded in size; a rule whose pattern cannot be matched restricts
-and never allows. A pattern is reliable for arguments with a structure of their own, not for one
-that is a language, such as a shell command.
+all three places that apply to a call, the one that decides the strongest of it decides - `deny`
+before `ask` (`ApprovalRule::decide`). The `ToolExecutor` reads them as they stand at every call;
+the approver is not involved. Patterns are matched without backtracking and bounded in size; a rule
+whose pattern cannot be matched restricts and never allows. A pattern is reliable for arguments
+with a structure of their own, not for one that is a language, such as a shell command.
 
 ### Rules of a person
 
@@ -111,9 +113,39 @@ clicked.
     request: a rule weighs as much as the button.
 *   **The brave mode** is a rule like any other: every tool, allowed in one session, for a while.
 *   **A rule is derived from a call**: the approval card offers "and from now on", with the matcher
-    the call's tool suggests. The person answers the call first; the rule is added after.
+    the call's tool suggests - by default derived from its parameters (`ToolMatcher::proposed`):
+    every argument exactly, a command line of one command by its first two words, as far as they
+    do not expand. The person answers the call first; the rule is added after.
 *   Rules are changed through the user's controller, which stores them first, announces the profile
     and drops those expired. A rule is bound to no agent: whether the person may approve bounds it.
+
+### Rules on commands
+
+An argument that is a bash command line - `command` of `run_command` - is compared by what it runs
+rather than by a pattern: the rule names the words its commands begin with
+(`{ "shell": ["git", "status"] }`), for a named tool. The model reads the line into its simple
+commands (`approval/shell.rs`): split at `;`, `&&`, `||`, `|` and line breaks, each a list of
+words with quoting and escapes removed. A word that expands - a glob, a `~` - equals no word named.
+
+*   **A chain is judged by its parts.** A rule that allows applies if every command begins with its
+    words, one that asks or denies if any does: a rule for `git` allows `git status && git diff`,
+    one that denies `rm` denies `ls && rm x`. Of several arguments a rule names, each must match.
+*   **What cannot be read is not judged.** A line is unjudgeable where bash would run other words
+    than those written, or do more than run them: substitution and expansion (`$`, a backtick),
+    redirection, a background job, subshells and groups, a leading assignment, a command beginning
+    with a reserved word (`while`, `do`, `if`, ...) or with a word that expands, an unclosed quote,
+    a line too long. No rule allows such a line; a rule that asks asks, and one that denies asks
+    too, rather than refuse every line with a `$` in it. A person's rule that thus only asks
+    answers nothing: the person decides.
+*   **Not a boundary.** Words are compared as written. A program reached by another path
+    (`/bin/rm`) or through another (`env rm`, `sh -c "rm"`, `find -exec rm`) is not seen: a rule
+    that denies a program is a hint. A rule that allows is safe against all of them - the words
+    must begin with what it names - but wider than it reads: programs take options after their
+    operands, so one for `rm x` allows `rm x -rf /`. The boundary is where the command runs, the
+    workspace's storage ([WORKSPACE.md](WORKSPACE.md)).
+*   **A pattern stays a pattern.** Nothing but the rule says that an argument is a command line; a
+    pattern on one is compared as text, and `ls.*` matches `ls; rm x`. What a tool declares of its
+    parameters serves the rule it proposes, not the judging.
 
 ### Who may approve
 

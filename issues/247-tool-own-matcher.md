@@ -1,6 +1,6 @@
 # 247 — A rule can match an argument that is a language only by its exact text
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** high
 **Area:** Tools and approvals
@@ -81,6 +81,48 @@ each.
    configured rule's error read too vaguely, a `Deserialize` of its own that tells the variants
    apart by their fields is the remedy.
 
+Taken on 2026-10-17 by the maintainer, after the plan was checked against the code and against how
+Claude Code matches shell commands (https://code.claude.com/docs/en/permissions): the recommended
+option of each. Decision 5 replaces 4, decision 6 corrects 2.
+
+5. **The kind of comparison is the argument's, not the matcher's.** `ToolMatcher` stays the struct
+   it is; the value of each argument becomes an untagged enum, `ArgumentMatcher`: a string is
+   today's pattern, an object names the language its argument is in
+   (`{ "shell": ["git", "status"] }`). A rule can so name a structured argument and one that is a
+   language together - an SQL tool's `database` and `query` -, which a kind of the whole matcher
+   could not: its command variant knew one argument and repeated what the matcher does for the
+   tool. Stored rules keep their form; the worry of decision 4 about vague errors is gone, since a
+   string and an object are told apart by their form. Claude Code goes half this way: a tool's
+   main argument by a syntax of the tool's own, the others only in rules that ask or deny, and
+   only by their value.
+6. **The card proposes the first words as they are written**: `cargo test` of `cargo test -p x`,
+   `ls -la` of `ls -la src`. Decision 2 took the program and its first word that is no option -
+   `ls src`, which a comparison of the first words does not match even against the call it was
+   derived from. The person shortens the proposal on the card. Claude Code saves `npm test *` the
+   same way.
+7. **bash's reserved words make a line unjudgeable** where a simple command begins with one:
+   split at its `;`, `while true; do rm -rf x; done` gives `do rm -rf x`, which a rule denying
+   `rm` would not see - bash's grammar, not another program reaching `rm`. So do a leading
+   `NAME+=value` and `|&`.
+8. **A rule that denies asks for an unjudgeable line** instead of denying it. Denying would refuse
+   every line with a `$` or a `>` once any rule denies a command - the effect for which option 1b
+   was rejected; asking opens nothing either. A rule that allows does not apply to such a line,
+   one that asks does, as before.
+
+Taken on 2026-10-17 by the maintainer as well:
+
+9. **A tool says which of its arguments are in a language**: `ToolParameters::String` gets an
+   optional `language` (`shell`, later perhaps `sql`) beside its description - not `format`,
+   which means something else in JSON Schema and which some model providers refuse unknown values
+   of; it is the same word as the key of `ArgumentMatcher`. What the model is told does not
+   change. The language serves where the tool is known: the proposal for a rule is derived from
+   it (`ToolProvider::matcher`), and the web UI offers a shell argument where it knows the tool.
+   It is not carried to where rules are judged: a pattern on an argument in a language, written
+   by hand, stays as unreliable as today, and the docs say so. Weighed and not taken: the agent
+   stamping the languages onto the `ToolCall`, as it stamps `visibility` and `presentation`, so
+   that `applies` could keep a pattern on such an argument from allowing - more than this issue
+   needs, for a rule nobody is offered.
+
 ## Plan
 
 Names are proposals; what is fixed is where a responsibility lies.
@@ -88,66 +130,88 @@ Names are proposals; what is fixed is where a responsibility lies.
 ### A. The command line, in the model
 
 The rules are the model's (`caelumora-model`), so is reading a command line for them:
-`approval.rs` becomes `approval/mod.rs`, and `approval/command.rs` holds the scanner.
+`approval.rs` becomes `approval/mod.rs`, and `approval/shell.rs` holds the scanner.
 
 - `CommandLine::parse(text)` returns the simple commands of a line, each as its words after
   quoting and escapes are removed - or `Unjudgeable`.
 - **Separators** split it into simple commands: `;`, `&&`, `||`, `|` and a line break.
 - **Unjudgeable** is everything that makes the words that run differ from the words written, or
   that acts besides running them: `$` and backticks (substitution, expansion), `<` and `>`
-  (redirection, also `2>&1`), `&` alone (a background job), `(`, `)`, `{`, `}` (subshells and
-  groups), a leading `NAME=value`, an unclosed quote, a trailing backslash, a line longer than a
-  limit. A glob (`*`, `?`, `[`) or a `~` unquoted is fine in a word no rule compares, and makes a
-  word that is compared unequal.
+  (redirection, also `2>&1`), `&` alone and `|&`, `(`, `)`, `{`, `}` (subshells and groups), a
+  leading `NAME=value` or `NAME+=value`, a simple command beginning with one of bash's reserved
+  words (`if`, `then`, `else`, `elif`, `fi`, `for`, `while`, `until`, `do`, `done`, `case`, `esac`,
+  `select`, `function`, `time`, `!`, `[[`), an unclosed quote, a trailing backslash, a line longer
+  than a limit. A glob (`*`, `?`, `[`) or a `~` unquoted is fine in a word no rule compares, and
+  makes a word that is compared unequal.
 - **What it does not see**, said in the docs rather than solved: a program reached by another
   path (`/bin/rm`) or through another (`env rm`, `xargs rm`, `sh -c "rm"`, `find -exec rm`). A
   rule that allows is safe against all of them - the words must start with what it names; a rule
-  that denies a program is a hint, not a boundary. The boundary is where the command runs, the
-  workspace's storage (issue [251](251-open-terminal.md)): a `local` shell reaches what the
-  server's user reaches, a container what is in it.
+  that denies a program is a hint, not a boundary. Neither is a rule that allows narrower than it
+  reads: GNU programs take options after their operands, so one for `rm x` allows `rm x -rf /`.
+  The boundary is where the command runs, the workspace's storage (issue
+  [251](251-open-terminal.md)): a `local` shell reaches what the server's user reaches, a
+  container what is in it.
 
 ### B. The matcher
 
-- `ToolMatcher` gets a second variant, `Command { tool, argument, prefix }`: the tool, the
-  argument that holds the command line, and the words a simple command must begin with.
-  `check` requires a named tool (not `*`), an argument, and a prefix of at least one word, with
-  limits on their number and length.
-- `matches` reports, for a command, whether no part, some or every part of the line begins with
-  the prefix - or that the line is unjudgeable. `ApprovalRule::applies` turns that into an answer
-  by the rule's decision (open question 1a); an unjudgeable line takes the fallback that exists for
-  a matcher that fails: a rule that allows does not apply, one that asks or denies does.
-- Today's variant answers as before: every part, or none.
+- `ToolMatcher` keeps its form; its `arguments` map each name to an `ArgumentMatcher`, untagged:
+  `Pattern(String)`, today's regular expression, and `Shell { shell: Vec<String> }`, the words a
+  simple command of the line must begin with. `check` requires, for a shell argument, a named
+  tool (not `*`) and at least one word, with limits on their number and length.
+- Each argument answers whether **every** part of its value matches and whether **some** part
+  does: a pattern both or neither; a shell line by its simple commands; an unjudgeable line
+  neither every nor some, but unjudgeable. `ToolMatcher::matches` joins its arguments - every
+  argument for every, every argument for some, and unjudgeable where one is and the others
+  match at least in part.
+- `ApprovalRule::applies` turns that into the decision the rule takes of the call, or none:
+  a rule that allows applies where every part matches, one that asks or denies where some part
+  does (decision 1); of an unjudgeable call a rule that allows takes none, one that asks asks, and
+  one that denies asks (decision 8). `decide` compares rules by what they take of the call, not
+  by what they are written to decide; its callers learn the rule and that decision.
+- A pattern that cannot be matched keeps the fallback it has: a rule that allows does not apply,
+  one that asks or denies does.
 
-### C. `run_command` proposes it
+### C. A tool proposes it by its parameters
 
-`TerminalTool::matcher` proposes, for `run_command`, a `Command` matcher of the call's first two
-words (open question 2a) when the line is one simple command; for a chain or an unjudgeable line
-it keeps `ToolMatcher::exact`, a rule for that line alone.
+- `ToolParameters::String` gets its `language` (decision 9); `run_command` declares `command` as
+  `shell`.
+- The default of `ToolProvider::matcher` derives the proposal from the tool's parameters,
+  argument by argument: one in `shell` as a shell argument of its first two words as written
+  (decision 6) when the line is one simple command, every other as `ToolMatcher::exact` does. For
+  a chain or an unjudgeable line the argument keeps its exact pattern, a rule for that line alone.
+- `TerminalTool::matcher` keeps its proposal for the files and, for `run_command`, leaves out
+  `wait_secs`, which the derived proposal would have taken in.
 
 ### D. REST and the web UI
 
-- The REST API carries `ToolMatcher` as it is; the TypeScript types gain the variant.
-- `describeMatcher` shows a command matcher as the command it is about (`run_command: git status
-  …`).
-- `ApprovalRuleOffer` offers, for a command matcher, the words of the call to choose how many of
+- The REST API carries `ToolMatcher` as it is; the TypeScript types gain `ArgumentMatcher`.
+- `describeMatcher` shows each argument by its kind: a pattern as today, a shell argument as the
+  command it is about (`run_command (command: git status …)`).
+- `ApprovalRuleOffer` offers, for a shell argument, the words of the call to choose how many of
   them the rule is about; `ApprovalRulesDialog`, where a place's rules are written, can write one
-  too. The profile lists it as it lists the others.
+  too, for an argument whose tool it knows to declare it `shell`. The profile lists it as it lists
+  the others.
 
 ### E. Tests
 
-- The scanner, as a table: lines and the simple commands or `Unjudgeable` they give.
+- The proposal derived from a tool's parameters: a shell argument of a simple command, the exact
+  pattern of a chain, the other arguments exact.
+- The scanner, as a table: lines and the simple commands or `Unjudgeable` they give, reserved
+  words among them.
 - The matcher and `applies`, by decision: a rule that allows `ls` allows `ls -la` and
-  `ls && ls src`, not `ls; rm x`, `ls $(rm x)`, `ls > f`, `FOO=1 ls`; one that denies `rm`
-  denies `ls && rm x` and every unjudgeable line.
+  `ls && ls src`, not `ls; rm x`, `ls $(rm x)`, `ls > f`, `FOO=1 ls`; one that denies `rm` denies
+  `ls && rm x`, asks for an unjudgeable line, and leaves `ls` alone; a shell argument together
+  with a pattern on another argument, of which an unjudgeable line does not make the other match.
 - The security suite: a person's rule derived from an approved `ls` lets the next `ls -la` pass and
-  asks again for `ls; rm -rf ~`; a place's rule that asks for a command asks for an unjudgeable
-  line.
+  asks again for `ls; rm -rf ~`; a place's rule that denies a command asks for an unjudgeable line.
 
 ### F. Docs
 
-TOOLS-AND-COMMANDS.md (rules and what `run_command` proposes), CONFIGURATION.md (a command matcher
-in `approvals.rules`; the example there denies `rm .*` with a pattern, which `ls; rm x` passes),
-SECURITY.md (what a rule on commands does not bound).
+APPROVALS.md (rules with shell arguments, how a chain and an unjudgeable line are judged, what a
+rule on commands does not bound, that a pattern on a shell argument is not judged as a command
+line), TOOLS.md (the `language` of a parameter, the proposal derived from it, what `run_command`
+proposes), CONFIGURATION.md (a shell argument in `approvals.rules`), SECURITY.md where it speaks
+of what bounds a command.
 
 ### G. Steps
 
@@ -176,3 +240,35 @@ command is not matched by a rule for its first part.
 - **2026-10-08** — A plan, with the maintainer: four open questions with a recommendation each,
   and the steps from the scanner in the model to the web UI.
 - **2026-10-08** — The open questions decided: the recommended option of each.
+- **2026-10-17** — The plan checked against the code and against how Claude Code matches shell
+  commands; four further decisions (5 to 8): the kind of comparison per argument instead of per
+  matcher, the first words as written proposed, bash's reserved words unjudgeable, and a rule that
+  denies asks for an unjudgeable line. The plan follows them; its docs are those of today's
+  `docs/`.
+- **2026-10-17** — Decision 9: a tool declares the language of an argument in its parameters, for
+  the proposal and the web UI; it is not carried to where rules are judged.
+- **2026-10-17** — Steps 1 and 2: `approval.rs` is `approval/mod.rs`; `approval/shell.rs` reads a
+  command line into its simple commands, `ArgumentMatcher` compares an argument as a pattern or as
+  a shell line, `ToolMatcher::matches` answers a `Coverage`, and `ApprovalRule::decision_for`
+  takes the place of `applies`, answering what a rule decides of a call. `ApprovalRule::decide`
+  returns the rule with that decision; the `ToolExecutor` and the `UserActor` act on it - a
+  person's rule that only asks answers nothing. Besides the reserved words of decision 7, a
+  simple command whose first word expands is unjudgeable, so is `coproc`.
+- **2026-10-17** — Step 3: `ToolParameters::String` has its `language` (`ArgumentLanguage`,
+  `ToolParameters::shell`), which `run_command` declares for `command`. `ToolMatcher::proposed`
+  derives the proposal from a tool's parameters; the default of `ToolProvider::matcher` uses it
+  (`proposed_matcher`), and `TerminalTool` leaves out `wait_secs`. A word that expands ends the
+  proposal before it, since the call itself would not match it. The agents' security suite has a
+  tool of its own whose argument is a shell line, a person's rule derived from an approved `ls`,
+  and a rule that denies a command asking for an unjudgeable line - of a place, and of a person,
+  whose rule then does not answer.
+- **2026-10-17** — Steps 4 and 5, and done. The web UI knows `ArgumentMatcher`: `describeMatcher`
+  shows a shell argument by its words, the approval card offers how many of the proposed words the
+  rule keeps, and the dialog of a place's rules compares each argument as a pattern or by the
+  words a command begins with. Two narrowings of the plan: the card shortens the proposal but
+  cannot lengthen it, since which words a line has is the server's to read and the UI does not
+  mirror the scanner; and the dialog offers both kinds for every argument, since it does not know
+  the tools of a place's agents. APPROVALS.md has a section on rules on commands - how a chain and
+  an unjudgeable line are judged, and what such a rule does not bound -, TOOLS.md, CONFIGURATION.md
+  and WEB-UI.md say what changed; SECURITY.md has no passage on what bounds a command, so nothing
+  was added there.

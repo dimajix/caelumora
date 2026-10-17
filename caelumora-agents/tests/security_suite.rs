@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use caelumora_model::actor::{ActorId, Rejection, ActorEvent, Envelope};
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityKind};
-use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher, ApprovalRequest, ApprovalRuleId};
+use caelumora_model::approval::{ApprovalRule, ArgumentMatcher, Reach, RuleDecision, ToolMatcher, ApprovalRequest, ApprovalRuleId};
 use caelumora_model::channel::HistoryAccess;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
 use caelumora_model::external_agent::{ConversationId, TaskId};
@@ -528,28 +528,37 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
 /// once it is asked, in a session alice shares with bob and he opened;
 /// with the session's main channel.
 async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, AgentId) {
-    use caelumora_model::message::{Message, MessageRole};
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
-
-    let call = Message {
-        role: MessageRole::Assistant,
-        tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "sleep".to_string(), arguments: serde_json::json!({ "seconds": 0 }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
-        ..Message::new(Classification::general(Confidentiality::Internal))
+    let sleep = ComponentDescriptor {
+        params: serde_json::json!({ "requires_approval": true }),
+        ..ComponentDescriptor::new("sleep", SLEEP_TOOL_KIND)
     };
+    with_a_call_of(calling("sleep", serde_json::json!({ "seconds": 0 })), sleep).await
+}
+
+/// `with_a_call_to_approve`, with an agent that calls `run` of `Commands`
+/// with the command line `command`.
+async fn with_a_command_to_approve(command: &str) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, AgentId) {
+    with_a_call_of(calling("run", serde_json::json!({ "command": command })), ComponentDescriptor::new("commands", "commands")).await
+}
+
+/// `with_a_call_to_approve`, with an agent that answers `call` with its tool
+/// `tool`.
+async fn with_a_call_of(call: Message, tool: ComponentDescriptor) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, AgentId) {
     let model = Arc::new(Once(Mutex::new(Some(call))));
-    let world = World::with(&[&TestAgents], |registry| registry.register(ComponentKind::new("once").provides::<dyn LLMClient>(), move |_, _| {
-        let mut facets = ComponentFacets::empty();
-        facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
-        Ok(facets)
-    })).await;
+    let world = World::with(&[&TestAgents], |registry| {
+        registry.register(ComponentKind::new("once").provides::<dyn LLMClient>(), move |_, _| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
+            Ok(facets)
+        });
+        registry.register(ComponentKind::new("commands").provides::<dyn ToolProvider>(), |_, _| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ToolProvider>(Arc::new(Commands));
+            Ok(facets)
+        });
+    }).await;
     let asking = Personality {
-        components: ComponentConfig { component_nodes: vec![
-            ComponentDescriptor::new("model", "once"),
-            ComponentDescriptor {
-                params: serde_json::json!({ "requires_approval": true }),
-                ..ComponentDescriptor::new("sleep", SLEEP_TOOL_KIND)
-            },
-        ] },
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "once"), tool] },
         ..world.personality("asking", None, &[]).await
     };
     world.runtime.entity_stores().personalities.update(&World::system(), &asking).await.unwrap();
@@ -757,6 +766,33 @@ async fn ask_helper(world: &World, main: &ChannelLoop, user: UserId) -> Asked {
     asked
 }
 
+/// A tool `run` that needs approval and runs nothing, whose `command` is a
+/// shell command line (issue 247): what makes two of its calls alike is
+/// what its parameters say.
+#[derive(Debug)]
+struct Commands;
+
+#[async_trait]
+impl ToolProvider for Commands {
+    fn description(&self) -> String {
+        "runs commands".to_string()
+    }
+    fn tools(&self) -> Vec<Tool> {
+        vec![Tool {
+            name: "run".to_string(),
+            description: "runs a command".to_string(),
+            parameters: ToolParameters::object([("command", ToolParameters::shell("The command line"))], ["command"]),
+            requires_approval: true,
+            visibility: Default::default(),
+            classification: None,
+            presentation: Default::default(),
+        }]
+    }
+    async fn execute(&self, _: &str, _: &Value, _: Option<&Answers>, _: &mut Turn) -> ToolResult<ToolOutput> {
+        Ok(serde_json::json!({}).into())
+    }
+}
+
 fn sleeping(decision: RuleDecision, reach: Reach) -> ApprovalRule {
     ApprovalRule::new(ToolMatcher { tool: "sleep".to_string(), arguments: Default::default() }, decision, reach, None).unwrap()
 }
@@ -833,6 +869,70 @@ async fn a_rule_of_a_place_outweighs_a_persons_rule() {
 
     let asked = ask_helper(&world, &main, world.alice).await;
     assert!(asked.request.is_none(), "nobody is asked");
+    world.manager.stop(&alice, session.id()).await.unwrap();
+}
+
+/// A rule derived from a command (issue 247) is about the commands that
+/// begin as it began, as its tool proposes: alice approves `ls` and from
+/// now on, and her rule answers `ls -la` - but not `ls; rm -rf ~`, for which
+/// she is asked again.
+#[tokio::test]
+async fn a_rule_derived_from_a_command_answers_only_the_commands_like_it() {
+    let (world, session, main, _) = with_a_command_to_approve("ls").await;
+    let asked = ask_helper(&world, &main, world.alice).await;
+    let suggested = asked.request.and_then(|request| request.suggested).expect("a rule is proposed");
+    assert_eq!(suggested.arguments["command"], ArgumentMatcher::Shell { shell: vec!["ls".to_string()] });
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    // As the approval card makes it of her answer.
+    let rule = ApprovalRule::new(suggested, RuleDecision::Allow, Reach::Everywhere, None).expect("a rule she may keep");
+
+    for (command, answered) in [("ls -la", true), ("ls; rm -rf ~", false)] {
+        let (world, session, main, _) = with_a_command_to_approve(command).await;
+        let alice = World::as_user(world.alice);
+        let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
+        hers.add_approval_rule(&alice, rule.clone()).await.unwrap();
+        let asked = ask_helper(&world, &main, world.alice).await;
+        assert!(asked.request.is_some(), "{command}: put up for approval");
+        assert_eq!(asked.by_rule, answered.then_some(rule.id), "{command}");
+        world.manager.stop(&alice, session.id()).await.unwrap();
+    }
+}
+
+/// A rule that denies a command (issue 247) denies a line it is part of,
+/// and asks for one it cannot judge: a place's leaves it to alice's own
+/// decision, which her rule that allows every command does not take; her
+/// own rule that denies does not answer for her.
+#[tokio::test]
+async fn a_rule_that_denies_a_command_asks_for_a_line_it_cannot_judge() {
+    let commands = |words: &[&str], decision| {
+        let shell = ArgumentMatcher::Shell { shell: words.iter().map(|word| word.to_string()).collect() };
+        ApprovalRule::new(ToolMatcher { tool: "run".to_string(), arguments: [("command".to_string(), shell)].into() }, decision, Reach::Everywhere, None).unwrap()
+    };
+    let every_command = ApprovalRule::new(ToolMatcher { tool: "run".to_string(), arguments: Default::default() }, RuleDecision::Allow, Reach::Everywhere, None).unwrap();
+
+    let (world, session, main, _) = with_a_command_to_approve("ls && rm x").await;
+    let alice = World::as_user(world.alice);
+    session.update_approval_rules(&alice, vec![commands(&["rm"], RuleDecision::Deny)]).await.expect("her session");
+    assert!(ask_helper(&world, &main, world.alice).await.request.is_none(), "denied before anyone is asked");
+    world.manager.stop(&alice, session.id()).await.unwrap();
+
+    let (world, session, main, _) = with_a_command_to_approve("echo $HOME").await;
+    let alice = World::as_user(world.alice);
+    let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
+    hers.add_approval_rule(&alice, every_command.clone()).await.unwrap();
+    session.update_approval_rules(&alice, vec![commands(&["rm"], RuleDecision::Deny)]).await.expect("her session");
+    let asked = ask_helper(&world, &main, world.alice).await;
+    assert!(asked.request.as_ref().is_some_and(|r| r.explicit), "asked for explicitly");
+    assert_eq!((asked.by_rule, asked.approved), (None, None), "her rule does not answer");
+    world.manager.stop(&alice, session.id()).await.unwrap();
+
+    let (world, session, main, _) = with_a_command_to_approve("echo $HOME").await;
+    let alice = World::as_user(world.alice);
+    let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
+    hers.add_approval_rule(&alice, commands(&["rm"], RuleDecision::Deny)).await.unwrap();
+    let asked = ask_helper(&world, &main, world.alice).await;
+    assert!(asked.request.as_ref().is_some_and(|r| !r.explicit), "put up for approval");
+    assert_eq!((asked.by_rule, asked.approved), (None, None), "her rule that denies does not answer");
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
 

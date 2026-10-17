@@ -18,7 +18,7 @@ use caelumora_runtime::component::{ComponentImpl, ComponentRegistry, ComponentRe
 use providers::ToolProviders;
 use caelumora_runtime::controller::{ChannelController, SessionController};
 use async_trait::async_trait;
-use caelumora_model::approval::{ApprovalRule, RuleDecision, ToolMatcher};
+use caelumora_model::approval::{ApprovalRule, ApprovalRuleId, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Compartment, Confidentiality};
 use caelumora_model::security::{ActionType, Enforcement, AccessPolicy};
 use caelumora_model::question::{Answers, Questions};
@@ -352,10 +352,11 @@ pub trait ToolProvider: Send + Sync + Debug {
     }
     /// What other calls are like the call of tool `name` with `params`
     /// (issue 13): the matcher a rule derived from it is offered with. By
-    /// default the calls exactly like it; a tool whose argument is a
-    /// language says better what makes two calls alike.
+    /// default as the tool's parameters tell (`proposed_matcher`): every
+    /// argument exactly, one written in a language by its meaning; a tool
+    /// that knows more of what makes two calls alike says better.
     fn matcher(&self, name: &str, params: &Value) -> ToolMatcher {
-        ToolMatcher::exact(&ToolCall { id: None, function_name: name.to_string(), arguments: params.clone(), visibility: ToolVisibility::SHOWN, presentation: Default::default() })
+        proposed_matcher(&self.tools(), name, params)
     }
     /// Provides a textual description for a specific tool call
     fn describe(&self,  name: &str, _params: &Value) -> ToolResult<String> {
@@ -382,6 +383,18 @@ pub async fn usable_workspace(work: &AgentWork<'_>) -> Result<WorkspaceView, Str
             warn!("Reading the workspace an agent may use in its channel failed: {error}");
             Err("its workspace cannot be read now".to_string())
         }
+    }
+}
+
+/// What a rule derived from a call of the tool `name` with `params` is
+/// offered with, as the parameters of the tool of that name among `tools`
+/// tell (`ToolMatcher::proposed`, issue 247); the calls exactly like it if
+/// none has that name.
+pub(crate) fn proposed_matcher(tools: &[Tool], name: &str, params: &Value) -> ToolMatcher {
+    let call = ToolCall { id: None, function_name: name.to_string(), arguments: params.clone(), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
+    match tools.iter().find(|tool| tool.name == name) {
+        Some(tool) => ToolMatcher::proposed(&call, &tool.parameters),
+        None => ToolMatcher::exact(&call),
     }
 }
 
@@ -529,13 +542,13 @@ impl ToolExecutor {
             .map_err(|e| ToolError::InvalidParameter(e.to_string()))
     }
 
-    /// The rule of a place that decides `call` now, if one does: the
-    /// strongest of the system's, the session's and the channel's
-    /// (`ApprovalRule::decide`).
-    fn place_rule(&self, call: &ToolCall) -> Option<ApprovalRule> {
+    /// The rule of a place that decides `call` now, if one does, with what
+    /// it decides of it: the strongest of the system's, the session's and the
+    /// channel's (`ApprovalRule::decide`).
+    fn place_rule(&self, call: &ToolCall) -> Option<(ApprovalRuleId, RuleDecision)> {
         let (session, channel) = (self.session.load(), self.channel.load());
         let rules = self.system_rules.iter().chain(&session.approval_rules).chain(&channel.approval_rules);
-        ApprovalRule::decide(rules, call, session.id, channel.id, Utc::now()).cloned()
+        ApprovalRule::decide(rules, call, session.id, channel.id, Utc::now()).map(|(rule, decision)| (rule.id, decision))
     }
 
     /// Runs `call` if it may be run now, with the `answers` to the questions
@@ -636,8 +649,8 @@ impl ToolExecutor {
             return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.label()));
         }
         let rule = self.place_rule(call);
-        if let Some(rule) = rule.as_ref().filter(|r| r.decision == RuleDecision::Deny) {
-            info!(rule = %rule.id, "Tool call '{}' by agent {} denied by a rule", call.function_name, agent);
+        if let Some((rule_id, RuleDecision::Deny)) = rule {
+            info!(rule = %rule_id, "Tool call '{}' by agent {} denied by a rule", call.function_name, agent);
             return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.label()));
         }
         let description = match self.providers.describe(call) {
@@ -658,7 +671,7 @@ impl ToolExecutor {
                 return Admission::Answered(self.failed(call, e, turn));
             }
         };
-        let explicit = rule.is_some_and(|r| r.decision == RuleDecision::Ask);
+        let explicit = rule.is_some_and(|(_, decision)| decision == RuleDecision::Ask);
         let asks = explicit || turn.tools().any(|t| t.name == call.function_name && t.requires_approval);
         match questions {
             _ if asks => Admission::Ask { description, explicit, suggested: self.providers.matcher(call), questions },
@@ -702,7 +715,7 @@ impl ToolExecutor {
         }
         // A rule that denies may have been set while the call waited.
         match self.place_rule(call) {
-            Some(rule) if rule.decision == RuleDecision::Deny => Err(ToolError::PermissionDenied(format!("rule {}", rule.id))),
+            Some((rule_id, RuleDecision::Deny)) => Err(ToolError::PermissionDenied(format!("rule {rule_id}"))),
             _ => Ok(()),
         }
     }

@@ -1,12 +1,13 @@
 // The approval rules of a session or a channel (issue 13): what it restricts
 // of the tool calls its agents make - a rule asks a person to decide the call
 // themselves, or denies it outright. A place never allows; that is a
-// person's to say. Whether the rules may be changed, and whether a pattern
-// is one, is the server's to decide.
+// person's to say. An argument is compared by a pattern, or - a bash command
+// line - by the words its commands begin with (issue 247). Whether the rules
+// may be changed, and whether a pattern is one, is the server's to decide.
 
 import React, {useState} from 'react';
 import {Plus, Trash2, X} from 'lucide-react';
-import type {ApprovalRule, RuleDecision} from '../types';
+import type {ApprovalRule, ArgumentMatcher, RuleDecision} from '../types';
 import {ApiRequestError, reportError} from '../errors';
 
 interface ApprovalRulesDialogProps {
@@ -19,12 +20,29 @@ interface ApprovalRulesDialogProps {
   onClose: () => void;
 }
 
-/** A rule as it is edited: the patterns as rows, so that one can be added before it is named. */
+/** A rule as it is edited: the arguments as rows, so that one can be added before it is named. */
 interface Draft {
   id?: string;
   tool: string;
   decision: RuleDecision;
-  arguments: {name: string; pattern: string}[];
+  arguments: ArgumentDraft[];
+}
+
+/** An argument as it is edited: a pattern, or the words of a command line separated by blanks. */
+interface ArgumentDraft {
+  name: string;
+  kind: 'pattern' | 'shell';
+  text: string;
+}
+
+function argumentDraftOf(name: string, argument: ArgumentMatcher): ArgumentDraft {
+  return typeof argument === 'string'
+    ? {name, kind: 'pattern', text: argument}
+    : {name, kind: 'shell', text: argument.shell.join(' ')};
+}
+
+function argumentOf(draft: ArgumentDraft): ArgumentMatcher {
+  return draft.kind === 'pattern' ? draft.text : {shell: draft.text.split(/\s+/).filter(word => word !== '')};
 }
 
 const DECISIONS: {value: RuleDecision; label: string}[] = [
@@ -37,7 +55,7 @@ function draftOf(rule: ApprovalRule): Draft {
     id: rule.id,
     tool: rule.matcher.tool,
     decision: rule.decision,
-    arguments: Object.entries(rule.matcher.arguments ?? {}).map(([name, pattern]) => ({name, pattern})),
+    arguments: Object.entries(rule.matcher.arguments ?? {}).map(([name, argument]) => argumentDraftOf(name, argument)),
   };
 }
 
@@ -45,7 +63,7 @@ function ruleOf(draft: Draft): ApprovalRule {
   const named = draft.arguments.filter(a => a.name.trim() !== '');
   return {
     id: draft.id,
-    matcher: {tool: draft.tool.trim(), arguments: Object.fromEntries(named.map(a => [a.name.trim(), a.pattern]))},
+    matcher: {tool: draft.tool.trim(), arguments: Object.fromEntries(named.map(a => [a.name.trim(), argumentOf(a)]))},
     decision: draft.decision,
   };
 }
@@ -107,7 +125,9 @@ export const ApprovalRulesDialog: React.FC<ApprovalRulesDialogProps> = ({title, 
           <p className="text-xs text-gray-400">
             What the {place} restricts of the tool calls its agents make, whatever the tool or anyone's own rules
             say. A tool is named as the agent calls it, <code>*</code> for every tool; a pattern is a regular
-            expression the whole value of the argument must match.
+            expression the whole value of the argument must match. An argument that is a command line is better
+            compared by the words its commands begin with: a rule on <code>rm</code> also finds it
+            in <code>ls; rm x</code>, and asks for a line it cannot read.
           </p>
           {drafts.length === 0 && <p className="text-xs text-gray-500">No rules: each tool decides whether it asks.</p>}
           {drafts.map((draft, index) => (
@@ -143,22 +163,31 @@ export const ApprovalRulesDialog: React.FC<ApprovalRulesDialogProps> = ({title, 
                     onChange={(e) => change(index, d => ({...d, arguments: d.arguments.map((x, i) => i === a ? {...x, name: e.target.value} : x)}))}
                     className={`${field} w-32 font-mono`}
                   />
+                  <select
+                    aria-label="Compared as"
+                    value={argument.kind}
+                    onChange={(e) => change(index, d => ({...d, arguments: d.arguments.map((x, i) => i === a ? {...x, kind: e.target.value as ArgumentDraft['kind']} : x)}))}
+                    className={field}
+                  >
+                    <option value="pattern">matches</option>
+                    <option value="shell">commands begin with</option>
+                  </select>
                   <input
-                    aria-label="Pattern"
-                    placeholder="pattern"
-                    value={argument.pattern}
-                    onChange={(e) => change(index, d => ({...d, arguments: d.arguments.map((x, i) => i === a ? {...x, pattern: e.target.value} : x)}))}
+                    aria-label={argument.kind === 'pattern' ? 'Pattern' : 'Words'}
+                    placeholder={argument.kind === 'pattern' ? 'pattern' : 'words, e.g. git push'}
+                    value={argument.text}
+                    onChange={(e) => change(index, d => ({...d, arguments: d.arguments.map((x, i) => i === a ? {...x, text: e.target.value} : x)}))}
                     className={`${field} min-w-0 flex-1 font-mono`}
                   />
                   {canChange && (
-                    <button type="button" onClick={() => change(index, d => ({...d, arguments: d.arguments.filter((_, i) => i !== a)}))} className="p-1 hover:bg-gray-800 rounded-md" title="Remove the pattern">
+                    <button type="button" onClick={() => change(index, d => ({...d, arguments: d.arguments.filter((_, i) => i !== a)}))} className="p-1 hover:bg-gray-800 rounded-md" title="Remove the argument">
                       <X size={14} />
                     </button>
                   )}
                 </div>
               ))}
               {canChange && (
-                <button type="button" onClick={() => change(index, d => ({...d, arguments: [...d.arguments, {name: '', pattern: ''}]}))} className="ml-4 text-xs text-blue-400 hover:underline">
+                <button type="button" onClick={() => change(index, d => ({...d, arguments: [...d.arguments, {name: '', kind: 'pattern', text: ''}]}))} className="ml-4 text-xs text-blue-400 hover:underline">
                   Only when an argument matches…
                 </button>
               )}
