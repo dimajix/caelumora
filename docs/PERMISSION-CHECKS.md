@@ -245,7 +245,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | A profile read or changed, approval rules (`UserController`) | store `GetUserProfile`, `UpdateUserProfile` (U,1) | R1 | `NotFound`, `PermissionDenied` |
 | Users, agents, personalities, profiles read by the runtime (controllers, names in the views) | in S | - | - |
 | Templates listed | store `GetSessionTemplate` per item (U,1) | R1 | left out |
-| Roles, limiting roles | no question: carried by the context, put there by the `UserController` and the `AgentController` from the roles as they are now | - | - |
+| Roles, limiting roles | no question: carried by the context, put there by the `UserController` and the `AgentController` from the roles as they are now, the limit from the `PersonalityController` as it last took the personality in | - | - |
 
 ## Findings
 

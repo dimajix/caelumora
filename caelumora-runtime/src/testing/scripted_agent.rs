@@ -52,7 +52,7 @@ impl Plugin for ScriptedAgents {
             let script = self.0.clone();
             kinds.register(kind, &[], move |agent, personality, runtime| {
                 let script = script.clone();
-                async move { Ok(Box::new(ScriptedAgent::new(&agent, &personality, runtime, script)) as Box<dyn Actor>) }
+                async move { Ok(Box::new(ScriptedAgent::new(&agent, &personality.load(), runtime, script)) as Box<dyn Actor>) }
             });
         }
         Ok(())

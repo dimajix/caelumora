@@ -32,7 +32,7 @@ use crate::command::AgentCommandProvider;
 use caelumora_runtime::component::ComponentImpl;
 use crate::prompt::external_context_provider::EXTERNAL_CONTEXT_PROVIDER_KIND;
 use crate::prompt::ContextProvider;
-use caelumora_runtime::controller::AgentController;
+use caelumora_runtime::controller::{AgentController, PersonalityController};
 use crate::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, OutboundMessage, Said};
 use caelumora_runtime::logging::envelope_span;
 use crate::message::PerceiveInProcessor;
@@ -41,7 +41,7 @@ use caelumora_runtime::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
-use caelumora_model::agent::{Personality, RetryRefused};
+use caelumora_model::agent::RetryRefused;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -126,14 +126,15 @@ impl ExternalAgentActor {
 
     /// The actor of the external agent `agent_controller` holds - the
     /// session's controller of it, shared with its actors in the session's
-    /// other channels (issue 120) - built from its `personality`, as the
-    /// channel read it for the agent, in the channel of `actor_runtime`.
+    /// other channels (issue 120) - built from the personality `personality`
+    /// holds, the instance's controller of it (issue 406), in the channel of
+    /// `actor_runtime`.
     ///
     /// # Errors
     /// If its personality provides no `ExternalAgent` - or more than one -
     /// or its answers, as the component classifies them, may not be
     /// published in the channel; whatever its state store reports.
-    pub async fn new(agent_controller: Arc<AgentController>, personality: Personality, actor_runtime: ActorRuntime) -> Result<Self> {
+    pub async fn new(agent_controller: Arc<AgentController>, personality: Arc<PersonalityController>, actor_runtime: ActorRuntime) -> Result<Self> {
         let channel = Arc::clone(&actor_runtime.channel_controller().load());
         // Its context provider is, unless it configures one, not a turn's.
         let defaults = ComponentConfig {
@@ -142,7 +143,7 @@ impl ExternalAgentActor {
         // It resumes no answer: the remote agent's tasks are followed again
         // (`follow_open_tasks`), and it starts idle.
         let resume = |state: &mut AgentChannelState| state.processing_state = ActorState::Idle;
-        let (body, components) = AgentBody::build(agent_controller, &personality, Self::COMPONENT_FACETS, &defaults, actor_runtime, resume).await?;
+        let (body, components) = AgentBody::build(agent_controller, personality, Self::COMPONENT_FACETS, &defaults, actor_runtime, resume).await?;
         let remote = components.one::<dyn ExternalAgent>().await?;
 
         // Answers that may never enter the channel would each be dropped

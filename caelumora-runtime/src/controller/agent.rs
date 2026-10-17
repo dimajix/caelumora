@@ -1,12 +1,12 @@
 use arc_swap::Guard;
-use caelumora_model::agent::{Agent, AgentId, AgentUpdateEvent, Personality};
+use caelumora_model::agent::{Agent, AgentId, AgentUpdateEvent};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::role::RoleId;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use super::document::LiveDocument;
 use super::UserController;
-use caelumora_model::store::{EntityStore, EntityStores, StoreResult};
+use caelumora_model::store::{EntityStores, StoreResult};
 use std::sync::Arc;
 
 /// The one writer of an agent's document in this instance, shared by all
@@ -17,7 +17,6 @@ pub struct AgentController {
     /// The live user who owns the agent, whose roles it acts with (issue
     /// 304); none for an agent of the system, or of an owner who is gone.
     owner: Option<Arc<UserController>>,
-    personalities: Arc<dyn EntityStore<Personality>>,
 }
 
 impl AgentController {
@@ -27,7 +26,6 @@ impl AgentController {
         Self {
             agent: LiveDocument::new(agent.id, agent, Arc::clone(&stores.agents), event_publisher),
             owner,
-            personalities: Arc::clone(&stores.personalities),
         }
     }
 
@@ -50,21 +48,6 @@ impl AgentController {
     pub fn security_context(&self, session: SessionId, channel: ChannelId, limiting_roles: Option<&[RoleId]>) -> SecurityContext {
         let roles = self.owner.as_ref().map(|owner| owner.load().roles.clone()).unwrap_or_default();
         self.agent.load().security_context(session, channel).with_roles(roles, limiting_roles.map(<[_]>::to_vec))
-    }
-
-    /// The agent's personality - what the agent is, read through
-    /// `personality_id` each time, so that a change of the personality
-    /// reaches it (issue 176). Read in the runtime's name, as the controller
-    /// holds the agent's document: a controller is the runtime's, and
-    /// whoever acts with what it hands out in someone's name checks that
-    /// themselves - running the agent, whether it may read its personality
-    /// (issue 191).
-    ///
-    /// # Errors
-    /// Whatever the store reports: also that the personality is gone.
-    pub async fn personality(&self) -> StoreResult<Personality> {
-        let id = self.agent.load().personality_id;
-        self.personalities.get(&SecurityContext::system(), id).await
     }
 
     /// Renames the agent on behalf of `ctx` (`LiveDocument::update`):

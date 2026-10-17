@@ -25,7 +25,7 @@ use caelumora_model::approval::{ApprovalRule, ArgumentMatcher, Reach, RuleDecisi
 use caelumora_model::channel::HistoryAccess;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
 use caelumora_model::external_agent::{ConversationId, TaskId};
-use caelumora_model::confidentiality::{Classification, Confidentiality};
+use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::question::{Addressee, Answers, QuestionId, QuestionRequest, Questions};
 use caelumora_model::scope::Scope;
@@ -127,6 +127,40 @@ async fn an_agent_whose_personality_is_gone_is_left_out_of_its_channel() {
 
     let reopened = world.manager.open(&World::as_user(world.alice), session.id()).await.expect("the session still opens");
     assert!(!reopened.channels()[0].member_ids().contains(&ActorId::Agent(helper)), "the agent is not run");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// P3c (issue 406): who sees a running agent's reasoning follows its
+/// personality as it was last taken in - by whatever asks for it, here an
+/// agent of it being added -, not as it was when the agent's actor was built.
+#[tokio::test]
+async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_taken_in() {
+    use caelumora_model::message::MessageRole;
+    let answer = Message { role: MessageRole::Assistant, content: Some("an answer".to_string()), ..Message::new(Classification::PUBLIC) };
+    let world = World::with(&[&TestAgents], |registry| register_once(registry, "answering", answer)).await;
+    let answering = Personality {
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "answering")] },
+        reasoning_visibility: Visibility::Channel,
+        ..world.personality("answering", None, &[]).await
+    };
+    world.runtime.entity_stores().personalities.update(&World::system(), &answering).await.unwrap();
+    let (helper, other) = (world.agent("helper", world.alice, &answering).await, world.agent("other", world.alice, &answering).await);
+    let session = world.shared_session(&[helper], &[other]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let owners = Personality { reasoning_visibility: Visibility::Owner, ..answering };
+    world.runtime.entity_stores().personalities.update(&World::system(), &owners).await.unwrap();
+
+    main.add_participant(&World::as_user(world.alice), ActorId::Agent(other), HistoryAccess::All).await.expect("it may run");
+    let alice = main.user_actor(world.alice).expect("she takes part");
+    let mut watch = alice.watch();
+    alice.send_message("@helper hello".to_string(), None).await.expect("sent");
+    let answered = loop {
+        let ActorEvent::CompleteMessageGenerated(answered) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
+        if answered.sender_id == ActorId::Agent(helper) {
+            break answered;
+        }
+    };
+    assert_eq!(answered.reasoning_visibility, Visibility::Owner, "as its personality says now");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

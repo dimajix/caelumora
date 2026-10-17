@@ -17,13 +17,14 @@ use crate::command::AgentCommandProvider;
 use caelumora_runtime::command::CommandExecutor;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentImpl};
 use crate::prompt::ContextProvider;
-use caelumora_runtime::controller::AgentController;
+use caelumora_runtime::controller::{AgentController, PersonalityController};
 use crate::message::PerceiveInProcessor;
 use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::transport::{EventReceiver, EventSender};
 use anyhow::{Context, Result};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
-use caelumora_model::agent::{AgentChannelState, AgentId, Personality, RetryRefused};
+use caelumora_model::agent::{AgentChannelState, AgentId, RetryRefused};
+use caelumora_model::confidentiality::Visibility;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
 use caelumora_model::security::SecurityContext;
@@ -57,9 +58,13 @@ pub(super) struct AgentBody {
     /// The session's controller of the agent, shared with its actors in
     /// the session's other channels (issue 120).
     pub(super) agent: Arc<AgentController>,
+    /// The instance's controller of its personality (issue 406), what it
+    /// answers by as it runs - what it is limited to, who sees its
+    /// reasoning. Its components stay as they were built from it.
+    personality: Arc<PersonalityController>,
     pub(super) runtime: ActorRuntime,
-    /// Where it acts and what it is limited to, as it was built; its roles
-    /// are taken anew by `security_context` (issue 304).
+    /// Where it acts, as it was built; its roles and what it is limited to
+    /// are taken anew by `security_context` (issues 304, 406).
     context: SecurityContext,
     /// What filters what reaches it (issue 196).
     pub(super) perceive_in_processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>,
@@ -91,8 +96,8 @@ pub(super) struct AgentBody {
 }
 
 impl AgentBody {
-    /// The body of the agent `agent` in `channel`, as its `personality`
-    /// makes it, and the components it was built with - those `facets` asks
+    /// The body of the agent `agent` in `channel`, as the personality
+    /// `personality` holds makes it, and the components it was built with - those `facets` asks
     /// for (issue 337), with the components of `defaults` as the defaults of
     /// the singles they provide - for its actor to take its own from. Its
     /// state in the channel is made fit to run from by `resume`, as its
@@ -105,7 +110,7 @@ impl AgentBody {
     /// (`command_executor`), or its state cannot be loaded.
     pub(super) async fn build(
         agent: Arc<AgentController>,
-        personality: &Personality,
+        personality: Arc<PersonalityController>,
         facets: &[TypeKey],
         defaults: &ComponentConfig,
         runtime: ActorRuntime,
@@ -116,9 +121,9 @@ impl AgentBody {
         // its owner's roles as they are when it is built, limited by its
         // personality (issue 304); `security_context` takes them anew.
         let channel = runtime.channel_controller().load();
-        let context = agent.security_context(channel.session_id, channel.id, personality.limiting_roles());
+        let context = agent.security_context(channel.session_id, channel.id, personality.load().limiting_roles());
         let components = ComponentContainer::with_defaults(
-            &personality.components,
+            &personality.load().components,
             defaults,
             facets,
             runtime.component_registry(),
@@ -136,6 +141,7 @@ impl AgentBody {
         let agent_state = runtime.agent_state(attributes).await?;
         let body = Self {
             agent,
+            personality,
             runtime,
             context,
             perceive_in_processors,
@@ -179,9 +185,16 @@ impl AgentBody {
     }
 
     /// The context it acts in, here: its owner's delegate, with its owner's
-    /// roles as they are now and limited as it was built (issue 304).
+    /// roles as they are now, limited as its personality is now (issues 304,
+    /// 406).
     pub(super) fn security_context(&self) -> SecurityContext {
-        self.agent.security_context(self.context.session_id, self.context.channel_id, self.context.limiting_roles.as_deref())
+        self.agent.security_context(self.context.session_id, self.context.channel_id, self.personality.load().limiting_roles())
+    }
+
+    /// Who sees its reasoning at least (issues 61, 133), as its
+    /// personality says now (issue 406).
+    pub(super) fn reasoning_visibility(&self) -> Visibility {
+        self.personality.load().reasoning_visibility
     }
 
     /// What it was built from, its preconfigured components resolved (issue
@@ -301,7 +314,7 @@ mod testing {
     use crate::prompt::external_context_provider::ExternalContextProvider;
     use caelumora_runtime::runtime::ChannelRuntime;
     use caelumora_runtime::session::testing::{bare_channel, bare_session, test_runtime};
-    use caelumora_model::agent::{Agent, PersonalityId};
+    use caelumora_model::agent::{Agent, Personality, PersonalityId};
     use caelumora_model::scope::Scope;
     use caelumora_model::session::SessionId;
     use caelumora_model::value::name::ScopedName;
@@ -311,7 +324,12 @@ mod testing {
         /// through `processors`: for tests of what it takes in.
         pub(in crate::actor) fn detached(processors: Vec<ComponentImpl<dyn PerceiveInProcessor>>) -> Self {
             let runtime = test_runtime();
-            let agent = Agent::new(ScopedName::new("agent", Scope::GlobalScope).unwrap_or_else(|e| panic!("{e}")), PersonalityId::new(), ActorId::None);
+            let personality = Personality {
+                id: PersonalityId::new(), name: ScopedName::new("plain", Scope::GlobalScope).unwrap_or_else(|e| panic!("{e}")), kind: Default::default(),
+                roles: None, description: None, introduction: None, components: ComponentConfig::default(),
+                security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
+            };
+            let agent = Agent::new(ScopedName::new("agent", Scope::GlobalScope).unwrap_or_else(|e| panic!("{e}")), personality.id, ActorId::None);
             let agent = Arc::new(AgentController::new(agent, None, Arc::new(()), runtime.entity_stores()));
             let commands = CommandExecutor::empty(Arc::clone(runtime.access_policy()));
             let session = bare_session(SessionId::new());
@@ -322,6 +340,7 @@ mod testing {
             Self {
                 context: agent.security_context(session_id, channel_id, None),
                 agent,
+                personality: Arc::new(PersonalityController::new(personality)),
                 runtime: actor_runtime,
                 perceive_in_processors: processors,
                 context_provider: ComponentImpl { id: "context".to_string(), fail_policy: Default::default(), facet: Arc::new(ExternalContextProvider { prompt_providers: Vec::new() }) },
