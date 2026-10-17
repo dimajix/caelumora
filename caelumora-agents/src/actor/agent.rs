@@ -17,7 +17,7 @@ use crate::tool::{not_executed_result, ToolExecutor, ToolProvider};
 use caelumora_runtime::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result, Error};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
+use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
 use caelumora_model::agent::{AgentChannelState, RetryRefused};
 use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
@@ -786,6 +786,10 @@ impl Actor for AgentActor {
     }
     fn name(&self) -> Name {
         self.body.name()
+    }
+
+    fn describe(&self) -> ActorDescription {
+        self.body.describe()
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {

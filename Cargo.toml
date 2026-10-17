@@ -15,6 +15,7 @@ members = [
     "caelumora-a2a",
     "caelumora-open-terminal",
     "caelumora-ollama",
+    "caelumora-decision",
 ]
 resolver = "2"
 

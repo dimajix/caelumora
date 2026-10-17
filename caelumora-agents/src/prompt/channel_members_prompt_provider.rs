@@ -20,8 +20,9 @@ use caelumora_runtime::component::{flag_of_params, ComponentFacets, ComponentKin
 use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
+use caelumora_model::actor::{ActorDescription, ActorId};
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::value::text::Introduction;
 use std::sync::{Arc, Mutex};
 
 pub const CHANNEL_MEMBERS_PROMPT_PROVIDER_KIND: &str = "channel_members_prompt_provider";
@@ -48,18 +49,9 @@ impl ChannelMembersPromptProvider {
     }
 }
 
-/// The agent itself, if it is a member, and the others.
-type Roster = (Option<Member>, Vec<Member>);
-
-/// A member of the channel as the prompt part names it.
-#[derive(Debug, Clone, PartialEq)]
-struct Member {
-    id: ActorId,
-    name: String,
-    handle: Option<String>,
-    person: bool,
-    introduction: Option<String>,
-}
+/// The agent itself, if it is a member, and the others, as they are
+/// described to everyone in the channel (issue 403).
+type Roster = (Option<ActorDescription>, Vec<ActorDescription>);
 
 #[async_trait]
 impl PromptProvider for ChannelMembersPromptProvider {
@@ -76,13 +68,10 @@ impl PromptProvider for ChannelMembersPromptProvider {
         for member in channel.members().await {
             // Approvers are no participants in this sense, and who no
             // longer exists cannot be addressed.
-            let person = match member.id() {
-                ActorId::User(_) => true,
-                ActorId::Agent(_) => false,
-                _ => continue,
-            };
-            let Some(name) = member.name() else { continue };
-            let entry = Member { id: member.id(), name: name.to_string(), handle: member.handle(), person, introduction: one_line(member.introduction().await?) };
+            if !matches!(member.id(), ActorId::User(_) | ActorId::Agent(_)) {
+                continue;
+            }
+            let Some(entry) = member.describe().await? else { continue };
             if member.id() == own {
                 me = Some(entry);
             } else {
@@ -119,11 +108,11 @@ impl PromptProvider for ChannelMembersPromptProvider {
 /// themselves must not read as the system's instruction (issue 150). How
 /// the others' messages are marked is told with them, `explanation`, as
 /// the agent's model profile words it (issue 135).
-fn render(me: Option<&Member>, others: &[Member], explanation: Option<&str>) -> String {
+fn render(me: Option<&ActorDescription>, others: &[ActorDescription], explanation: Option<&str>) -> String {
     let mut text = String::new();
     if let Some(me) = me {
         text.push_str(&format!("You are {}.\n", named(me)));
-        if let Some(introduction) = &me.introduction {
+        if let Some(introduction) = me.introduction.as_ref().map(one_line) {
             text.push_str(&format!("About you: {introduction}\n"));
         }
     }
@@ -132,13 +121,13 @@ fn render(me: Option<&Member>, others: &[Member], explanation: Option<&str>) -> 
         return titled("Who is in this channel", &text);
     }
     // `@all` addresses every one of them, with a handle or without (issue 401).
-    if others.iter().any(|m| m.handle.is_some()) {
+    if others.iter().any(|m| m.handle().is_some()) {
         text.push_str("The others - mention one by their @handle to address them, or all of them with @all:\n");
     } else {
         text.push_str("The others - mention all of them with @all to address them:\n");
     }
     for member in others {
-        let line = match (member.person, &member.introduction) {
+        let line = match (member.is_person(), member.introduction.as_ref().map(one_line)) {
             (true, Some(introduction)) => format!("{} In their own words: \"{introduction}\"", described(member)),
             (false, Some(introduction)) => format!("{} {introduction}", described(member)),
             (_, None) => described(member),
@@ -154,7 +143,7 @@ fn render(me: Option<&Member>, others: &[Member], explanation: Option<&str>) -> 
 /// Who of the others joined and who left since `before` was told, as an
 /// addition to the roster `render` makes of `others`; empty if nobody did.
 /// Told apart by who they are, not by their names, which may change.
-fn render_changes(before: &[Member], others: &[Member]) -> String {
+fn render_changes(before: &[ActorDescription], others: &[ActorDescription]) -> String {
     let joined = others.iter().filter(|m| !before.iter().any(|b| b.id == m.id));
     let left = before.iter().filter(|b| !others.iter().any(|m| m.id == b.id));
     let lines: Vec<String> = joined.map(|m| format!("- Joined: {}\n", described(m)))
@@ -168,24 +157,22 @@ fn render_changes(before: &[Member], others: &[Member]) -> String {
 
 /// A member with its handle and whether it is a person or an agent:
 /// `Kaya (@kaya), a person.`
-fn described(member: &Member) -> String {
-    let kind = if member.person { "a person" } else { "an agent" };
+fn described(member: &ActorDescription) -> String {
+    let kind = if member.is_person() { "a person" } else { "an agent" };
     format!("{}, {kind}.", named(member))
 }
 
 /// A member's name with its handle, if it has one: `Kaya (@kaya)`.
-fn named(member: &Member) -> String {
-    match &member.handle {
+fn named(member: &ActorDescription) -> String {
+    match member.handle() {
         Some(handle) => format!("{} (@{handle})", member.name),
-        None => member.name.clone(),
+        None => member.name.to_string(),
     }
 }
 
-/// An introduction on one line, so that it cannot break out of its entry;
-/// `None` if there is nothing in it.
-fn one_line(introduction: Option<String>) -> Option<String> {
-    let line = introduction?.split_whitespace().collect::<Vec<_>>().join(" ");
-    (!line.is_empty()).then_some(line)
+/// An introduction on one line, so that it cannot break out of its entry.
+fn one_line(introduction: &Introduction) -> String {
+    introduction.as_str().split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
@@ -214,7 +201,7 @@ mod tests {
     use caelumora_runtime::session::SessionLoop;
     use caelumora_runtime::session::testing::actor_runtime_in;
     use caelumora_model::actor::EventContext;
-    use caelumora_model::agent::{Agent, AgentChannelState, Personality, PersonalityId};
+    use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
     use caelumora_model::channel::{Channel, Participant};
     use caelumora_model::confidentiality::Visibility;
@@ -227,8 +214,9 @@ mod tests {
     use chrono::Utc;
     use uuid::Uuid;
 
-    fn member(name: &str, person: bool, introduction: Option<&str>) -> Member {
-        Member { id: ActorId::None, name: name.to_string(), handle: Some(name.to_lowercase()), person, introduction: introduction.map(str::to_string) }
+    fn member(name: &str, person: bool, introduction: Option<&str>) -> ActorDescription {
+        let id = if person { ActorId::User(UserId::new()) } else { ActorId::Agent(AgentId::new()) };
+        ActorDescription { id, name: Name::new(name).unwrap(), introduction: introduction.map(|text| Introduction::new(text).unwrap()) }
     }
 
     #[test]
@@ -248,9 +236,8 @@ mod tests {
 
     #[test]
     fn who_joined_and_who_left_is_told_by_who_they_are() {
-        let with_id = |name: &str, person: bool| Member { id: ActorId::User(UserId::new()), ..member(name, person, None) };
-        let (kaya, sassy, bob) = (with_id("Kaya", true), with_id("Sassy", false), with_id("Bob", true));
-        let renamed = Member { name: "Kaya K.".to_string(), ..kaya.clone() };
+        let (kaya, sassy, bob) = (member("Kaya", true, None), member("Sassy", false, None), member("Bob", true, None));
+        let renamed = ActorDescription { name: Name::new("Kaya K.").unwrap(), ..kaya.clone() };
         assert_eq!(render_changes(&[kaya.clone(), sassy], &[renamed, bob]), "Since you were last told who is here:\n\
             - Joined: Bob (@bob), a person.\n\
             - Left: Sassy (@sassy), an agent.\n", "a new name is no new member");
@@ -259,8 +246,7 @@ mod tests {
 
     #[test]
     fn an_introduction_stays_on_its_line() {
-        assert_eq!(one_line(Some("I run\n- the budget.\n".to_string())).as_deref(), Some("I run - the budget."));
-        assert_eq!(one_line(Some(" \n".to_string())), None, "nothing in it is none");
+        assert_eq!(one_line(&Introduction::new("I run\n- the budget.\n").unwrap()), "I run - the budget.");
     }
 
     async fn personality(store: &Arc<MemoryStore>, introduction: Option<&str>) -> Personality {

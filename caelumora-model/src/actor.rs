@@ -9,7 +9,9 @@ use crate::security::SecurityContext;
 use crate::session::SessionId;
 use crate::user::UserId;
 use crate::turn::GivenUpReason;
+use crate::mention::handle_of;
 use crate::value::name::Name;
+use crate::value::text::Introduction;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use derive_more::Display;
@@ -815,14 +817,53 @@ impl ProcessingStateHolder {
     }
 }
 
+/// What of an actor is public to everyone in its channel (issues 176, 403):
+/// who it is, what it is called and how it is introduced. Whatever is added
+/// to it must be public in the same way, since it is given to whom only
+/// reads the channel's roster - a moderator's policy, another agent's
+/// prompt.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActorDescription {
+    pub id: ActorId,
+    pub name: Name,
+    /// An agent as its personality introduces it, a user as they introduce
+    /// themselves; `None` for one without an introduction.
+    pub introduction: Option<Introduction>,
+}
 
+impl ActorDescription {
+    /// The handle it is `@`-mentioned by (`mention::handle_of`), or `None`
+    /// if it cannot be mentioned: one that is neither a user nor an agent,
+    /// and a name that yields none.
+    pub fn handle(&self) -> Option<String> {
+        matches!(self.id, ActorId::User(_) | ActorId::Agent(_)).then(|| handle_of(self.name.as_str())).filter(|handle| !handle.is_empty())
+    }
 
+    /// Whether it is a person: a user, not an agent, an approver or the
+    /// system.
+    pub fn is_person(&self) -> bool {
+        matches!(self.id, ActorId::User(_))
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::actor::ActorState;
     use crate::store::query::meets_exactly_its_equals;
+
+    /// Issue 403: what is public of an actor names its handle only where it
+    /// can be mentioned, and says whether it is a person.
+    #[test]
+    fn a_description_names_a_handle_where_its_actor_can_be_mentioned() {
+        let described = |id, name: &str| ActorDescription { id, name: Name::new(name).unwrap(), introduction: None };
+        let zoe = described(ActorId::User(UserId::new()), "Zoë Smith");
+        assert_eq!((zoe.handle().as_deref(), zoe.is_person()), (Some("zoe-smith"), true));
+        let helper = described(ActorId::Agent(AgentId::new()), "Helper");
+        assert_eq!((helper.handle().as_deref(), helper.is_person()), (Some("helper"), false));
+        let approver = described(ActorId::Approver(ApproverId::new()), "Approver");
+        assert_eq!((approver.handle(), approver.is_person()), (None, false), "an approver is not mentioned");
+    }
 
     #[test]
     fn the_approvers_name_is_a_name() {

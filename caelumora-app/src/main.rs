@@ -10,6 +10,7 @@ use caelumora_mcp::plugin::McpPlugin;
 use caelumora_model::config::AppConfig;
 use caelumora_ollama::client::OLLAMA_CLIENT_KIND;
 use caelumora_ollama::plugin::OllamaPlugin;
+use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::{self, ApiError};
@@ -174,7 +175,7 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
 /// which only its runtime is built with - first the essential one, the
 /// agents' (issue 370).
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(AgentsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin)]
+    vec![Box::new(AgentsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin), Box::new(DecisionPlugin)]
 }
 
 /// Names the defaults of the facets of which an agent has one that the core
@@ -223,6 +224,7 @@ mod tests {
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::value::text::Description;
     use caelumora_runtime::backend::Backends;
+    use caelumora_runtime::channel::ChannelLoop;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};
     use caelumora_model::config::BackendConfig;
     use caelumora_runtime::runtime::{RuntimeManager, Services};
@@ -318,6 +320,22 @@ mod tests {
             let asked = runtime.agent_kinds().facets(personality.kind).expect("a kind of agent the program runs");
             ComponentContainer::from_config(&personality.components, asked, runtime.component_registry(), &context).await
                 .unwrap_or_else(|e| panic!("personality {} cannot be built: {e}", personality.name));
+        }
+    }
+
+    /// Every channel of the example seed's templates can be built with
+    /// what the program's plugins bring: its moderator and the policy in its
+    /// slot, `decision_policy` among them (issue 403).
+    #[tokio::test]
+    async fn every_channel_of_the_example_seed_can_be_built() {
+        let seed = Seed::read(&example("seed.yaml")).expect("examples/seed.yaml is a seed");
+        let store = Arc::new(MemoryStore::new());
+        let runtime = runtime(&store);
+        runtime.seed(&[example("seed.yaml")]).await.unwrap();
+        let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
+        for (template, channel) in seed.session_templates.iter().flat_map(|template| template.channels.iter().map(move |channel| (template, channel))) {
+            ComponentContainer::from_config(&channel.components, ChannelLoop::COMPONENT_FACETS, runtime.component_registry(), &context).await
+                .unwrap_or_else(|e| panic!("channel {} of template {} cannot be built: {e}", channel.name, template.name));
         }
     }
 

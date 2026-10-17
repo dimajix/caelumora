@@ -122,6 +122,24 @@ Before the first call to a model, the client reads the model's control tokens fr
 keeps them from being produced by any text it sends; if they cannot be read, the call fails
 (`llm::control_tokens`).
 
+A channel may choose who answers by asking a decision model (`decision_policy`, see
+[CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). Only an operator configures it: in a
+template, or as preconfigured components a channel created on request names by a `ref`:
+
+```yaml
+components:                      # of the seed: kept in the ComponentStore
+- id: by-content
+  components:
+  - id: responders
+    kind: decision_policy
+    params:
+      endpoint:
+        url: "http://127.0.0.1:11434"
+      model: nimble
+      max_responders: 2
+      destination: { level: internal }
+```
+
 Every message the model produces carries the size of the context it was produced in: the configured
 `context_size`, or else the size Ollama has the model loaded with, which may be unknown. Ollama
 counts in a prompt's tokens all of the prompt, also what it kept from the previous call, so prompt

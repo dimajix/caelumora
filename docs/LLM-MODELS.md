@@ -66,3 +66,30 @@ consequences may rest on whom the model believes said something.
 An `a2a_agent` takes the same `sender_format` and `sender_style`. The model behind a remote agent is
 unknown, so nothing can be recommended from measurements; the default (`prefix`, `handle`) is what
 most models above handle reasonably well.
+
+## Decision models
+
+`decision_policy` ([CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)) asks a decision model, not
+a chat model: one that answers typed questions about a text with probabilities, served by Ollama
+since 0.35 (2026-09-29) at `/v1/systemone`, a contract that hosted services implement too. The
+default is `nimble`; a server that has pulled it by its size knows it as `nimble:9b`, which is then
+what `model` has to name. A model is given the question and what was said within 8,192 tokens;
+shorter is better tested.
+
+Measured on 2026-10-17 against Ollama 0.40.6 (`work/decision_models/`, `RESULTS.md`): which of
+six agents, by their introductions, should respond to 16 messages in English and German, three of
+which need no answer.
+
+| Model | Right | p(right) mean | Median latency |
+|---|---:|---:|---:|
+| tev1:0.8b | 11/16 | 0.59 | 83 ms |
+| d1:3b | 15/16 | 0.72 | 151 ms |
+| tev1:4b | 15/16 | 0.79 | 268 ms |
+| clef-flash:9b | 16/16 | 0.86 | 298 ms |
+| nimble:9b | 16/16 | 0.95 | 327 ms |
+| pplx-decider:27b | 16/16 | 0.95 | 690 ms |
+
+So: `nimble:9b`, as right and as sure as the 27B model at half its latency. The small models fail
+mostly by choosing nobody where someone should answer. Loading `nimble:9b` took over a minute once,
+far beyond the 5 s a decision may take by default: keep it loaded with `keep_alive`, or the first
+message after a pause is answered by everyone. Which `threshold` suits a model was not measured.

@@ -21,6 +21,7 @@ caelumora-mcp = { path = "../caelumora-mcp" }
 caelumora-a2a = { path = "../caelumora-a2a" }
 caelumora-open-terminal = { path = "../caelumora-open-terminal" }
 caelumora-ollama = { path = "../caelumora-ollama" }
+caelumora-decision = { path = "../caelumora-decision" }
 axum = "0.8.9"
 tokio = { version = "1.0", features = ["full"] }
 tokio-util = "0.7"

@@ -22,7 +22,7 @@ use crate::message::PerceiveInProcessor;
 use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::transport::{EventReceiver, EventSender};
 use anyhow::{Context, Result};
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
+use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
 use caelumora_model::agent::{AgentChannelState, AgentId, RetryRefused};
 use caelumora_model::confidentiality::Visibility;
 use caelumora_model::component::ComponentConfig;
@@ -189,6 +189,12 @@ impl AgentBody {
     /// 406).
     pub(super) fn security_context(&self) -> SecurityContext {
         self.agent.security_context(self.context.session_id, self.context.channel_id, self.personality.load().limiting_roles())
+    }
+
+    /// What of it is public in its channel (issue 403): its name as it is
+    /// now, introduced as its personality says now.
+    pub(super) fn describe(&self) -> ActorDescription {
+        ActorDescription { id: self.id(), name: self.name(), introduction: self.personality.load().introduction.clone() }
     }
 
     /// Who sees its reasoning at least (issues 61, 133), as its

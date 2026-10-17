@@ -61,6 +61,11 @@ pub enum ComponentError {
     /// (`ComponentError::is_unavailable`).
     #[error("preconfigured component '{id}' cannot be read: {cause}")]
     Unavailable { id: String, cause: StoreError },
+    /// A component of a kind only an operator configures was written in a
+    /// request rather than named through a `ref` (issue 403,
+    /// `ComponentKind::operator_only`).
+    #[error("components of kind '{0}' are configured by an operator: name a preconfigured one")]
+    OperatorOnly(String),
     /// A component of a graph could not be built. Wraps whatever went wrong
     /// with the component's id and kind, so that the message names the
     /// offending component on its own (issue 02).

@@ -50,6 +50,10 @@ The project is a Rust workspace, with a web UI next to it:
     component kind `ollama_client`, so that the core keeps the facet `LLMClient` and names no
     model provider; the programs name it as the default model (issue 329). See
     [CONFIGURATION.md](CONFIGURATION.md#the-model).
+*   **`caelumora-decision`** - decision models, which answer typed questions about a text with
+    probabilities, reached through the `/v1/systemone` contract: a plugin that brings nothing but
+    its component kind `decision_policy`, a `ResponderPolicy` that chooses who answers by what was
+    said (issue 403). See [CHANNELS.md](CHANNELS.md#choosing-by-what-was-said).
 *   **`caelumora-open-terminal`** - the storages of workspaces backed by Open Terminal,
     `open_terminal_shared` and `open_terminal_docker`, a plugin that brings nothing but these
     backends, the Docker one with `bollard` behind the feature `docker` (issue 327). See
@@ -77,14 +81,14 @@ from its section as the core makes its own. Which plugins are in is the program'
 the model; the core knows none. A plugin is one crate, cut into layers by Cargo features rather than
 crates. The first is `caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)), the second
 `caelumora-artifacts`, which depends on the core's workspaces; `caelumora-mcp`
-([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a` and `caelumora-ollama` are ones that bring a
-component kind alone, `caelumora-open-terminal` one that brings backends alone. The agents are a
-plugin too, an essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose
-actors the channel builds (`AgentKinds`), and the kinds of their components; without it, the
-program is a chat between users. The plugins whose components serve an agent's facets - tools,
-models, external agents - build on it. Where the core calls
-a plugin, the plugin answers in the core's error types, not in its own: the core decides by the
-types it knows what a person is told of an error.
+([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`, `caelumora-ollama` and `caelumora-decision` are
+ones that bring a component kind alone, `caelumora-open-terminal` one that brings backends alone.
+The agents are a plugin too, an essential one (issue 370): `caelumora-agents` registers the kinds of
+agent, whose actors the channel builds (`AgentKinds`), and the kinds of their components; without
+it, the program is a chat between users. The plugins whose components serve an agent's facets -
+tools, models, external agents - build on it. Where the core calls a plugin, the plugin answers in
+the core's error types, not in its own: the core decides by the types it knows what a person is told
+of an error.
 
 Details: [PLUGINS.md](PLUGINS.md).
 

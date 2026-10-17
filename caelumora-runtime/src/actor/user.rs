@@ -6,7 +6,7 @@ use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender, TransportError};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
+use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
 use caelumora_model::work::TurnId;
 use caelumora_model::approval::{ApprovalRequest, ApprovalResponse, ApprovalRule, RuleDecision};
 use caelumora_model::channel::ChannelId;
@@ -716,6 +716,11 @@ impl Actor for UserActor {
 
     fn name(&self) -> Name {
         self.user.load().username.clone()
+    }
+
+    /// With the introduction of their profile as it is now.
+    fn describe(&self) -> ActorDescription {
+        ActorDescription { id: self.id, name: self.name(), introduction: self.user.profile().introduction.clone() }
     }
 
     fn state(&self) -> ActorState {

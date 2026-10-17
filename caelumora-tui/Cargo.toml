@@ -14,6 +14,7 @@ caelumora-mcp = { path = "../caelumora-mcp" }
 caelumora-a2a = { path = "../caelumora-a2a" }
 caelumora-open-terminal = { path = "../caelumora-open-terminal" }
 caelumora-ollama = { path = "../caelumora-ollama" }
+caelumora-decision = { path = "../caelumora-decision" }
 clap = { version = "4.6.7", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["full"] }
 rustyline = "18.0.1"

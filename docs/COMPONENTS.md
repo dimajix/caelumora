@@ -71,6 +71,10 @@ personalities:
     where that is someone else: a channel's components are built in its owner's name, so whoever
     creates the channel may name only lists they may read themselves
     (`ComponentRegistry::require_acceptable`, issue 321).
+*   A kind whose params are trusted - where it sends what it is given, what that is cleared for -
+    is declared `operator_only` (issue 403): it is written only where an operator writes, in the
+    seed's templates, personalities and preconfigured components. A request that writes one itself
+    is refused (`ComponentError::OperatorOnly`); it names one through a `ref`.
 
 ## Facets
 
@@ -334,6 +338,8 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `round_robin_policy` | `ResponderPolicy` | - | The default policy: the agents take turns. |
 | `random_policy` | `ResponderPolicy` | - | Asks one agent, chosen at random. |
 | `mentions_only_policy` | `ResponderPolicy` | - | Asks nobody: agents answer only when mentioned. |
+| `user_driven_policy` | `ResponderPolicy` | - | Asks every agent if a user wrote, nobody if an agent did. |
+| `decision_policy` | `ResponderPolicy` | `endpoint`, `model` (`nimble`), `keep_alive`, `threshold` (`0.3`), `max_responders` (`1`), `on_failure` (`all`), `destination` (`public`) | Of the plugin `caelumora-decision`, registered where it is joined; configured by an operator alone. Asks a decision model whom to ask ([CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). |
 | `compaction` | `AgentCommandProvider` | - | The command `/compact`, for the agent's owners: asks the agent's `CompactionStrategy` to compact its context and tells the channel what it did ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |
 | `threshold_compaction_policy` | `CompactionPolicy` | `threshold` (0.8, how full the context may be, as a share of the model's context size) | The default policy: the agent compacts its context on its own before a call once it is that full, as measured ([AGENT-TURN.md](AGENT-TURN.md#compaction)). Its strategy's `keep` belongs below it, or every compaction frees too little. |
 | `summary_compaction` | `CompactionStrategy` | `keep` (0.25, how much of the context is kept as it stands, as a share of the model's context size) | The default strategy: the agent's own model summarises the older part of its transcript, and the agent's `KnowledgeRestorer`s give again what it had been given there ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LLMClient`. |

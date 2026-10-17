@@ -164,6 +164,91 @@ personalities:
           type: bearer
           secret: HERMES_A2A_TOKEN
     fail_policy: FailClosed
+# Three agents of a software team (issue 403), each introduced by what it
+# is there for: the introduction is what a decision model chooses by, in a
+# channel whose policy is `decision_policy`.
+- id: ee3b010f-b0fc-462b-98b7-25b1342021fb
+  name: team-coder
+  description: Writes and fixes code in the session's workspace
+  introduction: Writes and fixes code, runs the build and the tests in the workspace, and debugs
+    what fails.
+  components:
+  - id: system-prompt
+    kind: static_system_prompt_provider
+    params:
+      title: Who you are
+      prompt: You are the coder of a small software team. You write and fix code in the session's
+        workspace, run the build and the tests, and debug what fails. Leave reviews to the
+        reviewer and planning to the planner.
+    fail_policy: FailClosed
+  - id: channel-context
+    kind: ref
+    params:
+      id: channel-context
+  - id: agent-basics
+    kind: ref
+    params:
+      id: agent-basics
+  - id: workspace
+    kind: workspace_prompt_provider
+    fail_policy: FailClosed
+  - id: terminal-tool
+    kind: terminal_tool
+    fail_policy: FailClosed
+- id: c0bb5f0c-d731-4cf6-bef0-aabe69ea44d5
+  name: team-reviewer
+  description: Reviews changes for correctness, style and security
+  introduction: Reviews changes before they are merged - for correctness, readability and security -
+    and says what has to change.
+  components:
+  - id: system-prompt
+    kind: static_system_prompt_provider
+    params:
+      title: Who you are
+      prompt: You are the reviewer of a small software team. You review changes before they are
+        merged, for correctness, readability and security, and say clearly what has to change and
+        why. You do not write the code yourself.
+    fail_policy: FailClosed
+  - id: channel-context
+    kind: ref
+    params:
+      id: channel-context
+  - id: agent-basics
+    kind: ref
+    params:
+      id: agent-basics
+  - id: workspace
+    kind: workspace_prompt_provider
+    fail_policy: FailClosed
+  - id: terminal-tool
+    kind: terminal_tool
+    params:
+      requires_approval: unless_read_only
+    fail_policy: FailClosed
+- id: 92576955-d5fb-4bad-9b46-e856b92f49db
+  name: team-planner
+  description: Splits work into tasks, estimates and schedules them
+  introduction: Keeps the backlog - splits work into tasks, estimates them and decides in which
+    order they are done.
+  components:
+  - id: system-prompt
+    kind: static_system_prompt_provider
+    params:
+      title: Who you are
+      prompt: You are the planner of a small software team. You keep the backlog, split work into
+        tasks, estimate them and decide in which order they are done. You do not write code.
+    fail_policy: FailClosed
+  - id: channel-context
+    kind: ref
+    params:
+      id: channel-context
+  - id: agent-basics
+    kind: ref
+    params:
+      id: agent-basics
+  - id: create-plan-tool
+    kind: create_plan_tool
+    fail_policy: FailClosed
 session_templates:
 - id: 94a2df67-0bde-4906-adb1-40e936b463e9
   name: simple-session
@@ -327,6 +412,64 @@ session_templates:
     - approval
     - Jonathan
     - Hermes
+# A team whose members answer by what is said (issue 403): a decision model
+# chooses which of them should respond to a message that mentions none - the
+# most fitting one, and a second if it fits almost as well. `nimble:9b`
+# chose best in a quick comparison of the decision models of the local
+# Ollama: as reliably as a 27B model, at about a third of a second once it
+# is loaded. Loading it took over a minute, far beyond the endpoint's
+# timeout of 5 s, so it is kept loaded for an hour after each decision. The
+# server is local, so what is said may go to it up to the highest level;
+# what is classified with a compartment is not sent, and everybody is asked
+# instead, as when the model cannot be reached. A template may write the
+# policy itself - its params are the operator's -, a channel created on
+# request only names preconfigured ones.
+- id: b6f36657-cb30-4fac-8873-c216b46bbf2c
+  name: team-session
+  description: A coder, a reviewer and a planner; a decision model chooses who answers
+  summary: Software work with a small team
+  briefing: |-
+    The user works on software with a small team: a coder, a reviewer and a planner. Each answers
+    what concerns them; mention one with @ to ask them directly.
+  participants:
+  - User:
+      name: user
+  - Approver:
+      name: approval
+  - Agent:
+      name: Coder
+      scope: SessionScope
+      personality_id: ee3b010f-b0fc-462b-98b7-25b1342021fb
+  - Agent:
+      name: Reviewer
+      scope: SessionScope
+      personality_id: c0bb5f0c-d731-4cf6-bef0-aabe69ea44d5
+  - Agent:
+      name: Planner
+      scope: SessionScope
+      personality_id: 92576955-d5fb-4bad-9b46-e856b92f49db
+  channels:
+  - name: main
+    components:
+    - id: moderator
+      kind: policy_moderator
+      params:
+        max_agent_hops: 3
+    - id: responders
+      kind: decision_policy
+      params:
+        endpoint:
+          url: "http://127.0.0.1:11434"
+        model: "nimble:9b"
+        keep_alive: 1h
+        max_responders: 2
+        destination: { level: strictly_confidential }
+    participants:
+    - user
+    - approval
+    - Coder
+    - Reviewer
+    - Planner
 
 skills:
 - id: 8bdb7961-a455-4063-8be6-98a2f16b46f5
