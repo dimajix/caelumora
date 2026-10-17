@@ -1684,10 +1684,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                   <p className="text-sm text-gray-500 dark:text-gray-400 text-center">Waiting for whoever is responsible for the agent.</p>
                 ) : (
                 <>
-                {!approval.explicit && (
+                {!approval.explicit && approval.suggested && (
                   <ApprovalRuleOffer
                     choice={ruleChoices[approval.id] ?? null}
-                    initial={initialChoice(approval)}
+                    initial={initialChoice(approval.suggested)}
                     onChange={(choice) => setRuleChoices(prev => ({...prev, [approval.id]: choice}))}
                   />
                 )}

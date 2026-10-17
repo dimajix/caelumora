@@ -145,7 +145,7 @@ impl TurnState {
                     tool_call: c.tool_call.clone(),
                     description: description.clone(),
                     explicit: *explicit,
-                    suggested: Some(suggested.clone()),
+                    suggested: suggested.clone(),
                 }),
                 _ => None,
             })

@@ -389,7 +389,7 @@ pub enum ToolCallStatus {
     /// A person decides whether it may run (issue 13). They are shown
     /// `description` - a decision of their own if `explicit`, which no rule
     /// of a person answers - and offered a rule for the calls `suggested`
-    /// matches. `id` is the approval's, from the agent's request to the
+    /// matches, if one can be derived from the call (issue 400). `id` is the approval's, from the agent's request to the
     /// decision (issue 81). Approved, it asks its `questions`, if it has
     /// any (issue 165).
     WaitingApproval {
@@ -397,7 +397,8 @@ pub enum ToolCallStatus {
         description: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         explicit: bool,
-        suggested: ToolMatcher,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        suggested: Option<ToolMatcher>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         questions: Option<Questions>,
     },
@@ -419,7 +420,7 @@ pub enum ToolCallStatus {
 impl ToolCallState {
     /// `tool_call`, waiting for a person's decision (`ToolCallStatus::WaitingApproval`),
     /// and then to ask `questions`.
-    pub fn pending(tool_call: ToolCall, description: String, explicit: bool, suggested: ToolMatcher, questions: Option<Questions>) -> Self {
+    pub fn pending(tool_call: ToolCall, description: String, explicit: bool, suggested: Option<ToolMatcher>, questions: Option<Questions>) -> Self {
         Self { tool_call, status: ToolCallStatus::WaitingApproval { id: ApprovalId::new(), description, explicit, suggested, questions } }
     }
 
@@ -506,7 +507,7 @@ mod tests {
     #[test]
     fn a_call_state_is_read_back_as_written() {
         let call = ToolCall { id: Some("1".to_string()), function_name: "delete".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
-        let waiting = ToolCallState::pending(call.clone(), "Delete it?".to_string(), true, ToolMatcher::exact(&call), None);
+        let waiting = ToolCallState::pending(call.clone(), "Delete it?".to_string(), true, Some(ToolMatcher::exact(&call)), None);
         let read: ToolCallState = serde_json::from_str(&serde_json::to_string(&waiting).unwrap()).unwrap();
         assert_eq!(read.approval_id(), waiting.approval_id());
         assert!(matches!(read.status, ToolCallStatus::WaitingApproval { explicit: true, ref description, .. } if description == "Delete it?"));

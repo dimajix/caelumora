@@ -404,9 +404,10 @@ pub(crate) fn proposed_matcher(tools: &[Tool], name: &str, params: &Value) -> To
 pub enum Admission {
     /// A user decides first; they are shown `description`. `explicit` if a
     /// rule of a place asked for it: a decision of their own (issue 13).
-    /// `suggested` is what a rule derived from the call would match.
+    /// `suggested` is what a rule derived from the call would match, if one
+    /// can be kept (issue 400).
     /// Approved, it asks `questions`, if it has any (issue 165).
-    Ask { description: String, explicit: bool, suggested: ToolMatcher, questions: Option<Questions> },
+    Ask { description: String, explicit: bool, suggested: Option<ToolMatcher>, questions: Option<Questions> },
     /// The users answer its questions first (issue 165), as put to them.
     Await(Questions),
     /// It runs as it is.
@@ -975,6 +976,25 @@ mod tests {
         assert!(matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result()), "refused before anyone is asked: {admitted:?}");
         let result = executor.execute(&call("test_tool"), None, &mut context, std::future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::Ok, "running asks the policy nothing more: only an admitted call is run");
+    }
+
+    /// A rule is offered only where one can be kept (issue 400): of a call
+    /// with a value too long even to be compared by equality, none.
+    #[tokio::test]
+    async fn a_call_is_offered_a_rule_only_where_one_can_be_kept() {
+        use caelumora_model::approval::{ArgumentMatcher, MAX_EQUALS_CHARS, MAX_PATTERN_CHARS};
+
+        let asking = executor(Arc::new(AllowAllPolicy::new()));
+        let mut agent_channel_state = agent_turn(&asking).await;
+        let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
+        let with = |text: String| ToolCall { arguments: json!({ "text": text }), ..call("test_tool") };
+        let suggested = |admitted| match admitted {
+            Admission::Ask { suggested, .. } => suggested,
+            other => panic!("its tool requires approval, got {other:?}"),
+        };
+        let long = suggested(asking.admit(&with("x".repeat(MAX_PATTERN_CHARS + 1)), &turn).await).expect("a rule by equality");
+        assert!(matches!(long.arguments["text"], ArgumentMatcher::Equals { .. }), "{long:?}");
+        assert!(suggested(asking.admit(&with("x".repeat(MAX_EQUALS_CHARS + 1)), &turn).await).is_none(), "no rule that cannot be kept");
     }
 
     #[tokio::test]

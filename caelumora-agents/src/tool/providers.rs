@@ -69,12 +69,15 @@ impl ToolProviders {
     }
 
     /// What other calls are like `call`, as its tool says (issue 13); the
-    /// calls exactly like it if no tool has its name.
-    pub(super) fn matcher(&self, call: &ToolCall) -> ToolMatcher {
-        match self.provider_of(&call.function_name) {
+    /// calls exactly like it if no tool has its name. `None` where that is
+    /// no rule a person could keep (`ToolMatcher::check`, issue 400): a
+    /// rule is offered only where it can be added.
+    pub(super) fn matcher(&self, call: &ToolCall) -> Option<ToolMatcher> {
+        let matcher = match self.provider_of(&call.function_name) {
             Ok(provider) => provider.matcher(&call.function_name, &call.arguments),
             Err(_) => ToolMatcher::exact(call),
-        }
+        };
+        matcher.check().is_ok().then_some(matcher)
     }
 
     /// The tools offered in `work`, in the sets of the providers they come

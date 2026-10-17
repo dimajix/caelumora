@@ -218,6 +218,10 @@ pub enum ArgumentMatcher {
     /// command matches if it begins with the words `shell`, as they run. A line that cannot be
     /// judged, or a value that is no string, is unjudgeable.
     Shell { shell: Vec<String> },
+    /// The whole value as it is - a string as itself, any other value as its compact JSON -,
+    /// compared without a regular expression (issue 400): what `ToolMatcher::exact` takes for a
+    /// value whose pattern would be too long.
+    Equals { equals: String },
 }
 
 /// How much of a call a matcher is about, from least to most; of several arguments, the least
@@ -243,6 +247,9 @@ pub const MAX_SHELL_WORDS: usize = 20;
 /// The longest word a shell argument names, in characters.
 pub const MAX_WORD_CHARS: usize = 500;
 
+/// The longest value an argument compared by equality names, in characters.
+pub const MAX_EQUALS_CHARS: usize = 10_000;
+
 /// How many words of a command a rule derived from it is proposed with: the program and the first
 /// word after it - `cargo test`, `git status`, `ls -la`.
 pub const PROPOSED_SHELL_WORDS: usize = 2;
@@ -267,6 +274,8 @@ pub enum RuleError {
     ShellWords(String),
     #[error("the words of the shell argument `{0}` must not be longer than {MAX_WORD_CHARS} characters")]
     WordTooLong(String),
+    #[error("the value of argument `{0}` must not be longer than {MAX_EQUALS_CHARS} characters")]
+    ValueTooLong(String),
     #[error("a session, a channel or the system may only ask or deny, everywhere within it")]
     NotRestricting,
     #[error("a rule of a person allows or denies; asking is what happens without one")]
@@ -287,13 +296,18 @@ impl ToolMatcher {
 
     /// The calls exactly like `call`: its tool, and every argument as it is -
     /// what a rule derived from a call is offered with unless its tool
-    /// knows better, for the person to widen.
+    /// knows better, for the person to widen. An argument is an escaped
+    /// pattern where that fits `MAX_PATTERN_CHARS`, and compared by equality
+    /// where it would not (issue 400) - which a value longer than
+    /// `MAX_EQUALS_CHARS` fails to `check`.
     pub fn exact(call: &ToolCall) -> Self {
         let arguments = match &call.arguments {
             Value::Object(arguments) => arguments.iter()
                 .map(|(name, value)| {
-                    let text = match value { Value::String(text) => text.clone(), other => other.to_string() };
-                    (name.clone(), ArgumentMatcher::Pattern(regex::escape(&text)))
+                    let text = text_of(value);
+                    let pattern = regex::escape(&text);
+                    let matcher = if pattern.chars().count() <= MAX_PATTERN_CHARS { ArgumentMatcher::Pattern(pattern) } else { ArgumentMatcher::Equals { equals: text } };
+                    (name.clone(), matcher)
                 })
                 .collect(),
             _ => BTreeMap::new(),
@@ -370,7 +384,8 @@ impl ArgumentMatcher {
     }
 
     /// Nothing if it can be matched as the argument `argument` of the tool `tool`: a pattern that
-    /// compiles, a shell argument of a named tool with as many and as long words as allowed.
+    /// compiles, a shell argument of a named tool with as many and as long words as allowed, a
+    /// value no longer than `MAX_EQUALS_CHARS`.
     ///
     /// # Errors
     /// `RuleError` saying why not.
@@ -389,6 +404,8 @@ impl ArgumentMatcher {
                 }
                 Ok(())
             }
+            ArgumentMatcher::Equals { equals } if equals.chars().count() > MAX_EQUALS_CHARS => Err(RuleError::ValueTooLong(argument.to_string())),
+            ArgumentMatcher::Equals { .. } => Ok(()),
         }
     }
 
@@ -400,13 +417,8 @@ impl ArgumentMatcher {
     fn matches(&self, argument: &str, value: Option<&Value>) -> Result<Coverage, RuleError> {
         let matched = match (self, value) {
             (_, None) => false,
-            (ArgumentMatcher::Pattern(pattern), Some(value)) => {
-                let regex = compile(argument, pattern)?;
-                match value {
-                    Value::String(text) => regex.is_match(text),
-                    value => regex.is_match(&value.to_string()),
-                }
-            }
+            (ArgumentMatcher::Pattern(pattern), Some(value)) => compile(argument, pattern)?.is_match(&text_of(value)),
+            (ArgumentMatcher::Equals { equals }, Some(value)) => text_of(value) == *equals,
             (ArgumentMatcher::Shell { shell }, _) if shell.is_empty() => return Err(RuleError::ShellWords(argument.to_string())),
             (ArgumentMatcher::Shell { shell }, Some(Value::String(line))) => {
                 let Ok(commands) = shell::simple_commands(line) else { return Ok(Coverage::Unjudgeable) };
@@ -420,6 +432,15 @@ impl ArgumentMatcher {
             (ArgumentMatcher::Shell { .. }, Some(_)) => return Ok(Coverage::Unjudgeable),
         };
         Ok(if matched { Coverage::Whole } else { Coverage::Nothing })
+    }
+}
+
+/// The text of an argument's value as it is compared: a string as itself, any other value as its
+/// compact JSON.
+fn text_of(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
     }
 }
 
@@ -759,6 +780,27 @@ mod tests {
     }
 
     #[test]
+    fn a_value_too_long_for_a_pattern_is_compared_by_equality() {
+        let sending = |text: &str| call("send", json!({ "text": text, "to": "bob" }));
+        let long = "x".repeat(MAX_PATTERN_CHARS + 1);
+        let exact = ToolMatcher::exact(&sending(&long));
+        assert_eq!(exact.arguments["text"], ArgumentMatcher::Equals { equals: long.clone() });
+        assert_eq!(exact.arguments["to"], ArgumentMatcher::Pattern("bob".to_string()), "a short one stays a pattern");
+        assert!(exact.check().is_ok());
+        assert_eq!(exact.matches(&sending(&long)).unwrap(), Coverage::Whole, "itself");
+        assert_eq!(exact.matches(&sending(&format!("{long}y"))).unwrap(), Coverage::Nothing);
+
+        let dots = ".".repeat(MAX_PATTERN_CHARS / 2 + 1);
+        assert!(matches!(ToolMatcher::exact(&sending(&dots)).arguments["text"], ArgumentMatcher::Equals { .. }), "escaping lengthens a value");
+        let equals = |value: &str| ToolMatcher { tool: "note".to_string(), arguments: BTreeMap::from([("id".to_string(), ArgumentMatcher::Equals { equals: value.to_string() })]) };
+        assert_eq!(equals("42").matches(&call("note", json!({ "id": 42 }))).unwrap(), Coverage::Whole, "a number as its JSON");
+        assert_eq!(equals("42").matches(&call("note", json!({}))).unwrap(), Coverage::Nothing, "an argument the call lacks");
+
+        let too_long = ToolMatcher::exact(&sending(&"x".repeat(MAX_EQUALS_CHARS + 1)));
+        assert_eq!(too_long.check(), Err(RuleError::ValueTooLong("text".to_string())));
+    }
+
+    #[test]
     fn a_person_allows_or_denies_within_any_reach() {
         assert!(rule(matcher("shell", &[]), RuleDecision::Allow).check_personal().is_ok());
         assert!(rule(matcher("shell", &[]), RuleDecision::Deny).check_personal().is_ok());
@@ -789,10 +831,11 @@ mod tests {
 
     #[test]
     fn an_argument_is_written_as_a_pattern_or_as_its_language() {
-        let written = json!({ "tool": "run_command", "arguments": { "command": { "shell": ["git", "status"] }, "cwd": "main" } });
+        let written = json!({ "tool": "run_command", "arguments": { "command": { "shell": ["git", "status"] }, "cwd": "main", "input": { "equals": "a.b" } } });
         let matcher: ToolMatcher = serde_json::from_value(written.clone()).unwrap();
         assert_eq!(matcher.arguments["command"], ArgumentMatcher::Shell { shell: vec!["git".to_string(), "status".to_string()] });
         assert_eq!(matcher.arguments["cwd"], ArgumentMatcher::Pattern("main".to_string()));
+        assert_eq!(matcher.arguments["input"], ArgumentMatcher::Equals { equals: "a.b".to_string() });
         assert_eq!(serde_json::to_value(&matcher).unwrap(), written);
         let misspelt = json!({ "tool": "run_command", "arguments": { "command": { "shell": ["git"], "shel": ["x"] } } });
         assert!(serde_json::from_value::<ToolMatcher>(misspelt).is_err(), "a misspelt key");

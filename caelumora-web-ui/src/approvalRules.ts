@@ -46,9 +46,16 @@ export function describeMatcher(matcher: ToolMatcher): string {
   return args.length === 0 ? tool : `${tool} (${args.join(', ')})`;
 }
 
-/** How an argument is compared, after its name: ` ~ pattern`, or `: the words …` of a command line. */
+/** How an argument is compared, after its name: ` ~ pattern`, `: the words …` of a command line, or ` = "value"`. */
 function describeArgument(argument: ArgumentMatcher): string {
-  return typeof argument === 'string' ? ` ~ ${argument}` : `: ${argument.shell.join(' ')} …`;
+  if (typeof argument === 'string') return ` ~ ${argument}`;
+  if ('shell' in argument) return `: ${argument.shell.join(' ')} …`;
+  return ` = "${shortened(argument.equals, 40)}"`;
+}
+
+/** `text`, cut to `length` characters with an ellipsis if longer. */
+function shortened(text: string, length: number): string {
+  return text.length <= length ? text : `${text.slice(0, length)}…`;
 }
 
 /** Where `rule` reaches, in words; the session's or channel's name if known. */
@@ -67,9 +74,9 @@ export interface RuleChoice {
   minutes: number | null;
 }
 
-/** The choice a card starts with: the calls like `request`'s, in this channel, for no end. */
-export function initialChoice(request: ApprovalRequest): RuleChoice {
-  return {matcher: request.suggested ?? {tool: request.tool_call.function_name}, reach: 'channel', minutes: null};
+/** The choice a card starts with: the calls `suggested` matches - as the call's tool proposes -, in this channel, for no end. */
+export function initialChoice(suggested: ToolMatcher): RuleChoice {
+  return {matcher: suggested, reach: 'channel', minutes: null};
 }
 
 /** The rule `choice` makes, deciding as the user answered. */

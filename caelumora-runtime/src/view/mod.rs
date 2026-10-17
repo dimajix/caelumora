@@ -1291,7 +1291,7 @@ mod tests {
 
         // The agent's turn waits for one call, the other was approved.
         let call = |name: &str| ToolCall { id: Some(name.to_string()), function_name: name.to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
-        let waiting = ToolCallState::pending(call("delete"), "Delete it?".to_string(), false, ToolMatcher::everything(), None);
+        let waiting = ToolCallState::pending(call("delete"), "Delete it?".to_string(), false, Some(ToolMatcher::everything()), None);
         let mut turn = TurnState::default();
         turn.work.event_context.session_id = session.id;
         turn.work.event_context.channel_id = channel.id;
@@ -1341,7 +1341,7 @@ mod tests {
         let mut turn = TurnState::default();
         turn.work.event_context.sender_id = ActorId::Agent(helper.id);
         let call = ToolCall { id: Some("delete".to_string()), function_name: "delete".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
-        turn.tool_calls = vec![ToolCallState::pending(call, "Delete it?".to_string(), false, ToolMatcher::everything(), None)];
+        turn.tool_calls = vec![ToolCallState::pending(call, "Delete it?".to_string(), false, Some(ToolMatcher::everything()), None)];
         state.turn = Some(turn);
         store.put_agent_channel_state(helper.id, channel.id, &mut state).await.unwrap();
 

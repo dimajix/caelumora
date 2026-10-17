@@ -1,8 +1,9 @@
 // The approval rules of a session or a channel (issue 13): what it restricts
 // of the tool calls its agents make - a rule asks a person to decide the call
 // themselves, or denies it outright. A place never allows; that is a
-// person's to say. An argument is compared by a pattern, or - a bash command
-// line - by the words its commands begin with (issue 247). Whether the rules
+// person's to say. An argument is compared by a pattern, as a bash command
+// line by the words its commands begin with (issue 247), or as it is (issue
+// 400). Whether the rules
 // may be changed, and whether a pattern is one, is the server's to decide.
 
 import React, {useState} from 'react';
@@ -28,22 +29,32 @@ interface Draft {
   arguments: ArgumentDraft[];
 }
 
-/** An argument as it is edited: a pattern, or the words of a command line separated by blanks. */
+/** An argument as it is edited: a pattern, the words of a command line separated by blanks, or a value. */
 interface ArgumentDraft {
   name: string;
-  kind: 'pattern' | 'shell';
+  kind: 'pattern' | 'shell' | 'equals';
   text: string;
 }
 
 function argumentDraftOf(name: string, argument: ArgumentMatcher): ArgumentDraft {
-  return typeof argument === 'string'
-    ? {name, kind: 'pattern', text: argument}
-    : {name, kind: 'shell', text: argument.shell.join(' ')};
+  if (typeof argument === 'string') return {name, kind: 'pattern', text: argument};
+  if ('shell' in argument) return {name, kind: 'shell', text: argument.shell.join(' ')};
+  return {name, kind: 'equals', text: argument.equals};
 }
 
 function argumentOf(draft: ArgumentDraft): ArgumentMatcher {
-  return draft.kind === 'pattern' ? draft.text : {shell: draft.text.split(/\s+/).filter(word => word !== '')};
+  switch (draft.kind) {
+    case 'pattern': return draft.text;
+    case 'shell': return {shell: draft.text.split(/\s+/).filter(word => word !== '')};
+    case 'equals': return {equals: draft.text};
+  }
 }
+
+const ARGUMENT_PLACEHOLDERS: Record<ArgumentDraft['kind'], string> = {
+  pattern: 'pattern',
+  shell: 'words, e.g. git push',
+  equals: 'the whole value',
+};
 
 const DECISIONS: {value: RuleDecision; label: string}[] = [
   {value: 'ask', label: 'Ask - a person decides each call'},
@@ -171,10 +182,11 @@ export const ApprovalRulesDialog: React.FC<ApprovalRulesDialogProps> = ({title, 
                   >
                     <option value="pattern">matches</option>
                     <option value="shell">commands begin with</option>
+                    <option value="equals">is exactly</option>
                   </select>
                   <input
-                    aria-label={argument.kind === 'pattern' ? 'Pattern' : 'Words'}
-                    placeholder={argument.kind === 'pattern' ? 'pattern' : 'words, e.g. git push'}
+                    aria-label="Value compared"
+                    placeholder={ARGUMENT_PLACEHOLDERS[argument.kind]}
                     value={argument.text}
                     onChange={(e) => change(index, d => ({...d, arguments: d.arguments.map((x, i) => i === a ? {...x, text: e.target.value} : x)}))}
                     className={`${field} min-w-0 flex-1 font-mono`}
