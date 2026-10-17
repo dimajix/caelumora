@@ -11,7 +11,7 @@
 //! turn uses it too.
 
 use crate::turn::Turn;
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use crate::tool::{ToolError, ToolResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentChannelState;
@@ -64,21 +64,21 @@ pub struct AgentNotes;
 impl AgentNotes {
     /// The notes as they stand - without the changes of the current turn,
     /// which count only once it completes.
-    pub fn current(work: &AgentWork, kind: NoteKind) -> Vec<Note> {
-        kind.chain(work.agent_channel_state()).current()
+    pub fn current(situation: &Situation, kind: NoteKind) -> Vec<Note> {
+        kind.chain(situation.agent_channel_state()).current()
     }
 
     /// The digest of the chain, `None` while it is empty: the state of
     /// knowledge a reader of the notes records.
-    pub fn digest(work: &AgentWork, kind: NoteKind) -> Option<Digest> {
-        kind.chain(work.agent_channel_state()).digest()
+    pub fn digest(situation: &Situation, kind: NoteKind) -> Option<Digest> {
+        kind.chain(situation.agent_channel_state()).digest()
     }
 
     /// The notes as they stand with the changes of the current turn in
     /// them (issue 156): what the turn's operations on notes look at.
     pub fn effective(turn: &Turn, kind: NoteKind) -> Staged<Notes> {
         let staged = turn.staged_notes(kind).iter().map(|c| (c, NoteOrigin::default()));
-        kind.chain(turn.agent_channel_state()).with_staged(staged)
+        kind.chain(turn.situation().agent_channel_state()).with_staged(staged)
     }
 
     /// Notes `text` in this turn, classified as the turn has seen so far
@@ -86,7 +86,7 @@ impl AgentNotes {
     /// than any in the chain or noted earlier in the turn.
     pub fn note(turn: &mut Turn, kind: NoteKind, text: String) -> NoteId {
         let id = Self::effective(turn, kind).next_id();
-        let classification = turn.label();
+        let classification = turn.situation().label();
         turn.stage_note(kind, NoteChange::Add { id, text, classification });
         id
     }
@@ -99,7 +99,7 @@ impl AgentNotes {
         if Self::effective(turn, kind).get(id).is_none() {
             return false;
         }
-        let classification = turn.label();
+        let classification = turn.situation().label();
         turn.stage_note(kind, NoteChange::Update { id, text, classification });
         true
     }
@@ -128,12 +128,12 @@ impl AgentNotes {
         if Self::effective(turn, kind).get(id).is_none() {
             return Err(ToolError::InvalidParameter(format!("you have no note #{id}; only your own current notes can be reclassified")));
         }
-        let channel = turn.classification();
+        let channel = turn.situation().classification();
         let refused = || ToolError::PermissionDenied(format!("reclassifying note #{id} as {classification}"));
-        let attributes = turn.work().channel_attributes();
-        let action = ActionType::Reclassify(Reclassified::Note { author: ActorId::Agent(turn.agent_id()), attributes: &attributes });
-        access_policy.require(turn.security_context(), action, |_| refused()).await?;
-        confidentiality.require_publish(turn.security_context(), &classification, &channel, refused)?;
+        let attributes = turn.situation().channel_attributes();
+        let action = ActionType::Reclassify(Reclassified::Note { author: ActorId::Agent(turn.situation().agent_id()), attributes: &attributes });
+        access_policy.require(turn.situation().security_context(), action, |_| refused()).await?;
+        confidentiality.require_publish(turn.situation().security_context(), &classification, &channel, refused)?;
         turn.stage_note(kind, NoteChange::Reclassify { id, classification });
         Ok(())
     }

@@ -32,7 +32,7 @@ mod files;
 mod shell;
 
 use crate::turn::Turn;
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::workspace::{WorkspaceError, WorkspaceManager};
@@ -150,8 +150,8 @@ impl ToolProvider for TerminalTool {
     /// its channel (issue 290): none where there is none, none that change
     /// where its list grants reading alone, no shell where its storage gives
     /// none.
-    async fn offered(&self, work: &AgentWork<'_>) -> Result<Vec<Tool>, String> {
-        let workspace = usable_workspace(work).await?;
+    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
+        let workspace = usable_workspace(situation).await?;
         let (writable, has_shell) = (workspace.may_write().await, workspace.has_shell());
         Ok(self.tools().into_iter()
             .filter(|tool| needs(&tool.name).is_some_and(|(grant, shell)| (grant == Grant::Read || writable) && (!shell || has_shell)))
@@ -240,13 +240,13 @@ mod tests {
         let world = session_with_workspace().await;
         let tool = tool(&world, json!({}));
         let mut state = AgentChannelState::default();
-        let offered = tool.offered(&workspace_turn(&world, &mut state).work()).await.expect("offered where it is used");
+        let offered = tool.offered(&workspace_turn(&world, &mut state).situation()).await.expect("offered where it is used");
         assert_eq!(offered.len(), shell::TOOLS.len() + files::TOOLS.len(), "every tool: {offered:?}");
 
         world.session.channels()[0].update_uses_workspace(&SecurityContext::system(), false).await.unwrap();
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let unavailable = tool.offered(&turn.work()).await;
+        let unavailable = tool.offered(&turn.situation()).await;
         assert_eq!(unavailable, Err("there is no workspace you can use in this channel".to_string()), "none, saying why");
         for (name, params) in [(RUN_COMMAND, json!({ "command": "touch here" })), (WRITE_FILE, json!({ "path": "here", "content": "x" }))] {
             let refused = tool.execute(name, &params, None, &mut turn).await;

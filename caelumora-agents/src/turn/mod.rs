@@ -46,9 +46,8 @@ use caelumora_runtime::terminal::{Shell, Terminal};
 use caelumora_runtime::runtime::ActorRuntime;
 #[cfg(test)]
 use caelumora_runtime::session::testing::detached_actor_runtime;
-use caelumora_runtime::view::SessionView;
 use caelumora_runtime::workspace::WorkspaceResult;
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -60,8 +59,7 @@ use caelumora_model::digest::Digest;
 use caelumora_model::memory::{MemoryChange, MemoryOrigin};
 use caelumora_model::message::Message;
 use caelumora_model::note::NoteChange;
-use caelumora_model::security::{Grant, SecurityContext};
-use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_model::security::Grant;
 use caelumora_model::tool::Tool;
 use caelumora_model::workspace::Workspace;
 use std::sync::{Arc, LazyLock};
@@ -119,17 +117,12 @@ impl<'a> Turn<'a> {
         Self::of(agent_id, "agent".to_string(), agent_channel_state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn is under way")
     }
 
-    /// The turn as a piece of work of the agent, to read (issue 204): what
-    /// components that only read are given, as an external agent's work
-    /// gives it too.
-    pub fn work(&self) -> AgentWork<'_> {
-        AgentWork::new(self.agent_id, &self.current().work, self.agent_channel_state, &self.agent_state, &self.runtime)
-    }
-
-    /// The agent's session as the turn reads it from its channel
-    /// (`AgentWork::session`).
-    pub async fn session(&self) -> Option<SessionView> {
-        self.work().session().await
+    /// The situation of the turn, to read (issues 204, 399): what the turn
+    /// reads through - who works, where, in whose name, bound by what - and
+    /// what components that only read are given, as an external agent's
+    /// work gives it too.
+    pub fn situation(&self) -> Situation<'_> {
+        Situation::new(self.agent_id, &self.current().work, self.agent_channel_state, &self.agent_state, &self.runtime)
     }
 
     /// The workspace of the agent's session and its terminal, for what
@@ -140,7 +133,7 @@ impl<'a> Turn<'a> {
     /// # Errors
     /// As `ActorRuntime::workspace_terminal`.
     pub async fn workspace_terminal(&self, need: Grant) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
-        self.runtime.workspace_terminal(self.security_context(), need).await
+        self.runtime.workspace_terminal(self.situation().security_context(), need).await
     }
 
     /// The workspace of the agent's session and its shell as its channel
@@ -150,17 +143,12 @@ impl<'a> Turn<'a> {
     /// # Errors
     /// As [`Self::workspace_terminal`].
     pub async fn workspace_shell(&self) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
-        self.runtime.workspace_shell(self.security_context()).await
+        self.runtime.workspace_shell(self.situation().security_context()).await
     }
 
     /// Which turn this is (issue 235).
     pub fn turn_id(&self) -> TurnId {
         self.current().work.turn_id
-    }
-
-    /// The agent whose turn this is.
-    pub fn agent_id(&self) -> AgentId {
-        self.agent_id
     }
 
     /// The agent's name, as the channel knows it.
@@ -182,37 +170,10 @@ impl<'a> Turn<'a> {
         self.agent_channel_state.turn.get_or_insert_with(TurnState::default)
     }
 
-    /// The agent's own state (issue 62): `current()` is a snapshot of it as
-    /// it is now, without the changes of the current turn.
-    pub fn agent_state(&self) -> &Arc<AgentStateHandle> {
-        &self.agent_state
-    }
-
-    /// The classification of the agent's channel as it was when the turn
-    /// began (`AgentChannelState::begin_turn`, `AgentWork::classification`).
-    pub fn classification(&self) -> Classification {
-        self.work().classification()
-    }
-
-    /// The classification of what the turn writes (`AgentWork::label`).
-    pub fn label(&self) -> Classification {
-        self.work().label()
-    }
-
     /// Records that the turn has seen what is classified `classification`:
     /// what it writes from now on is classified at least so (`label`).
     pub fn see(&mut self, classification: &Classification) {
         self.current_mut().work.see(classification);
-    }
-
-    /// The agent's channel (`AgentWork::channel_id`).
-    pub fn channel_id(&self) -> ChannelId {
-        self.work().channel_id()
-    }
-
-    /// The session of the agent's channel (`AgentWork::session_id`).
-    pub fn session_id(&self) -> SessionId {
-        self.work().session_id()
     }
 
     /// Stages `change` to the agent's memory, made at `origin`, applied when
@@ -230,10 +191,10 @@ impl<'a> Turn<'a> {
     /// The agent's tools as they were when the turn began: what its model
     /// is offered, and what its calls are labelled and put up for approval
     /// by (issue 137) - the tools of the sets it was offered
-    /// (`AgentWork::tool_sets`), one offer for the whole turn, a resumed one
+    /// (`Situation::tool_sets`), one offer for the whole turn, a resumed one
     /// included.
     pub(crate) fn tools(&self) -> impl Iterator<Item = &Tool> {
-        self.work().tool_sets().iter().flat_map(|set| &set.tools)
+        self.situation().tool_sets().iter().flat_map(|set| &set.tools)
     }
 
     /// Gives the agent `message` to read in this turn (issue 22) - a skill
@@ -305,11 +266,6 @@ impl<'a> Turn<'a> {
         ToolCalls::new(turn, &self.agent_name)
     }
 
-    /// Whose authority the turn acts with (`AgentWork::security_context`).
-    pub fn security_context(&self) -> &SecurityContext {
-        self.work().security_context()
-    }
-
     /// Whether the turn was given or read private knowledge of the agent -
     /// its private notes (issue 51) or its memory (issue 62) - so far: what the model produces from
     /// then on may reveal it (issue 61).
@@ -323,13 +279,6 @@ impl<'a> Turn<'a> {
     /// with every message the turn produces from now on.
     pub fn record_knowledge(&mut self, reference: KnowledgeRef) {
         self.current_mut().work.record_knowledge(reference);
-    }
-
-    /// The agent's state in this channel as it stands: what components read
-    /// their state from (issue 65). Changes the turn made count only once it
-    /// completes.
-    pub fn agent_channel_state(&self) -> &AgentChannelState {
-        self.agent_channel_state
     }
 
     /// Stages `change` to the agent's notes of `kind` in this channel,
@@ -410,6 +359,7 @@ mod tests {
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::context::{ContextItem, ContextResolver, PromptPart};
     use caelumora_model::message::MessageId;
+    use caelumora_model::security::SecurityContext;
     use caelumora_model::message::MessageRole;
     use caelumora_runtime::transport::memory::InMemoryEventSender;
 
@@ -473,7 +423,7 @@ mod tests {
             Some(ActorEvent::TurnFinished { messages, .. }) => assert!(messages.is_empty(), "the hidden call is not published"),
             other => panic!("the complete message is not sent at all, got {other:?}"),
         }
-        assert_eq!(turn.agent_channel_state().transcript.messages().last().map(|m| m.tool_calls.len()), Some(1), "the agent keeps it");
+        assert_eq!(turn.situation().agent_channel_state().transcript.messages().last().map(|m| m.tool_calls.len()), Some(1), "the agent keeps it");
 
         // Reasoning reaches the channel unless it is the owner's.
         let thinking = Message {
@@ -501,15 +451,15 @@ mod tests {
         state.transcript.extend(vec![said(&Classification::PUBLIC, "Hello.")]);
         state.begin_turn(EventContext::default(), SecurityContext::default(), confidential.clone(), Default::default());
         let mut turn = Turn::under_way(AgentId::new(), &mut state);
-        assert_eq!(turn.label(), Classification::PUBLIC, "a public transcript");
+        assert_eq!(turn.situation().label(), Classification::PUBLIC, "a public transcript");
 
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: Some(Classification::PUBLIC), source: None }], Vec::new());
-        assert_eq!(turn.label(), Classification::PUBLIC);
+        assert_eq!(turn.situation().label(), Classification::PUBLIC);
         state.perceive(Vec::new(), vec![said(&internal, "Our numbers are good.")]);
         let mut turn = Turn::under_way(AgentId::new(), &mut state);
-        assert_eq!(turn.label(), internal, "what others said during the turn");
+        assert_eq!(turn.situation().label(), internal, "what others said during the turn");
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }], Vec::new());
-        assert_eq!(turn.label(), confidential, "a part that does not say counts as the channel");
-        assert_eq!(turn.agent_channel_state().turn.as_ref().unwrap().work.context.prompts[0].classification, None, "and is recorded so");
+        assert_eq!(turn.situation().label(), confidential, "a part that does not say counts as the channel");
+        assert_eq!(turn.situation().agent_channel_state().turn.as_ref().unwrap().work.context.prompts[0].classification, None, "and is recorded so");
     }
 }

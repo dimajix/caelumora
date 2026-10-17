@@ -1,17 +1,21 @@
-//! A piece of work of an agent as what is asked during it reads it (issue
-//! 204): the turn of an agent run here, or an external agent's exchange with
-//! its remote agent - both a `Work` in the model. [`AgentWork`] is the part
-//! both kinds of agent have: who works, in which contexts and bound by what,
-//! the agent's states to read from, and its session to navigate. What only a
-//! turn has - staged changes, tool calls, the plan - is `Turn`'s.
+//! The situation of a piece of work of an agent, to read (issues 204,
+//! 399): where it stands and what it sees from there - who works, in which
+//! contexts and bound by what, what it has seen so far, the agent's states,
+//! and its session to navigate. A piece of work is a turn of an agent run
+//! here or an external agent's exchange with its remote agent - both a
+//! `Work` in the model; a [`Situation`] is what both kinds have. What only a
+//! turn has - staged changes, tool calls, the plan, what it says and does in
+//! its channel - is `Turn`'s, which reads through its situation
+//! (`Turn::situation`) and passes none of it on.
 //!
-//! Components that only read - a `PromptProvider` - are given an
-//! `AgentWork` rather than a `Turn`, so that they serve both kinds of agent.
+//! Components that only read - a `PromptProvider`, a `ToolProvider` asked
+//! what it offers - are given a `Situation` rather than a `Turn`, so that
+//! they serve both kinds of agent.
 
 use caelumora_runtime::agent::state::AgentStateHandle;
 use caelumora_runtime::terminal::Terminal;
 use caelumora_runtime::runtime::ActorRuntime;
-use caelumora_runtime::view::{SessionView, ViewResult, WorkspaceView};
+use caelumora_runtime::view::{ChannelView, SessionView, ViewResult, WorkspaceView};
 use caelumora_runtime::workspace::WorkspaceResult;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -24,9 +28,10 @@ use caelumora_model::work::Work;
 use caelumora_model::workspace::Workspace;
 use std::sync::Arc;
 
-/// The work under way of an agent in its channel, to read.
+/// The situation of the work under way of an agent in its channel, to
+/// read.
 #[derive(Debug, Clone, Copy)]
-pub struct AgentWork<'a> {
+pub struct Situation<'a> {
     agent_id: AgentId,
     work: &'a Work,
     agent_channel_state: &'a AgentChannelState,
@@ -36,7 +41,7 @@ pub struct AgentWork<'a> {
     runtime: &'a ActorRuntime,
 }
 
-impl<'a> AgentWork<'a> {
+impl<'a> Situation<'a> {
     /// `work` of the agent `agent_id`, with its state in the channel and its
     /// own state, read through the actor's `runtime`.
     pub(crate) fn new(
@@ -91,10 +96,24 @@ impl<'a> AgentWork<'a> {
     /// 163): the root of what it may read elsewhere - the other channels'
     /// notes and histories, its own private notes there - at the
     /// classification the work began with (issue 67). `None` while it is not
-    /// attached to its channel, once the session is gone, or if the agent
-    /// may not read it.
-    pub async fn session(&self) -> Option<SessionView> {
+    /// attached to its channel, or once the session is gone.
+    ///
+    /// # Errors
+    /// As `ActorRuntime::session_view`: the agent may not read it, or reading
+    /// it failed.
+    pub async fn session(&self) -> ViewResult<Option<SessionView>> {
         self.runtime.session_view(&self.work.security_context, self.work.classification.clone()).await
+    }
+
+    /// The agent's channel as the work reads it from there (`session`,
+    /// `SessionView::channel`, issue 399): its members, its notes, its
+    /// workspace. `None` where the work reaches no session.
+    ///
+    /// # Errors
+    /// What following the views to it reports.
+    pub async fn channel(&self) -> ViewResult<Option<ChannelView>> {
+        let Some(session) = self.session().await? else { return Ok(None) };
+        session.channel(self.channel_id()).await.map(Some)
     }
 
     /// The workspace of the agent's session the work may use in its channel,
@@ -105,8 +124,8 @@ impl<'a> AgentWork<'a> {
     /// # Errors
     /// What following the views to it reports.
     pub async fn workspace(&self) -> ViewResult<Option<WorkspaceView>> {
-        let Some(session) = self.session().await else { return Ok(None) };
-        session.channel(self.channel_id()).await?.workspace().await
+        let Some(channel) = self.channel().await? else { return Ok(None) };
+        channel.workspace().await
     }
 
     /// The workspace of the agent's session and its terminal, to read its
@@ -117,7 +136,7 @@ impl<'a> AgentWork<'a> {
     ///
     /// # Errors
     /// As `ActorRuntime::workspace_terminal`.
-    pub async fn workspace_for_reading(&self) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
+    pub async fn workspace_terminal(&self) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
         self.runtime.workspace_terminal(&self.work.security_context, Grant::Read).await
     }
 

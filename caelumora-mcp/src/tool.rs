@@ -5,7 +5,7 @@ use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use caelumora_agents::turn::Turn;
-use caelumora_agents::work::AgentWork;
+use caelumora_agents::situation::Situation;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ToolAnnotations};
@@ -282,7 +282,7 @@ impl ToolProvider for McpToolProvider {
 
     /// Its tools wherever it is asked, unless its server could not be
     /// reached as it was built.
-    async fn offered(&self, _work: &AgentWork<'_>) -> Result<Vec<Tool>, String> {
+    async fn offered(&self, _situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
         match &self.unavailable {
             Some(why) => Err(why.clone()),
             None => Ok(self.tools()),
@@ -295,7 +295,7 @@ impl ToolProvider for McpToolProvider {
 
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         let remote_name = self.strip_prefix(name)?.to_string();
-        let security_context = turn.security_context().clone();
+        let security_context = turn.situation().security_context().clone();
 
         let call_result: McpResult<Value> = async {
             let auth_header = self.config.endpoint.bearer_token(&self.secret_manager, &security_context).await?;

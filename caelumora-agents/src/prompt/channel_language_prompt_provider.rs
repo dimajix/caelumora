@@ -19,7 +19,7 @@
 
 use caelumora_runtime::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::value::language::Language;
@@ -80,10 +80,9 @@ impl PromptProvider for ChannelLanguagePromptProvider {
         self.position
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
-        // Work that reaches no session (`AgentWork::session`) has no language to follow.
-        let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
-        let channel = session.channel(work.channel_id()).await?;
+    async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
+        // Work that reaches no session (`Situation::channel`) has no language to follow.
+        let Some(channel) = situation.channel().await? else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let text = self.text(channel.language().cloned());
         // Which language a channel is held in is no secret of its contents.
         Ok(Prompt::classified(text, Classification::PUBLIC))
@@ -216,6 +215,6 @@ mod tests {
     /// What `provider` tells agent `agent` in the turn begun in `state`.
     async fn told(provider: &ChannelLanguagePromptProvider, agent: AgentId, session_loop: &Arc<SessionLoop>, state: &mut AgentChannelState) -> Prompt {
         let turn = Turn::of(agent, "Jonathan".to_string(), state, AgentStateHandle::detached(), actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(agent))).expect("a turn was begun");
-        provider.get_prompt(&turn.work()).await.unwrap()
+        provider.get_prompt(&turn.situation()).await.unwrap()
     }
 }

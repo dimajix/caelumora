@@ -40,7 +40,7 @@ impl ToolProvider for EchoToolProvider {
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         if name == ECHO_TOOL_NAME {
             // The arguments themselves: classified as the turn (issue 168).
-            Ok(ToolOutput::classified(params.clone(), turn.label()))
+            Ok(ToolOutput::classified(params.clone(), turn.situation().label()))
         } else {
             Err(ToolError::UnknownTool(name.to_string()))
         }

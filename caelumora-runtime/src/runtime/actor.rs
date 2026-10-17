@@ -16,7 +16,7 @@ use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
 use crate::agent::state::AgentStateHandle;
 use crate::event::{EventSubscription, SubscriptionTopic};
-use crate::view::{SessionView, Viewer};
+use crate::view::{SessionView, ViewResult, Viewer};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{SecurityContext, AccessPolicy};
 use caelumora_model::session::Session;
@@ -29,7 +29,6 @@ use caelumora_model::workspace::Workspace;
 use crate::terminal::{Shell, Terminal};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
 use std::sync::Arc;
-use tracing::debug;
 use super::{ChannelRuntime, Services};
 
 /// What an actor runs with (issue 69): the services every actor needs, and
@@ -201,18 +200,15 @@ impl ActorRuntime {
     /// group of the session's participants: the root of what its work
     /// navigates, asked in the context of each piece of work (issue 255).
     /// `None` while the channel is still being built or once it or its
-    /// session is gone, or if it may not.
-    pub async fn session_view(&self, context: &SecurityContext, classification: Classification) -> Option<SessionView> {
-        let session_loop = self.channel_loop()?.session_loop()?;
+    /// session is gone.
+    ///
+    /// # Errors
+    /// As `Views::session`: `context` may not read it, or reading it failed.
+    pub async fn session_view(&self, context: &SecurityContext, classification: Classification) -> ViewResult<Option<SessionView>> {
+        let Some(session_loop) = self.channel_loop().and_then(|channel| channel.session_loop()) else { return Ok(None) };
         let from = Place { channel: self.channel_id, classification, session: session_loop.privacy() };
         let views = session_loop.views(Viewer::from_place(context.clone(), from));
-        match views.session(session_loop.id()).await {
-            Ok(session) => Some(session),
-            Err(e) => {
-                debug!(session = %session_loop.id(), caller = %context.caller_id, "An agent may not read its own session: {e}");
-                None
-            }
-        }
+        views.session(session_loop.id()).await.map(Some)
     }
 
     /// The classification of the actor's channel as it is now, which what

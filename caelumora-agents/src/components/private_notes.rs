@@ -26,7 +26,7 @@ use crate::notes::{AgentNotes, NoteKind};
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::prompt::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use caelumora_runtime::view::PrivateNotesElsewhere;
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
@@ -133,7 +133,7 @@ impl ToolProvider for PrivateNotesComponent {
         }?;
         // What these answer tells only what the model asked for: classified
         // as the turn (issue 168).
-        Ok(ToolOutput::classified(value, turn.label()))
+        Ok(ToolOutput::classified(value, turn.situation().label()))
     }
 }
 
@@ -183,11 +183,11 @@ impl PromptProvider for PrivateNotesComponent {
         PromptPosition::BeforeTurnInput
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
-        let own = AgentNotes::current(work, NoteKind::Private);
+    async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
+        let own = AgentNotes::current(situation, NoteKind::Private);
         // This channel's come from the turn, with its own changes; the
         // others' through the agent itself.
-        let elsewhere = match work.session().await {
+        let elsewhere = match situation.session().await? {
             Some(session) => session.own_private_notes().await,
             None => Vec::new(),
         };
@@ -195,13 +195,13 @@ impl PromptProvider for PrivateNotesComponent {
         let private = |channel, digest, notes: &[Note]| KnowledgeRef {
             channel,
             // Its own session's channels only.
-            session: work.session_id(),
-            source: KnowledgeSource::PrivateNotes { agent: work.agent_id(), digest },
+            session: situation.session_id(),
+            source: KnowledgeSource::PrivateNotes { agent: situation.agent_id(), digest },
             classification: Classification::join_all(notes.iter().map(|n| &n.classification)),
         };
         let mut knowledge: Vec<KnowledgeRef> = elsewhere.iter().map(|c| private(c.channel, c.digest, &c.notes)).collect();
         if !own.is_empty() {
-            knowledge.push(private(work.channel_id(), AgentNotes::digest(work, NoteKind::Private), &own));
+            knowledge.push(private(situation.channel_id(), AgentNotes::digest(situation, NoteKind::Private), &own));
         }
         Ok(Prompt::of_knowledge(render(&own, &elsewhere), knowledge))
     }
@@ -279,7 +279,7 @@ mod tests {
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
         let noted = tools.execute(WRITE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), None, &mut turn).await.unwrap();
         assert_eq!(noted.value["id"], 1, "its own numbering");
-        assert!(AgentNotes::current(&turn.work(), NoteKind::Private).is_empty(), "not before the turn completes");
+        assert!(AgentNotes::current(&turn.situation(), NoteKind::Private).is_empty(), "not before the turn completes");
         assert!(turn.commit(false, &Discard).await.channel_state_changed, "the channel state changed");
         assert_eq!(state.private_notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["secret"]);
         assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["public"], "the chains are apart");

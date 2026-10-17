@@ -115,7 +115,7 @@ impl AgentActor {
         turn: &mut Turn<'_>,
     ) -> Option<Message> {
         let mut output =
-            apply_stage_processors(&self.emit_out_processors, vec![message], turn.security_context())
+            apply_stage_processors(&self.emit_out_processors, vec![message], turn.situation().security_context())
                 .await
                 .ok()?;
         if output.is_empty() {
@@ -160,12 +160,12 @@ impl AgentActor {
         self.body.control.begin_turn(turn_id);
         let mut turn = self.turn_under_way(state)?;
         // Judged for whoever asked, in the channel as the turn begins.
-        let tool_sets = self.tool_executor.tool_sets(&turn.work()).await;
+        let tool_sets = self.tool_executor.tool_sets(&turn.situation()).await;
         turn.offer_tools(tool_sets);
 
         debug!("Starting generating messages for agent {} {} in turn {}", self.id(), turn.agent_name(), turn_id);
         turn.send_event(ActorEvent::ResponseStarted { turn_id }, output).await?;
-        let (parts, knowledge) = self.body.current_context(&turn.work()).await?;
+        let (parts, knowledge) = self.body.current_context(&turn.situation()).await?;
         turn.set_context(parts, knowledge);
         Ok(())
     }
@@ -588,7 +588,7 @@ impl AgentActor {
     /// Whether the context of `turn` is to be compacted before its next model
     /// call (issue 284), as its policy says - asked once before each call.
     fn compaction_due(&self, turn: &Turn<'_>) -> bool {
-        turn.may_compact() && self.compaction_policy.is_due(&turn.work())
+        turn.may_compact() && self.compaction_policy.is_due(&turn.situation())
     }
 
     /// Compacts the context of `turn` before its next model call (issue
@@ -730,7 +730,7 @@ async fn withdraw_requests(answering: &Answering, abandoned: &[ToolCallState], o
 /// `complete` as for `label`.
 fn stamp(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, complete: bool) {
     message.sender_name = turn.agent_name().to_string();
-    message.sender_id = ActorId::Agent(turn.agent_id());
+    message.sender_id = ActorId::Agent(turn.situation().agent_id());
     message.turn_id = Some(turn.turn_id());
     label(message, turn, reasoning_visibility, complete);
     message.internal = turn.in_plan_step();
@@ -764,7 +764,7 @@ fn label(message: &mut Message, turn: &Turn, reasoning_visibility: Visibility, c
     // What the model produces is derived from what the turn has seen: it
     // carries the turn's label, at most the channel's classification as
     // the turn began with it (issue 168).
-    message.classification = turn.label();
+    message.classification = turn.situation().label();
 
     let owners_call = if complete {
         message.tool_calls.iter().any(|c| !c.visibility.arguments.is_channel())
@@ -968,7 +968,7 @@ impl Actor for AgentActor {
         };
         let at = EventContext::new(runtime.session_controller().load().id, runtime.channel_controller().load().id, ActorId::None, String::new());
         let work = Work::new(at, self.body.security_context(), runtime.channel_classification());
-        self.tool_executor.tool_sets(&self.body.work(&work, &state)).await
+        self.tool_executor.tool_sets(&self.body.situation(&work, &state)).await
     }
 
     fn wakeup(&self) {
@@ -1100,7 +1100,7 @@ mod tests {
             agent_channel_state.offer_tools(vec![ToolSet::new("tools", "some tools", tools)]);
             let mut turn = Turn::under_way(agent, &mut agent_channel_state);
             if private_knowledge {
-                turn.record_knowledge(KnowledgeRef { channel: turn.channel_id(), session: turn.session_id(), source: KnowledgeSource::PrivateNotes { agent, digest: None }, classification: None });
+                turn.record_knowledge(KnowledgeRef { channel: turn.situation().channel_id(), session: turn.situation().session_id(), source: KnowledgeSource::PrivateNotes { agent, digest: None }, classification: None });
             }
             let mut message = answer(calls);
             label(&mut message, &turn, personality, complete);

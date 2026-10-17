@@ -18,7 +18,7 @@
 
 use caelumora_runtime::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
@@ -67,11 +67,10 @@ impl PromptProvider for ChannelMembersPromptProvider {
         self.position
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
-        // Work that reaches no session (`AgentWork::session`) has nobody to name.
-        let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
-        let channel = session.channel(work.channel_id()).await?;
-        let own = ActorId::Agent(work.agent_id());
+    async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
+        // Work that reaches no session (`Situation::channel`) has nobody to name.
+        let Some(channel) = situation.channel().await? else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
+        let own = ActorId::Agent(situation.agent_id());
         let mut me = None;
         let mut others = Vec::new();
         for member in channel.members().await {
@@ -91,7 +90,7 @@ impl PromptProvider for ChannelMembersPromptProvider {
             }
         }
         let roster = (me, others);
-        let explanation = work.profile().sender_explanation();
+        let explanation = situation.profile().sender_explanation();
         let explanation = explanation.as_deref();
         let text = match &self.told {
             None => render(roster.0.as_ref(), &roster.1, explanation),
@@ -206,7 +205,8 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::turn::Turn;
-    use crate::testing::TestAgents;
+    use crate::testing::{self, TestAgents};
+    use caelumora_runtime::view::ViewError;
     use caelumora_runtime::testing::TestRuntime;
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_runtime::agent::state::AgentStateHandle;
@@ -333,7 +333,7 @@ mod tests {
         state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Default::default());
         let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(jonathan.id))).expect("a turn was begun");
 
-        let prompt = ChannelMembersPromptProvider::new(PromptPosition::Start).get_prompt(&turn.work()).await.unwrap();
+        let prompt = ChannelMembersPromptProvider::new(PromptPosition::Start).get_prompt(&turn.situation()).await.unwrap();
         assert_eq!(prompt.text, "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
             About you: A quiz master.\n\
@@ -342,5 +342,22 @@ mod tests {
             - Sassy (@sassy), an agent.\n\
             - Bob (@bob), a person.\n", "no approver, nobody who no longer exists");
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));
+    }
+
+    #[tokio::test]
+    async fn work_that_may_not_read_its_session_fails_the_part_rather_than_naming_nobody() {
+        let world = testing::world().await;
+        let personality = world.personality("plain", None, &[]).await;
+        let outsider = world.agent("outsider", world.alice, &personality).await;
+        let session = world.shared_session(&[], &[]).await;
+        let channel = &session.channels()[0];
+        // In its own name alone: nobody it acts for may read the session.
+        let context = SecurityContext::default().next(ActorId::Agent(outsider), ActorId::None, ActorId::None);
+        let mut state = AgentChannelState::default();
+        state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), context, channel.classification(), Default::default());
+        let turn = Turn::of(outsider, "outsider".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(channel, ActorId::Agent(outsider))).expect("a turn was begun");
+        assert!(matches!(turn.situation().session().await, Err(ViewError::SessionNotFound(_))), "reached, but not to be read (issue 399)");
+        let failed = ChannelMembersPromptProvider::new(PromptPosition::Start).get_prompt(&turn.situation()).await;
+        assert!(matches!(failed, Err(ContextError::View(ViewError::SessionNotFound(_)))), "left to its fail policy: {failed:?}");
     }
 }

@@ -14,7 +14,7 @@ use crate::notes::{AgentNotes, NoteKind};
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::prompt::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use caelumora_model::question::Answers;
 use caelumora_model::snapshot::PublishedNotes;
 use crate::tool::{arguments, classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
@@ -155,7 +155,7 @@ impl ToolProvider for NotesComponent {
         }?;
         // What these answer tells only what the model asked for: classified
         // as the turn (issue 168).
-        Ok(ToolOutput::classified(value, turn.label()))
+        Ok(ToolOutput::classified(value, turn.situation().label()))
     }
 }
 
@@ -203,14 +203,14 @@ impl NotesComponent {
         #[derive(Deserialize)]
         struct ReadNotes { #[serde(default)] channel: Option<String> }
         let ReadNotes { channel } = arguments(params)?;
-        let Some(session) = turn.session().await else {
+        let Some(session) = turn.situation().session().await? else {
             return Err(ToolError::ExecutionFailed("the turn is in no session to read from".to_string()));
         };
         let channels = match channel.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
             Some(name) => vec![session.channel_named(name).await?],
             None => session.channels().await,
         };
-        let here = turn.channel_id();
+        let here = turn.situation().channel_id();
         let mut listed = Vec::new();
         let mut read = Vec::new();
         for channel in channels {
@@ -255,31 +255,30 @@ impl PromptProvider for NotesComponent {
         PromptPosition::BeforeTurnInput
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
-        let own = ActorId::Agent(work.agent_id());
+    async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
+        let own = ActorId::Agent(situation.agent_id());
         let mut others = Vec::new();
-        if let Some(session) = work.session().await {
-            let published = match session.channel(work.channel_id()).await {
-                Ok(channel) => channel.notes().await,
-                Err(e) => Err(e),
-            };
-            match published {
-                Ok(published) => others = published,
-                // The agent can still answer without the others' notes.
-                Err(e) => warn!("Reading the notes of channel {} failed: {}", work.channel_id(), e),
-            }
+        let published = match situation.channel().await {
+            Ok(Some(channel)) => channel.notes().await,
+            Ok(None) => Ok(Vec::new()),
+            Err(e) => Err(e),
+        };
+        match published {
+            Ok(published) => others = published,
+            // The agent can still answer without the others' notes.
+            Err(e) => warn!("Reading the notes of channel {} failed: {}", situation.channel_id(), e),
         }
         others.retain(|p| p.agent != own && !p.notes.is_empty());
         others.sort_by(|l, r| l.name.cmp(&r.name));
-        let own_notes = AgentNotes::current(work, NoteKind::Public);
+        let own_notes = AgentNotes::current(situation, NoteKind::Public);
         let text = render(&own_notes, others.iter().map(|p| (p.name.as_str(), p.notes.as_slice())));
 
         // What the part shows, as knowledge read (issue 17).
-        let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(work.channel_id(), work.session_id(), p)).collect();
+        let mut knowledge: Vec<KnowledgeRef> = others.iter().filter_map(|p| notes_ref(situation.channel_id(), situation.session_id(), p)).collect();
         if !own_notes.is_empty() {
-            let own_digest = AgentNotes::digest(work, NoteKind::Public);
+            let own_digest = AgentNotes::digest(situation, NoteKind::Public);
             let classification = Classification::join_all(own_notes.iter().map(|n| &n.classification));
-            knowledge.push(KnowledgeRef { channel: work.channel_id(), session: work.session_id(), source: KnowledgeSource::Notes { agent: work.agent_id(), digest: own_digest }, classification });
+            knowledge.push(KnowledgeRef { channel: situation.channel_id(), session: situation.session_id(), source: KnowledgeSource::Notes { agent: situation.agent_id(), digest: own_digest }, classification });
         }
         Ok(Prompt::of_knowledge(text, knowledge))
     }
@@ -376,7 +375,7 @@ mod tests {
             let mut turn = Turn::begun(AgentId::new(), &mut state);
             let noted = tools.execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn).await.unwrap();
             assert_eq!(noted.value["id"], 1);
-            assert!(AgentNotes::current(&turn.work(), NoteKind::Public).is_empty(), "not before the turn completes");
+            assert!(AgentNotes::current(&turn.situation(), NoteKind::Public).is_empty(), "not before the turn completes");
             let unknown = tools.execute(REVOKE_NOTE_TOOL_NAME, &serde_json::json!({ "id": 7 }), None, &mut turn).await;
             assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))), "not one of its notes");
             assert!(turn.commit(false, &Discard).await.channel_state_changed, "the turn changed notes");

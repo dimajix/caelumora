@@ -105,7 +105,7 @@ impl Turn<'_> {
     pub(crate) fn place_turn_prompt(&mut self, role: MessageRole, text: String) {
         let after = self.current().work.context.transcript;
         // Written by the runtime from what the turn produced: as the turn.
-        let prompt = self.keep_prompt(role, text, after, Some(self.label()));
+        let prompt = self.keep_prompt(role, text, after, Some(self.situation().label()));
         self.current_mut().work.context.prompts.push(prompt);
     }
 }

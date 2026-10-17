@@ -1959,7 +1959,7 @@ impl ProvidesCommands for Commanded {
 #[async_trait]
 impl AgentCommandProvider for Commanded {
     async fn execute(&self, name: &str, _args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
-        self.0.lock().unwrap().push(turn.security_context().clone());
+        self.0.lock().unwrap().push(turn.situation().security_context().clone());
         Ok(CommandOutput::private(format!("{name}: done")))
     }
 }

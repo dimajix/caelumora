@@ -15,7 +15,7 @@
 //! 163).
 
 use crate::turn::Turn;
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use crate::tool::{ToolError, ToolResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::digest::Digest;
@@ -24,7 +24,7 @@ use caelumora_model::ledger::Staged;
 use caelumora_model::memory::{Memories, Memory, MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::session::SessionId;
-use caelumora_runtime::view::Views;
+use caelumora_runtime::view::{SessionView, Views};
 use tracing::warn;
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
 use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext, AccessPolicy};
@@ -46,11 +46,11 @@ impl AgentMemory {
     /// now permit it - looked up through the turn's views. Of a session
     /// that is gone, the one it had decides; one that cannot be looked up
     /// recalls nothing. A turn in no session recalls nothing.
-    pub async fn recalled(work: &AgentWork<'_>, confidentiality: &dyn ConfidentialityPolicy) -> Vec<Memory> {
-        let context = work.security_context();
-        let Some(own) = work.session().await else { return Vec::new() };
+    pub async fn recalled(situation: &Situation<'_>, confidentiality: &dyn ConfidentialityPolicy) -> Vec<Memory> {
+        let context = situation.security_context();
+        let Some(own) = Self::own_session(situation).await else { return Vec::new() };
         let Some(here) = own.views().viewer().place().cloned() else { return Vec::new() };
-        let memory = work.agent_state().current().memory.current();
+        let memory = situation.agent_state().current().memory.current();
         let mut sessions: Vec<(SessionId, Option<SessionPrivacy>)> = Vec::new();
         let mut decided: Vec<(MemoryOrigin, Classification, bool)> = Vec::new();
         let mut recalled = Vec::new();
@@ -115,8 +115,8 @@ impl AgentMemory {
 
     /// The digest of the memory as it is now: the state of knowledge a turn
     /// that recalls from it records.
-    pub fn digest(work: &AgentWork) -> Option<Digest> {
-        work.agent_state().current().memory.digest()
+    pub fn digest(situation: &Situation) -> Option<Digest> {
+        situation.agent_state().current().memory.digest()
     }
 
     /// Remembers `text`, as written in the turn's channel, with the privacy
@@ -131,8 +131,8 @@ impl AgentMemory {
     /// time, and would otherwise hand out the same number. Deliberately the
     /// one exception to "commit, don't write" (issue 19).
     pub async fn remember(turn: &mut Turn<'_>, text: String) -> MemoryId {
-        let classification = turn.label();
-        let id = turn.agent_state().reserve_memory_id();
+        let classification = turn.situation().label();
+        let id = turn.situation().agent_state().reserve_memory_id();
         let origin = Self::origin(turn).await;
         turn.stage_memory(MemoryChange::Add { id, text, classification }, origin);
         id
@@ -142,7 +142,7 @@ impl AgentMemory {
     /// (issue 156) - every entry, recallable here or not.
     pub fn effective(turn: &Turn) -> Staged<Memories> {
         let staged = turn.staged_memory().iter().map(|(change, origin)| (change, origin.clone()));
-        turn.agent_state().current().memory.with_staged(staged)
+        turn.situation().agent_state().current().memory.with_staged(staged)
     }
 
     /// Entry `id` as it stands with the turn's changes, if it does and is
@@ -151,12 +151,12 @@ impl AgentMemory {
     /// as in [`recalled`](Self::recalled).
     pub async fn find(turn: &Turn<'_>, id: MemoryId, confidentiality: &dyn ConfidentialityPolicy) -> Option<Memory> {
         let entry = Self::effective(turn).get(id)?.clone();
-        let Some(stored) = turn.agent_state().current().memory.current().into_iter().find(|m| m.id == id) else {
+        let Some(stored) = turn.situation().agent_state().current().memory.current().into_iter().find(|m| m.id == id) else {
             return Some(entry);
         };
-        let own = turn.session().await?;
+        let own = Self::own_session(&turn.situation()).await?;
         let here = own.views().viewer().place()?.clone();
-        Self::may_recall(&stored, &here, own.views(), &mut Vec::new(), confidentiality, turn.security_context()).await.then_some(entry)
+        Self::may_recall(&stored, &here, own.views(), &mut Vec::new(), confidentiality, turn.situation().security_context()).await.then_some(entry)
     }
 
     /// Updates entry `id` - one the turn may change (see
@@ -168,7 +168,7 @@ impl AgentMemory {
         if Self::find(turn, id, confidentiality).await.is_none() {
             return false;
         }
-        let classification = turn.label();
+        let classification = turn.situation().label();
         let origin = Self::origin(turn).await;
         turn.stage_memory(MemoryChange::Update { id, text, classification }, origin);
         true
@@ -197,15 +197,15 @@ impl AgentMemory {
     /// `InvalidParameter` if there is no such entry here, `PermissionDenied`
     /// if the policy refuses.
     pub async fn reclassify(turn: &mut Turn<'_>, id: MemoryId, classification: Classification, access_policy: &dyn AccessPolicy, confidentiality: &dyn ConfidentialityPolicy) -> ToolResult<()> {
-        let here = turn.classification();
+        let here = turn.situation().classification();
         if Self::find(turn, id, confidentiality).await.is_none() {
             return Err(ToolError::InvalidParameter(format!("there is no entry #{id} you remember here")));
         }
         let refused = || ToolError::PermissionDenied(format!("reclassifying entry #{id} as {classification}"));
-        let attributes = turn.work().channel_attributes();
-        let action = ActionType::Reclassify(Reclassified::Memory { author: ActorId::Agent(turn.agent_id()), attributes: &attributes });
-        access_policy.require(turn.security_context(), action, |_| refused()).await?;
-        confidentiality.require_publish(turn.security_context(), &classification, &here, refused)?;
+        let attributes = turn.situation().channel_attributes();
+        let action = ActionType::Reclassify(Reclassified::Memory { author: ActorId::Agent(turn.situation().agent_id()), attributes: &attributes });
+        access_policy.require(turn.situation().security_context(), action, |_| refused()).await?;
+        confidentiality.require_publish(turn.situation().security_context(), &classification, &here, refused)?;
         let origin = Self::origin(turn).await;
         turn.stage_memory(MemoryChange::Reclassify { id, classification }, origin);
         Ok(())
@@ -214,8 +214,19 @@ impl AgentMemory {
     /// Where a change made in `turn` is made: its channel, and the privacy
     /// its session has now (issue 134) - private, for a turn in no session.
     async fn origin(turn: &Turn<'_>) -> MemoryOrigin {
-        let session = turn.session().await.map(|s| s.privacy())
-            .unwrap_or_else(|| SessionPrivacy { id: turn.session_id(), ..SessionPrivacy::default() });
-        MemoryOrigin { channel: turn.channel_id(), session }
+        let session = Self::own_session(&turn.situation()).await.map(|s| s.privacy())
+            .unwrap_or_else(|| SessionPrivacy { id: turn.situation().session_id(), ..SessionPrivacy::default() });
+        MemoryOrigin { channel: turn.situation().channel_id(), session }
+    }
+
+    /// The agent's session as `situation` reads it (`Situation::session`),
+    /// through which what it remembers is recalled and placed; `None` if it
+    /// reaches none, or reading it failed - which is logged, since the turn
+    /// goes on as one in no session.
+    async fn own_session(situation: &Situation<'_>) -> Option<SessionView> {
+        situation.session().await.unwrap_or_else(|e| {
+            warn!("Agent {}: its session could not be read for its memory: {e}", situation.agent_id());
+            None
+        })
     }
 }

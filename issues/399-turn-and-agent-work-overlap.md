@@ -1,6 +1,6 @@
 # 399 — A turn repeats what its work reads, and the work names one workspace three ways
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -45,19 +45,52 @@ What is wrong is that the names and signatures do not follow it.
 
 ## Considerations
 
-**A. The turn reads through its work.** `Turn` passes nothing on that `AgentWork` reads; what reads
-is `turn.work().…`. `Turn`'s own methods change something, act in the channel, or read what the
-turn itself holds (`staged_memory`, `staged_notes`, `requested_state`, the plan, the tool calls).
-The rule of AGENT-TURN.md then shows in the API. Borrowing does not change: what `turn.work()`
-returns borrows the turn as `turn.security_context()` does today. It costs about a hundred call
-sites, mechanically, many in tests (`turn.label()` alone thirty times). The opposite - passing on
-every method of `AgentWork` - was weighed and rejected: it doubles more, and every new method of
-the work would have to be added twice.
+**The name.** `AgentWork` sounds like an entity - the agent's work - and, to some ears, like
+changing something, though it is a handle to read: who works, where, in whose name, bound by what,
+what it has seen so far, the agent's states, and the way into its session. What it is, the views
+already have a word for in part: a `Viewer` reads as a `SecurityContext` from a `Place`
+(`caelumora-runtime/src/view/mod.rs`) - the channel, the classification it reads at, the session.
+A name for it says where a piece of work stands and what it sees from there. Weighed:
+
+- `Situation` - the circumstances a piece of work is in. Reads best where the type is used most,
+  as a question put to a component: the prompt part, the tools that suit this situation
+  (`get_prompt(&self, situation: &Situation)`, `offered(situation)`). Does not sound like
+  changing, is taken nowhere in the code, and is the same word in German. A little general.
+- `Perspective` - what is seen, from where and how far; says most clearly that it only reads, and
+  fits `Viewer` and `Place`, and that it shifts as the work sees more (`label`). Reads awkwardly in
+  the providers' signatures ("the prompt from a perspective").
+- `Vantage`, `Purview` - more precise than `Perspective`, but rare words.
+- `Environment` - too broad, and taken by environment variables and the configuration;
+  `Workplace` - a place that outlives a piece of work, and too close to `Workspace`; `Access` -
+  sounds like a permission, next to `AccessPolicy` and `AccessQuestions`.
+- `Mandate`, `Remit`, `Brief` - only the authority and the bounds, not the states and the way into
+  the session; `Brief` next to the briefing prompt part.
+- `Desk`, `Workbench`, `Station`, `Seat` - sound like tools and doing, or outlive a piece of work
+  (`turn_id`, `label` are a piece of work's).
+- `WorkView`, `WorkContext`, `WorkRef` - each ending means something else already: a view is
+  reached through `Views` and hands out no terminal (296, 344), a context is five things
+  (`SecurityContext`, `EventContext`, `ContextRef`, `ContextProvider`, `ContextResolver`), a ref
+  is a reference by digest (`ContextRef`, `KnowledgeRef`).
+
+Decided: `Situation`, reached as `Turn::situation()` in place of `Turn::work()`; the parameters
+named `work` that hold one are named `situation`. The model's `Work` keeps its name - it is a
+piece of work, what a turn and an external agent's exchange have in common, and it changes as the
+work goes on (`see`, `record_knowledge`); a situation holds the work it is about. The renaming
+comes first, as part of A, since A touches the same call sites (`turn.work().…`).
+
+**A. The turn reads through its situation.** `Turn` passes nothing on that its `Situation` reads;
+what reads is `turn.situation().…`. `Turn`'s own methods change something, act in the channel, or
+read what the turn itself holds (`staged_memory`, `staged_notes`, `requested_state`, the plan, the
+tool calls). The rule of AGENT-TURN.md then shows in the API. Borrowing does not change: what
+`turn.situation()` returns borrows the turn as `turn.security_context()` does today. It costs about
+a hundred call sites, mechanically, many in tests (`turn.label()` alone thirty times). Passing on
+every method of `Situation` instead was weighed and rejected: it doubles more, and every new method
+of the situation would have to be added twice.
 
 **B. Names by one rule: a view is named after the thing, a handle after the handle.**
 
 ```rust
-// AgentWork - reading
+// Situation - reading
 fn session(&self)   -> ViewResult<Option<SessionView>>
 fn channel(&self)   -> ViewResult<Option<ChannelView>>   // new
 fn workspace(&self) -> ViewResult<Option<WorkspaceView>> // channel()?.workspace()
@@ -84,9 +117,10 @@ terminal for the instruction files - and B does not change that.
 
 ## Done when
 
-- `Turn` has no method that only passes on one of `AgentWork`; components read through
-  `turn.work()`.
-- `AgentWork` offers `session`, `channel` and `workspace` as views in one shape of answer, and
+- `AgentWork` is `Situation`, reached as `Turn::situation()`; the model's `Work` is unchanged.
+- `Turn` has no method that only passes on one of `Situation`; components read through
+  `turn.situation()`.
+- `Situation` offers `session`, `channel` and `workspace` as views in one shape of answer, and
   `workspace_terminal` for reading; `workspace_for_reading` is gone.
 - No caller writes `session.channel(work.channel_id())` any more.
 - AGENT-TURN.md names the rule for both types and for views and handles.
@@ -96,3 +130,28 @@ terminal for the instruction files - and B does not change that.
 
 - **2026-10-17** — Opened at the maintainer's request, after a review of how `AgentWork` and
   `Turn` are used: both A and B, A first.
+- **2026-10-17** — Decided with the maintainer: `AgentWork` is named `Situation` (*The name*),
+  renamed as the first step of A.
+- **2026-10-17** — A in the working tree of the branch: `AgentWork` is `Situation`
+  (`caelumora-agents/src/situation.rs`), reached as `Turn::situation()` and, for an external
+  agent's work, `ActorBody::situation`; the parameters that hold one are named `situation`. `Turn`
+  lost `session`, `channel_id`, `session_id`, `classification`, `label`, `security_context`,
+  `agent_id`, `agent_state` and `agent_channel_state`; its callers, and the turn's own files, read
+  through `situation()`. `turn_id` and `agent_name` stay on `Turn`, since a situation has neither.
+  AGENT-TURN.md describes the situation and the rule, TOOLS.md and MEMORY.md name it. No behaviour
+  changes.
+- **2026-10-17** — Decided with the maintainer, departing from B as written: where a session that
+  is reached cannot be read, a prompt part or a tool passes the error on (`?`), as it passes on
+  one of its channel already, instead of going on as if there were no session - a part falls under
+  its fail policy, a tool tells why. Where nothing can be passed on - the agent's memory, the notes
+  part, which goes on without the others' notes - it is logged and the work goes on as before.
+- **2026-10-17** — B in the working tree of the branch: `ActorRuntime::session_view` and
+  `Situation::session` answer `ViewResult<Option<SessionView>>` - `None` where no session is
+  reached, `SessionNotFound` where it may not be read -, `Situation::channel` is new and takes the
+  place of the copies of `session.channel(work.channel_id())`, `Situation::workspace` follows it,
+  and `workspace_for_reading` is `Situation::workspace_terminal`. `AgentMemory` reads the session
+  through one function of its own that logs a failure. AGENT-TURN.md names the rule for views and
+  handles, PERMISSION-CHECKS.md the refusal.
+- **2026-10-17** — Done, with a test that work which may not read the session it reaches fails a
+  prompt part rather than telling of nobody
+  (`work_that_may_not_read_its_session_fails_the_part_rather_than_naming_nobody`).

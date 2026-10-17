@@ -439,7 +439,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [396](396-three-ways-to-read-a-message-as-it-stands.md) | done | One message as it stands is read by three functions, two of which fold everything said after it or given before it. |
 | [397](397-agent-channel-state-follows-the-transcript.md) | done | Four methods of `AgentChannelState` move the turn's context after the transcript's head each for itself, and `compact` checks for a turn four times. |
 | [398](398-given-means-four-things.md) | done | Around the transcript "given" names a message given to read, which messages the transcript holds, and the directory of the prompt texts and tool sets. |
-| [399](399-turn-and-agent-work-overlap.md) | open | `Turn` passes on nine of `AgentWork`'s methods to read and not the others, and `AgentWork` names its session, its workspace and the workspace's terminal by no common rule and fails in three shapes, so neither the line between the two types nor the one between views and handles can be read off their methods. |
+| [399](399-turn-and-agent-work-overlap.md) | done | `Turn` passes on nine of `AgentWork`'s methods to read and not the others, and `AgentWork` names its session, its workspace and the workspace's terminal by no common rule and fails in three shapes, so neither the line between the two types nor the one between views and handles can be read off their methods. |
 
 ## Integrations
 

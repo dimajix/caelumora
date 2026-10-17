@@ -34,7 +34,7 @@ use caelumora_model::work::TurnId;
 use tokio::sync::broadcast;
 use crate::command::AgentCommandProvider;
 use crate::plugin::AgentsPlugin;
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use crate::prompt::{ContextError, Prompt, PromptProvider};
 use crate::message::{ProcessingError, MessageProcessor, PerceiveInProcessor};
 use crate::llm::{LLMClient, LLMResult};
@@ -235,8 +235,8 @@ struct Heard;
 
 #[async_trait::async_trait]
 impl PromptProvider for Heard {
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
-        Ok(Prompt::from(format!("[Heard]\n{}", messages_of(&work.agent_channel_state().history).len())))
+    async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
+        Ok(Prompt::from(format!("[Heard]\n{}", messages_of(&situation.agent_channel_state().history).len())))
     }
 }
 

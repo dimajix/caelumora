@@ -3,13 +3,13 @@
 //! (issue 284). The default compaction policy of an agent.
 //!
 //! How full the context is, is measured by the calls made on it and
-//! estimated beyond them (`AgentWork::token_positions`); only once a call
+//! estimated beyond them (`Situation::token_positions`); only once a call
 //! made on the active branch measured it, not right after a compaction,
 //! whose branch no call measured yet. A model that reports no context size
 //! gives nothing to measure against: its agent does not compact on its own,
 //! which the policy says once.
 
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use crate::compaction::CompactionPolicy;
 use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use serde::Deserialize;
@@ -50,13 +50,13 @@ impl ThresholdCompactionPolicy {
 }
 
 impl CompactionPolicy for ThresholdCompactionPolicy {
-    fn is_due(&self, work: &AgentWork<'_>) -> bool {
-        let Some((positions, true)) = work.token_positions() else { return false };
+    fn is_due(&self, situation: &Situation<'_>) -> bool {
+        let Some((positions, true)) = situation.token_positions() else { return false };
         let tokens = positions.last().copied().unwrap_or(0);
-        let size = work.agent_channel_state().used.and_then(|usage| usage.context_size);
+        let size = situation.agent_channel_state().used.and_then(|usage| usage.context_size);
         let Some(size) = size.filter(|size| *size > 0) else {
             if !self.told_no_size.swap(true, Ordering::Relaxed) {
-                info!("Agent {}: its model reports no context size; it does not compact its context on its own", work.agent_id());
+                info!("Agent {}: its model reports no context size; it does not compact its context on its own", situation.agent_id());
             }
             return false;
         };
@@ -99,7 +99,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.perceive(vec![heard.clone()], vec![heard]);
         let mut turn = workspace_turn(&world, &mut state);
-        assert!(!policy.is_due(&turn.work()), "nothing measured");
+        assert!(!policy.is_due(&turn.situation()), "nothing measured");
 
         let call = |prompt: u64, size: Option<u64>| Message {
             id: MessageId::new(),
@@ -112,11 +112,11 @@ mod tests {
             ..Message::new(Classification::PUBLIC)
         };
         turn.push_message(call(700, Some(1000)));
-        assert!(!policy.is_due(&turn.work()), "701 of 1000");
+        assert!(!policy.is_due(&turn.situation()), "701 of 1000");
         turn.push_message(call(800, Some(1000)));
-        assert!(policy.is_due(&turn.work()), "801 of 1000");
+        assert!(policy.is_due(&turn.situation()), "801 of 1000");
         turn.push_message(call(900, None));
-        assert!(!policy.is_due(&turn.work()), "nothing to measure against without a size");
+        assert!(!policy.is_due(&turn.situation()), "nothing to measure against without a size");
     }
 
     #[test]

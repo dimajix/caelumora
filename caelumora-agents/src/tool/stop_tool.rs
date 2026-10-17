@@ -65,14 +65,14 @@ impl ToolProvider for StopToolProvider {
         // What it answers tells nothing: classified as the turn (issue 168).
         match name {
             STOP_TOOL_NAME | BYE_TOOL_NAME => {
-                info!("Stopping agent {} {}", turn.agent_id(), turn.agent_name());
+                info!("Stopping agent {} {}", turn.situation().agent_id(), turn.agent_name());
                 turn.request_state(ActorState::Sleeping);
-                Ok(ToolOutput::classified(serde_json::json!({ "status": "stopped" }), turn.label()))
+                Ok(ToolOutput::classified(serde_json::json!({ "status": "stopped" }), turn.situation().label()))
             },
             SILENCE_TOOL_NAME => {
-                info!("Silencing agent {} {}", turn.agent_id(), turn.agent_name());
+                info!("Silencing agent {} {}", turn.situation().agent_id(), turn.agent_name());
                 turn.request_state(ActorState::Idle);
-                Ok(ToolOutput::classified(serde_json::json!({ "status": "silent" }), turn.label()))
+                Ok(ToolOutput::classified(serde_json::json!({ "status": "silent" }), turn.situation().label()))
             },
             &_ => {
                 Err(ToolError::UnknownTool(name.to_string()))

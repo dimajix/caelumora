@@ -50,7 +50,7 @@ impl ToolProvider for CalculatorToolProvider {
 
             // Derived from the arguments alone: classified as the turn (issue 168).
             let value = serde_json::to_value(result).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-            Ok(ToolOutput::classified(value, turn.label()))
+            Ok(ToolOutput::classified(value, turn.situation().label()))
         } else {
             Err(ToolError::UnknownTool(name.to_string()))
         }

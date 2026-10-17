@@ -112,17 +112,30 @@ with its remote agent (`caelumora_model::work`):
 The rest is the turn's own: the changes staged to the agent's states, the tool calls, the plan, the
 state a tool requested.
 
+**The turn's situation** (`Turn::situation`, issue 399) is what is read of it: where the piece of
+work stands and what it sees from there - who works, in which channel and session, in whose name,
+bound by which classification, what it has seen so far (its label), the agent's states, the tools
+it was offered, and its session to navigate. A `Situation` is what every piece of work of an agent
+has, so an external agent's work has one too. The `Turn` reads through it and passes none of it
+on: its own methods change something - stage, say, give, compact -, act in the channel, or read
+what only the turn holds (its id, what it staged, the state a tool requested).
+
 **The turn's id** is given when it begins and stored with it, so that a turn resumed after a restart
 is the same turn. Every message the turn produces carries it (`Message::turn_id`), so which messages
 belong to one turn can be told from the messages alone. It is not covered by the digest, and a
 modification does not take it over: a changed message stays in the turn it was produced in.
 
-Beside its state, a turn reaches its session through its views (`Turn::session`), from which
+Beside its state, a turn reaches its session through its views (`Situation::session`), from which
 components read other channels as the confidentiality rules allow - at the classification the turn
-began with (see [MEMORY.md](MEMORY.md#reading-other-channels)). The views only read. What the turn
-does in its channel - using the session's workspace (`Turn::workspace_terminal`,
-`Turn::workspace_shell`) - it does through its actor's `ActorRuntime`, which it holds and which its
-components never see: they are given the turn's methods (issue 370).
+began with (see [MEMORY.md](MEMORY.md#reading-other-channels)). The views only read: its session,
+its channel and the workspace it may use there (`Situation::session`, `channel`, `workspace`) are
+views, named after what they show, and answer alike - nothing where the work reaches no session,
+an error where it may not read what it reaches. What is done with the workspace's files goes
+through a handle instead, named after the handle: its terminal, to read them
+(`Situation::workspace_terminal`), and to change them or run commands, the turn's
+(`Turn::workspace_terminal`, `Turn::workspace_shell`). Both are reached through the actor's
+`ActorRuntime`, which the situation and the turn hold and which their components never see: they
+are given their methods (issue 370).
 
 ### Beginning and ending a turn
 
@@ -485,7 +498,7 @@ as written.
 
 ### The `ContextProvider`
 
-The `ContextProvider` only answers: given the turn to read as an `AgentWork`, it returns the prompt
+The `ContextProvider` only answers: given the turn's `Situation`, it returns the prompt
 parts, each where it goes, and the knowledge they hold, and the actor sets both at once
 (`Turn::set_context`). It runs once, at the start of a turn, so a part stays in place across the
 tool loop. When it fails, the turn fails, whatever its fail policy: without a context there is
@@ -506,9 +519,9 @@ The parts of one position are joined in the order of the configuration. Every pa
 its provider says, or as the channel; the turn has seen it. A part whose component fails open is
 left out of that turn with a warning; one that fails closed fails the turn.
 
-A `PromptProvider` is given an `AgentWork` (`Turn::work`), the part of a turn every piece of work of
-an agent has, so the same providers serve an external agent as well. What only reads takes an
-`AgentWork`; what stages changes takes the `Turn`.
+A `PromptProvider` is given a `Situation` (`Turn::situation`), what every piece of work of an agent
+has, so the same providers serve an external agent as well. What only reads takes a `Situation`;
+what stages changes takes the `Turn`.
 
 The runtime brings four parts of its own, which a personality wires in as components. They go into
 the system prompt by default, since they change rarely. For an external agent, whose remote agent

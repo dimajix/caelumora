@@ -21,7 +21,7 @@
 
 use caelumora_runtime::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::value::text::{Briefing, Summary};
@@ -79,10 +79,10 @@ impl PromptProvider for ChannelBriefingPromptProvider {
         self.position
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
-        // Work that reaches no session (`AgentWork::session`) has no place to describe.
-        let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
-        let channel = session.channel(work.channel_id()).await?;
+    async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
+        // Work that reaches no session (`Situation::channel`) has no place to describe.
+        let Some(channel) = situation.channel().await? else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
+        let session = channel.session();
         let ours = described("session", session.summary(), session.briefing());
         let its = described("channel", channel.summary(), channel.briefing());
         // A session's descriptions are public; a channel's are the channel's.
@@ -219,6 +219,6 @@ mod tests {
     /// What `provider` tells agent `agent` in the turn begun in `state`.
     async fn told(provider: &ChannelBriefingPromptProvider, agent: AgentId, session_loop: &Arc<SessionLoop>, state: &mut AgentChannelState) -> Prompt {
         let turn = Turn::of(agent, "Jonathan".to_string(), state, AgentStateHandle::detached(), actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(agent))).expect("a turn was begun");
-        provider.get_prompt(&turn.work()).await.unwrap()
+        provider.get_prompt(&turn.situation()).await.unwrap()
     }
 }

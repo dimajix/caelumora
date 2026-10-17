@@ -1665,9 +1665,9 @@ mod tests {
 
         let channel = Arc::clone(&hers.channels()[0]);
         let runtime = actor_runtime_in(&channel, alice_id);
-        let session = runtime.session_view(&alice_ctx, channel.classification()).await.expect("attached to its session");
+        let session = runtime.session_view(&alice_ctx, channel.classification()).await.expect("hers to read").expect("attached to its session");
         let stranger = SecurityContext::new(ActorId::Agent(AgentId::new()), Default::default(), Default::default());
-        assert!(runtime.session_view(&stranger, channel.classification()).await.is_none(), "reached by who may read it alone (issue 304)");
+        assert!(runtime.session_view(&stranger, channel.classification()).await.is_err(), "reached by who may read it alone (issue 304)");
 
         let own = session.privacy();
         assert_eq!((own.policy, own.owner), (PrivacyConfig::SameOwner, alice_id));
@@ -1712,7 +1712,7 @@ mod tests {
         let reading_from = |channel: &Arc<ChannelLoop>| {
             let runtime = actor_runtime_in(channel, alice_id);
             let (context, classification) = (alice_ctx.clone(), channel.classification());
-            async move { runtime.session_view(&context, classification).await.expect("attached to its session") }
+            async move { runtime.session_view(&context, classification).await.expect("hers to read").expect("attached to its session") }
         };
         let read = whole(&reading_from(&finance).await.channel_named("hr").await.expect("reachable for what was released")).await.expect("what was released to finance");
         let texts: Vec<_> = messages(&read).iter().map(|m| m.content.clone().unwrap_or_default()).collect();

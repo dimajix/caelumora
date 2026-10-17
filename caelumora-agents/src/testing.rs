@@ -81,7 +81,7 @@ pub async fn offered_anywhere(provider: &dyn ToolProvider) -> Result<Vec<Tool>, 
     let Some(turn) = Turn::of(agent, agent.to_string(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()) else {
         return Err("no turn was begun".to_string());
     };
-    provider.offered(&turn.work()).await
+    provider.offered(&turn.situation()).await
 }
 
 /// What is asked in `world` when the agent of `owner`, with a component of `kind`,

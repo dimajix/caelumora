@@ -80,14 +80,14 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
     let (session, helper) = with_an_agent(&world).await;
     let component = component();
     let mut state = AgentChannelState::default();
-    let prompt = component.get_prompt(&agent_testing::turn(&session, helper, world.alice, &mut state).work()).await.unwrap();
+    let prompt = component.get_prompt(&agent_testing::turn(&session, helper, world.alice, &mut state).situation()).await.unwrap();
     assert_eq!(prompt.text, "", "nothing to list, no part");
 
     let internal = Classification::general(Confidentiality::Internal);
     let made = manager(&world)
         .create(&SecurityContext::system(), "release-notes", Scope::GlobalScope, "How we write a release note", "1. Collect.\n2. Group.", internal.clone()).await.unwrap();
     let mut state = AgentChannelState::default();
-    let prompt = component.get_prompt(&agent_testing::turn(&session, helper, world.alice, &mut state).work()).await.unwrap();
+    let prompt = component.get_prompt(&agent_testing::turn(&session, helper, world.alice, &mut state).situation()).await.unwrap();
     assert!(prompt.text.starts_with("[Skills you can load]") && prompt.text.contains("- release-notes: How we write a release note"), "{}", prompt.text);
     assert!(!prompt.text.contains("Collect"), "the catalogue, not the text");
     assert_eq!(prompt.classification, Some(internal.clone()));

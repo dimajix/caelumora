@@ -4,7 +4,7 @@
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::prompt::{ContextError, titled, Prompt, PromptProvider};
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use crate::tool::{arguments, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::question::Answers;
@@ -48,7 +48,7 @@ pub struct CreatePlanToolProvider;
 
 #[async_trait]
 impl PromptProvider for CreatePlanToolProvider {
-    async fn get_prompt(&self, _work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
+    async fn get_prompt(&self, _situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         // A fixed text of the runtime's: nothing confidential (issue 168).
         Ok(Prompt::classified(titled("Planning", PLANNING_SYSTEM_PROMPT), Classification::PUBLIC))
     }
@@ -140,11 +140,11 @@ impl ToolProvider for CreatePlanToolProvider {
                 // untouched - the current step continues uninterrupted, and
                 // the new steps get picked up once it converges.
                 turn.set_plan(state);
-                Ok(ToolOutput::classified(serde_json::json!({ "status": "steps_added" }), turn.label()))
+                Ok(ToolOutput::classified(serde_json::json!({ "status": "steps_added" }), turn.situation().label()))
             }
             None => {
                 turn.set_plan(PlanState { plan: incoming, progress: PlanProgress::Step(0) });
-                Ok(ToolOutput::classified(serde_json::json!({ "status": "accepted" }), turn.label()))
+                Ok(ToolOutput::classified(serde_json::json!({ "status": "accepted" }), turn.situation().label()))
             }
         }
     }
@@ -304,7 +304,7 @@ mod tests {
     async fn create_plan_tool_contributes_the_planning_system_prompt() {
         let mut state = AgentChannelState::default();
         let turn = Turn::begun(Default::default(), &mut state);
-        let prompt = CreatePlanToolProvider.get_prompt(&turn.work()).await.expect("prompt should be available");
+        let prompt = CreatePlanToolProvider.get_prompt(&turn.situation()).await.expect("prompt should be available");
         assert_eq!(prompt.text, format!("[Planning]\n{PLANNING_SYSTEM_PROMPT}\n"), "under a title of its own (issue 249)");
     }
 

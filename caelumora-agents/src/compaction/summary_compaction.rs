@@ -184,15 +184,15 @@ impl SummaryCompaction {
     /// for the tokens of the call.
     async fn summarise(&self, turn: &mut Turn<'_>, last: Digest) -> Result<(String, Message), CompactionError> {
         let mut input = turn.context_until(last).map_err(|e| {
-            tracing::warn!("Agent {}: a compaction cannot read its transcript: {:#}", turn.agent_id(), e);
+            tracing::warn!("Agent {}: a compaction cannot read its transcript: {:#}", turn.situation().agent_id(), e);
             CompactionError::TranscriptUnreadable
         })?;
         input.push(Message {
             role: MessageRole::User,
             content: Some(self.instruction()),
-            sender_id: ActorId::Agent(turn.agent_id()),
+            sender_id: ActorId::Agent(turn.situation().agent_id()),
             sender_name: turn.agent_name().to_string(),
-            ..Message::new(turn.classification())
+            ..Message::new(turn.situation().classification())
         });
         let mut stream = self.llm_client.chat_completion(&input, &[]).await;
         let mut answered: Vec<Message> = Vec::new();
@@ -201,7 +201,7 @@ impl SummaryCompaction {
                 Ok(MessageEvent::Complete(message)) => answered.push(message),
                 Ok(MessageEvent::Partial(_) | MessageEvent::EndOfTurn(_)) => {}
                 Err(e) => {
-                    tracing::warn!("Agent {}: a compaction could not ask its model: {}", turn.agent_id(), e);
+                    tracing::warn!("Agent {}: a compaction could not ask its model: {}", turn.situation().agent_id(), e);
                     return Err(CompactionError::ModelUnreachable);
                 }
             }
@@ -217,12 +217,12 @@ impl SummaryCompaction {
 #[async_trait]
 impl CompactionStrategy for SummaryCompaction {
     async fn compact(&self, turn: &mut Turn<'_>) -> Result<Option<Compaction>, CompactionError> {
-        let agent = ActorId::Agent(turn.agent_id());
-        let whole = kept_whole(turn.agent_channel_state().transcript.entries().map(|node| &node.entry));
-        let (positions, _) = turn.work().token_positions().ok_or(CompactionError::TranscriptUnreadable)?;
-        let size = turn.agent_channel_state().used.and_then(|usage| usage.context_size).or(positions.last().copied()).unwrap_or(0);
+        let agent = ActorId::Agent(turn.situation().agent_id());
+        let whole = kept_whole(turn.situation().agent_channel_state().transcript.entries().map(|node| &node.entry));
+        let (positions, _) = turn.situation().token_positions().ok_or(CompactionError::TranscriptUnreadable)?;
+        let size = turn.situation().agent_channel_state().used.and_then(|usage| usage.context_size).or(positions.last().copied()).unwrap_or(0);
         let keep = self.keep_of(size);
-        let path: Vec<Entry> = as_they_stand(turn.agent_channel_state().transcript.entries())
+        let path: Vec<Entry> = as_they_stand(turn.situation().agent_channel_state().transcript.entries())
             .map(|(node, message)| {
                 let gives = match &node.entry {
                     TranscriptEntry::Given { source: Some(source), .. } => given(source),
@@ -254,10 +254,10 @@ impl CompactionStrategy for SummaryCompaction {
         // the transcript alone (issue 284).
         let of_turn = summarised.iter().any(|(_, _, message)| message.as_ref().is_some_and(|m| m.turn_id == Some(turn.turn_id())));
         let (owner, classification) = match of_turn {
-            true => (Some(turn.turn_id()), turn.label()),
+            true => (Some(turn.turn_id()), turn.situation().label()),
             false => {
                 let summarised_as: Vec<&Classification> = summarised.iter().filter_map(|(_, _, message)| message.as_ref().map(|m| &m.classification)).collect();
-                (None, Classification::join_all(summarised_as).unwrap_or_else(|| turn.label()))
+                (None, Classification::join_all(summarised_as).unwrap_or_else(|| turn.situation().label()))
             }
         };
         let summary = Message {
@@ -284,7 +284,7 @@ impl CompactionStrategy for SummaryCompaction {
                 timestamp: Utc::now(),
                 // Given in the turn, as `Turn::give` gives.
                 turn_id: Some(turn.turn_id()),
-                ..Message::new(given.knowledge.classification.clone().unwrap_or_else(|| turn.label()))
+                ..Message::new(given.knowledge.classification.clone().unwrap_or_else(|| turn.situation().label()))
             };
             replacement.push((message, Some(given.knowledge.clone())));
         }
@@ -369,7 +369,7 @@ mod tests {
     }
 
     fn turn_knowledge(turn: &Turn<'_>) -> KnowledgeRef {
-        KnowledgeRef { channel: turn.channel_id(), session: turn.session_id(), source: KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), None), classification: Some(Classification::general(Confidentiality::Internal)) }
+        KnowledgeRef { channel: turn.situation().channel_id(), session: turn.situation().session_id(), source: KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), None), classification: Some(Classification::general(Confidentiality::Internal)) }
     }
 
     /// A model that summarises everything as `"They want release notes."`,
@@ -567,7 +567,7 @@ mod tests {
             turn.push_message(said(content, role));
         }
         let under_way = turn.turn_id();
-        let label = turn.label();
+        let label = turn.situation().label();
         let compaction = strategy.compact(&mut turn).await.expect("compacted");
         drop(turn);
 
