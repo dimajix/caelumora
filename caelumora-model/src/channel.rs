@@ -138,8 +138,8 @@ pub struct Channel {
 }
 
 /// How much of a channel's history a new participant may see, as asked for
-/// when adding them (issue 46). The `ChannelLoop` fixes it as a
-/// `HistoryStart` when they join (`start_in`) and applies that.
+/// when adding them (issue 46). The `ChannelLoop` fixes it as a position
+/// when they join (`start_in`, `HistoryStart::from`) and applies that.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HistoryAccess {
@@ -191,9 +191,10 @@ impl HistoryAccess {
     }
 }
 
-/// Where a participant's view of a channel's history begins.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+/// Where a participant's view of a channel's history begins, as a grant
+/// reads it off the messages (`HistoryAccess::start_in`); fixed as a
+/// position as they join (`from`, `HistoryLimit`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryStart {
     /// From this message on.
     From(MessageId),
@@ -221,11 +222,13 @@ impl HistoryStart {
     }
 }
 
-/// The view of the history granted to one participant.
+/// The view of the history granted to one participant: from the position
+/// `from` on (issues 46, 417) - where the `HistoryShared` it was given as it
+/// joined says, kept here as the index every read of its view takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryLimit {
     pub participant: ActorId,
-    pub start: HistoryStart,
+    pub from: u64,
 }
 
 impl Stored for Channel {
@@ -350,10 +353,10 @@ impl Channel {
         Ok(())
     }
 
-    /// Where `participant`'s view of the history begins (issue 46); `None`:
-    /// all of it.
-    pub fn history_start_of(&self, participant: ActorId) -> Option<HistoryStart> {
-        self.history_limits.iter().find(|l| l.participant == participant).map(|l| l.start)
+    /// The position from which on `participant` sees the history (issues
+    /// 46, 417); `0`: all of it.
+    pub fn history_from(&self, participant: ActorId) -> u64 {
+        self.history_limits.iter().find(|l| l.participant == participant).map_or(0, |l| l.from)
     }
 }
 

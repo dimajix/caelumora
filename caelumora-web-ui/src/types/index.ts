@@ -762,6 +762,12 @@ export interface ActorEvent {
    */
   ParticipantLeft?: { participant: ActorId; name: string };
   /**
+   * `participant` was given the history from the position `from` on as it
+   * joined (issue 417), by the act of the envelope's sender; sent to the
+   * newcomer alone, right before `ParticipantJoined`. Not shown.
+   */
+  HistoryShared?: { participant: ActorId; from: number };
+  /**
    * A chain between agents reached its limit (issue 200): the response ending
    * in `message` was delivered, but nobody was asked to respond to it -
    * `not_asked` are the agents it mentioned. Sent in the name of the system.
@@ -1188,10 +1194,10 @@ export interface KnowledgeRef {
   agent_name: string | null;
   digest: string | null;
   /**
-   * For `history`: where the reader's view began if they joined later with a
-   * limit (issue 72) - from or after that message; absent means all of it.
+   * For `history`: the position the reader's view began at if they joined
+   * later with a limit (issues 72, 417); absent means all of it.
    */
-  history_start?: {from: string} | {after: string};
+  history_start?: number;
   /** How what was read was classified when it was read; null if not known - it counts as the channel (issue 168). */
   classification: Classification | null;
   /** Whether it set the label of the message (issue 170). */

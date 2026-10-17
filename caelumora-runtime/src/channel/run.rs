@@ -120,7 +120,11 @@ impl ChannelLoop {
                 }
                 // Once it runs, so that the newcomer hears it first (issue
                 // 408); also if it was removed again before it got to run:
-                // it was added, and its removal follows.
+                // it was added, and its removal follows. Right before it,
+                // the part of the history it was given, to it alone (issue
+                // 417).
+                let shared = ActorEvent::HistoryShared { participant: id, from: self.visible_from(id) };
+                self.announce(shared, adder.clone(), running).await;
                 let name = joined.actor.name().to_string();
                 self.announce(ActorEvent::ParticipantJoined { participant: id, name }, adder, running).await;
             }
@@ -1159,6 +1163,8 @@ mod tests {
         let announced = events.try_recv().expect("the removal is announced");
         assert!(matches!(announced.event, ActorEvent::ParticipantLeft { participant: p, .. } if p == participant), "{}", announced.describe());
         assert_eq!(announced.context.sender_id, context.caller_id, "in the remover's name");
+        let shared = events.try_recv().expect("what it is given of the history is told after it");
+        assert!(matches!(shared.event, ActorEvent::HistoryShared { participant: p, from: 0 } if p == participant), "{}", shared.describe());
         let added = events.try_recv().expect("the join is announced after it");
         assert!(matches!(added.event, ActorEvent::ParticipantJoined { participant: p, .. } if p == participant), "{}", added.describe());
         assert!(running.get(&participant).is_some_and(|actor| actor.leaving.is_none()), "and then the new actor runs");

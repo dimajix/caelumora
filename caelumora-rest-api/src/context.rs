@@ -2,7 +2,6 @@
 //! knowledge it was produced with, its tools and components.
 
 use caelumora_model::actor::ActorId;
-use caelumora_model::channel::HistoryStart;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::{Classification, LabelCauses};
 use caelumora_model::context::ContextItem;
@@ -75,10 +74,10 @@ pub struct KnowledgeRefResponse {
     pub agent_id: Option<ActorId>,
     pub agent_name: Option<String>,
     pub digest: Option<Digest>,
-    /// For `"history"`: where the reader's view began, if they joined later
-    /// with a limit (issue 72) - `{"from": id}` or `{"after": id}`.
+    /// For `"history"`: the position the reader's view began at, if they
+    /// joined later with a limit (issues 72, 417).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub history_start: Option<HistoryStart>,
+    pub history_start: Option<u64>,
     /// How what was read was classified when it was read, `null` if that
     /// is not known (issue 168).
     pub classification: Option<Classification>,

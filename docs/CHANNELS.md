@@ -444,12 +444,18 @@ channel's scope goes with that session or channel (see [Sessions](#sessions)).
 ### How much history a newcomer sees
 
 Whoever adds a participant decides how much of the history so far they may see: all (the default),
-none, the last n messages or the last n days (`HistoryAccess`). It is fixed at once as the message
-the participant's history starts at, so "the last three days" does not move day by day; to fix it,
-the history is read back from its end only as far as the grant reaches. The channel and its views
-apply it wherever the history is read for a participant - from the store, as the position where
-their view begins (issue 379): over REST, in the snapshot, for `read_history` (see
-[MEMORY.md](MEMORY.md)) and for what a joining actor is given.
+none, the last n messages or the last n days (`HistoryAccess`). It is fixed at once as the position
+in the history the participant's view starts at, so "the last three days" does not move day by day;
+to fix it, the history is read back from its end only as far as the grant reaches. The channel's
+document keeps that position (`HistoryLimit`), and the channel and its views apply it wherever the
+history is read for a participant, without reading the history for it (issues 379, 417): over
+REST, in the snapshot, for `read_history` (see [MEMORY.md](MEMORY.md)) and for what a joining actor
+is given.
+
+As the newcomer's actor starts, the channel records what it was given - `HistoryShared`, with the
+position and who granted it - right before its `ParticipantJoined`, delivered to the newcomer
+alone: catching up is a delivery too, and the history says what every participant received (issue
+417). Who granted it reads it as its sender; nobody else does.
 
 *   A **joining actor** is given the position where its view begins and takes in what was said
     from there as what it hears, read from the store as the participant it is: an agent keeps what
@@ -492,7 +498,8 @@ carries the participant's name as it was, so that it reads the same after a rena
     (`HistoryEntry::ParticipantJoined`, `ParticipantLeft`, with who made it and when), among what
     was said, as it keeps the end of a turn.
 *   **A join** is announced as the newcomer's actor starts, after where its view of the history
-    begins was fixed: the newcomer hears it first, whatever it was granted of the history before.
+    begins was fixed: the newcomer hears it first, whatever it was granted of the history before -
+    right after `HistoryShared`, which records what it was granted, to it alone.
 *   **A leave** is announced once the actor's task has ended, and at the latest before an actor
     starts under the same id. Until then the channel takes what the actor still sends; after it,
     nothing of the actor enters the channel. That is how a frontend ends what an actor aborted

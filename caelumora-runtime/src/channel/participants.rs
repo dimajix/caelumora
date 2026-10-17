@@ -83,8 +83,8 @@ impl ChannelLoop {
         };
         self.participation.require_admissible(&resolved, context, &self.classification())?;
 
-        let start = self.history_start(history).await?;
-        self.channel.add_participant(&storing, found.clone(), start).await?;
+        let from = self.history_start(history).await?;
+        self.channel.add_participant(&storing, found.clone(), from).await?;
 
         if let Err(error) = self.start_participant(resolved, context).await {
             // Stored, but it cannot run: taken back out, in the runtime's
@@ -196,9 +196,7 @@ impl ChannelLoop {
     async fn start_participant(&self, resolved: ResolvedParticipant, adder: &SecurityContext) -> Result<()> {
         self.left(resolved.actor_id()).await?;
         let actor = self.create_actor(&resolved).await?;
-        if let Some(from) = self.visible_from(resolved.actor_id()).await? {
-            actor.catch_up(from).await?;
-        }
+        actor.catch_up(self.visible_from(resolved.actor_id())).await?;
         let adopted = self.adopt(Arc::from(actor), resolved).await;
         let _ = self.changes_tx.send(ActorChange::Start(adopted, adder.clone()));
         Ok(())
@@ -352,7 +350,8 @@ impl ChannelLoop {
 #[cfg(test)]
 mod tests {
     use caelumora_model::actor::ActorId;
-    use caelumora_model::channel::{Channel, JOINED, LEFT, HistoryAccess, HistoryStart};
+    use caelumora_model::channel::{Channel, JOINED, LEFT, HistoryAccess};
+    use caelumora_model::history::HistoryEntry;
     use std::collections::HashSet;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -496,9 +495,26 @@ mod tests {
         let visible: Vec<_> = channel.visible_messages(other).await.into_iter().map(|m| m.content).collect();
         assert_eq!(visible, vec![Some("three".to_string())], "the last message and no more");
         assert_eq!(channel.visible_messages(ctx.initiator_id).await.len(), before.len(), "the others still see everything");
-        // What a reader records as read says from where (issue 72).
-        assert_eq!(channel.history_start_of(other), Some(HistoryStart::From(before[2].id)), "from the last message");
-        assert_eq!(channel.history_start_of(ctx.initiator_id), None, "all of it");
+        // What a reader records as read says from where (issue 72), and the
+        // history records what was shared with the newcomer, for it alone,
+        // right before it joined (issue 417).
+        let from = channel.history_from(other);
+        assert!(from > 0, "from the last message");
+        assert_eq!(channel.history_from(ctx.initiator_id), 0, "all of it");
+        let shared = |e: &HistoryEntry| matches!(e, HistoryEntry::HistoryShared { .. } | HistoryEntry::ParticipantJoined { .. });
+        let recorded: Vec<_> = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let recorded: Vec<_> = channel.history_entries().await.into_iter().filter(shared).collect();
+                if recorded.len() == 2 { break recorded }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("recorded");
+        assert!(matches!(recorded.as_slice(), [.., HistoryEntry::HistoryShared { participant, from: f, by, .. }, HistoryEntry::ParticipantJoined { participant: joined, .. }]
+            if *participant == other && *f == from && *by == ctx.caller_id && *joined == other), "{recorded:?}");
+        for (reader, seen) in [(other, 1), (ctx.caller_id, 1), (ActorId::User(UserId::new()), 0)] {
+            let shared = channel.visible_entries(reader).await.into_iter().filter(|e| matches!(e, HistoryEntry::HistoryShared { .. })).count();
+            assert_eq!(shared, seen, "to the newcomer and to who shared it, who sent it - to nobody else: {reader}");
+        }
         let stored = runtime.entity_stores().channels.get(&ctx, channel.id()).await.unwrap();
         assert!(stored.participants.iter().any(|p| p.actor_id() == other), "stored, not only in memory");
         assert_eq!(stored.history_limits.len(), 1, "with the limit");
@@ -523,7 +539,6 @@ mod tests {
     #[tokio::test]
     async fn who_joins_or_leaves_is_recorded_where_it_happened_and_shown_also_to_who_made_it() {
         use caelumora_model::actor::ActorEvent;
-        use caelumora_model::history::HistoryEntry;
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
@@ -555,11 +570,13 @@ mod tests {
 
         let entries = recorded(&channel, |e| matches!(e, HistoryEntry::ParticipantJoined { .. })).await;
         assert!(entries[0].said().is_some_and(|m| m.content.as_deref() == Some("before")), "after what was said before: {entries:?}");
-        assert!(matches!(&entries[1], HistoryEntry::ParticipantJoined { participant, name, by, by_name, .. }
+        assert!(matches!(&entries[1], HistoryEntry::HistoryShared { participant, from: 1, by, .. } if *participant == other && *by == ctx.caller_id),
+            "right before it, what the newcomer was given of the history: {entries:?}");
+        assert!(matches!(&entries[2], HistoryEntry::ParticipantJoined { participant, name, by, by_name, .. }
             if *participant == other && name == "other" && *by == ctx.caller_id && by_name == "owner"), "who, and by whose act, named as they are: {entries:?}");
         let visible = channel.visible_entries(other).await;
-        assert!(matches!(visible.as_slice(), [HistoryEntry::ParticipantJoined { participant, .. }] if *participant == other),
-            "the newcomer sees its own join, though granted nothing before it: {visible:?}");
+        assert!(matches!(visible.as_slice(), [HistoryEntry::HistoryShared { .. }, HistoryEntry::ParticipantJoined { participant, .. }] if *participant == other),
+            "the newcomer sees what it was given and its own join, though granted nothing before it: {visible:?}");
         let told = shown(&mut mine, |e| matches!(e, ActorEvent::ParticipantJoined { .. })).await;
         assert_eq!(told.context.sender_id, ctx.caller_id, "shown to who added them, in whose name it is told");
 

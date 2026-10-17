@@ -384,6 +384,15 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
         }
         HistoryEntry::ParticipantJoined { participant, name, by, by_name, .. } => taking_part("caelumora.history-participant-joined.v1", previous, participant, name, by, by_name),
         HistoryEntry::ParticipantLeft { participant, name, by, by_name, .. } => taking_part("caelumora.history-participant-left.v1", previous, participant, name, by, by_name),
+        HistoryEntry::HistoryShared { participant, from, by, by_name, .. } => {
+            let mut e = Encoder::new("caelumora.history-shared.v1");
+            e.opt_digest(previous);
+            e.json(&to_json(participant));
+            e.json(&serde_json::json!(from));
+            e.json(&to_json(by));
+            e.str(by_name);
+            e.finish()
+        }
     }
 }
 

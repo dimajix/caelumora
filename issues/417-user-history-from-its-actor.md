@@ -524,3 +524,22 @@ Each step is reviewable on its own; 1-2 change no behaviour.
     anchored at it. The transcript cannot tell: its active branch begins anew with every call of
     an external agent and every compaction, so an agent joining again was given what it had
     heard before.
+- 2026-10-17: Step 5 done. As a participant's actor starts - added, joining, or an agent restored
+  -, the channel records `HistoryShared { participant, from, by }` right before its
+  `ParticipantJoined`, sent in the name of who granted it and delivered to the newcomer alone
+  (`Envelope::concerns`, `HistoryEntry::concerns`); no actor may send it (`is_announcement`). The
+  channel's document keeps the position (`HistoryLimit { participant, from: u64 }`,
+  `Channel::history_from`): the grant is read off the messages once, as the participant joins,
+  and every read of its view applies the position without reading the history - the case of a
+  view whose first message is gone is gone with it. `KnowledgeSource::History` and the REST
+  field `history_start` carry the position. Tested in the channel (recorded right before the
+  join, from the position kept, read by the newcomer and its sender alone) and in S4. Where it
+  differs from the design above:
+  - **The reader carries no ranges.** `Reader::Participant` stays the actor; the view begins at
+    the one position its document keeps, as before. What went to everybody while a participant
+    was away is read again only as far as a new grant reaches - the earlier stint's is not kept
+    apart; that needs the delivery of an entry to everybody to name who took part then.
+  - **Catching up stays the actor's**, before it starts (`Actor::catch_up`), not taken from the
+    delivered `HistoryShared`: a restored agent and one started with its channel catch up the
+    same way, and the agents' filters let the event pass by.
+  - **Who granted it reads it**, as its sender; the clients do not show it yet (step 6).

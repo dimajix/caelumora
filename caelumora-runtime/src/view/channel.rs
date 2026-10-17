@@ -4,13 +4,13 @@ use super::participant::{participant_state, AgentParticipant, ParticipantState};
 use super::ChannelReading;
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
 use crate::actor::user::ChannelWatch;
-use crate::channel::{visible_from, ChannelLoop};
+use crate::channel::ChannelLoop;
 use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
 use caelumora_model::actor::{ActorDescription, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, PersonalityKind};
 use caelumora_model::approval::ApprovalRequest;
-use caelumora_model::channel::{Channel, HistoryStart, Participant};
+use caelumora_model::channel::{Channel, Participant};
 use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
@@ -253,12 +253,12 @@ impl ChannelView {
         ParticipantView::of_former(self.clone(), participant.clone(), left).await
     }
 
-    /// Where the viewer's view of the history begins (issue 46): all of it,
-    /// unless they joined later with a limit - what a reader records as read
-    /// (issue 72). An agent reads as itself, not as the owner it acts for:
-    /// its own limit applies, not the owner's.
-    pub fn history_start(&self) -> Option<HistoryStart> {
-        self.channel.history_start_of(self.reader())
+    /// The position from which on the viewer sees the history (issues 46,
+    /// 417): all of it, `0`, unless they joined later with a limit - what a
+    /// reader records as read (issue 72). An agent reads as itself, not as
+    /// the owner it acts for: its own limit applies, not the owner's.
+    pub fn visible_from(&self) -> u64 {
+        self.channel.history_from(self.reader())
     }
 
     /// A page of the history as the viewer sees it (issues 46, 218, 379):
@@ -282,14 +282,9 @@ impl ChannelView {
     /// # Errors
     /// As `history_page`.
     pub async fn history_page_of(&self, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> ViewResult<HistoryPage> {
-        let page = match self.visible_from().await? {
-            Some(from) => {
-                let readable = |item: &HistoryEntry| self.may_read_item(item) && keep(item);
-                self.views().histories().page(self.channel.id, &self.reading_as(), from, before, limit, &readable).await
-                    .map_err(|e| self.failed_reading(e))?
-            }
-            None => HistoryPage::default(),
-        };
+        let readable = |item: &HistoryEntry| self.may_read_item(item) && keep(item);
+        let page = self.views().histories().page(self.channel.id, &self.reading_as(), self.visible_from(), before, limit, &readable).await
+            .map_err(|e| self.failed_reading(e))?;
         if self.readable == ChannelReading::Released && page.items.is_empty() {
             return Err(self.nothing_released());
         }
@@ -304,9 +299,9 @@ impl ChannelView {
     /// read; `NoChannelNamed` instead of `MessageNotFound` in a channel read
     /// entry by entry.
     pub async fn message(&self, id: MessageId) -> ViewResult<Message> {
-        let from = self.visible_from().await?;
+        let from = self.visible_from();
         let said = self.views().histories().said(self.channel.id, &self.reading_as(), id).await.map_err(|e| self.failed_reading(e))?;
-        let seen = said.filter(|(at, _)| from.is_some_and(|from| *at >= from)).and_then(|(_, item)| item.said().cloned());
+        let seen = said.filter(|(at, _)| *at >= from).and_then(|(_, item)| item.said().cloned());
         match seen {
             Some(message) if self.may_read_entry(&message.classification) => Ok(message),
             _ if self.readable == ChannelReading::Released => Err(self.nothing_released()),
@@ -331,18 +326,6 @@ impl ChannelView {
             ChannelReading::Whole if took_part => Reader::Participant(reader),
             ChannelReading::Whole | ChannelReading::Released => Reader::Outsider,
         }
-    }
-
-    /// The position from which on the viewer sees the history; `None` if
-    /// they see nothing of it - the message their view begins at is gone.
-    async fn visible_from(&self) -> ViewResult<Option<u64>> {
-        self.visible_from_of(self.reader()).await
-    }
-
-    /// The position from which on `participant` sees the history, as
-    /// `visible_from` says.
-    pub(super) async fn visible_from_of(&self, participant: ActorId) -> ViewResult<Option<u64>> {
-        visible_from(self.views().histories().as_ref(), self.channel.id, self.channel.history_start_of(participant)).await.map_err(|e| self.failed_reading(e))
     }
 
     /// That the history could not be read: `error`, logged.
@@ -471,10 +454,7 @@ impl ChannelView {
             ViewError::failed(e, format!("reading what was read of channel {}", self.channel.id))
         })?;
         let read_up_to = state.read.map(|read| read.message);
-        let Some(visible) = self.visible_from().await? else {
-            return Ok(Some(Unread { messages: 0, mentioned: false, read_up_to }));
-        };
-        let from = visible.max(state.unread_from());
+        let from = self.visible_from().max(state.unread_from());
         let new = |item: &HistoryEntry| self.may_read_item(item) && item.said().is_some_and(|message| message.sender_id != viewer && message.is_heard());
         let mentioning = |item: &HistoryEntry| new(item) && item.said().is_some_and(|message| message.mentions.contains(&viewer));
         let key = self.channel.id;
@@ -798,8 +778,7 @@ impl ParticipantView {
             let attributes = self.state.attributes().ok_or(ViewError::NoContext { actor: self.id() })?;
             return Err(ViewError::Forbidden { actor: self.id(), refused: ActionType::ReadAgentContext(attributes).refused() });
         }
-        let from = self.channel.visible_from_of(self.id()).await?;
-        agent.context(from).await
+        agent.context(self.channel.channel.history_from(self.id())).await
     }
 
     /// The participant as an agent whose context the viewer may read.

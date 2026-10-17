@@ -301,6 +301,17 @@ pub enum ActorEvent {
         participant: ActorId,
         name: String,
     },
+    /// `participant` is given the channel's history from the position `from`
+    /// on as it joins (issues 46, 417): how much of it the envelope's
+    /// sender, who added it, granted. Sent by the channel alone, right before
+    /// `ParticipantJoined`, to the newcomer alone; recorded in its history
+    /// (`HistoryEntry::HistoryShared`), so that what the newcomer was
+    /// delivered as it joined is read from there. Its actor has taken that
+    /// part in already as it was started (`Actor::catch_up`).
+    HistoryShared {
+        participant: ActorId,
+        from: u64,
+    },
     /// A chain between agents reached its limit (issue 200): the response
     /// ending in `message` was delivered, but it made nobody respond, since
     /// that would have been more than `max_agent_hops` hops since the last
@@ -468,10 +479,11 @@ impl ActorEvent {
     }
 
     /// Whether it is the channel's own word, which no actor sends: who
-    /// joined or left (issue 408). It reaches whose name it is told in,
+    /// joined or left (issue 408), what a newcomer was given of the history
+    /// (issue 417). It reaches whose name it is told in,
     /// too - nothing of theirs is echoed back to them.
     pub fn is_announcement(&self) -> bool {
-        matches!(self, ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. })
+        matches!(self, ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } | ActorEvent::HistoryShared { .. })
     }
 
     /// The variant's name, for logs - never the payload, which may carry
@@ -508,6 +520,7 @@ impl ActorEvent {
             ActorEvent::ActivityFinished { .. } => "ActivityFinished",
             ActorEvent::ParticipantJoined { .. } => "ParticipantJoined",
             ActorEvent::ParticipantLeft { .. } => "ParticipantLeft",
+            ActorEvent::HistoryShared { .. } => "HistoryShared",
             ActorEvent::ChainCutOff { .. } => "ChainCutOff",
             ActorEvent::MessageModified(_) => "MessageModified",
             ActorEvent::MessageRevoked { .. } => "MessageRevoked",
@@ -668,6 +681,9 @@ impl Envelope {
             ActorEvent::ParticipantLeft { participant, name } => {
                 HistoryEntry::ParticipantLeft { participant: *participant, name: name.clone(), by: actor, by_name: self.context.sender_name.clone(), at }
             }
+            ActorEvent::HistoryShared { participant, from } => {
+                HistoryEntry::HistoryShared { participant: *participant, from: *from, by: actor, by_name: self.context.sender_name.clone(), at }
+            }
             ActorEvent::MessageModified(modified) => HistoryEntry::Modified { message: modified.clone() },
             ActorEvent::MessageRevoked { message, at } => HistoryEntry::Revoked { message: *message, at: *at },
             ActorEvent::MessageReclassified { message, classification } => HistoryEntry::Reclassified { message: *message, classification: classification.clone() },
@@ -696,7 +712,8 @@ impl Envelope {
     /// nobody. A message to every user, and to every agent if there is
     /// something to hear in it (`Message::is_heard`, issues 224, 258); a
     /// change of a message to every user and agent (issue 234); who joined
-    /// or left to every user and agent (issue 408); how an answer comes
+    /// or left to every user and agent (issue 408), the part of the history
+    /// shared with a newcomer to the newcomer alone (issue 417); how an answer comes
     /// about, how a turn ended, where an agent stands, what it does of its
     /// own accord and an answer to a retry to the users (issues 220, 243,
     /// 284); a command, a request to answer again and an answer to questions
@@ -720,6 +737,7 @@ impl Envelope {
             ActorEvent::CompleteMessageGenerated(message) => user || (agent && message.is_heard()),
             ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. }
             | ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } => user || agent,
+            ActorEvent::HistoryShared { participant: shared_with, .. } => participant == *shared_with,
             ActorEvent::TurnFinished { .. } | ActorEvent::TurnGivenUp { .. } | ActorEvent::ResponseStarted { .. } | ActorEvent::StateChanged(_)
             | ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_) | ActorEvent::IntermediateMessageGenerated(_)
             | ActorEvent::PlanStepStarted { .. } | ActorEvent::PlanStepFinished { .. } | ActorEvent::ActivityStarted { .. } | ActorEvent::ActivityFinished { .. }
@@ -803,6 +821,9 @@ impl Envelope {
             }
             ActorEvent::ParticipantLeft { participant, .. } => {
                 format!("ParticipantLeft(sender_id={}, sender_name={}, participant={})", ctx.sender_id, ctx.sender_name, participant)
+            }
+            ActorEvent::HistoryShared { participant, from } => {
+                format!("HistoryShared(sender_id={}, participant={}, from={})", ctx.sender_id, participant, from)
             }
             ActorEvent::ChainCutOff { message, max_agent_hops, not_asked } => {
                 format!("ChainCutOff(sender_id={}, message={}, max_agent_hops={}, not_asked={})", ctx.sender_id, message, max_agent_hops, not_asked.len())

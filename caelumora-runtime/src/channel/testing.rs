@@ -19,7 +19,7 @@ use caelumora_model::message::MessageId;
 use caelumora_model::store::history::every;
 use caelumora_model::store::StoreResult;
 use caelumora_model::work::TurnId;
-use caelumora_model::channel::{Channel, ChannelId, HistoryStart, Participant, moderation_components};
+use caelumora_model::channel::{Channel, ChannelId, Participant, moderation_components};
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::message::Message;
 use caelumora_model::security::{AccessPolicy, ActionType, SecurityAttributes, SecurityContext};
@@ -196,13 +196,13 @@ impl ChannelLoop {
     /// The entries `participant` sees of the history, as `visible_messages`
     /// reads them: who joined or left among them (issue 408).
     pub async fn visible_entries(&self, participant: ActorId) -> Vec<HistoryEntry> {
-        let Some(from) = self.visible_from(participant).await.expect("the history is read") else { return Vec::new() };
-        self.history_store.page(self.id, &Reader::Participant(participant), from, None, 10_000, &every).await.expect("the history is read").items
+        self.history_store.page(self.id, &Reader::Participant(participant), self.visible_from(participant), None, 10_000, &every).await.expect("the history is read").items
     }
 
-    /// Where `participant`'s view of the history begins (`Channel::history_start_of`).
-    pub fn history_start_of(&self, participant: ActorId) -> Option<HistoryStart> {
-        self.channel.load().history_start_of(participant)
+    /// The position from which on `participant` sees the history
+    /// (`Channel::history_from`).
+    pub fn history_from(&self, participant: ActorId) -> u64 {
+        self.visible_from(participant)
     }
 
     /// The entries of the whole history, its messages folded as they stand.
@@ -251,8 +251,7 @@ impl ChannelLoop {
     /// as it saw it, from where its view begins (`AgentContextView`).
     pub async fn agent_context(&self, agent: AgentId) -> AgentContextView {
         let state = self.stored_agent_channel_state(agent).await.expect("the state is read");
-        let from = self.visible_from(ActorId::Agent(agent)).await.expect("the history is read");
-        AgentContextView::of(agent, self.id, state, from, Arc::clone(&self.history_store), Arc::clone(self.runtime.transcript_store()))
+        AgentContextView::of(agent, self.id, state, self.visible_from(ActorId::Agent(agent)), Arc::clone(&self.history_store), Arc::clone(self.runtime.transcript_store()))
     }
 
     /// The runtime of this channel built again, as after a restart

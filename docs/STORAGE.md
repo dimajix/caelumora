@@ -259,10 +259,12 @@ participant (issue 417), and is kept apart from the channel state's document (is
     reader is given of an entry is decided in one place, `Recorded::as_seen_by`: whether it went
     to them, and in which form - as it was recorded for its sender, as everybody was given it
     (`Message::published`) for anyone else. Whatever reads a history without holding it reads
-    there, whether the channel runs or not: the views - a page over REST, a message, where a
-    participant's view begins, what an agent saw -, the checks before a change, an actor catching
-    up when it joins, the tool that reads another channel. A page is addressed by the position
-    (`seq`) of its oldest item; a client passes it back without computing with it.
+    there, whether the channel runs or not: the views - a page over REST, a message, what an agent
+    saw -, the checks before a change, an actor catching up when it joins, the tool that reads
+    another channel. Where a participant's view begins is a position the channel's document keeps
+    (`HistoryLimit`), fixed as they joined and recorded in the history as what they were given
+    (`HistoryShared`): no read of the history is needed to apply it. A page is addressed by the
+    position (`seq`) of its oldest item; a client passes it back without computing with it.
 *   **The holder keeps a window.** The channel loop holds the history from `history_from` on, a
     small part of the document: the last `WINDOW` (200) entries. After every put it lets go of what
     lies before (`keep_window`, `Chain::keep_from`), and a state is loaded from there. What a holder

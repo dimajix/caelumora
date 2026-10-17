@@ -4,7 +4,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::ApprovalRule;
-use caelumora_model::channel::{self, Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, HistoryLimit, HistoryStart, Participant};
+use caelumora_model::channel::{self, Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, HistoryLimit, Participant};
 use caelumora_model::removal::Removal;
 use caelumora_model::message::Message;
 use caelumora_model::group::Group;
@@ -105,7 +105,7 @@ impl ChannelController {
     }
 
     /// Adds `participant` to the channel on behalf of `ctx` (issue 46), seeing
-    /// its history from `start` on (`None`: all of it). Stored first
+    /// its history from the position `from` on (`0`: all of it). Stored first
     /// (`UpdateChannel`), then the group of its participants follows, so
     /// that the newcomer may read it (issue 286), then taken over and
     /// announced (`channel::JOINED`).
@@ -113,7 +113,7 @@ impl ChannelController {
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub async fn add_participant(&self, ctx: &SecurityContext, participant: Participant, start: Option<HistoryStart>) -> StoreResult<()> {
+    pub async fn add_participant(&self, ctx: &SecurityContext, participant: Participant, from: u64) -> StoreResult<()> {
         let writing = self.channel.write().await;
         let mut channel = writing.current();
         let id = participant.actor_id();
@@ -121,8 +121,8 @@ impl ChannelController {
         // Back again: no longer a former participant (issue 164).
         channel.former.retain(|f| f.participant.actor_id() != id);
         channel.history_limits.retain(|l| l.participant != id);
-        if let Some(start) = start {
-            channel.history_limits.push(HistoryLimit { participant: id, start });
+        if from > 0 {
+            channel.history_limits.push(HistoryLimit { participant: id, from });
         }
         let channel = writing.store(ctx, channel).await?;
         self.keep_participants(&channel).await;

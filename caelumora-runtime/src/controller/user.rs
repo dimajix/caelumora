@@ -11,7 +11,6 @@ use caelumora_model::store::history::HistoryStore;
 use caelumora_model::user::{ReadMark, User, UserId, UserProfile};
 use caelumora_model::channel::Channel;
 use caelumora_model::message::MessageId;
-use crate::channel::visible_from;
 use tracing::debug;
 use std::sync::Arc;
 use super::document::{log_changed, take_over};
@@ -199,9 +198,8 @@ impl UserController {
             return Err(StoreError::NotFound { entity: "channel", id: channel_id.to_string() });
         }
         let not_seen = || StoreError::NotFound { entity: "message", id: message_id.to_string() };
-        let from = visible_from(self.histories.as_ref(), channel_id, channel.history_start_of(reader)).await?.ok_or_else(not_seen)?;
         let (position, _) = self.histories.said(channel_id, &Reader::Participant(reader), message_id).await?
-            .filter(|(at, _)| *at >= from)
+            .filter(|(at, _)| *at >= channel.history_from(reader))
             .ok_or_else(not_seen)?;
         let _guard = self.read_lock.lock().await;
         let mut state = self.states.get_user_channel_state(self.id, channel_id).await?;

@@ -53,7 +53,6 @@ pub mod testing;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use history::visible_from;
 pub(crate) use participation::{ResolvedParticipant, ResolvedKind, Participation};
 
 /// A participant of a channel, with the handle it is `@`-mentioned by.

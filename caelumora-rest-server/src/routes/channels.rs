@@ -665,7 +665,7 @@ async fn knowledge_response(session: &SessionView, knowledge: &KnowledgeRef, cau
     let (source, agent_id, digest, history_start) = match knowledge.source {
         KnowledgeSource::Notes { agent, digest } => ("notes", Some(ActorId::Agent(agent)), digest, None),
         KnowledgeSource::PrivateNotes { agent, digest } => ("private_notes", Some(ActorId::Agent(agent)), digest, None),
-        KnowledgeSource::History { digest, start } => ("history", None, digest, start),
+        KnowledgeSource::History { digest, from } => ("history", None, digest, from),
         KnowledgeSource::Memory { agent, digest } => ("memory", Some(ActorId::Agent(agent)), digest, None),
         KnowledgeSource::Entity { kind, digest, .. } => (kind.name(), None, digest, None),
     };

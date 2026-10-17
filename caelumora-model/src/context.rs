@@ -33,7 +33,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use crate::channel::{ChannelId, HistoryStart};
+use crate::channel::ChannelId;
 use crate::mention::handle_of;
 use crate::session::SessionId;
 
@@ -109,12 +109,12 @@ pub enum KnowledgeSource {
     /// agent; the digest of its private note chain.
     PrivateNotes { agent: AgentId, digest: Option<Digest> },
     /// The channel's history; the digest of it when it was read - up to
-    /// where - and, for a reader who joined later with a limit, where their
-    /// view began (issue 72). `None`: all of it.
+    /// where - and, for a reader who joined later with a limit, the position
+    /// their view began at (issues 72, 417). `None`: all of it.
     History {
         digest: Option<Digest>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        start: Option<HistoryStart>,
+        from: Option<u64>,
     },
     /// An agent's memory (issue 62), read by that agent; the digest of its
     /// memory chain. Recorded once for every channel the entries recalled

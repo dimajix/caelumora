@@ -1072,7 +1072,7 @@ mod tests {
     /// the mark moves forward only, and only to a message they see.
     #[tokio::test]
     async fn what_is_new_to_a_user_is_counted_from_what_they_read() {
-        use caelumora_model::channel::{ChannelState, HistoryLimit, HistoryStart};
+        use caelumora_model::channel::{ChannelState, HistoryLimit};
         use caelumora_model::message::{Message, MessageId, MessageRole};
         use caelumora_model::snapshot::Unread;
         use caelumora_model::store::{StateStore, StoreError};
@@ -1093,7 +1093,7 @@ mod tests {
         let notice = Message { role: MessageRole::System, ..said(&bob, "a notice") };
         let asking = Message { mentions: vec![ActorId::User(alice.id)], ..said(&bob, "@alice, a question") };
         // Bob joined after his first message.
-        channel.history_limits.push(HistoryLimit { participant: ActorId::User(bob.id), start: HistoryStart::After(hello.id) });
+        channel.history_limits.push(HistoryLimit { participant: ActorId::User(bob.id), from: 1 });
         stored_channel(&store, &channel).await;
         let mut state = ChannelState::new(channel.id);
         state.history.extend(vec![hello.clone(), hers.clone(), step.clone(), notice, asking.clone()]);
@@ -1141,7 +1141,7 @@ mod tests {
 
     #[tokio::test]
     async fn what_a_channel_holds_is_read_through_its_nodes_and_a_participants_context_by_who_may() {
-        use caelumora_model::channel::{ChannelState, HistoryLimit, HistoryStart};
+        use caelumora_model::channel::{ChannelState, HistoryLimit};
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId, MessageRole};
         use caelumora_model::note::{NoteId, NoteOrigin};
@@ -1159,9 +1159,9 @@ mod tests {
         // What was said, of which bob - who joined later - sees the end only.
         let said = |t: &str| Message { id: MessageId::new(), role: MessageRole::User, content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let (first, second) = (said("first"), said("second"));
-        channel.history_limits.push(HistoryLimit { participant: ActorId::User(bob.id), start: HistoryStart::After(first.id) });
+        channel.history_limits.push(HistoryLimit { participant: ActorId::User(bob.id), from: 1 });
         // And so does the agent, though alice, for whom it acts, sees it all.
-        channel.history_limits.push(HistoryLimit { participant: ActorId::Agent(helper.id), start: HistoryStart::After(first.id) });
+        channel.history_limits.push(HistoryLimit { participant: ActorId::Agent(helper.id), from: 1 });
         stored_channel(&store, &channel).await;
         let mut state = ChannelState::new(channel.id);
         state.history.extend(vec![first.clone(), second.clone()]);

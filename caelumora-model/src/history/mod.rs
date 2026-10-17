@@ -95,6 +95,13 @@ pub enum HistoryEntry {
     /// `participant` left the channel, as `ParticipantJoined` says - `by`
     /// who removed it, the participant itself if it left by itself.
     ParticipantLeft { participant: ActorId, name: String, by: ActorId, by_name: String, at: DateTime<Utc> },
+    /// `participant` was given the history from the position `from` on as
+    /// it joined at `at`, by the act of `by`, called `by_name` then (issues
+    /// 46, 417): what the channel delivered to it then, recorded right
+    /// before its `ParticipantJoined`, for it alone. How much `by` granted
+    /// (`HistoryAccess`), fixed as a position; the channel's document keeps
+    /// the same as the index its views read (`HistoryLimit`).
+    HistoryShared { participant: ActorId, from: u64, by: ActorId, by_name: String, at: DateTime<Utc> },
 }
 
 /// What happened in a channel, recorded (issue 417): the entry, the actor
@@ -361,7 +368,7 @@ impl Chain<Recorded> {
             HistoryEntry::Reclassified { message, classification } => self.is_changed(*message, |m| m.reclassify(classification)),
             HistoryEntry::Fitted { .. } | HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
-            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => true,
+            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. } => true,
         };
         if applies {
             self.push_with(recorded, digest::history_chain);
@@ -380,7 +387,7 @@ impl HistoryEntry {
         match self {
             HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
-            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => true,
+            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. } => true,
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => false,
         }
     }
@@ -391,7 +398,7 @@ impl HistoryEntry {
             HistoryEntry::Said { message } => Some(message),
             HistoryEntry::Given { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
-            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => None,
+            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. } => None,
         }
     }
 
@@ -415,7 +422,7 @@ impl HistoryEntry {
             }
             HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
-            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => false,
+            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. } => false,
         }
     }
 
@@ -426,7 +433,7 @@ impl HistoryEntry {
             HistoryEntry::Revoked { message, .. } | HistoryEntry::Reclassified { message, .. } => Some(*message),
             HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::Fitted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
-            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => None,
+            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. } => None,
         }
     }
 
@@ -435,11 +442,15 @@ impl HistoryEntry {
     /// records - a message to every user, and to every agent if there is
     /// something to hear in it; a change of a message and who joined or left
     /// to every user and agent; how a turn went, what it carried out and
-    /// what came of what it did of its own accord to the users; what an
+    /// what came of what it did of its own accord to the users; the part of
+    /// the history shared with a newcomer to the newcomer alone; what an
     /// agent was given and a compaction to nobody. Whether it went back to its sender is not this
     /// rule's: a reader is given what it sent itself.
     pub fn concerns(&self, participant: ActorId) -> bool {
-        self.reaches(matches!(participant, ActorId::User(_)), matches!(participant, ActorId::Agent(_)))
+        match self {
+            HistoryEntry::HistoryShared { participant: shared_with, .. } => participant == *shared_with,
+            _ => self.reaches(matches!(participant, ActorId::User(_)), matches!(participant, ActorId::Agent(_))),
+        }
     }
 
     /// Whether the entry concerns a user, if `user`, or an agent, if
@@ -451,7 +462,7 @@ impl HistoryEntry {
             | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => user || agent,
             HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
             | HistoryEntry::ActivityFinished { .. } => user,
-            HistoryEntry::Compacted { .. } | HistoryEntry::Given { .. } => false,
+            HistoryEntry::Compacted { .. } | HistoryEntry::Given { .. } | HistoryEntry::HistoryShared { .. } => false,
         }
     }
 
@@ -466,7 +477,7 @@ impl HistoryEntry {
             HistoryEntry::Given { .. } => None,
             HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. } | HistoryEntry::TurnFinished { .. }
             | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. }
-            | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => Some(self.clone()),
+            | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. } => Some(self.clone()),
         }
     }
 
@@ -480,7 +491,7 @@ impl HistoryEntry {
             HistoryEntry::Said { message } | HistoryEntry::Given { message } | HistoryEntry::Modified { message } => message.sender_id,
             HistoryEntry::TurnFinished { actor, .. } | HistoryEntry::TurnGivenUp { actor, .. } | HistoryEntry::PlanStepStarted { actor, .. }
             | HistoryEntry::CommandExecuted { actor, .. } | HistoryEntry::Compacted { actor, .. } | HistoryEntry::ActivityFinished { actor, .. } => *actor,
-            HistoryEntry::ParticipantJoined { by, .. } | HistoryEntry::ParticipantLeft { by, .. } => *by,
+            HistoryEntry::ParticipantJoined { by, .. } | HistoryEntry::ParticipantLeft { by, .. } | HistoryEntry::HistoryShared { by, .. } => *by,
             HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. } => ActorId::None,
         }
     }
@@ -493,7 +504,7 @@ impl HistoryEntry {
             HistoryEntry::Said { message } => Some((message.produced_from.as_ref()?, message.turn_id?)),
             HistoryEntry::Given { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
-            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => None,
+            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. } => None,
         }
     }
 }
