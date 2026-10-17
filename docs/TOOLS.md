@@ -11,8 +11,11 @@ A component offers tools by implementing `ToolProvider`; one component may expos
 Besides running a call, a provider says what its tools are for, why it gives none now (in general
 terms, never with the error), what approvers are shown for a call (`describe`), which calls are
 like a given one (`matcher`, for a rule derived from it), and what a call asks a person before it
-runs (`questions`). A tool whose argument is a language says better than the default what makes two
-calls alike.
+runs (`questions`). A parameter written in a language - a bash command line,
+`ToolParameters::shell` - says so; the model is not told of it, but the default `matcher` derives
+from it a rule on the words a command begins with
+([APPROVALS.md](APPROVALS.md#rules-on-commands)). A tool that knows more of what makes two calls
+alike says better than the default.
 
 A `Tool` declares its name, description and parameters, whether it requires approval, its
 visibility, optionally the classification of its results, and its presentation: how frontends show
@@ -205,8 +208,9 @@ with `publish_artifact`.
 over - and is seen only from the channel it was started in. A call follows its command for
 `wait_secs`; one still running then is handed back with its id, and the model follows it with
 `command_output` or ends it with `kill_command`. The result is classified as the workspace. The
-approver reads the command whole; following and ending a command need no approval, since only a
-command that was approved is followed or ended.
+approver reads the command whole, and a rule derived from an approved command covers the commands
+beginning with its first two words, however long a call waits. Following and ending a command need
+no approval, since only a command that was approved is followed or ended.
 
 A call dropped while it waits for its command - the turn cancelled or stopped - kills the command,
 in a task of its own, bounded and logged, that the drop does not await. It is the deliberate

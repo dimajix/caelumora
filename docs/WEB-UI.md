@@ -273,7 +273,8 @@ else who may read it - the session's owner, say - is shown its history and no in
     or withdrawn. The pending approvals come with the snapshot, and a request asked anew after a
     restart is shown once. Whether this user answered is known only to this page. Unless a rule of
     the place asked for it, a card offers to add a rule derived from the call with the answer
-    ("and from now on"); a request a rule of this user's answered says so.
+    ("and from now on") - a command line by how many of the words it was proposed with; which words
+    a line has is the server's to read. A request a rule of this user's answered says so.
 *   **Questions** an agent's call waits for are shown to everybody the server sends them to, above
     the approvals, with the controls only for the users they are put to. A question may be skipped,
     the whole of them declined; a question's text keeps its line breaks, so that a command of
@@ -322,9 +323,10 @@ takes it back; the dialog says that nothing said before is translated.
 ### Approval rules
 
 The channel's approval rules are counted below the language and changed in the same dialog as the
-session's. A rule names a tool - `*` for every one - and optionally a pattern per argument, and asks
-or denies; the dialog offers nothing that allows, since a place cannot. The rules are saved as a
-whole. An approval asked for by such a rule says so on its card.
+session's. A rule names a tool - `*` for every one - and optionally per argument a pattern or the
+words a command line's commands begin with, and asks or denies; the dialog offers nothing that
+allows, since a place cannot. The rules are saved as a whole. An approval asked for by such a rule
+says so on its card.
 
 ### The channel's files
 

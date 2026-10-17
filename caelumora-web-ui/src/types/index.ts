@@ -978,10 +978,21 @@ export interface ApprovalRequest {
   suggested?: ToolMatcher;
 }
 
-/** What calls a rule is about: the tool by name - `*` for every tool - and, per argument, a pattern its whole value must match. */
+/** What calls a rule is about: the tool by name - `*` for every tool - and, per argument, how its value is compared. */
 export interface ToolMatcher {
   tool: string;
-  arguments?: Record<string, string>;
+  arguments?: Record<string, ArgumentMatcher>;
+}
+
+/**
+ * How the value of one argument is compared (issue 247): a pattern - a regular expression its whole value must
+ * match - or, for a bash command line, the words each of its simple commands must begin with.
+ */
+export type ArgumentMatcher = string | ShellWords;
+
+/** The words each simple command of a bash command line must begin with, as they run. */
+export interface ShellWords {
+  shell: string[];
 }
 
 /** What a rule decides of the calls it is about (issue 13). A session or channel only asks or denies. */
@@ -990,10 +1001,7 @@ export type RuleDecision = 'allow' | 'ask' | 'deny';
 /** Where a rule applies within the place it is kept; `everywhere` when left out. */
 export type Reach = 'everywhere' | {session: string} | {channel: string};
 
-/**
- * A standing decision on tool calls (issue 13): the tool by name - `*` for every tool - and, per
- * argument, a regular expression its whole value must match.
- */
+/** A standing decision on tool calls (issue 13): the calls its matcher is about, what it decides of them, where and how long. */
 export interface ApprovalRule {
   /** Made by the server when left out. */
   id?: string;

@@ -1,6 +1,6 @@
 # 247 — A rule can match an argument that is a language only by its exact text
 
-**Status:** in progress
+**Status:** done
 **Type:** bug
 **Priority:** high
 **Area:** Tools and approvals
@@ -262,3 +262,13 @@ command is not matched by a rule for its first part.
   tool of its own whose argument is a shell line, a person's rule derived from an approved `ls`,
   and a rule that denies a command asking for an unjudgeable line - of a place, and of a person,
   whose rule then does not answer.
+- **2026-10-17** — Steps 4 and 5, and done. The web UI knows `ArgumentMatcher`: `describeMatcher`
+  shows a shell argument by its words, the approval card offers how many of the proposed words the
+  rule keeps, and the dialog of a place's rules compares each argument as a pattern or by the
+  words a command begins with. Two narrowings of the plan: the card shortens the proposal but
+  cannot lengthen it, since which words a line has is the server's to read and the UI does not
+  mirror the scanner; and the dialog offers both kinds for every argument, since it does not know
+  the tools of a place's agents. APPROVALS.md has a section on rules on commands - how a chain and
+  an unjudgeable line are judged, and what such a rule does not bound -, TOOLS.md, CONFIGURATION.md
+  and WEB-UI.md say what changed; SECURITY.md has no passage on what bounds a command, so nothing
+  was added there.

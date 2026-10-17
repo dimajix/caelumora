@@ -2,7 +2,7 @@
 // the server's to decide; this only says what a rule is about, and which of
 // the user's own rules approve everything here, to show while they do.
 
-import type {ApprovalRequest, ApprovalRule, Reach, ToolMatcher} from './types';
+import type {ApprovalRequest, ApprovalRule, ArgumentMatcher, Reach, ToolMatcher} from './types';
 
 /** Whether `rule` reaches the channel `channelId` of session `sessionId`. */
 export function inReach(rule: ApprovalRule, sessionId: string, channelId: string): boolean {
@@ -39,11 +39,16 @@ export function approveEverything(sessionId: string, minutes: number): ApprovalR
   };
 }
 
-/** What `matcher` is about, in a line: the tool, and each argument's pattern. */
+/** What `matcher` is about, in a line: the tool, and each argument as it is compared. */
 export function describeMatcher(matcher: ToolMatcher): string {
   const tool = matcher.tool === '*' ? 'every tool' : matcher.tool;
-  const args = Object.entries(matcher.arguments ?? {}).map(([name, pattern]) => `${name} ~ ${pattern}`);
+  const args = Object.entries(matcher.arguments ?? {}).map(([name, argument]) => `${name}${describeArgument(argument)}`);
   return args.length === 0 ? tool : `${tool} (${args.join(', ')})`;
+}
+
+/** How an argument is compared, after its name: ` ~ pattern`, or `: the words …` of a command line. */
+function describeArgument(argument: ArgumentMatcher): string {
+  return typeof argument === 'string' ? ` ~ ${argument}` : `: ${argument.shell.join(' ')} …`;
 }
 
 /** Where `rule` reaches, in words; the session's or channel's name if known. */
