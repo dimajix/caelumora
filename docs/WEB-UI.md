@@ -127,6 +127,15 @@ or their members. Starting and stopping are ignored. An event about an entity is
 are loaded again on any event of their kind, and the trash on any deletion or restoring, whatever
 the kind.
 
+What is new in a channel (issue 404) is shown beside it: how many messages of others came since the
+user last read it, and an `@` where one of them mentions them; a folded session shows the sum of its
+channels. The list takes the numbers from the snapshot and counts on with every message the global
+stream announces (`said`) - except in the channel on screen while the tab is visible -, and the
+chat view clears them as it marks the channel read (`unread.ts`). What another tab or device read
+is seen here on the next listing. A message that mentions the user is shown as a notification of
+the browser where they allowed it - asked for by the bell at the foot of the sidebar - unless its
+channel is on screen.
+
 A session's privacy is shown to everyone in it; its owner changes it (`PrivacyDialog`). Choosing a
 policy that lets other sessions read says that it holds for what is said from then on. The session's
 approval rules are changed by its owner from its menu. Deleting a session or a channel asks once
@@ -217,7 +226,15 @@ from the dialog that adds someone to a channel (see below).
 ### A channel
 
 `ChatView` shows one channel. Only a participant follows it live, over the channel's stream; anyone
-else who may read it - the session's owner, say - is shown its history and no input.
+else who may read it - the session's owner, say - is shown its history and no input, and what
+others say in it as the global stream announces it.
+
+*   **What was read.** The chat marks the channel read up to the newest message of someone else it
+    shows, while the tab is visible - as the channel is opened, as messages arrive and as the tab
+    comes back. Never up to one of the user's own, which is shown before the channel takes it in,
+    nor to a notice of the UI's. A line marks where the new messages began as the channel was
+    opened, and stays there while the user reads; where the message last read lies before the pages
+    shown, or nothing was read, it stands at the top.
 
 *   **History.** The snapshot holds the last page of the history; "Load earlier messages" puts the
     page before those shown in front of them, until there is none (issue 218). One who does not take

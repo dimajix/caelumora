@@ -10,7 +10,8 @@ use crate::value::text::Introduction;
 use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
 use crate::removal::{Deletable, Removal};
-use crate::store::{EntityKind, NoEntity, Stored, Updatable};
+use crate::store::{EntityKind, Journaled, NoEntity, Stored, Updatable};
+use crate::message::MessageId;
 use crate::store::query::{Field, NoField};
 
 define_id!(UserId);
@@ -255,9 +256,91 @@ impl From<UserProfileFields> for UserProfile {
     }
 }
 
+/// A user in one channel (issue 404): up to where they read it. The user's
+/// counterpart of an agent's `AgentChannelState`, kept in the `StateStore`,
+/// written by the user's controller alone and read by nobody but the user.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UserChannelState {
+    /// The last message of someone else the user read; `None` while they
+    /// read nothing of the channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read: Option<ReadMark>,
+}
+
+/// Up to where a user read a channel: a message and where it stands in the
+/// channel's history - the position to count what is new from, the message
+/// to show where the new ones begin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadMark {
+    pub position: u64,
+    pub message: MessageId,
+}
+
+impl UserChannelState {
+    /// Moves the mark to `mark` if that lies after it - it only moves
+    /// forward, so that two frontends of the user cannot move it back.
+    /// Whether it moved.
+    pub fn read_up_to(&mut self, mark: ReadMark) -> bool {
+        if self.read.is_some_and(|read| read.position >= mark.position) {
+            return false;
+        }
+        self.read = Some(mark);
+        true
+    }
+
+    /// The position in the channel's history from which on what is said is
+    /// new to the user: after the mark, or from the start.
+    pub fn unread_from(&self) -> u64 {
+        self.read.map_or(0, |read| read.position + 1)
+    }
+}
+
+/// A change to a [`UserChannelState`] since it was last stored.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UserChannelStateChange {
+    Read(Option<ReadMark>),
+}
+
+impl Journaled for UserChannelState {
+    type Change = UserChannelStateChange;
+
+    /// The mark is small and changed in place: recorded whole.
+    fn changes(&self) -> Vec<Self::Change> {
+        vec![UserChannelStateChange::Read(self.read)]
+    }
+
+    fn mark_stored(&mut self) {}
+
+    fn apply(&mut self, change: Self::Change) -> Result<(), String> {
+        match change {
+            UserChannelStateChange::Read(read) => self.read = read,
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue 404: two frontends of one user cannot move the mark back.
+    #[test]
+    fn what_was_read_only_moves_forward() {
+        let mut state = UserChannelState::default();
+        assert_eq!(state.unread_from(), 0, "nothing read: everything is new");
+        let (first, later) = (ReadMark { position: 4, message: MessageId::new() }, ReadMark { position: 9, message: MessageId::new() });
+        assert!(state.read_up_to(first));
+        assert!(state.read_up_to(later));
+        assert!(!state.read_up_to(first), "not back");
+        assert!(!state.read_up_to(later), "nor again");
+        assert_eq!((state.read, state.unread_from()), (Some(later), 10));
+        let mut replayed = UserChannelState::default();
+        for change in state.changes() {
+            replayed.apply(change).unwrap();
+        }
+        assert_eq!(replayed.read, Some(later), "replayed as stored");
+    }
     use crate::confidentiality::ConfidentialityRules;
 
     #[test]

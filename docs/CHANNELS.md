@@ -200,6 +200,31 @@ the REST server: `SessionLoop::channel_for` returns a channel only to whoever ma
 views answer the same way. What a client lists and offers comes from views the runtime builds for
 one viewer; see [SECURITY.md](SECURITY.md).
 
+### What is new to a user
+
+A user marks up to where they read a channel: the newest message of someone else they were shown,
+never one of their own - their own is shown as they send it, before the channel takes it in, so it
+may stand after a message of another that comes earlier in the history and was not shown yet. The
+messages of others reach a user in the order of the history, since the channel appends and routes
+in one step; so their positions in the history order them as the user sees them.
+
+*   **Kept by the user's controller.** The mark is the user's state in the channel
+    (`UserChannelState`, see [STORAGE.md](STORAGE.md#the-state-store)): the position of the message
+    in the history and the message. The `UserController` is its one writer
+    (`UserController::mark_read`), so that it is kept whether the channel runs or not, and for a
+    reader who takes no part. It reaches the channel as the user reads it - the store asks - and
+    takes only a message from where the user's view of the history begins. The mark only moves
+    forward, so that two frontends of the user cannot move it back, and nobody else reads it.
+*   **Counted by the views.** What is new (`ChannelView::unread`, `Detail::UNREAD`) is what others
+    said that a participant hears (`Message::is_heard`: no steps of a plan, no notices of the
+    runtime, nothing taken back), of what the user may read, after the mark and from where their
+    view begins - counted up to a cap, and whether one of these messages mentions them, `@all`
+    included.
+*   **Announced as it is said.** Every message others hear is announced on the event bus once it is
+    stored (`channel::SAID`), with the message, classified as the channel: it reaches who may read
+    the channel and is cleared for it, which is who reads the message in the history. A frontend
+    counts on from what it listed.
+
 ## Acting in a channel
 
 Whoever writes or approves does so in their own name. `ChannelLoop::user_actor(UserId)` returns

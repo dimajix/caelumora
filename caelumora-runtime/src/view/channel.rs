@@ -22,7 +22,7 @@ use caelumora_model::note::Note;
 use caelumora_model::removal::Removal;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement};
 use caelumora_model::session::ChannelId;
-use caelumora_model::snapshot::{ChannelSnapshot, Detail, MemberSnapshot, PublishedNotes};
+use caelumora_model::snapshot::{ChannelSnapshot, Detail, MemberSnapshot, PublishedNotes, Unread};
 use caelumora_model::store::history::{every, HistoryKey, Keep};
 use caelumora_model::store::{StoreError, StoreResultExt};
 use caelumora_model::tool::ToolSet;
@@ -428,7 +428,41 @@ impl ChannelView {
             can_change: self.may_change().await,
             members,
             former_members,
+            unread: match detail.contains(Detail::UNREAD) {
+                true => self.unread().await.ok().flatten(),
+                false => None,
+            },
         }
+    }
+
+    /// What is new in the channel to the viewer (issue 404), if they are a
+    /// user: the messages others said that the viewer hears and may read,
+    /// after the last one they read and from where their view of the
+    /// history begins - counted up to `Unread::CAP` -, and whether one of
+    /// them mentions them. Read from the store, whether the channel runs or
+    /// not.
+    ///
+    /// # Errors
+    /// `Failed` if the history or what the user read cannot be read.
+    pub async fn unread(&self) -> ViewResult<Option<Unread>> {
+        let viewer @ ActorId::User(user) = self.reader() else { return Ok(None) };
+        let state = self.views().states().get_user_channel_state(user, self.channel.id).await.map_err(|e| {
+            warn!("Cannot read what user {} read of channel {}: {}", user, self.channel.id, e);
+            ViewError::failed(e, format!("reading what was read of channel {}", self.channel.id))
+        })?;
+        let read_up_to = state.read.map(|read| read.message);
+        let Some(visible) = self.visible_from().await? else {
+            return Ok(Some(Unread { messages: 0, mentioned: false, read_up_to }));
+        };
+        let from = visible.max(state.unread_from());
+        let new = |item: &HistoryEntry| self.may_read_item(item) && item.said().is_some_and(|message| message.sender_id != viewer && message.is_heard());
+        let mentioning = |item: &HistoryEntry| new(item) && item.said().is_some_and(|message| message.mentions.contains(&viewer));
+        let key = HistoryKey::Channel(self.channel.id);
+        let counted = self.views().histories().page(key, from, None, Unread::CAP, &new).await.map_err(|e| self.failed_reading(e))?;
+        // A mention among those not counted is looked for on its own.
+        let mentioned = counted.items.iter().any(mentioning) || (counted.items.len() == Unread::CAP
+            && !self.views().histories().page(key, from, None, 1, &mentioning).await.map_err(|e| self.failed_reading(e))?.items.is_empty());
+        Ok(Some(Unread { messages: counted.items.len(), mentioned, read_up_to }))
     }
 }
 

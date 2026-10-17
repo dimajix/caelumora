@@ -1,6 +1,6 @@
 # 404 — The channel overview does not say where something new was said
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -139,6 +139,8 @@ so its count stays at 0.
 *   The chat view moves the read position when the newest messages are on screen, and when the user
     scrolls down to them.
 *   Optional, later: the title of the browser tab with the total.
+*   The chat view draws a line where the new messages begin: after the message last read, as it
+    was when the channel was opened, so that the line stays while the position moves on.
 
 ## Done when
 
@@ -149,6 +151,7 @@ so its count stays at 0.
 *   The global stream tells a user when a channel has news for them, without content and only for
     messages they may read.
 *   The sidebar shows the count and the mention mark; opening a channel and reading clears them.
+*   The chat view marks where the new messages begin.
 *   The new action has its test in the security suite.
 *   [CHANNELS.md](../docs/CHANNELS.md), [REST-SERVER.md](../docs/REST-SERVER.md),
     [STORAGE.md](../docs/STORAGE.md) and [WEB-UI.md](../docs/WEB-UI.md) describe it.
@@ -162,3 +165,38 @@ user and channel (`UserChannelState`) and moved forward by the frontend; only re
 said after it count, on request and capped; a mention by name and one through `@all` both count;
 the global stream tells each reader of news with their count and whether they are mentioned, and
 `ChannelResponse` carries both.
+
+2026-10-17: Changed before implementing. The event bus cannot compute a count per subscriber: it
+sends the same event to every party, from one dispatcher that keeps their order, and would have to
+read the history for each of them. Instead the channel publishes, for every message that counts as
+news, a custom change `said` carrying the message, classified as the channel: the bus asks of each
+subscriber what `channel_reading` asks of a user - reading the channel and being cleared for it -,
+so it reaches exactly who would read the message in the history. The web UI counts up from what
+the snapshot said and marks the mention itself, and may show the message as a browser
+notification. The read position is kept and moved by the `UserController`, the one writer of the
+user's states in the instance, so that it can be moved while the channel does not run and by a
+reader who takes no part; the frontend names the last message read, since it does not know
+positions in the history.
+
+2026-10-17: The frontend names the newest message of someone else it has received and shown, never
+one of the user's own: those are shown as the user sends them, before the channel takes them in,
+so one may stand after a message of another that is earlier in the history and not yet shown. The
+messages of others reach a user's actor in the order of the history - the channel appends and
+routes in one step -, so their positions order them as the user sees them; the count runs over the
+user's view of the history, from where it begins and only over what they may read. The state keeps
+the position and the message, so that the chat view can also draw a line where the new messages
+begin.
+
+2026-10-17: Done. The user's state in a channel (`UserChannelState`) is kept in the state store and
+deleted with the channel's; the `UserController` moves it (`mark_read`, `PUT …/read`), reaching the
+channel as the user reads it. `ChannelView::unread` counts what is new (`Detail::UNREAD`): in every
+listing of channels, the global stream's snapshot, a channel's stream's snapshot and `GET` of a
+channel. The channel announces every message others hear as `channel::SAID`, with the message.
+The web UI shows the count and the `@` per channel and summed on a folded session, notifies of a
+mention where the browser may (asked for by a bell in the sidebar), marks a channel read as it
+shows its newest message of someone else, draws the line where the new messages began, and shows a
+reader who takes no part what others say as the global stream announces it. Left as it is: where
+the message last read lies before the pages loaded, the line stands at the top - earlier pages are
+not loaded for it; marking is not announced, so what another tab or device read is seen on the next
+listing; and the state has one writer per instance, as an agent's has (several instances: issue
+122).

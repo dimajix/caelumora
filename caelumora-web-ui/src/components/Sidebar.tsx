@@ -1,5 +1,6 @@
 import React, {useEffect, useEffectEvent, useState} from 'react';
 import {
+  Bell,
   BookOpen,
   Bot,
   ChevronDown,
@@ -18,10 +19,11 @@ import {
   Users,
   UsersRound
 } from 'lucide-react';
-import type {AgentResponse, ArtifactResponse, ChannelResponse, GlobalEvent, GroupResponse, SessionSnapshot, SkillResponse, UserResponse, WorkspaceResponse} from '../types';
+import type {ActorId, AgentResponse, ArtifactResponse, ChannelResponse, GlobalEvent, GroupResponse, Message, SessionSnapshot, SkillResponse, Unread, UserResponse, WorkspaceResponse} from '../types';
 import {api} from '../api';
 import {ApiRequestError, reportError} from '../errors';
-import {asGlobalEvent, dispatchGlobalEvent, sessionChange} from '../globalEvents';
+import {asGlobalEvent, dispatchGlobalEvent, saidInChannel, sessionChange} from '../globalEvents';
+import {askForNotifications, countedIn, isOthers, mayAskForNotifications, mentions, notifyMention, onChannelRead, unreadLabel} from '../unread';
 import {openEventStream} from '../stream';
 import {ActionMenu} from './ActionMenu';
 import {ResizeHandle} from './ResizeHandle';
@@ -53,6 +55,39 @@ function sessionName(session: SessionSnapshot): string {
 function channelName(channel: ChannelResponse): string {
   return channel.name || `Channel ${channel.id?.slice?.(0, 8) || channel.id}`;
 }
+
+/** `sessions` with channel `channelId` changed as `change` says. */
+function withChannel(sessions: SessionSnapshot[], channelId: string, change: (channel: ChannelResponse) => ChannelResponse): SessionSnapshot[] {
+  return sessions.map(session => session.channels.some(c => c.id === channelId)
+    ? {...session, channels: session.channels.map(c => (c.id === channelId ? change(c) : c))}
+    : session);
+}
+
+/** What is new in all of `session`'s channels together (issue 404), shown while they are folded. */
+function unreadIn(session: SessionSnapshot): Unread {
+  return {
+    messages: session.channels.reduce((sum, channel) => sum + (channel.unread?.messages ?? 0), 0),
+    mentioned: session.channels.some(channel => channel.unread?.mentioned),
+  };
+}
+
+/** How many messages are new, as a badge - marked `@` where one mentions the user. */
+const UnreadBadge: React.FC<{unread: Unread | undefined}> = ({unread}) => {
+  if (!unread || unread.messages === 0) return null;
+  const label = `${unread.messages > 99 ? 'More than 99' : unread.messages} new message${unread.messages === 1 ? '' : 's'}${unread.mentioned ? ', you are mentioned' : ''}`;
+  return (
+    <span
+      className={cn(
+        "ml-auto shrink-0 rounded-full px-1.5 text-[10px] font-semibold leading-4",
+        unread.mentioned ? "bg-red-600 text-white" : "bg-gray-600 text-gray-100"
+      )}
+      title={label}
+      aria-label={label}
+    >
+      {unread.mentioned && '@ '}{unreadLabel(unread.messages)}
+    </span>
+  );
+};
 
 /** Whether `event` may change what the trash holds (issue 164): a deletion or restoring of whatever kind. */
 function trashChangedBy(event: GlobalEvent): boolean {
@@ -154,6 +189,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // the trash is loaded again (issue 164).
   const [trashVersion, setTrashVersion] = useState(0);
   const trashChanged = () => setTrashVersion(v => v + 1);
+  // Whether the browser may still be asked to show notifications (issue 404).
+  const [mayAsk, setMayAsk] = useState(mayAskForNotifications);
+  const me: ActorId = {User: user.id};
 
   /** Drops a session from the list - deleted here or elsewhere. */
   const removeSession = (sessionId: string) => {
@@ -180,6 +218,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const groupsChangedFromStream = useEffectEvent(() => groups.reload());
   const agentsChangedFromStream = useEffectEvent(() => agents.reload());
   const refreshSessionFromStream = useEffectEvent((sessionId: string) => void refreshSession(sessionId));
+  // Something new was said (issue 404): counted where the user does not see
+  // it now, and shown as a notification where it mentions them.
+  const saidFromStream = useEffectEvent((sessionId: string, channelId: string, message: Message) => {
+    if (!isOthers(message, me)) return;
+    const seen = channelId === selectedChannelId && page === null && document.visibilityState === 'visible';
+    if (seen) return;
+    setSessions(prev => withChannel(prev, channelId, channel => ({...channel, unread: countedIn(channel.unread, message, me)})));
+    if (mentions(message, me)) {
+      const channel = sessions.find(s => s.id === sessionId)?.channels.find(c => c.id === channelId);
+      notifyMention(message, channel ? channelName(channel) : 'a channel', () => onSelectChannel(sessionId, channelId));
+    }
+  });
+
+  // What the chat view marked read is nothing new any more.
+  useEffect(() => onChannelRead((channelId, messageId) => {
+    setSessions(prev => withChannel(prev, channelId, channel => ({...channel, unread: {messages: 0, mentioned: false, read_up_to: messageId}})));
+  }), []);
 
   // The list is the global stream's: its snapshot, then its events (issue
   // 35). What this tab does itself is shown at once as well; the event that
@@ -206,6 +261,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           return;
         }
         dispatchGlobalEvent(event);
+        const said = saidInChannel(event);
+        if (said) {
+          saidFromStream(said.sessionId, said.channelId, said.message);
+          return;
+        }
         if (trashChangedBy(event)) trashChangedFromStream();
         if (isAbout(event, 'workspace')) workspacesChangedFromStream();
         if (isAbout(event, 'skill')) skillsChangedFromStream();
@@ -363,8 +423,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       onClick={(e) => e.stopPropagation()}
                     />
                   ) : (
-                    <span className="truncate">{sessionName(session)}</span>
+                    <span className="truncate mr-2">{sessionName(session)}</span>
                   )}
+                  {!expandedSessions[session.id] && <UnreadBadge unread={unreadIn(session)} />}
                   {session.privacy && session.privacy !== 'private' && (
                     <span className="ml-1 shrink-0 text-gray-500" title={`${privacyInfo(session.privacy).label}: ${privacyInfo(session.privacy).description}`}>
                       <Users size={12} aria-label={privacyInfo(session.privacy).label} />
@@ -405,7 +466,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           title={channel.summary}
                         >
                           <MessageSquare size={14} className="mr-2 shrink-0" />
-                          <span className="truncate">{channelName(channel)}</span>
+                          <span className={cn("truncate mr-2", (channel.unread?.messages ?? 0) > 0 && "text-white font-medium")}>{channelName(channel)}</span>
+                          <UnreadBadge unread={channel.unread} />
                         </button>
                         <ActionMenu
                           label={`Options of ${channelName(channel)}`}
@@ -648,6 +710,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <User size={16} className="text-gray-400 shrink-0" />
           <span className="flex-1 truncate">{user.username}</span>
         </button>
+        {mayAsk && (
+          <button
+            onClick={() => void askForNotifications().finally(() => setMayAsk(mayAskForNotifications()))}
+            className="p-1 hover:bg-gray-800 rounded-md transition-colors"
+            title="Let the browser tell you when someone mentions you"
+          >
+            <Bell size={16} />
+          </button>
+        )}
         <button
           onClick={onLogout}
           className="p-1 hover:bg-gray-800 rounded-md transition-colors"

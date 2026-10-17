@@ -133,7 +133,7 @@ impl RuntimeBuilder {
             .with(Arc::clone(&secret_manager))
             .with(Arc::clone(&entity_stores.users));
         let storages = Arc::new(backends.make_named::<dyn TerminalProvider>("storage of workspaces", &config.workspaces.storage, &backend_services)?);
-        let controller_manager = Arc::new(ControllerManager::new(entity_stores.clone(), Arc::clone(&event_bus), Arc::clone(&access_policy), Arc::clone(&confidentiality), Arc::clone(&storages)));
+        let controller_manager = Arc::new(ControllerManager::new(entity_stores.clone(), Arc::clone(&event_bus), Arc::clone(&access_policy), Arc::clone(&confidentiality), Arc::clone(&storages), Arc::clone(&state_store), Arc::clone(&history_store)));
         let agent_states = Arc::new(AgentStates::new(Arc::clone(&state_store), Arc::<EventBus>::clone(&event_bus)));
         let command_reaper = CommandReaper::new(&entity_stores, &event_bus, Arc::clone(&controller_manager), Arc::clone(&storages))?;
         let workspaces = Arc::new(WorkspaceManager::new(&entity_stores, Arc::clone(&event_bus), Arc::clone(&access_policy), Arc::clone(&confidentiality), storages, &config.workspaces));

@@ -299,6 +299,20 @@ export const api = {
     return res.json();
   },
 
+  /**
+   * Marks the channel read up to `messageId` (issue 404): the newest message of
+   * someone else the user was shown. A message before the one marked changes
+   * nothing.
+   */
+  async markRead(sessionId: string, channelId: string, messageId: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/read`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message_id: messageId }),
+    });
+    await ensureOk(res, 'Failed to mark the channel read');
+  },
+
   /** The message `messageId` of the channel as it stands, if the user sees it (issue 218). */
   async getMessage(sessionId: string, channelId: string, messageId: string): Promise<Message> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages/${messageId}`);

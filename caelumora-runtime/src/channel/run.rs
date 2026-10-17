@@ -481,6 +481,12 @@ impl ChannelLoop {
     }
 
     async fn append_history(&self, envelope: &Envelope) {
+        // What others hear of it is news to them (issue 404), announced once
+        // it is stored.
+        let said = match &envelope.event {
+            ActorEvent::CompleteMessageGenerated(message) | ActorEvent::IntermediateMessageGenerated(message) => Some(message).filter(|message| message.is_heard()),
+            _ => None,
+        };
         let mut state = self.state.lock().await;
         let changed = match &envelope.event {
             // What is said is kept as it arrives, a turn's steps too, and
@@ -544,8 +550,11 @@ impl ChannelLoop {
         };
 
         if changed {
-            if let Err(e) = self.store_state(&mut state).await {
-                warn!("Cannot store state of channel {}: {}", self.id, e);
+            match self.store_state(&mut state).await {
+                Ok(()) => if let Some(message) = said {
+                    self.channel.announce_said(message);
+                },
+                Err(e) => warn!("Cannot store state of channel {}: {}", self.id, e),
             }
         }
     }
@@ -1162,5 +1171,37 @@ mod tests {
         assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })), "{error}");
         let error = channel.wakeup_actor(&context, stranger).await.expect_err("nor to be woken");
         assert!(matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })), "the same error: {error}");
+    }
+
+    /// Issue 404: what others hear of a message is announced with the
+    /// message once it is stored, as news of the channel; a step of a plan
+    /// or a notice of the runtime is not.
+    #[tokio::test]
+    async fn what_others_hear_is_announced_once_it_is_stored() {
+        use crate::session::testing::{drain, running_session_of_a_user, spec, test_runtime};
+        use crate::session::SessionManager;
+        use caelumora_model::channel::{Channel, SAID};
+        let runtime = test_runtime();
+        let manager = SessionManager::new(Arc::clone(&runtime));
+        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
+        let owner = ctx.initiator_id;
+        let said = |message: &Message| Envelope::new(ctx.clone(), EventContext { sender_id: owner, ..EventContext::default() }, ActorEvent::CompleteMessageGenerated(message.clone()));
+        let heard = Message { id: MessageId::new(), role: MessageRole::User, sender_id: owner, content: Some("hello".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let step = Message { id: MessageId::new(), internal: true, ..heard.clone() };
+        let notice = Message { id: MessageId::new(), role: MessageRole::System, ..heard.clone() };
+        let mut rx = runtime.event_bus().subscribe_all();
+
+        for message in [&heard, &step, &notice] {
+            channel.append_history(&said(message)).await;
+        }
+
+        let announced: Vec<MessageId> = drain(&mut rx).iter()
+            .filter_map(|event| event.about::<Channel>().filter(|((_, id), _)| *id == channel.id()))
+            .filter_map(|(_, change)| change.data::<Message>(SAID))
+            .map(|message| message.id)
+            .collect();
+        assert_eq!(announced, [heard.id], "the words others hear, with the message");
+        assert_eq!(channel.history().await.len(), 3, "though every one is kept");
     }
 }

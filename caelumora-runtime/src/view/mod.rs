@@ -1065,6 +1065,78 @@ mod tests {
         assert_eq!(&alone, agent, "a member asked for alone is shown as in the list");
     }
 
+    /// Issue 404: what is new to a user is what others said that they hear,
+    /// after the last message they read and from where their view begins;
+    /// the mark moves forward only, and only to a message they see.
+    #[tokio::test]
+    async fn what_is_new_to_a_user_is_counted_from_what_they_read() {
+        use caelumora_model::channel::{ChannelState, HistoryLimit, HistoryStart};
+        use caelumora_model::message::{Message, MessageId, MessageRole};
+        use caelumora_model::snapshot::Unread;
+        use caelumora_model::store::{StateStore, StoreError};
+        use caelumora_model::user::User;
+
+        let (store, manager) = owned_runtime(Default::default());
+        let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
+        let mut session = make_session("hers", ActorId::User(alice.id));
+        session.participants = record_users(&manager, &[&alice, &bob, &carol]).await;
+        let mut channel = main_channel(&session);
+        channel.participants.retain(|participant| participant.actor_id() != ActorId::User(carol.id));
+        stored_session(&store, &session).await;
+
+        let said = |by: &User, text: &str| Message { id: MessageId::new(), role: MessageRole::User, sender_id: ActorId::User(by.id), content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let hello = said(&bob, "hello");
+        let hers = said(&alice, "hi");
+        let step = Message { internal: true, ..said(&bob, "a step") };
+        let notice = Message { role: MessageRole::System, ..said(&bob, "a notice") };
+        let asking = Message { mentions: vec![ActorId::User(alice.id)], ..said(&bob, "@alice, a question") };
+        // Bob joined after his first message.
+        channel.history_limits.push(HistoryLimit { participant: ActorId::User(bob.id), start: HistoryStart::After(hello.id) });
+        stored_channel(&store, &channel).await;
+        let mut state = ChannelState::new(channel.id);
+        state.history.extend(vec![hello.clone(), hers.clone(), step.clone(), notice, asking.clone()]);
+        store.put_channel_state(channel.id, &mut state).await.unwrap();
+
+        let unread_of = |viewer: &User| {
+            let (manager, viewer) = (&manager, viewer.id);
+            async move {
+                let channel = manager.views(as_user(viewer)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
+                channel.snapshot(Detail::UNREAD).await.unread
+            }
+        };
+        let unread = |messages, mentioned, read_up_to| Some(Unread { messages, mentioned, read_up_to });
+        assert_eq!(unread_of(&alice).await, unread(2, true, None), "bob's words, not her own, his steps or the runtime's notices");
+        assert_eq!(unread_of(&bob).await, unread(1, false, None), "hers, from where his view begins");
+        let without = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap().snapshot(Detail::empty()).await;
+        assert_eq!(without.unread, None, "only where it is asked for");
+
+        let controller = |user: &User| {
+            let (manager, user) = (&manager, user.id);
+            async move { Arc::clone(manager.views(as_user(user)).controller_manager()).user_controller(user).await.unwrap() }
+        };
+        let mark = |user: &User, message: MessageId| {
+            let (controller, user) = (controller(user), user.id);
+            async move { controller.await.mark_read(as_user(user).context(), session.id, channel.id, message).await }
+        };
+        mark(&alice, hello.id).await.expect("hers to mark");
+        assert_eq!(unread_of(&alice).await, unread(1, true, Some(hello.id)), "after what she read");
+        mark(&alice, asking.id).await.expect("hers to mark");
+        assert_eq!(unread_of(&alice).await, unread(0, false, Some(asking.id)));
+        mark(&alice, hello.id).await.expect("an older one is no error");
+        assert_eq!(unread_of(&alice).await, unread(0, false, Some(asking.id)), "but does not move the mark back");
+        assert_eq!(store.get_user_channel_state(bob.id, channel.id).await.unwrap().read, None, "hers alone");
+
+        let not_found = |result: Result<(), StoreError>, entity: &str| matches!(result, Err(StoreError::NotFound { entity: found, .. }) if found == entity);
+        assert!(not_found(mark(&bob, hello.id).await, "message"), "not before where his view begins");
+        assert!(not_found(mark(&bob, MessageId::new()).await, "message"), "nor what was never said");
+        assert!(not_found(mark(&carol, hello.id).await, "channel"), "nor in a channel she does not read");
+        let elsewhere = controller(&alice).await.mark_read(as_user(alice.id).context(), SessionId::new(), channel.id, hers.id).await;
+        assert!(not_found(elsewhere, "channel"), "nor in another session");
+        let forged = controller(&alice).await.mark_read(as_user(bob.id).context(), session.id, channel.id, hers.id).await;
+        assert!(matches!(forged, Err(StoreError::Validation(_))), "nor by someone else: {forged:?}");
+        assert_eq!(unread_of(&alice).await, unread(0, false, Some(asking.id)), "none of it changed anything");
+    }
+
     #[tokio::test]
     async fn what_a_channel_holds_is_read_through_its_nodes_and_a_members_context_by_who_may() {
         use caelumora_model::channel::{ChannelState, HistoryLimit, HistoryStart};

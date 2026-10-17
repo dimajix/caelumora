@@ -26,7 +26,7 @@ use crate::scope::Scope;
 use crate::value::language::Language;
 use crate::value::text::{Briefing, Description, Summary};
 use crate::digest::Digest;
-use crate::message::TokenUsage;
+use crate::message::{MessageId, TokenUsage};
 use crate::note::Note;
 use crate::privacy::PrivacyConfig;
 use crate::session::{ChannelId, SessionId};
@@ -60,6 +60,9 @@ bitflags::bitflags! {
         /// Of a session or channel: its briefing (issue 245), which may be
         /// long - not where they are listed.
         const BRIEFING = 1 << 6;
+        /// Of a channel: what is new in it to a viewing user (issue 404),
+        /// which reads its history.
+        const UNREAD = 1 << 7;
     }
 }
 
@@ -143,6 +146,28 @@ pub struct ChannelSnapshot {
     /// Who took part and left (issue 164), in the order they left, each
     /// with `left` - with `Detail::MEMBERS`, without the other details.
     pub former_members: Vec<MemberSnapshot>,
+    /// What is new in it to the viewer - with `Detail::UNREAD`, for a user;
+    /// `None` without it, for an agent, or if it cannot be read.
+    pub unread: Option<Unread>,
+}
+
+/// What is new in a channel to a user (issue 404): the messages of others
+/// said since they last read it, of those they may read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unread {
+    /// How many, counted up to `Unread::CAP`: a number above it says only
+    /// that there are more.
+    pub messages: usize,
+    /// Whether one of them mentions the user, `@all` included.
+    pub mentioned: bool,
+    /// The last message the user read, after which the new ones begin;
+    /// `None` while they read nothing of the channel.
+    pub read_up_to: Option<MessageId>,
+}
+
+impl Unread {
+    /// How far the messages are counted: one more than a client shows.
+    pub const CAP: usize = 100;
 }
 
 /// The notes one agent published in a channel.

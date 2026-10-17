@@ -25,7 +25,7 @@ use crate::confidentiality::{Classification, ConfidentialityPolicy};
 use crate::security::{Refused, Secured, SecurityContext, AccessPolicy};
 use crate::session::Session;
 use crate::template::SessionTemplate;
-use crate::user::{User, UserProfile};
+use crate::user::{User, UserChannelState, UserId, UserProfile};
 use crate::value::name::ScopedName;
 use crate::value::ValueError;
 use chrono::{DateTime, Utc};
@@ -523,8 +523,14 @@ pub trait StateStore : Debug + Sync + Send {
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState>;
     async fn put_channel_state(&self, channel_id: ChannelId, state: &mut ChannelState) -> StoreResult<()>;
 
+    /// A user in a channel (issue 404): up to where they read it. One never
+    /// stored reads as the default, nothing read.
+    async fn get_user_channel_state(&self, user_id: UserId, channel_id: ChannelId) -> StoreResult<UserChannelState>;
+    async fn put_user_channel_state(&self, user_id: UserId, channel_id: ChannelId, state: &mut UserChannelState) -> StoreResult<()>;
+
     /// Deletes the state of a channel that no longer exists: its own and that
-    /// of every agent in it. Nothing to delete is not an error (issue 09).
+    /// of every agent and user in it. Nothing to delete is not an error
+    /// (issue 09).
     async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()>;
 
     /// Deletes the state of an agent purged for good (issue 164): its own
