@@ -19,7 +19,8 @@ use std::sync::Arc;
 
 use crate::actor::Actor;
 use crate::component::ComponentRegistry;
-use caelumora_model::actor::{ActorId, Envelope};
+use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
+use caelumora_model::message::Message;
 
 /// Decides how the events of a channel are routed and who is asked to
 /// respond. A component of the channel, of which it has exactly one (issue
@@ -39,10 +40,11 @@ pub(crate) trait Moderator : Send + Sync + Debug {
 /// the slot of the `policy_moderator`. A channel has exactly one.
 #[async_trait]
 pub trait ResponderPolicy: Send + Sync + Debug {
-    /// The agents of `candidates` to ask to respond to what `sender` wrote -
-    /// the agents that are awake and did not write it, in no particular
-    /// order.
-    async fn choose(&self, sender: ActorId, candidates: Vec<ActorId>) -> Vec<ActorId>;
+    /// The agents of `candidates` to ask to respond to `messages`, what
+    /// `sender` said - a message, or the messages of a turn. The candidates
+    /// are the agents that are awake and did not say them, in no particular
+    /// order, as they are described to everyone in the channel (issue 403).
+    async fn choose(&self, sender: ActorId, messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId>;
 }
 
 /// Registers the moderator and policy kinds with `registry`, and the

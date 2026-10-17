@@ -4,7 +4,8 @@
 use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::moderator::ResponderPolicy;
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
+use caelumora_model::actor::{ActorDescription, ActorId};
+use caelumora_model::message::Message;
 use rand::prelude::StdRng;
 use rand::seq::IndexedRandom;
 use std::sync::{Arc, Mutex};
@@ -31,9 +32,9 @@ impl Default for RandomPolicy {
 
 #[async_trait]
 impl ResponderPolicy for RandomPolicy {
-    async fn choose(&self, _sender: ActorId, candidates: Vec<ActorId>) -> Vec<ActorId> {
+    async fn choose(&self, _sender: ActorId, _messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId> {
         let mut rng = self.rng.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        candidates.choose(&mut *rng).copied().into_iter().collect()
+        candidates.choose(&mut *rng).map(|candidate| candidate.id).into_iter().collect()
     }
 }
 

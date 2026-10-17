@@ -16,7 +16,7 @@ use crate::component::{ComponentError, ComponentFacets, ComponentImpl, Component
 use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
+use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::message::Message;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -84,7 +84,7 @@ impl PolicyModerator {
         // the policy is not consulted, so a rotation is left as it is.
         let responders = match mentioned {
             Some(mentioned) => mentioned,
-            None => self.policy.choose(event.context.sender_id, candidates).await,
+            None => self.policy.choose(event.context.sender_id, messages, candidates).await,
         };
         let mut request = event.forward(ActorEvent::ResponseRequested);
         request.context.agent_hops = agent_hops;
@@ -264,16 +264,16 @@ impl ModeratorActors {
             .collect()
     }
 
-    /// The agents a policy may choose from: awake, and not among the
+    /// The agents a policy may choose from, as they are described to
+    /// everyone in the channel (issue 403): awake, and not among the
     /// senders. Leaving the sleeping out matters beyond the policy: the
     /// channel wakes whomever the moderator asks to respond, so a sleeping
     /// agent chosen here would be woken without being addressed (issue 45).
-    fn actor_candidates(&self, messages: &[Message]) -> Vec<ActorId> {
+    fn actor_candidates(&self, messages: &[Message]) -> Vec<ActorDescription> {
         let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
         self.agent_actors.iter()
-            .filter(|(_, actor)| actor.state() != ActorState::Sleeping)
-            .map(|(id, _)| *id)
-            .filter(|id| !sender_ids.contains(id))
+            .filter(|(id, actor)| actor.state() != ActorState::Sleeping && !sender_ids.contains(id))
+            .map(|(_, actor)| actor.describe())
             .collect()
     }
 
@@ -511,6 +511,41 @@ mod tests {
     /// `policy` as a component.
     fn policy(policy: impl ResponderPolicy + 'static) -> ComponentImpl<dyn ResponderPolicy> {
         ComponentImpl { id: "responders".to_string(), fail_policy: Default::default(), facet: Arc::new(policy) }
+    }
+
+    /// What a policy was told once: the contents of the messages and the
+    /// candidates.
+    type Told = (Vec<String>, Vec<ActorDescription>);
+
+    /// A policy that asks nobody and records what it was told.
+    #[derive(Debug, Clone, Default)]
+    struct Recording(Arc<Mutex<Vec<Told>>>);
+
+    #[async_trait]
+    impl ResponderPolicy for Recording {
+        async fn choose(&self, _sender: ActorId, messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId> {
+            let said = messages.iter().filter_map(|message| message.content.clone()).collect();
+            self.0.lock().unwrap().push((said, candidates));
+            Vec::new()
+        }
+    }
+
+    /// Issue 403: a policy is told what was said, and the candidates as
+    /// they are described to everyone in the channel - the agents awake
+    /// that did not say it.
+    #[tokio::test]
+    async fn a_policy_is_told_what_was_said_and_who_the_candidates_are() {
+        let recording = Recording::default();
+        let moderator = PolicyModerator::new(policy(recording.clone()), DEFAULT_MAX_AGENT_HOPS);
+        let agents = add_agents(&moderator);
+
+        moderator.route(&message_from(agents[0], "who knows?", vec![])).await;
+
+        let told = recording.0.lock().unwrap().clone();
+        let [(said, candidates)] = told.as_slice() else { panic!("asked once: {told:?}") };
+        assert_eq!(said, &["who knows?"]);
+        assert_eq!(candidates.iter().map(|candidate| candidate.id).collect::<Vec<_>>(), [agents[2]], "awake, and not who said it");
+        assert_eq!(candidates[0].name.as_str(), "test", "as it is described");
     }
 
     /// The moderators that ask someone to respond to a user when nobody is

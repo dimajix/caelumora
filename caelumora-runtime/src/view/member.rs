@@ -16,7 +16,9 @@
 use super::context::AgentContextView;
 use super::{ViewError, ViewResult, Views};
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
+use caelumora_model::actor::{ActorDescription, ActorId};
+use caelumora_model::value::name::Name;
+use caelumora_model::value::text::Introduction;
 use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality};
 use caelumora_model::channel::Participant;
 use caelumora_model::digest::Digest;
@@ -49,7 +51,16 @@ pub(super) trait MemberState: Send + Sync + Debug {
     ///
     /// # Errors
     /// `Failed` if it cannot be read.
-    async fn introduction(&self) -> ViewResult<Option<String>> {
+    async fn introduction(&self) -> ViewResult<Option<Introduction>> {
+        Ok(None)
+    }
+
+    /// What of it is public to everyone in the channel, as member `id`
+    /// (issue 403); `None` for one that no longer exists.
+    ///
+    /// # Errors
+    /// `Failed` if its introduction cannot be read.
+    async fn describe(&self, _id: ActorId) -> ViewResult<Option<ActorDescription>> {
         Ok(None)
     }
 
@@ -85,7 +96,7 @@ pub(super) trait MemberState: Send + Sync + Debug {
 pub(super) async fn member_state(views: &Views, participant: &Participant, channel: ChannelId) -> Arc<dyn MemberState> {
     match participant {
         Participant::User(id) => match views.stores().users.get(&SecurityContext::system(), *id).await {
-            Ok(user) => Arc::new(UserMember { id: *id, name: user.username.to_string(), profiles: Arc::clone(&views.stores().user_profiles), introduction: OnceCell::new() }),
+            Ok(user) => Arc::new(UserMember { id: *id, name: user.username, profiles: Arc::clone(&views.stores().user_profiles), introduction: OnceCell::new() }),
             Err(StoreError::NotFound { .. }) => Arc::new(GoneMember { name: None }),
             Err(e) => {
                 warn!("Cannot read user {}: {:#}", id, e);
@@ -111,24 +122,28 @@ pub(super) async fn member_state(views: &Views, participant: &Participant, chann
 #[derive(Debug)]
 struct UserMember {
     id: UserId,
-    name: String,
+    name: Name,
     profiles: Arc<dyn EntityStore<UserProfile>>,
-    introduction: OnceCell<Option<String>>,
+    introduction: OnceCell<Option<Introduction>>,
 }
 
 #[async_trait]
 impl MemberState for UserMember {
     fn name(&self) -> Option<&str> {
-        Some(&self.name)
+        Some(self.name.as_str())
     }
 
-    async fn introduction(&self) -> ViewResult<Option<String>> {
+    async fn introduction(&self) -> ViewResult<Option<Introduction>> {
         let introduction = self.introduction.get_or_try_init(|| async {
             let profile = self.profiles.get(&SecurityContext::system(), self.id).await.optional()
                 .map_err(|e| ViewError::failed(e, format!("reading the introduction of {}", ActorId::User(self.id))))?;
-            Ok::<_, ViewError>(profile.and_then(|profile| profile.introduction).map(String::from))
+            Ok::<_, ViewError>(profile.and_then(|profile| profile.introduction))
         }).await?;
         Ok(introduction.clone())
+    }
+
+    async fn describe(&self, id: ActorId) -> ViewResult<Option<ActorDescription>> {
+        Ok(Some(ActorDescription { id, name: self.name.clone(), introduction: self.introduction().await? }))
     }
 }
 
@@ -138,6 +153,7 @@ struct ApproverMember {
     name: Option<&'static str>,
 }
 
+#[async_trait]
 impl MemberState for ApproverMember {
     fn name(&self) -> Option<&str> {
         self.name
@@ -145,6 +161,10 @@ impl MemberState for ApproverMember {
 
     fn handle(&self) -> Option<String> {
         None
+    }
+
+    async fn describe(&self, id: ActorId) -> ViewResult<Option<ActorDescription>> {
+        Ok(Some(ActorDescription { id, name: ActorId::approver_name(), introduction: None }))
     }
 }
 
@@ -207,8 +227,12 @@ impl MemberState for AgentMemberState {
 
     /// How its personality introduces it; nothing if the personality is
     /// gone.
-    async fn introduction(&self) -> ViewResult<Option<String>> {
-        Ok(self.personality().await?.and_then(|personality| personality.introduction.as_ref().map(ToString::to_string)))
+    async fn introduction(&self) -> ViewResult<Option<Introduction>> {
+        Ok(self.personality().await?.and_then(|personality| personality.introduction.clone()))
+    }
+
+    async fn describe(&self, id: ActorId) -> ViewResult<Option<ActorDescription>> {
+        Ok(Some(ActorDescription { id, name: self.agent.name.name.clone(), introduction: self.introduction().await? }))
     }
 
     async fn personality(&self) -> ViewResult<Option<&Personality>> {

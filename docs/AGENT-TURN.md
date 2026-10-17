@@ -531,7 +531,9 @@ keeps its conversation, the first three take `changes_only`: told once, then onl
 ### Who is in the channel
 
 `channel_members_prompt_provider` lists the agent itself and every other current user or agent,
-with their introductions, read at the start of every turn. A person's introduction is marked as
+with their introductions, read at the start of every turn - each as the views describe it
+(`MemberView::describe`), in the same `ActorDescription` a responder policy is given of a running
+actor (see [CHANNELS.md](CHANNELS.md#moderators)). A person's introduction is marked as
 written by them, so that it does not read as an instruction of the system, and kept to one line. It
 also says that `@all` addresses all of them, and explains how the others' messages are marked.
 

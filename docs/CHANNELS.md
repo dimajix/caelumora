@@ -732,7 +732,10 @@ The built-in moderator, `policy_moderator` (the default), routes the way every c
 *   a chain between agents ends at a limit (see below).
 
 Whom it asks when a message mentions no agent is the channel's `ResponderPolicy`, which is told who
-wrote the message and which agents could answer. A new way of choosing who answers is a new policy:
+wrote the message, what was said - the message, or the messages of a turn - and which agents could
+answer, as an `ActorDescription` each: what of an actor is public to everyone in its channel, its
+id, name and introduction (`Actor::describe`), and nothing a policy from another crate could act on.
+A new way of choosing who answers is a new policy:
 
 | Policy | Who responds to a message without a mention |
 |---|---|

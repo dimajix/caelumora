@@ -603,7 +603,7 @@ async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session
     let view = world.manager.views(Viewer::new(bob)).session(session.id()).await.unwrap().channel(channel).await.unwrap();
     let members = view.members().await;
     let hers = members.iter().find(|m| m.id() == ActorId::User(world.alice)).unwrap();
-    assert_eq!(hers.introduction().await.unwrap().as_deref(), Some("I run the team."), "bob reads how she introduces herself");
+    assert_eq!(hers.introduction().await.unwrap().as_ref().map(|introduction| introduction.as_str()), Some("I run the team."), "bob reads how she introduces herself");
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
 

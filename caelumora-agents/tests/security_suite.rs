@@ -180,7 +180,7 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
     let members = view.members().await;
     let member = members.iter().find(|m| m.id() == ActorId::Agent(helper)).expect("he sees the agent");
     assert_eq!(member.name(), Some("helper"));
-    assert_eq!(member.introduction().await.unwrap().as_deref(), Some("I am hers."), "and how it introduces itself");
+    assert_eq!(member.introduction().await.unwrap().as_ref().map(|introduction| introduction.as_str()), Some("I am hers."), "and how it introduces itself");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

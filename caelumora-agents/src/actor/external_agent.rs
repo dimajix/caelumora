@@ -40,7 +40,7 @@ use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
+use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::RetryRefused;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::confidentiality::Classification;
@@ -823,6 +823,10 @@ impl Actor for ExternalAgentActor {
 
     fn name(&self) -> Name {
         self.body.name()
+    }
+
+    fn describe(&self) -> ActorDescription {
+        self.body.describe()
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {

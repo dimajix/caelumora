@@ -1,6 +1,6 @@
 # 403 — No responder policy decides by what a message says
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -199,3 +199,20 @@ explanation there.
 
 2026-10-17: Opened. Ollama added decision models and the `/v1/systemone` endpoint in version 0.35;
 the API as of then is recorded above.
+
+2026-10-17: Decided with the maintainer, for what the policy is told: option (a), `choose` widened.
+A candidate is passed as an `ActorDescription` (`caelumora_model::actor`), never as the
+`Arc<dyn Actor>`, whose control methods a policy from another crate must not reach. It holds what of
+an actor is public to everyone in its channel - id, name, introduction - and whatever is added to it
+later must be public in the same way; `handle()` and `is_person()` are derived from it, not stored.
+`Actor::describe()` gives it, beside `name()`, which stays. The views give the same type
+(`MemberView::describe`), which replaced the private `Member` of `channel_members_prompt_provider`.
+For an agent's introduction to be current, the personality had to be held live: issue
+[406](406-personality-frozen-in-running-agents.md), done first.
+
+2026-10-17: Step 1 done, without a change of behaviour but one: `ResponderPolicy::choose(sender,
+messages, candidates)` with the candidates described; the five policies use the ids as before. A
+deleted agent that is still a participant is no longer named in the roster of the members' prompt
+part - it has no description, as it can no longer be addressed. Still to decide before the policy
+itself: `choice` or `noul`, `destination` judged per message, and where the endpoint may be
+configured.

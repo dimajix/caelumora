@@ -7,7 +7,7 @@ use crate::actor::user::ChannelWatch;
 use crate::channel::{visible_from, ChannelLoop};
 use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
-use caelumora_model::actor::{ActorId, ActorState};
+use caelumora_model::actor::{ActorDescription, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, PersonalityKind};
 use caelumora_model::approval::ApprovalRequest;
 use caelumora_model::channel::{Channel, HistoryStart, Participant};
@@ -28,7 +28,7 @@ use caelumora_model::store::{StoreError, StoreResultExt};
 use caelumora_model::tool::ToolSet;
 use caelumora_model::value::language::Language;
 use caelumora_model::value::name::Name;
-use caelumora_model::value::text::{Briefing, Summary};
+use caelumora_model::value::text::{Briefing, Introduction, Summary};
 use caelumora_model::work::TurnId;
 use std::sync::Arc;
 use tracing::warn;
@@ -541,8 +541,18 @@ impl MemberView {
     ///
     /// # Errors
     /// `Failed` if it cannot be read.
-    pub async fn introduction(&self) -> ViewResult<Option<String>> {
+    pub async fn introduction(&self) -> ViewResult<Option<Introduction>> {
         self.state.introduction().await
+    }
+
+    /// What of the member is public to everyone in the channel (issue
+    /// 403): its name and introduction, as `name` and `introduction` give
+    /// them. `None` for a member that no longer exists.
+    ///
+    /// # Errors
+    /// `Failed` if its introduction cannot be read.
+    pub async fn describe(&self) -> ViewResult<Option<ActorDescription>> {
+        self.state.describe(self.id()).await
     }
 
     /// The name of an agent member's personality, without its scope, and
@@ -807,7 +817,7 @@ impl MemberView {
         if detail.contains(Detail::PROFILE) {
             introduction = self.introduction().await
                 .inspect_err(|e| warn!("Reading the introduction of {} failed: {:#}", self.id(), e))
-                .ok().flatten();
+                .ok().flatten().map(String::from);
             personality = self.personality().await
                 .inspect_err(|e| warn!("Reading the personality of {} failed: {:#}", self.id(), e))
                 .ok().flatten();

@@ -19,7 +19,7 @@ use tracing::warn;
 use crate::transport::{EventReceiver, EventSender};
 pub use kinds::AgentKinds;
 pub use manager::{ActorManager, Shown};
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
+use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
@@ -41,6 +41,12 @@ use uuid::Uuid;
 pub trait Actor: Any + Debug + Send + Sync {
     fn id(&self) -> ActorId;
     fn name(&self) -> Name;
+
+    /// What of it is public to everyone in its channel, as it is now
+    /// (issue 403): by default its id and name, without an introduction.
+    fn describe(&self) -> ActorDescription {
+        ActorDescription { id: self.id(), name: self.name(), introduction: None }
+    }
 
     /// Returns the predicate that declares which events this actor wants to receive.
     /// The ChannelLoop wraps the actor's input sender in a `FilteringEventSender` using
