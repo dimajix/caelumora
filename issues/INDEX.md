@@ -202,6 +202,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [281](281-tool-argument-visibility.md) | done | A tool's arguments share one visibility flag with its result, so a call cannot publish what it was asked and hide what it returned. |
 | [290](290-tools-offered-by-the-turn.md) | done | A model is offered every tool of its components in every turn, also those it may not call where it is - a workspace's tools where there is none, or where its list grants reading alone. |
 | [294](294-user-ends-a-command.md) | done | A command an agent's call handed back as running can be ended only by the model; a user who sees it hang has no way to end it. |
+| [400](400-exact-matcher-long-value.md) | open | `ToolMatcher::exact` escapes every argument's whole value into a pattern, which for a value longer than `MAX_PATTERN_CHARS` fails the check, so the rule an approval card offers for such a call is refused - only after the call was answered. |
 
 ## User interaction
 
