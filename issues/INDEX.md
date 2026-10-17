@@ -153,6 +153,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [343](343-users-bring-their-own-secrets.md) | open | A user cannot bring a secret of their own: every secret is the operator's, put into the configured providers, so an agent of one's own cannot reach a remote system with its owner's credential. |
 | [347](347-entries-naming-purged-groups.md) | done | An access list keeps its entries for a group once the group is purged - a session long over, a team removed -, so lists grow by entries that name nobody and are cleaned up by hand. |
 | [348](348-participants-groups-out-of-step-with-their-holder.md) | done | A session's or channel's deletion that fails half-way, or a restoring that does not reach its groups, leaves the group of its participants in the trash while it is there, and its members lose it. |
+| [402](402-login-attempts-unlimited.md) | open | `/auth/login` takes any number of attempts from anyone, so passwords can be guessed without limit, and every attempt costs the server an Argon2 verification that a flood of requests turns into exhausted memory and CPU. |
 
 ## Audit
 

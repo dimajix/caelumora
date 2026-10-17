@@ -35,6 +35,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [142](142-roles.md) | in progress | high | feature | Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them. |
 | [169](169-changing-classified-content.md) | open | high | feature | Nothing says who may change something classified once it is written, or that what the writer has seen must fit into its classification. |
 | [310](310-secrets-have-no-owner.md) | open | high | feature | Any secret can be named by whoever writes a component: secrets have no owner and no access list, and the policy allows every `ReadSecret`. |
+| [402](402-login-attempts-unlimited.md) | open | high | feature | `/auth/login` takes any number of attempts from anyone, so passwords can be guessed without limit, and every attempt costs the server an Argon2 verification that a flood of requests turns into exhausted memory and CPU. |
 | [27](27-ldap-user-backend.md) | open | medium | feature | Where identities are managed in a directory, the system has no way to authenticate against it or read its groups. |
 
 ## Audit
