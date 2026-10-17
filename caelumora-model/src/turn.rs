@@ -37,9 +37,10 @@ pub enum GivenUpReason {
     /// Its answer was asked for again while it was under way (issue 235):
     /// a turn of its own answers instead.
     Retried,
-    /// It asked its model `calls` times, as often as a turn may, and was
-    /// not done (issue 411): the limit is a safety net against a model that
-    /// does not come to an end, so reaching it is no answer.
+    /// It asked its model `calls` times, as often as a turn - or a step of
+    /// its plan (issue 412) - may, and was not done (issue 411): the limit
+    /// is a safety net against a model that does not come to an end, so
+    /// reaching it is no answer.
     CallLimit { calls: u32 },
 }
 
@@ -61,7 +62,7 @@ impl GivenUpReason {
             GivenUpReason::Lowered { .. } => "the channel's classification was lowered",
             GivenUpReason::Left => "you left the channel",
             GivenUpReason::Retried => "your answer was asked for again",
-            GivenUpReason::CallLimit { .. } => "it asked the model as often as one turn may",
+            GivenUpReason::CallLimit { .. } => "it asked the model as often as one answer, or one step of a plan, may",
         }
     }
 }

@@ -1,6 +1,6 @@
 # 412 — A plan has to fit into the model calls of one turn
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -57,3 +57,12 @@ To be decided; the third is the structural answer and should be weighed against 
 
 - **2026-10-17** — Opened with [411](411-call-limit-ends-turn-silently.md), after Jonathan's plan in
   session `s2` ran out of model calls at step 6 of 9.
+- **2026-10-17** — Decided: a budget per step. Each step of a plan, and its final answer, may call
+  the model `MAX_MODEL_CALLS` times, as a turn without a plan may - the count begins anew in
+  `Turn::advance_plan`; a step that would call it once more gives the turn up as `CallLimit`
+  (issue [411](411-call-limit-ends-turn-silently.md)) rather than going on to a step that builds
+  on results it does not have. What a plan may cost is bounded by its steps: `create_plan` refuses
+  a plan of more than `Plan::MAX_STEPS` (20), those it is extended by included. A plan that
+  outlives its turn was not taken: it solves the budget no better and changes much else - worth an
+  issue of its own once a plan should outlive its turn for other reasons. The numbers stay
+  constants for now; a value of the personality is the next step if one is needed.

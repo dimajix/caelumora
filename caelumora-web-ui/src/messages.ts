@@ -87,7 +87,7 @@ export function givenUpText(reason: GivenUpReason): string {
     case 'retried':
       return 'Its answer was asked for again while it was under way.';
     case 'call_limit':
-      return `It asked its model ${reason.calls} times, as often as one answer may, and was not done.`;
+      return `It asked its model ${reason.calls} times, as often as one answer or one step of a plan may, and was not done.`;
   }
 }
 

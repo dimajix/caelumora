@@ -67,7 +67,8 @@ use std::sync::{Arc, LazyLock};
 /// What a turn reads as when none runs.
 static NO_TURN: LazyLock<TurnState> = LazyLock::new(TurnState::default);
 
-/// How many times a turn may ask its model; then it is given up (issue 411).
+/// How many times a turn, or a step of its plan, may ask its model; then it
+/// is given up (issues 411, 412).
 pub(crate) const MAX_MODEL_CALLS: u32 = 25;
 
 #[derive(Debug)]
@@ -232,8 +233,9 @@ impl<'a> Turn<'a> {
     }
 
     /// Whether the turn may still call its model: not once it made
-    /// `MAX_MODEL_CALLS` (issue 157). The count is the turn's and is stored
-    /// with it, a resumed turn goes on from where it was.
+    /// `MAX_MODEL_CALLS` (issue 157) - since it began, or since the step of
+    /// its plan under way began (issue 412). The count is the turn's and is
+    /// stored with it, a resumed turn goes on from where it was.
     pub(crate) fn may_call_model(&self) -> bool {
         self.current().model_calls < MAX_MODEL_CALLS
     }
@@ -241,6 +243,17 @@ impl<'a> Turn<'a> {
     /// Counts a call of the model, made once `may_call_model` allowed it.
     pub(crate) fn count_model_call(&mut self) {
         self.current_mut().model_calls += 1;
+    }
+
+    /// Counts the model calls anew, as a step of the plan or its final
+    /// answer begins (issue 412): each may make as many as a turn without a
+    /// plan. A model call came since any compaction tried - the one that
+    /// made or ended the plan's step -, so the next call may be compacted
+    /// for again.
+    pub(super) fn count_model_calls_anew(&mut self) {
+        let turn = self.current_mut();
+        turn.model_calls = 0;
+        turn.compaction_tried_at = None;
     }
 
     /// Whether the turn may still try to compact its context before its next

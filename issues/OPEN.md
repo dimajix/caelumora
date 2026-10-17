@@ -68,7 +68,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [55](55-notes-by-reflection.md) | open | medium | feature | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |
 | [57](57-prompt-catalogue.md) | open | medium | question | The prompts the runtime gives models are English constants spread through the code, in one variant for every language and model. |
 | [166](166-memory-as-topic-documents.md) | open | medium | feature | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
-| [412](412-plan-budget.md) | open | medium | feature | A plan is carried out within one turn, and a turn may ask its model 25 times at most, so a plan of nine steps has fewer than three calls per step - too few for a step that writes a file, finds its mistake and writes it again - and a plan that runs out ends unfinished. |
 
 ## Maintenance
 

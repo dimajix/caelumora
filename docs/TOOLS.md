@@ -184,8 +184,8 @@ notes and agent memory are described in [MEMORY.md](MEMORY.md), skills in [SKILL
 
 `stop`, `bye` and `silence` end the turn with the current tool step: after `stop` and `bye` the
 agent sleeps, after `silence` it stays idle without an answer. `create_plan` submits a multi-step
-plan; a plan in progress is extended, not replaced. `sleep` waits at most 60 seconds, for testing a
-cancel or a stop while a tool runs.
+plan of at most `Plan::MAX_STEPS` steps; a plan in progress is extended, not replaced. `sleep`
+waits at most 60 seconds, for testing a cancel or a stop while a tool runs.
 
 ### The workspace
 
