@@ -52,18 +52,19 @@ pub async fn open_channel(state: &Arc<AppState>, user: &AuthenticatedUser, sessi
 }
 
 /// Channel `channel_id` of session `session_id` as `user` sees it (issue
-/// 80) - what a handler answers with a channel. Described by the runtime,
-/// which decides what the user may read and do; does not start the session.
+/// 80) - what a handler answers with a channel, with what is new in it to
+/// the user (issue 404). Described by the runtime, which decides what the
+/// user may read and do; does not start the session.
 pub async fn channel_view(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId, channel_id: ChannelId) -> Result<ChannelResponse, ApiError> {
-    Ok(channel_of(state, user, session_id, channel_id).await?.snapshot(Detail::MEMBERS | Detail::BRIEFING).await.into())
+    Ok(channel_of(state, user, session_id, channel_id).await?.snapshot(Detail::MEMBERS | Detail::BRIEFING | Detail::UNREAD).await.into())
 }
 
 /// Session `session_id` as `user` sees it now, with its channels and their
-/// members and the briefings (issue 245) - what `GET` of one session and
-/// every change of one answer.
+/// members, the briefings (issue 245) and what is new to the user in each
+/// (issue 404) - what `GET` of one session and every change of one answer.
 pub async fn session_view(state: &Arc<AppState>, user: &AuthenticatedUser, session_id: SessionId) -> Result<SessionSnapshot, ApiError> {
     let session = views(state, user).session(session_id).await?;
-    Ok(session.snapshot(Detail::CHANNELS | Detail::MEMBERS | Detail::BRIEFING).await.into())
+    Ok(session.snapshot(Detail::CHANNELS | Detail::MEMBERS | Detail::BRIEFING | Detail::UNREAD).await.into())
 }
 
 /// Channel `channel_id` of session `session_id` as `user` reaches it
@@ -170,6 +171,7 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
         .route("/sessions/{id}/channels", get(channels::list_channels).post(channels::create_channel))
         .route("/sessions/{id}/channels/{cid}", get(channels::get_channel).delete(channels::delete_channel))
         .route("/sessions/{id}/channels/{cid}/history", get(channels::get_channel_history))
+        .route("/sessions/{id}/channels/{cid}/read", axum::routing::put(channels::mark_read))
         .route("/sessions/{id}/channels/{cid}/messages", axum::routing::post(channels::send_message))
         .route("/sessions/{id}/channels/{cid}/classification", axum::routing::put(channels::reclassify_channel))
         .route("/sessions/{id}/channels/{cid}/language", axum::routing::put(channels::set_channel_language))

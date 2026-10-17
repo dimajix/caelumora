@@ -12,7 +12,7 @@
 // (`GET /sessions/{id}`), which answers in the form the snapshot uses.
 // Events that do not change what the list shows are ignored.
 
-import type {ApprovalRule, EntityChange, GlobalEvent} from './types';
+import type {ApprovalRule, EntityChange, GlobalEvent, Message} from './types';
 import type {Classification} from './confidentiality';
 
 export type SessionChange =
@@ -98,6 +98,18 @@ export function dispatchGlobalEvent(event: GlobalEvent): void {
 export function membershipChangedChannel(event: GlobalEvent): string | null {
   const channel = channelEvent(event);
   return channel && changesMembers(channel.change) ? channel.channelId : null;
+}
+
+/**
+ * What was said where, for a channel's `said` (issue 404): a message others
+ * hear, as it was said, sent to whoever reads the channel once it is stored;
+ * `null` for any other event.
+ */
+export function saidInChannel(event: GlobalEvent): {sessionId: string; channelId: string; message: Message} | null {
+  const channel = channelEvent(event);
+  const message = channel && dataOf(channel.change, 'said');
+  if (!channel || typeof message !== 'object' || message === null) return null;
+  return {sessionId: channel.sessionId, channelId: channel.channelId, message: message as Message};
 }
 
 /**

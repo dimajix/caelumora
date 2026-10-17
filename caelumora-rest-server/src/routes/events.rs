@@ -46,7 +46,7 @@ async fn global_snapshot(state: &Arc<AppState>, user: &AuthenticatedUser) -> Opt
     };
     let mut described = Vec::with_capacity(sessions.len());
     for session in sessions {
-        described.push(session.snapshot(Detail::CHANNELS | Detail::MEMBERS).await.into());
+        described.push(session.snapshot(Detail::CHANNELS | Detail::MEMBERS | Detail::UNREAD).await.into());
     }
     Some(GlobalSnapshot { sessions: described })
 }

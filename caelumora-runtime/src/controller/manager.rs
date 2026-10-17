@@ -12,7 +12,8 @@ use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::event::EntityChange;
 use caelumora_model::security::{SecurityAttributes, SecurityContext, AccessPolicy};
 use caelumora_model::session::{Session, SessionId};
-use caelumora_model::store::{EntityStores, StoreResult, StoreResultExt};
+use caelumora_model::store::{EntityStores, StateStore, StoreResult, StoreResultExt};
+use caelumora_model::store::history::HistoryStore;
 use caelumora_model::user::{User, UserId, UserProfile};
 use caelumora_model::workspace::{Workspace, WorkspaceId};
 use std::collections::{BTreeMap, HashMap};
@@ -53,6 +54,10 @@ pub struct ControllerManager {
     /// `WorkspaceManager` and the `CommandReaper`: a workspace's controller
     /// holds its own.
     storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>,
+    /// The states and their histories: a user's controller keeps what the
+    /// user read of each channel (issue 404).
+    states: Arc<dyn StateStore>,
+    histories: Arc<dyn HistoryStore>,
     agents: Registry<AgentId, AgentController>,
     users: Registry<UserId, UserController>,
     workspaces: Registry<WorkspaceId, WorkspaceController>,
@@ -62,13 +67,15 @@ pub struct ControllerManager {
 }
 
 impl ControllerManager {
-    pub fn new(stores: EntityStores, event_bus: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>) -> Self {
+    pub fn new(stores: EntityStores, event_bus: Arc<EventBus>, access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, storages: Arc<BTreeMap<String, Arc<dyn TerminalProvider>>>, states: Arc<dyn StateStore>, histories: Arc<dyn HistoryStore>) -> Self {
         Self {
             stores,
             event_bus,
             access_policy,
             confidentiality,
             storages,
+            states,
+            histories,
             agents: Default::default(),
             users: Default::default(),
             workspaces: Default::default(),
@@ -124,7 +131,7 @@ impl ControllerManager {
         }
         let user = self.stores.users.get(&SecurityContext::system(), id).await?;
         let profile = self.stores.user_profiles.get(&SecurityContext::system(), id).await.optional()?;
-        let controller = Arc::new(UserController::new(user, profile, Arc::<EventBus>::clone(&self.event_bus), Arc::clone(&self.stores.user_profiles)));
+        let controller = Arc::new(UserController::new(user, profile, Arc::<EventBus>::clone(&self.event_bus), &self.stores, Arc::clone(&self.states), Arc::clone(&self.histories)));
         remember(&mut users, id, &controller);
         Ok(controller)
     }
@@ -261,7 +268,7 @@ mod tests {
     fn manager() -> (Arc<MemoryStore>, Arc<EventBus>, ControllerManager) {
         let store = Arc::new(MemoryStore::new());
         let bus = Arc::new(EventBus::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default())));
-        let manager = ControllerManager::new(store.entity_stores(), Arc::clone(&bus), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), Default::default());
+        let manager = ControllerManager::new(store.entity_stores(), Arc::clone(&bus), Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), Default::default(), Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store));
         (store, bus, manager)
     }
 

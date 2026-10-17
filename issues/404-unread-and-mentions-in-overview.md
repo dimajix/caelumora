@@ -1,6 +1,6 @@
 # 404 — The channel overview does not say where something new was said
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -58,7 +58,7 @@ answer has come.
     thing - a participant's state in a channel - and a `UserChannelState` beside it treats users
     like agents. Every frontend sees the same.
 
-Recommended: (b). The position is the user's own: nobody else can read it - no read receipts for
+Decided: (b). The position is the user's own: nobody else can read it - no read receipts for
 others, which would be a feature of its own with its own privacy question.
 
 What the position is: the position in the history of the last message shown, not a message id - a
@@ -72,7 +72,7 @@ count and a page both start from a position (`HistoryStart::from` converts where
 *   **(b) The server moves it on delivery** to the user's channel stream. But delivered is not read:
     a tab open in the background would mark everything as read.
 
-Recommended: (a). An action in the user's name, which needs no permission beyond reading the
+Decided: (a). An action in the user's name, which needs no permission beyond reading the
 channel and comes with its test in the security suite (a user moves only their own position, and
 only within what they may read).
 
@@ -96,7 +96,7 @@ name and one through `@all` cannot be told apart afterwards. Options:
 *   **Only the explicit one counts.** Needs the marker that 401 rejected - reopening that decision,
     with its cost (a second representation of who was mentioned).
 
-Recommended: both count; whoever writes `@all` wants everyone's attention.
+Decided: both count; whoever writes `@all` wants everyone's attention.
 
 ### How it is counted
 
@@ -111,7 +111,7 @@ Recommended: both count; whoever writes `@all` wants everyone's attention.
     a second bookkeeping beside the history that has to follow reclassifications, revocations and
     changes of what a user may read - every rule of `may_read_item` a second time.
 
-Recommended: (a). The count is the `ChannelView`'s: it already knows what its reader may read.
+Decided: (a). The count is the `ChannelView`'s: it already knows what its reader may read.
 
 ### How the overview learns of new messages
 
@@ -126,7 +126,7 @@ The overview needs to change without the channel's stream being open.
 *   **(b) A change without numbers**, after which the UI fetches the channel again
     (`GET /sessions/{id}`). Simpler per event, but one request per message per user and channel.
 
-Recommended: (a), and `ChannelResponse` (snapshot and `GET /sessions/{id}`) carries the same two
+Decided: (a), and `ChannelResponse` (snapshot and `GET /sessions/{id}`) carries the same two
 values - `unread` (capped) and `mentioned` - for the user who asks, so that the overview is right
 from the start. For a channel the user has on screen, the UI moves the position as messages arrive,
 so its count stays at 0.
@@ -139,6 +139,8 @@ so its count stays at 0.
 *   The chat view moves the read position when the newest messages are on screen, and when the user
     scrolls down to them.
 *   Optional, later: the title of the browser tab with the total.
+*   The chat view draws a line where the new messages begin: after the message last read, as it
+    was when the channel was opened, so that the line stays while the position moves on.
 
 ## Done when
 
@@ -149,6 +151,7 @@ so its count stays at 0.
 *   The global stream tells a user when a channel has news for them, without content and only for
     messages they may read.
 *   The sidebar shows the count and the mention mark; opening a channel and reading clears them.
+*   The chat view marks where the new messages begin.
 *   The new action has its test in the security suite.
 *   [CHANNELS.md](../docs/CHANNELS.md), [REST-SERVER.md](../docs/REST-SERVER.md),
     [STORAGE.md](../docs/STORAGE.md) and [WEB-UI.md](../docs/WEB-UI.md) describe it.
@@ -156,3 +159,44 @@ so its count stays at 0.
 ## History
 
 2026-10-17: Opened.
+
+2026-10-17: Decided by the maintainer, as recommended: the read position is kept on the server per
+user and channel (`UserChannelState`) and moved forward by the frontend; only readable messages
+said after it count, on request and capped; a mention by name and one through `@all` both count;
+the global stream tells each reader of news with their count and whether they are mentioned, and
+`ChannelResponse` carries both.
+
+2026-10-17: Changed before implementing. The event bus cannot compute a count per subscriber: it
+sends the same event to every party, from one dispatcher that keeps their order, and would have to
+read the history for each of them. Instead the channel publishes, for every message that counts as
+news, a custom change `said` carrying the message, classified as the channel: the bus asks of each
+subscriber what `channel_reading` asks of a user - reading the channel and being cleared for it -,
+so it reaches exactly who would read the message in the history. The web UI counts up from what
+the snapshot said and marks the mention itself, and may show the message as a browser
+notification. The read position is kept and moved by the `UserController`, the one writer of the
+user's states in the instance, so that it can be moved while the channel does not run and by a
+reader who takes no part; the frontend names the last message read, since it does not know
+positions in the history.
+
+2026-10-17: The frontend names the newest message of someone else it has received and shown, never
+one of the user's own: those are shown as the user sends them, before the channel takes them in,
+so one may stand after a message of another that is earlier in the history and not yet shown. The
+messages of others reach a user's actor in the order of the history - the channel appends and
+routes in one step -, so their positions order them as the user sees them; the count runs over the
+user's view of the history, from where it begins and only over what they may read. The state keeps
+the position and the message, so that the chat view can also draw a line where the new messages
+begin.
+
+2026-10-17: Done. The user's state in a channel (`UserChannelState`) is kept in the state store and
+deleted with the channel's; the `UserController` moves it (`mark_read`, `PUT …/read`), reaching the
+channel as the user reads it. `ChannelView::unread` counts what is new (`Detail::UNREAD`): in every
+listing of channels, the global stream's snapshot, a channel's stream's snapshot and `GET` of a
+channel. The channel announces every message others hear as `channel::SAID`, with the message.
+The web UI shows the count and the `@` per channel and summed on a folded session, notifies of a
+mention where the browser may (asked for by a bell in the sidebar), marks a channel read as it
+shows its newest message of someone else, draws the line where the new messages began, and shows a
+reader who takes no part what others say as the global stream announces it. Left as it is: where
+the message last read lies before the pages loaded, the line stands at the top - earlier pages are
+not loaded for it; marking is not announced, so what another tab or device read is seen on the next
+listing; and the state has one writer per instance, as an agent's has (several instances: issue
+122).

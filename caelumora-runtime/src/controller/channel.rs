@@ -6,6 +6,7 @@ use caelumora_model::agent::AgentId;
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::{self, Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, HistoryLimit, HistoryStart, Participant};
 use caelumora_model::removal::Removal;
+use caelumora_model::message::Message;
 use caelumora_model::group::Group;
 use tracing::error;
 use caelumora_model::event::{EventPublisher, GlobalEvent};
@@ -178,6 +179,13 @@ impl ChannelController {
         if let Some(event) = self.membership_event(ActorId::Agent(agent), !resting) {
             self.channel.announce(event);
         }
+    }
+
+    /// Announces that `message` was said in the channel and is stored (issue
+    /// 404): to whoever reads the channel, as it is classified - who would
+    /// read the message in its history.
+    pub(crate) fn announce_said(&self, message: &Message) {
+        self.channel.announce(GlobalEvent::custom::<Channel>(self.channel.address(), channel::SAID, message));
     }
 
     /// The event announcing that `participant` joined or left.

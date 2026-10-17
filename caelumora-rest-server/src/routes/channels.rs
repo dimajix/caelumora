@@ -17,7 +17,7 @@ use caelumora_model::question::QuestionId;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::Detail;
-use caelumora_rest_api::channel::{AddParticipantRequest, AnswerQuestionsRequest, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest, MessageRequest, PublishedNotesResponse, SendApprovalRequest, TurnRequest};
+use caelumora_rest_api::channel::{AddParticipantRequest, AnswerQuestionsRequest, ChannelMemberResponse, ChannelResponse, ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest, MessageRequest, PublishedNotesResponse, ReadRequest, SendApprovalRequest, TurnRequest};
 use caelumora_rest_api::context::{AgentComponentsResponse, AgentToolsResponse, KnowledgeRefResponse, MessageContextResponse, SeenItemResponse};
 use caelumora_rest_api::history::{HistoryMessageResponse, HistoryPageResponse, HistoryQuery};
 use caelumora_rest_api::session::DescriptionRequest;
@@ -56,7 +56,7 @@ pub async fn list_channels(
     }
     let mut channels: Vec<ChannelResponse> = Vec::new();
     for channel in session.channels().await {
-        channels.push(channel.snapshot(Detail::MEMBERS).await.into());
+        channels.push(channel.snapshot(Detail::MEMBERS | Detail::UNREAD).await.into());
     }
     Ok(Json(channels).into_response())
 }
@@ -135,6 +135,23 @@ pub async fn get_channel_history(
     Ok(Json(HistoryPageResponse::of(page, |message, _| message)))
 }
 
+/// Marks the channel read by the user up to the message the body names
+/// (issue 404): the newest message of someone else they were shown. `204`;
+/// a message before the one marked changes nothing. Answers `404
+/// channel_not_found` for a channel they do not read and
+/// `message_not_found` for a message they do not see in it. Kept by the
+/// user's controller, without starting the session.
+pub async fn mark_read(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid)): Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+    Json(payload): Json<ReadRequest>,
+) -> Result<StatusCode, ApiError> {
+    let controller = state.runtime_manager.controller_manager().user_controller(user.id).await?;
+    controller.mark_read(&user.security_context(), SessionId(id), ChannelId(cid), payload.message_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// The message `mid` of the channel as it stands (issue 218), if the user
 /// sees it in the history - what a client reads back after a change of it
 /// was not let in.
@@ -186,7 +203,7 @@ async fn channel_snapshot(state: &AppState, session_id: SessionId, channel_id: C
         }
     };
     // The conversation can be shown without what of it cannot be read.
-    let channel = view.snapshot(Detail::MEMBERS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS | Detail::BRIEFING).await;
+    let channel = view.snapshot(Detail::MEMBERS | Detail::USAGE | Detail::NOTES | Detail::APPROVALS | Detail::BRIEFING | Detail::UNREAD).await;
     Some(ChannelSnapshot::of(channel, HistoryPageResponse::of(page, |message, _| message)))
 }
 

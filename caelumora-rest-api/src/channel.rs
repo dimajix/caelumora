@@ -10,7 +10,7 @@ use caelumora_model::approval::{ApprovalRequest, ApprovalRule};
 use caelumora_model::channel::HistoryAccess;
 use caelumora_model::command::Command;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::message::{Message, TokenUsage};
+use caelumora_model::message::{Message, MessageId, TokenUsage};
 use caelumora_model::note::Note;
 use caelumora_model::question::{QuestionRequest, Response};
 use caelumora_model::removal::Removal;
@@ -162,6 +162,37 @@ pub struct ChannelResponse {
     /// Who took part and left (issue 164), in the order they left, each
     /// with `left`: who removed them and when.
     pub former_members: Vec<ChannelMemberResponse>,
+    /// What is new in it to the requesting user (issue 404), as they open
+    /// or list it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unread: Option<UnreadResponse>,
+}
+
+/// What is new in a channel to the requesting user (issue 404): the
+/// messages of others said since they last read it.
+#[derive(Debug, Serialize)]
+pub struct UnreadResponse {
+    /// How many, counted up to 100: a client shows more than 99 as such.
+    pub messages: usize,
+    /// Whether one of them mentions the user, `@all` included.
+    pub mentioned: bool,
+    /// The last message they read, after which the new ones begin; absent
+    /// while they read nothing of the channel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_up_to: Option<MessageId>,
+}
+
+impl From<snapshot::Unread> for UnreadResponse {
+    fn from(unread: snapshot::Unread) -> Self {
+        Self { messages: unread.messages, mentioned: unread.mentioned, read_up_to: unread.read_up_to }
+    }
+}
+
+/// Up to where the user read a channel (issue 404): the newest message of
+/// someone else they were shown.
+#[derive(Debug, Deserialize)]
+pub struct ReadRequest {
+    pub message_id: MessageId,
 }
 
 impl From<snapshot::ChannelSnapshot> for ChannelResponse {
@@ -182,6 +213,7 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             workspace_id: view.workspace_id,
             can_change: view.can_change,
             former_members: view.former_members.into_iter().filter_map(ChannelMemberResponse::of).collect(),
+            unread: view.unread.map(UnreadResponse::from),
         }
     }
 }
@@ -384,6 +416,7 @@ mod tests {
             can_change: true,
             members: vec![member(alice, None), member(approver, Some("Approver")), member(ActorId::System, Some("system"))],
             former_members: Vec::new(),
+            unread: None,
         };
 
         let response = ChannelResponse::from(view);
@@ -397,12 +430,16 @@ mod tests {
     fn what_a_place_is_for_is_left_out_where_nothing_was_said_or_read() {
         let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None, id: ChannelId::new(), name: "main".to_string(),
             uses_workspace: true,
-            moderator: None, responder_policy: None, classification: Classification::CHANNEL_DEFAULT, language: None, can_change: false, members: Vec::new(), former_members: Vec::new() };
+            moderator: None, responder_policy: None, classification: Classification::CHANNEL_DEFAULT, language: None, can_change: false, members: Vec::new(), former_members: Vec::new(), unread: None };
         let json = serde_json::to_value(ChannelResponse::from(view.clone())).unwrap();
         assert!(json.get("summary").is_none() && json.get("briefing").is_none(), "{json}");
-        let described = snapshot::ChannelSnapshot { summary: Some(Summary::new("Planning").unwrap()), briefing: Some(Briefing::new("Dates in UTC.").unwrap()), ..view };
+        let described = snapshot::ChannelSnapshot { summary: Some(Summary::new("Planning").unwrap()), briefing: Some(Briefing::new("Dates in UTC.").unwrap()), ..view.clone() };
         let json = serde_json::to_value(ChannelResponse::from(described)).unwrap();
         assert_eq!((&json["summary"], &json["briefing"]), (&serde_json::json!("Planning"), &serde_json::json!("Dates in UTC.")));
+        assert!(json.get("unread").is_none(), "nothing new is told where it was not read: {json}");
+        let unread = snapshot::ChannelSnapshot { unread: Some(snapshot::Unread { messages: 3, mentioned: true, read_up_to: None }), ..view };
+        let json = serde_json::to_value(ChannelResponse::from(unread)).unwrap();
+        assert_eq!(json["unread"], serde_json::json!({ "messages": 3, "mentioned": true }), "nothing read yet: no message it ends at");
         let request: DescriptionRequest = serde_json::from_value(serde_json::json!({ "summary": "Planning" })).unwrap();
         assert_eq!((request.summary.as_deref(), request.briefing), (Some("Planning"), None), "one left out is none: removed");
     }
@@ -435,6 +472,7 @@ mod tests {
             can_change: false,
             members: vec![member(alice, "alice", Vec::new()), member(helper, "Helper", vec![note])],
             former_members: Vec::new(),
+            unread: None,
         };
 
         let json = serde_json::to_value(ChannelSnapshot::of(channel, HistoryPageResponse { items: Vec::new(), earlier: None })).unwrap();
@@ -462,6 +500,7 @@ mod tests {
             can_change: true,
             members: vec![member(alice, None)],
             former_members: vec![member(helper, Some(left.clone()))],
+            unread: None,
         };
         let json = serde_json::to_value(ChannelResponse::from(view)).unwrap();
         assert!(json["members"][0].get("left").is_none(), "a member has not left");

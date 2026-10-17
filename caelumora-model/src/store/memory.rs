@@ -1,6 +1,7 @@
 use crate::agent::{AgentChannelState, AgentId, AgentState};
 use crate::chain::Node;
 use crate::channel::{ChannelId, ChannelState};
+use crate::user::{UserChannelState, UserId};
 use crate::history::{History, HistoryEntry, HistoryPage};
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
@@ -41,6 +42,7 @@ pub struct MemoryStore {
     agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
+    user_channel_states: RwLock<HashMap<(UserId, ChannelId), UserChannelState>>,
     histories: RwLock<HashMap<HistoryKey, KeptHistory>>,
     transcripts: RwLock<HashMap<(AgentId, ChannelId), KeptChain<TranscriptEntry>>>,
     given: RwLock<HashMap<(AgentId, ChannelId), KeptGiven>>,
@@ -85,6 +87,7 @@ impl MemoryStore {
             policies,
             kinds: Default::default(),
             agent_states: Default::default(),
+            user_channel_states: Default::default(),
             agent_channel_states: Default::default(),
             channel_states: Default::default(),
             histories: Default::default(),
@@ -446,8 +449,19 @@ impl StateStore for MemoryStore {
         Ok(())
     }
 
+    async fn get_user_channel_state(&self, user_id: UserId, channel_id: ChannelId) -> StoreResult<UserChannelState> {
+        Ok(read_lock(&self.user_channel_states, |v| v.get(&(user_id, channel_id)).cloned()).unwrap_or_default())
+    }
+
+    async fn put_user_channel_state(&self, user_id: UserId, channel_id: ChannelId, state: &mut UserChannelState) -> StoreResult<()> {
+        state.mark_stored();
+        write_lock(&self.user_channel_states, |v| v.insert((user_id, channel_id), state.clone()));
+        Ok(())
+    }
+
     async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()> {
         write_lock(&self.channel_states, |v| v.remove(&channel_id));
+        write_lock(&self.user_channel_states, |v| v.retain(|(_, cid), _| *cid != channel_id));
         write_lock(&self.agent_channel_states, |v| v.retain(|(_, cid), _| *cid != channel_id));
         write_lock(&self.histories, |v| v.retain(|key, _| !key.in_channel(channel_id)));
         write_lock(&self.transcripts, |v| v.retain(|(_, cid), _| *cid != channel_id));

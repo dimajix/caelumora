@@ -112,6 +112,7 @@ its handler's doc comment.
 | `GET …/channels/{cid}/artifacts` | The artifacts with a version published in the channel (the plugin's) |
 | `POST …/channels/{cid}/commands/{command_id}/kill` | End a command of the workspace's shell started in the channel, with what it started |
 | `GET …/history`, `POST …/messages` | A page of the channel's history as items; write a message |
+| `PUT …/read` | Mark the channel read up to a message (`message_id`): the newest of someone else the user was shown; `404 message_not_found` for one their view of the history does not reach |
 | `GET`, `PUT`, `DELETE …/messages/{mid}`; `PUT …/messages/{mid}/classification`; `POST …/messages/{mid}/retry` | Read a message as it stands (`404 message_not_found` where the user's view of the history does not reach it); modify or take back one's own message; reclassify a message; ask the agent that said it to answer again |
 | `POST …/approvals`, `POST …/questions/{qid}` | Approve or deny a tool call; answer or decline the questions of an agent's call |
 | `POST …/cancel` | End the current turn of every agent in the channel |
@@ -141,7 +142,8 @@ Some rules hold across the endpoints:
     follows a channel](#who-follows-a-channel)).
 *   **What costs, or concerns one thing, is given where one thing is fetched**, not where things are
     listed: what a member's model calls used, a briefing, an artifact's places of publication. An
-    access list is given to the owner alone.
+    access list is given to the owner alone. What is new in a channel to the user (`unread`) is
+    given wherever channels are, listed or fetched: it is what a list is read for.
 *   **What a client offers it reads from flags** (`can_change`, `can_retry`, `can_cancel`,
     `can_read_context`, ...) the views decide for the user, not from rules of its own.
 

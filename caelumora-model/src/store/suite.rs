@@ -30,7 +30,8 @@ use crate::transcript::TranscriptEntry;
 use crate::history::{History, HistoryEntry};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
 use crate::removal::{Deletable, Removal};
-use crate::user::{User, UserId, UserProfile};
+use crate::user::{ReadMark, User, UserChannelState, UserId, UserProfile};
+use crate::message::MessageId;
 use crate::workspace::{Workspace, WorkspaceId};
 use crate::group::{Group, GroupId};
 use chrono::Utc;
@@ -650,8 +651,24 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
     store.put_channel_state(other_channel, &mut ChannelState::new(other_channel)).await.expect("put channel state");
     assert_eq!(store.get_channel_state(channel).await.expect("get channel state").channel_id, channel);
 
+    // A user's: what they read (issue 404).
+    let (user, other_user) = (UserId::new(), UserId::new());
+    assert!(store.get_user_channel_state(user, channel).await.expect("a missing user channel state is no error").read.is_none(), "nothing read");
+    let mark = ReadMark { position: 7, message: MessageId::new() };
+    let mut read = UserChannelState::default();
+    read.read_up_to(mark);
+    store.put_user_channel_state(user, channel, &mut read).await.expect("put user channel state");
+    store.put_user_channel_state(user, other_channel, &mut read).await.expect("put user channel state");
+    read.read_up_to(ReadMark { position: 9, message: MessageId::new() });
+    store.put_user_channel_state(other_user, channel, &mut read).await.expect("put user channel state");
+    assert_eq!(store.get_user_channel_state(user, channel).await.expect("get").read, Some(mark), "the stored state comes back");
+    assert_eq!(store.get_user_channel_state(other_user, channel).await.expect("get").read.map(|read| read.position), Some(9), "each user's own");
+
     store.delete_channel_state(channel).await.expect("delete channel state");
     assert!(matches!(store.get_channel_state(channel).await, Err(StoreError::NotFound { .. })), "the channel state is gone");
+    assert!(store.get_user_channel_state(user, channel).await.expect("get").read.is_none(), "the users' states in the channel are gone");
+    assert!(store.get_user_channel_state(other_user, channel).await.expect("get").read.is_none(), "the users' states in the channel are gone");
+    assert_eq!(store.get_user_channel_state(user, other_channel).await.expect("get").read, Some(mark), "other channels keep theirs");
     assert!(store.get_agent_channel_state(agent, channel).await.expect("get").turn.is_none(), "the agents' states in the channel are gone");
     assert!(store.get_agent_channel_state(other_agent, channel).await.expect("get").turn.is_none(), "the agents' states in the channel are gone");
     assert!(store.get_agent_channel_state(agent, other_channel).await.expect("get").turn.is_some(), "other channels keep theirs");

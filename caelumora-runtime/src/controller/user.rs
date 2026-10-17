@@ -5,8 +5,13 @@ use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::value::language::Language;
 use caelumora_model::security::{Secured, SecurityContext};
-use caelumora_model::store::{EntityStore, StoreError, StoreResult};
-use caelumora_model::user::{User, UserId, UserProfile};
+use caelumora_model::store::{EntityStore, EntityStores, StateStore, StoreError, StoreResult};
+use caelumora_model::store::history::{HistoryKey, HistoryStore};
+use caelumora_model::user::{ReadMark, User, UserId, UserProfile};
+use caelumora_model::channel::Channel;
+use caelumora_model::message::MessageId;
+use crate::channel::visible_from;
+use tracing::debug;
 use std::sync::Arc;
 use super::document::{log_changed, take_over};
 use chrono::Utc;
@@ -22,6 +27,10 @@ use tokio::sync::Mutex;
 /// does not write, and the profile is created with its first change rather
 /// than changed, and announced as it then stands rather than by an update
 /// event. It takes the user's changes over and logs its own alike.
+///
+/// It is also the one writer of the user's states in channels in this
+/// instance (issue 404): up to where they read each - whether the channel
+/// runs or not, and whether they take part in it or only read it.
 #[derive(Debug)]
 pub struct UserController {
     id: UserId,
@@ -31,23 +40,34 @@ pub struct UserController {
     profile: ArcSwap<UserProfile>,
     event_publisher: Arc<dyn EventPublisher>,
     profiles: Arc<dyn EntityStore<UserProfile>>,
+    /// Where a channel the user marks read is reached, as they read it.
+    channels: Arc<dyn EntityStore<Channel>>,
+    states: Arc<dyn StateStore>,
+    histories: Arc<dyn HistoryStore>,
     /// Held while the profile is changed and stored, like the other
     /// controllers.
     write_lock: Mutex<()>,
+    /// Held while a state of the user in a channel is read, changed and
+    /// stored: its puts never overlap.
+    read_lock: Mutex<()>,
 }
 
 impl UserController {
     /// The live `user` with their `profile`, `None` if they have none yet.
     /// Made by the `ControllerManager`, which keeps one per user.
-    pub(crate) fn new(user: User, profile: Option<UserProfile>, event_publisher: Arc<dyn EventPublisher>, profiles: Arc<dyn EntityStore<UserProfile>>) -> Self {
+    pub(crate) fn new(user: User, profile: Option<UserProfile>, event_publisher: Arc<dyn EventPublisher>, stores: &EntityStores, states: Arc<dyn StateStore>, histories: Arc<dyn HistoryStore>) -> Self {
         let id = user.id;
         Self {
             id,
             user: ArcSwap::from_pointee(user),
             profile: ArcSwap::from_pointee(profile.unwrap_or_else(|| UserProfile::new(id, None))),
             event_publisher,
-            profiles,
+            profiles: Arc::clone(&stores.user_profiles),
+            channels: Arc::clone(&stores.channels),
+            states,
+            histories,
             write_lock: Mutex::new(()),
+            read_lock: Mutex::new(()),
         }
     }
 
@@ -154,6 +174,43 @@ impl UserController {
         }
     }
 
+    /// Marks channel `channel_id` of session `session_id` read by the user up to message
+    /// `message_id` (issue 404), on behalf of `ctx`, the user's own: the
+    /// newest message of someone else they were shown. The channel is
+    /// reached as `ctx` reads it - the store asks whether they may read it
+    /// and are cleared for it -, and the message must be one of its history
+    /// they see, from where their view of it begins. The mark only moves
+    /// forward: a message before it changes nothing.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` for a channel `ctx` does not reach in the
+    /// session and for a
+    /// message the user does not see in it; `Validation` for a context not
+    /// the user's; otherwise whatever the stores report. Nothing is changed
+    /// then.
+    pub async fn mark_read(&self, ctx: &SecurityContext, session_id: SessionId, channel_id: ChannelId, message_id: MessageId) -> StoreResult<()> {
+        let reader = ActorId::User(self.id);
+        if ctx.caller_id != reader {
+            return Err(StoreError::Validation(format!("only user {} marks what they read", self.id)));
+        }
+        let channel = self.channels.get(ctx, channel_id).await?;
+        if channel.session_id != session_id {
+            return Err(StoreError::NotFound { entity: "channel", id: channel_id.to_string() });
+        }
+        let not_seen = || StoreError::NotFound { entity: "message", id: message_id.to_string() };
+        let from = visible_from(self.histories.as_ref(), channel_id, channel.history_start_of(reader)).await?.ok_or_else(not_seen)?;
+        let (position, _) = self.histories.said(HistoryKey::Channel(channel_id), message_id).await?
+            .filter(|(at, _)| *at >= from)
+            .ok_or_else(not_seen)?;
+        let _guard = self.read_lock.lock().await;
+        let mut state = self.states.get_user_channel_state(self.id, channel_id).await?;
+        if state.read_up_to(ReadMark { position, message: message_id }) {
+            self.states.put_user_channel_state(self.id, channel_id, &mut state).await?;
+            debug!(user = %self.id, channel = %channel_id, "Read up to message {}", message_id);
+        }
+        Ok(())
+    }
+
     /// Takes over a change made elsewhere - already stored there - once it
     /// is announced: of the user as a `LiveDocument` takes it over, of the
     /// profile as it now stands. An event carries the resulting value, so
@@ -202,12 +259,17 @@ mod tests {
         SecurityContext::new(ActorId::User(id), Default::default(), Default::default())
     }
 
+    /// The controller of `user`, keeping everything in `store`.
+    fn controller_in(store: &Arc<MemoryStore>, user: &User, event_publisher: Arc<dyn EventPublisher>) -> UserController {
+        UserController::new(user.clone(), None, event_publisher, &store.entity_stores(), Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store))
+    }
+
     #[tokio::test]
     async fn a_profile_is_stored_first_then_taken_over_and_announced() {
         let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())));
         let announced = Arc::new(Announced::default());
         let user = alice();
-        let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), store.entity_stores().user_profiles);
+        let controller = controller_in(&store, &user, Arc::<Announced>::clone(&announced));
         let hers = as_user(user.id);
 
         for text in ["I run the budget.", "I run the budget and the team."] {
@@ -224,7 +286,7 @@ mod tests {
     #[test]
     fn the_roles_follow_their_announcement() {
         let user = alice();
-        let controller = UserController::new(user.clone(), None, Arc::new(Announced::default()), Arc::new(MemoryStore::new()).entity_stores().user_profiles);
+        let controller = controller_in(&Arc::new(MemoryStore::new()), &user, Arc::new(Announced::default()));
         let staff = RoleId::new();
         controller.process_global_event(&GlobalEvent::updated::<User>(&UserId::new(), &UserUpdateEvent::RolesChanged(vec![staff])));
         assert!(controller.load().roles.is_empty(), "not someone else's");
@@ -239,7 +301,7 @@ mod tests {
         let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())));
         let announced = Arc::new(Announced::default());
         let user = alice();
-        let controller = UserController::new(user.clone(), None, Arc::<Announced>::clone(&announced), store.entity_stores().user_profiles);
+        let controller = controller_in(&store, &user, Arc::<Announced>::clone(&announced));
 
         let invalid = controller.update_profile(&as_user(user.id), Some("a\u{1b}[2Jb"), None).await;
         assert!(matches!(invalid, Err(StoreError::Invalid(_))), "{invalid:?}");
@@ -258,7 +320,7 @@ mod tests {
         use caelumora_model::approval::{Reach, RuleDecision, ToolMatcher};
         let store = Arc::new(MemoryStore::with_policies(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default())));
         let user = alice();
-        let controller = UserController::new(user.clone(), None, Arc::new(()), store.entity_stores().user_profiles);
+        let controller = controller_in(&store, &user, Arc::new(()));
         let hers = as_user(user.id);
         controller.update_profile(&hers, Some("I run the budget."), None).await.unwrap();
         let rule = ApprovalRule::new(ToolMatcher { tool: "shell".to_string(), arguments: Default::default() }, RuleDecision::Allow, Reach::Everywhere, None).unwrap();
@@ -281,7 +343,7 @@ mod tests {
     #[tokio::test]
     async fn a_profile_changed_elsewhere_is_taken_over() {
         let user = alice();
-        let controller = UserController::new(user.clone(), None, Arc::new(()), Arc::new(MemoryStore::new()).entity_stores().user_profiles);
+        let controller = controller_in(&Arc::new(MemoryStore::new()), &user, Arc::new(()));
         let changed = UserProfile::new(user.id, Some(Introduction::new("I run the budget.").unwrap()));
 
         controller.process_global_event(&GlobalEvent::updated::<UserProfile>(&UserId::new(), &UserProfile::new(UserId::new(), Some(Introduction::new("not hers").unwrap()))));

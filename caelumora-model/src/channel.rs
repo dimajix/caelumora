@@ -61,6 +61,13 @@ pub const LEFT: &str = "left";
 /// end of its turn; without content, since part of it is private.
 pub const AGENT_STATE_CHANGED: &str = "agent_state_changed";
 
+/// Something new was said in the channel (issue 404): a message that others
+/// hear (`Message::is_heard`), in the change's data as it was said.
+/// Published with the channel's attributes and classification, so that it
+/// reaches who may read the channel and is cleared for it - who would read
+/// the message in its history -, once the message is stored.
+pub const SAID: &str = "said";
+
 /// Whether a channel uses its session's workspace unless it says
 /// otherwise: it does (issue 251, decision 11).
 pub(crate) fn uses_workspace_by_default() -> bool {

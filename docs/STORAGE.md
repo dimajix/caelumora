@@ -199,6 +199,8 @@ The `StateStore` (in `caelumora-model`) stores the runtime state of channels and
     the tasks not yet ended.
 *   **`AgentState`**: the agent itself, across its channels and sessions - so far its memory (see
     [MEMORY.md](MEMORY.md)).
+*   **`UserChannelState`**: a user in one channel - up to where they read it (see
+    [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)).
 
 ### What a state tells a store
 
@@ -346,6 +348,7 @@ not help; the rule is the runtime's to keep:
 *   `ChannelState`: its `ChannelLoop`;
 *   `AgentChannelState`: the actor of that agent and channel;
 *   `AgentState`: its handle;
+*   `UserChannelState`: the user's controller, one per user in the instance;
 
 each holding the state under a lock of its own while it changes and stores it.
 
@@ -361,8 +364,8 @@ for the other's.
 
 Deleting a session or a channel keeps its state, hidden with it; purging removes the state too, with
 its histories. The entity store and the state store may be different stores, so a purge deletes the
-state explicitly - a channel's with that of every agent in it, an agent's own with its state in
-every channel. It is never a side effect of the `EntityStore`.
+state explicitly - a channel's with that of every agent and user in it, an agent's own with its
+state in every channel. It is never a side effect of the `EntityStore`.
 
 ## Controllers
 

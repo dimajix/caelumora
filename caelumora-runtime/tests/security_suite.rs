@@ -247,6 +247,56 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
+/// S5 (issue 404): a reader marks up to where they read a channel as they
+/// reach it - the store asks to read it - and nothing more; the mark is
+/// theirs alone, and a message before where their view begins is none they
+/// read. Carol, who does not reach the channel, marks nothing.
+#[tokio::test]
+async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
+    use caelumora_model::actor::ActorEvent;
+    use caelumora_model::message::MessageId;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let alice = World::as_user(world.alice);
+    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.unwrap();
+    let hers = side.user_actor(world.alice).unwrap();
+    let mut watch = hers.watch();
+    let mut say = async |text: &str| {
+        hers.send_message(text.to_string(), None).await.expect("sent");
+        let ActorEvent::CompleteMessageGenerated(said) = shown(&mut watch, "CompleteMessageGenerated").await else { unreachable!() };
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !side.visible_messages(ActorId::User(world.alice)).await.iter().any(|m| m.id == said.id) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("in the history");
+        said.id
+    };
+    let before = say("before bob").await;
+    side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::None).await.expect("without what was said");
+    let after = say("after bob").await;
+    let mark = |user: UserId, message: MessageId| {
+        let (controllers, session, channel) = (world.runtime.controller_manager(), session.id(), side.id());
+        async move { controllers.user_controller(user).await.unwrap().mark_read(&World::as_user(user), session, channel, message).await }
+    };
+    let unread = |user: UserId| {
+        let (manager, session, channel) = (&world.manager, session.id(), side.id());
+        async move { manager.views(Viewer::new(World::as_user(user))).session(session).await.unwrap().channel(channel).await.unwrap().unread().await.unwrap().map(|unread| unread.messages) }
+    };
+    assert_eq!(unread(world.bob).await, Some(1), "what alice said since he was taken in");
+
+    let (marked, asked) = world.asked(mark(world.bob, after)).await;
+    marked.expect("his to mark");
+    assert_eq!(asked, checks(&["bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes"]), "reaching the channel, as the views do; marking what he read asks nothing more");
+    assert_eq!(unread(world.bob).await, Some(0));
+    assert_eq!(unread(world.alice).await, Some(0), "her own words are nothing new to her, and his mark is not hers");
+    assert!(matches!(mark(world.bob, before).await, Err(StoreError::NotFound { entity: "message", .. })), "not before where his view begins");
+
+    let (marked, asked) = world.asked(mark(world.carol, after)).await;
+    assert!(matches!(marked, Err(StoreError::NotFound { entity: "channel", .. })), "carol does not reach it: {marked:?}");
+    assert_eq!(asked, checks(&["carol: GetChannel(alice's) no"]));
+    world.manager.stop(&alice, session.id()).await.unwrap();
+}
+
 /// S5 (issue 386): a participant follows a channel through their own actor
 /// alone, whether it runs or not - asked as reaching the channel is, and
 /// nothing more; following a stopped channel does not start it. Carol does

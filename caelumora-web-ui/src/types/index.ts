@@ -196,6 +196,18 @@ export interface ChannelResponse {
   can_change: boolean;
   /** Who took part and left (issue 164), in the order they left, each with `left`. */
   former_members: ChannelMember[];
+  /** What is new in it to you (issue 404), as you open or list it. */
+  unread?: Unread;
+}
+
+/** What is new in a channel to you (issue 404): the messages of others said since you last read it. */
+export interface Unread {
+  /** How many, counted up to 100: more than 99 are shown as such. */
+  messages: number;
+  /** Whether one of them mentions you, `@all` included. */
+  mentioned: boolean;
+  /** The last message you read, after which the new ones begin; absent while you read nothing of the channel. */
+  read_up_to?: string;
 }
 
 /** Who sees a part of what an agent produces (issue 133): the channel, or only the agent's owner. */

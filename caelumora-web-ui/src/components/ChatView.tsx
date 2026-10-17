@@ -69,7 +69,8 @@ import {MessageEditor} from './MessageEditor';
 import {LanguageDialog} from './LanguageDialog';
 import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {languageLabel} from '../language';
-import {approvalRulesChangedChannel, changedChannel, descriptionChangedChannel, languageChangedChannel, membershipChangedChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel} from '../globalEvents';
+import {approvalRulesChangedChannel, changedChannel, descriptionChangedChannel, languageChangedChannel, membershipChangedChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel, saidInChannel} from '../globalEvents';
+import {isOthers, markRead} from '../unread';
 import {api} from '../api';
 import type {Page} from '../page';
 import {ApiRequestError, reportError} from '../errors';
@@ -328,6 +329,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // request, read before `earlier` (issue 218) - `null` once there are none.
   const [earlier, setEarlier] = useState<number | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  // Where the new messages began as the channel was opened (issue 404):
+  // after the message last read, as the server said then, so that the line
+  // stays where it was while the mark moves on as the user reads.
+  const [newSince, setNewSince] = useState<{channelId: string; after: string | null; count: number} | null>(null);
+  if (channel?.id === channelId && newSince?.channelId !== channelId) {
+    setNewSince({channelId, after: channel.unread?.read_up_to ?? null, count: channel.unread?.messages ?? 0});
+  }
 
   /**
    * Shows `page`, the last page of the history, in place of what is shown,
@@ -503,6 +511,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         });
     });
   }, [sessionId, channelId]);
+
+  // Who reads the channel without taking part follows what others hear in it
+  // through the global stream (issue 404), as it is stored; a participant
+  // follows it through their own actor.
+  useEffect(() => {
+    if (participant !== false) return;
+    return onGlobalEvent(event => {
+      const said = saidInChannel(event);
+      if (!said || said.channelId !== channelId) return;
+      setMessages(prev => prev.some(m => m.id === said.message.id) ? prev : [...prev, said.message]);
+    });
+  }, [channelId, participant]);
 
   // A reclassified channel follows the global stream (issue 133): it may
   // have changed its messages too, which are fetched again. A reclassified
@@ -1017,6 +1037,33 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   useEffect(() => {
     saveDraft(channelId, inputText);
   }, [channelId, inputText]);
+
+  // The newest message of someone else shown is what the user read (issue
+  // 404), marked while the tab is visible: as the channel is opened, as
+  // messages arrive and as the tab comes back. Never one of their own, which
+  // is shown before the channel takes it in; nor a notice of the UI's, which
+  // is in no history.
+  const newestOfOthers = useMemo(() => messages.findLast(m =>
+    m.id && (m.role === 'User' || m.role === 'Assistant') && isOthers(m, {User: user.id})
+    && !m.givenUp && !m.commandOutput && !m.activity && !m.chainCutOff && !m.nudged
+  )?.id ?? null, [messages, user.id]);
+  const marked = useRef<string | null>(null);
+  useEffect(() => {
+    if (!newestOfOthers) return;
+    const mark = () => {
+      const key = `${channelId}:${newestOfOthers}`;
+      if (document.visibilityState !== 'visible' || marked.current === key) return;
+      marked.current = key;
+      markRead(sessionId, channelId, newestOfOthers).catch(error => {
+        marked.current = null;
+        // A message the history does not hold marks nothing.
+        if (!(error instanceof ApiRequestError && error.status === 404)) reportError('Failed to mark the channel read', error);
+      });
+    };
+    mark();
+    document.addEventListener('visibilitychange', mark);
+    return () => document.removeEventListener('visibilitychange', mark);
+  }, [sessionId, channelId, newestOfOthers]);
 
   /** Puts the page of the history before those shown in front of them. */
   const loadEarlier = async () => {
@@ -1550,6 +1597,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // where its turn has none - a snapshot without the step's mark - below,
   // with every other answer.
   const inStep = (answer: Answer) => answer.internal && currentSteps.has(answer.turnId);
+  // The row before which the new messages begin (issue 404), if there were
+  // any as the channel was opened: after the one last read, or at the top
+  // where it lies before what is shown or nothing was read.
+  const newFrom = (() => {
+    if (newSince?.channelId !== channelId || newSince.count === 0 || rows.length === 0) return null;
+    const read = newSince.after === null ? -1 : rows.findIndex(row => row.kind === 'message'
+      ? row.message.id === newSince.after
+      : row.messages.some(m => m.id === newSince.after));
+    const from = read + 1;
+    return from < rows.length ? from : null;
+  })();
 
   const renderAnswer = (answer: Answer) => (
     <div key={answer.sender} className="max-w-[80%] p-3 rounded-lg shadow-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600">
@@ -1604,7 +1662,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
               </button>
             </div>
           )}
-          {rows.map((row, idx) => row.kind === 'message'
+          {rows.map((row, idx) => [idx === newFrom && (
+            <div key="new-messages" role="separator" aria-label="New messages" className="flex items-center gap-2 text-xs font-semibold text-red-600 dark:text-red-400">
+              <div className="flex-1 border-t border-red-400 dark:border-red-500" />
+              New messages
+              <div className="flex-1 border-t border-red-400 dark:border-red-500" />
+            </div>
+          ), row.kind === 'message'
             ? renderMessage(row.message, row.message.id ?? `local-${idx}`)
             : (() => {
               const current = currentSteps.get(row.turnId) === idx;
@@ -1622,7 +1686,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                   {streaming.map(renderAnswer)}
                 </PlanSteps>
               );
-            })())}
+            })()])}
           {answers.filter(answer => !inStep(answer)).map(renderAnswer)}
           <div ref={messagesEndRef} />
         </div>

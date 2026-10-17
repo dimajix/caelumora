@@ -2,6 +2,7 @@ use crate::agent::{AgentChannelState, AgentId, AgentState};
 use crate::channel::{ChannelId, ChannelState};
 use crate::component::StoredComponents;
 use crate::confidentiality::ConfidentialityPolicy;
+use crate::user::{UserChannelState, UserId};
 use crate::removal::{Deletable, Removal};
 use crate::security::{ActionType, AccessPolicy};
 use crate::store::access::{name_free, Access};
@@ -92,7 +93,7 @@ impl JsonFileStore {
     }
 
     fn ensure_layout(&self) -> StoreResult<()> {
-        for dir in [self.agent_states_dir(), self.agent_channel_states_dir(), self.channel_states_dir()] {
+        for dir in [self.agent_states_dir(), self.agent_channel_states_dir(), self.channel_states_dir(), self.user_channel_states_dir()] {
             fs::create_dir_all(dir).map_err(to_backend_error)?;
         }
         Ok(())
@@ -118,6 +119,20 @@ impl JsonFileStore {
 
     fn agent_channel_state_dir(&self, channel_id: ChannelId) -> PathBuf {
         self.agent_channel_states_dir().join(channel_id.to_string())
+    }
+
+    fn user_channel_states_dir(&self) -> PathBuf {
+        self.root.join("runtime").join("user_channel_state")
+    }
+
+    /// The states of the users in `channel_id`, one file each, so that they
+    /// go with the channel's.
+    fn user_channel_state_dir(&self, channel_id: ChannelId) -> PathBuf {
+        self.user_channel_states_dir().join(channel_id.to_string())
+    }
+
+    fn user_channel_state_path(&self, user_id: UserId, channel_id: ChannelId) -> PathBuf {
+        self.user_channel_state_dir(channel_id).join(format!("{user_id}.json"))
     }
 
 
@@ -618,6 +633,16 @@ impl StateStore for JsonFileStore {
         self.store_state(&self.channel_state_path(channel_id), state).await
     }
 
+    async fn get_user_channel_state(&self, user_id: UserId, channel_id: ChannelId) -> StoreResult<UserChannelState> {
+        let path = self.user_channel_state_path(user_id, channel_id);
+        debug!("Reading user channel state from {}", path.display());
+        Ok(load_state(&path).await?.unwrap_or_default())
+    }
+
+    async fn put_user_channel_state(&self, user_id: UserId, channel_id: ChannelId, state: &mut UserChannelState) -> StoreResult<()> {
+        self.store_state(&self.user_channel_state_path(user_id, channel_id), state).await
+    }
+
     async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()> {
         debug!("Deleting the state of channel {}", channel_id);
         let path = self.channel_state_path(channel_id);
@@ -625,6 +650,7 @@ impl StateStore for JsonFileStore {
         delete_if_exists(&journal_path(&path)).await?;
         delete_dir_if_exists(&self.history_dir(HistoryKey::Channel(channel_id))).await?;
         delete_dir_if_exists(&self.agent_channel_state_dir(channel_id)).await?;
+        delete_dir_if_exists(&self.user_channel_state_dir(channel_id)).await?;
         Ok(())
     }
 

@@ -132,7 +132,7 @@ mod tests {
         let (staff, hr) = (RoleId::new(), RoleId::new());
         let alice = User { id: UserId::new(), username: Name::new("alice").unwrap(), email: String::new(), roles: vec![staff], deleted: None };
         let store = Arc::new(MemoryStore::new());
-        let owner = Arc::new(UserController::new(alice.clone(), None, Arc::new(()), store.entity_stores().user_profiles));
+        let owner = Arc::new(UserController::new(alice.clone(), None, Arc::new(()), &store.entity_stores(), Arc::<MemoryStore>::clone(&store), Arc::<MemoryStore>::clone(&store)));
         let personality = Personality { roles: Some(vec![staff]), ..plain() };
         let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(alice.id));
         let controller = AgentController::new(agent, Some(Arc::clone(&owner)), Arc::new(()), &store.entity_stores());

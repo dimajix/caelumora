@@ -18,8 +18,9 @@ text, `within` the id of the entity it lies in, and `change` an `EntityChange`:
     `ArtifactUpdateEvent`, …); a profile comes as it now stands;
 *   `Custom { name, data }` - something particular to the kind, under a name its module defines:
     `session::STARTED` and `STOPPED`, `agent::STATE_CHANGED`, a channel's `STARTED`, `STOPPED`,
-    `JOINED` and `LEFT` - with the `ActorId` of who joined or left - and `AGENT_STATE_CHANGED`,
-    with the agent's id.
+    `JOINED` and `LEFT` - with the `ActorId` of who joined or left -, `AGENT_STATE_CHANGED`, with
+    the agent's id, and `SAID`, with a message others hear as it was said (see
+    [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)).
 
 What happens to a channel's members is a change of the channel: its readers are the ones who hear
 of it, and it carries the member in its data.
