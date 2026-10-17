@@ -58,6 +58,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [208](208-generated-artifacts.md) | open | high | feature | Files and data an agent generates - an external agent's artifacts, a tool's images - are dropped; only their text is kept, and nothing can be stored or downloaded. |
 | [282](282-message-attachments.md) | open | high | feature | A user cannot attach an image or a file to a message, so a model that can see, such as Gemma 4, is never shown one. |
 | [298](298-pick-users-and-roles-to-share-with.md) | open | medium | feature | The web UI shares a workspace or an artifact only with the members of a session or channel, not with a user or a role by name, since the REST API lists neither. |
+| [415](415-messages-of-a-turn-not-grouped.md) | open | medium | feature | The chat shows every message of an agent as a bubble of its own, named and spaced like any other, so a turn of several messages cannot be told apart from several turns one after the other. |
 
 ## Context and knowledge
 
