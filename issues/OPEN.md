@@ -28,6 +28,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [382](382-agents-held-without-a-session.md) | open | medium | feature | An agent stays loaded with its memory while nothing uses it, and what still holds it once its sessions are unloaded has not been checked. Part of epic [378](378-resource-management-epic.md). |
 | [388](388-resume-interrupted-work-after-a-restart.md) | open | medium | feature | Work interrupted by a restart - a turn stopped mid-step at the shutdown - waits until someone acts in its session, since nothing starts the session again. |
 | [403](403-decision-model-policy.md) | open | medium | feature | Every responder policy chooses who answers without looking at the message - by turn, by chance or by whether a user wrote - so in a channel of agents with different roles the one that fits a question is asked only if someone mentions it. |
+| [408](408-membership-changes-in-history.md) | open | medium | feature | When someone is added to a channel or leaves it, neither its history nor the agents' transcripts record it, so the chat does not show who added whom, and an agent learns of the change only from the roster of its next system prompt, without knowing that something changed. |
 
 ## Identity and access management
 
