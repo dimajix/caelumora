@@ -4,6 +4,7 @@
 use super::{stopped, ActorChange, ChannelActor, ChannelLoop};
 use crate::actor::Answering;
 use crate::logging::envelope_span;
+use crate::moderator::Routing;
 use crate::transport::{EventSender, TransportError};
 use crate::transport::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
 use anyhow::{anyhow, Result};
@@ -432,7 +433,8 @@ impl ChannelLoop {
 
         let span_id = event.context.span_id;
         let span_depth = event.context.span_depth + 1;
-        let decision = self.moderator.route(event).await;
+        let routing = self.moderator.route(event).await;
+        let decision = self.deliveries(event, routing);
         let quiet = self.quiet.load(Ordering::SeqCst);
 
         // Whom the moderator asks to respond is woken first, before anything
@@ -506,6 +508,29 @@ impl ChannelLoop {
                 }
             }
         }
+    }
+
+    /// What the channel delivers of `event` as `routing` decided (issue
+    /// 418), each envelope built here: the event as it entered, to whom it
+    /// concerns among the actors (`Envelope::concerns`) or whom the
+    /// moderator named; each notice of the moderator's to whom it names, in
+    /// the system's name; a request to respond to each it asks, in the
+    /// event's contexts, with the hops it counted. Whom none of it goes
+    /// back to is `route_event_impl`'s to see to.
+    fn deliveries(&self, event: &Envelope, routing: Routing) -> Vec<(ActorId, Envelope)> {
+        let Routing { deliver_to, ask, agent_hops, notices } = routing;
+        let deliver_to = deliver_to.unwrap_or_else(|| self.actors.load().keys().copied().filter(|id| event.concerns(*id)).collect());
+        let mut deliveries: Vec<(ActorId, Envelope)> = deliver_to.into_iter().map(|id| (id, event.clone())).collect();
+        for (recipients, notice) in notices {
+            let mut told = event.forward(notice.into());
+            told.context.sender_id = ActorId::System;
+            told.context.sender_name = ActorId::System.fixed_name().unwrap_or_default().to_string();
+            deliveries.extend(recipients.into_iter().map(|id| (id, told.clone())));
+        }
+        let mut request = event.forward(ActorEvent::ResponseRequested);
+        request.context.agent_hops = agent_hops;
+        deliveries.extend(ask.into_iter().map(|id| (id, request.clone())));
+        deliveries
     }
 
     async fn append_history(&self, envelope: &Envelope) {
@@ -649,7 +674,7 @@ mod tests {
     use caelumora_model::tool::{ToolCall, ToolCallResult};
     use caelumora_model::turn::GivenUpReason;
     use chrono::Utc;
-    use crate::moderator::{Moderator, ResponderPolicy};
+    use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing};
     use crate::moderator::broadcast_policy::BroadcastPolicy;
     use uuid::Uuid;
 
@@ -677,10 +702,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Moderator for TellsTheSender {
-        async fn route(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
-            let mut notice = event.forward(ActorEvent::ChainCutOff { message: MessageId::new(), max_agent_hops: 0, not_asked: Vec::new() });
-            notice.context.sender_id = ActorId::System;
-            vec![(event.context.sender_id, event.clone()), (event.context.sender_id, notice)]
+        async fn route(&self, event: &Envelope) -> Routing {
+            let sender = event.context.sender_id;
+            let notice = Notice::ChainCutOff { message: MessageId::new(), max_agent_hops: 0, not_asked: Vec::new() };
+            Routing { deliver_to: Some(vec![sender]), notices: vec![(vec![sender], notice)], ..Routing::default() }
         }
         fn add_actor(&self, _: Arc<dyn Actor>) {}
         fn remove_actor(&self, _: ActorId) {}

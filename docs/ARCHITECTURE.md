@@ -175,8 +175,8 @@ The path of one message shows how the parts fit together:
     channel. There is no way to write into a channel other than through one's own actor, so sender
     and authority always follow from who is writing.
 2.  **The channel routes it.** The `ChannelLoop` resolves `@`-mentions, appends the message to the
-    channel's history and passes it through the moderator, which delivers it to every other
-    participant and asks some agents to respond.
+    channel's history, asks the moderator whom to ask to respond, and delivers the message to every
+    other participant and the requests to those asked.
 3.  **An agent takes a turn.** The `AgentActor` begins a **turn**: its context provider assembles
     what the model is given (prompt parts, the agent's transcript), the model answers, and tool
     calls in the answer are run - after approval, where a tool requires it - and their results fed

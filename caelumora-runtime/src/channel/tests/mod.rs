@@ -23,7 +23,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::user::User;
-use crate::moderator::Moderator;
+use crate::moderator::{Moderator, Routing};
 use std::any::Any;
 
 mod commands;
@@ -121,8 +121,8 @@ pub(super) struct AskBack(pub(super) ActorId);
 
 #[async_trait::async_trait]
 impl Moderator for AskBack {
-    async fn route(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
-        vec![(self.0, event.clone()), (self.0, event.forward(ActorEvent::ResponseRequested))]
+    async fn route(&self, event: &Envelope) -> Routing {
+        Routing { deliver_to: Some(vec![self.0]), ask: vec![self.0], agent_hops: event.context.agent_hops, ..Routing::default() }
     }
     fn add_actor(&self, _: Arc<dyn Actor>) {}
     fn remove_actor(&self, _: ActorId) {}

@@ -721,10 +721,11 @@ reach them. Components are not given their actor's `ActorRuntime` either, only w
 
 ## Moderators
 
-A moderator decides how messages are routed and who is asked to respond. It is a component of the
-channel: a channel has components, from its template or the request, which the channel builds as an
-agent builds its own - in the name of the channel's owner. `Moderator` and `ResponderPolicy` are
-facets of which a channel has exactly one, each with a default (see
+A moderator decides whom an event goes to, who is asked to respond and what it tells of its own -
+and never what anyone is told of an event (issue 418). It is a component of the channel: a channel
+has components, from its template or the request, which the channel builds as an agent builds its
+own - in the name of the channel's owner. `Moderator` and `ResponderPolicy` are facets of which a
+channel has exactly one, each with a default (see
 [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one)):
 
 ```yaml
@@ -735,17 +736,31 @@ channels:
     kind: mentions_only_policy
 ```
 
-The built-in moderator, `policy_moderator` (the default), routes the way every channel routes:
+Every channel delivers by one rule, the channel's and not a moderator's (`Envelope::concerns`):
 
 *   every message said goes, as it was said, to every other participant: to the users always, to the
     agents if there is something to hear in it - each agent takes in its words itself;
-*   whom to ask to respond is decided when an answer is complete: for a message said outside of any
-    turn as it is said, for the messages of a turn at its end. The decision follows from the
-    messages - whether a turn is theirs - never from the kind of their sender;
+*   a change of a message, and who joined or left, go to every user and agent;
 *   how an answer comes about - its start, partial and intermediate messages, plan steps - where an
-    agent stands, and how a turn ended go to the users, not to the agents;
-*   approvals and commands go to whom they concern: a request for a command to the agent it names,
-    that it began to the issuer, its answer to the issuer alone if private, else to every user;
+    agent stands, how a turn ended and what an agent does of its own accord go to the users, not to
+    the agents;
+*   approvals, questions and commands go to whom they concern: a request for a command to the agent
+    it names, that it began to the issuer, its answer to the issuer alone if private, else to every
+    user; an approval through the approvers; questions to the users asked;
+*   nothing goes back to its sender, but what the channel announces in their name.
+
+A moderator answers each event with a `Routing`: whether it goes where the rule sends it or to some
+participants alone, whom to ask to respond, and which of its own notices to tell whom - of a fixed
+few (`Notice`), today a chain cut off. The channel builds every envelope from it: the event as it
+entered, a request to respond in the event's contexts, a notice in the system's name. So a moderator
+cannot change what anyone is told, nor speak in anybody's name.
+
+The built-in moderator, `policy_moderator` (the default), lets every event go where the rule sends
+it, and decides:
+
+*   whom to ask to respond, when an answer is complete: for a message said outside of any turn as it
+    is said, for the messages of a turn at its end. The decision follows from the messages - whether
+    a turn is theirs - never from the kind of their sender;
 *   every agent a message `@`-mentions is asked to respond;
 *   a chain between agents ends at a limit (see below).
 
@@ -814,10 +829,10 @@ only through a `ref` to preconfigured components, while a template may write it.
 | `sender_format` | How the model is told who said what: `none`, `prefix` or `xml` | `prefix` |
 | `sender_style` | By which name a sender is marked: `handle` or `name` | `handle` |
 
-What a moderator decides is all a participant is told: `Moderator::route` returns whom an event is
-delivered to and as what, and the channel delivers exactly that; it has no broadcast of its own.
-Nothing goes back to the actor that sent an event but why it was refused: an agent takes its own
-messages into its history and transcript itself, and a user's actor shows what its user says itself.
+What the channel delivers is what its rule and the moderator's `Routing` say, and nothing else; it
+has no broadcast of its own. Nothing goes back to the actor that sent an event but why it was
+refused: an agent takes its own messages into its history and transcript itself, and a user's actor
+shows what its user says itself.
 
 ### Chains between agents
 
