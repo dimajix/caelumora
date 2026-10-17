@@ -5,6 +5,7 @@ use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use caelumora_agents::turn::Turn;
+use caelumora_agents::work::AgentWork;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ToolAnnotations};
@@ -278,8 +279,13 @@ impl ToolProvider for McpToolProvider {
         self.cached_tools.clone()
     }
 
-    fn unavailable(&self) -> Option<String> {
-        self.unavailable.clone()
+    /// Its tools wherever it is asked, unless its server could not be
+    /// reached as it was built.
+    async fn offered(&self, _work: &AgentWork<'_>) -> Result<Vec<Tool>, String> {
+        match &self.unavailable {
+            Some(why) => Err(why.clone()),
+            None => Ok(self.tools()),
+        }
     }
 
     fn destination(&self) -> Option<Classification> {

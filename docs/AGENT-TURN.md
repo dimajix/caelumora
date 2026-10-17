@@ -94,8 +94,8 @@ while a turn is under way, and only then: between turns the actor works on the s
 taking a turn over or giving it up uses the handle up.
 
 What a turn does to the state - beginning, saying something, finishing, giving up - is a rule of the
-state, kept with it in the model (`AgentChannelState::begin_turn`, `said`, `finish_turn`,
-`give_up_turn`). `Turn` calls these and does what runs around them.
+state, kept with it in the model (`AgentChannelState::begin_turn`, `offer_tools`, `said`,
+`finish_turn`, `give_up_turn`). `Turn` calls these and does what runs around them.
 
 The working state of a turn is one value, `AgentChannelState::turn`, `None` between turns. Its
 `Work` is what every piece of work of an agent has, a turn as much as an external agent's exchange
@@ -333,14 +333,17 @@ order it was given it.
 
 ### Tools offered
 
-A turn offers its model the agent's tools as they were when it began, fixed in the turn like its
-classification - a resumed turn keeps them. The model is told of a tool only its name, description
-and parameters; whether its calls need approval, who sees them and how results are classified stay
-with the runtime. A tool that changes during a turn is offered as it is from the next turn on; a
-call of one that is gone fails as unknown. The tool sets offered are kept once per digest, each tool
-whole with how its calls were treated: the same tools treated otherwise are another offer. The
-model gets the tools from the resolved context, as it gets the messages, so what it was offered and
-what is recorded as offered are the same.
+A turn offers its model the tools the agent's providers offer for its work as it begins: once it is
+begun, and before its context is built, so that a provider can ask the turn's work - its place and
+whose authority it acts with - which of its tools may be called there
+(`AgentChannelState::offer_tools`, see [TOOLS.md](TOOLS.md#tool-sets)). They are fixed in the turn
+like its classification - a resumed turn keeps them. The model is told of a tool only its name,
+description and parameters; whether its calls need approval, who sees them and how results are
+classified stay with the runtime. A tool that changes during a turn is offered as it is from the
+next turn on; a call of one that is gone fails as unknown. The tool sets offered are kept once per
+digest, each tool whole with how its calls were treated: the same tools treated otherwise are
+another offer. The model gets the tools from the resolved context, as it gets the messages, so what
+it was offered and what is recorded as offered are the same.
 
 ### Reasoning given back
 

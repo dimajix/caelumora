@@ -17,12 +17,12 @@ use crate::tool::{not_executed_result, ToolExecutor, ToolProvider};
 use caelumora_runtime::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result, Error};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
 use caelumora_model::agent::{AgentChannelState, Personality, RetryRefused};
 use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::turn::TurnState;
-use caelumora_model::work::TurnId;
+use caelumora_model::work::{TurnId, Work};
 use caelumora_runtime::controller::AgentController;
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::confidentiality::{Classification, Visibility};
@@ -139,8 +139,9 @@ impl AgentActor {
 
     /// Starts a new turn in answer to the `ResponseRequested` in `request`,
     /// in its contexts continued in the agent's name, with the channel as it
-    /// is now: begins it on `state`, announces `ResponseStarted` and builds
-    /// the context. The run loop then goes on in `Planning`. Fails without a
+    /// is now: begins it on `state`, offers it the tools its providers offer
+    /// for its work (issue 290), announces `ResponseStarted` and builds the
+    /// context. The run loop then goes on in `Planning`. Fails without a
     /// channel, which happens only while it is being torn down.
     async fn request_response(
         &self,
@@ -150,17 +151,17 @@ impl AgentActor {
     ) -> Result<()> {
         let classification = self.body.runtime.channel_classification();
         let Answering { event_context, security_context } = Answering::to(request, self.id(), self.body.agent.name(), &self.body.security_context());
-        // Judged for whoever asked, in the channel as the turn begins.
-        let tool_sets = self.tool_executor.tool_sets(&security_context, &classification).await;
         let turn_id = state.begin_turn(
             event_context,
             security_context,
             classification,
-            tool_sets,
             self.llm_client.profile(),
         );
         self.body.control.begin_turn(turn_id);
         let mut turn = self.turn_under_way(state)?;
+        // Judged for whoever asked, in the channel as the turn begins.
+        let tool_sets = self.tool_executor.tool_sets(&turn.work()).await;
+        turn.offer_tools(tool_sets);
 
         debug!("Starting generating messages for agent {} {} in turn {}", self.id(), turn.agent_name(), turn_id);
         turn.send_event(ActorEvent::ResponseStarted { turn_id }, output).await?;
@@ -954,10 +955,20 @@ impl Actor for AgentActor {
     }
 
     async fn tool_sets(&self) -> Vec<ToolSet> {
-        // As a turn would be offered them now, in the agent's own name:
-        // who will ask is not known yet.
-        let channel = self.body.runtime.channel_classification();
-        self.tool_executor.tool_sets(&self.body.security_context(), &channel).await
+        // As a turn would be offered them now, in the agent's own name: who
+        // will ask is not known yet. Its state is the one stored - the run
+        // loop holds the one it works with.
+        let runtime = &self.body.runtime;
+        let state = match runtime.load_channel_state().await {
+            Ok(state) => state,
+            Err(e) => {
+                warn!("Cannot read the state of agent {} in its channel for the tools it would be offered: {e}", self.id());
+                return Vec::new();
+            }
+        };
+        let at = EventContext::new(runtime.session_controller().load().id, runtime.channel_controller().load().id, ActorId::None, String::new());
+        let work = Work::new(at, self.body.security_context(), runtime.channel_classification());
+        self.tool_executor.tool_sets(&self.body.work(&work, &state)).await
     }
 
     fn wakeup(&self) {
@@ -1054,7 +1065,8 @@ mod tests {
         let agent = AgentId::new();
         let channel = Classification::general(Confidentiality::Confidential);
         let mut agent_channel_state = AgentChannelState::default();
-        agent_channel_state.begin_turn(Default::default(), Default::default(), channel.clone(), vec![ToolSet::new("tools", "some tools", vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)])], Default::default());
+        agent_channel_state.begin_turn(Default::default(), Default::default(), channel.clone(), Default::default());
+        agent_channel_state.offer_tools(vec![ToolSet::new("tools", "some tools", vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)])]);
         let mut turn = Turn::under_way(agent, &mut agent_channel_state);
 
         let mut partial = answer(&[]);
@@ -1084,7 +1096,8 @@ mod tests {
         let both = || vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY), tool("without_result", ToolVisibility::WITHOUT_RESULT)];
         let reasoning = |tools: Vec<Tool>, personality: Visibility, private_knowledge: bool, calls: &[&str], complete: bool| {
             let mut agent_channel_state = AgentChannelState::default();
-            agent_channel_state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, vec![ToolSet::new("tools", "some tools", tools)], Default::default());
+            agent_channel_state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, Default::default());
+            agent_channel_state.offer_tools(vec![ToolSet::new("tools", "some tools", tools)]);
             let mut turn = Turn::under_way(agent, &mut agent_channel_state);
             if private_knowledge {
                 turn.record_knowledge(KnowledgeRef { channel: turn.channel_id(), session: turn.session_id(), source: KnowledgeSource::PrivateNotes { agent, digest: None }, classification: None });

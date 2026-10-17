@@ -284,7 +284,7 @@ mod tests {
         /// begins one: the agent acting with its owner's rights.
         fn begin(&self, state: &mut AgentChannelState, at: &At, agent: AgentId) {
             let context = SecurityContext::new(self.owner, at.0.0, at.0.1).next(ActorId::Agent(agent), self.owner, self.owner);
-            state.begin_turn(in_channel(at), context, at.1.clone(), Vec::new(), Default::default());
+            state.begin_turn(in_channel(at), context, at.1.clone(), Default::default());
         }
     }
 

@@ -11,7 +11,7 @@
 use caelumora_runtime::agent::state::AgentStateHandle;
 use caelumora_runtime::terminal::Terminal;
 use caelumora_runtime::runtime::ActorRuntime;
-use caelumora_runtime::view::SessionView;
+use caelumora_runtime::view::{SessionView, ViewResult, WorkspaceView};
 use caelumora_runtime::workspace::WorkspaceResult;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -95,6 +95,18 @@ impl<'a> AgentWork<'a> {
     /// may not read it.
     pub async fn session(&self) -> Option<SessionView> {
         self.runtime.session_view(&self.work.security_context, self.work.classification.clone()).await
+    }
+
+    /// The workspace of the agent's session the work may use in its channel,
+    /// as its views see it (`ChannelView::workspace`, issue 290): what a
+    /// component tells of it, or offers to do on it. `None` where there is
+    /// none it may use - also where the work reaches no session.
+    ///
+    /// # Errors
+    /// What following the views to it reports.
+    pub async fn workspace(&self) -> ViewResult<Option<WorkspaceView>> {
+        let Some(session) = self.session().await else { return Ok(None) };
+        session.channel(self.channel_id()).await?.workspace().await
     }
 
     /// The workspace of the agent's session and its terminal, to read its

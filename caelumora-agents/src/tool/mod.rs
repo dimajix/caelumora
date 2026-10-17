@@ -13,13 +13,14 @@ pub mod stop_tool;
 pub mod terminal_tool;
 
 use crate::turn::Turn;
+use crate::work::AgentWork;
 use caelumora_runtime::component::{ComponentImpl, ComponentRegistry, ComponentResult};
 use providers::ToolProviders;
 use caelumora_runtime::controller::{ChannelController, SessionController};
 use async_trait::async_trait;
 use caelumora_model::approval::{ApprovalRule, RuleDecision, ToolMatcher};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Compartment, Confidentiality};
-use caelumora_model::security::{ActionType, Enforcement, SecurityContext, AccessPolicy};
+use caelumora_model::security::{ActionType, Enforcement, AccessPolicy};
 use caelumora_model::question::{Answers, Questions};
 use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::view::ViewError;
@@ -317,12 +318,19 @@ pub trait ToolProvider: Send + Sync + Debug {
     /// What its tools are for, written for a model: the description of its
     /// tool set, which is named after its component (issue 194).
     fn description(&self) -> String;
-    /// Returns a list of tools provided by this component.
+    /// Every tool it has: those it may offer, by which a call finds its
+    /// provider, and whose names no other provider of the agent may have.
     fn tools(&self) -> Vec<Tool>;
-    /// Why it gives no tools now, in general terms - never the error, which
-    /// may name hosts (issue 32). `None`: available.
-    fn unavailable(&self) -> Option<String> {
-        None
+    /// The tools of `tools` it offers the model in `work` (issue 290), asked
+    /// as a turn begins: those that may be called there. `Err` with why it
+    /// offers none, in general terms - never the error, which may name hosts
+    /// (issue 32). By default all of them. A call is checked anyway as it
+    /// runs: what was offered may change while the turn goes on. Asked of a
+    /// turn just begun, and - for what an agent would be offered (the
+    /// agent's `tool_sets`) - of work that is no turn: what it decides by
+    /// is the place and who acts, not the turn's state.
+    async fn offered(&self, _work: &AgentWork<'_>) -> Result<Vec<Tool>, String> {
+        Ok(self.tools())
     }
     /// Where the arguments of its calls go (issue 180): the classification
     /// its remote side is cleared for. By default none - they stay in the
@@ -642,14 +650,15 @@ impl ToolExecutor {
         }
     }
 
-    /// The tool sets the agent is offered in a channel classified
-    /// `channel`, acting in `context` (issue 180): a set whose destination
-    /// the channel may not flow into (`ConfidentialityPolicy::may_publish`,
-    /// in the agent's name) is offered as unavailable, without its tools - its
-    /// arguments would carry what the channel holds out of the system.
-    pub async fn tool_sets(&self, context: &SecurityContext, channel: &Classification) -> Vec<ToolSet> {
+    /// The tool sets the agent is offered in `work` (issues 180, 290): what
+    /// each provider offers there, and a set whose destination the work's
+    /// channel may not flow into (`ConfidentialityPolicy::may_publish`, in
+    /// the name the work acts in) offered as unavailable, without its tools -
+    /// its arguments would carry what the channel holds out of the system.
+    pub async fn tool_sets(&self, work: &AgentWork<'_>) -> Vec<ToolSet> {
+        let (context, channel) = (work.security_context(), &work.classification());
         let mut offered = Vec::new();
-        for set in self.providers.tool_sets() {
+        for set in self.providers.tool_sets(work).await {
             let withheld = match (&set.destination, &set.unavailable) {
                 (Some(destination), None) => !self.confidentiality.may_publish(context, channel, destination),
                 _ => false,
@@ -889,7 +898,7 @@ mod tests {
     async fn a_rule_of_a_place_denies_a_call_or_asks_for_it_explicitly() {
         let access_policy: Arc<dyn AccessPolicy> = Arc::new(AllowAllPolicy::new());
         let admitted = |executor: ToolExecutor| async move {
-            let mut agent_channel_state = agent_turn(&executor);
+            let mut agent_channel_state = agent_turn(&executor).await;
             let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
             executor.admit(&call("test_tool"), &turn).await
         };
@@ -909,7 +918,7 @@ mod tests {
     #[tokio::test]
     async fn a_rule_that_denies_set_while_a_call_waits_refuses_it_when_run() {
         let (executor, session, _channel) = guarded_in(Arc::new(AllowAllPolicy::new()), true, Places::default());
-        let mut agent_channel_state = agent_turn(&executor);
+        let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         assert!(matches!(executor.admit(&call("test_tool"), &turn).await, Admission::Ask { .. }));
 
@@ -929,7 +938,7 @@ mod tests {
         let executor = executor(Arc::new(DenyAllPolicy));
 
         let agent_id = AgentId::new();
-        let mut agent_channel_state = offering(Work { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() }, executor.providers.tool_sets());
+        let mut agent_channel_state = offered(&executor, Work { security_context: SecurityContext { caller_id: ActorId::Agent(agent_id), ..SecurityContext::default() }, ..Default::default() }).await;
         let mut context = Turn::under_way(agent_id, &mut agent_channel_state);
 
         let admitted = executor.admit(&call("test_tool"), &context).await;
@@ -941,7 +950,7 @@ mod tests {
     #[tokio::test]
     async fn a_call_is_asked_for_run_or_answered_at_once_as_it_can_succeed() {
         let asking = executor(Arc::new(AllowAllPolicy::new()));
-        let mut agent_channel_state = agent_turn(&asking);
+        let mut agent_channel_state = agent_turn(&asking).await;
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         assert!(matches!(asking.admit(&call("test_tool"), &turn).await, Admission::Ask { description, explicit: false, .. } if description == "desc"), "its tool requires approval");
         match asking.admit(&call("does_not_exist"), &turn).await {
@@ -953,12 +962,12 @@ mod tests {
         }
 
         let refusing = executor(Arc::new(DenyAllPolicy));
-        let mut agent_channel_state = agent_turn(&refusing);
+        let mut agent_channel_state = agent_turn(&refusing).await;
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         assert!(matches!(refusing.admit(&call("test_tool"), &turn).await, Admission::Answered(r) if r.status == ToolResultStatus::Forbidden), "first the policy");
 
         let running = guarded(Arc::new(AllowAllPolicy::new()), false, Places::default());
-        let mut agent_channel_state = agent_turn(&running);
+        let mut agent_channel_state = agent_turn(&running).await;
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let admitted = running.admit(&call("test_tool"), &turn).await;
         assert!(matches!(admitted, Admission::Run), "no approval needed");
@@ -998,11 +1007,11 @@ mod tests {
         let (executor, _, _) = guarding(access_policy, vec![("outward", outward), ("local", local)], Places::default());
         let agent = SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() };
 
-        let internal = executor.tool_sets(&agent, &Classification::general(Confidentiality::Internal)).await;
+        let internal = sets_offered(&executor, Work { security_context: agent.clone(), classification: Classification::general(Confidentiality::Internal), ..Default::default() }).await;
         assert!(internal.iter().all(|set| set.unavailable.is_none() && !set.tools.is_empty()), "offered where the channel flows to it: {internal:?}");
         assert_eq!(internal[0].destination, Some(Classification::general(Confidentiality::Internal)), "and says where");
 
-        let confidential = executor.tool_sets(&agent, &Classification::general(Confidentiality::Confidential)).await;
+        let confidential = sets_offered(&executor, Work { security_context: agent.clone(), classification: Classification::general(Confidentiality::Confidential), ..Default::default() }).await;
         let (outward, local) = (&confidential[0], &confidential[1]);
         assert!(outward.tools.is_empty() && outward.unavailable.as_deref().is_some_and(|why| why.contains("not cleared for this channel")), "withheld above it: {outward:?}");
         assert!(local.unavailable.is_none() && !local.tools.is_empty(), "a set that sends nothing out is offered");
@@ -1031,7 +1040,7 @@ mod tests {
     #[tokio::test]
     async fn only_an_agent_calls_tools() {
         let executor = executor(Arc::new(AllowAllPolicy::new()));
-        let mut agent_channel_state = offering(Work { security_context: SecurityContext { caller_id: ActorId::User(UserId::new()), ..SecurityContext::default() }, ..Default::default() }, executor.providers.tool_sets());
+        let mut agent_channel_state = offered(&executor, Work { security_context: SecurityContext { caller_id: ActorId::User(UserId::new()), ..SecurityContext::default() }, ..Default::default() }).await;
         let mut context = Turn::under_way(AgentId::new(), &mut agent_channel_state);
 
         let result = executor.execute(&call("test_tool"), None, &mut context, std::future::pending()).await;
@@ -1040,8 +1049,22 @@ mod tests {
 
     /// A turn of an agent in a general internal channel, with the tools of
     /// `executor` as it began with them.
-    fn agent_turn(executor: &ToolExecutor) -> AgentChannelState {
-        offering(Work { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() }, executor.providers.tool_sets())
+    async fn agent_turn(executor: &ToolExecutor) -> AgentChannelState {
+        offered(executor, Work { security_context: SecurityContext { caller_id: ActorId::Agent(AgentId::new()), ..SecurityContext::default() }, ..Default::default() }).await
+    }
+
+    /// The tool sets `executor` offers in a turn done as `work` says.
+    async fn sets_offered(executor: &ToolExecutor, work: Work) -> Vec<ToolSet> {
+        let mut state = offering(work, Vec::new());
+        let turn = Turn::under_way(AgentId::new(), &mut state);
+        executor.tool_sets(&turn.work()).await
+    }
+
+    /// A turn under way, done as `work` says, offered what `executor`
+    /// offers in it.
+    async fn offered(executor: &ToolExecutor, work: Work) -> AgentChannelState {
+        let tool_sets = sets_offered(executor, work.clone()).await;
+        offering(work, tool_sets)
     }
 
     /// A turn under way, done as `work` says, offered `tool_sets` as it
@@ -1065,7 +1088,7 @@ mod tests {
     #[tokio::test]
     async fn a_call_runs_is_timed_and_classified_as_the_channel_unless_it_says_otherwise() {
         let executor = with_hr();
-        let mut agent_channel_state = agent_turn(&executor);
+        let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
 
         let result = executor.execute(&call("test_tool"), None, &mut turn, std::future::pending()).await;
@@ -1086,7 +1109,7 @@ mod tests {
     #[tokio::test]
     async fn a_call_still_running_when_its_turn_ends_is_interrupted_and_counts_as_run() {
         let executor = executor(Arc::new(AllowAllPolicy::new()));
-        let mut agent_channel_state = agent_turn(&executor);
+        let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let ending = async {
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1106,7 +1129,7 @@ mod tests {
     #[tokio::test]
     async fn a_call_a_user_interrupts_tells_the_model_who_did_and_that_the_turn_goes_on() {
         let executor = executor(Arc::new(AllowAllPolicy::new()));
-        let mut agent_channel_state = agent_turn(&executor);
+        let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let interrupting = async {
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1125,7 +1148,7 @@ mod tests {
     #[tokio::test]
     async fn a_result_that_may_not_flow_into_the_channel_never_reaches_the_model() {
         let executor = with_hr();
-        let mut agent_channel_state = agent_turn(&executor);
+        let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
 
         for name in ["hr_tool", "configured_tool"] {
@@ -1141,7 +1164,7 @@ mod tests {
     #[tokio::test]
     async fn a_result_classified_by_the_tool_is_kept_where_the_channel_admits_it() {
         let executor = with_hr();
-        let mut agent_channel_state = agent_turn(&executor);
+        let mut agent_channel_state = agent_turn(&executor).await;
         if let Some(turn) = agent_channel_state.turn.as_mut() {
             turn.work.classification = hr();
         }

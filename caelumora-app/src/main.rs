@@ -228,6 +228,7 @@ mod tests {
     use caelumora_runtime::runtime::{RuntimeManager, Services};
     use caelumora_runtime::terminal::TerminalProvider;
     use caelumora_runtime::seed::Seed;
+    use caelumora_agents::testing::offered_anywhere;
     use caelumora_agents::tool::ToolProvider;
     use caelumora_skills::skill::Skill;
     use serde_json::json;
@@ -331,7 +332,7 @@ mod tests {
         let container = ComponentContainer::from_config(&config, &[TypeKey::of::<dyn ToolProvider>()], runtime.component_registry(), &context).await.expect("the kind is known");
         let tools = container.get_all::<dyn ToolProvider>(None).unwrap();
         assert_eq!(tools.len(), 1);
-        assert!(tools[0].unavailable().is_some());
+        assert!(offered_anywhere(tools[0].facet.as_ref()).await.is_err());
     }
 
     /// The storages of workspaces the example configuration names are made

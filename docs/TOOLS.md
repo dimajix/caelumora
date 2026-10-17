@@ -8,11 +8,11 @@ Which calls need a person's approval, and how a tool asks a person, is in
 tool call may travel in [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 
 A component offers tools by implementing `ToolProvider`; one component may expose several `Tool`s.
-Besides running a call, a provider says what its tools are for, why it gives none now (in general
-terms, never with the error), what approvers are shown for a call (`describe`), which calls are
-like a given one (`matcher`, for a rule derived from it), and what a call asks a person before it
-runs (`questions`). A tool whose argument is a language says better than the default what makes two
-calls alike.
+Besides running a call, a provider says what its tools are for, which of them it offers in a turn
+and why it offers none (`offered`, in general terms, never with the error), what approvers are shown
+for a call (`describe`), which calls are like a given one (`matcher`, for a rule derived from it),
+and what a call asks a person before it runs (`questions`). A tool whose argument is a language says
+better than the default what makes two calls alike.
 
 A `Tool` declares its name, description and parameters, whether it requires approval, its
 visibility, optionally the classification of its results, and its presentation: how frontends show
@@ -27,6 +27,18 @@ provider's description and, if it is unavailable, why. A model's backend is give
 natively, without the sets; the sets are kept in the record of what the model was offered and shown
 in the web UI. Only a generic provider such as `mcp_tool` takes its description from its
 configuration.
+
+**What a turn is offered** depends on where it works (issue
+[290](../issues/290-tools-offered-by-the-turn.md)). A provider has its tools (`tools`), by which a
+call finds it and whose names no other provider of the agent may have, and offers of them those
+that may be called in the turn's work (`offered`): by default all, a provider whose tools depend
+on the place fewer, or none, saying why. It is asked once the turn is begun and before its context
+is built, given the turn's work (`AgentWork`) - the place and whose authority it acts with -, as a
+prompt part is; what it offers is fixed in the turn (see
+[AGENT-TURN.md](AGENT-TURN.md#tools-offered)). Offering is a convenience for the model, never the
+guard: a call of a tool not offered is answered as unknown, and a call of one offered keeps its own
+checks, since what may be called can change while the turn runs. What the web UI shows of an
+agent's tools is what a turn would be offered now, in the agent's own name.
 
 The model needs no prompt to learn of its tools, but a source that is unavailable leaves no trace in
 what it is offered. The optional component `tool_sets_prompt_provider` names the unavailable sets of

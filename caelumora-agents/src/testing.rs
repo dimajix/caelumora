@@ -6,6 +6,7 @@
 
 use caelumora_runtime::agent::state::AgentStateHandle;
 use crate::turn::Turn;
+use crate::tool::ToolProvider;
 use crate::plugin::{register_components, AgentsPlugin};
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::llm::{LLMClient, LLMError, LLMResult};
@@ -13,6 +14,7 @@ use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use anyhow::Result;
 use caelumora_runtime::session::SessionLoop;
+use caelumora_runtime::session::testing::detached_actor_runtime;
 use caelumora_runtime::workspace::testing::WithWorkspace;
 use caelumora_runtime::testing::{actor_runtime_in, test_registry as runtime_registry, World, STAFF};
 use async_trait::async_trait;
@@ -66,8 +68,20 @@ pub async fn world() -> World {
 pub fn turn<'a>(session: &Arc<SessionLoop>, agent: AgentId, owner: UserId, state: &'a mut AgentChannelState) -> Turn<'a> {
     let channel = &session.channels()[0];
     let context = SecurityContext::new(ActorId::User(owner), session.id(), channel.id()).next(ActorId::Agent(agent), ActorId::User(owner), ActorId::User(owner)).with_roles(vec![*STAFF], None);
-    state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), context, channel.classification(), Vec::new(), Default::default());
+    state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), context, channel.classification(), Default::default());
     Turn::of(agent, agent.to_string(), state, AgentStateHandle::detached(), actor_runtime_in(channel, ActorId::Agent(agent))).expect("a turn was begun")
+}
+
+/// What `provider` offers in a turn that reaches no channel (issue 290) -
+/// for a provider whose offer does not depend on the place.
+pub async fn offered_anywhere(provider: &dyn ToolProvider) -> Result<Vec<Tool>, String> {
+    let mut state = AgentChannelState::default();
+    state.begin_turn(Default::default(), Default::default(), Default::default(), Default::default());
+    let agent = AgentId::new();
+    let Some(turn) = Turn::of(agent, agent.to_string(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()) else {
+        return Err("no turn was begun".to_string());
+    };
+    provider.offered(&turn.work()).await
 }
 
 /// What is asked in `world` when the agent of `owner`, with a component of `kind`,
@@ -227,6 +241,6 @@ pub fn register_once(registry: &mut ComponentRegistry, kind: &str, answer: Messa
 /// test of a tool on the workspace calls it.
 pub fn workspace_turn<'a>(with: &WithWorkspace, state: &'a mut AgentChannelState) -> Turn<'a> {
     let channel = &with.session.channels()[0];
-    state.begin_turn(EventContext::new(with.session.id(), channel.id(), ActorId::None, String::new()), with.context.clone(), channel.classification(), Vec::new(), Default::default());
+    state.begin_turn(EventContext::new(with.session.id(), channel.id(), ActorId::None, String::new()), with.context.clone(), channel.classification(), Default::default());
     Turn::of(with.agent, "Jonathan".to_string(), state, AgentStateHandle::detached(), actor_runtime_in(channel, ActorId::Agent(with.agent))).expect("a turn was begun")
 }

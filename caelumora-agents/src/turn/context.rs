@@ -10,7 +10,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextItem, ContextRef, ContextResolver, KnowledgeRef, PromptPart, PromptRef};
 use caelumora_model::digest::Digest;
 use caelumora_model::message::{Message, MessageRole};
-use caelumora_model::tool::Tool;
+use caelumora_model::tool::{Tool, ToolSet};
 
 impl Turn<'_> {
     /// What the model is given for the next step - its messages and the
@@ -63,6 +63,13 @@ impl Turn<'_> {
                 },
             })
             .collect()
+    }
+
+    /// Offers the turn's model the tools in `tool_sets` - once, at its start,
+    /// before its context is set (`AgentChannelState::offer_tools`, issue
+    /// 290): what the agent's tool providers offer for the turn's work.
+    pub(crate) fn offer_tools(&mut self, tool_sets: Vec<ToolSet>) {
+        self.agent_channel_state.offer_tools(tool_sets);
     }
 
     /// Sets what the `ContextProvider` assembled for the turn - once, at its
@@ -140,7 +147,7 @@ mod tests {
         let (first, second) = (thought(ActorId::Agent(agent), "first"), thought(ActorId::Agent(agent), "second"));
         let reasoning_of = |messages: &[Message]| messages.iter().map(|m| m.reasoning.is_some()).collect::<Vec<_>>();
         {
-            state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), profile(ReasoningHistory::CurrentTurn));
+            state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), profile(ReasoningHistory::CurrentTurn));
             let mut turn = Turn::under_way(agent, &mut state);
             turn.set_context(Vec::new(), Vec::new());
             turn.push_message(first.clone());
@@ -162,7 +169,7 @@ mod tests {
         // Under `Always`, the agent's own reasoning of earlier turns too -
         // still not another agent's.
         let third = thought(ActorId::Agent(agent), "third");
-        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), Vec::new(), profile(ReasoningHistory::Always));
+        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), profile(ReasoningHistory::Always));
         let mut turn = Turn::under_way(agent, &mut state);
         turn.set_context(Vec::new(), Vec::new());
         turn.push_message(third);
@@ -246,7 +253,8 @@ mod tests {
         let (first, second, third, fourth) = (answer("first"), answer("second"), answer("third"), answer("fourth"));
         let take_turn = |state: &mut AgentChannelState, tools: Vec<Tool>, messages: &[&Message]| {
             let sets = if tools.is_empty() { Vec::new() } else { vec![ToolSet::new("tools", "some tools", tools.clone())] };
-            state.begin_turn(Default::default(), Default::default(), Default::default(), sets, Default::default());
+            state.begin_turn(Default::default(), Default::default(), Default::default(), Default::default());
+            state.offer_tools(sets);
             let mut turn = Turn::under_way(agent, state);
             let (_, offered) = turn.full_context().unwrap();
             assert_eq!(offered, tools, "the model is offered what the turn began with");

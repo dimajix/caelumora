@@ -20,6 +20,7 @@ use caelumora_runtime::component::{ComponentContainer, ComponentContext, PRECONF
 use caelumora_runtime::runtime::{ActorRuntime, RuntimeManager};
 use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime_in};
 use caelumora_runtime::testing::TestRuntime;
+use caelumora_agents::testing::offered_anywhere;
 use caelumora_agents::tool::ToolProvider;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, ServerConfig};
@@ -127,10 +128,10 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     assert_eq!(names, ["test-echo__echo", "test-echo__forget"]);
     assert!(tools.iter().all(|t| t.requires_approval), "approval unless configured otherwise, read-only or not");
     assert_eq!(provider.description(), "Echo messages back, for testing.", "what the server says of itself");
-    assert!(provider.unavailable().is_none());
+    assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| tools.len()), Ok(2), "all of them, wherever");
 
     let mut agent_channel_state = AgentChannelState::default();
-    agent_channel_state.begin_turn(Default::default(), Default::default(), Default::default(), Vec::new(), Default::default());
+    agent_channel_state.begin_turn(Default::default(), Default::default(), Default::default(), Default::default());
     let states = AgentStates::new(Arc::new(MemoryStore::new()), Arc::new(()));
     let agent_id = AgentId::default();
     let agent_state = states.get(agent_id, Default::default()).await.expect("the state of the agent was loaded");
@@ -244,7 +245,7 @@ async fn unreachable_server_degrades_gracefully_instead_of_failing_construction(
     let providers = container.get_all::<dyn ToolProvider>(None).unwrap();
     assert_eq!(providers.len(), 1);
     assert_eq!(providers[0].tools().len(), 0);
-    assert_eq!(providers[0].unavailable().as_deref(), Some("its server cannot be reached"), "its tool set says so, without the error (issue 32)");
+    assert_eq!(offered_anywhere(providers[0].facet.as_ref()).await, Err("its server cannot be reached".to_string()), "its tool set says so, without the error (issue 32)");
     assert_eq!(providers[0].description(), "The tools of the MCP server 'test-echo'.");
 }
 

@@ -4,6 +4,7 @@
 //! permits, and makes what the model is told of the result.
 
 use crate::turn::Turn;
+use crate::work::AgentWork;
 use caelumora_runtime::component::{ComponentError, ComponentImpl, ComponentResult};
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_model::approval::ToolMatcher;
@@ -76,12 +77,20 @@ impl ToolProviders {
         }
     }
 
-    /// The tools there are now, in the sets of the providers they come from
-    /// (issue 194), in the order of the configuration.
-    pub(super) fn tool_sets(&self) -> Vec<ToolSet> {
-        self.providers.iter()
-            .map(|p| ToolSet { unavailable: p.unavailable(), destination: p.destination(), ..ToolSet::new(p.id.clone(), p.description(), p.tools()) })
-            .collect()
+    /// The tools offered in `work`, in the sets of the providers they come
+    /// from (issue 194), in the order of the configuration: each as its
+    /// provider offers them there (`ToolProvider::offered`, issue 290), or
+    /// unavailable without tools, saying why.
+    pub(super) async fn tool_sets(&self, work: &AgentWork<'_>) -> Vec<ToolSet> {
+        let mut sets = Vec::with_capacity(self.providers.len());
+        for provider in &self.providers {
+            let (tools, unavailable) = match provider.offered(work).await {
+                Ok(tools) => (tools, None),
+                Err(why) => (Vec::new(), Some(why)),
+            };
+            sets.push(ToolSet { unavailable, destination: provider.destination(), ..ToolSet::new(provider.id.clone(), provider.description(), tools) });
+        }
+        sets
     }
 }
 
@@ -187,7 +196,8 @@ mod tests {
         assert_eq!(output.value, json!({"answered_by": "alice"}));
     }
 
-    /// A provider whose source cannot be reached.
+    /// A provider whose source cannot be reached now: it has a tool, and
+    /// offers none.
     #[derive(Debug)]
     struct Unreachable;
 
@@ -197,27 +207,29 @@ mod tests {
             "remote tools".to_string()
         }
         fn tools(&self) -> Vec<Tool> {
-            Vec::new()
+            vec![Tool { name: "remote_tool".to_string(), ..MockToolProvider.tools().remove(0) }]
         }
-        fn unavailable(&self) -> Option<String> {
-            Some("its server cannot be reached".to_string())
+        async fn offered(&self, _work: &AgentWork<'_>) -> Result<Vec<Tool>, String> {
+            Err("its server cannot be reached".to_string())
         }
         async fn execute(&self, name: &str, _params: &Value, _answers: Option<&Answers>, _turn: &mut Turn) -> ToolResult<ToolOutput> {
             Err(ToolError::UnknownTool(name.to_string()))
         }
     }
 
-    #[test]
-    fn each_provider_s_tools_are_a_set_named_after_its_component() {
+    #[tokio::test]
+    async fn each_provider_s_tools_are_a_set_named_after_its_component_as_it_offers_them() {
         let remote = ComponentImpl { id: "remote".to_string(), fail_policy: Default::default(), facet: Arc::new(Unreachable) as Arc<dyn ToolProvider> };
         let providers = ToolProviders::new(vec![component("local"), remote]).unwrap();
-        let sets: Vec<_> = providers.tool_sets().into_iter()
+        let mut agent_channel_state = agent_state();
+        let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
+        let sets: Vec<_> = providers.tool_sets(&turn.work()).await.into_iter()
             .map(|set| (set.name, set.description, set.tools.into_iter().map(|t| t.name).collect::<Vec<_>>(), set.unavailable))
             .collect();
         assert_eq!(sets, [
             ("local".to_string(), "mock tools".to_string(), vec!["test_tool".to_string()], None),
             ("remote".to_string(), "remote tools".to_string(), Vec::new(), Some("its server cannot be reached".to_string())),
-        ], "in the order of the configuration, an unavailable one included");
+        ], "in the order of the configuration, an unavailable one included, without the tools it has");
     }
 
     #[test]

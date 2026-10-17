@@ -197,7 +197,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let question = Message { id: MessageId::new(), role: MessageRole::User, content: Some("question".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         state.perceive(vec![question.clone()], vec![question.clone()]);
-        state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, Vec::new(), Default::default());
+        state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, Default::default());
         let step = Message { id: MessageId::new(), sender_id: actor, role: MessageRole::Assistant, content: Some("thinking".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         state.said(step.clone());
 

@@ -698,30 +698,28 @@ impl AgentChannelState {
     }
 
     /// Begins a turn (issue 85): fixes what it is - the envelope it answers,
-    /// whose authority it acts with, the channel's classification now, how
-    /// the agent's model is given its context (the `profile`, issues 49, 63),
-    /// and the agent's tools in their `tool_sets` (issues 137, 194), whose
-    /// offer is kept once by digest.
+    /// whose authority it acts with, the channel's classification now and
+    /// how the agent's model is given its context (the `profile`, issues
+    /// 49, 63). What its model is offered is added once it is begun
+    /// (`offer_tools`), since what may be called depends on the work.
     /// All but the first two hold for the whole turn - also one resumed after
-    /// the model's configuration or the agent's tools changed - so that what
-    /// it reads, publishes and remembers is judged alike, and what its model
-    /// is given and offered too. The turn has seen the transcript, which is
-    /// what the model is given first (issue 168). Whatever a previous turn
-    /// left behind is gone. Returns the turn's id (issue 235).
+    /// the model's configuration changed - so that what it reads, publishes
+    /// and remembers is judged alike, and what its model is given too. The
+    /// turn has seen the transcript, which is what the model is given first
+    /// (issue 168). Whatever a previous turn left behind is gone. Returns the
+    /// turn's id (issue 235).
     pub fn begin_turn(
         &mut self,
         event_context: EventContext,
         security_context: SecurityContext,
         classification: Classification,
-        tool_sets: Vec<ToolSet>,
         profile: ModelProfile,
     ) -> TurnId {
-        let offered = self.keep_offer(tool_sets);
         if self.turn.is_some() {
             tracing::warn!("A turn was begun while another was under way; the other ends without an end recorded");
         }
         let mut work = Work::new(event_context, security_context, classification);
-        work.context = ContextRef { transcript: self.transcript.digest(), tools: offered, profile, ..ContextRef::default() };
+        work.context = ContextRef { transcript: self.transcript.digest(), profile, ..ContextRef::default() };
         self.transcript.messages().iter().for_each(|m| work.see_message(m));
         let turn_id = work.turn_id;
         let turn = TurnState { work, ..TurnState::default() };
@@ -729,10 +727,27 @@ impl AgentChannelState {
         turn_id
     }
 
+    /// Offers the model of the turn under way the tools in `tool_sets`
+    /// (issues 137, 194, 290): kept once by digest and named by the turn's
+    /// context. Once, right after the turn was begun and before its context
+    /// is built - what it offers holds for the whole turn, also one resumed
+    /// after the agent's tools changed. A turn offered tools already keeps
+    /// them; without a turn, nothing is offered.
+    pub fn offer_tools(&mut self, tool_sets: Vec<ToolSet>) {
+        if self.turn.as_ref().is_none_or(|turn| turn.work.context.tools.is_some()) {
+            tracing::warn!("Tools were offered with no turn under way, or to a turn offered tools already; nothing is offered");
+            return;
+        }
+        let offered = self.keep_offer(tool_sets);
+        if let Some(turn) = &mut self.turn {
+            turn.work.context.tools = offered;
+        }
+    }
+
     /// Begins a turn that carries out `request` (issue 269): as `begin_turn`
-    /// does, with no tools - a command turn offers its model nothing - and
-    /// the command kept with the turn, so that one resumed after a restart
-    /// knows what to do.
+    /// does, offering no tools - a command turn offers its model nothing -
+    /// and the command kept with the turn, so that one resumed after a
+    /// restart knows what to do.
     pub fn begin_command_turn(
         &mut self,
         event_context: EventContext,
@@ -741,7 +756,7 @@ impl AgentChannelState {
         profile: ModelProfile,
         request: CommandRequest,
     ) -> TurnId {
-        let turn_id = self.begin_turn(event_context, security_context, classification, Vec::new(), profile);
+        let turn_id = self.begin_turn(event_context, security_context, classification, profile);
         if let Some(turn) = &mut self.turn {
             turn.command = Some(request);
         }
@@ -1106,7 +1121,8 @@ pub(crate) mod tests {
     /// Begins a turn offering `tools` as one set, or none.
     fn begin(state: &mut AgentChannelState, tools: Vec<Tool>) {
         let sets = if tools.is_empty() { Vec::new() } else { vec![ToolSet::new("tools", "some tools", tools)] };
-        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, sets, ModelProfile::default());
+        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default());
+        state.offer_tools(sets);
     }
 
     #[test]
@@ -1128,6 +1144,9 @@ pub(crate) mod tests {
         assert_eq!(turn.work.label(), internal, "it has seen the transcript");
         assert_eq!(turn.work.context.transcript, state.transcript.digest(), "it continues the transcript");
         assert!(turn.work.context.tools.is_some() && state.offered_tools.len() == 1, "the set offered is kept once");
+        let offered = turn.work.context.tools;
+        state.offer_tools(vec![ToolSet::new("more", "more tools", Vec::new())]);
+        assert_eq!(state.turn.as_ref().and_then(|t| t.work.context.tools), offered, "a turn offered tools keeps them");
 
         begin(&mut state, Vec::new());
         assert!(state.turn.as_ref().is_some_and(|t| t.work.context.tools.is_none()), "no tools, no set");
@@ -1431,7 +1450,7 @@ pub(crate) mod tests {
         state.keep_window();
         assert_eq!(state.history.base(), 401, "a compaction does not keep what came after it");
 
-        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, Vec::new(), ModelProfile::default());
+        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default());
         let turn = state.turn.as_ref().unwrap().work.turn_id;
         let first = Message { turn_id: Some(turn), ..make_message(id(601)) };
         state.history.push(first.clone(), Some(ContextRef::default()));
@@ -1474,7 +1493,8 @@ pub(crate) mod tests {
         let mut state = AgentChannelState::default();
         let earlier = state.keep_prompt(MessageRole::System, "earlier".to_string(), None, None);
         let sets = vec![ToolSet::new("calc", "calculates", Vec::new())];
-        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, sets, ModelProfile::default());
+        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default());
+        state.offer_tools(sets);
         let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
         state.turn.as_mut().unwrap().work.context.prompts.push(system.clone());
         let offer = state.turn.as_ref().unwrap().work.context.tools.expect("an offer");
