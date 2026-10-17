@@ -324,6 +324,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [338](338-artifacts-go-with-their-session.md) | open | An artifact is published into its session's scope and is deleted with the session unless its owner keeps it elsewhere, though it is meant to outlive the conversation. |
 | [389](389-knowledge-read-in-the-transcript.md) | done | A compaction finds what the agent read, to give it again, in the history, although the model's input is to be built from the transcript alone. |
 | [390](390-context-gauge-profile-from-history.md) | done | How full an agent's context is between turns is estimated with the model profile of a message from its history, not with the rules of the model it is run with now. |
+| [410](410-roster-changes-told-twice.md) | open | An external agent whose roster is told `changes_only` learns of a join or a leave twice - from the roster's "Since you were last told who is here" and from the channel's notice in what it is given - and the two can disagree. |
 
 ## Maintenance
 
