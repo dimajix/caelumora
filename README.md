@@ -82,7 +82,9 @@ a login. Users come from the providers in the config's
 `users` section; without one, nobody can log in. `examples/config.yaml`
 enables the `accept_any` provider for local development — it accepts any
 username and password and must never be enabled on a server reachable from a
-network. Session tokens are signed with the secret `CAELUMORA_JWT_SECRET`
+network. For real users, the `file` provider reads them, with hashed
+passwords, from a YAML file (see `docs/SECURITY.md`); `examples/users.yaml`
+is one to try it with, each user's password their name. Session tokens are signed with the secret `CAELUMORA_JWT_SECRET`
 (at least 32 bytes, e.g. in `local/secrets.json`); without it, every restart
 logs everybody out.
 

@@ -1,0 +1,30 @@
+# The users of the `file` user provider (see docs/SECURITY.md#users), as
+# `examples/config.yaml` names them. For trying it out only: each user's
+# password is their name. Never use these users on a server reachable from
+# a network.
+#
+# A user is added by hand: the id is any new UUID (`uuidgen`), and is kept
+# when the user is renamed; the roles are named by the names of the roles
+# configured in `roles`; the password hash is an Argon2 hash, made with the
+# `argon2` command line tool from a salt of its own, e.g.:
+#
+#   read -rs PASSWORD; printf %s "$PASSWORD" | argon2 "$(openssl rand -base64 12)" -id -t 2 -m 15 -p 1 -e; unset PASSWORD
+#
+# The file is read anew at every login, so a user added or removed counts
+# without a restart. Keep it readable by its owner only (`chmod 600`).
+users:
+  - id: 09bac8f4-9682-4f0d-9dd5-e8da8a264f47
+    username: alice
+    email: alice@example.com
+    roles: [staff, hr]
+    password_hash: "$argon2id$v=19$m=19456,t=2,p=1$ZXhhbXBsZS1hbGljZS0wMQ$n+wMXXst6sARkAu0/Eijt0tpMw76t9hjxHuBfc5UBe8"
+  - id: 9da3601e-095a-4453-b34e-132d26344ec0
+    username: bob
+    email: bob@example.com
+    roles: [staff, management]
+    password_hash: "$argon2id$v=19$m=19456,t=2,p=1$ZXhhbXBsZS1ib2ItLTAwMQ$U1FcRyw+MHplIKl2M1EYYm8DNl4cGgCzaBgrf5gKfJY"
+  # Whom the TUI acts for unless `--user` names another.
+  - id: 1022ad93-386b-40b8-b561-6325af910176
+    username: user
+    roles: [staff]
+    password_hash: "$argon2id$v=19$m=19456,t=2,p=1$ZXhhbXBsZS11c2VyLTAwMQ$sXd77jbBUsZ9/Te4yBZxraWZgW7NrW4tJg8MsDodWkw"

@@ -33,7 +33,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [10](10-user-authentication.md) | in progress | high | feature | There is no authentication at all; the REST server fabricates its own `SecurityContext` and `DummySecurityManager` approves everything. |
-| [25](25-file-user-backend.md) | in progress | high | feature | There is no source of identities to authenticate against; a hand-edited user file is the smallest one, and defines the provider seam. |
 | [142](142-roles.md) | in progress | high | feature | Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them. |
 | [169](169-changing-classified-content.md) | open | high | feature | Nothing says who may change something classified once it is written, or that what the writer has seen must fit into its classification. |
 | [310](310-secrets-have-no-owner.md) | open | high | feature | Any secret can be named by whoever writes a component: secrets have no owner and no access list, and the policy allows every `ReadSecret`. |

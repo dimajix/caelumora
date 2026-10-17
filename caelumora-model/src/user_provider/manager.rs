@@ -192,8 +192,8 @@ mod tests {
             match (self.users.get(username), credential) {
                 (None, _) => Ok(None),
                 (Some((u, p)), Credential::Password(password)) if p == password => Ok(Some(u.clone())),
-                // A wrong secret, or none where one is verified.
-                (Some(_), _) => Err(AuthError::InvalidCredentials),
+                (Some((u, _)), Credential::Trusted) => Ok(Some(u.clone())),
+                (Some(_), Credential::Password(_)) => Err(AuthError::InvalidCredentials),
             }
         }
     }
@@ -241,16 +241,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_trusted_frontend_is_not_passed_on_past_a_provider_that_verifies_the_user() {
+    async fn a_trusted_frontend_is_answered_by_the_first_provider_that_knows_the_user() {
         let alice = user("alice");
+        let other_alice = user("alice");
         let bob = user("bob");
         let manager = chain(vec![
             Arc::new(MapUserProvider::new(&[(&alice, "a")])),
-            Arc::new(MapUserProvider::new(&[(&alice, "a"), (&bob, "b")])),
+            Arc::new(MapUserProvider::new(&[(&other_alice, "a"), (&bob, "b")])),
         ]);
 
-        let result = manager.authenticate("alice", &Credential::Trusted).await;
-        assert!(matches!(result, Err(AuthError::InvalidCredentials)), "her secret is verified, and none was given");
+        let found = manager.authenticate("alice", &Credential::Trusted).await.expect("known");
+        assert_eq!(found.id, alice.id, "not passed on past the provider that knows her");
+        assert_eq!(manager.authenticate("bob", &Credential::Trusted).await.expect("known").id, bob.id);
+        assert!(matches!(manager.authenticate("mallory", &Credential::Trusted).await, Err(AuthError::InvalidCredentials)), "nobody knows him");
     }
 
     #[tokio::test]

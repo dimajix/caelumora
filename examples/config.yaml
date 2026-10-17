@@ -88,6 +88,12 @@ artifacts:
 # `default_roles` (issue 142); the roles must be configured below.
 users:
   providers:
+    # Instead of accept_any - or before it, for users with passwords - the
+    # users of a file written by hand, with their ids, roles and Argon2
+    # password hashes (see docs/SECURITY.md#users); in this one, each
+    # user's password is their name:
+    #- type: file
+    #  path: examples/users.yaml
     - type: accept_any
       default_roles: [staff]
       roles:

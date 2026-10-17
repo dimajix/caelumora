@@ -26,10 +26,14 @@ any_ascii = "=0.3.3"
 # pattern takes linear time whatever it is matched against.
 regex = "1.12"
 # The JSON store reads and writes files asynchronously, and keeps names
-# unique under a lock per kind (issue 250).
-tokio = { version = "1.53.1", features = ["fs", "io-util", "sync"] }
+# unique under a lock per kind (issue 250); the user file verifies a
+# password on a blocking thread (`rt`, issue 25).
+tokio = { version = "1.53.1", features = ["fs", "io-util", "rt", "sync"] }
 # The URL of a remote endpoint, parsed to show it without credentials.
 url = "2.5"
+# The password hashes of the user file (issue 25), verified only: hashes
+# are made by hand, so no random salts are needed here.
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }
 
 [features]
 # What the tests of other crates read of a model value held in memory

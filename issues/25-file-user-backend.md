@@ -1,6 +1,6 @@
 # 25 — A text-file user backend
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** high
 **Area:** Identity and access management
@@ -166,3 +166,37 @@ unreadable one should deny rather than fall through.
   `Credential::Trusted`), so it starts with `examples/config.yaml` again, its user cleared as
   `accept_any` configures them. A provider that verifies a secret refuses `Trusted` for a user it
   knows; with a file backend, the TUI would need a password - to be decided with it.
+- **2026-10-17** — Done, on the branch `issue-25-file-user-backend`: the backend `file`
+  (`FileUserProvider` in `caelumora-model/src/user_provider/file.rs`, `FileUserConfig` with a
+  `path`). Decisions:
+  - YAML, as `AppConfig`: the file is written by hand, and YAML allows comments. A JSON provider can
+    be added later should there be a reason. Users are added by hand, without a command of ours:
+    the id with `uuidgen`, the hash with the `argon2` command line tool (`docs/SECURITY.md`).
+  - Every user carries an explicit `id`, required: renaming keeps the id, and the `UserManager`
+    announces it as `NameChanged`. Derived ids were rejected because a renamed user would be a new
+    one, the old record and every ownership reference left behind.
+  - Credentials are Argon2 hashes as PHC strings (crate `argon2` 0.6), verified on a blocking
+    thread. For a name the file does not know, another user's hash is verified all the same, so
+    that the time a login takes does not tell which names exist. A plaintext `password` field is
+    refused as an unknown field.
+  - The file is read at every question and once when the provider is made. A missing, unreadable or
+    invalid file - unlike the secret file - is refused at startup and later answers every question
+    with `AuthError::Backend`, never with "nobody". A file others may read, or others than its
+    owner change, is warned of at startup (Unix).
+  - Roles are named by the names of configured roles, as with `accept_any`.
+  - `Credential::Trusted` (the TUI): every provider takes it for the users it knows - also the file
+    backend, which verifies a password otherwise. This replaces the rule of 2026-10-16 that a
+    provider verifying a secret refuses it: the TUI holds the stores itself, so a password would
+    keep out nobody. The chain still does not pass a known user on.
+  - Who owns the `User` record was settled by [306](306-user-records-have-no-writer.md): the
+    `UserManager`; users belong to the system ([94](94-users-unchecked-in-store.md)), so nothing
+    else updates them. The REST server's `--user` flag no longer exists since the login of
+    [10](10-user-authentication.md).
+
+  `examples/users.yaml` holds the users `examples/config.yaml` names (alice, bob, and `user` for the
+  TUI), each with their name as password; the configuration names it in a commented-out `file`
+  provider, and a test checks that the two fit together.
+
+  No stored data changes. A user that `accept_any` stored under a name the file now gives, with
+  another id, keeps the name taken, and the login of the file's user fails until that record is
+  deleted.
