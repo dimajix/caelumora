@@ -148,8 +148,9 @@ impl CommandReaper {
                 },
                 Participant::Agent(agent) => match self.controllers.agent_controller(*agent).await.optional()? {
                     Some(agent) => {
-                        let limit = agent.personality().await.optional()?.and_then(|p| p.limiting_roles().map(<[_]>::to_vec));
-                        agent.security_context(channel.session_id, channel.id, limit.as_deref())
+                        let personality = self.controllers.personality_controller(agent.load().personality_id).await.optional()?;
+                        let personality = personality.as_ref().map(|p| p.load());
+                        agent.security_context(channel.session_id, channel.id, personality.as_ref().and_then(|p| p.limiting_roles()))
                     }
                     None => continue,
                 },

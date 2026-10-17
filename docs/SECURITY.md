@@ -17,7 +17,8 @@ Security is a context that travels with every operation, and explicit checks aga
     owner and the roles the caller is limited to - an agent's personality's. What a decision needs
     to know of the subject is in the context, put there where the context is built - a user's by
     their `UserController`, an agent's by its `AgentController` from its owner's, each with the
-    roles as they are now - and not looked up while the decision is made. A context continued for
+    roles as they are now, and an agent's limit as its `PersonalityController` last took it in -
+    and not looked up while the decision is made. A context continued for
     another caller (`SecurityContext::next`) carries no roles until whoever continues it gives
     them: the initiator lends none.
 *   **`AccessPolicy`** authorizes actions: `check(context, action)`.

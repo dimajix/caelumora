@@ -18,12 +18,12 @@ use caelumora_runtime::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result, Error};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
-use caelumora_model::agent::{AgentChannelState, Personality, RetryRefused};
+use caelumora_model::agent::{AgentChannelState, RetryRefused};
 use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::turn::TurnState;
 use caelumora_model::work::{TurnId, Work};
-use caelumora_runtime::controller::AgentController;
+use caelumora_runtime::controller::{AgentController, PersonalityController};
 use caelumora_model::approval::{ApprovalId, ApprovalStatus};
 use caelumora_model::confidentiality::{Classification, Visibility};
 use caelumora_model::message::{Message, MessageEvent};
@@ -55,9 +55,6 @@ pub struct AgentActor {
     /// Runs the agent's tool calls with the tools of its components, behind
     /// the runtime's permission checks (issues 127, 280).
     tool_executor: ToolExecutor,
-    /// Who sees its reasoning at least (issues 61, 133), from the
-    /// personality.
-    reasoning_visibility: Visibility,
 }
 
 impl AgentActor {
@@ -76,9 +73,10 @@ impl AgentActor {
 
     /// The actor of the agent `agent_controller` holds - the session's
     /// controller of it, shared with its actors in the session's other
-    /// channels (issue 120) - built from its `personality`, as the channel
-    /// read it for the agent, in the channel of `actor_runtime`.
-    pub async fn new(agent_controller: Arc<AgentController>, personality: Personality, actor_runtime: ActorRuntime) -> Result<Self> {
+    /// channels (issue 120) - built from the personality `personality`
+    /// holds, the instance's controller of it (issue 406), in the channel of
+    /// `actor_runtime`.
+    pub async fn new(agent_controller: Arc<AgentController>, personality: Arc<PersonalityController>, actor_runtime: ActorRuntime) -> Result<Self> {
         let channel_id = actor_runtime.channel_controller().id();
         let agent_id = agent_controller.id();
         // A turn stored under way is resumed (issue 75).
@@ -88,7 +86,7 @@ impl AgentActor {
                 warn!("Agent {} in channel {}: {} approved tool calls were not executed before it stopped; the model is told", agent_id, channel_id, not_executed);
             }
         };
-        let (body, components) = AgentBody::build(agent_controller, &personality, Self::COMPONENT_FACETS, &ComponentConfig::default(), actor_runtime, resume).await?;
+        let (body, components) = AgentBody::build(agent_controller, personality, Self::COMPONENT_FACETS, &ComponentConfig::default(), actor_runtime, resume).await?;
         let llm_client = components.one::<dyn LLMClient>().await?;
         let compaction_policy = components.one::<dyn CompactionPolicy>().await?;
         let compaction = components.one::<dyn CompactionStrategy>().await?;
@@ -102,7 +100,6 @@ impl AgentActor {
             compaction,
             emit_out_processors,
             tool_executor,
-            reasoning_visibility: personality.reasoning_visibility,
         })
     }
 
@@ -551,13 +548,13 @@ impl AgentActor {
 
             match event {
                 MessageEvent::Partial(mut message) => {
-                    stamp(&mut message, turn, self.reasoning_visibility, false);
+                    stamp(&mut message, turn, self.body.reasoning_visibility(), false);
                     if let Some(msg) = self.respond(message, turn).await {
                         turn.show(msg, output).await?;
                     }
                 }
                 MessageEvent::Complete(mut message) => {
-                    stamp(&mut message, turn, self.reasoning_visibility, true);
+                    stamp(&mut message, turn, self.body.reasoning_visibility(), true);
                     self.request_approvals(&message.tool_calls, turn, output).await?;
                     let converged = message.tool_calls.is_empty();
                     if let Some(msg) = self.respond(message, turn).await {

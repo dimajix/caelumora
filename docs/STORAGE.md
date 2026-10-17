@@ -371,7 +371,8 @@ state in every channel. It is never a side effect of the `EntityStore`.
 
 The live state of the entities of a running session is held by controllers
 (`caelumora_runtime::controller`): `SessionController`, `ChannelController`, `AgentController`,
-`UserController` and `WorkspaceController`, made by the `ControllerManager`. The model only defines
+`PersonalityController`, `UserController` and `WorkspaceController`, made by the
+`ControllerManager`. The model only defines
 the documents; keeping them live, writing them and announcing changes is the runtime's. What a
 controller changes and what its entity's manager does is in
 [ARCHITECTURE.md](ARCHITECTURE.md#managers-and-controllers).
@@ -394,17 +395,21 @@ controller changes and what its entity's manager does is in
     `LiveDocument`: the user's record belongs to the system and is only kept current, and their
     profile is created with its first change and announced as it stands, to its user and the
     runtime alone. The `WorkspaceController` also holds the storage its workspace lies in and the
-    confidentiality policy, which a new classification is asked of.
+    confidentiality policy, which a new classification is asked of. The `PersonalityController`
+    is no writer at all (issue 406): personalities are changed in the store, and it only holds the
+    one copy every running agent of a personality answers from (see below).
 
 ### Session-owned and per-instance controllers
 
 A `SessionController` and its `ChannelController`s are made with the running session and live as
 long as it does: a session runs once, so there is never a second. An agent or a user takes part in
 any number of sessions, and a workspace may be attached to several and is used directly too, so the
-`ControllerManager` keeps **one controller per agent, per user and per workspace in the
-instance**: loaded when the first one needs it, shared by all that use it, and held only as long as
-one of them holds it. An agent thus has one writer per instance. The manager also answers what an
-actor is called - an entity's current name, or the fixed name of an actor that is none.
+`ControllerManager` keeps **one controller per agent, per personality, per user and per workspace
+in the instance**: loaded when the first one needs it, shared by all that use it, and held only as
+long as one of them holds it. An agent thus has one writer per instance. A personality's controller
+is held beside its agent's, not by it - an agent's personality is fixed with the agent, and another
+one could make it another kind of agent, which only a new actor can be. The manager also answers
+what an actor is called - an entity's current name, or the fixed name of an actor that is none.
 
 A missing record is `StoreError::NotFound`, which a lookup that expects it may be gone turns into
 `None`; a channel then leaves that participant out (see [CHANNELS.md](CHANNELS.md)).
@@ -419,6 +424,11 @@ other instances will arrive (see [Several instances](#several-instances)). An ev
 resulting value, so taking over an instance's own change again changes nothing; a workspace is read
 again as stored instead, since the announcement of a new access list does not carry it. A text in it
 that does not fit the model's value is left out and logged.
+
+No change of a personality is announced. Its controller takes in the personality as stored whenever
+it is asked for - as an agent of it is resolved to take part, and by the `CommandReaper` - and from
+then on every running agent of it answers by that: its limiting roles, who sees its reasoning, its
+introduction. Only an agent's components stay as they were built, until its actor is built again.
 
 ## Several instances
 

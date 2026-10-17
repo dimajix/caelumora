@@ -1,6 +1,6 @@
 # 406 — A running agent keeps its personality as it was when its actor was built
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Sessions and channels
@@ -126,3 +126,26 @@ running actor stops, or only refuses from then on - is to be decided with it.
 - **2026-10-17** — Opened while discussing issue 403: `Actor::describe()` needs the introduction
   live, and looking for where the personality is held showed that a running agent keeps parts of it
   as they were built while other parts of the runtime read it anew.
+- **2026-10-17** — Decided with the maintainer, as the work began: the `PersonalityController` is
+  held beside the `AgentController`, not by it - `ResolvedKind::Agent`, `AgentKinds` and the
+  actors take it in place of the `Personality`, and `AgentController::personality()` is gone. An
+  agent's personality cannot be replaced by another, which was accepted: it is fixed with the agent
+  (`AgentUpdateEvent` knows only `NameChanged`), and another could make it another kind of agent
+  with other components, which only a new actor can be.
+- **2026-10-17** — Personalities do have a writer: the store, in the name of who may change them,
+  which the security suite relies on (P3, P3b: a share withdrawn, a personality deleted, take effect
+  at the next resolve). A controller loaded once and kept while held broke those tests. Decided
+  instead of making the controller the writer (option (a) above, left for an issue of its own if
+  personalities become editable through the runtime): `ControllerManager::personality_controller`
+  reads the personality as stored every time it is asked for - as an agent is resolved, and by the
+  `CommandReaper` - and takes it over into the controller that lives, for every running agent of
+  it. A personality deleted is not handed out; the running agents keep it as it was.
+- **2026-10-17** — Done. The running agent reads its limiting roles and `reasoning_visibility`
+  through the controller (`AgentBody::security_context`, `AgentBody::reasoning_visibility`); only
+  its components stay as built. The security suite has P3c: who sees a running agent's reasoning
+  follows its personality as last taken in. What the problem above says of the limiting roles was
+  overstated: a running agent's own clearance is asked of hardly anything - reading another channel
+  asks the flow (`CopyInformation`), not the reader's clearance -, so a narrowed limit counted at
+  the door and in the reaper before as well; what differed was that the two read it at different
+  times. Docs: STORAGE.md (controllers, following changes), ARCHITECTURE.md, SECURITY.md,
+  PERMISSION-CHECKS.md.

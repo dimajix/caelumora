@@ -1,12 +1,12 @@
 //! `ControllerManager`: where the runtime gets its controllers - made for
 //! the documents of a running session, or shared in this instance for
-//! agents, users and workspaces (issue 121).
+//! agents, personalities, users and workspaces (issues 121, 406).
 
-use super::{AgentController, ChannelController, SessionController, UserController, WorkspaceController};
+use super::{AgentController, ChannelController, PersonalityController, SessionController, UserController, WorkspaceController};
 use crate::event::EventBus;
 use crate::terminal::TerminalProvider;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentId};
+use caelumora_model::agent::{Agent, AgentId, PersonalityId};
 use caelumora_model::channel::{Channel, ChannelId};
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::event::EntityChange;
@@ -35,9 +35,9 @@ type Registry<K, C> = Arc<Mutex<HashMap<K, Weak<C>>>>;
 ///   caller has loaded the document, with its own permissions, and the
 ///   session that runs it owns the controller; that there is only one per
 ///   document follows from a session running only once (`SessionManager`).
-/// - `…_controller(id)` gives the controller of an agent, a user or a
-///   workspace that this instance shares among all that use it (issues 121,
-///   344): the one that lives,
+/// - `…_controller(id)` gives the controller of an agent, a personality, a
+///   user or a workspace that this instance shares among all that use it
+///   (issues 121, 344, 406): the one that lives,
 ///   or loaded from the store if none does. Hence an id rather than a
 ///   document - whether to load is the manager's to decide - and `async`
 ///   and fallible.
@@ -59,6 +59,7 @@ pub struct ControllerManager {
     states: Arc<dyn StateStore>,
     histories: Arc<dyn HistoryStore>,
     agents: Registry<AgentId, AgentController>,
+    personalities: Registry<PersonalityId, PersonalityController>,
     users: Registry<UserId, UserController>,
     workspaces: Registry<WorkspaceId, WorkspaceController>,
     /// The task that takes announced changes into the live agent, user and
@@ -77,6 +78,7 @@ impl ControllerManager {
             states,
             histories,
             agents: Default::default(),
+            personalities: Default::default(),
             users: Default::default(),
             workspaces: Default::default(),
             follower: OnceLock::new(),
@@ -114,6 +116,29 @@ impl ControllerManager {
         };
         let controller = Arc::new(AgentController::new(agent, owner, Arc::<EventBus>::clone(&self.event_bus), &self.stores));
         remember(&mut agents, id, &controller);
+        Ok(controller)
+    }
+
+    /// The controller of personality `id` in this instance, like
+    /// `agent_controller`: what the actors of its agents are built from and
+    /// answer by (issue 406). Personalities are changed in the store, and no
+    /// change of one is announced: the personality is read as stored now
+    /// every time its controller is asked for, and taken over into the one
+    /// that lives, for every running agent of it.
+    ///
+    /// # Errors
+    /// `StoreError::NotFound` if the personality no longer exists - the
+    /// controller that lives, if one does, then keeps it as it was for the
+    /// agents that run -, or whatever else the store reports.
+    pub async fn personality_controller(&self, id: PersonalityId) -> StoreResult<Arc<PersonalityController>> {
+        let mut personalities = self.personalities.lock().await;
+        let personality = self.stores.personalities.get(&SecurityContext::system(), id).await?;
+        if let Some(controller) = personalities.get(&id).and_then(Weak::upgrade) {
+            controller.take_over(personality);
+            return Ok(controller);
+        }
+        let controller = Arc::new(PersonalityController::new(personality));
+        remember(&mut personalities, id, &controller);
         Ok(controller)
     }
 
@@ -285,6 +310,7 @@ mod tests {
             reasoning_visibility: Visibility::Channel,
             deleted: None,
         };
+        store.entity_stores().personalities.create(&SecurityContext::system(), &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         store.entity_stores().agents.create(&SecurityContext::system(), &agent).await.unwrap();
         agent
@@ -338,6 +364,34 @@ mod tests {
 
         let gone = manager.agent_controller(AgentId::new()).await;
         assert!(matches!(gone, Err(StoreError::NotFound { .. })), "an agent that does not exist has none, got {gone:?}");
+    }
+
+    /// Issue 406: the actors of a personality's agents answer from one copy
+    /// of it, which takes in what is stored whenever the controller is asked
+    /// for.
+    #[tokio::test]
+    async fn a_personality_has_one_controller_in_the_instance_while_it_is_used() {
+        let (store, _, manager) = manager();
+        let agent = agent_in(&store).await;
+        let system = SecurityContext::system();
+
+        let first = manager.personality_controller(agent.personality_id).await.unwrap();
+        assert!(Arc::ptr_eq(&first, &manager.personality_controller(agent.personality_id).await.unwrap()), "every agent of it gets the same controller");
+
+        let mut narrowed = Personality::clone(&first.load());
+        narrowed.roles = Some(vec![RoleId::new()]);
+        store.entity_stores().personalities.update(&system, &narrowed).await.unwrap();
+        assert_eq!(first.load().roles, None, "not taken in by itself");
+        manager.personality_controller(agent.personality_id).await.unwrap();
+        assert_eq!(first.load().roles, narrowed.roles, "taken in when asked for, for all that hold it");
+
+        store.entity_stores().personalities.delete(&system, agent.personality_id).await.unwrap();
+        let deleted = manager.personality_controller(agent.personality_id).await;
+        assert!(matches!(deleted, Err(StoreError::NotFound { .. })), "a deleted one is not handed out, got {deleted:?}");
+        assert_eq!(first.load().roles, narrowed.roles, "but kept for those that hold it");
+
+        let gone = manager.personality_controller(PersonalityId::new()).await;
+        assert!(matches!(gone, Err(StoreError::NotFound { .. })), "a personality that does not exist has none, got {gone:?}");
     }
 
     #[tokio::test]

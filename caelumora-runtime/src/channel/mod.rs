@@ -513,7 +513,7 @@ impl ChannelLoop {
         let actor_runtime = self.runtime.new_actor_runtime(resolved.actor_id());
         Ok(match resolved.kind().clone() {
             ResolvedKind::User(user) => Box::new(UserActor::new(user, actor_runtime).await?),
-            ResolvedKind::Agent(agent, personality) => self.agent_kinds.build(agent, *personality, actor_runtime).await?,
+            ResolvedKind::Agent(agent, personality) => self.agent_kinds.build(agent, personality, actor_runtime).await?,
             ResolvedKind::Approver(approver) => Box::new(ApproverActor::new(approver, actor_runtime)),
         })
     }
