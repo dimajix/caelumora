@@ -86,7 +86,19 @@ export function givenUpText(reason: GivenUpReason): string {
       return 'The agent left the channel.';
     case 'retried':
       return 'Its answer was asked for again while it was under way.';
+    case 'call_limit':
+      return `It asked its model ${reason.calls} times, as often as one answer may, and was not done.`;
   }
+}
+
+/**
+ * Whether the agent may be asked to answer anew after a turn given up so
+ * (issues 259, 411), as the server's `GivenUpReason::may_be_answered_again`
+ * has it: one that failed, whose channel was lowered or that reached the
+ * limit of its model calls.
+ */
+export function mayBeAnsweredAgain(reason: GivenUpReason): boolean {
+  return reason.kind === 'failed' || reason.kind === 'lowered' || reason.kind === 'call_limit';
 }
 
 /**

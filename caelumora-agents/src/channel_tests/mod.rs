@@ -208,7 +208,7 @@ async fn turn_given_up(events: &mut Receiver<Envelope>, agent: AgentId) -> Strin
                 break match reason {
                     GivenUpReason::Failed { message } => message,
                     GivenUpReason::Lowered { channel } => format!("{cause} to {channel}"),
-                    GivenUpReason::Left | GivenUpReason::Retried => cause.to_string(),
+                    GivenUpReason::Left | GivenUpReason::Retried | GivenUpReason::CallLimit { .. } => cause.to_string(),
                 };
             }
         }

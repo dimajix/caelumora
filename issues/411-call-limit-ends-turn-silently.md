@@ -1,6 +1,6 @@
 # 411 — A turn that reaches the limit of model calls ends without a word
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** high
 **Area:** User interaction
@@ -55,3 +55,11 @@ Recommended: a `GivenUpReason` of its own - one way for every turn that did not 
 
 - **2026-10-17** — Opened after Jonathan in session `s2` stopped in the middle of a plan; the cause
   was found in its stored turn: 25 model calls, and the turn ended without a message.
+- **2026-10-17** — Done as recommended: a turn that would make one more model call is given up as
+  `GivenUpReason::CallLimit { calls }` - before its context is compacted for a call it will not
+  make. Its users are told (chat, TUI, history), the model is told why the turn ended, and the
+  agent may be asked to answer anew (`may_be_answered_again`; in the web UI
+  `mayBeAnsweredAgain`). As for every turn given up, nothing it staged is applied - memories and
+  notes noted in it are lost with it, as with `Failed`. The plan is lost too; that is issue
+  [412](412-plan-budget.md). `Turn::count_model_call` is split into `may_call_model` and
+  `count_model_call`.

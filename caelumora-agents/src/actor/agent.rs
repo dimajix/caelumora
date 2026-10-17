@@ -496,7 +496,9 @@ impl AgentActor {
     /// Calls the LLM and streams its response for a single turn step. Loops
     /// back to itself (via the run loop, after a trip through
     /// `ExecutingTools`) as long as the model keeps making tool calls, up to
-    /// `MAX_MODEL_CALLS` in a turn.
+    /// `MAX_MODEL_CALLS` in a turn: a turn that would make one more is given
+    /// up as `CallLimit` (issue 411), before its context is compacted for a
+    /// call it will not make, and the agent lands in `Idle`.
     ///
     /// A message is "final" (shown to the user as the answer) exactly
     /// when it isn't part of executing an in-progress plan
@@ -510,18 +512,21 @@ impl AgentActor {
     /// participant and not part of the answer.
     async fn handle_planning(
         &self,
-        turn: &mut Turn<'_>,
+        state: &mut AgentChannelState,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
         let agent_name = self.body.agent.name();
 
+        let turn = &mut self.turn_under_way(state)?;
+        if !turn.may_call_model() {
+            warn!("Agent {} {} asked its model {} times in one turn; the turn is given up", self.id(), agent_name, MAX_MODEL_CALLS);
+            self.give_up(state, GivenUpReason::CallLimit { calls: MAX_MODEL_CALLS }, output).await;
+            return Ok(ActorState::Idle);
+        }
         if self.compaction_due(turn) {
             return Ok(ActorState::Busy);
         }
-        if !turn.count_model_call() {
-            warn!("Agent {} {} asked its model {} times in one turn; the turn ends", self.id(), agent_name, MAX_MODEL_CALLS);
-            return Ok(ActorState::Reflecting);
-        }
+        turn.count_model_call();
 
         let cancelled = self.body.control.token();
         // The turn's context - prompt parts, a planning nudge among them if
@@ -891,7 +896,7 @@ impl Actor for AgentActor {
                 ActorState::WaitingForUser => {
                     self.handle_waiting_for_user(&mut self.turn_under_way(&mut state)?, &mut rx, &*output).await?
                 }
-                ActorState::Planning => Some(self.handle_planning(&mut self.turn_under_way(&mut state)?, &*output).await?),
+                ActorState::Planning => Some(self.handle_planning(&mut state, &*output).await?),
                 ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut self.turn_under_way(&mut state)?, &*output).await?),
                 ActorState::Busy => Some(self.handle_busy(&mut state, &*output).await?),
                 ActorState::Cancelling => Some(self.handle_cancelling(&mut state, &*output).await?),

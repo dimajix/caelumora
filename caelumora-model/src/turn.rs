@@ -37,15 +37,20 @@ pub enum GivenUpReason {
     /// Its answer was asked for again while it was under way (issue 235):
     /// a turn of its own answers instead.
     Retried,
+    /// It asked its model `calls` times, as often as a turn may, and was
+    /// not done (issue 411): the limit is a safety net against a model that
+    /// does not come to an end, so reaching it is no answer.
+    CallLimit { calls: u32 },
 }
 
 impl GivenUpReason {
     /// Whether the agent may be asked to answer anew after a turn given up
-    /// so (issue 259): one that failed or whose channel was lowered below
-    /// it. One asked for again is answered anew already; one given up as it
-    /// left belongs to an agent that left.
+    /// so (issue 259): one that failed, whose channel was lowered below it
+    /// or that reached the limit of its model calls (issue 411). One asked
+    /// for again is answered anew already; one given up as it left belongs
+    /// to an agent that left.
     pub fn may_be_answered_again(&self) -> bool {
-        matches!(self, GivenUpReason::Failed { .. } | GivenUpReason::Lowered { .. })
+        matches!(self, GivenUpReason::Failed { .. } | GivenUpReason::Lowered { .. } | GivenUpReason::CallLimit { .. })
     }
 
     /// Why the turn was given up, as its agent is told: "… because it
@@ -56,6 +61,7 @@ impl GivenUpReason {
             GivenUpReason::Lowered { .. } => "the channel's classification was lowered",
             GivenUpReason::Left => "you left the channel",
             GivenUpReason::Retried => "your answer was asked for again",
+            GivenUpReason::CallLimit { .. } => "it asked the model as often as one turn may",
         }
     }
 }

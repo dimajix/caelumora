@@ -612,7 +612,7 @@ impl ContextItem {
 fn given_up_notice(turn: TurnId, reason: &GivenUpReason, at: DateTime<Utc>) -> Message {
     let withheld = match reason {
         GivenUpReason::Lowered { .. } => " What it read and said is withheld; only which tools it called is given.",
-        GivenUpReason::Failed { .. } | GivenUpReason::Left | GivenUpReason::Retried => "",
+        GivenUpReason::Failed { .. } | GivenUpReason::Left | GivenUpReason::Retried | GivenUpReason::CallLimit { .. } => "",
     };
     Message {
         id: MessageId(turn.0),

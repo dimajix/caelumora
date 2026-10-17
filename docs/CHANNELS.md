@@ -326,8 +326,9 @@ message, and what they said in reply stays.
 Whoever takes part may ask an agent to answer again instead of one of its messages - its last
 answer and nothing else, since a new answer cannot be placed above what answered the old one without
 forking - or instead of its answer still under way, or anew after its last turn, given up because
-it failed or the channel was lowered, while nothing followed it. It is a request to the agent, not
-an operation of the channel: `RetryRequested`, naming a message or a turn.
+it failed, the channel was lowered or it reached the limit of its model calls, while nothing
+followed it. It is a request to the agent, not an operation of the channel: `RetryRequested`,
+naming a message or a turn.
 
 *   **A user** asks through their actor, which refuses at once, without an event, what cannot
     succeed: a message not there, taken back or no agent's, a turn that is neither the agent's turn
@@ -343,9 +344,9 @@ an operation of the channel: `RetryRequested`, naming a message or a turn.
     taken over instead.
 *   **The agent judges the requests** between turns, with what it hears:
     *   the request of the turn it gave up for it is accepted;
-    *   a request of its last turn, given up because it failed or the channel was lowered, with
-        nothing after it, is accepted and answered anew after it - nothing taken back; otherwise
-        it is rejected;
+    *   a request of its last turn, given up because it failed, the channel was lowered or it
+        reached the limit of its model calls, with nothing after it, is accepted and answered anew
+        after it - nothing taken back; otherwise it is rejected;
     *   of the requests of a message, the last is judged against the conversation as it stands, the
         others rejected. It is accepted only if the message is the agent's last answer, as its own
         transcript says: then the agent takes back the message and the rest of its turn, in its
