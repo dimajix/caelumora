@@ -78,7 +78,7 @@ import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {activityNotice, activityUnderWay, chatMessages, chatRows, commandNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, mergeToolResults, planStepMark} from '../messages';
+import {activityNotice, activityUnderWay, chatMessages, chatRows, commandNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, mergeToolResults, planStepMark} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -262,6 +262,8 @@ interface ChatViewProps {
 }
 
 export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, onSelectPage }) => {
+  // The user's actor, whose messages are their own (issue 407).
+  const me = useMemo<ActorId>(() => ({User: user.id}), [user.id]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
   const [notes, setNotes] = useState<PublishedNotes[]>([]);
@@ -552,7 +554,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   /** Whether the user may change the classification of `msg`: its author, or the channel's owner. */
   const mayReclassify = (msg: Message) =>
-    !!msg.id && !!msg.classification && (!!channel?.can_change || (typeof msg.sender_id === 'object' && msg.sender_id !== null && 'User' in msg.sender_id && msg.sender_id.User === user.id));
+    !!msg.id && !!msg.classification && (!!channel?.can_change || isOwn(msg, me));
 
   /**
    * Whether `msg` is the user's own to edit and take back (issue 234): a
@@ -560,8 +562,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
    * - only a participant has an actor to change it through.
    */
   const mayChange = (msg: Message) =>
-    !!participant && !!msg.id && !msg.revoked && typeof msg.sender_id === 'object' && msg.sender_id !== null
-      && 'User' in msg.sender_id && msg.sender_id.User === user.id;
+    !!participant && !!msg.id && !msg.revoked && isOwn(msg, me);
 
   const saveEdit = async (msg: Message, content: string) => {
     try {
@@ -1044,9 +1045,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // is shown before the channel takes it in; nor a notice of the UI's, which
   // is in no history.
   const newestOfOthers = useMemo(() => messages.findLast(m =>
-    m.id && (m.role === 'User' || m.role === 'Assistant') && isOthers(m, {User: user.id})
+    m.id && (m.role === 'User' || m.role === 'Assistant') && isOthers(m, me)
     && !m.givenUp && !m.commandOutput && !m.activity && !m.chainCutOff && !m.nudged
-  )?.id ?? null, [messages, user.id]);
+  )?.id ?? null, [messages, me]);
   const marked = useRef<string | null>(null);
   useEffect(() => {
     if (!newestOfOthers) return;
@@ -1298,7 +1299,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   // Only those questions are put to answer them (issue 165); everybody else
   // they reach sees what the agent waits for.
-  const me = actorKey({User: user.id});
   const askedOf = (request: QuestionRequest) =>
     request.questions.ask.flatMap(a => typeof a === 'object' && 'actor' in a ? [actorKey(a.actor)] : []);
   const answerQuestions = async (request: QuestionRequest, responses: QuestionResponse[] | null) => {
@@ -1485,7 +1485,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       key={key}
       className={cn(
         "max-w-[80%] p-3 rounded-lg border border-dashed border-red-300 dark:border-red-800 text-gray-600 dark:text-gray-300 text-sm",
-        msg.role === 'User' && "ml-auto",
+        isOwn(msg, me) && "ml-auto",
       )}
     >
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
@@ -1500,7 +1500,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       key={key}
       className={cn(
         "max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 text-sm italic",
-        msg.role === 'User' && "ml-auto",
+        isOwn(msg, me) && "ml-auto",
       )}
     >
       {msg.sender_name || 'Its author'} took this message back
@@ -1519,6 +1519,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     <MessageView
       key={key}
       message={msg}
+      me={me}
       members={members}
       files={workspaceFiles ?? undefined}
       filesVersion={workspaceVersion}
@@ -1712,7 +1713,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
               <QuestionCard
                 key={request.id}
                 request={request}
-                asked={askedOf(request).includes(me)}
+                asked={askedOf(request).includes(actorKey(me))}
                 askedNames={askedOf(request).map(key => members.find(m => actorKey(m.id) === key)?.name ?? key)}
                 answered={answeredQuestions.includes(request.id)}
                 onAnswer={responses => answerQuestions(request, responses)}
@@ -1965,6 +1966,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           sessionId={sessionId}
           channelId={channelId}
           message={contextOf.message}
+          me={me}
           members={members}
           onClose={() => setContextOf(null)}
         />
@@ -1974,6 +1976,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           sessionId={sessionId}
           channelId={channelId}
           member={historyOf.member}
+          me={me}
           members={members}
           version={messages.length}
           onShowContext={message => setContextOf({channelId, message})}

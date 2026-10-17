@@ -1,6 +1,6 @@
 # 407 — The web UI shows every user's message as one's own
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** User interaction
@@ -51,3 +51,7 @@ that the messages could be changed like one's own.
 
 - **2026-10-17** — Opened after noticing that in a channel with several users every message of a
   person is shown as the viewer's own.
+- **2026-10-17** — Done: `isOwn` in `messages.ts` says whether a message was said by the viewer,
+  and `isOthers` is built on it. `MessageView` is given the viewer (`me`) and chooses side and
+  colour by it, the chat view does the same for a message refused or taken back and uses `isOwn`
+  for changing and reclassifying; the context and history panels pass the viewer on.

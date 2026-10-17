@@ -25,6 +25,8 @@ interface HistoryPanelProps {
   channelId: string;
   /** The agent whose history is shown. */
   member: ChannelMember;
+  /** Who views it, whose messages are their own (issue 407). */
+  me: ActorId;
   members: ChannelMember[];
   /** Changes whenever the history may have grown, to load it again. */
   version: number;
@@ -93,7 +95,7 @@ function rowsOf(items: HistoryItem<HistoryMessage>[]): Row[] {
   return rows;
 }
 
-export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId, member, members, version, onShowContext, onClose}) => {
+export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId, member, me, members, version, onShowContext, onClose}) => {
   const actor = actorUuid(member.id);
   const [items, setItems] = useState<HistoryItem<HistoryMessage>[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -152,6 +154,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
       <MessageView
         key={key}
         message={message}
+        me={me}
         members={members}
         className={cn('max-w-full', !passedOn && 'opacity-50')}
         badges={[
