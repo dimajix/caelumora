@@ -78,7 +78,7 @@ import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {activityNotice, activityUnderWay, chatMessages, chatRows, commandNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, mayBeAnsweredAgain, mergeToolResults, participantNotice, planStepMark} from '../messages';
+import {activityNotice, activityUnderWay, chatMessages, chatRows, commandNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, mayBeAnsweredAgain, mergeToolResults, participantNotice, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -365,6 +365,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // The user's own message being edited, and the one whose taking back
   // waits for a second click (issue 234).
   const [editing, setEditing] = useState<string | null>(null);
+  // The turn whose messages are pointed at, shown together (issue 415).
+  const [pointedTurn, setPointedTurn] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   // The agent whose history is shown, with the channel it belongs to (issue
   // 207); a context opened from it is shown on top and returns to it.
@@ -1388,8 +1390,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   };
 
   // One message of the chat, as its kind shows it; `key` for the list it
-  // is rendered in.
-  const renderMessage = (msg: Message, key: React.Key) => msg.participant ? (
+  // is rendered in, `inTurn` where it stands among the messages of its turn
+  // shown together (issue 415).
+  const renderMessage = (msg: Message, key: React.Key, inTurn?: {first: boolean; last: boolean}) => msg.participant ? (
     <div
       key={key}
       className="flex items-center justify-center gap-2 text-xs text-gray-500 dark:text-gray-400"
@@ -1548,6 +1551,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       onInterruptCall={mayInterruptCallsOf(msg) ? (call) => void interruptCall(msg, call) : undefined}
       onKillCommand={workspace?.can_write ? (commandId) => void killCommand(commandId) : undefined}
       endedCommands={ended}
+      inTurn={inTurn}
       badges={channel && msg.classification && !sameClassification(msg.classification, channel.classification)
         ? [`released: ${classificationLabel(msg.classification)}`]
         : undefined}
@@ -1629,11 +1633,35 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     const from = read + 1;
     return from < rows.length ? from : null;
   })();
+  // The rows grouped by turn (issue 415), and how many rows each turn has in
+  // all - also where answers interleaved split it -, with its answer under
+  // way: the messages of a turn of more than one are shown together when
+  // one of them is pointed at.
+  const groups = turnGroups(rows, newFrom);
+  const turnSizes = new Map<string, number>();
+  for (const row of rows) {
+    const turnId = rowTurn(row);
+    if (turnId !== null) turnSizes.set(turnId, (turnSizes.get(turnId) ?? 0) + 1);
+  }
+  // An answer under way goes on with the last group where that is of its
+  // turn; any other is shown below every group, with its name.
+  const lastTurn = groups.length > 0 ? groups[groups.length - 1].turnId : null;
+  const continuesLast = (answer: Answer) => !inStep(answer) && answer.turnId !== null && answer.turnId === lastTurn;
+  if (lastTurn !== null) {
+    const continuing = answers.filter(continuesLast).length;
+    turnSizes.set(lastTurn, (turnSizes.get(lastTurn) ?? 0) + continuing);
+  }
+  // A row's key, stable while earlier pages are put in front of it.
+  const rowKey = (row: ChatRow, idx: number) => row.kind === 'message'
+    ? row.message.id ?? `local-${idx}`
+    : `steps-${row.turnId}-${row.step?.step_index ?? ''}-${row.messages[0]?.id ?? idx}`;
 
-  const renderAnswer = (answer: Answer) => (
+  // An answer under way; `continues` where it follows the messages of its
+  // turn shown together, which name the agent already (issue 415).
+  const renderAnswer = (answer: Answer, continues = false) => (
     <div key={answer.sender} className="max-w-[80%] p-3 rounded-lg shadow-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600">
       <div className="text-xs font-semibold mb-1 opacity-70 uppercase tracking-wider flex items-center gap-2">
-        <span>{answer.name || 'Assistant'}</span>
+        {!continues && <span>{answer.name || 'Assistant'}</span>}
         <span className="inline-flex items-center gap-1.5 normal-case font-normal text-blue-500 dark:text-blue-400">
           <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-working" />
           generating…
@@ -1683,32 +1711,53 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
               </button>
             </div>
           )}
-          {rows.map((row, idx) => [idx === newFrom && (
-            <div key="new-messages" role="separator" aria-label="New messages" className="flex items-center gap-2 text-xs font-semibold text-red-600 dark:text-red-400">
-              <div className="flex-1 border-t border-red-400 dark:border-red-500" />
-              New messages
-              <div className="flex-1 border-t border-red-400 dark:border-red-500" />
-            </div>
-          ), row.kind === 'message'
-            ? renderMessage(row.message, row.message.id ?? `local-${idx}`)
-            : (() => {
-              const current = currentSteps.get(row.turnId) === idx;
-              const streaming = current ? answers.filter(a => a.turnId === row.turnId && inStep(a)) : [];
-              return (
-                <PlanSteps
-                  key={`steps-${row.turnId}-${row.step?.step_index ?? ''}-${row.messages[0]?.id ?? idx}`}
-                  name={row.sender || 'Assistant'}
-                  step={row.step}
-                  count={row.messages.length}
-                  underWay={row.turnId !== null && current && answers.some(a => a.turnId === row.turnId)}
-                  streaming={streaming.length > 0}
-                >
-                  {row.messages.map((msg, i) => renderMessage(msg, msg.id ?? `local-${i}`))}
-                  {streaming.map(renderAnswer)}
-                </PlanSteps>
-              );
-            })()])}
-          {answers.filter(answer => !inStep(answer)).map(renderAnswer)}
+          {groups.map(group => {
+            const trailing = group === groups[groups.length - 1] ? answers.filter(continuesLast) : [];
+            const together = group.turnId !== null && (turnSizes.get(group.turnId) ?? 0) > 1;
+            return [group.start === newFrom && (
+              <div key="new-messages" role="separator" aria-label="New messages" className="flex items-center gap-2 text-xs font-semibold text-red-600 dark:text-red-400">
+                <div className="flex-1 border-t border-red-400 dark:border-red-500" />
+                New messages
+                <div className="flex-1 border-t border-red-400 dark:border-red-500" />
+              </div>
+            ), (
+              <div
+                key={`turn-${rowKey(rows[group.start], group.start)}`}
+                onMouseEnter={together ? () => setPointedTurn(group.turnId) : undefined}
+                onMouseLeave={together ? () => setPointedTurn(null) : undefined}
+                className={cn(
+                  "space-y-1",
+                  // Indented as a whole, its frame flush with the messages alone and as
+                  // far from its messages as they are from their content.
+                  together && "p-3 rounded-lg transition-colors",
+                  together && pointedTurn === group.turnId && "bg-gray-200/70 dark:bg-gray-700/50 ring-1 ring-gray-300 dark:ring-gray-600",
+                )}
+              >
+                {rows.slice(group.start, group.end).map((row, offset) => {
+                  const idx = group.start + offset;
+                  const inTurn = {first: idx === group.start, last: idx === group.end - 1 && trailing.length === 0};
+                  if (row.kind === 'message') return renderMessage(row.message, rowKey(row, idx), inTurn);
+                  const current = currentSteps.get(row.turnId) === idx;
+                  const streaming = current ? answers.filter(a => a.turnId === row.turnId && inStep(a)) : [];
+                  return (
+                    <PlanSteps
+                      key={rowKey(row, idx)}
+                      name={row.sender || 'Assistant'}
+                      step={row.step}
+                      count={row.messages.length}
+                      underWay={row.turnId !== null && current && answers.some(a => a.turnId === row.turnId)}
+                      streaming={streaming.length > 0}
+                    >
+                      {row.messages.map((msg, i) => renderMessage(msg, msg.id ?? `local-${i}`, {first: false, last: i === row.messages.length - 1 && streaming.length === 0}))}
+                      {streaming.map(answer => renderAnswer(answer, true))}
+                    </PlanSteps>
+                  );
+                })}
+                {trailing.map(answer => renderAnswer(answer, true))}
+              </div>
+            )];
+          })}
+          {answers.filter(answer => !inStep(answer) && !continuesLast(answer)).map(answer => renderAnswer(answer))}
           <div ref={messagesEndRef} />
         </div>
 

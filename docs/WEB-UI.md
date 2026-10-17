@@ -248,6 +248,12 @@ others say in it as the global stream announces it.
     the right, in a colour of their own; everybody else's, other users' as well as agents', on the
     left, named above them. The role decides only that a person's message keeps its line breaks.
     The context and history panels colour messages by the same rule.
+*   **What a turn said** stands together (issue 415): the messages of one turn in a row, and the
+    notices of it, are one group, indented as a whole - its agent named only above the first,
+    close to one another, the corner pointing at the agent only on the last. An answer under way
+    goes on with the group of its turn. Turns of agents
+    answering at once interleave, each part a group of its own; pointing at a message of a turn of
+    more than one shades every part of it. A user's message belongs to no turn and stands alone.
 *   **Tool calls** are shown by their presentation, which the tool declares and the agent stamps on
     each call, never by the tool's name. `ToolCallView` draws the frame every call has - the tool,
     who sees it, its status and duration, the record of questions it asked - and leaves what is
