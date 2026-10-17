@@ -10,6 +10,7 @@
 
 import {api} from './api';
 import {actorKey} from './mention';
+import {isOwn} from './messages';
 import type {ActorId, Message, Unread} from './types';
 
 /** More new messages than this are shown as such. */
@@ -22,7 +23,7 @@ export function unreadLabel(count: number): string {
 
 /** Whether `message` was said by someone other than `me`. */
 export function isOthers(message: Message, me: ActorId): boolean {
-  return message.sender_id !== undefined && actorKey(message.sender_id) !== actorKey(me);
+  return message.sender_id !== undefined && !isOwn(message, me);
 }
 
 /** Whether `message` mentions `me` - by name or as one of everyone. */

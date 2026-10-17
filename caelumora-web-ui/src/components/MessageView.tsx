@@ -3,13 +3,13 @@
 
 import React, {useState} from 'react';
 import {Brain, Check, ChevronDown, ChevronRight, Copy, EyeOff, Info} from 'lucide-react';
-import type {ChannelMember, Message, ToolCall} from '../types';
+import type {ActorId, ChannelMember, Message, ToolCall} from '../types';
 import type {ChannelArtifacts, WorkspaceFiles} from '../api';
 import type {Page} from '../page';
 import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {mentionedHandles} from '../mention';
-import {formatTimestamp, usageGroups} from '../messages';
+import {formatTimestamp, isOwn, usageGroups} from '../messages';
 import {HoverCard} from './HoverCard';
 import {UsageStats} from './UsageStats';
 import {ToolCallView} from './ToolCallView';
@@ -131,6 +131,8 @@ export const MessageFooter: React.FC<{message: Message; actions?: React.ReactNod
 
 interface MessageViewProps {
   message: Message;
+  /** Who views it: their own messages stand on the right, in a colour of their own (issue 407). */
+  me: ActorId;
   /** The channel's members, for highlighting `@`-mentions. */
   members: ChannelMember[];
   /** Labels shown next to the sender, e.g. "internal". */
@@ -154,43 +156,46 @@ interface MessageViewProps {
   endedCommands?: ReadonlySet<string>;
 }
 
-export const MessageView: React.FC<MessageViewProps> = ({message: msg, members, badges, actions, className, files, filesVersion, artifacts, onSelectPage, onInterruptCall, onKillCommand, endedCommands}) => (
-  <div
-    className={cn(
-      "max-w-[80%] p-3 rounded-lg shadow-xs",
-      msg.role === 'User'
-        ? "ml-auto bg-blue-600 text-white rounded-br-none"
-        : "bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600",
-      className
-    )}
-  >
-    <div className="text-xs font-semibold mb-1 uppercase tracking-wider flex items-center gap-2">
-      <span className="opacity-70">{msg.sender_name || msg.role}</span>
-      {badges?.map(badge => (
-        <span key={badge} className="opacity-70 normal-case font-normal px-1.5 rounded-sm border border-current">{badge}</span>
-      ))}
-    </div>
-
-    {msg.reasoning && <Reasoning text={msg.reasoning} ownerOnly={msg.reasoning_visibility === 'owner'} />}
-
-    {msg.content && (
-      <MarkdownMessage
-        content={msg.content}
-        invert={msg.role === 'User'}
-        hardBreaks={msg.role === 'User'}
-        mentions={mentionedHandles(msg, members)}
-      />
-    )}
-
-    {msg.tool_calls && msg.tool_calls.length > 0 && (
-      <div className="mt-2 space-y-2">
-        {msg.tool_calls.map((call, cidx) => (
-          <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectPage={onSelectPage}
-            onInterrupt={onInterruptCall && call.id ? () => onInterruptCall(call) : undefined} onKillCommand={onKillCommand} endedCommands={endedCommands} />
+export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, members, badges, actions, className, files, filesVersion, artifacts, onSelectPage, onInterruptCall, onKillCommand, endedCommands}) => {
+  const own = isOwn(msg, me);
+  return (
+    <div
+      className={cn(
+        "max-w-[80%] p-3 rounded-lg shadow-xs",
+        own
+          ? "ml-auto bg-blue-600 text-white rounded-br-none"
+          : "bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600",
+        className
+      )}
+    >
+      <div className="text-xs font-semibold mb-1 uppercase tracking-wider flex items-center gap-2">
+        <span className="opacity-70">{msg.sender_name || msg.role}</span>
+        {badges?.map(badge => (
+          <span key={badge} className="opacity-70 normal-case font-normal px-1.5 rounded-sm border border-current">{badge}</span>
         ))}
       </div>
-    )}
 
-    <MessageFooter message={msg} actions={actions} />
-  </div>
-);
+      {msg.reasoning && <Reasoning text={msg.reasoning} ownerOnly={msg.reasoning_visibility === 'owner'} />}
+
+      {msg.content && (
+        <MarkdownMessage
+          content={msg.content}
+          invert={own}
+          hardBreaks={msg.role === 'User'}
+          mentions={mentionedHandles(msg, members)}
+        />
+      )}
+
+      {msg.tool_calls && msg.tool_calls.length > 0 && (
+        <div className="mt-2 space-y-2">
+          {msg.tool_calls.map((call, cidx) => (
+            <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectPage={onSelectPage}
+              onInterrupt={onInterruptCall && call.id ? () => onInterruptCall(call) : undefined} onKillCommand={onKillCommand} endedCommands={endedCommands} />
+          ))}
+        </div>
+      )}
+
+      <MessageFooter message={msg} actions={actions} />
+    </div>
+  );
+};

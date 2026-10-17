@@ -11,7 +11,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [223](223-full-inbox-drops-events.md) | open | high | bug | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
 | [385](385-inbox-lost-on-restart.md) | open | medium | bug | An actor's inbox is a queue in memory, so a restart loses what was routed to it and not yet taken in - a change to a message, a request, a command - for good. |
 | [406](406-personality-frozen-in-running-agents.md) | open | medium | bug | A running agent's actor takes its personality once, when it is built, while other parts of the runtime read it anew from the store, so a change of a personality reaches some of its uses and not others - its limiting roles among them. |
-| [407](407-own-messages-by-role.md) | open | medium | bug | The web UI puts a message on the right, in the colour of one's own, whenever its role is `User`, so in a channel with several people the messages of all of them look like the viewer's own. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 
 ## Persistence

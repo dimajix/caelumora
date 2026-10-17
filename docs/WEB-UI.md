@@ -243,6 +243,10 @@ others say in it as the global stream announces it.
     the notice the chat shows live, once; a turn that finished shows nothing of its own. A call that
     is not public is marked with how far it may travel. A message's reasoning, where the server
     hands it out, is folded above its content.
+*   **Whose a message is.** The user's own messages - those whose sender is their actor - stand on
+    the right, in a colour of their own; everybody else's, other users' as well as agents', on the
+    left, named above them. The role decides only that a person's message keeps its line breaks.
+    The context and history panels colour messages by the same rule.
 *   **Tool calls** are shown by their presentation, which the tool declares and the agent stamps on
     each call, never by the tool's name. `ToolCallView` draws the frame every call has - the tool,
     who sees it, its status and duration, the record of questions it asked - and leaves what is

@@ -2,6 +2,12 @@
 
 import type {ActorId, GivenUpReason, HistoryItem, Message, PlanStep, TokenUsage, ToolResult, ToolVisibility} from './types';
 import {classificationLabel} from './confidentiality';
+import {actorKey} from './mention';
+
+/** Whether `message` was said by `me` (issue 407); one without a sender is no one's own. */
+export function isOwn(message: Message, me: ActorId): boolean {
+  return message.sender_id !== undefined && actorKey(message.sender_id) === actorKey(me);
+}
 
 export function formatArguments(args: unknown): string {
   return typeof args === 'string' ? args : JSON.stringify(args);

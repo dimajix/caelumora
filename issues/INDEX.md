@@ -268,7 +268,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [401](401-mention-everyone.md) | done | A user who wants every participant of a channel to respond has to `@`-mention each of them by name; there is no `@all` or `@channel` that addresses them all at once. |
 | [404](404-unread-and-mentions-in-overview.md) | done | The channel list shows only each channel's name, so a user does not see in which channels new messages arrived since they last looked, nor where someone `@`-mentioned them, without opening every channel. |
 | [405](405-gauge-stale-after-compact-command.md) | done | After an agent compacted its context on `/compact`, the web UI's gauge still shows how full the context was before, until the page is loaded again. |
-| [407](407-own-messages-by-role.md) | open | The web UI puts a message on the right, in the colour of one's own, whenever its role is `User`, so in a channel with several people the messages of all of them look like the viewer's own. |
+| [407](407-own-messages-by-role.md) | done | The web UI puts a message on the right, in the colour of one's own, whenever its role is `User`, so in a channel with several people the messages of all of them look like the viewer's own. |
 
 ## Context and knowledge
 
