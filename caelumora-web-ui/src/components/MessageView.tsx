@@ -154,26 +154,36 @@ interface MessageViewProps {
   onKillCommand?: (commandId: string) => void;
   /** The commands ended already in the channel. */
   endedCommands?: ReadonlySet<string>;
+  /**
+   * Where it stands among the messages of its turn shown together (issue
+   * 415): not `first`, it is not headed with its sender's name; not `last`,
+   * it has no corner pointing at its sender. Shown alone where not given.
+   */
+  inTurn?: {first: boolean; last: boolean};
 }
 
-export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, participants, badges, actions, className, files, filesVersion, artifacts, onSelectPage, onInterruptCall, onKillCommand, endedCommands}) => {
+export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, participants, badges, actions, className, files, filesVersion, artifacts, onSelectPage, onInterruptCall, onKillCommand, endedCommands, inTurn}) => {
   const own = isOwn(msg, me);
+  const named = inTurn?.first ?? true;
+  const last = inTurn?.last ?? true;
   return (
     <div
       className={cn(
         "max-w-[80%] p-3 rounded-lg shadow-xs",
         own
-          ? "ml-auto bg-blue-600 text-white rounded-br-none"
-          : "bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600",
+          ? cn("ml-auto bg-blue-600 text-white", last && "rounded-br-none")
+          : cn("bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-600", last && "rounded-bl-none"),
         className
       )}
     >
-      <div className="text-xs font-semibold mb-1 uppercase tracking-wider flex items-center gap-2">
-        <span className="opacity-70">{msg.sender_name || msg.role}</span>
-        {badges?.map(badge => (
-          <span key={badge} className="opacity-70 normal-case font-normal px-1.5 rounded-sm border border-current">{badge}</span>
-        ))}
-      </div>
+      {(named || (badges && badges.length > 0)) && (
+        <div className="text-xs font-semibold mb-1 uppercase tracking-wider flex items-center gap-2">
+          {named && <span className="opacity-70">{msg.sender_name || msg.role}</span>}
+          {badges?.map(badge => (
+            <span key={badge} className="opacity-70 normal-case font-normal px-1.5 rounded-sm border border-current">{badge}</span>
+          ))}
+        </div>
+      )}
 
       {msg.reasoning && <Reasoning text={msg.reasoning} ownerOnly={msg.reasoning_visibility === 'owner'} />}
 

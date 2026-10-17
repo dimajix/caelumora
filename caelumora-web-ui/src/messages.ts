@@ -294,6 +294,32 @@ export function chatRows(messages: Message[]): ChatRow[] {
   return rows;
 }
 
+/** The turn a row was said in, or `null` for what was said outside of any - a user's message, a notice of the channel. */
+export function rowTurn(row: ChatRow): string | null {
+  return row.kind === 'message' ? row.message.turn_id ?? null : row.turnId;
+}
+
+/**
+ * The rows `rows` are shown in grouped by turn (issue 415), each group as
+ * the range `start..end` of them: consecutive rows of the same turn form one
+ * group, every row outside of a turn one of its own. A turn interrupted by
+ * another's - agents answering at once - goes on in a group of its own, and
+ * so does one where the new messages begin, `breakAt`.
+ */
+export function turnGroups(rows: ChatRow[], breakAt: number | null): {turnId: string | null; start: number; end: number}[] {
+  const groups: {turnId: string | null; start: number; end: number}[] = [];
+  rows.forEach((row, index) => {
+    const turnId = rowTurn(row);
+    const last = groups[groups.length - 1];
+    if (last && turnId !== null && last.turnId === turnId && index !== breakAt) {
+      last.end = index + 1;
+    } else {
+      groups.push({turnId, start: index, end: index + 1});
+    }
+  });
+  return groups;
+}
+
 // The month by name ("29. Sept. 2026, 15:24"): at the small size timestamps
 // are shown in, dots between digits are hard to make out.
 const DATE_TIME = new Intl.DateTimeFormat(undefined, {

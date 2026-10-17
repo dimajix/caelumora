@@ -1,6 +1,6 @@
 # 415 — The chat does not show which messages belong to the same turn
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -73,3 +73,15 @@ which others belong to its turn.
 ## History
 
 **2026-10-17:** Opened, with options A to D; A and D chosen to be built first.
+
+**2026-10-17:** A and D built on the branch `issue-415-turn-grouping`: `turnGroups` (`messages.ts`)
+groups the rows of `chatRows` by turn, `MessageView` takes where a message stands in its group
+(`inTurn`), and `ChatView` shades the groups of the turn pointed at. To be tried in use before it is
+done.
+
+**2026-10-17:** Adjusted after a first look in use: the footers of every message are shown always -
+hidden, they took their room all the same, and none showed while the turn went on -, and a turn of
+more than one message is indented as a whole, its frame on hover flush with the messages alone and
+as far from its messages as they are from their content.
+
+**2026-10-17:** Done: the maintainer accepted A and D as adjusted; B and C stay in reserve.
