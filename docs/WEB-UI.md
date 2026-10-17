@@ -344,8 +344,9 @@ without a known size, the tokens alone. Its hover card keeps two things apart: t
 usage of all of the agent's calls in the channel as totals - which grow much faster than the
 context, since every call is given the whole context again. Above the list, "Total tokens" adds up
 the usage of the agents shown. An agent's numbers are updated by each of its calls and fetched again
-when its turn ends or it compacted its context, which also counts calls whose messages were not
-published. An external agent reports none.
+when its turn ends, it carried out a command - `/compact` ends without the end of a turn - or it
+compacted its context, which also counts calls whose messages were not published. An external agent
+reports none.
 
 Each agent has a dot for where it stands, starting from the snapshot and following its state
 changes: idle, working, carrying out a command, busy with something of its own - what, as its

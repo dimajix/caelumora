@@ -49,7 +49,8 @@ behind it, in order, then commit once (`AgentBody::take_in`):
 *   **`Busy`** does something of the agent's own accord, besides answering - the counterpart of
     `CarryingOutCommand`, which it does when asked. So far that is compacting its context; it
     tells the users what it does (`ActivityStarted`) and what came of it (`ActivityFinished`), and
-    returns to `Planning`. A cancel ends it as it ends a call; a failure ends the turn.
+    returns to `Planning` - stored before `ActivityFinished` is sent, so that whoever reacts to it
+    reads the compacted context. A cancel ends it as it ends a call; a failure ends the turn.
 *   **`ExecutingTools`** runs the calls that are ready. Once every call of the step has finished,
     the tool message goes into the turn and the agent returns to `Planning` - or to `Reflecting` if
     a tool asked for the turn to end. Calls that wait for a person take it to `WaitingForUser`. A
