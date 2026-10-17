@@ -266,7 +266,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [384](384-malformed-query-answered-as-plain-text.md) | done | A malformed query string, such as `?limit=abc`, is answered with a plain-text `400` instead of problem details with a `code`, since axum's `Query` extractor is used unwrapped. |
 | [401](401-mention-everyone.md) | done | A user who wants every participant of a channel to respond has to `@`-mention each of them by name; there is no `@all` or `@channel` that addresses them all at once. |
 | [404](404-unread-and-mentions-in-overview.md) | open | The channel list shows only each channel's name, so a user does not see in which channels new messages arrived since they last looked, nor where someone `@`-mentioned them, without opening every channel. |
-| [405](405-gauge-stale-after-compact-command.md) | open | After an agent compacted its context on `/compact`, the web UI's gauge still shows how full the context was before, until the page is loaded again. |
+| [405](405-gauge-stale-after-compact-command.md) | done | After an agent compacted its context on `/compact`, the web UI's gauge still shows how full the context was before, until the page is loaded again. |
 
 ## Context and knowledge
 

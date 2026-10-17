@@ -897,6 +897,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             // whom: the stream carries `to` only to the issuer.
             const notice = commandNotice(turn_id, command, args, envelope.context.sender_id, envelope.context.sender_name, undefined, envelope.timestamp, {output, private: to !== null});
             setMessages(prev => prev.some(m => m.id === notice.id) ? prev.map(m => m.id === notice.id ? notice : m) : [...prev, notice]);
+            // A command turn ends without `TurnFinished`, and may have
+            // compacted the context (issue 405): what the agent uses is
+            // read again.
+            readUsage();
           } else {
             // A command of the channel: shown, but not part of the history.
             const notice: Message = {

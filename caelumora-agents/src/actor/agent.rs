@@ -597,8 +597,14 @@ impl AgentActor {
     /// once before the call; the call follows whatever came of it. A cancel
     /// ends it, as it ends a call; a failure ends the turn - the call it
     /// was to make room for would not fit -, the transcript as it was.
-    async fn handle_busy(&self, turn: &mut Turn<'_>, output: &dyn EventSender) -> Result<ActorState> {
+    ///
+    /// Compacted, the actor goes on to `Planning` and stores its state
+    /// before `ActivityFinished` announces it, as `end_turn` does before
+    /// `TurnFinished` (issue 405): whoever reacts to it - a user interface
+    /// reading what the agent uses - reads the context as it is now.
+    async fn handle_busy(&self, state: &mut AgentChannelState, output: &dyn EventSender) -> Result<ActorState> {
         const ACTIVITY: &str = "compacting its context";
+        let mut turn = self.turn_under_way(state)?;
         turn.try_compaction();
         let turn_id = turn.turn_id();
         turn.send_event(ActorEvent::ActivityStarted { turn_id, activity: ACTIVITY.to_string() }, output).await?;
@@ -610,14 +616,15 @@ impl AgentActor {
                 info!("Interrupting the compaction of agent {} {}", self.id(), turn.agent_name());
                 return Ok(ActorState::Busy);
             }
-            compacted = self.compaction.compact(turn) => compacted,
+            compacted = self.compaction.compact(&mut turn) => compacted,
         };
         let compaction = compacted.with_context(|| format!("component '{}' could not compact the context", self.compaction.id))?;
         let said = match compaction {
             Some(compaction) => compaction.describe(turn.agent_name()),
             None => format!("{} found nothing to compact: it keeps the newest part of its context as it is.", turn.agent_name()),
         };
-        turn.send_event(ActorEvent::ActivityFinished { turn_id, activity: ACTIVITY.to_string(), output: said }, output).await?;
+        self.settle(state, ActorState::Planning).await;
+        self.turn_under_way(state)?.send_event(ActorEvent::ActivityFinished { turn_id, activity: ACTIVITY.to_string(), output: said }, output).await?;
         Ok(ActorState::Planning)
     }
 
@@ -883,7 +890,7 @@ impl Actor for AgentActor {
                 }
                 ActorState::Planning => Some(self.handle_planning(&mut self.turn_under_way(&mut state)?, &*output).await?),
                 ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut self.turn_under_way(&mut state)?, &*output).await?),
-                ActorState::Busy => Some(self.handle_busy(&mut self.turn_under_way(&mut state)?, &*output).await?),
+                ActorState::Busy => Some(self.handle_busy(&mut state, &*output).await?),
                 ActorState::Cancelling => Some(self.handle_cancelling(&mut state, &*output).await?),
                 ActorState::Reflecting => Some(self.handle_reflecting(&mut state, &*output).await?),
             }) }.instrument(span.clone()).await;

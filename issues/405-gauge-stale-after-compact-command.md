@@ -1,6 +1,6 @@
 # 405 — The context gauge keeps the old size after `/compact`
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** User interaction
@@ -41,3 +41,10 @@ and `TurnFinished` fetches it again -, but it breaks the rule `end_turn` follows
 
 - **2026-10-17** — Opened from a report of the maintainer: after a compaction, the web UI shows the
   old context size of the agent; a reload fixes it.
+- **2026-10-17** — The web UI fetches the usage again on an agent's `CommandExecuted` (with a
+  `turn_id`), as on `TurnFinished`; WEB-UI.md says so. Whether `ActivityFinished` should follow
+  the store is still open.
+- **2026-10-17** — Decided by the maintainer: it should. `handle_busy` takes the agent's state,
+  goes on to `Planning` and stores it (`settle`) before it sends `ActivityFinished`, as `end_turn`
+  does before `TurnFinished`. No test pins the order: in the test world the store is done before
+  the event is seen either way, and a store that holds a write does not exist there.
