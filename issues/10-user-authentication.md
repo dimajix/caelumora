@@ -1,6 +1,6 @@
 # 10 — User authentication
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** high
 **Area:** Identity and access management
@@ -167,3 +167,15 @@ without it treats every authenticated user as the same channel participant.
 - **2026-10-16** — The TUI no longer fabricates its user: `--user <name>` names whom it acts for,
   authenticated through the `UserManager` with `Credential::Trusted` - no secret, since it runs in
   the runtime's process -, and recorded with their roles as a login records them.
+- **2026-10-17** — Done. Checked against *Done when*: every route of the REST API, the plugins'
+  included, sits behind `require_auth` (event streams behind `require_stream_auth`), except
+  `/auth/login` and `/auth/logout`; the REST server derives every `SecurityContext` from the
+  logged-in user and the TUI from the user the `UserManager` authenticates; `DummySecurityManager`
+  is gone, the default policy is `OwnershipPolicy` and `allow_all` must be configured; the web UI
+  logs in as decided above. What was left open here was done elsewhere: messages come from the
+  sender's own `UserActor` ([09](09-creating-channels.md), [11](11-agent-ownership.md)), event
+  streams end with their token ([31](31-session-renewal-from-ui.md),
+  [33](33-sse-outlives-its-token.md)), and since [25](25-file-user-backend.md) users can have real
+  passwords. The known limit "no rate limiting on `/auth/login`" is now
+  [402](402-login-attempts-unlimited.md). API keys or bearer tokens for scripts remain an idea
+  without an issue until something needs them.
