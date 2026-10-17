@@ -548,7 +548,8 @@ is given to the model as the channel's notice - "Channel notice: @alice added @b
 of its profile and unmarked by any participant, as a system message where the model keeps one
 (`SystemMessages`), else as a user message. The ContextResolver words it, so that the transcript
 keeps what happened rather than words; an external agent's remote agent is given the same
-(`ModelProfile::given_messages`).
+(`ModelProfile::given_messages`). With `changes_only`, the roster is told again as a whole when it
+changed, without an account of its own of what changed: that is the notices' (issue 410).
 
 ### The channel's language
 
