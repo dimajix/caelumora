@@ -749,11 +749,16 @@ The built-in moderator, `policy_moderator` (the default), routes the way every c
 *   every agent a message `@`-mentions is asked to respond;
 *   a chain between agents ends at a limit (see below).
 
-Whom it asks when a message mentions no agent is the channel's `ResponderPolicy`, which is told who
-wrote the message, what was said - the message, or the messages of a turn - and which agents could
-answer, as an `ActorDescription` each: what of an actor is public to everyone in its channel, its
-id, name and introduction (`Actor::describe`), and nothing a policy from another crate could act on.
-A new way of choosing who answers is a new policy:
+Whom it asks when a message mentions no agent is the channel's `ResponderPolicy`, which is told the
+event to answer, the conversation and which agents could answer, as an `ActorDescription` each:
+what of an actor is public to everyone in its channel, its id, name and introduction
+(`Actor::describe`), and nothing a policy from another crate could act on. The conversation ends
+with what the event said - the message, or the messages of a turn -; before it come the last
+messages heard, as many as the moderator's `context_messages` (default 10), as they stand after
+every change, each naming its sender (issue 414). The moderator keeps them itself, from what it
+routes: a message of a turn once the turn ended, so that a long turn does not push out what was said
+before it, and nothing of a turn given up. After a restart it starts empty. A new way of choosing
+who answers is a new policy:
 
 | Policy | Who responds to a message without a mention |
 |---|---|
@@ -774,7 +779,11 @@ from asking to respond, not from delivering.
 `decision_policy`, of the plugin `caelumora-decision` (issue 403), asks a decision model which of
 the agents should respond: a model that answers typed questions about a text with probabilities,
 served by Ollama since 0.35 at `/v1/systemone` (see [LLM-MODELS.md](LLM-MODELS.md#decision-models)).
-It is given what was said and the candidates as they are introduced. Up to 25 candidates it asks one
+It is given the conversation and the candidates as they are introduced. Each message goes to the
+model as a model is given one of another participant (see
+[AGENT-TURN.md](AGENT-TURN.md#who-said-what)), its sender marked as `sender_format` and
+`sender_style` say - by default `@handle: ...`, the name its options have; what was said before is
+left out beyond about 4,096 tokens, the oldest first. Up to 25 candidates it asks one
 `choice` over their handles and "nobody": the most probable is asked to respond - nobody, if that is
 most probable - and every other at or above `threshold` besides, at most `max_responders`. Beyond 25
 it asks whether each should respond, up to 64, and asks those at or above `threshold`.
@@ -785,10 +794,11 @@ an answer naming no option, more than 64 candidates - asks whom `on_failure` say
 default), so that nothing said is left unanswered in silence, or `none`. It is logged without
 anything that was said.
 
-What was said leaves the system where the endpoint lies outside it. The policy sends it only if
-every message may flow to the endpoint's `destination` - `public` unless configured, as for an MCP
-server - asked in the context of the event routed, in which the endpoint's credential is resolved
-too; otherwise it asks as on failure. Since its parameters say where what it is given goes, an
+What was said leaves the system where the endpoint lies outside it. The policy sends a message only
+if it may flow to the endpoint's `destination` - `public` unless configured, as for an MCP server -
+asked in the context of the event routed, in which the endpoint's credential is resolved too. What
+was said before is left out if it may not; if what is to be answered may not, it asks as on
+failure. Since its parameters say where what it is given goes, an
 operator configures it alone (`ComponentKind::operator_only`): a channel created on request names it
 only through a `ref` to preconfigured components, while a template may write it.
 
@@ -801,6 +811,8 @@ only through a `ref` to preconfigured components, while a template may write it.
 | `max_responders` | How many are asked at most | `1` |
 | `on_failure` | Whom to ask when the model does not choose: `all` or `none` | `all` |
 | `destination` | What the server is cleared for | `public` |
+| `sender_format` | How the model is told who said what: `none`, `prefix` or `xml` | `prefix` |
+| `sender_style` | By which name a sender is marked: `handle` or `name` | `handle` |
 
 What a moderator decides is all a participant is told: `Moderator::route` returns whom an event is
 delivered to and as what, and the channel delivers exactly that; it has no broadcast of its own.

@@ -8,9 +8,18 @@
 //! other above `threshold`, at most `max_responders`. Beyond that it asks
 //! one `noul` per candidate, up to 64, and asks those above `threshold`.
 //!
+//! It is given the conversation (issue 414): what was said before, as far
+//! as the moderator keeps it, and what is to be answered. Each message is
+//! given as a model is given one of another participant, its sender marked
+//! as its `ModelProfile` says - `prefix` by `handle` unless configured, so
+//! that a sender is named as the options are. Beyond `MAX_STATE_TOKENS`
+//! the oldest is left out first.
+//!
 //! What was said leaves the system where the endpoint lies outside it: it
-//! is sent only if every message may flow to the endpoint's `destination`
-//! (`public` unless configured), asked in the context of the event routed.
+//! is sent only if it may flow to the endpoint's `destination` (`public`
+//! unless configured), asked in the context of the event routed. What was
+//! said before is left out if it may not; what is to be answered keeps the
+//! model from choosing.
 //! Whatever keeps the model from choosing - that, a timeout, an error, too
 //! many candidates - asks whom `on_failure` says: everyone by default, so
 //! that nothing said is left unanswered in silence. It is logged, without
@@ -23,13 +32,14 @@ use crate::client::{Answer, DecisionClient, DecisionError, Question, MAX_OPTIONS
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
-use caelumora_model::message::Message;
+use caelumora_model::context::{ModelProfile, SenderFormat, SenderStyle};
+use caelumora_model::message::{estimated_tokens, Message, MessageId};
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
 use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
 use caelumora_runtime::moderator::ResponderPolicy;
 use serde::Deserialize;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::Arc;
 use tracing::warn;
 
@@ -40,6 +50,11 @@ const NOBODY: &str = "nobody";
 
 /// The name of the `choice` question.
 const RESPONDENT: &str = "respondent";
+
+/// How many tokens what was said may take at most, as `estimated_tokens`
+/// estimates them: half of the 8,192 a decision model reads, the rest left
+/// to the questions - up to 26 options, each with its introduction.
+const MAX_STATE_TOKENS: u64 = 4096;
 
 /// Whom to ask when the model does not choose.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -76,9 +91,20 @@ struct DecisionPolicyConfig {
     /// public.
     #[serde(default)]
     destination: Option<Classification>,
+    /// How the model is told who said what (issue 135): `prefix` unless
+    /// named, by `handle` unless named.
+    #[serde(default = "SenderFormat::configured_default")]
+    sender_format: SenderFormat,
+    #[serde(default)]
+    sender_style: SenderStyle,
 }
 
 impl DecisionPolicyConfig {
+    /// How the model is given what was said.
+    fn profile(&self) -> ModelProfile {
+        ModelProfile { sender_format: self.sender_format, sender_style: self.sender_style, ..ModelProfile::default() }
+    }
+
     /// Nothing if the threshold is a probability and at least one may be
     /// asked to respond.
     ///
@@ -130,6 +156,7 @@ pub struct DecisionPolicy {
     max_responders: usize,
     on_failure: OnFailure,
     destination: Classification,
+    profile: ModelProfile,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
 }
 
@@ -154,18 +181,15 @@ impl ResponderPolicy for DecisionPolicy {
 }
 
 impl DecisionPolicy {
-    /// Whom of `candidates` the model chooses to respond to `messages`.
+    /// Whom of `candidates` the model chooses to respond to what `event`
+    /// said, the end of the conversation `messages`.
     ///
     /// # Errors
-    /// `NotCleared` if a message may not flow to the destination, asked in
-    /// the context of `event`; `TooMany` beyond 64 candidates; `Model` if
-    /// the model gave no answer, or one that names no option.
+    /// `NotCleared` if what `event` said may not flow to the destination;
+    /// `TooMany` beyond 64 candidates; `Model` if the model gave no answer,
+    /// or one that names no option.
     async fn decide(&self, event: &Envelope, messages: &[Message], candidates: &[ActorDescription]) -> Result<Vec<ActorId>, Undecided> {
-        let heard: Vec<&Message> = messages.iter().filter(|message| message.is_heard()).collect();
-        if heard.iter().any(|message| !self.confidentiality.may_publish(&event.security, &message.classification, &self.destination)) {
-            return Err(Undecided::NotCleared(self.client.shown()));
-        }
-        let state = heard.iter().filter_map(|message| message.content.as_deref()).collect::<Vec<_>>().join("\n\n");
+        let state = self.state(event, messages)?;
         let options = options(candidates);
         if candidates.len() < MAX_OPTIONS {
             let answers = self.client.ask(&event.security, &state, &choice(candidates, &options)).await?;
@@ -180,6 +204,40 @@ impl DecisionPolicy {
         } else {
             Err(Undecided::TooMany(candidates.len()))
         }
+    }
+
+    /// What the model judges: the conversation `messages`, each message
+    /// heard as a model is given one of another participant, one after
+    /// another. What was said before is left out if it may not flow to the
+    /// destination, asked in the context of `event`, and beyond
+    /// `MAX_STATE_TOKENS` the oldest first.
+    ///
+    /// # Errors
+    /// `NotCleared` if what `event` said may not flow to the destination.
+    fn state(&self, event: &Envelope, messages: &[Message]) -> Result<String, Undecided> {
+        let answered: HashSet<MessageId> = event.event.messages().iter().map(|message| message.id).collect();
+        // Each text, and whether it is to be answered.
+        let mut texts = VecDeque::new();
+        for message in messages.iter().filter_map(Message::as_heard) {
+            let to_answer = answered.contains(&message.id);
+            if !self.confidentiality.may_publish(&event.security, &message.classification, &self.destination) {
+                if to_answer {
+                    return Err(Undecided::NotCleared(self.client.shown()));
+                }
+                continue;
+            }
+            if let Some(text) = self.profile.given(message, ActorId::None, false).content {
+                texts.push_back((text, to_answer));
+            }
+        }
+        let separators = 2 * texts.len().saturating_sub(1);
+        let mut bytes = texts.iter().map(|(text, _)| text.len()).sum::<usize>() + separators;
+        while estimated_tokens(bytes) > MAX_STATE_TOKENS && texts.front().is_some_and(|(_, to_answer)| !to_answer) {
+            if let Some((text, _)) = texts.pop_front() {
+                bytes = bytes.saturating_sub(text.len() + 2);
+            }
+        }
+        Ok(texts.into_iter().map(|(text, _)| text).collect::<Vec<_>>().join("\n\n"))
     }
 
     /// Whom the `choice` `answer` chooses: nobody if it chose nobody, else
@@ -262,6 +320,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             let config: DecisionPolicyConfig = config_of_params(&descriptor.params)?;
             config.check()?;
             let secret_manager = Arc::clone(context.service::<SecretManager>()?);
+            let profile = config.profile();
             let client = DecisionClient::new(config.endpoint, config.model, config.keep_alive, secret_manager)
                 .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
             let policy = DecisionPolicy {
@@ -270,6 +329,7 @@ pub fn register(registry: &mut ComponentRegistry) {
                 max_responders: config.max_responders,
                 on_failure: config.on_failure,
                 destination: config.destination.unwrap_or(Classification::PUBLIC),
+                profile,
                 confidentiality: Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
             };
             let mut facets = ComponentFacets::empty();
@@ -292,7 +352,7 @@ mod tests {
     use caelumora_model::store::memory::MemoryStore;
     use caelumora_runtime::channel::ChannelLoop;
     use caelumora_model::confidentiality::{ConfidentialityRules, Confidentiality};
-    use caelumora_model::message::MessageRole;
+    use caelumora_model::message::{MessageId, MessageRole};
     use caelumora_model::security::{AllowAllPolicy, SecurityContext};
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
@@ -343,12 +403,14 @@ mod tests {
         let mut config: DecisionPolicyConfig = config_of_params(&params).unwrap();
         config.endpoint = RemoteEndpoint::new(url);
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
+        let profile = config.profile();
         DecisionPolicy {
             client: DecisionClient::new(config.endpoint, config.model, config.keep_alive, secret_manager).unwrap(),
             threshold: config.threshold,
             max_responders: config.max_responders,
             on_failure: config.on_failure,
             destination: config.destination.unwrap_or(Classification::PUBLIC),
+            profile,
             confidentiality: Arc::new(ConfidentialityRules::default()),
         }
     }
@@ -357,13 +419,24 @@ mod tests {
         ActorDescription { id: ActorId::Agent(AgentId::new()), name: Name::new(name).unwrap(), introduction: introduction.map(|text| Introduction::new(text).unwrap()) }
     }
 
-    /// A user's message `content`, classified `classification`, and the
-    /// event that says it.
+    /// The message `content` of `sender`, called `name`, in `role`,
+    /// classified `classification`.
+    fn message(sender: ActorId, name: &str, role: MessageRole, content: &str, classification: Classification) -> Message {
+        Message { id: MessageId::new(), sender_id: sender, sender_name: name.to_string(), role, content: Some(content.to_string()), ..Message::new(classification) }
+    }
+
+    /// The event that says `message`, the last of `conversation`, and the
+    /// conversation.
+    fn saying(conversation: Vec<Message>) -> (Envelope, Vec<Message>) {
+        let message = conversation.last().cloned().unwrap();
+        let context = EventContext::new(Default::default(), Default::default(), message.sender_id, message.sender_name.clone());
+        (Envelope::new(SecurityContext::default(), context, ActorEvent::CompleteMessageGenerated(message)), conversation)
+    }
+
+    /// A message `content` of Alice, classified `classification`, and the
+    /// event that says it, with nothing said before.
     fn said(content: &str, classification: Classification) -> (Envelope, Vec<Message>) {
-        let sender = ActorId::User(UserId::new());
-        let message = Message { sender_id: sender, role: MessageRole::User, content: Some(content.to_string()), ..Message::new(classification) };
-        let context = EventContext::new(Default::default(), Default::default(), sender, "alice".to_string());
-        (Envelope::new(SecurityContext::default(), context, ActorEvent::CompleteMessageGenerated(message.clone())), vec![message])
+        saying(vec![message(ActorId::User(UserId::new()), "Alice", MessageRole::User, content, classification)])
     }
 
     fn choosing(choice: &str, probabilities: Value) -> Value {
@@ -382,7 +455,7 @@ mod tests {
         assert_eq!(chosen, [coder.id]);
         assert_eq!(fake.asked(), [json!({
             "model": "nimble",
-            "state": "The test fails.",
+            "state": "@alice: The test fails.",
             "keep_alive": "5m",
             "questions": { "respondent": {
                 "type": "choice",
@@ -394,6 +467,53 @@ mod tests {
                 },
             } },
         })]);
+    }
+
+    /// Issue 414: the model is given the conversation, each message as a
+    /// model is given one of another participant - an agent's answer as it
+    /// is heard -, its sender marked as configured.
+    #[tokio::test]
+    async fn the_conversation_is_sent_with_who_said_what() {
+        let fake = FakeModel::answering(choosing("reviewer", json!({ "reviewer": 0.9 })));
+        let url = serve(fake.clone()).await;
+        let (alice, coder) = (ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
+        let (event, messages) = saying(vec![
+            message(alice, "Alice", MessageRole::User, "The test fails.", Classification::PUBLIC),
+            message(coder, "Coder", MessageRole::Assistant, "Fixed it.", Classification::PUBLIC),
+            message(alice, "Alice", MessageRole::User, "Thanks, please have a look.", Classification::PUBLIC),
+        ]);
+        let candidates = vec![agent("Reviewer", None), agent("Coder", None)];
+
+        policy(&url, json!({})).choose(&event, &messages, candidates.clone()).await;
+        policy(&url, json!({ "sender_format": "xml", "sender_style": "name" })).choose(&event, &messages, candidates.clone()).await;
+        policy(&url, json!({ "sender_format": "none" })).choose(&event, &messages, candidates).await;
+
+        let states: Vec<Value> = fake.asked().iter().map(|asked| asked["state"].clone()).collect();
+        assert_eq!(states, [
+            "@alice: The test fails.\n\n@coder: Fixed it.\n\n@alice: Thanks, please have a look.",
+            "<message from=\"Alice\">The test fails.</message>\n\n<message from=\"Coder\">Fixed it.</message>\n\n<message from=\"Alice\">Thanks, please have a look.</message>",
+            "The test fails.\n\nFixed it.\n\nThanks, please have a look.",
+        ]);
+    }
+
+    /// Issue 414: what was said before is left out where it may not go, and
+    /// beyond the budget, the oldest first - what is to be answered never.
+    #[tokio::test]
+    async fn what_was_said_before_is_left_out_where_it_may_not_go_and_beyond_the_budget() {
+        let fake = FakeModel::answering(choosing("a", json!({ "a": 1.0 })));
+        let url = serve(fake.clone()).await;
+        let alice = ActorId::User(UserId::new());
+        let long = "x".repeat(4 * MAX_STATE_TOKENS as usize);
+        let (event, messages) = saying(vec![
+            message(alice, "Alice", MessageRole::User, &long, Classification::PUBLIC),
+            message(alice, "Alice", MessageRole::User, "Internal matters.", Classification::general(Confidentiality::Internal)),
+            message(alice, "Alice", MessageRole::User, "Before.", Classification::PUBLIC),
+            message(alice, "Alice", MessageRole::User, "Now.", Classification::PUBLIC),
+        ]);
+
+        policy(&url, json!({})).choose(&event, &messages, vec![agent("A", None)]).await;
+
+        assert_eq!(fake.asked()[0]["state"], "@alice: Before.\n\n@alice: Now.");
     }
 
     #[tokio::test]
@@ -466,6 +586,8 @@ mod tests {
         assert!(checked(json!({ "threshold": 1.5 })).is_err());
         assert!(checked(json!({ "max_responders": 0 })).is_err());
         assert!(checked(json!({ "on_failure": "some" })).is_err());
+        assert!(checked(json!({ "sender_format": "xml", "sender_style": "name" })).is_ok());
+        assert!(checked(json!({ "sender_format": "header" })).is_err());
         assert!(checked(json!({ "endpoint": { "url": "http://decide.example", "auth": { "type": "bearer", "secret": "DECIDE" } } })).is_ok());
         assert!(checked(json!({ "temperature": 0.1 })).is_err(), "nothing unknown");
     }

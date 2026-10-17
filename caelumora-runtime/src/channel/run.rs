@@ -743,10 +743,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_user_following_the_channel_is_told_when_a_chain_is_cut_off() {
-        use crate::moderator::policy_moderator::PolicyModerator;
+        use crate::moderator::policy_moderator::{PolicyModerator, DEFAULT_CONTEXT_MESSAGES};
         let alice = user("alice");
         let responders = ComponentImpl { id: "responders".to_string(), fail_policy: Default::default(), facet: Arc::new(BroadcastPolicy) as Arc<dyn ResponderPolicy> };
-        let moderator = Arc::new(PolicyModerator::new(responders, 1));
+        let moderator = Arc::new(PolicyModerator::new(responders, 1, DEFAULT_CONTEXT_MESSAGES));
         let channel = channel_moderated_by(&[&alice], Arc::<PolicyModerator>::clone(&moderator)).await;
         // One hop into a chain between agents, as the answer to a request.
         let talker = ActorId::Agent(AgentId::new());

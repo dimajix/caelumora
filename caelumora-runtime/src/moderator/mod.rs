@@ -40,12 +40,14 @@ pub(crate) trait Moderator : Send + Sync + Debug {
 /// the slot of the `policy_moderator`. A channel has exactly one.
 #[async_trait]
 pub trait ResponderPolicy: Send + Sync + Debug {
-    /// The agents of `candidates` to ask to respond to `messages`, what
-    /// `event` said - a message, or the messages of a turn -, by its sender
-    /// and in its context, in which whatever the policy asks is asked. The
-    /// candidates are the agents that are awake and did not say them, in no
-    /// particular order, as they are described to everyone in the channel
-    /// (issue 403).
+    /// The agents of `candidates` to ask to respond to what `event` said -
+    /// a message, or the messages of a turn -, by its sender and in its
+    /// context, in which whatever the policy asks is asked. `messages` is the
+    /// conversation, the oldest first: what was heard before, as far as the
+    /// moderator keeps it, as it stands (issue 414), and last what `event`
+    /// said; each names its sender. The candidates are the agents that are
+    /// awake and did not say what `event` said, in no particular order, as
+    /// they are described to everyone in the channel (issue 403).
     async fn choose(&self, event: &Envelope, messages: &[Message], candidates: Vec<ActorDescription>) -> Vec<ActorId>;
 }
 
