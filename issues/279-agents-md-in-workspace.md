@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Context and knowledge
+**Summary:** An agent is not told of an `AGENTS.md` in its workspace, and there is no skill that helps it write one for an existing project.
 
 ## The problem
 

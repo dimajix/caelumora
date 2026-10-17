@@ -1,7 +1,8 @@
 # 235 — An answer still being generated cannot be asked for again
 
 **Status:** done
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Summary:** An answer still being generated cannot be asked for again; only stopping every agent of the channel gets there.
 
 ## The problem
 

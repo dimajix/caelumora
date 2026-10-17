@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** Deleting a channel aborts it without a grace period, which may leave an external agent's remote tasks running.
 
 ## The problem
 

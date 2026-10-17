@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The skills an agent lists with `list_skills` are shown in the web UI as raw JSON, while loading, writing and changing a skill are shown as what they do.
 
 ## The problem
 

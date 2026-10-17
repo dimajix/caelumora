@@ -1,7 +1,10 @@
 # 59 — Relevant knowledge reaches the model only in full or by the model searching
 
 **Status:** open
-**Area:** Context & knowledge
+**Type:** feature
+**Priority:** low
+**Area:** Context and knowledge
+**Summary:** Knowledge reaches the model only in full or when the model itself searches for it; nothing selects what is relevant to the turn.
 
 ## The problem
 

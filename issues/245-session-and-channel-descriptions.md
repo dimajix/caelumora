@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** Sessions and channels have no description, so neither the users nor the agents in them learn what they are for.
 
 ## The problem
 

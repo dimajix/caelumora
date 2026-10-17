@@ -1,7 +1,10 @@
 # 298 — The web UI shares a workspace or artifact only with the members of a session or channel
 
 **Status:** open
+**Type:** feature
+**Priority:** medium
 **Area:** User interaction
+**Summary:** The web UI shares a workspace or an artifact only with the members of a session or channel, not with a user or a role by name, since the REST API lists neither.
 
 ## The problem
 

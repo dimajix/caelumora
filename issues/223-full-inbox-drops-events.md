@@ -1,7 +1,10 @@
 # 223 — An actor whose inbox is full loses what was said, silently
 
 **Status:** open
+**Type:** bug
+**Priority:** high
 **Area:** Sessions and channels
+**Summary:** An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it.
 
 ## The problem
 

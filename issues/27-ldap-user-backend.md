@@ -1,7 +1,10 @@
 # 27 — An LDAP user backend
 
 **Status:** open
-**Area:** Identity & access management
+**Type:** feature
+**Priority:** medium
+**Area:** Identity and access management
+**Summary:** Where identities are managed in a directory, the system has no way to authenticate against it or read its groups.
 
 ## The problem
 

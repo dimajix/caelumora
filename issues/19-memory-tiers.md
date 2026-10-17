@@ -1,7 +1,8 @@
 # 19 — Memory tiers
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** The four memory tiers from `TODO.md` are named but undefined — scope, lifetime, readers and invalidation are all open.
 
 ## The problem
 

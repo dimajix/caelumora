@@ -1,7 +1,8 @@
 # 239 — A reclassified message keeps its old classification in every agent's state
 
 **Status:** done
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Summary:** A reclassified message keeps its old classification in every agent's state, so a released message still raises the label of later answers.
 
 ## The problem
 

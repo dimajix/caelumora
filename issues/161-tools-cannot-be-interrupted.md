@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Tools and approvals
+**Summary:** A running tool cannot be interrupted, so a cancel waits for it and a stop during it aborts the agent without giving its turn up.
 
 ## The problem
 

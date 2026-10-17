@@ -1,7 +1,10 @@
 # 122 — The server cannot run in several instances
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Observability and operations
+**Summary:** The server cannot run in several instances: everything live is in one process, and nothing keeps agents and users in step between processes.
 
 ## The problem
 

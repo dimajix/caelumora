@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Epic:** [151](151-agent-refactoring-epic.md)
+**Summary:** Whether something may flow into a channel is asked of the policy in five places by hand, not as an access question.
 
 ## The problem
 

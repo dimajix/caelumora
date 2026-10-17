@@ -1,7 +1,8 @@
 # 22 — Managing skills, and who is allowed to use them
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** Skills do not exist: there is no unit of procedural knowledge below a personality, and no rule for who may load one into a turn.
 
 ## The problem
 

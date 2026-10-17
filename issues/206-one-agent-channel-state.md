@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** Agents run here and external agents keep their channel state in two types with separate store methods, change types and views, though history and transcript are the same in both.
 
 ## The problem
 

@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** `SecurityManager` decides who may do what and manages nothing: it is the access policy beside `ConfidentialityPolicy`, under a name that means a lifecycle everywhere else.
 
 ## The problem
 

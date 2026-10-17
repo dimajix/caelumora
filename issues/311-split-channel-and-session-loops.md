@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** `channel.rs` and `session.rs` have about 5900 and 2750 lines, each holding several subjects in one file, and most of the channel's tests are about the actors that run in it.
 
 ## The problem
 

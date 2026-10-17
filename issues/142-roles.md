@@ -1,7 +1,10 @@
 # 142 — Roles are strings nothing gives a meaning to
 
 **Status:** in progress
+**Type:** feature
+**Priority:** high
 **Area:** Identity and access management
+**Summary:** Users carry roles as strings, but nothing says which roles exist or what they grant - clearances among them.
 
 ## The problem
 

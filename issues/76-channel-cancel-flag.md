@@ -1,7 +1,9 @@
 # 76 — The channel's cancel flag suppresses the final response and is a third state machine
 
 **Status:** done
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** The channel's own cancel flag suppresses the final response of a cancelled turn, so the other agents' transcripts diverge from the history.
 
 ## The problem
 

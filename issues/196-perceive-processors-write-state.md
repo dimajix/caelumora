@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** Whether an agent's history is complete depends on two configurable components, and an external agent has no stage to filter what it perceives.
 
 ## The problem
 

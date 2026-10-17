@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Persistence
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** `ParticipantTemplate::instantiate` treats every store error as "not found" and creates a second agent.
 
 ## The problem
 

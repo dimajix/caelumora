@@ -1,7 +1,9 @@
 # 92 — `NoteChain` and `MemoryChain` are the same type written twice
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Epic:** [151](151-agent-refactoring-epic.md)
+**Summary:** `NoteChain` and `MemoryChain` are the same type written twice.
 
 ## The problem
 

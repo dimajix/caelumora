@@ -1,7 +1,9 @@
 # 391 — Epic: review of history and transcript
 
 **Status:** done
+**Type:** epic
 **Area:** Maintenance
+**Summary:** Epic for the review of the history and the transcript of 2026-10-16: the bracket around issues 392–398 and their recommended order.
 
 ## The problem
 

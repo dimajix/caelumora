@@ -1,7 +1,8 @@
 # 47 — Prompt parts are placed and recorded on two separate paths
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** What a model is given besides the conversation is placed and recorded on two separate paths, and can only be a system prompt, whose every change invalidates the prompt cache.
 
 ## The problem
 

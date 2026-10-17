@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** User interaction
+**Epic:** [378](378-resource-management-epic.md)
+**Summary:** A channel's history and an agent's history are returned whole over REST, though both grow without a limit and only their end is shown first.
 
 ## The problem
 

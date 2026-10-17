@@ -1,7 +1,10 @@
 # 342 — Nobody can be invited to a session or channel: who is added is taken in without being asked
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Sessions and channels
+**Summary:** Nobody can be invited to a session or channel: who is added is taken in without being asked, told nothing beforehand and unable to decline.
 
 ## The problem
 

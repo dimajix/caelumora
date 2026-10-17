@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** The working state of a turn is eleven loose fields of `AgentChannelState`, reset by three overlapping lists.
 
 ## The problem
 

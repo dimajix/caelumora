@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The action buttons on every channel member in the web UI keep their place even when hidden, so the member's name is cut off almost entirely.
 
 ## The problem
 

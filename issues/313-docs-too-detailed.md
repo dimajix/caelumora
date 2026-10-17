@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Maintenance
+**Summary:** The documents in `docs/` have about 130,000 tokens, mostly code retold - variants, fields, call orders - and inline issue history, so the concepts and rules are hard to find and every change has a second place to update.
 
 ## The problem
 

@@ -1,7 +1,9 @@
 # 156 — Notes and memory search a turn's staged changes by hand
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Epic:** [151](151-agent-refactoring-epic.md)
+**Summary:** Notes and memory answer "the chain with this turn's changes" with eight hand-written scans instead of the fold the chains already have.
 
 ## The problem
 

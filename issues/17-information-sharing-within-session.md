@@ -1,7 +1,8 @@
 # 17 — Sharing information within a single session
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** Agents in one session share nothing but routed messages — there is no scratchpad one can write to and another read.
 
 ## The problem
 

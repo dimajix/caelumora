@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** Agents often answer in English, and a user has no way to choose the language the agents of a channel answer in.
 
 ## The problem
 

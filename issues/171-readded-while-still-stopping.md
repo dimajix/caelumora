@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** A participant removed and added again within seconds gets a new actor while the old one still stops, and both write its state.
 
 ## The problem
 

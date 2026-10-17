@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Tools and approvals
+**Summary:** An agent cannot point a user to a file of the workspace to download; it can only say in text where it lies.
 
 ## The problem
 

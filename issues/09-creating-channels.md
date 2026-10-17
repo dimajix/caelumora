@@ -1,7 +1,8 @@
 # 09 — Creating channels
 
 **Status:** done
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Summary:** Channels exist only as instantiated from a session template; there is no create, no close, and no way to add a participant afterwards.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** Sessions and channels store full copies of their participants' user records, which go stale and disclose email and roles to every participant.
 
 ## The problem
 

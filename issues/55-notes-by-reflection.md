@@ -1,7 +1,10 @@
 # 55 — Notes are written only when the model thinks of calling a tool
 
 **Status:** open
-**Area:** Context & knowledge
+**Type:** feature
+**Priority:** medium
+**Area:** Context and knowledge
+**Summary:** Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up.
 
 ## The problem
 

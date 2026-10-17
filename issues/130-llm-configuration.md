@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Observability and operations
+**Summary:** The language model is configured through environment variables, not in the configuration file like everything else.
 
 ## The problem
 

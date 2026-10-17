@@ -2,8 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
-
-Part of [391](391-history-and-transcript-review-epic.md).
+**Epic:** [391](391-history-and-transcript-review-epic.md)
+**Summary:** One message as it stands is read by three functions, two of which fold everything said after it or given before it.
 
 ## The problem
 

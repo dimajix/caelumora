@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Maintenance
+**Summary:** AGENTS.md and ARCHITECTURE.md hold everything in two long files, so the architecture draws no overall picture and the details of one subject are hard to find.
 
 ## The problem
 

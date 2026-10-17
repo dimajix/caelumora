@@ -1,7 +1,8 @@
 # 06 — Persist the context a message was generated from
 
 **Status:** done
-**Area:** Persistence / Audit
+**Area:** Audit
+**Summary:** For a past message there is no way to reconstruct what the agent actually saw when it wrote it.
 
 ## The problem
 

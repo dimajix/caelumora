@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** The confidentiality rules are applied by the ownership policy, so any other policy has to re-implement them or leave them out.
 
 ## The problem
 

@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** The component factory is synchronous while building is async, and component tags have no reader.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** The channel admits a request to answer a message again for an agent that left, and drops it unseen, while the same request for a turn is refused.
 
 ## The problem
 

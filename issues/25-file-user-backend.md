@@ -1,7 +1,10 @@
 # 25 — A text-file user backend
 
 **Status:** in progress
-**Area:** Identity & access management
+**Type:** feature
+**Priority:** high
+**Area:** Identity and access management
+**Summary:** There is no source of identities to authenticate against; a hand-edited user file is the smallest one, and defines the provider seam.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Integrations
+**Summary:** The A2A event stream is decoded chunk by chunk, so a character or a line end split by the network breaks the answer.
 
 ## The problem
 

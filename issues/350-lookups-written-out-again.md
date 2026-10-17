@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** The same lookup - the actor's channel, an agent's attributes as stored, a permission with the channel's attributes - is written out again at several places around channels and actors.
 
 ## The problem
 

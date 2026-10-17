@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** Starting a member's actor is written three times in `ChannelLoop`, and building a channel's loop twice in `SessionLoop`.
 
 ## The problem
 

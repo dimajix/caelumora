@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Maintenance
+**Summary:** The traits components implement as facets live in different places, some among the implementations, and `MessageProcessor` names two unrelated traits.
 
 ## The problem
 

@@ -1,7 +1,11 @@
 # 382 — An agent stays loaded while nothing uses it
 
 **Status:** open
+**Type:** feature
+**Priority:** medium
 **Area:** Sessions and channels
+**Epic:** [378](378-resource-management-epic.md)
+**Summary:** An agent stays loaded with its memory while nothing uses it, and what still holds it once its sessions are unloaded has not been checked.
 
 ## The problem
 

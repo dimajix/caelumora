@@ -1,7 +1,8 @@
 # 137 — What tools a model was offered is not recorded
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** Which tools a model was offered, and how they were described to it, is recorded nowhere, so what an agent saw cannot be told in full.
 
 ## The problem
 

@@ -2,8 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
-
-Part of [391](391-history-and-transcript-review-epic.md).
+**Epic:** [391](391-history-and-transcript-review-epic.md)
+**Summary:** `History` records a turn's end, a plan step, a command, an activity and a compaction through five methods that each only assert the variant of the entry they are handed.
 
 ## The problem
 

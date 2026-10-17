@@ -1,7 +1,8 @@
 # 30 — Messages come from the channel's first user actor, not from the sender
 
 **Status:** done
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Summary:** Messages and approvals from the REST API go through the channel's first `UserActor`, so they are recorded in the name of someone other than the authenticated sender.
 
 ## The problem
 

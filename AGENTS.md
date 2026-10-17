@@ -34,21 +34,22 @@ change something, read the document on its subject:
 
 ## Issue Tracking
 
-Open issues live in this repository, not in an external tracker. The overview is
-[issues/INDEX.md](issues/INDEX.md); every issue additionally has its own file
-`issues/<number>-<slug>.md` holding the reasoning, the options that were weighed, and the decision.
+Open issues live in this repository, not in an external tracker. Every issue is a file
+`issues/<number>-<slug>.md`: its field lines - status, type, priority, area, summary - and below
+them the reasoning, the options that were weighed, and the decision.
+[issues/INDEX.md](issues/INDEX.md) lists every issue by area, [issues/OPEN.md](issues/OPEN.md)
+those open or in progress, the bugs first; both are generated from the issue files by
+`issues/generate.sh` and never edited by hand.
 
 Read `issues/INDEX.md` before starting work. If what you are about to do corresponds to an issue,
 work from that issue's file — it usually records why an obvious approach was already rejected. How
-issues are kept up to date and created is described at the top of the index, under *How this is
-maintained*. In short: an issue is a line in the index *and* a file, its status changes in both, the
-description of a resolved issue is never rewritten (what happened goes under `## History`), and
-numbers are never reused.
+issues are kept up to date and created is described in [issues/README.md](issues/README.md). In
+short: the issue file is the one place its status is kept, the description of a resolved issue is
+never rewritten (what happened goes under `## History`), and numbers are never reused.
 
-[issues/OPEN.md](issues/OPEN.md) lists only the issues that are open or in progress. It is generated
-from the index by `issues/open.sh` and never edited by hand; the pre-commit hook in `.githooks`
-keeps it up to date, once a clone has it enabled (`git config core.hooksPath .githooks`). The same
-hook refuses a commit of Rust code while `cargo clippy --workspace --all-targets` warns.
+The pre-commit hook in `.githooks` regenerates both overviews whenever an issue is committed, once
+a clone has it enabled (`git config core.hooksPath .githooks`). The same hook refuses a commit of
+Rust code while `cargo clippy --workspace --all-targets` warns.
 
 ## Rules for every change
 
@@ -100,9 +101,9 @@ The reasons and details are in [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md)
     [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md#what-goes-where).
 5.  **Verify**: Run existing tests and add new ones to cover your changes.
 6.  **Refactor**: Ensure the code is clean and well-documented.
-7.  **Record**: If the change resolves or advances an issue, update its status in *both*
-    `issues/INDEX.md` and the issue file, and append a dated entry under `## History`. If it
-    uncovered something new, open an issue for it rather than leaving it in a comment.
+7.  **Record**: If the change resolves or advances an issue, update its status in the issue file
+    and append a dated entry under `## History`; the overviews follow by `issues/generate.sh`. If
+    it uncovered something new, open an issue for it rather than leaving it in a comment.
 
 ### Architecture decisions
 Architecture questions are discussed before they are implemented: where a method lives, which object
@@ -171,7 +172,7 @@ taken where everybody takes them, and is published before anyone else can take i
 
 1.  Before opening it, update `main` from the remote repository (`git fetch`, then fast-forward
     `main` to `origin/main`), and take the next free number from that.
-2.  The commit holds the issue alone - its file, its line in the index and the regenerated
+2.  The commit holds the issue alone - its file and the regenerated `issues/INDEX.md` and
     `issues/OPEN.md` - and no change of code or of anything else.
 3.  As soon as that commit is made, push it, without waiting to be asked again: an issue that is
     committed but not pushed holds a number nobody else can see.

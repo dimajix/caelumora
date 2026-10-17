@@ -1,7 +1,9 @@
 # 151 — Refactoring epic: the review of the agent actor of 2026-09-30
 
 **Status:** done
+**Type:** epic
 **Area:** Maintenance
+**Summary:** Epic for the review of the agent actor of 2026-09-30: the bracket around issues 152–160 and 92, and their recommended order.
 
 ## The problem
 

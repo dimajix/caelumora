@@ -2,6 +2,8 @@
 
 **Status:** rejected
 **Area:** Code structure
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** `ChannelRuntime` is six methods that forward to `RuntimeManager`.
 
 ## The problem
 

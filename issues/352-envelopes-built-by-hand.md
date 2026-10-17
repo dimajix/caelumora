@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** The approver and the channel build their envelopes by hand beside `Answering`, the one way an actor publishes.
 
 ## The problem
 

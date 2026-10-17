@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** Every personality writes out its whole list of components, so what every agent should have is repeated in each and a later addition reaches only those touched by hand.
 
 ## The problem
 

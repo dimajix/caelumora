@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** The five controllers write to the store and publish events from inside the model, each built differently.
 
 ## The problem
 

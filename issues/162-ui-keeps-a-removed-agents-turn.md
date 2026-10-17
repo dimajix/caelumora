@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The web UI keeps showing the turn of an agent removed during it as under way, with its stop button, until the page is reloaded.
 
 ## The problem
 

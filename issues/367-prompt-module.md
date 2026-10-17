@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** The prompt facets live in a flat `context.rs` and their components among the components of no facet in `component_impl/`, unlike every other facet with a module of its own.
 
 ## The problem
 

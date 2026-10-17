@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [151](151-agent-refactoring-epic.md)
+**Summary:** `actor_impl/agent.rs` holds the run loop, the model step, the tool step and the end of a turn in 1100 lines.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** `ChannelRuntime` hands out the whole `RuntimeManager` so that member lookups can be called with it.
 
 ## The problem
 

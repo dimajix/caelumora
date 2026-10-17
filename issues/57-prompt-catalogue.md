@@ -1,7 +1,10 @@
 # 57 — Prompts are English constants spread through the code
 
 **Status:** open
-**Area:** Context & knowledge
+**Type:** question
+**Priority:** medium
+**Area:** Context and knowledge
+**Summary:** The prompts the runtime gives models are English constants spread through the code, in one variant for every language and model.
 
 ## The problem
 

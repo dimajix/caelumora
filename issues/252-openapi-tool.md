@@ -1,7 +1,10 @@
 # 252 — Tool servers described by OpenAPI cannot be reached
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Tools and approvals
+**Summary:** A tool server that describes itself by OpenAPI - as most HTTP services and Open WebUI's tool servers do - cannot be reached; only MCP servers can.
 
 ## The problem
 

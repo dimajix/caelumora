@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** After a cancel the web UI keeps showing the answer as being generated, and the cancel button stays lit.
 
 ## The problem
 

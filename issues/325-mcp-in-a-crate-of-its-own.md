@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** The MCP integration is part of the runtime crate, so `rmcp` is built into everything that uses the runtime, though the core knows `mcp_tool` only as a component kind.
 
 ## The problem
 

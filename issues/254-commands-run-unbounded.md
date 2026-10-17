@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Tools and approvals
+**Summary:** A command an agent's call hands back as running runs until the model ends it - past its turn, its session and the channel's access to the workspace.
 
 ## The problem
 

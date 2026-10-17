@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** A turn running while its channel's classification is lowered classifies its answer above the channel, and the channel drops it.
 
 ## The problem
 

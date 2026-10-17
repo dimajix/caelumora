@@ -1,7 +1,10 @@
 # 287 — Every check of a membership reads the store
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Identity and access management
+**Summary:** Every check of a membership or a role in an access list reads the entity store, for every event of a session or channel and every subscriber.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** A user's record is written by whichever provider authenticates, without an event, so the `UserController` never learns that roles changed and every check reads them from the store.
 
 ## The problem
 

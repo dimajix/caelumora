@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The web UI shows writing, changing, revoking and reading notes, private notes and memory entries as raw JSON, so a call that names an entry by number does not say which one.
 
 ## The problem
 

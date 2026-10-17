@@ -1,7 +1,8 @@
 # 16 — Context compression
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** History and context grow without bound; nothing decides what to drop before the model's context window is exceeded.
 
 ## The problem
 

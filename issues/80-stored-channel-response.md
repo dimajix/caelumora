@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** User interaction
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** A channel that is not running is reported as not changeable and its agents' context as not readable, because the REST server picks and asks the access questions itself, in response builders spread over three modules.
 
 ## The problem
 

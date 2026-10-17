@@ -2,8 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
-
-Part of [391](391-history-and-transcript-review-epic.md).
+**Epic:** [391](391-history-and-transcript-review-epic.md)
+**Summary:** Four methods of `AgentChannelState` move the turn's context after the transcript's head each for itself, and `compact` checks for a turn four times.
 
 ## The problem
 

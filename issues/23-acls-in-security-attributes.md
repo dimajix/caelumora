@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** Who may reach a workspace's files or an artifact follows from the channel one stands in, not from the thing: `SecurityAttributes` can name no reader but the owner and a hand-written list.
 
 *Rewritten on 2026-10-10 against what [142](142-roles.md), [253](253-workspace.md),
 [255](255-whose-name-agents-act-in.md) and [271](271-publishing-artifacts.md) built; the text it

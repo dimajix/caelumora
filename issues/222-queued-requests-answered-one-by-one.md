@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** An agent - run here or external - asked while it answers works through every queued request afterwards, one answer each, to a conversation that has moved on.
 
 ## The problem
 

@@ -1,7 +1,10 @@
 # 181 — It is not reviewed where a user's roles enter a permission check
 
 **Status:** open
+**Type:** question
+**Priority:** low
 **Area:** Identity and access management
+**Summary:** Nobody has reviewed where a user's roles - and soon an agent's - enter a permission check; today only the clearance at a channel's door asks for them.
 
 ## The problem
 

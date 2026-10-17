@@ -1,7 +1,10 @@
 # 03 — Postgres implementation of the `EntityStore`
 
 **Status:** open
+**Type:** feature
+**Priority:** medium
 **Area:** Persistence
+**Summary:** `EntityStore` has only in-memory and JSON-file implementations; a Postgres one is the prerequisite for everything multi-process.
 
 ## The problem
 

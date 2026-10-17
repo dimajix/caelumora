@@ -1,7 +1,10 @@
 # 124 — Nobody can join a channel just to watch it
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Sessions and channels
+**Summary:** Nobody can join a channel just to watch it: joining makes a participant who can write, and without joining it cannot be followed live.
 
 ## The problem
 

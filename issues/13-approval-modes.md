@@ -1,7 +1,8 @@
 # 13 — Approval workflow: "Always approve" and "Brave mode"
 
 **Status:** done
-**Area:** Tools & approvals
+**Area:** Tools and approvals
+**Summary:** Approvals cannot be remembered — no "always approve" for a scope, no brave mode — so repeated prompts train the user to approve without reading.
 
 ## The problem
 

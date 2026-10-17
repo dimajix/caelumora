@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** A turn keeps its messages apart from the transcript until it ends, so two places hold what an agent said and every reader puts them together.
 
 ## The problem
 

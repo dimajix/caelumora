@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Persistence
+**Summary:** Concurrent writes of the same JSON store file share one temporary file, so one fails and the newest state can be lost.
 
 ## The problem
 

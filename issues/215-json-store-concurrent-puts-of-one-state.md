@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Persistence
+**Summary:** Concurrent puts of one state in the JSON store can leave a journal beside the new snapshot and lose a change appended in between, and the test that puts one state concurrently fails now and then.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Integrations
+**Summary:** A remote agent is not told when a message it was given is modified or taken back, so it goes on answering the old version.
 
 ## The problem
 

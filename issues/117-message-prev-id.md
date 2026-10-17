@@ -1,7 +1,9 @@
 # 117 — `Message::prev_id` is excluded from the digest yet still set
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** `Message::prev_id` is excluded from the digest because the chain owns it, yet two places still set it.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Maintenance
+**Summary:** The REST server and the web UI have no document of their own; what they do is scattered across the documents of other subjects.
 
 ## The problem
 

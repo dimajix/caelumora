@@ -2,6 +2,7 @@
 
 **Status:** rejected
 **Area:** Persistence
+**Summary:** A list asks the policy entity by entity, so a database store cannot push access into its query and a full page may be followed by an empty one.
 
 ## The problem
 

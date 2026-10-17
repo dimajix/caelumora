@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** Instantiating a template does store I/O in the model, and both frontends drive the sequence by hand.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Context and knowledge
+**Summary:** Agent memory decides with the built-in rule which entries may be recalled in a channel, instead of asking the `SecurityManager` like the other reads across channels.
 
 ## The problem
 

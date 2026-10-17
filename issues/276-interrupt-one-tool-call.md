@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Tools and approvals
+**Summary:** A tool call that hangs can be interrupted only by ending its whole turn or agent, not on its own so that the agent goes on with the turn.
 
 ## The problem
 

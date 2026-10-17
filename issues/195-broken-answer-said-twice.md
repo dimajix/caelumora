@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Integrations
+**Summary:** An external agent's answer that broke off before its task ended is published cut off, and said again in full when the followed task ends.
 
 ## The problem
 

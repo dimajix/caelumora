@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** A participant can write another participant's sender marker into their own message, and models believe it, so the agent may act on a consent nobody gave.
 
 ## The problem
 

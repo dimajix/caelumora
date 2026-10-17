@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** A security context cannot tell an agent's owner from the one it acts for: `principal_id` stands for both, so a check that means the owner silently asks whoever it acts for once they differ.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Persistence
+**Summary:** A store's restore returns nothing, so every caller reads or rebuilds what it restored - under a permission the restore did not need - and the managers answer a restore differently.
 
 ## The problem
 

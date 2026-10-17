@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** An artifact shared with a team is read by its members but not listed among their artifacts, since the list asks the store only for artifacts naming the viewer or their roles.
 
 ## The problem
 

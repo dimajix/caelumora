@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** User interaction
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** Six REST functions map runtime errors to problem details with the same pattern.
 
 ## The problem
 

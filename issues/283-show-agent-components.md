@@ -1,7 +1,10 @@
 # 283 — The web UI does not show what an agent was built from
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** User interaction
+**Summary:** The web UI does not show what an agent was built from, so its owner cannot see which components it has or which came from an included list.
 
 ## The problem
 

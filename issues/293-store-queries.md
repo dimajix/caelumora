@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Persistence
+**Summary:** A store list takes no condition and no limit: every narrowing is done by its caller after everything was read, and no database could take it over.
 
 ## The problem
 

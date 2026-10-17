@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** The channel runtime carries a handle to the session that only the channel needs, filled in a second step outside the session.
 
 ## The problem
 

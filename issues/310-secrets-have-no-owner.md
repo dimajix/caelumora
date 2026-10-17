@@ -1,7 +1,10 @@
 # 310 — Any secret can be named by whoever writes a component
 
 **Status:** open
+**Type:** feature
+**Priority:** high
 **Area:** Identity and access management
+**Summary:** Any secret can be named by whoever writes a component: secrets have no owner and no access list, and the policy allows every `ReadSecret`.
 
 ## The problem
 

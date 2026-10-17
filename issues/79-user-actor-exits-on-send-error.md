@@ -1,7 +1,9 @@
 # 79 — `UserActor` exits on a send error, and the three actor run loops differ only there
 
 **Status:** done
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** A `UserActor` ends itself when one forward fails, and the three actor run loops differ only in how they handle errors.
 
 ## The problem
 

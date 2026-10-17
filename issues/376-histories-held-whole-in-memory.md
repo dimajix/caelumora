@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Persistence
+**Epic:** [378](378-resource-management-epic.md)
+**Summary:** A channel's history and an agent's history and transcript are held in memory and loaded whole, though they grow with the channel and almost only their recent end is used.
 
 ## The problem
 

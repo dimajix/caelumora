@@ -1,7 +1,8 @@
 # 63 — Earlier reasoning is always given back to the model
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** Every model call gets the reasoning of all earlier messages back, other agents' included, although several reasoning models document that it must not be.
 
 ## The problem
 

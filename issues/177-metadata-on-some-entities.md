@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** Name, scope and description sit in `Metadata` on some entities only, which brings fields to entities that mean nothing there.
 
 ## The problem
 

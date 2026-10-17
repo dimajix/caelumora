@@ -1,7 +1,10 @@
 # 07 — Session deletion and its audit trail
 
 **Status:** in progress
-**Area:** Sessions & channels
+**Type:** feature
+**Priority:** low
+**Area:** Audit
+**Summary:** Deletion works since `540e482`; what remains open is whether and how a deletion is recorded.
 
 ## The problem
 

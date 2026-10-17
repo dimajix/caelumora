@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** Whoever follows a channel keeps an agent's last state and its answer under way after the session stops, and the follower's reconnect starts the session again.
 
 ## The problem
 

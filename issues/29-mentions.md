@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** In a multi-agent channel the user cannot choose who answers; the moderator alone decides, and an `@name` in the text means nothing to it.
 
 ## The problem
 

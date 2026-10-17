@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** The Open Terminal storages of workspaces are part of the runtime crate and named in `StorageConfig`, so `bollard` is built into everything that uses the runtime.
 
 ## The problem
 

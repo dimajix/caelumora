@@ -1,7 +1,8 @@
 # 12 — Combining user permissions with agent permissions
 
 **Status:** done
-**Area:** Identity & access management
+**Area:** Identity and access management
+**Summary:** When an agent acts for a user, two sets of rights are involved and there is no rule for combining them.
 
 ## The problem
 

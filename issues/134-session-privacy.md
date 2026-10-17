@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** Once classification no longer keeps sessions apart, nothing expresses that a session's participants have not agreed to be read from another.
 
 ## The problem
 

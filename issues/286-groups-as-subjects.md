@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** A workspace or an artifact cannot be shared with a team that users make themselves, only with people one by one, a role, or the members of a session or channel.
 
 ## The problem
 

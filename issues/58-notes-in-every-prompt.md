@@ -1,7 +1,10 @@
 # 58 — Notes are shown in full in every prompt and again as tool calls
 
 **Status:** open
-**Area:** Context & knowledge
+**Type:** feature
+**Priority:** high
+**Area:** Context and knowledge
+**Summary:** Every note is put into every prompt in full, which grows without bound, and the writing agent sees its notes a second time as tool calls - revoked ones included.
 
 ## The problem
 

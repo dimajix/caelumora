@@ -1,7 +1,9 @@
 # 100 — `DefaultToolExecutor` scans its providers per call, and a tool result has three representations
 
 **Status:** done
-**Area:** Tools & approvals
+**Area:** Tools and approvals
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** The tool executor scans all providers on every call, and a tool result exists in three shapes between the executor and the model.
 
 ## The problem
 

@@ -1,7 +1,8 @@
 # 212 — An external agent's task that began before its channel was lowered is answered into the lowered channel
 
 **Status:** done
-**Area:** Confidentiality, integrations
+**Area:** Integrations
+**Summary:** An external agent's task that began before its channel's classification was lowered is answered into the lowered channel, where a turn of an agent run here is given up.
 
 ## The problem
 

@@ -1,7 +1,10 @@
 # 378 — Epic: resource management
 
 **Status:** open
+**Type:** epic
+**Priority:** medium
 **Area:** Maintenance
+**Summary:** Epic for resource management: the bracket around 376, 379–383 and 218, which reduce what the server holds in memory, and their recommended order.
 
 ## The problem
 

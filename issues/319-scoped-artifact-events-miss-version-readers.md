@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Identity and access management
+**Summary:** An artifact deleted or restored with its session or channel is announced by its own access list only, so whoever reads it by a version's list does not hear of it.
 
 ## The problem
 

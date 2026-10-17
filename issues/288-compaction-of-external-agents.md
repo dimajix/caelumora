@@ -2,6 +2,7 @@
 
 **Status:** rejected
 **Area:** Integrations
+**Summary:** A personality of an external agent that lists `compaction` is given a default model and compacts what its remote agent is to be given next; nothing refuses it.
 
 ## The problem
 

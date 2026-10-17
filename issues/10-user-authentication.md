@@ -1,7 +1,10 @@
 # 10 — User authentication
 
 **Status:** in progress
-**Area:** Identity & access management
+**Type:** feature
+**Priority:** high
+**Area:** Identity and access management
+**Summary:** There is no authentication at all; the REST server fabricates its own `SecurityContext` and `DummySecurityManager` approves everything.
 
 ## The problem
 

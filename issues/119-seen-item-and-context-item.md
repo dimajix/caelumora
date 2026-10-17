@@ -1,7 +1,8 @@
 # 119 — What the model saw and what it was given are two types
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** What a model saw when it produced a message and what its turn gave it are two types of the same thing.
 
 ## The problem
 

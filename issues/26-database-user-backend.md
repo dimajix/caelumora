@@ -1,7 +1,10 @@
 # 26 — A database user backend
 
 **Status:** open
-**Area:** Identity & access management
+**Type:** feature
+**Priority:** low
+**Area:** Identity and access management
+**Summary:** A file cannot serve several processes or an existing corporate user table; no database-backed user provider exists.
 
 ## The problem
 

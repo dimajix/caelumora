@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Integrations
+**Summary:** An agent that runs elsewhere cannot be given a task or take part in a channel; only models and MCP tools can be reached from outside.
 
 ## The problem
 

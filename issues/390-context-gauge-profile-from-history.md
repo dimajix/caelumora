@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Context and knowledge
+**Summary:** How full an agent's context is between turns is estimated with the model profile of a message from its history, not with the rules of the model it is run with now.
 
 ## The problem
 

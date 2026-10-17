@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** An external agent's report on a finished task wakes every sleeping agent and ends a quiet channel, though it addresses neither.
 
 ## The problem
 

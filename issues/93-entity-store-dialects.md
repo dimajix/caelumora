@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Persistence
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** The `EntityStore` offers a different set of methods for every entity kind, and templates are stored by name but deleted by id.
 
 ## The problem
 

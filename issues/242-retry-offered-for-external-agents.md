@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The web UI offers to ask an external agent for another answer - of a message and while it answers - which it never gives.
 
 ## The problem
 

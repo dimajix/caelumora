@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Maintenance
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** The demo data is seeded by both the REST server and the TUI, from two different definitions.
 
 ## The problem
 

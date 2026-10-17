@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Tools and approvals
+**Summary:** `publish_file` asks for approval like the other file tools, though it changes nothing and gives the file to nobody who could not download it already.
 
 ## The problem
 

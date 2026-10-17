@@ -1,7 +1,8 @@
 # 31 — An open web UI loses its session after 15 minutes without requests
 
 **Status:** done
-**Area:** Identity & access management
+**Area:** Identity and access management
+**Summary:** The session token is only renewed by requests, so a web UI that is open but only receiving events is logged out after 15 minutes and loses the typed input.
 
 ## The problem
 

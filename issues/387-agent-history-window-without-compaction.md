@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Persistence
+**Summary:** An agent that never compacts its context - every external agent - holds its whole history in a channel in memory, since the window of its history begins at its last compaction.
 
 ## The problem
 

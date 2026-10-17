@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** The questions on a channel's member take its session and channel and four services as parameters each time, so both loops hold the services and one method needs a clippy exception.
 
 ## The problem
 

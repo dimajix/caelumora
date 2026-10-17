@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** User interaction
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** The REST server repeats the session/channel lookup twelve times and decides itself what a viewer may see.
 
 ## The problem
 

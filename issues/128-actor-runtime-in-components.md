@@ -1,7 +1,9 @@
 # 128 — Components reach the whole ActorRuntime, including what only the actor may do
 
 **Status:** done
-**Area:** Open architecture questions
+**Type:** question
+**Area:** Code structure
+**Summary:** Components are given their actor's whole `ActorRuntime` and could store its state or act as it past the turn.
 
 ## The problem
 

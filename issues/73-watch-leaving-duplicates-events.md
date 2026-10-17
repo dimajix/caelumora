@@ -1,7 +1,8 @@
 # 73 — `watch_leaving` duplicates what the event bus announces
 
 **Status:** done
-**Area:** Sessions & channels
+**Area:** Sessions and channels
+**Summary:** `ChannelLoop::watch_leaving` is a second channel for the fact that someone left, which the `EventBus` already announces as `UserChannelLeft`/`AgentChannelLeft`.
 
 ## The problem
 

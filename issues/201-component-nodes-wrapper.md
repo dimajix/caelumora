@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** Components are written under a `component_nodes` key inside their own key, a level that exists only because `ComponentConfig` is a struct with one field.
 
 ## The problem
 

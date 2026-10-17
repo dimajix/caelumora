@@ -1,7 +1,10 @@
 # 332 — The policy answers entity by entity, so no database can filter by it
 
 **Status:** open
+**Type:** feature
+**Priority:** low
 **Area:** Identity and access management
+**Summary:** The policy decides entity by entity, so a store filters a list after reading it and no database could put who may read into its query.
 
 ## The problem
 

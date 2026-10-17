@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Integrations
+**Summary:** An external agent is not told who is in its channel nor how to address them, so it cannot mention another agent.
 
 ## The problem
 

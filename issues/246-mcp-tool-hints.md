@@ -1,7 +1,8 @@
 # 246 — An MCP server's hints on its tools are ignored
 
 **Status:** done
-**Area:** Tools & approvals
+**Area:** Tools and approvals
+**Summary:** An MCP server's hints on its tools - read-only, destructive - are ignored, so all tools of a server need approval alike.
 
 ## The problem
 

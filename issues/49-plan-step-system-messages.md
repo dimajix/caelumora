@@ -1,7 +1,8 @@
 # 49 — Plan step instructions are system messages in the middle of a turn
 
 **Status:** done
-**Area:** Tools & approvals
+**Area:** Tools and approvals
+**Summary:** Plan step instructions are system messages in the middle of a turn, which some models move into the system prompt, losing their place and the prompt cache.
 
 ## The problem
 

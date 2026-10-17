@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** An agent cannot be asked to answer again after a turn it gave up: the turn's end makes its last message not the last, and a turn that ended is no turn under way.
 
 ## The problem
 

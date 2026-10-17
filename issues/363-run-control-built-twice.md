@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [349](349-core-review-epic.md)
+**Summary:** Where an agent's actor stands and what `cancel` and `stop` asked of it is built twice - `RunControl` for the `AgentActor`, three fields of its own for the `ExternalAgentActor` - so the two show and end their work differently, and the loop that carries out commands cannot be shared.
 
 ## The problem
 

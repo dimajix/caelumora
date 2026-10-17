@@ -1,7 +1,8 @@
 # 51 — An agent has no private knowledge across its channels
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** An agent knows in each channel only what was said there; it has no private knowledge that carries over to its other channels.
 
 ## The problem
 

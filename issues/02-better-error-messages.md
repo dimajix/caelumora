@@ -1,7 +1,8 @@
 # 02 — Better error messages
 
 **Status:** done
-**Area:** Developer & user experience
+**Area:** Observability and operations
+**Summary:** Failures lose the context that would make them actionable — which component, which endpoint, which parameter.
 
 ## The problem
 

@@ -1,7 +1,8 @@
 # 15 — Return errors to the LLM when a tool is disallowed
 
 **Status:** done
-**Area:** Tools & approvals
+**Area:** Tools and approvals
+**Summary:** A refused tool call does not reach the model as something it can act on, so the agent retries or proceeds as if it had succeeded.
 
 ## The problem
 

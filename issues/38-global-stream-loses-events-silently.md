@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Sessions and channels
+**Summary:** A client of the global event stream that falls behind loses events without being told, and its session list stays wrong until a reload.
 
 ## The problem
 

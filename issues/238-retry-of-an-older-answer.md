@@ -1,7 +1,10 @@
 # 238 — Only an agent's last answer can be asked for again
 
 **Status:** open
-**Area:** Sessions & channels
+**Type:** feature
+**Priority:** low
+**Area:** Sessions and channels
+**Summary:** Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept.
 
 ## The problem
 

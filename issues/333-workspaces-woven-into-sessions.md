@@ -2,6 +2,7 @@
 
 **Status:** rejected
 **Area:** Code structure
+**Summary:** Workspaces are part of what sessions, channels and templates are - an attached workspace, its use per channel, one made by a template -, so they cannot leave the core as skills did.
 
 ## The problem
 

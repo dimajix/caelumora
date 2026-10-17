@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** The logic of a turn lives in `AgentActor`, which drives `Turn` through eight to ten setters per step.
 
 ## The problem
 

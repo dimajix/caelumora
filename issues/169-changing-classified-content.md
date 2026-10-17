@@ -1,7 +1,10 @@
 # 169 — Nothing says who may change something classified, or what a change must respect
 
 **Status:** open
+**Type:** feature
+**Priority:** high
 **Area:** Identity and access management
+**Summary:** Nothing says who may change something classified once it is written, or that what the writer has seen must fit into its classification.
 
 ## The problem
 

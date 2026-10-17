@@ -2,8 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
-
-Part of [391](391-history-and-transcript-review-epic.md).
+**Epic:** [391](391-history-and-transcript-review-epic.md)
+**Summary:** `History::messages`, `items` and `recorded_context_of` read a history held in memory, which nothing in production does any more, and two comments of the agent's run loop describe a history that keeps only final messages.
 
 ## The problem
 

@@ -1,7 +1,8 @@
 # 24 — A `SecurityManager` backed by Open Policy Agent
 
 **Status:** rejected
-**Area:** Identity & access management
+**Area:** Identity and access management
+**Summary:** `DummySecurityManager` is the only implementation; deployment-specific policy has no home outside the compiled binary.
 
 ## The problem
 

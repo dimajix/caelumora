@@ -1,7 +1,8 @@
 # 68 — Notes are bound to one channel of the agent
 
 **Status:** done
-**Area:** Context & knowledge
+**Area:** Context and knowledge
+**Summary:** An agent's notes are bound to one of its channels, although much of what it notes is knowledge of the agent itself, across channels and sessions.
 
 ## The problem
 

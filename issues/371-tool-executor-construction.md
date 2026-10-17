@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Code structure
+**Summary:** `ToolExecutor::new` takes seven parameters, five of which its one caller reads from the agent's `ActorRuntime` that it passes as well, so they can disagree with it.
 
 ## The problem
 

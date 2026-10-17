@@ -2,8 +2,8 @@
 
 **Status:** rejected
 **Area:** Code structure
-
-Part of [391](391-history-and-transcript-review-epic.md).
+**Epic:** [391](391-history-and-transcript-review-epic.md)
+**Summary:** `HistoryEntry` and `TranscriptEntry` apply a modification, revocation or reclassification to a message, and digest it, by two copies of one rule.
 
 ## The problem
 

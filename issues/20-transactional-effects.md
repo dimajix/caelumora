@@ -1,7 +1,9 @@
 # 20 — Transactional effects
 
 **Status:** rejected
-**Area:** Open architecture questions
+**Type:** question
+**Area:** Persistence
+**Summary:** A cognitive turn persists state, runs tools and emits events with no boundary around them; a crash mid-tool re-executes it on restart.
 
 ## The question
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The members panel does not show what an agent is doing - idle, asleep, working, waiting - nor offers to stop one that works.
 
 ## The problem
 

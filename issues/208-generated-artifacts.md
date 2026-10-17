@@ -1,7 +1,10 @@
 # 208 — Artifacts an agent generates are dropped
 
 **Status:** open
+**Type:** feature
+**Priority:** high
 **Area:** User interaction
+**Summary:** Files and data an agent generates - an external agent's artifacts, a tool's images - are dropped; only their text is kept, and nothing can be stored or downloaded.
 
 ## The problem
 

@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** While an agent generates an answer, the web UI does not let the user send a message, though nothing in the runtime needs that.
 
 ## The problem
 

@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** `SessionLoop` describes the one set of its channels with two tables and a queue.
 
 ## The problem
 

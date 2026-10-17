@@ -1,7 +1,10 @@
 # 226 — The tool calls of one step run one after the other
 
 **Status:** open
+**Type:** feature
+**Priority:** medium
 **Area:** Tools and approvals
+**Summary:** The tool calls of one step run one after the other, because every tool holds the turn while it runs, so a step of several slow calls takes the sum of their durations.
 
 ## The problem
 

@@ -2,6 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
+**Epic:** [74](74-refactoring-epic.md)
+**Summary:** Many `pub` items of the three crates have no caller, or one, outside their file.
 
 ## The problem
 

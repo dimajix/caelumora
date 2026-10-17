@@ -1,7 +1,8 @@
 # 33 — An open event stream outlives the token that authenticated it
 
 **Status:** done
-**Area:** Identity & access management
+**Area:** Identity and access management
+**Summary:** An open server-sent event stream is authenticated once, when it connects, and keeps delivering after its token has expired or its user was removed.
 
 ## The problem
 

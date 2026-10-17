@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** Observability and operations
+**Summary:** The tokens of each model call are recorded per message but summed up nowhere, and the model's context size is unknown, so nobody sees how full an agent's context is.
 
 ## The problem
 

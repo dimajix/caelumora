@@ -2,8 +2,8 @@
 
 **Status:** done
 **Area:** Code structure
-
-Part of [391](391-history-and-transcript-review-epic.md).
+**Epic:** [391](391-history-and-transcript-review-epic.md)
+**Summary:** Around the transcript "given" names a message given to read, which messages the transcript holds, and the directory of the prompt texts and tool sets.
 
 ## The problem
 

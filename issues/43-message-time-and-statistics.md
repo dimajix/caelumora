@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The web UI shows neither when a message was written nor the token counts and durations recorded for it.
 
 ## The problem
 

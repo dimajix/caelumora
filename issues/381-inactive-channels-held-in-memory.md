@@ -1,7 +1,11 @@
 # 381 — A channel nobody speaks in stays in memory with its actors
 
 **Status:** open
+**Type:** feature
+**Priority:** medium
 **Area:** Sessions and channels
+**Epic:** [378](378-resource-management-epic.md)
+**Summary:** A channel nobody has spoken in for days keeps its loop, its actors and their states in memory until its session is stopped, and nothing notices that it is idle.
 
 ## The problem
 

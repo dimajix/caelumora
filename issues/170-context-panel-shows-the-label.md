@@ -2,6 +2,7 @@
 
 **Status:** done
 **Area:** User interaction
+**Summary:** The context panel does not show how each part of a message's context was classified, so nobody can tell why the message was classified as it was.
 
 ## The problem
 
