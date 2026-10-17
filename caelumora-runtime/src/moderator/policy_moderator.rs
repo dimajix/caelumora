@@ -10,6 +10,11 @@
 //! moderator counts the hops since the last user's message
 //! (`EventContext::agent_hops`) and asks nobody once they would exceed
 //! `max_agent_hops` (parameter, default `DEFAULT_MAX_AGENT_HOPS`; issue 45).
+//!
+//! It keeps the last `context_messages` messages heard (parameter, default
+//! `DEFAULT_CONTEXT_MESSAGES`; issue 414) as they stand after every change,
+//! and tells its policy the conversation: what was said before what it is
+//! to choose for, and that.
 
 use crate::actor::Actor;
 use crate::component::{ComponentError, ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
@@ -18,7 +23,7 @@ use crate::moderator::ResponderPolicy;
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::message::Message;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::{debug, warn};
 
@@ -28,25 +33,80 @@ pub const POLICY_MODERATOR_KIND: &str = "policy_moderator";
 /// message, unless the moderator is configured otherwise.
 pub const DEFAULT_MAX_AGENT_HOPS: u32 = 3;
 
+/// How many messages heard the moderator keeps to tell its policy, unless
+/// it is configured otherwise.
+pub const DEFAULT_CONTEXT_MESSAGES: usize = 10;
+
 /// A moderator that routes like every other and asks whom `policy` chooses
 /// to respond when a message mentions nobody - in a chain between agents
-/// only up to `max_agent_hops` hops.
+/// only up to `max_agent_hops` hops -, told the last `context_messages`
+/// messages heard before the message.
 #[derive(Debug)]
 pub struct PolicyModerator {
     actors: Mutex<ModeratorActors>,
     policy: ComponentImpl<dyn ResponderPolicy>,
     max_agent_hops: u32,
+    /// The messages heard, the oldest first, at most `context_messages`.
+    heard: Mutex<VecDeque<Message>>,
+    context_messages: usize,
 }
 
 impl PolicyModerator {
-    pub fn new(policy: ComponentImpl<dyn ResponderPolicy>, max_agent_hops: u32) -> Self {
-        Self { actors: Mutex::new(ModeratorActors::new()), policy, max_agent_hops }
+    pub fn new(policy: ComponentImpl<dyn ResponderPolicy>, max_agent_hops: u32, context_messages: usize) -> Self {
+        Self { actors: Mutex::new(ModeratorActors::new()), policy, max_agent_hops, heard: Mutex::default(), context_messages }
     }
 
     /// The actors, locked only while they are read or changed, never while
     /// the policy is asked.
     fn actors(&self) -> MutexGuard<'_, ModeratorActors> {
         self.actors.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// The messages heard, locked only while they are read or changed,
+    /// never while the policy is asked.
+    fn heard(&self) -> MutexGuard<'_, VecDeque<Message>> {
+        self.heard.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Keeps those of `messages` there is something to hear of
+    /// (`Message::is_heard`), dropping the oldest beyond `context_messages`.
+    /// A message is kept once its answer is complete, after whom to ask was
+    /// decided: a message of a turn at the turn's end, so that a long turn
+    /// does not push out what was said before it. What a turn given up said
+    /// is not kept.
+    fn hear(&self, messages: &[Message]) {
+        let mut heard = self.heard();
+        heard.extend(messages.iter().filter(|message| message.is_heard()).cloned());
+        let excess = heard.len().saturating_sub(self.context_messages);
+        heard.drain(..excess);
+    }
+
+    /// Applies the change of a message `event` tells, if it is one, to the
+    /// message kept, by the rules the message keeps (issue 234). A change of
+    /// the channel's classification is no event and does not reach the
+    /// moderator; it only lowers a message's, so the messages kept are at
+    /// worst classified higher than they are.
+    fn apply_change(&self, event: &ActorEvent) {
+        let mut heard = self.heard();
+        let mut kept = heard.iter_mut();
+        match event {
+            ActorEvent::MessageModified(modified) => {
+                if let Some(message) = kept.find(|message| message.id == modified.id) {
+                    message.modify(modified);
+                }
+            }
+            ActorEvent::MessageRevoked { message: id, at } => {
+                if let Some(message) = kept.find(|message| message.id == *id) {
+                    message.revoke(*at);
+                }
+            }
+            ActorEvent::MessageReclassified { message: id, classification } => {
+                if let Some(message) = kept.find(|message| message.id == *id) {
+                    message.reclassify(classification);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Whom to ask to respond to the answer `messages` of `event` - a turn
@@ -61,6 +121,7 @@ impl PolicyModerator {
             let actors = self.actors();
             (actors.mentioned_responders(messages), actors.actor_candidates(messages), actors.user_ids())
         };
+        let conversation: Vec<Message> = self.heard().iter().chain(messages).cloned().collect();
         let mut routes = Vec::new();
         if !heard {
             // Nothing anyone could answer: nobody is asked.
@@ -84,7 +145,7 @@ impl PolicyModerator {
         // the policy is not consulted, so a rotation is left as it is.
         let responders = match mentioned {
             Some(mentioned) => mentioned,
-            None => self.policy.choose(event, messages, candidates).await,
+            None => self.policy.choose(event, &conversation, candidates).await,
         };
         let mut request = event.forward(ActorEvent::ResponseRequested);
         request.context.agent_hops = agent_hops;
@@ -121,6 +182,7 @@ impl Moderator for PolicyModerator {
             ActorEvent::TurnFinished { messages, .. } => {
                 let mut routes = self.actors().forward_routes(event, messages);
                 routes.extend(self.ask(event, messages).await);
+                self.hear(messages);
                 routes
             }
             ActorEvent::ApprovalRequested(_) |
@@ -162,6 +224,7 @@ impl Moderator for PolicyModerator {
             // A change to what was said reaches everyone who may hold the
             // message (issue 234); each applies it if it does.
             ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } => {
+                self.apply_change(&event.event);
                 self.actors().route_to_participants(event)
             }
             // Whom a request to answer again names, and what it answers, to
@@ -179,7 +242,9 @@ impl Moderator for PolicyModerator {
             ActorEvent::CompleteMessageGenerated(message) => {
                 let mut routes = self.actors().route_said(event, message);
                 if message.turn_id.is_none() {
-                    routes.extend(self.ask(event, std::slice::from_ref(message)).await);
+                    let messages = std::slice::from_ref(message);
+                    routes.extend(self.ask(event, messages).await);
+                    self.hear(messages);
                 }
                 routes
             }
@@ -420,10 +485,15 @@ pub fn register(registry: &mut ComponentRegistry) {
                 Some(value) => value.as_u64().and_then(|hops| u32::try_from(hops).ok())
                     .ok_or_else(|| ComponentError::InvalidConfig("parameter 'max_agent_hops' must be a number of at least 0".to_string()))?,
             };
+            let context_messages = match descriptor.params.get("context_messages") {
+                None => DEFAULT_CONTEXT_MESSAGES,
+                Some(value) => value.as_u64().and_then(|count| usize::try_from(count).ok())
+                    .ok_or_else(|| ComponentError::InvalidConfig("parameter 'context_messages' must be a number of at least 0".to_string()))?,
+            };
             // The channel's policy, or the default one.
             let policy = context.one::<dyn ResponderPolicy>().await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn Moderator>(Arc::new(PolicyModerator::new(policy, max_agent_hops)));
+            facets.insert::<dyn Moderator>(Arc::new(PolicyModerator::new(policy, max_agent_hops, context_messages)));
             Ok(facets)
         },
     );
@@ -438,7 +508,7 @@ mod tests {
     use crate::moderator::{broadcast_policy, mentions_only_policy, random_policy, round_robin_policy, user_driven_policy};
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::AgentId;
-    use caelumora_model::message::MessageRole;
+    use caelumora_model::message::{MessageId, MessageRole};
     use caelumora_model::approval::{ApprovalRequest, ApprovalResponse, ApproverId};
     use caelumora_model::security::SecurityContext;
     use caelumora_model::tool::ToolCall;
@@ -448,6 +518,7 @@ mod tests {
     use caelumora_model::turn::GivenUpReason;
     use caelumora_model::work::TurnId;
     use crate::testing::StandIn;
+    use chrono::Utc;
     use serde_json::Value;
 
     fn envelope(sender_id: ActorId, event: ActorEvent) -> Envelope {
@@ -527,8 +598,8 @@ mod tests {
         ComponentImpl { id: "responders".to_string(), fail_policy: Default::default(), facet: Arc::new(policy) }
     }
 
-    /// What a policy was told once: the contents of the messages and the
-    /// candidates.
+    /// What a policy was told once: the contents of the conversation and
+    /// the candidates.
     type Told = (Vec<String>, Vec<ActorDescription>);
 
     /// A policy that asks nobody and records what it was told.
@@ -544,38 +615,81 @@ mod tests {
         }
     }
 
+    impl Recording {
+        /// What it was told last.
+        fn last_told(&self) -> Told {
+            self.0.lock().unwrap().last().cloned().expect("told something")
+        }
+    }
+
     /// Issue 403: a policy is told what was said, and the candidates as
     /// they are described to everyone in the channel - the agents awake
     /// that did not say it.
     #[tokio::test]
     async fn a_policy_is_told_what_was_said_and_who_the_candidates_are() {
         let recording = Recording::default();
-        let moderator = PolicyModerator::new(policy(recording.clone()), DEFAULT_MAX_AGENT_HOPS);
+        let moderator = PolicyModerator::new(policy(recording.clone()), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES);
         let agents = add_agents(&moderator);
 
         moderator.route(&message_from(agents[0], "who knows?", vec![])).await;
 
         let told = recording.0.lock().unwrap().clone();
         let [(said, candidates)] = told.as_slice() else { panic!("asked once: {told:?}") };
-        assert_eq!(said, &["who knows?"]);
+        assert_eq!(said, &["who knows?"], "nothing was said before");
         assert_eq!(candidates.iter().map(|candidate| candidate.id).collect::<Vec<_>>(), [agents[2]], "awake, and not who said it");
         assert_eq!(candidates[0].name.as_str(), "test", "as it is described");
+    }
+
+    /// Issue 414: a policy is told the conversation - the last messages
+    /// heard before, as they stand, and what it is to choose for: a message
+    /// of a turn once the turn ended, nothing there is nothing to hear of,
+    /// at most as many before as the moderator keeps.
+    #[tokio::test]
+    async fn a_policy_is_told_the_last_messages_heard_before_as_they_stand() {
+        let recording = Recording::default();
+        let moderator = PolicyModerator::new(policy(recording.clone()), DEFAULT_MAX_AGENT_HOPS, 3);
+        let agents = add_agents(&moderator);
+        let user = ActorId::User(UserId::new());
+        let said = |content: &str| envelope(user, ActorEvent::CompleteMessageGenerated(Message { id: MessageId::new(), ..text_from(user, content, vec![]) }));
+
+        moderator.route(&said("one")).await;
+        let in_turn = Message { id: MessageId::new(), turn_id: Some(TurnId::new()), ..text_from(agents[0], "two", vec![]) };
+        moderator.route(&envelope(agents[0], ActorEvent::CompleteMessageGenerated(in_turn.clone()))).await;
+        moderator.route(&said("three")).await;
+        assert_eq!(recording.last_told().0, ["one", "three"], "the turn has not ended yet");
+
+        let tool_calls_only = Message { id: MessageId::new(), content: None, ..text_from(agents[0], "", vec![]) };
+        moderator.route(&envelope(agents[0], ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![in_turn.clone(), tool_calls_only] })).await;
+        assert_eq!(recording.last_told().0, ["one", "three", "two"], "what the turn said, last");
+
+        moderator.route(&said("four")).await;
+        assert_eq!(recording.last_told().0, ["one", "three", "two", "four"], "the turn's once it ended");
+
+        let five = said("five");
+        moderator.route(&five).await;
+        assert_eq!(recording.last_told().0, ["three", "two", "four", "five"], "at most three before, the oldest dropped");
+
+        let ActorEvent::CompleteMessageGenerated(five) = five.event else { unreachable!() };
+        moderator.route(&envelope(user, ActorEvent::MessageModified(Message { content: Some("FIVE".to_string()), ..five }))).await;
+        moderator.route(&envelope(agents[0], ActorEvent::MessageRevoked { message: in_turn.id, at: Utc::now() })).await;
+        moderator.route(&said("six")).await;
+        assert_eq!(recording.last_told().0, ["four", "FIVE", "six"], "modified, and the revoked one says nothing");
     }
 
     /// The moderators that ask someone to respond to a user when nobody is
     /// mentioned.
     fn answering_moderators() -> Vec<PolicyModerator> {
         vec![
-            PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), DEFAULT_MAX_AGENT_HOPS),
-            PolicyModerator::new(policy(random_policy::RandomPolicy::new()), DEFAULT_MAX_AGENT_HOPS),
-            PolicyModerator::new(policy(round_robin_policy::RoundRobinPolicy::default()), DEFAULT_MAX_AGENT_HOPS),
-            PolicyModerator::new(policy(user_driven_policy::UserDrivenPolicy), DEFAULT_MAX_AGENT_HOPS),
+            PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES),
+            PolicyModerator::new(policy(random_policy::RandomPolicy::new()), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES),
+            PolicyModerator::new(policy(round_robin_policy::RoundRobinPolicy::default()), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES),
+            PolicyModerator::new(policy(user_driven_policy::UserDrivenPolicy), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES),
         ]
     }
 
     fn moderators() -> Vec<PolicyModerator> {
         let mut all = answering_moderators();
-        all.push(PolicyModerator::new(policy(mentions_only_policy::MentionsOnlyPolicy), DEFAULT_MAX_AGENT_HOPS));
+        all.push(PolicyModerator::new(policy(mentions_only_policy::MentionsOnlyPolicy), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES));
         all
     }
 
@@ -680,7 +794,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_chain_between_agents_ends_at_the_limit_and_a_user_starts_a_new_one() {
-        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), 2);
+        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), 2, DEFAULT_CONTEXT_MESSAGES);
         let agents = add_agents(&moderator);
         let hops_asked = |decision: &[(ActorId, Envelope)]| decision.iter()
             .filter(|(_, e)| matches!(e.event, ActorEvent::ResponseRequested))
@@ -702,7 +816,7 @@ mod tests {
 
     #[tokio::test]
     async fn how_an_answer_comes_about_reaches_the_users_only() {
-        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), DEFAULT_MAX_AGENT_HOPS);
+        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES);
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
         moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
@@ -727,7 +841,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_chain_cut_off_is_told_to_the_users_and_the_agents_involved() {
-        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), 2);
+        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), 2, DEFAULT_CONTEXT_MESSAGES);
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
         moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
@@ -781,7 +895,7 @@ mod tests {
 
     #[tokio::test]
     async fn mentions_only_asks_nobody_without_a_mention() {
-        let moderator = PolicyModerator::new(policy(mentions_only_policy::MentionsOnlyPolicy), DEFAULT_MAX_AGENT_HOPS);
+        let moderator = PolicyModerator::new(policy(mentions_only_policy::MentionsOnlyPolicy), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES);
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
 
@@ -796,7 +910,7 @@ mod tests {
 
     #[tokio::test]
     async fn user_driven_asks_every_agent_for_a_user_and_nobody_for_an_agent() {
-        let moderator = PolicyModerator::new(policy(user_driven_policy::UserDrivenPolicy), DEFAULT_MAX_AGENT_HOPS);
+        let moderator = PolicyModerator::new(policy(user_driven_policy::UserDrivenPolicy), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES);
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
 
@@ -814,7 +928,7 @@ mod tests {
 
     #[tokio::test]
     async fn round_robin_takes_turns_and_a_mention_does_not_advance_it() {
-        let moderator = PolicyModerator::new(policy(round_robin_policy::RoundRobinPolicy::default()), DEFAULT_MAX_AGENT_HOPS);
+        let moderator = PolicyModerator::new(policy(round_robin_policy::RoundRobinPolicy::default()), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES);
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
         let mut awake = [agents[0], agents[2]];

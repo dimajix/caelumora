@@ -92,4 +92,6 @@ which need no answer.
 So: `nimble:9b`, as right and as sure as the 27B model at half its latency. The small models fail
 mostly by choosing nobody where someone should answer. Loading `nimble:9b` took over a minute once,
 far beyond the 5 s a decision may take by default: keep it loaded with `keep_alive`, or the first
-message after a pause is answered by everyone. Which `threshold` suits a model was not measured.
+message after a pause is answered by everyone. Which `threshold` suits a model was not measured,
+nor how the models choose when given the conversation before a message, its senders marked (issue
+414): the measurement judged single messages without senders.
