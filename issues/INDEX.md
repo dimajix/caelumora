@@ -261,7 +261,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [301](301-skill-list-presentation.md) | done | The skills an agent lists with `list_skills` are shown in the web UI as raw JSON, while loading, writing and changing a skill are shown as what they do. |
 | [303](303-note-and-memory-presentations.md) | done | The web UI shows writing, changing, revoking and reading notes, private notes and memory entries as raw JSON, so a call that names an entry by number does not say which one. |
 | [331](331-language-default-in-the-frontend.md) | done | The core holds a new channel or session in its creator's preferred language where nothing else is said, a decision that belongs to the frontend. |
-| [384](384-malformed-query-answered-as-plain-text.md) | open | A malformed query string, such as `?limit=abc`, is answered with a plain-text `400` instead of problem details with a `code`, since axum's `Query` extractor is used unwrapped. |
+| [384](384-malformed-query-answered-as-plain-text.md) | done | A malformed query string, such as `?limit=abc`, is answered with a plain-text `400` instead of problem details with a `code`, since axum's `Query` extractor is used unwrapped. |
 
 ## Context and knowledge
 

@@ -4,8 +4,8 @@ use caelumora_rest_api::session::{AddSessionParticipantRequest, CandidateRespons
 use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use crate::state::AppState;
 use axum::response::{IntoResponse, Response};
-use axum::{extract::{Query, State}, http::StatusCode};
-use crate::error::{Json, Path};
+use axum::{extract::State, http::StatusCode};
+use crate::error::{Json, Path, Query};
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::snapshot::Detail;

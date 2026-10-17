@@ -1,9 +1,10 @@
 use caelumora_model::snapshot::Detail;
 use crate::auth::AuthenticatedUser;
+use crate::error::Query;
 use caelumora_rest_api::stream::{GlobalSnapshot, StreamOptions};
 use crate::state::AppState;
 use axum::{
-    extract::{Query, State},
+    extract::State,
     response::sse::{Event, Sse},
 };
 use futures::stream::Stream;

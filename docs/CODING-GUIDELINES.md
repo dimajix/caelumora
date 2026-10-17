@@ -244,8 +244,8 @@ the server answers every error with problem details, as described in
     the chain.
 *   Use `ApiError::internal` for server errors: it logs the full chain and discloses only what
     `user_message` allows.
-*   Use the `Json` and `Path` extractors from `crate::error`, so that malformed requests get problem
-    details too.
+*   Use the `Json`, `Path` and `Query` extractors from `crate::error`, so that malformed requests
+    get problem details too.
 
 ## Asynchronous programming
 

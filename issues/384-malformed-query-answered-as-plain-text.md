@@ -1,6 +1,6 @@
 # 384 — A malformed query string is answered in plain text
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** User interaction
@@ -45,3 +45,8 @@ and `caelumora-skills`.
 
 - **2026-10-16** — Opened while trying out 218 against a running server: `?limit=abc` was answered
   in plain text.
+- **2026-10-17** — Done: `crate::error::Query` and `From<QueryRejection> for ApiError`
+  (`400 invalid_query`); the fourteen handlers of the REST server, `caelumora-artifacts` and
+  `caelumora-skills` read their query through it. The stand-in of `caelumora-open-terminal` keeps
+  axum's, since it imitates another server rather than answering as ours. A test of the channel's
+  history shows `?limit=abc` answered as problem details.
