@@ -44,3 +44,10 @@ tooling.
 ## History
 
 - **2026-09-10** — Issue created from `TODO.md`.
+- **2026-10-17** — [417](417-user-history-from-its-actor.md) makes the channel's history the
+  record this issue asked for, for a channel: every envelope that enters, every notice and request
+  the channel sends and every refusal is an entry, with its audience and its position; only what
+  streams and where an actor stands is not. The `Recorder` hook goes with it. What remains of this
+  issue - a record across channels, retention, who may read it - is [140](140-audit-log.md), the
+  audit log of acts without content; the history is one of its sources. To be closed once 417 is
+  done.

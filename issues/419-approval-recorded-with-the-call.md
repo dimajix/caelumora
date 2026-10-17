@@ -81,7 +81,8 @@ the reader is here, at the result; the act for the audit is in 140.
 
 - `ToolCallResult` and the `Ready` status carry who approved - or denied - the call, by which rule
   and when; `ApprovalResponse` carries it from the approver.
-- The chat shows "approved by …" and "denied by …" at the call, with the rule where one answered.
+- The chat shows "approved by …" and "denied by …" at the call, with the rule where one
+  answered.
 - A test in the agents' security suite: a call approved by one of two users records that user, and
   one answered by a rule records the rule.
 - TOOLS.md and APPROVALS.md say what is recorded of an approval and where.

@@ -61,3 +61,10 @@ a participant of a channel, approving a tool call, deleting a session
   record here are therefore: delete, restore, purge (by a person or by the retention policy of
   [07](07-session-deletion-audit.md)), and a participant removed or added again. The purge depends
   on this log most: it leaves nothing else that says what was there.
+- **2026-10-17** — Decided with [417](417-user-history-from-its-actor.md): the channel's history
+  is not the basis of the audit, this log is. The history records the conversation - what entered a
+  channel and whom it went to, with content, for its participants -, and is one source of this
+  log; an audit is wider than channels and read by others. Approvals are therefore not entries of
+  the history: the act is recorded here, and who approved a call is kept at the call for the
+  readers of the message ([419](419-approval-recorded-with-the-call.md)). What
+  [05](05-postgres-event-recorder.md) wanted of a channel is the history now.
