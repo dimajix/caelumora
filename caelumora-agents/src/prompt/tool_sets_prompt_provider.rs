@@ -12,7 +12,7 @@
 
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::prompt::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::tool::ToolSet;
@@ -31,9 +31,9 @@ impl PromptProvider for ToolSetsPromptProvider {
         self.position
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
+    async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         // What the agent is configured with, nothing read from a channel.
-        Ok(Prompt::classified(render(work.tool_sets()), Classification::PUBLIC))
+        Ok(Prompt::classified(render(situation.tool_sets()), Classification::PUBLIC))
     }
 }
 
@@ -94,7 +94,7 @@ mod tests {
         state.offer_tools(sets);
         let turn = Turn::under_way(AgentId::new(), &mut state);
         let provider = ToolSetsPromptProvider { position: PromptPosition::Start };
-        provider.get_prompt(&turn.work()).await.unwrap()
+        provider.get_prompt(&turn.situation()).await.unwrap()
     }
 
     #[tokio::test]

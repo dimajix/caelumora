@@ -155,14 +155,14 @@ async fn the_tool_is_offered_where_the_channel_uses_a_workspace() {
     let (session, helper, _, tool) = with_the_tool(&world, json!({})).await;
     let mut state = AgentChannelState::default();
     let turn = agent_testing::turn(&session, helper, world.alice, &mut state);
-    assert_eq!(tool.offered(&turn.work()).await.map(|tools| tools.len()), Ok(1), "offered where it is used");
+    assert_eq!(tool.offered(&turn.situation()).await.map(|tools| tools.len()), Ok(1), "offered where it is used");
     drop(turn);
 
     let alice = World::as_user(world.alice);
     session.channels()[0].update_uses_workspace(&alice, false).await.unwrap();
     let mut state = AgentChannelState::default();
     let turn = agent_testing::turn(&session, helper, world.alice, &mut state);
-    assert_eq!(tool.offered(&turn.work()).await, Err("there is no workspace you can use in this channel".to_string()), "not where the channel uses none");
+    assert_eq!(tool.offered(&turn.situation()).await, Err("there is no workspace you can use in this channel".to_string()), "not where the channel uses none");
     drop(turn);
     world.manager.stop(&alice, session.id()).await.unwrap();
 }

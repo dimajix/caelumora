@@ -24,7 +24,7 @@ pub mod summary_compaction;
 pub mod threshold_compaction_policy;
 
 use crate::turn::Turn;
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use caelumora_runtime::component::ComponentRegistry;
 use async_trait::async_trait;
 use caelumora_model::context::KnowledgeRef;
@@ -36,9 +36,9 @@ use uuid::Uuid;
 /// call of its model. An agent has exactly one; how it is compacted is its
 /// `CompactionStrategy`'s.
 pub trait CompactionPolicy: Send + Sync + Debug {
-    /// Whether the context of `work` is to be compacted before its next
+    /// Whether the context of `situation` is to be compacted before its next
     /// model call. Asked at most once before each call.
-    fn is_due(&self, work: &AgentWork<'_>) -> bool;
+    fn is_due(&self, situation: &Situation<'_>) -> bool;
 }
 
 /// How an agent's context is compacted: where it is cut and what replaces

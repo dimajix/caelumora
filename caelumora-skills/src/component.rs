@@ -44,7 +44,7 @@ use caelumora_model::scope::Scope;
 use caelumora_model::store::{EntityKind, StoreError, Stored};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_agents::turn::Turn;
-use caelumora_agents::work::AgentWork;
+use caelumora_agents::situation::Situation;
 use caelumora_agents::command::AgentCommandProvider;
 use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_agents::compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
@@ -118,7 +118,7 @@ fn catalogue(skills: &[SkillView]) -> String {
 /// The session `turn` reads from (`Turn::session`); a turn that reaches
 /// none has no skills.
 async fn session_of(turn: &Turn<'_>) -> Result<SessionView, ToolError> {
-    turn.session().await.ok_or_else(|| ToolError::ExecutionFailed("the turn is in no session to load skills in".to_string()))
+    turn.situation().session().await.ok_or_else(|| ToolError::ExecutionFailed("the turn is in no session to load skills in".to_string()))
 }
 
 /// What `create_skill` is called with.
@@ -202,10 +202,10 @@ impl PromptProvider for SkillsComponent {
         self.position
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
-        let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
+    async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
+        let Some(session) = situation.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let skills = session.views().usable_skills().await?;
-        let classification = joined(&skills, &work.classification());
+        let classification = joined(&skills, &situation.classification());
         Ok(Prompt::classified(catalogue(&skills), classification))
     }
 }
@@ -313,7 +313,7 @@ impl ToolProvider for SkillsComponent {
             LIST_SKILLS_TOOL_NAME => {
                 let skills = session_of(turn).await?.views().usable_skills().await?;
                 let listed: Vec<Value> = skills.iter().map(|s| serde_json::json!({ "name": s.name(), "description": s.description().as_str(), "skill_id": s.id() })).collect();
-                Ok(ToolOutput { value: serde_json::json!({ "skills": listed }), classification: Some(joined(&skills, &turn.classification())) })
+                Ok(ToolOutput { value: serde_json::json!({ "skills": listed }), classification: Some(joined(&skills, &turn.situation().classification())) })
             }
             LOAD_SKILL_TOOL_NAME => {
                 #[derive(Deserialize)]
@@ -327,31 +327,31 @@ impl ToolProvider for SkillsComponent {
                 // catalogue names it.
                 let given = Message {
                     id: MessageId::new(),
-                    sender_id: ActorId::Agent(turn.agent_id()),
+                    sender_id: ActorId::Agent(turn.situation().agent_id()),
                     sender_name: turn.agent_name().to_string(),
                     role: MessageRole::User,
                     content: Some(skill.as_given()),
                     timestamp: Utc::now(),
                     ..Message::new(skill.classification().clone())
                 };
-                let knowledge = skill.knowledge(turn.channel_id(), turn.session_id());
+                let knowledge = skill.knowledge(turn.situation().channel_id(), turn.situation().session_id());
                 turn.give(given, Some(knowledge));
                 Ok(ToolOutput { value: serde_json::json!({ "status": "loaded", "name": skill.name(), "skill_id": skill.id() }), classification: Some(skill.classification().clone()) })
             }
             CREATE_SKILL_TOOL_NAME => {
                 let Create { name, description, body, scope } = arguments(params)?;
                 let session = session_of(turn).await?;
-                let context = turn.security_context().clone();
+                let context = turn.situation().security_context().clone();
                 let scope = match SkillScope::of(&scope)? {
-                    SkillScope::Session => Scope::SessionScope { session_id: turn.session_id() },
+                    SkillScope::Session => Scope::SessionScope { session_id: turn.situation().session_id() },
                     SkillScope::User => match context.principal_id.as_user_id() {
                         Some(user_id) => Scope::UserScope { user_id },
                         None => return Err(ToolError::InvalidParameter("your owner is no user: write a skill of this session".to_string())),
                     },
                 };
                 let made = session.views().skill_manager()?
-                    .create(&context, name.trim(), scope, &description, &body, turn.label()).await?;
-                Ok(ToolOutput::classified(serde_json::json!({ "status": "created", "name": made.name.name.as_str(), "skill_id": made.id }), turn.label()))
+                    .create(&context, name.trim(), scope, &description, &body, turn.situation().label()).await?;
+                Ok(ToolOutput::classified(serde_json::json!({ "status": "created", "name": made.name.name.as_str(), "skill_id": made.id }), turn.situation().label()))
             }
             UPDATE_SKILL_TOOL_NAME => {
                 let Update { name, description, body } = arguments(params)?;
@@ -360,12 +360,12 @@ impl ToolProvider for SkillsComponent {
                 }
                 let session = session_of(turn).await?;
                 let skill = session.views().usable_skill_named(name.trim()).await?;
-                let context = turn.security_context().clone();
+                let context = turn.situation().security_context().clone();
                 let views = session.views();
                 let manager = views.skill_manager()?;
                 // What the turn saw goes into the skill: raised to it first,
                 // so that nothing of it is ever held lower.
-                let raised = skill.classification().join_within(&turn.label(), &turn.classification());
+                let raised = skill.classification().join_within(&turn.situation().label(), &turn.situation().classification());
                 if raised != *skill.classification() {
                     manager.reclassify(&context, skill.id(), raised.clone()).await?;
                 }
@@ -375,7 +375,7 @@ impl ToolProvider for SkillsComponent {
                 if let Some(body) = body {
                     manager.rewrite(&context, skill.id(), &body).await?;
                 }
-                Ok(ToolOutput::classified(serde_json::json!({ "status": "updated", "name": skill.name(), "skill_id": skill.id(), "classification": raised.to_string() }), turn.label()))
+                Ok(ToolOutput::classified(serde_json::json!({ "status": "updated", "name": skill.name(), "skill_id": skill.id(), "classification": raised.to_string() }), turn.situation().label()))
             }
             _ => Err(ToolError::UnknownTool(name.to_string())),
         }
@@ -418,7 +418,7 @@ fn command_error(command: &str, error: SkillError) -> CommandError {
 impl AgentCommandProvider for SkillsComponent {
     async fn execute(&self, name: &str, args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
         let failed = |reason: &str| CommandError::Failed { command: name.to_string(), reason: reason.to_string() };
-        let session = turn.session().await.ok_or_else(|| failed("the agent is in no session"))?;
+        let session = turn.situation().session().await.ok_or_else(|| failed("the agent is in no session"))?;
         match name {
             SKILLS_COMMAND_NAME => {
                 let skills = session.views().usable_skills().await.map_err(|e| command_error(name, e))?;
@@ -435,8 +435,8 @@ impl AgentCommandProvider for SkillsComponent {
                 }
                 let skill = session.views().usable_skill_named(wanted).await.map_err(|e| command_error(name, e))?;
                 // In the name of who asked, as the channel knows them.
-                let issuer = turn.security_context().initiator_id;
-                let issuer_name = match session.channel(turn.channel_id()).await {
+                let issuer = turn.situation().security_context().initiator_id;
+                let issuer_name = match session.channel(turn.situation().channel_id()).await {
                     Ok(channel) => channel.member(issuer).await.ok().and_then(|m| m.name().map(str::to_string)),
                     Err(_) => None,
                 };
@@ -450,7 +450,7 @@ impl AgentCommandProvider for SkillsComponent {
                     ..Message::new(skill.classification().clone())
                 };
                 // Nothing can fail from here on: what is given is written at once.
-                let knowledge = skill.knowledge(turn.channel_id(), turn.session_id());
+                let knowledge = skill.knowledge(turn.situation().channel_id(), turn.situation().session_id());
                 turn.give(given, Some(knowledge));
                 Ok(CommandOutput::private(format!("{} has the skill '{}' now.", turn.agent_name(), skill.name())))
             }
@@ -467,9 +467,9 @@ impl KnowledgeRestorer for SkillsComponent {
 
     /// The skills of `given` the agent may still load where it is.
     async fn give_again(&self, turn: &mut Turn<'_>, given: &[Uuid]) -> Result<Vec<GivenAgain>, CompactionError> {
-        let session = turn.session().await.ok_or(CompactionError::NoSession)?;
+        let session = turn.situation().session().await.ok_or(CompactionError::NoSession)?;
         let usable = session.views().usable_skills().await.map_err(|e| {
-            tracing::warn!("Agent {}: the skills it had loaded could not be read again: {:#}", turn.agent_id(), e);
+            tracing::warn!("Agent {}: the skills it had loaded could not be read again: {:#}", turn.situation().agent_id(), e);
             CompactionError::KnowledgeUnreadable
         })?;
         Ok(given.iter()
@@ -477,7 +477,7 @@ impl KnowledgeRestorer for SkillsComponent {
             .map(|skill| GivenAgain {
                 name: skill.name().to_string(),
                 text: skill.as_given(),
-                knowledge: skill.knowledge(turn.channel_id(), turn.session_id()),
+                knowledge: skill.knowledge(turn.situation().channel_id(), turn.situation().session_id()),
             })
             .collect())
     }

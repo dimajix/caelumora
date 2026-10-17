@@ -13,7 +13,7 @@ pub mod stop_tool;
 pub mod terminal_tool;
 
 use crate::turn::Turn;
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use caelumora_runtime::component::{ComponentImpl, ComponentRegistry, ComponentResult};
 use providers::ToolProviders;
 use caelumora_runtime::controller::{ChannelController, SessionController};
@@ -330,7 +330,7 @@ pub trait ToolProvider: Send + Sync + Debug {
     /// turn just begun, and - for what an agent would be offered (the
     /// agent's `tool_sets`) - of work that is no turn: what it decides by
     /// is the place and who acts, not the turn's state.
-    async fn offered(&self, _work: &AgentWork<'_>) -> Result<Vec<Tool>, String> {
+    async fn offered(&self, _situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
         Ok(self.tools())
     }
     /// Where the arguments of its calls go (issue 180): the classification
@@ -369,13 +369,13 @@ pub trait ToolProvider: Send + Sync + Debug {
     }
 }
 
-/// The workspace the tools of a set on it may be offered on in `work`
+/// The workspace the tools of a set on it may be offered on in `situation`
 /// (issue 290): the one of the agent's session the work may use in its
-/// channel (`AgentWork::workspace`). `Err` with why the set is unavailable,
+/// channel (`Situation::workspace`). `Err` with why the set is unavailable,
 /// in general terms: there is none, or it cannot be read now - which is
 /// logged.
-pub async fn usable_workspace(work: &AgentWork<'_>) -> Result<WorkspaceView, String> {
-    match work.workspace().await {
+pub async fn usable_workspace(situation: &Situation<'_>) -> Result<WorkspaceView, String> {
+    match situation.workspace().await {
         Ok(Some(workspace)) => Ok(workspace),
         Ok(None) => Err(WorkspaceError::NotUsableInChannel.to_string()),
         Err(error) => {
@@ -522,7 +522,7 @@ impl ToolExecutor {
     fn questions(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<Option<Questions>> {
         let Some(questions) = self.providers.questions(call)? else { return Ok(None) };
         questions.check().map_err(|e| ToolError::InvalidParameter(e.to_string()))?;
-        let addressed = self.runtime.address_questions(questions, turn.security_context())
+        let addressed = self.runtime.address_questions(questions, turn.situation().security_context())
             .ok_or_else(|| ToolError::ExecutionFailed("the channel does not run".to_string()))?;
         addressed
             .map(Some)
@@ -564,7 +564,7 @@ impl ToolExecutor {
                 let after = (finished_at - started_at).to_std().unwrap_or_default();
                 info!(tool = %call.function_name, duration_ms = after.as_millis(), by_user = matches!(interruption, Interruption::ByUser(_)), "Tool interrupted");
                 // A fixed text of the runtime's: as the turn (issue 168).
-                let mut result = ToolCallResult::of(call, ToolResultStatus::Interrupted, interruption.result(after), turn.label());
+                let mut result = ToolCallResult::of(call, ToolResultStatus::Interrupted, interruption.result(after), turn.situation().label());
                 result.started_at = Some(started_at);
                 result.finished_at = Some(finished_at);
                 return result;
@@ -593,7 +593,7 @@ impl ToolExecutor {
     fn failed(&self, call: &ToolCall, error: ToolError, turn: &Turn<'_>) -> ToolCallResult {
         let available: Vec<String> = turn.tools().map(|t| t.name.clone()).collect();
         let (status, content) = error.to_result(&available);
-        ToolCallResult::of(call, status, content, turn.classification())
+        ToolCallResult::of(call, status, content, turn.situation().classification())
     }
 
     /// The result for `call`, whose tool gave `output`: classified as the
@@ -602,10 +602,10 @@ impl ToolExecutor {
     /// not flow into the channel (`ConfidentialityPolicy::may_publish`, in the agent's
     /// name: the result enters its context in the channel).
     async fn admitted(&self, call: &ToolCall, output: ToolOutput, turn: &Turn<'_>) -> ToolCallResult {
-        let channel = turn.classification();
+        let channel = turn.situation().classification();
         let configured = turn.tools().find(|t| t.name == call.function_name).and_then(|t| t.classification.clone());
         let classification = output.classification.or(configured).unwrap_or_else(|| channel.clone());
-        let context = turn.security_context();
+        let context = turn.situation().security_context();
         if !self.confidentiality.may_publish(context, &classification, &channel) {
             debug!(tool = %call.function_name, %classification, "Withheld a result the channel does not admit");
             return ToolCallResult::of(call, ToolResultStatus::Withheld, withheld_result(&classification), channel);
@@ -624,21 +624,21 @@ impl ToolExecutor {
     /// requires approval, and shown what the tool says of the call; the
     /// questions are asked once it is approved, or at once.
     pub async fn admit(&self, call: &ToolCall, turn: &Turn<'_>) -> Admission {
-        let agent = turn.agent_id();
+        let agent = turn.situation().agent_id();
         if !offered(call, turn) {
             info!("Tool call '{}' by agent {} names a tool it was not offered", call.function_name, agent);
             return Admission::Answered(self.failed(call, ToolError::UnknownTool(call.function_name.clone()), turn));
         }
         // The one question of the call's permission (issue 304, rule 4):
         // asked as it is admitted, not again when it runs.
-        if self.access_policy.require(turn.security_context(), ActionType::CallTool(call), |_| ()).await.is_err() {
+        if self.access_policy.require(turn.situation().security_context(), ActionType::CallTool(call), |_| ()).await.is_err() {
             info!("Tool call '{}' by agent {} forbidden by the access policy", call.function_name, agent);
-            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.label()));
+            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.situation().label()));
         }
         let rule = self.place_rule(call);
         if let Some(rule) = rule.as_ref().filter(|r| r.decision == RuleDecision::Deny) {
             info!(rule = %rule.id, "Tool call '{}' by agent {} denied by a rule", call.function_name, agent);
-            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.label()));
+            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.situation().label()));
         }
         let description = match self.providers.describe(call) {
             Ok(description) => description,
@@ -667,15 +667,15 @@ impl ToolExecutor {
         }
     }
 
-    /// The tool sets the agent is offered in `work` (issues 180, 290): what
+    /// The tool sets the agent is offered in `situation` (issues 180, 290): what
     /// each provider offers there, and a set whose destination the work's
     /// channel may not flow into (`ConfidentialityPolicy::may_publish`, in
     /// the name the work acts in) offered as unavailable, without its tools -
     /// its arguments would carry what the channel holds out of the system.
-    pub async fn tool_sets(&self, work: &AgentWork<'_>) -> Vec<ToolSet> {
-        let (context, channel) = (work.security_context(), &work.classification());
+    pub async fn tool_sets(&self, situation: &Situation<'_>) -> Vec<ToolSet> {
+        let (context, channel) = (situation.security_context(), &situation.classification());
         let mut offered = Vec::new();
-        for set in self.providers.tool_sets(work).await {
+        for set in self.providers.tool_sets(situation).await {
             let withheld = match (&set.destination, &set.unavailable) {
                 (Some(destination), None) => !self.confidentiality.may_publish(context, channel, destination),
                 _ => false,
@@ -696,7 +696,7 @@ impl ToolExecutor {
         if !offered(call, turn) {
             return Err(ToolError::UnknownTool(call.function_name.clone()));
         }
-        let security = turn.security_context();
+        let security = turn.situation().security_context();
         if security.caller_id.as_agent_id().is_none() {
             return Err(ToolError::PermissionDenied(format!("tools can only be called by agents, not by {}", security.caller_id)));
         }
@@ -1074,7 +1074,7 @@ mod tests {
     async fn sets_offered(executor: &ToolExecutor, work: Work) -> Vec<ToolSet> {
         let mut state = offering(work, Vec::new());
         let turn = Turn::under_way(AgentId::new(), &mut state);
-        executor.tool_sets(&turn.work()).await
+        executor.tool_sets(&turn.situation()).await
     }
 
     /// A turn under way, done as `work` says, offered what `executor`

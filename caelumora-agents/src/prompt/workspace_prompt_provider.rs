@@ -6,7 +6,7 @@
 //! It says what is there, whatever tools a personality has to work on it,
 //! so a personality with several gets it once. Read afresh at the start of
 //! every turn through the agent's views: the workspace the channel may use
-//! now (`AgentWork::workspace`). In the system prompt by default
+//! now (`Situation::workspace`). In the system prompt by default
 //! (parameter `position`): it changes rarely. The part is classified as the
 //! workspace, which flows into the channel where it may be used there.
 //!
@@ -22,7 +22,7 @@ use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFa
 use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
 use caelumora_runtime::terminal::{TerminalError, WorkspacePath};
 use caelumora_runtime::view::WorkspaceView;
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use serde::Deserialize;
@@ -70,13 +70,13 @@ impl WorkspacePromptProvider {
     }
 
     /// Those of the instruction files that lie at the root of `workspace`,
-    /// the one `work` may use in its channel; none if its storage cannot be
+    /// the one `situation` may use in its channel; none if its storage cannot be
     /// reached, which must not cost the turn.
-    async fn instruction_files_in(&self, workspace: &WorkspaceView, work: &AgentWork<'_>) -> Vec<&WorkspacePath> {
+    async fn instruction_files_in(&self, workspace: &WorkspaceView, situation: &Situation<'_>) -> Vec<&WorkspacePath> {
         if self.instruction_files.is_empty() {
             return Vec::new();
         }
-        let terminal = match work.workspace_for_reading().await {
+        let terminal = match situation.workspace_for_reading().await {
             Ok((_, terminal)) => terminal,
             Err(error) => {
                 warn!(workspace = %workspace.id(), "Looking for the instruction files of a workspace failed: {error}");
@@ -154,10 +154,10 @@ impl PromptProvider for WorkspacePromptProvider {
         self.position
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
-        Ok(match work.workspace().await? {
+    async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
+        Ok(match situation.workspace().await? {
             Some(workspace) => {
-                let found = self.instruction_files_in(&workspace, work).await;
+                let found = self.instruction_files_in(&workspace, situation).await;
                 let writable = workspace.may_write().await;
                 Prompt::classified(told(&workspace, writable, &self.instruction_files, &found), workspace.classification().clone())
             }
@@ -203,13 +203,13 @@ mod tests {
         let world = session_with_workspace().await;
         let provider = provider();
         let mut state = AgentChannelState::default();
-        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
+        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).situation()).await.unwrap();
         assert!(prompt.text.starts_with("[Your workspace]") && prompt.text.contains("\"docs\"") && prompt.text.contains("Drafts") && prompt.text.contains("You can run shell commands"), "{}", prompt.text);
         assert_eq!(prompt.classification.as_ref(), Some(&world.workspace.classification));
 
         world.session.channels()[0].update_uses_workspace(&SecurityContext::system(), false).await.unwrap();
         let mut state = AgentChannelState::default();
-        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
+        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).situation()).await.unwrap();
         assert!(prompt.text.contains("There is no workspace you can use in this channel"), "{}", prompt.text);
         assert!(!prompt.text.contains("docs"), "nor which there is: {}", prompt.text);
     }
@@ -219,21 +219,21 @@ mod tests {
         let world = session_with_workspace().await;
         let provider = provider();
         let mut state = AgentChannelState::default();
-        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
+        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).situation()).await.unwrap();
         assert!(!prompt.text.contains("At its top"), "none is there, none is named: {}", prompt.text);
         assert!(prompt.text.contains("may hold a file of its own named `AGENTS.md` or `CLAUDE.md`") && prompt.text.contains("takes precedence"), "{}", prompt.text);
 
         std::fs::write(world.dir().join("AGENTS.md"), "Run the tests.").unwrap();
         std::fs::create_dir(world.dir().join("CLAUDE.md")).unwrap();
         let mut state = AgentChannelState::default();
-        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
+        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).situation()).await.unwrap();
         assert!(prompt.text.contains("At its top lies `AGENTS.md`,") && prompt.text.contains("Read it with `read_file`"), "{}", prompt.text);
         assert!(!prompt.text.contains("Run the tests"), "not its content: {}", prompt.text);
 
         std::fs::remove_dir(world.dir().join("CLAUDE.md")).unwrap();
         std::fs::write(world.dir().join("CLAUDE.md"), "See AGENTS.md").unwrap();
         let mut state = AgentChannelState::default();
-        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
+        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).situation()).await.unwrap();
         assert!(prompt.text.contains("At its top lie `AGENTS.md` and `CLAUDE.md`,") && prompt.text.contains("Read them"), "every one found: {}", prompt.text);
     }
 
@@ -244,12 +244,12 @@ mod tests {
         std::fs::write(world.dir().join("GUIDE.md"), "").unwrap();
         let provider = provider_of(&["GUIDE.md".to_string()]);
         let mut state = AgentChannelState::default();
-        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
+        let prompt = provider.get_prompt(&workspace_turn(&world, &mut state).situation()).await.unwrap();
         assert!(prompt.text.contains("At its top lies `GUIDE.md`,") && !prompt.text.contains("AGENTS.md"), "{}", prompt.text);
 
         let none = provider_of(&[]);
         let mut state = AgentChannelState::default();
-        let prompt = none.get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
+        let prompt = none.get_prompt(&workspace_turn(&world, &mut state).situation()).await.unwrap();
         assert!(!prompt.text.contains("At its top") && !prompt.text.contains("of its own"), "{}", prompt.text);
 
         for invalid in ["", "docs/AGENTS.md", "../AGENTS.md", "/AGENTS.md"] {
@@ -263,7 +263,7 @@ mod tests {
         std::fs::write(world.dir().join("AGENTS.md"), "").unwrap();
         std::fs::remove_dir_all(world.dir()).unwrap();
         let mut state = AgentChannelState::default();
-        let prompt = provider().get_prompt(&workspace_turn(&world, &mut state).work()).await.unwrap();
+        let prompt = provider().get_prompt(&workspace_turn(&world, &mut state).situation()).await.unwrap();
         assert!(prompt.text.contains("\"docs\"") && !prompt.text.contains("At its top"), "{}", prompt.text);
     }
 }

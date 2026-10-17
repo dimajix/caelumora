@@ -123,9 +123,9 @@ per personality.
 
 ## Reading other channels
 
-Components read what other channels know through the views of the turn they are called with
-(`Turn::session`, see [SECURITY.md](SECURITY.md#views)): the agent's session, its channels and their
-notes and histories, and the agent's own private notes of the other channels.
+Components read what other channels know through the views of the situation they are given
+(`Situation::session`, see [SECURITY.md](SECURITY.md#views)): the agent's session, its channels and
+their notes and histories, and the agent's own private notes of the other channels.
 
 *   **From the own channel.** The agent reads as a viewer *from a place*: its channel, the
     classification its turn began with and its session's privacy.

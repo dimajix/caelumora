@@ -12,7 +12,7 @@ use super::run_control::RunControl;
 use caelumora_runtime::actor::Answering;
 use caelumora_runtime::agent::state::AgentStateHandle;
 use crate::turn::Turn;
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use crate::command::AgentCommandProvider;
 use caelumora_runtime::command::CommandExecutor;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentImpl};
@@ -196,22 +196,22 @@ impl AgentBody {
         Turn::of(self.agent_id(), self.agent.name(), state, Arc::clone(&self.agent_state), self.runtime.clone())
     }
 
-    /// `work` as the agent's components read it, with its `state` in the
-    /// channel - for work that is no turn of `state`, as an external agent's
-    /// answer is.
-    pub(super) fn work<'a>(&'a self, work: &'a Work, state: &'a AgentChannelState) -> AgentWork<'a> {
-        AgentWork::new(self.agent_id(), work, state, &self.agent_state, &self.runtime)
+    /// The situation of `work`, as the agent's components read it, with its
+    /// `state` in the channel - for work that is no turn of `state`, as an
+    /// external agent's answer is.
+    pub(super) fn situation<'a>(&'a self, work: &'a Work, state: &'a AgentChannelState) -> Situation<'a> {
+        Situation::new(self.agent_id(), work, state, &self.agent_state, &self.runtime)
     }
 
     /// The prompt parts and the knowledge they hold that its context
-    /// provider assembles for `work`, whatever its fail policy: without a
+    /// provider assembles for `situation`, whatever its fail policy: without a
     /// context there is nothing to give the mind. Parts that may be left
     /// out are the prompt providers', each by its own policy.
     ///
     /// # Errors
     /// If the context provider cannot assemble them.
-    pub(super) async fn current_context(&self, work: &AgentWork<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>)> {
-        self.context_provider.current_context(work).await
+    pub(super) async fn current_context(&self, situation: &Situation<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>)> {
+        self.context_provider.current_context(situation).await
             .with_context(|| format!("component '{}' could not assemble the context", self.context_provider.id))
     }
 

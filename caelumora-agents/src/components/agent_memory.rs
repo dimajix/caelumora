@@ -24,7 +24,7 @@ use crate::memory::AgentMemory;
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::prompt::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::question::Answers;
@@ -136,7 +136,7 @@ impl ToolProvider for AgentMemoryComponent {
         }?;
         // What these answer tells only what the model asked for: classified
         // as the turn (issue 168).
-        Ok(ToolOutput::classified(value, turn.label()))
+        Ok(ToolOutput::classified(value, turn.situation().label()))
     }
 }
 
@@ -186,14 +186,14 @@ impl PromptProvider for AgentMemoryComponent {
         PromptPosition::BeforeTurnInput
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
-        let recalled = AgentMemory::recalled(work, self.confidentiality.as_ref()).await;
+    async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
+        let recalled = AgentMemory::recalled(situation, self.confidentiality.as_ref()).await;
         if recalled.is_empty() {
             return Ok(Prompt::default());
         }
         // Once for every channel the entries come from, so that knowledge
         // from another session can be told (issue 134).
-        let source = KnowledgeSource::Memory { agent: work.agent_id(), digest: AgentMemory::digest(work) };
+        let source = KnowledgeSource::Memory { agent: situation.agent_id(), digest: AgentMemory::digest(situation) };
         let mut knowledge: Vec<KnowledgeRef> = Vec::new();
         for memory in &recalled {
             if !knowledge.iter().any(|k| k.channel == memory.origin.channel) {
@@ -407,7 +407,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at, agent);
         let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(handle), sessions.runtime_in(&at).await).expect("a turn was begun");
-        memory.get_prompt(&turn.work()).await.unwrap()
+        memory.get_prompt(&turn.situation()).await.unwrap()
     }
 
     #[tokio::test]
@@ -430,7 +430,7 @@ mod tests {
             turn.see(&team.1);
             let result = memory.execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "Kaya likes tea." }), None, &mut turn).await.unwrap();
             assert_eq!(result.value["id"], 1);
-            assert!(turn.agent_state().current().memory.current().is_empty(), "not before the turn completes");
+            assert!(turn.situation().agent_state().current().memory.current().is_empty(), "not before the turn completes");
             turn.commit(false, &Discard).await;
         }
 
@@ -525,7 +525,7 @@ mod tests {
         assert_eq!(handle.current().memory.current()[0].origin.session, SessionPrivacy { id: at.0.0, ..SessionPrivacy::default() }, "its session, private: nobody agreed to anything");
         memory.begin(&mut state, &at, agent);
         let turn = Turn::of(agent, "agent".to_string(), &mut state, Arc::clone(&handle), detached_actor_runtime()).expect("a turn was begun");
-        assert!(memory.get_prompt(&turn.work()).await.unwrap().text.is_empty(), "no session to recall in");
+        assert!(memory.get_prompt(&turn.situation()).await.unwrap().text.is_empty(), "no session to recall in");
     }
 
     /// Lets channels read each other only in the name of `owner` - and asks

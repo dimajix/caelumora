@@ -77,7 +77,7 @@ impl ToolProvider for SleepToolProvider {
             .ok_or_else(|| ToolError::InvalidParameter(format!("'seconds' must be between 0 and {MAX_SECONDS}")))?;
         tokio::time::sleep(wait).await;
         // Derived from the arguments alone: classified as the turn (issue 168).
-        Ok(ToolOutput::classified(serde_json::json!({ "status": "slept", "seconds": seconds }), turn.label()))
+        Ok(ToolOutput::classified(serde_json::json!({ "status": "slept", "seconds": seconds }), turn.situation().label()))
     }
 }
 

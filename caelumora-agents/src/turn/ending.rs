@@ -295,7 +295,7 @@ mod tests {
         let second = message("second");
         turn.push_message(first.clone());
         turn.push_message(second.clone());
-        let kept_from = turn.agent_channel_state().transcript.digest();
+        let kept_from = turn.situation().agent_channel_state().transcript.digest();
         turn.compact(vec![(message("summary of first"), None)], kept_from).expect("compacted");
         let third = message("third");
         turn.push_message(third.clone());

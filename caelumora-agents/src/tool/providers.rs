@@ -4,7 +4,7 @@
 //! permits, and makes what the model is told of the result.
 
 use crate::turn::Turn;
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use caelumora_runtime::component::{ComponentError, ComponentImpl, ComponentResult};
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_model::approval::ToolMatcher;
@@ -77,14 +77,14 @@ impl ToolProviders {
         }
     }
 
-    /// The tools offered in `work`, in the sets of the providers they come
+    /// The tools offered in `situation`, in the sets of the providers they come
     /// from (issue 194), in the order of the configuration: each as its
     /// provider offers them there (`ToolProvider::offered`, issue 290), or
     /// unavailable without tools, saying why.
-    pub(super) async fn tool_sets(&self, work: &AgentWork<'_>) -> Vec<ToolSet> {
+    pub(super) async fn tool_sets(&self, situation: &Situation<'_>) -> Vec<ToolSet> {
         let mut sets = Vec::with_capacity(self.providers.len());
         for provider in &self.providers {
-            let (tools, unavailable) = match provider.offered(work).await {
+            let (tools, unavailable) = match provider.offered(situation).await {
                 Ok(tools) => (tools, None),
                 Err(why) => (Vec::new(), Some(why)),
             };
@@ -209,7 +209,7 @@ mod tests {
         fn tools(&self) -> Vec<Tool> {
             vec![Tool { name: "remote_tool".to_string(), ..MockToolProvider.tools().remove(0) }]
         }
-        async fn offered(&self, _work: &AgentWork<'_>) -> Result<Vec<Tool>, String> {
+        async fn offered(&self, _situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
             Err("its server cannot be reached".to_string())
         }
         async fn execute(&self, name: &str, _params: &Value, _answers: Option<&Answers>, _turn: &mut Turn) -> ToolResult<ToolOutput> {
@@ -223,7 +223,7 @@ mod tests {
         let providers = ToolProviders::new(vec![component("local"), remote]).unwrap();
         let mut agent_channel_state = agent_state();
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
-        let sets: Vec<_> = providers.tool_sets(&turn.work()).await.into_iter()
+        let sets: Vec<_> = providers.tool_sets(&turn.situation()).await.into_iter()
             .map(|set| (set.name, set.description, set.tools.into_iter().map(|t| t.name).collect::<Vec<_>>(), set.unavailable))
             .collect();
         assert_eq!(sets, [

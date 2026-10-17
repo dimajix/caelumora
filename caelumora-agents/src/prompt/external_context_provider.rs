@@ -11,7 +11,7 @@
 
 use caelumora_runtime::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
 use crate::prompt::{prompt_for, ContextError, ContextProvider, PromptProvider};
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::message::MessageRole;
@@ -28,11 +28,11 @@ pub struct ExternalContextProvider {
 
 #[async_trait]
 impl ContextProvider for ExternalContextProvider {
-    async fn current_context(&self, work: &AgentWork<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError> {
+    async fn current_context(&self, situation: &Situation<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError> {
         let mut parts = Vec::new();
         let mut knowledge = Vec::new();
         for provider in &self.prompt_providers {
-            let Some(contribution) = prompt_for(provider, work).await? else { continue };
+            let Some(contribution) = prompt_for(provider, situation).await? else { continue };
             let text = contribution.text.trim();
             if text.is_empty() {
                 continue;
@@ -89,7 +89,7 @@ mod tests {
             fixed("rules", "Answer in German.", PromptPosition::Start),
         ] };
         let (state, agent_state, work) = (AgentChannelState::default(), AgentStateHandle::detached(), Work::default());
-        let (parts, knowledge) = provider.current_context(&AgentWork::new(AgentId::new(), &work, &state, &agent_state, &detached_actor_runtime())).await.unwrap();
+        let (parts, knowledge) = provider.current_context(&Situation::new(AgentId::new(), &work, &state, &agent_state, &detached_actor_runtime())).await.unwrap();
 
         let given: Vec<_> = parts.iter().map(|p| (p.source.as_deref(), p.text.as_str(), p.role, p.after)).collect();
         assert_eq!(given, [(Some("frame"), "Be brief.", MessageRole::User, None), (Some("rules"), "Answer in German.", MessageRole::User, None)]);

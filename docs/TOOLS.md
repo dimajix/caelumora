@@ -31,10 +31,10 @@ configuration.
 **What a turn is offered** depends on where it works (issue
 [290](../issues/290-tools-offered-by-the-turn.md)). A provider has its tools (`tools`), by which a
 call finds it and whose names no other provider of the agent may have, and offers of them those
-that may be called in the turn's work (`offered`): by default all, a provider whose tools depend
-on the place fewer, or none, saying why. It is asked once the turn is begun and before its context
-is built, given the turn's work (`AgentWork`) - the place and whose authority it acts with -, as a
-prompt part is; what it offers is fixed in the turn (see
+that may be called in the turn's situation (`offered`): by default all, a provider whose tools
+depend on the place fewer, or none, saying why. It is asked once the turn is begun and before its
+context is built, given the turn's `Situation` - the place and whose authority it acts with -, as
+a prompt part is; what it offers is fixed in the turn (see
 [AGENT-TURN.md](AGENT-TURN.md#tools-offered)). Offering is a convenience for the model, never the
 guard: a call of a tool not offered is answered as unknown, and a call of one offered keeps its own
 checks, since what may be called can change while the turn runs. What the web UI shows of an

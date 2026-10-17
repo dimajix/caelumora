@@ -23,9 +23,9 @@ pub mod message;
 pub(crate) mod notes;
 pub mod plugin;
 pub mod prompt;
+pub mod situation;
 pub mod tool;
 pub mod turn;
-pub mod work;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 #[cfg(test)]

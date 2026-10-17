@@ -18,7 +18,7 @@
 //! known of it, and all that is kept: in its `AgentChannelState`, as every
 //! agent's, with what ties it to the remote side (`RemoteState`, issue
 //! 206). What it reads beyond that, its prompt providers read, as for a
-//! turn (`AgentWork`).
+//! turn (`Situation`).
 //!
 //! Every request is a piece of work (`Work`), as a turn is (issues 211,
 //! 212): done in the request's contexts, bound by the channel as it was
@@ -178,7 +178,7 @@ impl ExternalAgentActor {
     /// # Errors
     /// If its context provider cannot assemble them.
     async fn prompts_to_give(&self, state: &AgentChannelState, work: &mut Work) -> Result<Vec<(String, PromptPart)>> {
-        let (parts, knowledge) = self.body.current_context(&self.body.work(work, state)).await?;
+        let (parts, knowledge) = self.body.current_context(&self.body.situation(work, state)).await?;
         work.take_in_context(&parts, knowledge);
         let mut pending = self.pending_prompts();
         for (index, part) in parts.into_iter().enumerate() {

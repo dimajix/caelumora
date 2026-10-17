@@ -16,7 +16,7 @@ pub mod turn_context_provider;
 pub mod workspace_prompt_provider;
 
 use caelumora_runtime::component::{ComponentError, ComponentImpl, ComponentRegistry};
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use caelumora_runtime::view::ViewError;
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
@@ -156,15 +156,15 @@ pub trait PromptProvider: Send + Sync + Debug {
     fn position(&self) -> PromptPosition {
         PromptPosition::Start
     }
-    /// The part for `work` - a turn about to start, or a request to an
+    /// The part for `situation` - a turn about to start, or a request to an
     /// external agent about to be sent (issue 204); empty text for none.
     ///
     /// # Errors
     /// `ContextError` if the part cannot be had.
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError>;
+    async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError>;
 }
 
-/// The part of the prompt provider `provider` for `work`, as its fail
+/// The part of the prompt provider `provider` for `situation`, as its fail
 /// policy says: `None` if it failed and fails open. A function of the
 /// prompt module rather than a method of `ComponentImpl`, whose methods are
 /// the component registry's alone (issue 370), as `apply_stage_processors`
@@ -173,8 +173,8 @@ pub trait PromptProvider: Send + Sync + Debug {
 /// # Errors
 /// `ContextError::Component`, naming the component, if it failed and
 /// fails closed.
-pub(crate) async fn prompt_for(provider: &ComponentImpl<dyn PromptProvider>, work: &AgentWork<'_>) -> Result<Option<Prompt>, ContextError> {
-    provider.apply_fail_policy(provider.get_prompt(work).await)
+pub(crate) async fn prompt_for(provider: &ComponentImpl<dyn PromptProvider>, situation: &Situation<'_>) -> Result<Option<Prompt>, ContextError> {
+    provider.apply_fail_policy(provider.get_prompt(situation).await)
         .map_err(|cause| ContextError::Component { component: provider.id.clone(), cause: Box::new(cause) })
 }
 
@@ -191,13 +191,13 @@ pub(crate) async fn prompt_for(provider: &ComponentImpl<dyn PromptProvider>, wor
 /// refused.
 #[async_trait]
 pub trait ContextProvider: Send + Sync + Debug {
-    /// The prompt parts for `work`, each where it goes, and the knowledge
+    /// The prompt parts for `situation`, each where it goes, and the knowledge
     /// they hold.
     ///
     /// # Errors
     /// `ContextError` if what the model is to be given cannot be had - a
     /// prompt provider that fails closed.
-    async fn current_context(&self, work: &AgentWork<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError>;
+    async fn current_context(&self, situation: &Situation<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError>;
 }
 
 /// Why what an agent's model is to be given cannot be had (issue 336):

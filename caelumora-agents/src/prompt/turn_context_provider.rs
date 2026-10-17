@@ -3,7 +3,7 @@
 //! every `PromptProvider` of the agent, placed around its transcript
 //! (issues 47, 99). The default `ContextProvider` of an agent run here.
 
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_runtime::component::{ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
 use crate::prompt::{prompt_for, ContextError, ContextProvider, PromptPosition, PromptProvider};
@@ -26,12 +26,12 @@ pub struct TurnContextProvider {
 
 #[async_trait]
 impl ContextProvider for TurnContextProvider {
-    async fn current_context(&self, work: &AgentWork<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError> {
+    async fn current_context(&self, situation: &Situation<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError> {
         let mut start = Vec::new();
         let mut before_input = Vec::new();
         let mut knowledge = Vec::new();
         for provider in &self.prompt_providers {
-            let Some(contribution) = prompt_for(provider, work).await? else { continue };
+            let Some(contribution) = prompt_for(provider, situation).await? else { continue };
             let text = contribution.text.trim();
             if text.is_empty() {
                 continue;
@@ -54,9 +54,9 @@ impl ContextProvider for TurnContextProvider {
             // Before the newest message, which is the turn's input - unless
             // the agent wrote it itself, in a turn that has none (e.g. after
             // `/wakeup`): then at the end.
-            let transcript = &work.agent_channel_state().transcript;
+            let transcript = &situation.agent_channel_state().transcript;
             let mut messages = transcript.entries().rev().filter_map(|n| n.entry.message().map(|m| (n.digest, m)));
-            let own = ActorId::Agent(work.agent_id());
+            let own = ActorId::Agent(situation.agent_id());
             let after = match messages.next() {
                 Some((_, input)) if input.sender_id != own => messages.next().map(|(digest, _)| digest),
                 Some((own_message, _)) => Some(own_message),
@@ -126,7 +126,7 @@ mod tests {
     /// What `provider` answers for `turn`, set in it as the agent's actor
     /// sets it.
     async fn assemble(provider: &TurnContextProvider, turn: &mut Turn<'_>) -> Result<()> {
-        let (parts, knowledge) = provider.current_context(&turn.work()).await?;
+        let (parts, knowledge) = provider.current_context(&turn.situation()).await?;
         turn.set_context(parts, knowledge);
         Ok(())
     }
@@ -137,7 +137,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PromptProvider for Unavailable {
-        async fn get_prompt(&self, _work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
+        async fn get_prompt(&self, _situation: &Situation<'_>) -> Result<Prompt, ContextError> {
             Err(ContextError::Failed("unavailable".to_string()))
         }
     }
@@ -180,7 +180,7 @@ mod tests {
         assemble(&provider, &mut turn).await.unwrap();
         assert_eq!(contents(&turn), ["System:Be brief.", "User:earlier", "User:Notes: none.", "User:question"],
             "the system prompt first, the notes before the turn's input");
-        assert_eq!(turn.agent_channel_state().transcript.messages().len(), 2, "prompt parts are never stored in the context");
+        assert_eq!(turn.situation().agent_channel_state().transcript.messages().len(), 2, "prompt parts are never stored in the context");
 
         // A turn without new input - the newest message is the agent's own.
         let mut own = message("my answer");

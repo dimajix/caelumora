@@ -99,7 +99,7 @@ impl Turn<'_> {
         let dropped: HashSet<usize> = of_plan.into_iter().filter(|&at| at == current || prompts[at].after == replaced).collect();
         let kept = prompts.iter().enumerate().filter(|(at, _)| !dropped.contains(at)).map(|(_, part)| part.clone()).collect();
         self.current_mut().work.context.prompts = kept;
-        let label = self.label();
+        let label = self.situation().label();
         let overview = self.keep_prompt(MessageRole::System, plan_overview_instruction(&plan, progress), after, Some(label));
         self.current_mut().work.context.prompts.push(overview);
     }
@@ -243,7 +243,7 @@ mod tests {
         let started = turn.advance_plan(1);
 
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Step(1));
-        assert!(turn.agent_channel_state().transcript.messages().iter().all(|m| m.turn_id != Some(turn.turn_id())), "the instruction is no message of the turn");
+        assert!(turn.situation().agent_channel_state().transcript.messages().iter().all(|m| m.turn_id != Some(turn.turn_id())), "the instruction is no message of the turn");
         let (role, text) = given(&turn).pop().expect("the instruction is given to the model");
         assert_eq!(role, MessageRole::User, "a system message in the middle, given as a user message");
         assert!(text.contains("second"));
@@ -377,12 +377,12 @@ mod tests {
         turn.push_message(message("did the first"));
         turn.advance_plan(1);
         turn.push_message(message("working on the second"));
-        let at_first = turn.agent_channel_state().transcript.entries().next().map(|node| node.digest);
+        let at_first = turn.situation().agent_channel_state().transcript.entries().next().map(|node| node.digest);
         turn.compact(vec![(message("summary"), None)], at_first).expect("compacted");
         assert_eq!(given(&turn).len(), 6, "nothing of the plan was replaced, so it is not named again: {:?}", given(&turn));
 
         // From its last message: the head is where the compaction's part ends.
-        let kept_from = turn.agent_channel_state().transcript.entries().rev().find(|node| node.entry.message().is_some()).map(|node| node.digest);
+        let kept_from = turn.situation().agent_channel_state().transcript.entries().rev().find(|node| node.entry.message().is_some()).map(|node| node.digest);
         turn.compact(vec![(message("summary again"), None)], kept_from).expect("compacted");
         let texts: Vec<String> = given(&turn).into_iter().map(|(_, text)| text).collect();
         assert_eq!(texts.len(), 3, "the summary, the plan named again, what was kept: {texts:?}");

@@ -440,8 +440,8 @@ async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &Regex, 
 /// `turn` what was read.
 pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Value, terminal: &dyn Terminal, workspace: &Workspace, max_file_bytes: u64, turn: &mut Turn<'_>) -> ToolResult<Value> {
     let read = |turn: &mut Turn<'_>, digest| turn.record_knowledge(KnowledgeRef {
-        channel: turn.channel_id(),
-        session: turn.session_id(),
+        channel: turn.situation().channel_id(),
+        session: turn.situation().session_id(),
         source: KnowledgeSource::entity::<Workspace>(workspace.id, digest),
         classification: Some(workspace.classification.clone()),
     });

@@ -5,7 +5,7 @@
 
 use caelumora_runtime::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use std::sync::Arc;
@@ -28,7 +28,7 @@ impl PromptProvider for StaticSystemPromptProvider {
     fn position(&self) -> PromptPosition {
         self.position
     }
-    async fn get_prompt(&self, _work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
+    async fn get_prompt(&self, _situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         Ok(Prompt::classified(self.prompt.clone(), self.classification.clone()))
     }
 }

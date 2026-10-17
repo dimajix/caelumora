@@ -18,7 +18,7 @@
 
 use caelumora_runtime::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
-use crate::work::AgentWork;
+use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
@@ -67,11 +67,11 @@ impl PromptProvider for ChannelMembersPromptProvider {
         self.position
     }
 
-    async fn get_prompt(&self, work: &AgentWork<'_>) -> Result<Prompt, ContextError> {
-        // Work that reaches no session (`AgentWork::session`) has nobody to name.
-        let Some(session) = work.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
-        let channel = session.channel(work.channel_id()).await?;
-        let own = ActorId::Agent(work.agent_id());
+    async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
+        // Work that reaches no session (`Situation::session`) has nobody to name.
+        let Some(session) = situation.session().await else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
+        let channel = session.channel(situation.channel_id()).await?;
+        let own = ActorId::Agent(situation.agent_id());
         let mut me = None;
         let mut others = Vec::new();
         for member in channel.members().await {
@@ -91,7 +91,7 @@ impl PromptProvider for ChannelMembersPromptProvider {
             }
         }
         let roster = (me, others);
-        let explanation = work.profile().sender_explanation();
+        let explanation = situation.profile().sender_explanation();
         let explanation = explanation.as_deref();
         let text = match &self.told {
             None => render(roster.0.as_ref(), &roster.1, explanation),
@@ -333,7 +333,7 @@ mod tests {
         state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Default::default());
         let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(jonathan.id))).expect("a turn was begun");
 
-        let prompt = ChannelMembersPromptProvider::new(PromptPosition::Start).get_prompt(&turn.work()).await.unwrap();
+        let prompt = ChannelMembersPromptProvider::new(PromptPosition::Start).get_prompt(&turn.situation()).await.unwrap();
         assert_eq!(prompt.text, "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
             About you: A quiz master.\n\

@@ -21,7 +21,7 @@ use caelumora_model::security::Grant;
 use caelumora_model::store::StoreError;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_agents::turn::Turn;
-use caelumora_agents::work::AgentWork;
+use caelumora_agents::situation::Situation;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
 use caelumora_runtime::terminal::WorkspacePath;
 use caelumora_agents::tool::{arguments, usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
@@ -122,11 +122,11 @@ impl ToolProvider for ArtifactTool {
     /// Its tool where a file can be published: where the work may use a
     /// workspace in its channel, and a storage of artifacts is configured
     /// (issue 290).
-    async fn offered(&self, work: &AgentWork<'_>) -> Result<Vec<Tool>, String> {
+    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
         if !self.artifacts.is_configured() {
             return Err("no storage of artifacts is configured".to_string());
         }
-        usable_workspace(work).await?;
+        usable_workspace(situation).await?;
         Ok(self.tools())
     }
 
@@ -153,7 +153,7 @@ impl ToolProvider for ArtifactTool {
             _ => at.file_name().unwrap_or_default().to_string(),
         };
         let description = description.as_deref().map(str::trim).filter(|d| !d.is_empty());
-        let (ctx, session, channel) = (turn.security_context(), turn.session_id(), turn.channel_id());
+        let (ctx, session, channel) = (turn.situation().security_context(), turn.situation().session_id(), turn.situation().channel_id());
         let (workspace, terminal) = turn.workspace_terminal(Grant::Read).await
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         let content = terminal.read(&at).await?;
