@@ -58,7 +58,7 @@ answer has come.
     thing - a participant's state in a channel - and a `UserChannelState` beside it treats users
     like agents. Every frontend sees the same.
 
-Recommended: (b). The position is the user's own: nobody else can read it - no read receipts for
+Decided: (b). The position is the user's own: nobody else can read it - no read receipts for
 others, which would be a feature of its own with its own privacy question.
 
 What the position is: the position in the history of the last message shown, not a message id - a
@@ -72,7 +72,7 @@ count and a page both start from a position (`HistoryStart::from` converts where
 *   **(b) The server moves it on delivery** to the user's channel stream. But delivered is not read:
     a tab open in the background would mark everything as read.
 
-Recommended: (a). An action in the user's name, which needs no permission beyond reading the
+Decided: (a). An action in the user's name, which needs no permission beyond reading the
 channel and comes with its test in the security suite (a user moves only their own position, and
 only within what they may read).
 
@@ -96,7 +96,7 @@ name and one through `@all` cannot be told apart afterwards. Options:
 *   **Only the explicit one counts.** Needs the marker that 401 rejected - reopening that decision,
     with its cost (a second representation of who was mentioned).
 
-Recommended: both count; whoever writes `@all` wants everyone's attention.
+Decided: both count; whoever writes `@all` wants everyone's attention.
 
 ### How it is counted
 
@@ -111,7 +111,7 @@ Recommended: both count; whoever writes `@all` wants everyone's attention.
     a second bookkeeping beside the history that has to follow reclassifications, revocations and
     changes of what a user may read - every rule of `may_read_item` a second time.
 
-Recommended: (a). The count is the `ChannelView`'s: it already knows what its reader may read.
+Decided: (a). The count is the `ChannelView`'s: it already knows what its reader may read.
 
 ### How the overview learns of new messages
 
@@ -126,7 +126,7 @@ The overview needs to change without the channel's stream being open.
 *   **(b) A change without numbers**, after which the UI fetches the channel again
     (`GET /sessions/{id}`). Simpler per event, but one request per message per user and channel.
 
-Recommended: (a), and `ChannelResponse` (snapshot and `GET /sessions/{id}`) carries the same two
+Decided: (a), and `ChannelResponse` (snapshot and `GET /sessions/{id}`) carries the same two
 values - `unread` (capped) and `mentioned` - for the user who asks, so that the overview is right
 from the start. For a channel the user has on screen, the UI moves the position as messages arrive,
 so its count stays at 0.
@@ -156,3 +156,9 @@ so its count stays at 0.
 ## History
 
 2026-10-17: Opened.
+
+2026-10-17: Decided by the maintainer, as recommended: the read position is kept on the server per
+user and channel (`UserChannelState`) and moved forward by the frontend; only readable messages
+said after it count, on request and capped; a mention by name and one through `@all` both count;
+the global stream tells each reader of news with their count and whether they are mentioned, and
+`ChannelResponse` carries both.
