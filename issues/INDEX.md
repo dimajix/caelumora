@@ -97,6 +97,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [385](385-inbox-lost-on-restart.md) | open | An actor's inbox is a queue in memory, so a restart loses what was routed to it and not yet taken in - a change to a message, a request, a command - for good. |
 | [386](386-actor-state-after-a-stop.md) | done | Whoever follows a channel keeps an agent's last state and its answer under way after the session stops, and the follower's reconnect starts the session again. |
 | [388](388-resume-interrupted-work-after-a-restart.md) | open | Work interrupted by a restart - a turn stopped mid-step at the shutdown - waits until someone acts in its session, since nothing starts the session again. |
+| [403](403-decision-model-policy.md) | open | Every responder policy chooses who answers without looking at the message - by turn, by chance or by whether a user wrote - so in a channel of agents with different roles the one that fits a question is asked only if someone mentions it. |
 
 ## Identity and access management
 
