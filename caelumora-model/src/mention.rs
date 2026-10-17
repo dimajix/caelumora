@@ -5,13 +5,27 @@
 //! mention collapsed into a single `-` — so that "Sassy" is addressed as
 //! `@sassy`, "Dr. Who" as `@dr-who` and "Zoë" as `@zoe` (issue 177). A
 //! mention typed with the original characters, `@zoë`, is normalised alike
-//! and addresses the same participant. Mentions are resolved to `ActorId`s once, when a message enters
-//! the channel, and stored with the message in `Message::mentions`; nothing
-//! downstream re-parses the text.
+//! and addresses the same participant. The group handles `@all` and
+//! `@channel` address every participant at once (issue 401). Mentions are
+//! resolved to `ActorId`s once, when a message enters the channel, and stored
+//! with the message in `Message::mentions`; nothing downstream re-parses the
+//! text.
 
 use crate::actor::ActorId;
 use std::collections::HashMap;
 use std::ops::Range;
+
+/// The handles that address every participant of a channel at once, rather
+/// than one by its name: `@all` and its synonym `@channel` (issue 401). A
+/// participant whose name yields one of them is among those it addresses,
+/// but is not addressed by it alone.
+pub const GROUP_HANDLES: [&str; 2] = ["all", "channel"];
+
+/// Returns whether `handle`, normalised as `handle_of` does, addresses every
+/// participant (`GROUP_HANDLES`).
+pub fn is_group_handle(handle: &str) -> bool {
+    GROUP_HANDLES.contains(&handle)
+}
 
 /// Returns whether `c` may be part of a handle.
 fn is_handle_char(c: char) -> bool {
@@ -103,14 +117,21 @@ pub fn parse_mentions(text: &str) -> Vec<String> {
 #[derive(Debug, Clone, Default)]
 pub struct MentionDirectory {
     handles: HashMap<String, Vec<ActorId>>,
+    /// Every participant, in the order given: whom a group handle addresses.
+    everyone: Vec<ActorId>,
 }
 
 impl MentionDirectory {
     /// Builds the directory from `(actor, name)` pairs. Participants whose
-    /// name yields no handle are left out.
+    /// name yields no handle cannot be mentioned by name, but are among
+    /// those a group handle addresses.
     pub fn new<'a>(participants: impl IntoIterator<Item = (ActorId, &'a str)>) -> Self {
         let mut handles: HashMap<String, Vec<ActorId>> = HashMap::new();
+        let mut everyone: Vec<ActorId> = Vec::new();
         for (id, name) in participants {
+            if !everyone.contains(&id) {
+                everyone.push(id);
+            }
             let handle = handle_of(name);
             if !handle.is_empty() {
                 let ids = handles.entry(handle).or_default();
@@ -119,20 +140,25 @@ impl MentionDirectory {
                 }
             }
         }
-        Self { handles }
+        Self { handles, everyone }
     }
 
-    /// Returns the actors a handle addresses: none if it is unknown, several
-    /// if it is ambiguous.
+    /// Returns the actors a handle addresses: every participant if it is a
+    /// group handle, else none if it is unknown, several if it is ambiguous.
     pub fn lookup(&self, handle: &str) -> &[ActorId] {
+        if is_group_handle(handle) {
+            return &self.everyone;
+        }
         self.handles.get(handle).map(Vec::as_slice).unwrap_or(&[])
     }
 
-    /// Handles shared by more than one participant, sorted. A mention of such
-    /// a handle addresses all of them.
+    /// Handles of participants that do not address one participant alone,
+    /// sorted: those shared by more than one, which a mention addresses all
+    /// of, and group handles a participant's name yields, which address
+    /// everyone.
     pub fn ambiguous(&self) -> Vec<String> {
         let mut result: Vec<String> = self.handles.iter()
-            .filter(|(_, ids)| ids.len() > 1)
+            .filter(|(handle, ids)| ids.len() > 1 || is_group_handle(handle))
             .map(|(handle, _)| handle.clone())
             .collect();
         result.sort();
@@ -161,6 +187,7 @@ mod tests {
     use super::*;
     use crate::agent::AgentId;
     use crate::user::UserId;
+    use std::collections::HashSet;
 
     #[test]
     fn handle_of_lowercases_and_collapses_separators() {
@@ -219,6 +246,33 @@ mod tests {
         let zoe = ActorId::User(UserId::new());
         let directory = MentionDirectory::new(vec![(zoe, "Zoë")]);
         assert_eq!(directory.resolve("@zoe, @Zoë and @ZOË"), vec![zoe]);
+    }
+
+    #[test]
+    fn a_group_handle_addresses_every_participant() {
+        let sassy = ActorId::Agent(AgentId::new());
+        let bob = ActorId::User(UserId::new());
+        let nameless = ActorId::Agent(AgentId::new());
+        let directory = MentionDirectory::new(vec![(sassy, "Sassy"), (bob, "Bob"), (nameless, "!!!")]);
+
+        for text in ["@all, what do you think?", "@channel?", "@ALL", "@bob and @all"] {
+            let resolved: HashSet<ActorId> = directory.resolve(text).into_iter().collect();
+            assert_eq!(resolved, HashSet::from([sassy, bob, nameless]), "{text}: everyone, also who has no handle of their own");
+        }
+        assert!(directory.resolve("`@all`").is_empty(), "not in code");
+        assert!(directory.resolve("@allison").is_empty(), "a handle of its own");
+        assert!(directory.ambiguous().is_empty());
+        assert!(is_group_handle("all") && is_group_handle("channel") && !is_group_handle("everyone"));
+    }
+
+    #[test]
+    fn a_participant_whose_handle_is_a_group_handle_is_addressed_with_everyone() {
+        let all = ActorId::Agent(AgentId::new());
+        let bob = ActorId::User(UserId::new());
+        let directory = MentionDirectory::new(vec![(all, "All"), (bob, "Bob")]);
+
+        assert_eq!(directory.lookup("all"), [all, bob], "the group wins");
+        assert_eq!(directory.ambiguous(), vec!["all".to_string()], "and the handle is not the participant's alone");
     }
 
     #[test]

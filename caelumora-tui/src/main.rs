@@ -5,7 +5,7 @@ use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
 use caelumora_model::command::{parse_input, UserInput};
 use caelumora_model::config::AppConfig;
-use caelumora_model::mention::mention_spans;
+use caelumora_model::mention::{is_group_handle, mention_spans};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::question::{Question, QuestionId, QuestionRequest, Response};
 use caelumora_model::turn::GivenUpReason;
@@ -49,7 +49,8 @@ fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, S
     let mut rendered = String::with_capacity(content.len());
     let mut pos = 0;
     for span in mention_spans(content) {
-        if mentioned.contains(&&span.handle) {
+        // A group handle addresses everyone (issue 401): resolved if anyone was.
+        if mentioned.contains(&&span.handle) || (is_group_handle(&span.handle) && !message.mentions.is_empty()) {
             rendered.push_str(&content[pos..span.range.start]);
             rendered.push_str("\x1b[1;36m");
             rendered.push_str(&content[span.range.clone()]);

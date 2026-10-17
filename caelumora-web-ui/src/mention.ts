@@ -68,10 +68,21 @@ export function actorUuid(id: ActorId | undefined): string | null {
   return Object.values(id)[0] ?? null;
 }
 
-/** The handles of the members a message mentions, i.e. the mentions to highlight. */
+/**
+ * The handles that address every participant at once (issue 401), as
+ * `caelumora_model::mention::GROUP_HANDLES`: `@all` and its synonym `@channel`.
+ */
+export const GROUP_HANDLES = ['all', 'channel'] as const;
+
+/**
+ * The handles of the members a message mentions, i.e. the mentions to
+ * highlight - and the group handles, if the message mentions anyone: the
+ * server resolved them to everyone.
+ */
 export function mentionedHandles(message: Message, members: ChannelMember[]): Set<string> {
   const keys = new Set((message.mentions ?? []).map(actorKey));
-  return new Set(members.flatMap(m => (m.handle && keys.has(actorKey(m.id)) ? [m.handle] : [])));
+  const groups = keys.size > 0 ? GROUP_HANDLES : [];
+  return new Set([...groups, ...members.flatMap(m => (m.handle && keys.has(actorKey(m.id)) ? [m.handle] : []))]);
 }
 
 /**

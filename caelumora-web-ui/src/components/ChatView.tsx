@@ -97,7 +97,7 @@ import {AddParticipantDialog} from './AddParticipantDialog';
 import {ApprovalRuleOffer} from './ApprovalRuleOffer';
 import {QuestionCard} from './QuestionCard';
 import {approveEverything, approvingEverything, initialChoice, ruleOf, type RuleChoice} from '../approvalRules';
-import {actorKey, actorUuid, handleOf, mentionQueryAt} from '../mention';
+import {actorKey, actorUuid, GROUP_HANDLES, handleOf, mentionQueryAt} from '../mention';
 import {commandQueryAt, parseInput} from '../command';
 import {openEventStream} from '../stream';
 import {loadDraft, saveDraft} from '../session';
@@ -179,12 +179,14 @@ function stateDot(member: ChannelMember, activity?: string): {className: string;
   }
 }
 
-/** An entry of the completion list: a member to mention or a command to run. */
-// A command suggested: one of the channel, or one an agent carries out
-// (issue 269), with the handle it is written with - `all` for every agent
-// that carries it out.
+/** An entry of the completion list: a member or everyone to mention, or a command to run. */
+// A group: a handle that mentions every participant (issue 401). A command
+// suggested: one of the channel, or one an agent carries out (issue 269),
+// with the handle it is written with - `all` for every agent that carries it
+// out.
 type Suggestion =
   | {kind: 'mention'; member: MentionableMember}
+  | {kind: 'group'; handle: string}
   | {kind: 'command'; command: Command; handle?: string};
 
 /**
@@ -404,18 +406,22 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   }
   const agentSuggestions = [...agentCommands.values()].flatMap(({command, handles}) =>
-    [...handles, ...(handles.length > 1 ? ['all'] : [])].map((handle): Suggestion => ({kind: 'command', command, handle})));
+    [...handles, ...(handles.length > 1 ? [GROUP_HANDLES[0]] : [])].map((handle): Suggestion => ({kind: 'command', command, handle})));
+  const mentionText = (mentionQuery?.query ?? '').toLowerCase();
   const suggestions: Suggestion[] = suggestionStart === null || suggestionStart === dismissedMention
     ? []
     : commandQuery !== null
       ? [...commands.map((command): Suggestion => ({kind: 'command', command})), ...agentSuggestions]
           .filter(s => s.kind === 'command' && s.command.name.startsWith(commandQuery.toLowerCase()))
-      : members
-          .filter((m): m is MentionableMember => {
-            const query = (mentionQuery?.query ?? '').toLowerCase();
-            return !!m.handle && (m.handle.startsWith(handleOf(query)) || m.name.toLowerCase().includes(query));
-          })
-          .map(member => ({kind: 'mention', member}));
+      : [
+          ...members
+            .filter((m): m is MentionableMember =>
+              !!m.handle && (m.handle.startsWith(handleOf(mentionText)) || m.name.toLowerCase().includes(mentionText)))
+            .map((member): Suggestion => ({kind: 'mention', member})),
+          ...GROUP_HANDLES
+            .filter(handle => handle.startsWith(handleOf(mentionText)))
+            .map((handle): Suggestion => ({kind: 'group', handle})),
+        ];
 
   // Whether the logged-in user takes part in this channel; `undefined` until
   // the channel is known. Joining or leaving changes it (the members follow
@@ -1091,14 +1097,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   const selectSuggestion = (suggestion: Suggestion) => {
     if (suggestion.kind === 'command') selectCommand(suggestion.command, suggestion.handle);
-    else selectMention(suggestion.member);
+    else selectMention(suggestion.kind === 'group' ? suggestion.handle : suggestion.member.handle);
   };
 
-  const selectMention = (member: MentionableMember) => {
+  const selectMention = (handle: string) => {
     if (!mentionQuery) return;
     const before = inputText.slice(0, mentionQuery.start);
     const after = inputText.slice(caret).replace(/^\s*/, ' ');
-    const inserted = `@${member.handle}`;
+    const inserted = `@${handle}`;
     const newCaret = before.length + inserted.length + 1;
     setInputText(before + inserted + after);
     setCaret(newCaret);
@@ -1743,10 +1749,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                   {suggestions.map((suggestion, idx) => {
                     const [label, detail, description] = suggestion.kind === 'command'
                       ? [`/${suggestion.command.name}`, [suggestion.handle && `@${suggestion.handle}`, suggestion.command.usage].filter(Boolean).join(' '), suggestion.command.description]
-                      : [suggestion.member.name, `@${suggestion.member.handle}`, null];
+                      : suggestion.kind === 'group'
+                        ? ['Everyone', `@${suggestion.handle}`, 'Every participant of this channel']
+                        : [suggestion.member.name, `@${suggestion.member.handle}`, null];
                     return (
                       <li
-                        key={`${suggestion.kind}:${label}:${suggestion.kind === 'command' ? suggestion.handle ?? '' : ''}`}
+                        key={`${suggestion.kind}:${label}:${suggestion.kind !== 'mention' ? suggestion.handle ?? '' : ''}`}
                         role="option"
                         aria-selected={idx === suggestionIndex}
                         onMouseDown={(e) => { e.preventDefault(); selectSuggestion(suggestion); }}

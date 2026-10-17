@@ -756,9 +756,14 @@ participant's name transliterated to ASCII and lowercased, other characters coll
 (`caelumora_model::mention`): "Zoë" is `@zoe`, and `@Zoë` addresses her too. Unknown handles stay
 plain text, and text in backticks is ignored.
 
+`@all` and its synonym `@channel` address everyone at once: every user and agent taking part, those
+whose name yields no handle included. They are group handles (`GROUP_HANDLES`), not names: a
+participant whose handle is `all` or `channel` is among those they address, but cannot be
+mentioned alone by it, and the channel warns of the handle as of one shared by several.
+
 The channel resolves mentions once, as a message enters it, and stores the resolved ids with the
-message. Nothing downstream parses the text again, so a later rename cannot change whom a past
-message addressed.
+message - for `@all`, the participants of that moment. Nothing downstream parses the text again, so
+a later rename, or a participant who joins later, cannot change whom a past message addressed.
 
 A mention changes who is asked to respond, not who receives the message: every participant still
 gets it, but every moderator asks exactly the mentioned agents instead of applying its own policy.
@@ -768,3 +773,7 @@ Mentions written by agents are routed as well: an agent can hand a question to a
 (`@researcher, can you look this up?`). The limit on chains between agents keeps two agents from
 addressing each other indefinitely; an agent that mentions itself or an author of the message is not
 asked.
+An `@all` asks every agent but the author, whoever wrote it, and needs no permission of its own: it
+asks nothing that mentioning each participant would not. What it fans out to is bounded by the same
+limit, as under `broadcast_policy`. An agent's question to `@all` (`ask_user`) is put to every user
+of the channel.

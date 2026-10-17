@@ -71,7 +71,7 @@ impl ToolProvider for AskUserToolProvider {
                  For yes or no, offer the two as choices. \
                  Ask questions that do not depend on each other together, at most {MAX_QUESTIONS} in one call; \
                  ask a question whose answer changes another in a call of its own. \
-                 Name in `ask` the users to ask by their handles, e.g. `@alice`; only their answer counts. \
+                 Name in `ask` the users to ask by their handles, e.g. `@alice`, or `@all` for every user here; only their answer counts. \
                  The result gives the answers in the order of the questions; a question the user did not answer is `declined`. \
                  If the user declines the whole call, or writes a message instead, the call is answered as declined: \
                  go on with what they wrote."

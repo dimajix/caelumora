@@ -244,7 +244,7 @@ impl ChannelLoop {
     pub(super) fn rebuild_mentions(&self) {
         let mentions = Self::mention_directory(&self.actors.load());
         for handle in mentions.ambiguous() {
-            warn!("Channel {}: handle @{} is shared by several participants; mentioning it addresses all of them", self.id, handle);
+            warn!("Channel {}: handle @{} is not a single participant's; mentioning it addresses more than one", self.id, handle);
         }
         self.mentions.store(Arc::new(mentions));
     }
@@ -335,8 +335,9 @@ impl ChannelLoop {
     }
 
     /// The participants `text` mentions by their `@`-handles, as the channel
-    /// resolves them when a message enters it (issue 29) - for an actor
-    /// that shows its own message before (issue 220).
+    /// resolves them when a message enters it (issue 29) - everyone for
+    /// `@all` or `@channel` (issue 401) - for an actor that shows its own
+    /// message before (issue 220).
     pub(crate) fn mentions_in(&self, text: &str) -> Vec<ActorId> {
         self.mentions.load().resolve(text)
     }
@@ -346,6 +347,7 @@ impl ChannelLoop {
 mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::channel::{Channel, JOINED, LEFT, HistoryAccess, HistoryStart};
+    use std::collections::HashSet;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
@@ -360,7 +362,7 @@ mod tests {
     use caelumora_model::security::{SecurityContext, Grant, Subject};
     use crate::view::Viewer;
     use caelumora_model::session::ChannelId;
-    use crate::actor::Shown;
+    use crate::actor::{Actor, Shown};
     use crate::actor::user::ChannelWatch;
 
     
@@ -384,6 +386,17 @@ mod tests {
         assert_eq!(named("@dr-who"), ["Dr-Who", "Dr. Who"], "the handle of both: ambiguous");
         assert!(named("alice").is_empty(), "a user is no agent");
         assert!(named("nobody").is_empty() && named("@").is_empty() && named("").is_empty(), "nobody");
+    }
+
+    #[tokio::test]
+    async fn all_and_channel_mention_every_participant_of_the_moment() {
+        let (channel, alice, sleepers) = channel_with_sleepers(&["Sassy", "All"]).await;
+        let everyone: HashSet<ActorId> = [ActorId::User(alice), sleepers[0].id(), sleepers[1].id()].into();
+
+        for text in ["@all, what do you think?", "@channel?"] {
+            assert_eq!(channel.mentions_in(text).into_iter().collect::<HashSet<_>>(), everyone, "{text}");
+        }
+        assert_eq!(channel.mentions_in("@sassy"), [sleepers[0].id()], "a handle still names one");
     }
 
     #[tokio::test]

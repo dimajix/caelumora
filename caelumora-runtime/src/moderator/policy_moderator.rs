@@ -607,6 +607,20 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn every_moderator_asks_every_agent_but_the_sender_when_everyone_is_mentioned() {
+        for moderator in moderators() {
+            let agents = add_agents(&moderator);
+            let user = ActorId::User(UserId::new());
+            // `@all`, as the channel resolves it (issue 401): every participant, the sender included.
+            let event = message_from(agents[0], "@all, what do you think?", vec![user, agents[0], agents[1], agents[2]]);
+
+            let decision = moderator.route(&event).await;
+
+            assert_eq!(responders(&decision), vec![agents[1], agents[2]], "{:?} must ask every other agent, the sleeping one included", moderator);
+        }
+    }
+
     /// A message of `sender` in a chain `agent_hops` hops from the last
     /// user's message.
     fn hops_from(sender_id: ActorId, agent_hops: u32, mentions: Vec<ActorId>) -> Envelope {

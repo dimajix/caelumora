@@ -532,7 +532,7 @@ keeps its conversation, the first three take `changes_only`: told once, then onl
 `channel_members_prompt_provider` lists the agent itself and every other current user or agent,
 with their introductions, read at the start of every turn. A person's introduction is marked as
 written by them, so that it does not read as an instruction of the system, and kept to one line. It
-also explains how the others' messages are marked.
+also says that `@all` addresses all of them, and explains how the others' messages are marked.
 
 ### The channel's language
 

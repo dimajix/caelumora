@@ -90,9 +90,9 @@ external agent alike.
     `AgentCommandProvider`, as a tool is offered, carried out in the agent's `Turn`. Which commands
     an agent carries out follows from its personality alone. Two of one name, or one that a command
     of the session has, keep the agent from starting.
-*   **Always addressed.** A command of an agent names its agent - `/compact @bob`; `@all` names
-    every agent of the channel that carries it out. Without a handle, or with one that names no such
-    agent, it is refused with the handles to choose from.
+*   **Always addressed.** A command of an agent names its agent - `/compact @bob`; `@all`, or
+    `@channel`, as for a mention, names every agent of the channel that carries it out. Without a
+    handle, or with one that names no such agent, it is refused with the handles to choose from.
 *   **Seen and asked for.** `ShowAgentCommand` and `ExecuteAgentCommand` carry the command and the
     attributes of the agent and of the channel. Under the ownership policy they are granted to
     whoever may write in the channel, unless the command is for the agent's owners alone: then to

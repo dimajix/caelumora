@@ -472,6 +472,8 @@ mod tests {
         assert_eq!(put.shown_to(), None, "not sensitive: shown to everyone");
         assert_eq!(Questions { sensitive: true, ..put }.shown_to(), Some(vec![alice, bob]));
 
+        assert_eq!(asking(vec![Addressee::Handle("@all".to_string())]).resolve(&participants, &users, &context).map(|put| put.asked()), Ok(vec![alice, bob]), "every user (issue 401)");
+        assert_eq!(asking(vec![Addressee::Handle("@channel".to_string()), Addressee::Owner]).resolve(&participants, &users, &context).map(|put| put.asked()), Ok(vec![alice, bob]), "each once");
         assert_eq!(asking(vec![Addressee::Handle("@helper".to_string())]).resolve(&participants, &users, &context), Err(QuestionError::UnknownHandle("@helper".to_string())), "an agent answers no questions");
         assert_eq!(asking(vec![Addressee::Handle("@carol".to_string())]).resolve(&participants, &users, &context), Err(QuestionError::UnknownHandle("@carol".to_string())));
         assert_eq!(asking(vec![Addressee::Owner]).resolve(&participants, &users, &context).map(|put| put.asked()), Ok(vec![alice]), "the agent's owner");
