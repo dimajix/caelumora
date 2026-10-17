@@ -127,10 +127,15 @@ modification does not take it over: a changed message stays in the turn it was p
 
 Beside its state, a turn reaches its session through its views (`Situation::session`), from which
 components read other channels as the confidentiality rules allow - at the classification the turn
-began with (see [MEMORY.md](MEMORY.md#reading-other-channels)). The views only read. What the turn
-does in its channel - using the session's workspace (`Turn::workspace_terminal`,
-`Turn::workspace_shell`) - it does through its actor's `ActorRuntime`, which it holds and which its
-components never see: they are given the turn's methods (issue 370).
+began with (see [MEMORY.md](MEMORY.md#reading-other-channels)). The views only read: its session,
+its channel and the workspace it may use there (`Situation::session`, `channel`, `workspace`) are
+views, named after what they show, and answer alike - nothing where the work reaches no session,
+an error where it may not read what it reaches. What is done with the workspace's files goes
+through a handle instead, named after the handle: its terminal, to read them
+(`Situation::workspace_terminal`), and to change them or run commands, the turn's
+(`Turn::workspace_terminal`, `Turn::workspace_shell`). Both are reached through the actor's
+`ActorRuntime`, which the situation and the turn hold and which their components never see: they
+are given their methods (issue 370).
 
 ### Beginning and ending a turn
 

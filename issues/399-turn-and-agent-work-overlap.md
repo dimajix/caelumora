@@ -1,6 +1,6 @@
 # 399 — A turn repeats what its work reads, and the work names one workspace three ways
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -140,3 +140,18 @@ terminal for the instruction files - and B does not change that.
   through `situation()`. `turn_id` and `agent_name` stay on `Turn`, since a situation has neither.
   AGENT-TURN.md describes the situation and the rule, TOOLS.md and MEMORY.md name it. No behaviour
   changes.
+- **2026-10-17** — Decided with the maintainer, departing from B as written: where a session that
+  is reached cannot be read, a prompt part or a tool passes the error on (`?`), as it passes on
+  one of its channel already, instead of going on as if there were no session - a part falls under
+  its fail policy, a tool tells why. Where nothing can be passed on - the agent's memory, the notes
+  part, which goes on without the others' notes - it is logged and the work goes on as before.
+- **2026-10-17** — B in the working tree of the branch: `ActorRuntime::session_view` and
+  `Situation::session` answer `ViewResult<Option<SessionView>>` - `None` where no session is
+  reached, `SessionNotFound` where it may not be read -, `Situation::channel` is new and takes the
+  place of the copies of `session.channel(work.channel_id())`, `Situation::workspace` follows it,
+  and `workspace_for_reading` is `Situation::workspace_terminal`. `AgentMemory` reads the session
+  through one function of its own that logs a failure. AGENT-TURN.md names the rule for views and
+  handles, PERMISSION-CHECKS.md the refusal.
+- **2026-10-17** — Done, with a test that work which may not read the session it reaches fails a
+  prompt part rather than telling of nobody
+  (`work_that_may_not_read_its_session_fails_the_part_rather_than_naming_nobody`).

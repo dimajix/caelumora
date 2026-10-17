@@ -24,7 +24,7 @@ use caelumora_model::ledger::Staged;
 use caelumora_model::memory::{Memories, Memory, MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::session::SessionId;
-use caelumora_runtime::view::Views;
+use caelumora_runtime::view::{SessionView, Views};
 use tracing::warn;
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
 use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext, AccessPolicy};
@@ -48,7 +48,7 @@ impl AgentMemory {
     /// recalls nothing. A turn in no session recalls nothing.
     pub async fn recalled(situation: &Situation<'_>, confidentiality: &dyn ConfidentialityPolicy) -> Vec<Memory> {
         let context = situation.security_context();
-        let Some(own) = situation.session().await else { return Vec::new() };
+        let Some(own) = Self::own_session(situation).await else { return Vec::new() };
         let Some(here) = own.views().viewer().place().cloned() else { return Vec::new() };
         let memory = situation.agent_state().current().memory.current();
         let mut sessions: Vec<(SessionId, Option<SessionPrivacy>)> = Vec::new();
@@ -154,7 +154,7 @@ impl AgentMemory {
         let Some(stored) = turn.situation().agent_state().current().memory.current().into_iter().find(|m| m.id == id) else {
             return Some(entry);
         };
-        let own = turn.situation().session().await?;
+        let own = Self::own_session(&turn.situation()).await?;
         let here = own.views().viewer().place()?.clone();
         Self::may_recall(&stored, &here, own.views(), &mut Vec::new(), confidentiality, turn.situation().security_context()).await.then_some(entry)
     }
@@ -214,8 +214,19 @@ impl AgentMemory {
     /// Where a change made in `turn` is made: its channel, and the privacy
     /// its session has now (issue 134) - private, for a turn in no session.
     async fn origin(turn: &Turn<'_>) -> MemoryOrigin {
-        let session = turn.situation().session().await.map(|s| s.privacy())
+        let session = Self::own_session(&turn.situation()).await.map(|s| s.privacy())
             .unwrap_or_else(|| SessionPrivacy { id: turn.situation().session_id(), ..SessionPrivacy::default() });
         MemoryOrigin { channel: turn.situation().channel_id(), session }
+    }
+
+    /// The agent's session as `situation` reads it (`Situation::session`),
+    /// through which what it remembers is recalled and placed; `None` if it
+    /// reaches none, or reading it failed - which is logged, since the turn
+    /// goes on as one in no session.
+    async fn own_session(situation: &Situation<'_>) -> Option<SessionView> {
+        situation.session().await.unwrap_or_else(|e| {
+            warn!("Agent {}: its session could not be read for its memory: {e}", situation.agent_id());
+            None
+        })
     }
 }

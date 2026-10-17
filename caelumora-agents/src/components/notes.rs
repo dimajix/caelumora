@@ -203,7 +203,7 @@ impl NotesComponent {
         #[derive(Deserialize)]
         struct ReadNotes { #[serde(default)] channel: Option<String> }
         let ReadNotes { channel } = arguments(params)?;
-        let Some(session) = turn.situation().session().await else {
+        let Some(session) = turn.situation().session().await? else {
             return Err(ToolError::ExecutionFailed("the turn is in no session to read from".to_string()));
         };
         let channels = match channel.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
@@ -258,16 +258,15 @@ impl PromptProvider for NotesComponent {
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         let own = ActorId::Agent(situation.agent_id());
         let mut others = Vec::new();
-        if let Some(session) = situation.session().await {
-            let published = match session.channel(situation.channel_id()).await {
-                Ok(channel) => channel.notes().await,
-                Err(e) => Err(e),
-            };
-            match published {
-                Ok(published) => others = published,
-                // The agent can still answer without the others' notes.
-                Err(e) => warn!("Reading the notes of channel {} failed: {}", situation.channel_id(), e),
-            }
+        let published = match situation.channel().await {
+            Ok(Some(channel)) => channel.notes().await,
+            Ok(None) => Ok(Vec::new()),
+            Err(e) => Err(e),
+        };
+        match published {
+            Ok(published) => others = published,
+            // The agent can still answer without the others' notes.
+            Err(e) => warn!("Reading the notes of channel {} failed: {}", situation.channel_id(), e),
         }
         others.retain(|p| p.agent != own && !p.notes.is_empty());
         others.sort_by(|l, r| l.name.cmp(&r.name));

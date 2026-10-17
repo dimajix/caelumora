@@ -76,7 +76,7 @@ impl WorkspacePromptProvider {
         if self.instruction_files.is_empty() {
             return Vec::new();
         }
-        let terminal = match situation.workspace_for_reading().await {
+        let terminal = match situation.workspace_terminal().await {
             Ok((_, terminal)) => terminal,
             Err(error) => {
                 warn!(workspace = %workspace.id(), "Looking for the instruction files of a workspace failed: {error}");
