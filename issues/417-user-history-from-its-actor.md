@@ -408,3 +408,8 @@ Each step is reviewable on its own; 1-3 change no behaviour.
   is left to show, and the transcript holds the full form, as today. `Audience::Everybody | Only`
   instead of a list of recipients. The entry keeps the history's own vocabulary, seven variants
   more. The watermark of an actor's own order is deferred to an issue of its own.
+- 2026-10-17: [418](418-moderator-decides-delivery-only.md) is done without `Audience`: a
+  moderator answers `deliver_to: Option<Vec<ActorId>>`, and the rule of "everybody" is
+  `Envelope::concerns`. `Audience` is introduced here, in `caelumora-model`, with the entry that
+  records it; `delivered_to(kind, V)` in the predicate above is `Envelope::concerns` read off the
+  entry.

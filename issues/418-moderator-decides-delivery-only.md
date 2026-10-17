@@ -1,6 +1,6 @@
 # 418 — The moderator returns envelopes, so it could change what a participant is told
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Sessions and channels
@@ -131,3 +131,17 @@ instead; those that count whom a message reaches test `delivers_to` of the chann
 - 2026-10-17: `Audience::Everybody | Only` instead of a list of recipients, and the rule of
   "everybody" moved to the channel, so that 417's entries stay small and a plugin's moderator need
   not copy how every channel routes.
+- 2026-10-17: Done on `issue-418-moderator-routing`. `Moderator::route` returns a `Routing`
+  (`deliver_to`, `ask`, `agent_hops`, `notices`); the channel builds every envelope
+  (`ChannelLoop::deliveries`). Three things differ from the text above:
+  - The rule of "everybody" is not `ChannelLoop::delivers_to` but `Envelope::concerns(participant)`
+    in `caelumora-model`: a rule over the event, its sender and a participant, needing nothing of
+    the runtime - and the predicate by which 417 reads a participant's view of the history needs
+    the same rule. Its tests replace the moderator's tests of whom what reaches.
+  - No `Audience` yet: `deliver_to: Option<Vec<ActorId>>`, `None` for the rule. Nothing in the
+    runtime delivers to some alone but the channel's own tests, so the enum would have been dead
+    code; it comes with 417, where the history records it.
+  - A notice names its recipients as a list: "everybody" has no meaning for a notice the rule does
+    not know.
+  The hops of a request are the moderator's to count (`Routing::agent_hops`), as the chain is its
+  to decide.

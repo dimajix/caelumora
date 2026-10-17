@@ -1,10 +1,12 @@
-//! The moderators, as components of a channel (issue 174). The built-in one,
-//! [`policy_moderator`], routes the way every channel routes - every message
-//! to every other participant, approvals, failed turns and commands to whom
-//! they concern, and a response request to every agent a user
-//! `@`-mentioned - and leaves only whom to ask when nobody was mentioned to
-//! its slot, a [`ResponderPolicy`] (issue 44). The policies are components
-//! of their own, one file per kind.
+//! The moderators, as components of a channel (issue 174). A moderator
+//! decides whom an event goes to, whom to ask to respond and what to tell
+//! of its own - a [`Routing`] - and never what anyone is told (issue 418):
+//! the channel delivers by the rule every channel delivers by
+//! (`Envelope::concerns`) unless the moderator names whom, and builds every
+//! envelope. The built-in one, [`policy_moderator`], asks every agent a
+//! message `@`-mentions and leaves whom to ask when nobody was mentioned
+//! to its slot, a [`ResponderPolicy`] (issue 44). The policies are
+//! components of their own, one file per kind.
 
 pub mod broadcast_policy;
 pub mod mentions_only_policy;
@@ -19,21 +21,60 @@ use std::sync::Arc;
 
 use crate::actor::Actor;
 use crate::component::ComponentRegistry;
-use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
-use caelumora_model::message::Message;
+use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, Envelope};
+use caelumora_model::message::{Message, MessageId};
 
-/// Decides how the events of a channel are routed and who is asked to
-/// respond. A component of the channel, of which it has exactly one (issue
-/// 174); shared like every facet, so it keeps what it changes behind its own
-/// lock.
+/// Decides whom the events of a channel are delivered to, who is asked to
+/// respond, and what it tells of its own - never what anyone is told of an
+/// event (issue 418): the channel builds every envelope it delivers. A
+/// component of the channel, of which it has exactly one (issue 174);
+/// shared like every facet, so it keeps what it changes behind its own lock.
 #[async_trait]
 pub(crate) trait Moderator : Send + Sync + Debug {
-    /// Whom `event` is delivered to, and as what: the event itself, or one
-    /// of the moderator's own, such as a request to respond. What a user
-    /// sees is what is routed to their actor (issue 220).
-    async fn route(&self, event: &Envelope) -> Vec<(ActorId, Envelope)>;
+    /// What becomes of `event` in the channel: whom it is delivered to,
+    /// whom to ask to respond, and what the moderator tells of its own.
+    /// What a user sees is what is delivered to their actor (issue 220).
+    async fn route(&self, event: &Envelope) -> Routing;
     fn add_actor(&self, actor: Arc<dyn Actor>);
     fn remove_actor(&self, actor: ActorId);
+}
+
+/// What a moderator decided of an event (issue 418). The default delivers
+/// it as every channel does and asks nobody.
+#[derive(Debug, Default)]
+pub(crate) struct Routing {
+    /// Whom the event is delivered to, as it entered the channel: everyone
+    /// it concerns by the rule every channel delivers by
+    /// (`Envelope::concerns`) if `None`, else these alone - never back to
+    /// its sender, unless the channel announces it in their name.
+    pub deliver_to: Option<Vec<ActorId>>,
+    /// Whom to ask to respond to what the event said, each by a
+    /// `ResponseRequested` in the event's contexts, after it.
+    pub ask: Vec<ActorId>,
+    /// How many hops since the last message of a user the requests of
+    /// `ask` carry (`EventContext::agent_hops`, issue 45): the moderator
+    /// decides the chain, so it counts them.
+    pub agent_hops: u32,
+    /// What the moderator tells of its own, in the system's name, and to
+    /// whom.
+    pub notices: Vec<(Vec<ActorId>, Notice)>,
+}
+
+/// What a moderator may tell of its own (issue 418) - nothing else: what
+/// it decides is whom, not what anyone is told.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Notice {
+    /// A chain between agents reached its limit (issue 200): `message` made
+    /// nobody respond, not even the agents `not_asked` it mentioned.
+    ChainCutOff { message: MessageId, max_agent_hops: u32, not_asked: Vec<ActorId> },
+}
+
+impl From<Notice> for ActorEvent {
+    fn from(notice: Notice) -> Self {
+        match notice {
+            Notice::ChainCutOff { message, max_agent_hops, not_asked } => ActorEvent::ChainCutOff { message, max_agent_hops, not_asked },
+        }
+    }
 }
 
 /// Whom a moderator asks to respond to a message that mentions no agent:

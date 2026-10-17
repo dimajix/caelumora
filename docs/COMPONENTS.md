@@ -92,7 +92,7 @@ facet trait lives next to the code that uses it, not among the implementations.
 | `ExternalAgent` | the remote agent an external personality's agents are | `crate::external` |
 | `PerceiveInProcessor` | filtering of incoming messages, of agents and external agents alike | `crate::message` |
 | `EmitOutProcessor` | filtering of the messages an agent emits | `crate::message` |
-| `Moderator` | how a channel routes its events and who is asked to respond | `crate::moderator` |
+| `Moderator` | whom a channel's events go to, who is asked to respond, what it tells of its own | `crate::moderator` |
 | `ResponderPolicy` | whom the `policy_moderator` asks when nobody was mentioned | `crate::moderator` |
 | `CompactionPolicy` | when an agent compacts its context on its own | `crate::compaction` |
 | `CompactionStrategy` | how an agent's context is compacted | `crate::compaction` |

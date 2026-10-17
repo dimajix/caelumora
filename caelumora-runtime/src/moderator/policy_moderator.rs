@@ -1,9 +1,8 @@
 //! The `policy_moderator` component: the moderator every channel has unless
-//! it is configured with another (issue 174). It routes the way every
-//! channel routes - every message to every other participant, approvals,
-//! failed turns and commands to whom they concern, and a response request to
-//! every agent a message `@`-mentions - and asks the `ResponderPolicy` of its
-//! channel, its slot, whom to ask when nobody was mentioned (issue 44).
+//! it is configured with another (issue 174). It lets every event go where
+//! every channel delivers it (issue 418), asks every agent a message
+//! `@`-mentions to respond, and asks the `ResponderPolicy` of its channel,
+//! its slot, whom to ask when nobody was mentioned (issue 44).
 //!
 //! An agent's message that makes other agents respond is a hop of a chain
 //! between agents, whether they were mentioned or chosen by the policy. The
@@ -18,8 +17,7 @@
 
 use crate::actor::Actor;
 use crate::component::{ComponentError, ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
-use crate::moderator::Moderator;
-use crate::moderator::ResponderPolicy;
+use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::message::Message;
@@ -37,7 +35,7 @@ pub const DEFAULT_MAX_AGENT_HOPS: u32 = 3;
 /// it is configured otherwise.
 pub const DEFAULT_CONTEXT_MESSAGES: usize = 10;
 
-/// A moderator that routes like every other and asks whom `policy` chooses
+/// A moderator that delivers like every other and asks whom `policy` chooses
 /// to respond when a message mentions nobody - in a chain between agents
 /// only up to `max_agent_hops` hops -, told the last `context_messages`
 /// messages heard before the message.
@@ -112,7 +110,7 @@ impl PolicyModerator {
     /// Whom to ask to respond to the answer `messages` of `event` - a turn
     /// that finished, or a message said outside of any turn (issue 258) -
     /// and, at the limit of a chain, the notice that nobody is.
-    async fn ask(&self, event: &Envelope, messages: &[Message]) -> Vec<(ActorId, Envelope)> {
+    async fn ask(&self, event: &Envelope, messages: &[Message]) -> Routing {
         // What there is to hear of it, by the rule every agent hears by
         // (issue 224): nothing, e.g. of a response of tool calls only or of
         // a turn cancelled before it said anything.
@@ -122,10 +120,9 @@ impl PolicyModerator {
             (actors.mentioned_responders(messages), actors.actor_candidates(messages), actors.user_ids())
         };
         let conversation: Vec<Message> = self.heard().iter().chain(messages).cloned().collect();
-        let mut routes = Vec::new();
         if !heard {
             // Nothing anyone could answer: nobody is asked.
-            return routes;
+            return Routing::default();
         }
 
         // A user's message starts a chain; whoever responds to an agent's
@@ -137,135 +134,69 @@ impl PolicyModerator {
         };
         if agent_hops > self.max_agent_hops {
             debug!(agent_hops, "Asking nobody to respond: the chain between agents has reached its limit");
-            routes.extend(self.cut_off(event, messages, mentioned.unwrap_or_default(), users));
-            return routes;
+            return self.cut_off(event, messages, mentioned.unwrap_or_default(), users);
         }
 
         // Mentioned agents respond instead of those the policy would choose;
         // the policy is not consulted, so a rotation is left as it is.
-        let responders = match mentioned {
+        let ask = match mentioned {
             Some(mentioned) => mentioned,
             None => self.policy.choose(event, &conversation, candidates).await,
         };
-        let mut request = event.forward(ActorEvent::ResponseRequested);
-        request.context.agent_hops = agent_hops;
-        for id in responders {
-            routes.push((id, request.clone()));
-        }
-        routes
+        Routing { ask, agent_hops, ..Routing::default() }
     }
 
     /// Tells that the response `messages` of `event` made nobody respond,
-    /// since its chain reached the limit (issue 200): a `ChainCutOff` in the
-    /// name of the system, to the `users` and to the agents involved - its
-    /// sender and the agents it mentioned, `not_asked`.
-    fn cut_off(&self, event: &Envelope, messages: &[Message], not_asked: Vec<ActorId>, users: Vec<ActorId>) -> Vec<(ActorId, Envelope)> {
+    /// since its chain reached the limit (issue 200): a `ChainCutOff` to the
+    /// `users` and to the agents involved - its sender and the agents it
+    /// mentioned, `not_asked`.
+    fn cut_off(&self, event: &Envelope, messages: &[Message], not_asked: Vec<ActorId>, users: Vec<ActorId>) -> Routing {
         let Some(last) = messages.last() else {
-            return Vec::new();
+            return Routing::default();
         };
-        let mut notice = event.forward(ActorEvent::ChainCutOff { message: last.id, max_agent_hops: self.max_agent_hops, not_asked: not_asked.clone() });
-        notice.context.sender_id = ActorId::System;
-        notice.context.sender_name = "system".to_string();
+        let notice = Notice::ChainCutOff { message: last.id, max_agent_hops: self.max_agent_hops, not_asked: not_asked.clone() };
         let mut recipients = users;
         recipients.push(event.context.sender_id);
         recipients.extend(not_asked);
-        recipients.into_iter().map(|id| (id, notice.clone())).collect()
+        Routing { notices: vec![(recipients, notice)], ..Routing::default() }
     }
 }
 
 #[async_trait]
 impl Moderator for PolicyModerator {
-    async fn route(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
+    /// Every event goes where every channel delivers it; what is decided
+    /// here is whom to ask to respond, and what to tell when a chain ends.
+    async fn route(&self, event: &Envelope) -> Routing {
         match &event.event {
-            // The end of a turn: the users learn that it ended, even when it
-            // said nothing (issue 225), and whoever is to respond is asked.
+            // The end of a turn: whoever is to respond is asked (issue 258).
             ActorEvent::TurnFinished { messages, .. } => {
-                let mut routes = self.actors().forward_routes(event, messages);
-                routes.extend(self.ask(event, messages).await);
+                let routing = self.ask(event, messages).await;
                 self.hear(messages);
-                routes
+                routing
             }
-            ActorEvent::ApprovalRequested(_) |
-            ActorEvent::ApprovalGranted(_) |
-            ActorEvent::ApprovalDenied(_) |
-            ActorEvent::ApprovalTimedOut(_) |
-            ActorEvent::ApprovalRequestWithdrawn { .. } => {
-                self.actors().route_approval_events(event)
-            }
-            ActorEvent::QuestionRequested(_) |
-            ActorEvent::QuestionAnswered { .. } |
-            ActorEvent::QuestionDeclined { .. } |
-            ActorEvent::QuestionClosed { .. } => {
-                self.actors().route_question_events(event)
-            }
-            ActorEvent::TurnGivenUp { .. } | ActorEvent::CommandExecuted { to: None, .. } => {
-                self.actors().route_to_users(event)
-            }
-            // Who joined or left (issue 408): everybody, the agents to take
-            // note of it, and also whose name it is told in.
-            ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } => {
-                self.actors().route_to_everybody(event)
-            }
-            // A command for an agent goes to it alone; that it began to the
-            // issuer alone (issue 299), and what it answers too, unless the
-            // answer is everybody's (issue 269).
-            ActorEvent::CommandRequested { agent, .. } => {
-                self.actors().route_to_agent(*agent, event)
+            // A message said: one of no turn - a user's - is answered by
+            // itself; one of a turn with the turn's end. The kind of its
+            // sender does not matter.
+            ActorEvent::CompleteMessageGenerated(message) if message.turn_id.is_none() => {
+                let messages = std::slice::from_ref(message);
+                let routing = self.ask(event, messages).await;
+                self.hear(messages);
+                routing
             }
             // A user nudges someone (issue 278): they alone are asked to
             // respond, as if a message of the user had mentioned them - no
             // policy is consulted, and no chain between agents counted.
             ActorEvent::NudgeRequested { participant } => {
-                self.actors().route_to_participant(*participant, &event.forward(ActorEvent::ResponseRequested))
+                let ask = self.actors().takes_part(*participant).then_some(*participant).into_iter().collect();
+                Routing { ask, agent_hops: event.context.agent_hops, ..Routing::default() }
             }
-            ActorEvent::CommandStarted { to: user, .. } | ActorEvent::CommandExecuted { to: Some(user), .. } | ActorEvent::CommandFailed { to: user, .. } => {
-                self.actors().route_to_user(*user, event)
-            }
-            // A change to what was said reaches everyone who may hold the
-            // message (issue 234); each applies it if it does.
+            // A change to what was said, in what the moderator keeps of
+            // what was heard (issue 234).
             ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } => {
                 self.apply_change(&event.event);
-                self.actors().route_to_participants(event)
+                Routing::default()
             }
-            // Whom a request to answer again names, and what it answers, to
-            // the users (issue 234).
-            ActorEvent::RetryRequested { author, .. } => {
-                self.actors().route_to_agent(*author, event)
-            }
-            ActorEvent::RetryAccepted { .. } | ActorEvent::RetryRejected { .. } => {
-                self.actors().route_to_users(event)
-            }
-            // A message said: the users see it, and the agents hear it if
-            // there is anything to hear (issues 224, 258). One of no turn -
-            // a user's - is answered by itself; one of a turn with the turn's
-            // end. The kind of its sender does not matter.
-            ActorEvent::CompleteMessageGenerated(message) => {
-                let mut routes = self.actors().route_said(event, message);
-                if message.turn_id.is_none() {
-                    let messages = std::slice::from_ref(message);
-                    routes.extend(self.ask(event, messages).await);
-                    self.hear(messages);
-                }
-                routes
-            }
-            // How an answer comes about - streamed, step by step - is for
-            // the users watching (issue 220); the agents hear what is said.
-            // So is where an agent stands (issue 243), and what it does of
-            // its own accord (issue 284).
-            ActorEvent::ResponseStarted { .. } |
-            ActorEvent::StateChanged(_) |
-            ActorEvent::ActivityStarted { .. } |
-            ActorEvent::ActivityFinished { .. } |
-            ActorEvent::PartialMessageGenerated(_) |
-            ActorEvent::IntermediatePartialGenerated(_) |
-            ActorEvent::IntermediateMessageGenerated(_) |
-            ActorEvent::PlanStepStarted { .. } |
-            ActorEvent::PlanStepFinished { .. } => {
-                self.actors().route_to_users(event)
-            }
-            _ => {
-                Vec::new()
-            }
+            _ => Routing::default(),
         }
     }
 
@@ -278,8 +209,9 @@ impl Moderator for PolicyModerator {
     }
 }
 
-/// The actors of a channel, by kind. Plain maps behind the moderator's one
-/// lock (issue 114).
+/// The actors of a channel, by kind: whom a policy chooses from, who is
+/// mentioned and who is told a chain ended. Plain maps behind the
+/// moderator's one lock (issue 114).
 #[derive(Debug, Default)]
 struct ModeratorActors {
     agent_actors: HashMap<ActorId, Arc<dyn Actor>>,
@@ -309,29 +241,9 @@ impl ModeratorActors {
         self.approval_actors.remove(&id);
     }
 
-    /// Forwards the end of the response `event`, of `messages`, to every
-    /// user but its senders, who learns that the answer ended even when
-    /// there is nothing to hear of it (issue 224). The agents heard its
-    /// messages as they were said (`route_said`, issue 258).
-    fn forward_routes(&self, event: &Envelope, messages: &[Message]) -> Vec<(ActorId, Envelope)> {
-        let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
-        self.user_actors.keys()
-            .filter(|id| !sender_ids.contains(id))
-            .map(|id| (*id, event.clone()))
-            .collect()
-    }
-
-    /// Forwards `message`, said in `event`, to every user, and to every
-    /// agent if there is something to hear of it (`Message::is_heard`),
-    /// which each takes in by the rule all agents hear by
-    /// (`Message::as_heard`, issues 224, 258). Never back to its sender.
-    fn route_said(&self, event: &Envelope, message: &Message) -> Vec<(ActorId, Envelope)> {
-        let agents = message.is_heard().then(|| self.agent_actors.keys()).into_iter().flatten();
-        self.user_actors.keys()
-            .chain(agents)
-            .filter(|id| **id != message.sender_id)
-            .map(|id| (*id, event.clone()))
-            .collect()
+    /// Whether `participant`, of whatever kind, is in the channel.
+    fn takes_part(&self, participant: ActorId) -> bool {
+        [&self.agent_actors, &self.user_actors, &self.approval_actors].iter().any(|actors| actors.contains_key(&participant))
     }
 
     /// The agents a policy may choose from, as they are described to
@@ -371,108 +283,6 @@ impl ModeratorActors {
     fn user_ids(&self) -> Vec<ActorId> {
         self.user_actors.keys().copied().collect()
     }
-
-    /// Forwards `event` to every user and every agent in the channel but its
-    /// sender, e.g. a change to a message said (issue 234), which everyone
-    /// who heard the message takes in.
-    fn route_to_participants(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
-        self.user_actors.keys()
-            .chain(self.agent_actors.keys())
-            .filter(|id| **id != event.context.sender_id)
-            .map(|id| (*id, event.clone()))
-            .collect()
-    }
-
-    /// Forwards `event` to every user and every agent in the channel, its
-    /// sender too: what the channel announces in someone's name (issue 408).
-    fn route_to_everybody(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
-        self.user_actors.keys()
-            .chain(self.agent_actors.keys())
-            .map(|id| (*id, event.clone()))
-            .collect()
-    }
-
-    /// Forwards `event` to `participant` alone, of whatever kind, if it is in
-    /// the channel - e.g. the request a nudge becomes (issue 278).
-    fn route_to_participant(&self, participant: ActorId, event: &Envelope) -> Vec<(ActorId, Envelope)> {
-        let present = [&self.agent_actors, &self.user_actors, &self.approval_actors].iter().any(|actors| actors.contains_key(&participant));
-        present.then(|| (participant, event.clone())).into_iter().collect()
-    }
-
-    /// Forwards `event` to the agent `agent` alone, if it is in the channel:
-    /// e.g. a request to answer again instead of its message (issue 234).
-    fn route_to_agent(&self, agent: ActorId, event: &Envelope) -> Vec<(ActorId, Envelope)> {
-        self.agent_actors.contains_key(&agent).then(|| (agent, event.clone())).into_iter().collect()
-    }
-
-    /// Forwards `event` to the user `user` alone, if they take part: what is
-    /// theirs alone, e.g. the private answer to a command (issue 269).
-    fn route_to_user(&self, user: ActorId, event: &Envelope) -> Vec<(ActorId, Envelope)> {
-        self.user_actors.contains_key(&user).then(|| (user, event.clone())).into_iter().collect()
-    }
-
-    /// Forwards `event` to every user in the channel, e.g. a `TurnGivenUp`
-    /// or a streamed part of an answer, which concern the users watching
-    /// and none of the other agents.
-    fn route_to_users(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
-        self.user_actors.keys()
-            .map(|id| (*id, event.clone()))
-            .collect()
-    }
-
-    /// Routes the questions of a tool call (issue 165), without the
-    /// approvers: an agent's questions, and their closing, go to the users,
-    /// to those asked alone if the questions are sensitive; a user's answer
-    /// goes to the agent that asked alone.
-    fn route_question_events(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
-        let to_users = |only: Option<Vec<ActorId>>| self.user_actors.keys()
-            .filter(|id| only.as_ref().is_none_or(|only| only.contains(id)))
-            .map(|id| (*id, event.clone()))
-            .collect::<Vec<_>>();
-        match (&event.event, event.context.sender_id) {
-            (ActorEvent::QuestionRequested(request), ActorId::Agent(_)) => to_users(request.shown_to()),
-            (ActorEvent::QuestionClosed { shown_to, .. }, ActorId::Agent(_)) => to_users(shown_to.clone()),
-            (ActorEvent::QuestionAnswered { agent_id, .. } | ActorEvent::QuestionDeclined { agent_id, .. }, ActorId::User(_)) => {
-                self.route_to_agent(ActorId::Agent(*agent_id), event)
-            }
-            _ => Vec::new(),
-        }
-    }
-
-    /// Routes the approval of a tool call (issues 81, 148): the agent's
-    /// request and its withdrawal go to the approvers, which ask the users
-    /// and tell them; the users' answers go to the approvers; an approver's
-    /// decision goes to the agent that asked, and to the users, who learn
-    /// so that the approval is over.
-    fn route_approval_events(&self, event: &Envelope) -> Vec<(ActorId, Envelope)> {
-        let to_approvers = || self.approval_actors.keys().map(|id| (*id, event.clone())).collect::<Vec<_>>();
-        let to_users = || self.user_actors.keys().map(|id| (*id, event.clone())).collect::<Vec<_>>();
-        let sender = event.context.sender_id;
-        match &event.event {
-            ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalRequestWithdrawn { .. } => match sender {
-                // Agent -> ApproverActor: internal plumbing, not shown to users yet.
-                ActorId::Agent(_) => to_approvers(),
-                // ApproverActor -> Users: what users act on, or no longer.
-                ActorId::Approver(_) => to_users(),
-                _ => Vec::new(),
-            },
-            ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) | ActorEvent::ApprovalTimedOut(response) => match sender {
-                // User -> ApproverActor. A timeout is the approver's alone.
-                ActorId::User(_) if !matches!(event.event, ActorEvent::ApprovalTimedOut(_)) => to_approvers(),
-                // ApproverActor -> Agent, and the users: the decision.
-                ActorId::Approver(_) => {
-                    let agent_id = ActorId::Agent(response.agent_id);
-                    let mut forwards = to_users();
-                    if self.agent_actors.contains_key(&agent_id) {
-                        forwards.push((agent_id, event.clone()));
-                    }
-                    forwards
-                }
-                _ => Vec::new(),
-            },
-            _ => Vec::new(),
-        }
-    }
 }
 
 
@@ -508,8 +318,8 @@ mod tests {
     use crate::moderator::{broadcast_policy, mentions_only_policy, random_policy, round_robin_policy, user_driven_policy};
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::AgentId;
+    use caelumora_model::approval::ApprovalRequest;
     use caelumora_model::message::{MessageId, MessageRole};
-    use caelumora_model::approval::{ApprovalRequest, ApprovalResponse, ApproverId};
     use caelumora_model::security::SecurityContext;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::UserId;
@@ -524,19 +334,6 @@ mod tests {
     fn envelope(sender_id: ActorId, event: ActorEvent) -> Envelope {
         let context = EventContext::new(Default::default(), Default::default(), sender_id, "test".to_string());
         Envelope::new(SecurityContext::default(), context, event)
-    }
-
-    fn approval_request() -> ApprovalRequest {
-        ApprovalRequest {
-            suggested: None,
-            explicit: false,
-            id: Default::default(),
-            session_id: Default::default(),
-            channel_id: Default::default(),
-            agent_id: AgentId::new(),
-            tool_call: ToolCall { id: None, function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() },
-            description: "test".to_string(),
-        }
     }
 
     /// Three agents, the middle one asleep, registered with `moderator`.
@@ -570,27 +367,10 @@ mod tests {
         envelope(sender_id, ActorEvent::CompleteMessageGenerated(text_from(sender_id, content, mentions)))
     }
 
-    fn responders(decision: &[(ActorId, Envelope)]) -> Vec<ActorId> {
-        decision.iter()
-            .filter(|(_, e)| matches!(e.event, ActorEvent::ResponseRequested))
-            .map(|(id, _)| *id)
-            .collect()
-    }
-
-    /// Who a message said is delivered to.
-    fn receivers(decision: &[(ActorId, Envelope)]) -> HashSet<ActorId> {
-        decision.iter()
-            .filter(|(_, e)| matches!(e.event, ActorEvent::CompleteMessageGenerated(_)))
-            .map(|(id, _)| *id)
-            .collect()
-    }
-
-    /// Who learns that an answer ended.
-    fn told_of_the_end(decision: &[(ActorId, Envelope)]) -> HashSet<ActorId> {
-        decision.iter()
-            .filter(|(_, e)| matches!(e.event, ActorEvent::TurnFinished { .. }))
-            .map(|(id, _)| *id)
-            .collect()
+    /// Whether `routing` delivers its event as every channel does, asks
+    /// nobody and tells nothing of its own.
+    fn as_every_channel(routing: &Routing) -> bool {
+        routing.deliver_to.is_none() && routing.ask.is_empty() && routing.notices.is_empty()
     }
 
     /// `policy` as a component.
@@ -713,13 +493,13 @@ mod tests {
 
         let broadcast = built(&[("responders", broadcast_policy::BROADCAST_POLICY_KIND)]).await;
         let agents = add_agents(broadcast.as_ref());
-        let asked = responders(&broadcast.route(&message_from(user, "hello", Vec::new())).await);
+        let asked = broadcast.route(&message_from(user, "hello", Vec::new())).await.ask;
         assert_eq!(asked.into_iter().collect::<HashSet<_>>(), HashSet::from([agents[0], agents[2]]), "every awake agent");
 
         let default = built(&[]).await;
         let agents = add_agents(default.as_ref());
-        let first = responders(&default.route(&message_from(user, "one", Vec::new())).await);
-        let second = responders(&default.route(&message_from(user, "two", Vec::new())).await);
+        let first = default.route(&message_from(user, "one", Vec::new())).await.ask;
+        let second = default.route(&message_from(user, "two", Vec::new())).await.ask;
         assert_eq!(first.len(), 1, "one agent at a time");
         assert_ne!(first, second, "round robin by default");
         assert!(!first.contains(&agents[1]) && !second.contains(&agents[1]), "not the sleeping one");
@@ -732,11 +512,12 @@ mod tests {
             let user = ActorId::User(UserId::new());
             let event = message_from(user, "@b and @c, please", vec![agents[1], agents[2]]);
 
-            let decision = moderator.route(&event).await;
+            let routing = moderator.route(&event).await;
 
-            assert_eq!(responders(&decision), vec![agents[1], agents[2]], "{:?} must ask the mentioned agents, the sleeping one included", moderator);
+            assert_eq!(routing.ask, vec![agents[1], agents[2]], "{:?} must ask the mentioned agents, the sleeping one included", moderator);
+            assert!(routing.deliver_to.is_none(), "{:?} must deliver the end of the turn as every channel does", moderator);
             let said = moderator.route(&said_from(user, "@b and @c, please", vec![agents[1], agents[2]])).await;
-            assert_eq!(receivers(&said), agents.iter().copied().collect(), "{:?} must still deliver to every agent", moderator);
+            assert!(said.deliver_to.is_none(), "{:?} must deliver the message as every channel does", moderator);
         }
     }
 
@@ -748,9 +529,8 @@ mod tests {
             let other_user = ActorId::User(UserId::new());
             let event = message_from(user, "@other", vec![other_user]);
 
-            let decision = moderator.route(&event).await;
+            let asked = moderator.route(&event).await.ask;
 
-            let asked = responders(&decision);
             assert!(!asked.is_empty(), "{:?} must apply its own policy", moderator);
             assert!(!asked.contains(&agents[1]), "{:?} must not ask the sleeping agent without a mention", moderator);
         }
@@ -762,11 +542,10 @@ mod tests {
             let agents = add_agents(&moderator);
             let event = message_from(agents[0], "@b, your turn", vec![agents[1]]);
 
-            let decision = moderator.route(&event).await;
+            let routing = moderator.route(&event).await;
 
-            assert_eq!(responders(&decision), vec![agents[1]], "{:?} must ask the agent an agent mentioned", moderator);
-            let request = decision.iter().find(|(_, e)| matches!(e.event, ActorEvent::ResponseRequested)).map(|(_, e)| e);
-            assert_eq!(request.map(|e| e.context.agent_hops), Some(1), "{:?} must count the hop", moderator);
+            assert_eq!(routing.ask, vec![agents[1]], "{:?} must ask the agent an agent mentioned", moderator);
+            assert_eq!(routing.agent_hops, 1, "{:?} must count the hop", moderator);
         }
     }
 
@@ -778,9 +557,9 @@ mod tests {
             // `@all`, as the channel resolves it (issue 401): every participant, the sender included.
             let event = message_from(agents[0], "@all, what do you think?", vec![user, agents[0], agents[1], agents[2]]);
 
-            let decision = moderator.route(&event).await;
+            let asked = moderator.route(&event).await.ask;
 
-            assert_eq!(responders(&decision), vec![agents[1], agents[2]], "{:?} must ask every other agent, the sleeping one included", moderator);
+            assert_eq!(asked, vec![agents[1], agents[2]], "{:?} must ask every other agent, the sleeping one included", moderator);
         }
     }
 
@@ -796,47 +575,20 @@ mod tests {
     async fn a_chain_between_agents_ends_at_the_limit_and_a_user_starts_a_new_one() {
         let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), 2, DEFAULT_CONTEXT_MESSAGES);
         let agents = add_agents(&moderator);
-        let hops_asked = |decision: &[(ActorId, Envelope)]| decision.iter()
-            .filter(|(_, e)| matches!(e.event, ActorEvent::ResponseRequested))
-            .map(|(_, e)| e.context.agent_hops)
-            .collect::<Vec<_>>();
+        let asked = |routing: &Routing| (routing.ask.len(), routing.agent_hops);
 
-        let decision = moderator.route(&hops_from(agents[0], 1, Vec::new())).await;
-        assert_eq!(hops_asked(&decision), vec![2], "the policy's choice is a hop, too");
+        let routing = moderator.route(&hops_from(agents[0], 1, Vec::new())).await;
+        assert_eq!(asked(&routing), (1, 2), "the policy's choice is a hop, too");
 
-        let decision = moderator.route(&hops_from(agents[0], 2, vec![agents[2]])).await;
-        assert!(responders(&decision).is_empty(), "beyond the limit nobody is asked, mentioned or not");
+        let routing = moderator.route(&hops_from(agents[0], 2, vec![agents[2]])).await;
+        assert!(routing.ask.is_empty(), "beyond the limit nobody is asked, mentioned or not");
+        assert!(routing.deliver_to.is_none(), "but the end of the turn is delivered as ever");
         let said = moderator.route(&said_from(agents[0], "and you?", vec![agents[2]])).await;
-        assert_eq!(receivers(&said), HashSet::from([agents[1], agents[2]]), "but the message is still delivered");
+        assert!(said.deliver_to.is_none(), "and so is the message");
 
         let user = ActorId::User(UserId::new());
-        let decision = moderator.route(&hops_from(user, 2, Vec::new())).await;
-        assert_eq!(hops_asked(&decision), vec![0, 0], "a user's message starts a new chain");
-    }
-
-    #[tokio::test]
-    async fn how_an_answer_comes_about_reaches_the_users_only() {
-        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES);
-        let agents = add_agents(&moderator);
-        let user = ActorId::User(UserId::new());
-        moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
-        let message = || Message::new(Classification::CHANNEL_DEFAULT);
-        let step = || (0, 2, "first".to_string());
-        let turn_id = TurnId::new();
-        let events = [
-            ActorEvent::ResponseStarted { turn_id },
-            ActorEvent::PartialMessageGenerated(message()),
-            ActorEvent::IntermediatePartialGenerated(message()),
-            ActorEvent::IntermediateMessageGenerated(message()),
-            ActorEvent::PlanStepStarted { turn_id, step_index: step().0, total_steps: step().1, description: step().2 },
-            ActorEvent::PlanStepFinished { turn_id, step_index: step().0, total_steps: step().1, description: step().2 },
-        ];
-        for event in events {
-            let kind = event.kind();
-            let decision = moderator.route(&envelope(agents[0], event)).await;
-            let to: Vec<ActorId> = decision.iter().map(|(id, _)| *id).collect();
-            assert_eq!(to, vec![user], "{kind} goes to the users, not to the agents (issue 220)");
-        }
+        let routing = moderator.route(&hops_from(user, 2, Vec::new())).await;
+        assert_eq!(asked(&routing), (2, 0), "a user's message starts a new chain");
     }
 
     #[tokio::test]
@@ -845,29 +597,23 @@ mod tests {
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
         moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
-        let cut_off = |decision: &[(ActorId, Envelope)]| decision.iter()
-            .filter_map(|(id, e)| match &e.event {
-                ActorEvent::ChainCutOff { max_agent_hops, not_asked, .. } => Some((*id, e.context.sender_id, *max_agent_hops, not_asked.clone())),
-                _ => None,
-            })
+        let told = |routing: &Routing| routing.notices.iter()
+            .map(|(recipients, notice)| (recipients.iter().copied().collect::<HashSet<_>>(), notice.clone()))
             .collect::<Vec<_>>();
 
-        let decision = moderator.route(&hops_from(agents[0], 1, vec![agents[2]])).await;
-        assert!(cut_off(&decision).is_empty(), "below the limit, nothing is cut off");
+        let routing = moderator.route(&hops_from(agents[0], 1, vec![agents[2]])).await;
+        assert!(routing.notices.is_empty(), "below the limit, nothing is cut off");
 
         let event = hops_from(agents[0], 2, vec![agents[2]]);
-        let decision = moderator.route(&event).await;
-        let told = cut_off(&decision);
-        let recipients: HashSet<ActorId> = told.iter().map(|(id, ..)| *id).collect();
-        assert_eq!(recipients, HashSet::from([user, agents[0], agents[2]]), "the users, the sender and whom it mentioned - not agents[1]");
-        assert!(told.iter().all(|(_, sender, hops, not_asked)| *sender == ActorId::System && *hops == 2 && *not_asked == vec![agents[2]]));
         let ActorEvent::TurnFinished { messages, .. } = &event.event else { unreachable!() };
-        assert!(decision.iter().any(|(_, e)| matches!(&e.event, ActorEvent::ChainCutOff { message, .. } if *message == messages[0].id)), "it names the message cut off");
+        let cut_off = Notice::ChainCutOff { message: messages[0].id, max_agent_hops: 2, not_asked: vec![agents[2]] };
+        assert_eq!(told(&moderator.route(&event).await), [(HashSet::from([user, agents[0], agents[2]]), cut_off)],
+            "the users, the sender and whom it mentioned - not agents[1] -, naming the message cut off");
 
-        let decision = moderator.route(&hops_from(agents[0], 2, Vec::new())).await;
-        let told = cut_off(&decision);
-        assert_eq!(told.iter().map(|(id, ..)| *id).collect::<HashSet<_>>(), HashSet::from([user, agents[0]]));
-        assert!(told.iter().all(|(.., not_asked)| not_asked.is_empty()), "told even when nobody was mentioned");
+        let event = hops_from(agents[0], 2, Vec::new());
+        let ActorEvent::TurnFinished { messages, .. } = &event.event else { unreachable!() };
+        let cut_off = Notice::ChainCutOff { message: messages[0].id, max_agent_hops: 2, not_asked: Vec::new() };
+        assert_eq!(told(&moderator.route(&event).await), [(HashSet::from([user, agents[0]]), cut_off)], "told even when nobody was mentioned");
     }
 
     #[tokio::test]
@@ -886,8 +632,8 @@ mod tests {
         let container = ComponentContainer::from_config(&configured(serde_json::json!(0)), ChannelLoop::COMPONENT_FACETS, &registry, &context).await.unwrap();
         let moderator = container.one::<dyn Moderator>().await.unwrap().facet;
         let agents = add_agents(moderator.as_ref());
-        let decision = moderator.route(&message_from(agents[0], "@c", vec![agents[2]])).await;
-        assert!(responders(&decision).is_empty(), "with no hops allowed, agents answer only users");
+        let asked = moderator.route(&message_from(agents[0], "@c", vec![agents[2]])).await.ask;
+        assert!(asked.is_empty(), "with no hops allowed, agents answer only users");
 
         let invalid = ComponentContainer::from_config(&configured(serde_json::json!(-1)), ChannelLoop::COMPONENT_FACETS, &registry, &context).await;
         assert!(invalid.is_err(), "a negative limit is refused");
@@ -899,13 +645,13 @@ mod tests {
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
 
-        let decision = moderator.route(&message_from(user, "hello, everyone", Vec::new())).await;
-        assert!(responders(&decision).is_empty(), "nobody was mentioned, so nobody answers");
+        let asked = moderator.route(&message_from(user, "hello, everyone", Vec::new())).await.ask;
+        assert!(asked.is_empty(), "nobody was mentioned, so nobody answers");
         let said = moderator.route(&said_from(user, "hello, everyone", Vec::new())).await;
-        assert_eq!(receivers(&said), agents.iter().copied().collect(), "every agent still receives the message");
+        assert!(said.deliver_to.is_none(), "the message is still delivered as every channel does");
 
-        let decision = moderator.route(&message_from(agents[0], "my answer", Vec::new())).await;
-        assert!(responders(&decision).is_empty(), "nor does anybody answer an agent without a mention");
+        let asked = moderator.route(&message_from(agents[0], "my answer", Vec::new())).await.ask;
+        assert!(asked.is_empty(), "nor does anybody answer an agent without a mention");
     }
 
     #[tokio::test]
@@ -914,16 +660,16 @@ mod tests {
         let agents = add_agents(&moderator);
         let user = ActorId::User(UserId::new());
 
-        let decision = moderator.route(&message_from(user, "hello, everyone", Vec::new())).await;
-        assert_eq!(responders(&decision).into_iter().collect::<HashSet<_>>(), HashSet::from([agents[0], agents[2]]), "every awake agent answers a user");
+        let asked = moderator.route(&message_from(user, "hello, everyone", Vec::new())).await.ask;
+        assert_eq!(asked.into_iter().collect::<HashSet<_>>(), HashSet::from([agents[0], agents[2]]), "every awake agent answers a user");
 
-        let decision = moderator.route(&message_from(user, "@b", vec![agents[1]])).await;
-        assert_eq!(responders(&decision), vec![agents[1]], "a user's mention asks only the mentioned agent");
+        let asked = moderator.route(&message_from(user, "@b", vec![agents[1]])).await.ask;
+        assert_eq!(asked, vec![agents[1]], "a user's mention asks only the mentioned agent");
 
-        let decision = moderator.route(&message_from(agents[0], "my answer", Vec::new())).await;
-        assert!(responders(&decision).is_empty(), "an agent's message asks nobody");
+        let asked = moderator.route(&message_from(agents[0], "my answer", Vec::new())).await.ask;
+        assert!(asked.is_empty(), "an agent's message asks nobody");
         let said = moderator.route(&said_from(agents[0], "my answer", Vec::new())).await;
-        assert_eq!(receivers(&said), HashSet::from([agents[1], agents[2]]), "but is delivered to the other agents");
+        assert!(said.deliver_to.is_none(), "but is delivered as every channel does");
     }
 
     #[tokio::test]
@@ -934,10 +680,10 @@ mod tests {
         let mut awake = [agents[0], agents[2]];
         awake.sort_unstable_by_key(|id| id.id());
 
-        let first = responders(&moderator.route(&message_from(user, "one", Vec::new())).await);
-        let mentioned = responders(&moderator.route(&message_from(user, "@b", vec![agents[1]])).await);
-        let second = responders(&moderator.route(&message_from(user, "two", Vec::new())).await);
-        let third = responders(&moderator.route(&message_from(user, "three", Vec::new())).await);
+        let first = moderator.route(&message_from(user, "one", Vec::new())).await.ask;
+        let mentioned = moderator.route(&message_from(user, "@b", vec![agents[1]])).await.ask;
+        let second = moderator.route(&message_from(user, "two", Vec::new())).await.ask;
+        let third = moderator.route(&message_from(user, "three", Vec::new())).await.ask;
 
         assert_eq!(first, vec![awake[0]]);
         assert_eq!(mentioned, vec![agents[1]]);
@@ -945,68 +691,40 @@ mod tests {
         assert_eq!(third, vec![awake[0]]);
     }
 
+    /// What does not ask anyone to respond is delivered as every channel
+    /// delivers it (issue 418): the moderator decides nothing of it.
     #[tokio::test]
-    async fn every_moderator_forwards_a_failed_turn_to_the_users_only() {
-        for moderator in moderators() {
-            let agents = add_agents(&moderator);
-            let user = ActorId::User(UserId::new());
-            moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
-            let event = envelope(agents[0], ActorEvent::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Failed { message: "boom".to_string() } });
-
-            let decision = moderator.route(&event).await;
-
-            assert_eq!(decision.iter().map(|(to, _)| *to).collect::<Vec<_>>(), vec![user], "{:?} must route a failed turn to the users only", moderator);
-        }
-    }
-
-    #[tokio::test]
-    async fn every_moderator_tells_the_users_alone_what_an_agent_does_of_its_own_accord() {
+    async fn every_moderator_lets_what_asks_nobody_go_where_every_channel_delivers_it() {
+        let call = ToolCall { id: None, function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
         for moderator in moderators() {
             let agents = add_agents(&moderator);
             let user = ActorId::User(UserId::new());
             moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
             let turn_id = TurnId::new();
-            let activity = "compacting its context".to_string();
-            for event in [ActorEvent::ActivityStarted { turn_id, activity: activity.clone() }, ActorEvent::ActivityFinished { turn_id, activity: activity.clone(), output: "done".to_string() }] {
-                let decision = moderator.route(&envelope(agents[0], event)).await;
-                assert_eq!(decision.iter().map(|(to, _)| *to).collect::<Vec<_>>(), [user], "{:?} must tell the users alone (issue 284)", moderator);
+            let in_turn = Message { turn_id: Some(turn_id), ..text_from(agents[0], "@c?", vec![agents[2]]) };
+            let events = [
+                (agents[0], ActorEvent::CompleteMessageGenerated(in_turn)),
+                (agents[0], ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Failed { message: "boom".to_string() } }),
+                (agents[0], ActorEvent::ActivityStarted { turn_id, activity: "compacting".to_string() }),
+                (agents[0], ActorEvent::PlanStepStarted { turn_id, step_index: 0, total_steps: 2, description: "first".to_string() }),
+                (user, ActorEvent::CommandExecuted { command: "wakeup".to_string(), args: String::new(), output: "Woke b.".to_string(), to: None, turn_id: None }),
+                (agents[0], ActorEvent::CommandStarted { command: "compact".to_string(), args: String::new(), to: user, turn_id }),
+                (user, ActorEvent::ParticipantJoined { participant: user, name: "user".to_string() }),
+                (agents[0], ActorEvent::ApprovalRequested(ApprovalRequest {
+                    suggested: None, explicit: false, id: Default::default(), session_id: Default::default(), channel_id: Default::default(),
+                    agent_id: AgentId::new(), tool_call: call.clone(), description: "test".to_string(),
+                })),
+                (user, ActorEvent::MessageRevoked { message: MessageId::new(), at: Utc::now() }),
+            ];
+            for (sender, event) in events {
+                let kind = event.kind();
+                assert!(as_every_channel(&moderator.route(&envelope(sender, event)).await), "{:?}: {kind}", moderator);
             }
         }
     }
 
     #[tokio::test]
-    async fn every_moderator_forwards_an_announced_command_to_the_users_only() {
-        for moderator in moderators() {
-            let agents = add_agents(&moderator);
-            let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
-            moderator.add_actor(Arc::new(StandIn::new(other, "test", ActorState::Idle)));
-            let event = envelope(user, ActorEvent::CommandExecuted { command: "wakeup".to_string(), args: String::new(), output: "Woke b.".to_string(), to: None, turn_id: None });
-
-            let decision = moderator.route(&event).await;
-
-            // Commands address the system: the agents must not see them.
-            assert!(decision.iter().all(|(to, _)| !agents.contains(to)), "{:?} must not route a command to agents", moderator);
-            assert!(decision.iter().any(|(to, _)| *to == other), "{:?} must tell the other users", moderator);
-        }
-    }
-
-    #[tokio::test]
-    async fn every_moderator_tells_the_start_of_a_command_to_its_issuer_alone() {
-        for moderator in moderators() {
-            let agents = add_agents(&moderator);
-            let (issuer, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
-            moderator.add_actor(Arc::new(StandIn::new(issuer, "test", ActorState::Idle)));
-            moderator.add_actor(Arc::new(StandIn::new(other, "test", ActorState::Idle)));
-            let started = ActorEvent::CommandStarted { command: "compact".to_string(), args: String::new(), to: issuer, turn_id: TurnId::new() };
-
-            let decision = moderator.route(&envelope(agents[0], started)).await;
-
-            assert_eq!(decision.iter().map(|(to, _)| *to).collect::<Vec<_>>(), [issuer], "{:?} must tell the issuer alone", moderator);
-        }
-    }
-
-    #[tokio::test]
-    async fn every_moderator_turns_a_nudge_into_a_request_to_whom_it_names_alone() {
+    async fn every_moderator_asks_whom_a_nudge_names_alone() {
         for moderator in moderators() {
             let agents = add_agents(&moderator);
             let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
@@ -1016,34 +734,13 @@ mod tests {
             // The sleeping one, too: the channel wakes whom a decision asks;
             // and a user as well as an agent.
             for nudged in [agents[1], other] {
-                let decision = moderator.route(&envelope(user, ActorEvent::NudgeRequested { participant: nudged })).await;
-                assert_eq!(decision.len(), 1, "{:?} must tell nobody else", moderator);
-                assert_eq!(responders(&decision), vec![nudged], "{:?} must ask whom the nudge names, and no policy", moderator);
-                assert_eq!(decision[0].1.context.sender_id, user, "{:?} must ask in the name of who nudged", moderator);
+                let routing = moderator.route(&envelope(user, ActorEvent::NudgeRequested { participant: nudged })).await;
+                assert_eq!(routing.ask, vec![nudged], "{:?} must ask whom the nudge names, and no policy", moderator);
+                assert!(routing.deliver_to.is_none() && routing.notices.is_empty(), "{:?} must tell nobody else", moderator);
             }
             let stranger = ActorId::Agent(AgentId::new());
-            assert!(moderator.route(&envelope(user, ActorEvent::NudgeRequested { participant: stranger })).await.is_empty(), "{:?} must ask nobody it does not know", moderator);
-        }
-    }
-
-    #[tokio::test]
-    async fn every_moderator_tells_everybody_who_joined_or_left_and_asks_nobody() {
-        for moderator in moderators() {
-            let agents = add_agents(&moderator);
-            let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
-            moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
-            moderator.add_actor(Arc::new(StandIn::new(other, "test", ActorState::Idle)));
-            let added = envelope(user, ActorEvent::ParticipantJoined { participant: other, name: "other".to_string() });
-            let removed = envelope(user, ActorEvent::ParticipantLeft { participant: agents[0], name: "agent".to_string() });
-
-            for event in [added, removed] {
-                let decision = moderator.route(&event).await;
-
-                let told: Vec<ActorId> = decision.iter().map(|(to, _)| *to).collect();
-                assert!(agents[1..].iter().all(|agent| told.contains(agent)), "{:?} must tell the agents (issue 408)", moderator);
-                assert!(told.contains(&other) && told.contains(&user), "{:?} must tell the users, whose name it is told in too", moderator);
-                assert!(responders(&decision).is_empty(), "{:?} must ask nobody to respond", moderator);
-            }
+            let routing = moderator.route(&envelope(user, ActorEvent::NudgeRequested { participant: stranger })).await;
+            assert!(routing.ask.is_empty(), "{:?} must ask nobody it does not know", moderator);
         }
     }
 
@@ -1057,141 +754,38 @@ mod tests {
             // Whoever said it - a user, or an agent speaking unasked - a
             // message of no turn asks whom it mentions (issue 258).
             for sender in [user, agents[0]] {
-                let decision = moderator.route(&said_from(sender, "@c?", mention())).await;
-                assert_eq!(responders(&decision), vec![agents[2]], "{:?}: {sender:?} said it outside of a turn", moderator);
+                let asked = moderator.route(&said_from(sender, "@c?", mention())).await.ask;
+                assert_eq!(asked, vec![agents[2]], "{:?}: {sender:?} said it outside of a turn", moderator);
             }
 
             // Within a turn it asks nobody yet: the turn's end does.
             let turn = TurnId::new();
             let in_turn = Message { turn_id: Some(turn), ..text_from(agents[0], "@c?", mention()) };
-            let decision = moderator.route(&envelope(agents[0], ActorEvent::CompleteMessageGenerated(in_turn.clone()))).await;
-            assert!(responders(&decision).is_empty(), "{:?}: not before the turn ended", moderator);
-            let decision = moderator.route(&envelope(agents[0], ActorEvent::TurnFinished { turn_id: turn, messages: vec![in_turn] })).await;
-            assert_eq!(responders(&decision), vec![agents[2]], "{:?}: at its end", moderator);
+            let asked = moderator.route(&envelope(agents[0], ActorEvent::CompleteMessageGenerated(in_turn.clone()))).await.ask;
+            assert!(asked.is_empty(), "{:?}: not before the turn ended", moderator);
+            let asked = moderator.route(&envelope(agents[0], ActorEvent::TurnFinished { turn_id: turn, messages: vec![in_turn] })).await.ask;
+            assert_eq!(asked, vec![agents[2]], "{:?}: at its end", moderator);
         }
     }
 
     #[tokio::test]
-    async fn a_message_reaches_the_agents_if_it_is_heard_and_the_end_of_an_answer_the_users_alone() {
+    async fn an_answer_of_nothing_to_hear_asks_nobody() {
         use caelumora_model::tool::{ToolCallResult, ToolVisibility};
         let classified = Classification::CHANNEL_DEFAULT;
         let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
         let result = ToolCallResult::of(&call, Default::default(), "done".to_string(), classified.clone());
         for moderator in moderators() {
             let agents = add_agents(&moderator);
-            let (sender, user) = (agents[0], ActorId::User(UserId::new()));
-            moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
-            let said = |message: &Message| envelope(sender, ActorEvent::CompleteMessageGenerated(message.clone()));
+            let sender = agents[0];
             let ended = |messages: Vec<Message>| envelope(sender, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages });
-            let calling = Message { sender_id: sender, role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call.clone()], ..Message::new(classified.clone()) };
+            let calling = Message { sender_id: sender, role: MessageRole::Assistant, content: None, tool_calls: vec![call.clone()], mentions: vec![agents[2]], ..Message::new(classified.clone()) };
             let tool = Message { sender_id: sender, role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result.clone()], ..Message::new(classified.clone()) };
-            let silent = Message { content: None, ..calling.clone() };
 
-            let decision = moderator.route(&said(&calling)).await;
-            assert_eq!(receivers(&decision), HashSet::from([agents[1], agents[2], user]), "{:?}: words to everyone but its sender", moderator);
-            let forwarded = decision.iter().find_map(|(_, e)| match &e.event { ActorEvent::CompleteMessageGenerated(m) => Some(m.clone()), _ => None }).unwrap();
-            assert!(forwarded.role == MessageRole::Assistant && forwarded.tool_calls.len() == 1, "{:?}: as it was said", moderator);
-            for unheard in [&tool, &silent] {
-                assert_eq!(receivers(&moderator.route(&said(unheard)).await), HashSet::from([user]), "{:?}: nothing to hear, the users alone", moderator);
-            }
-
-            let decision = moderator.route(&ended(vec![calling.clone(), tool.clone()])).await;
-            assert_eq!(told_of_the_end(&decision), HashSet::from([user]), "{:?}: the end of an answer is the users' (issue 258)", moderator);
             // A response of tool calls only, or a turn cancelled before it
             // said anything: nobody is asked.
-            for nothing in [vec![silent.clone(), tool.clone()], Vec::new()] {
-                let decision = moderator.route(&ended(nothing)).await;
-                assert_eq!(told_of_the_end(&decision), HashSet::from([user]), "{:?}: the users alone", moderator);
-                assert!(responders(&decision).is_empty(), "{:?}: nobody is asked", moderator);
+            for nothing in [vec![calling.clone(), tool.clone()], Vec::new()] {
+                assert!(as_every_channel(&moderator.route(&ended(nothing)).await), "{:?}: nobody is asked", moderator);
             }
         }
-    }
-
-    /// The actors of a channel with one agent, one user and one approver.
-    fn approval_parties() -> (ModeratorActors, AgentId, ActorId, ActorId) {
-        let mut actors = ModeratorActors::new();
-        let agent = AgentId::new();
-        let user = ActorId::User(UserId::new());
-        let approver = ActorId::Approver(ApproverId::new());
-        for id in [ActorId::Agent(agent), user, approver] {
-            actors.add_actor(Arc::new(StandIn::new(id, "test", ActorState::Idle)));
-        }
-        (actors, agent, user, approver)
-    }
-
-    /// To whom of `actors` an approval event of `sender` is routed.
-    fn routed_to(actors: &ModeratorActors, sender: ActorId, event: ActorEvent) -> HashSet<ActorId> {
-        actors.route_approval_events(&envelope(sender, event)).into_iter().map(|(to, _)| to).collect()
-    }
-
-    #[test]
-    fn a_request_reaches_the_users_only_through_the_approver() {
-        let (actors, agent, user, approver) = approval_parties();
-        let requested = || ActorEvent::ApprovalRequested(approval_request());
-        assert_eq!(routed_to(&actors, ActorId::Agent(agent), requested()), HashSet::from([approver]), "internal: not shown to the users yet");
-        assert_eq!(routed_to(&actors, approver, requested()), HashSet::from([user]), "what the users act on");
-    }
-
-    #[test]
-    fn a_users_answer_goes_to_the_approver() {
-        let (actors, agent, _, approver) = approval_parties();
-        let response = ApprovalResponse::new(Default::default(), agent);
-        assert_eq!(routed_to(&actors, ActorId::User(UserId::new()), ActorEvent::ApprovalGranted(response)), HashSet::from([approver]));
-    }
-
-    #[test]
-    fn a_decision_of_the_approver_reaches_the_agent_and_the_users() {
-        let (actors, agent, user, approver) = approval_parties();
-        let response = ApprovalResponse::new(Default::default(), agent);
-        for decided in [ActorEvent::ApprovalGranted(response.clone()), ActorEvent::ApprovalDenied(response.clone()), ActorEvent::ApprovalTimedOut(response.clone())] {
-            let kind = decided.kind();
-            assert_eq!(routed_to(&actors, approver, decided), HashSet::from([user, ActorId::Agent(agent)]), "{kind} ends the approval for the users");
-        }
-    }
-
-    #[test]
-    fn a_withdrawn_request_goes_to_the_approvers_and_from_them_to_the_users() {
-        let (actors, agent, user, approver) = approval_parties();
-        let withdrawn = || ActorEvent::ApprovalRequestWithdrawn { id: Default::default() };
-        assert_eq!(routed_to(&actors, ActorId::Agent(agent), withdrawn()), HashSet::from([approver]));
-        assert_eq!(routed_to(&actors, approver, withdrawn()), HashSet::from([user]));
-        assert!(routed_to(&actors, user, withdrawn()).is_empty(), "only an agent withdraws");
-    }
-
-    #[test]
-    fn questions_go_to_the_users_those_asked_alone_if_sensitive_and_the_answers_to_the_agent_alone() {
-        use caelumora_model::question::{Addressee, Question, QuestionId, QuestionRequest, Questions};
-        let (mut actors, agent, alice, approver) = approval_parties();
-        let bob = ActorId::User(UserId::new());
-        let other = AgentId::new();
-        for id in [bob, ActorId::Agent(other)] {
-            actors.add_actor(Arc::new(StandIn::new(id, "test", ActorState::Idle)));
-        }
-        let routed = |sender, event| actors.route_question_events(&envelope(sender, event)).into_iter().map(|(to, _)| to).collect::<HashSet<_>>();
-        let request = |sensitive| ActorEvent::QuestionRequested(QuestionRequest {
-            id: QuestionId::new(),
-            session_id: Default::default(),
-            channel_id: Default::default(),
-            agent_id: agent,
-            tool_call: approval_request().tool_call,
-            questions: Questions {
-                questions: vec![Question { header: "Name".to_string(), question: "Who?".to_string(), choices: Vec::new(), multi_select: false }],
-                ask: vec![Addressee::Actor(alice)],
-                sensitive,
-            },
-        });
-
-        assert_eq!(routed(ActorId::Agent(agent), request(false)), HashSet::from([alice, bob]), "every user sees what the agent waits for");
-        assert_eq!(routed(ActorId::Agent(agent), request(true)), HashSet::from([alice]), "sensitive: those asked alone");
-        assert!(routed(alice, request(false)).is_empty(), "only an agent asks");
-        let closed = |shown_to| ActorEvent::QuestionClosed { id: QuestionId::new(), shown_to };
-        assert_eq!(routed(ActorId::Agent(agent), closed(None)), HashSet::from([alice, bob]));
-        assert_eq!(routed(ActorId::Agent(agent), closed(Some(vec![alice]))), HashSet::from([alice]));
-
-        let answered = ActorEvent::QuestionAnswered { id: QuestionId::new(), agent_id: agent, responses: Vec::new() };
-        assert_eq!(routed(alice, answered.clone()), HashSet::from([ActorId::Agent(agent)]), "neither the other agent, the other users nor the approver");
-        assert_eq!(routed(alice, ActorEvent::QuestionDeclined { id: QuestionId::new(), agent_id: agent }), HashSet::from([ActorId::Agent(agent)]));
-        assert!(routed(ActorId::Agent(other), answered).is_empty(), "only a user answers");
-        assert!(!routed(ActorId::Agent(agent), request(false)).contains(&approver));
     }
 }

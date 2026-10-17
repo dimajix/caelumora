@@ -624,6 +624,59 @@ impl Envelope {
         }
     }
 
+    /// Whether the envelope concerns `participant` by the rule every channel
+    /// delivers by (issue 418): whom it goes to unless a moderator decides
+    /// otherwise. A message to every user, and to every agent if there is
+    /// something to hear in it (`Message::is_heard`, issues 224, 258); a
+    /// change of a message to every user and agent (issue 234); who joined
+    /// or left to every user and agent (issue 408); how an answer comes
+    /// about, how a turn ended, where an agent stands, what it does of its
+    /// own accord and an answer to a retry to the users (issues 220, 243,
+    /// 284); a command, a request to answer again and an answer to questions
+    /// to the agent they name, what a command answers to whom it names, or
+    /// to every user (issues 165, 234, 269, 299); an approval through the
+    /// approvers - an agent's request to them, theirs to the users, a user's
+    /// answer to them, their decision to the users and the agent that asked
+    /// (issues 81, 148); an agent's questions to the users, to those asked
+    /// alone if they are sensitive (issue 165). Nothing that only asks - a
+    /// request to respond, a nudge, a wakeup - nor what the channel or the
+    /// moderator say of their own.
+    ///
+    /// Whether it goes back to its sender is the channel's to decide: only
+    /// what it announces in someone's name does.
+    pub fn concerns(&self, participant: ActorId) -> bool {
+        let sender = self.context.sender_id;
+        let user = matches!(participant, ActorId::User(_));
+        let agent = matches!(participant, ActorId::Agent(_));
+        let approver = matches!(participant, ActorId::Approver(_));
+        match &self.event {
+            ActorEvent::CompleteMessageGenerated(message) => user || (agent && message.is_heard()),
+            ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. }
+            | ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } => user || agent,
+            ActorEvent::TurnFinished { .. } | ActorEvent::TurnGivenUp { .. } | ActorEvent::ResponseStarted { .. } | ActorEvent::StateChanged(_)
+            | ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_) | ActorEvent::IntermediateMessageGenerated(_)
+            | ActorEvent::PlanStepStarted { .. } | ActorEvent::PlanStepFinished { .. } | ActorEvent::ActivityStarted { .. } | ActorEvent::ActivityFinished { .. }
+            | ActorEvent::RetryAccepted { .. } | ActorEvent::RetryRejected { .. } | ActorEvent::CommandExecuted { to: None, .. } => user,
+            ActorEvent::CommandRequested { agent: named, .. } | ActorEvent::RetryRequested { author: named, .. } => agent && participant == *named,
+            ActorEvent::CommandStarted { to, .. } | ActorEvent::CommandExecuted { to: Some(to), .. } | ActorEvent::CommandFailed { to, .. } => user && participant == *to,
+            ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalRequestWithdrawn { .. } => match sender {
+                ActorId::Agent(_) => approver,
+                ActorId::Approver(_) => user,
+                _ => false,
+            },
+            ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) | ActorEvent::ApprovalTimedOut(response) => match sender {
+                // A timeout is the approver's alone.
+                ActorId::User(_) => approver && !matches!(self.event, ActorEvent::ApprovalTimedOut(_)),
+                ActorId::Approver(_) => user || participant == ActorId::Agent(response.agent_id),
+                _ => false,
+            },
+            ActorEvent::QuestionRequested(request) => sender.as_agent_id().is_some() && user && request.shown_to().is_none_or(|only| only.contains(&participant)),
+            ActorEvent::QuestionClosed { shown_to, .. } => sender.as_agent_id().is_some() && user && shown_to.as_ref().is_none_or(|only| only.contains(&participant)),
+            ActorEvent::QuestionAnswered { agent_id, .. } | ActorEvent::QuestionDeclined { agent_id, .. } => sender.as_user_id().is_some() && participant == ActorId::Agent(*agent_id),
+            ActorEvent::ResponseRequested | ActorEvent::NudgeRequested { .. } | ActorEvent::WakeupRequested | ActorEvent::ChainCutOff { .. } | ActorEvent::MessageRejected { .. } => false,
+        }
+    }
+
     /// Short, human-readable summary of this envelope's event, used for logging.
     pub fn describe(&self) -> String {
         let ctx = &self.context;
@@ -851,6 +904,8 @@ mod tests {
     use super::*;
     use crate::actor::ActorState;
     use crate::store::query::meets_exactly_its_equals;
+    use crate::message::MessageRole;
+    use std::collections::HashSet;
 
     /// Issue 403: what is public of an actor names its handle only where it
     /// can be mentioned, and says whether it is a person.
@@ -906,6 +961,199 @@ mod tests {
             matches!(ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![hidden] }.published(), Some(ActorEvent::TurnFinished { messages: m, .. }) if m.is_empty()),
             "the end of the turn is still announced"
         );
+    }
+
+    /// A channel's participants to deliver to: two agents, two users, an
+    /// approver.
+    struct Present {
+        agents: [ActorId; 2],
+        users: [ActorId; 2],
+        approver: ActorId,
+    }
+
+    impl Present {
+        fn new() -> Self {
+            let agent = || ActorId::Agent(AgentId::new());
+            let user = || ActorId::User(UserId::new());
+            Self { agents: [agent(), agent()], users: [user(), user()], approver: ActorId::Approver(ApproverId::new()) }
+        }
+
+        /// Whom of them `event` of `sender` concerns (`Envelope::concerns`).
+        fn concerned(&self, sender: ActorId, event: ActorEvent) -> HashSet<ActorId> {
+            let envelope = Envelope::new(SecurityContext::default(), EventContext { sender_id: sender, ..EventContext::default() }, event);
+            self.agents.iter().chain(&self.users).chain([&self.approver]).copied().filter(|id| envelope.concerns(*id)).collect()
+        }
+
+        fn users_and_agents(&self) -> HashSet<ActorId> {
+            self.users.iter().chain(&self.agents).copied().collect()
+        }
+
+        fn users(&self) -> HashSet<ActorId> {
+            self.users.iter().copied().collect()
+        }
+    }
+
+    /// Issues 224, 258, 418: what is said goes to every user, and to every
+    /// agent if there is something to hear in it; a change of it, and who
+    /// joined or left, to every user and agent - never to the approver.
+    #[test]
+    fn a_message_concerns_the_users_and_the_agents_that_hear_something_in_it() {
+        use crate::tool::{ToolCall, ToolCallResult};
+        let present = Present::new();
+        let sender = present.agents[0];
+        let said = |content: Option<&str>, role: MessageRole| Message { sender_id: sender, role, content: content.map(str::to_string), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        let call = ToolCall { id: Some("1".to_string()), function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
+        let tool = Message { tool_results: vec![ToolCallResult::of(&call, Default::default(), "done".to_string(), Classification::CHANNEL_DEFAULT)], ..said(Some("done"), MessageRole::Tool) };
+
+        assert_eq!(present.concerned(sender, ActorEvent::CompleteMessageGenerated(said(Some("hello"), MessageRole::Assistant))), present.users_and_agents(), "words, to everyone");
+        for unheard in [tool, said(None, MessageRole::Assistant), Message { internal: true, ..said(Some("thinking"), MessageRole::Assistant) }] {
+            assert_eq!(present.concerned(sender, ActorEvent::CompleteMessageGenerated(unheard)), present.users(), "nothing to hear, the users alone");
+        }
+        let id = MessageId::new();
+        for changed in [
+            ActorEvent::MessageModified(said(Some("changed"), MessageRole::Assistant)),
+            ActorEvent::MessageRevoked { message: id, at: Utc::now() },
+            ActorEvent::MessageReclassified { message: id, classification: Classification::PUBLIC },
+            ActorEvent::ParticipantJoined { participant: present.users[1], name: "bob".to_string() },
+            ActorEvent::ParticipantLeft { participant: present.agents[1], name: "helper".to_string() },
+        ] {
+            let kind = changed.kind();
+            assert_eq!(present.concerned(sender, changed), present.users_and_agents(), "{kind}");
+        }
+    }
+
+    /// Issues 220, 243, 258, 284: how an answer comes about, how a turn
+    /// ended, where an agent stands and what it does of its own accord are
+    /// the users'.
+    #[test]
+    fn how_an_answer_comes_about_concerns_the_users_alone() {
+        let present = Present::new();
+        let (turn_id, message) = (TurnId::new(), Message::new(Classification::CHANNEL_DEFAULT));
+        let step = |index| (index, 2, "first".to_string());
+        let target = RetryTarget::Turn(turn_id);
+        for event in [
+            ActorEvent::ResponseStarted { turn_id },
+            ActorEvent::StateChanged(ActorState::Planning),
+            ActorEvent::PartialMessageGenerated(message.clone()),
+            ActorEvent::IntermediatePartialGenerated(message.clone()),
+            ActorEvent::IntermediateMessageGenerated(message.clone()),
+            ActorEvent::PlanStepStarted { turn_id, step_index: step(0).0, total_steps: step(0).1, description: step(0).2 },
+            ActorEvent::PlanStepFinished { turn_id, step_index: step(0).0, total_steps: step(0).1, description: step(0).2 },
+            ActorEvent::TurnFinished { turn_id, messages: vec![message.clone()] },
+            ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Failed { message: "boom".to_string() } },
+            ActorEvent::ActivityStarted { turn_id, activity: "compacting".to_string() },
+            ActorEvent::ActivityFinished { turn_id, activity: "compacting".to_string(), output: "done".to_string() },
+            ActorEvent::RetryAccepted { target },
+            ActorEvent::RetryRejected { target, reason: RetryRefused::NotLast },
+        ] {
+            let kind = event.kind();
+            assert_eq!(present.concerned(present.agents[0], event), present.users(), "{kind} goes to the users, not to the agents");
+        }
+    }
+
+    /// Issues 234, 269, 299: a command and a request to answer again go to
+    /// the agent they name; what a command answers to its issuer, or to
+    /// every user - never to an agent.
+    #[test]
+    fn a_command_concerns_whom_it_names() {
+        let present = Present::new();
+        let (agent, issuer) = (present.agents[1], present.users[0]);
+        let turn_id = Some(TurnId::new());
+        let command = |to| ActorEvent::CommandExecuted { command: "wakeup".to_string(), args: String::new(), output: "Woke b.".to_string(), to, turn_id };
+
+        assert_eq!(present.concerned(issuer, ActorEvent::CommandRequested { command: "compact".to_string(), args: String::new(), agent }), HashSet::from([agent]));
+        assert_eq!(present.concerned(issuer, ActorEvent::RetryRequested { target: RetryTarget::Message(MessageId::new()), author: agent }), HashSet::from([agent]));
+        assert_eq!(present.concerned(issuer, ActorEvent::CommandRequested { command: "compact".to_string(), args: String::new(), agent: issuer }), HashSet::new(), "only an agent carries one out");
+        assert_eq!(present.concerned(agent, command(None)), present.users(), "everybody's answer, to the users");
+        assert_eq!(present.concerned(agent, command(Some(issuer))), HashSet::from([issuer]), "a private one, to its issuer");
+        assert_eq!(present.concerned(agent, ActorEvent::CommandStarted { command: "compact".to_string(), args: String::new(), to: issuer, turn_id: TurnId::new() }), HashSet::from([issuer]));
+        assert_eq!(present.concerned(agent, ActorEvent::CommandFailed { command: "compact".to_string(), reason: "no".to_string(), to: issuer, turn_id }), HashSet::from([issuer]));
+    }
+
+    /// Issues 81, 148: an approval goes through the approvers - the
+    /// agent's request to them, theirs to the users, a user's answer to
+    /// them, their decision to the users and the agent that asked.
+    #[test]
+    fn an_approval_concerns_the_approvers_and_through_them_the_users() {
+        use crate::approval::{ApprovalRequest, ApprovalResponse};
+        use crate::tool::ToolCall;
+        let present = Present::new();
+        let (agent, user, approver) = (present.agents[0], present.users[0], present.approver);
+        let ActorId::Agent(agent_id) = agent else { unreachable!() };
+        let request = || ActorEvent::ApprovalRequested(ApprovalRequest {
+            suggested: None, explicit: false, id: Default::default(), session_id: Default::default(), channel_id: Default::default(), agent_id,
+            tool_call: ToolCall { id: None, function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() },
+            description: "test".to_string(),
+        });
+        let withdrawn = || ActorEvent::ApprovalRequestWithdrawn { id: Default::default() };
+        let response = || ApprovalResponse::new(Default::default(), agent_id);
+
+        for asked in [request(), withdrawn()] {
+            let kind = asked.kind();
+            assert_eq!(present.concerned(agent, asked), HashSet::from([approver]), "{kind}: internal, not shown to the users yet");
+        }
+        for asked in [request(), withdrawn()] {
+            assert_eq!(present.concerned(approver, asked), present.users(), "what the users act on, or no longer");
+        }
+        assert!(present.concerned(user, withdrawn()).is_empty(), "only an agent and the approver withdraw");
+        assert_eq!(present.concerned(user, ActorEvent::ApprovalGranted(response())), HashSet::from([approver]), "a user's answer, to the approver alone");
+        assert!(present.concerned(user, ActorEvent::ApprovalTimedOut(response())).is_empty(), "a timeout is the approver's alone");
+        let decided = present.users().into_iter().chain([agent]).collect::<HashSet<_>>();
+        for decision in [ActorEvent::ApprovalGranted(response()), ActorEvent::ApprovalDenied(response()), ActorEvent::ApprovalTimedOut(response())] {
+            let kind = decision.kind();
+            assert_eq!(present.concerned(approver, decision), decided, "{kind} ends the approval for the users, and goes to the agent that asked");
+        }
+    }
+
+    /// Issue 165: an agent's questions, and their closing, go to the users,
+    /// to those asked alone if sensitive; a user's answer to the agent that
+    /// asked alone.
+    #[test]
+    fn questions_concern_the_users_asked_and_the_answers_the_agent_asking() {
+        use crate::question::{Addressee, Question, QuestionId, QuestionRequest, Questions};
+        use crate::tool::ToolCall;
+        let present = Present::new();
+        let (agent, alice) = (present.agents[0], present.users[0]);
+        let ActorId::Agent(agent_id) = agent else { unreachable!() };
+        let request = |sensitive| ActorEvent::QuestionRequested(QuestionRequest {
+            id: QuestionId::new(), session_id: Default::default(), channel_id: Default::default(), agent_id,
+            tool_call: ToolCall { id: None, function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() },
+            questions: Questions {
+                questions: vec![Question { header: "Name".to_string(), question: "Who?".to_string(), choices: Vec::new(), multi_select: false }],
+                ask: vec![Addressee::Actor(alice)],
+                sensitive,
+            },
+        });
+        let closed = |shown_to| ActorEvent::QuestionClosed { id: QuestionId::new(), shown_to };
+
+        assert_eq!(present.concerned(agent, request(false)), present.users(), "every user sees what the agent waits for");
+        assert_eq!(present.concerned(agent, request(true)), HashSet::from([alice]), "sensitive: those asked alone");
+        assert!(present.concerned(alice, request(false)).is_empty(), "only an agent asks");
+        assert_eq!(present.concerned(agent, closed(None)), present.users());
+        assert_eq!(present.concerned(agent, closed(Some(vec![alice]))), HashSet::from([alice]));
+        let answered = ActorEvent::QuestionAnswered { id: QuestionId::new(), agent_id, responses: Vec::new() };
+        assert_eq!(present.concerned(alice, answered.clone()), HashSet::from([agent]), "neither the other agent, the other users nor the approver");
+        assert_eq!(present.concerned(alice, ActorEvent::QuestionDeclined { id: QuestionId::new(), agent_id }), HashSet::from([agent]));
+        assert!(present.concerned(present.agents[1], answered).is_empty(), "only a user answers");
+    }
+
+    /// Issues 200, 278, 304, 418: what only asks, and what the channel or
+    /// the moderator say of their own, concerns nobody by the rule - the
+    /// moderator and the channel name whom.
+    #[test]
+    fn what_only_asks_concerns_nobody() {
+        let present = Present::new();
+        let user = present.users[0];
+        for event in [
+            ActorEvent::ResponseRequested,
+            ActorEvent::WakeupRequested,
+            ActorEvent::NudgeRequested { participant: present.agents[0] },
+            ActorEvent::ChainCutOff { message: MessageId::new(), max_agent_hops: 3, not_asked: Vec::new() },
+            ActorEvent::MessageRejected { rejected: "CompleteMessageGenerated".to_string(), message: None, reason: Rejection::Forbidden },
+        ] {
+            let kind = event.kind();
+            assert!(present.concerned(user, event).is_empty(), "{kind}");
+        }
     }
 
     /// An actor as a query compares it (issue 293): the variant counts, not

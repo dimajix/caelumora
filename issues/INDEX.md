@@ -103,7 +103,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [408](408-membership-changes-in-history.md) | done | When someone is added to a channel or leaves it, neither its history nor the agents' transcripts record it, so the chat does not show who added whom, and an agent learns of the change only from the roster of its next system prompt, without knowing that something changed. |
 | [414](414-decision-policy-conversation.md) | done | The `decision_policy` is given only the message just said - or the messages of the turn just ended - without anything said before it and without who said what, so a reply like "Yes, do that" cannot be told apart from any other. |
 | [417](417-user-history-from-its-actor.md) | open | Live, a user sees what the moderator routed to their actor; on reload they see the channel's history, filtered by what they may read, so the two can differ and whatever went to the user alone is gone. |
-| [418](418-moderator-decides-delivery-only.md) | open | `Moderator::route` returns the envelopes to deliver, so a moderator could alter a message for one recipient or speak in any name, and the channel cannot record what was decided apart from what was sent. |
+| [418](418-moderator-decides-delivery-only.md) | done | `Moderator::route` returns the envelopes to deliver, so a moderator could alter a message for one recipient or speak in any name, and the channel cannot record what was decided apart from what was sent. |
 
 ## Identity and access management
 
