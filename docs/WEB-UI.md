@@ -270,6 +270,10 @@ others say in it as the global stream announces it.
     or is shown as abandoned once the channel says it was removed. A chain between agents cut off at
     its limit says so, naming the agents that were not asked, and that a message of a user starts a
     new chain. A user someone nudges is shown that they are asked to respond.
+*   **Who joined or left** is a line of its own where it happened, live and from the history alike:
+    "@alice has added @bob to the channel", "@bob has joined the channel", "@bob was removed from
+    the channel" - by whose act it was, named as they were then (issue 408). An agent's history
+    panel shows it as well.
 *   **A plan** is shown by its call, its steps numbered. While an agent works through it, each step
     is a block of its own, headed with the step, that holds what the step said; the step a turn is
     in is open while the turn is under way, every other one folded unless the user opened or closed

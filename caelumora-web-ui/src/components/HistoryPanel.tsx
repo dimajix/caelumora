@@ -10,7 +10,7 @@
 // (issue 218), older ones on request.
 
 import React, {useEffect, useRef, useState} from 'react';
-import {ChevronRight, FoldVertical, History, ScrollText, Undo2, X} from 'lucide-react';
+import {ChevronRight, FoldVertical, History, ScrollText, Undo2, UserMinus, UserPlus, X} from 'lucide-react';
 import type {ActorId, ChannelMember, GivenUpReason, HistoryItem, HistoryMessage, HistoryPage, Message} from '../types';
 import {classificationLabel} from '../confidentiality';
 import {cn} from '../classNames';
@@ -18,7 +18,7 @@ import {api} from '../api';
 import {actorKey, actorUuid} from '../mention';
 import {ApiRequestError, reportError} from '../errors';
 import {MessageView} from './MessageView';
-import {formatTimestamp, givenUpText, mergeToolResults} from '../messages';
+import {formatTimestamp, givenUpText, mergeToolResults, participantNotice} from '../messages';
 
 interface HistoryPanelProps {
   sessionId: string;
@@ -37,13 +37,15 @@ interface HistoryPanelProps {
 
 /**
  * A row of the panel: a message of the history, merged with its tool results,
- * a turn given up, a command carried out, or the context compacted.
+ * a turn given up, a command carried out, the context compacted, or the
+ * notice of someone who joined or left (issue 408).
  */
 type Row =
   | {kind: 'message'; message: Message}
   | {kind: 'givenUp'; turnId: string; reason: GivenUpReason; at: string}
   | {kind: 'command'; turnId: string; command: string; args: string; issuer: ActorId; at: string}
-  | {kind: 'compacted'; turnId: string; at: string};
+  | {kind: 'compacted'; turnId: string; at: string}
+  | {kind: 'participant'; notice: Message};
 
 /**
  * The pages of a history read again from its end back to `until` - the
@@ -64,8 +66,9 @@ async function readBack<M>(read: (before: number | null) => Promise<HistoryPage<
 /**
  * The rows of `items`, in the order they happened: the messages, each run of
  * them with its tool results merged in, every turn given up where it ended,
- * every command carried out where it was, and every compaction where it was
- * made. A turn that finished shows nothing of its own.
+ * every command carried out where it was, every compaction where it was
+ * made, and who joined or left where they did. A turn that finished shows
+ * nothing of its own.
  */
 function rowsOf(items: HistoryItem<HistoryMessage>[]): Row[] {
   const rows: Row[] = [];
@@ -89,6 +92,14 @@ function rowsOf(items: HistoryItem<HistoryMessage>[]): Row[] {
       flush();
       const {turn_id, at} = item.compacted;
       rows.push({kind: 'compacted', turnId: turn_id, at});
+    } else if ('participant_joined' in item) {
+      flush();
+      const {participant, name, by, by_name, at} = item.participant_joined;
+      rows.push({kind: 'participant', notice: participantNotice('joined', participant, name, by, by_name, at)});
+    } else if ('participant_left' in item) {
+      flush();
+      const {participant, name, by, by_name, at} = item.participant_left;
+      rows.push({kind: 'participant', notice: participantNotice('left', participant, name, by, by_name, at)});
     }
   }
   flush();
@@ -220,11 +231,26 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
     );
   };
 
+  // Someone joined or left the channel (issue 408), as the agent was told.
+  const participantView = (notice: Message, key: React.Key) => {
+    const time = formatTimestamp(notice.timestamp);
+    return (
+      <div key={key} className="flex items-start gap-2 p-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-xs text-gray-700 dark:text-gray-300">
+        {notice.participant === 'joined' ? <UserPlus size={14} className="mt-0.5 shrink-0" /> : <UserMinus size={14} className="mt-0.5 shrink-0" />}
+        <span className="flex-1">
+          <span className="font-semibold">{notice.content}</span>
+          {time && <span className="opacity-70" title={time.full}> · {time.short}</span>}
+        </span>
+      </div>
+    );
+  };
+
   const rowView = (row: Row, idx: number) => {
     switch (row.kind) {
       case 'givenUp': return givenUpView(row.reason, row.at, `given-up-${row.turnId}`);
       case 'command': return commandView(row, `command-${row.turnId}`);
       case 'compacted': return compactedView(row.at, `compacted-${row.turnId}-${idx}`);
+      case 'participant': return participantView(row.notice, row.notice.id ?? `participant-${idx}`);
       case 'message': return messageView(row.message, row.message.id ?? `message-${idx}`);
     }
   };

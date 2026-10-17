@@ -18,6 +18,7 @@ use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use std::fmt;
 use std::str::FromStr;
+use uuid::Uuid;
 use crate::ledger::{Change, LedgerKind};
 use crate::tool::ToolSet;
 use serde::de::Error;
@@ -25,6 +26,17 @@ use serde::de::Error;
 /// A SHA-256 digest.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Digest([u8; 32]);
+
+impl Digest {
+    /// An id derived from the digest, the same each time (issue 408): what
+    /// the model is given for an entry of a transcript that is no message is
+    /// named by its entry's digest.
+    pub(crate) fn as_uuid(&self) -> Uuid {
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(&self.0[..16]);
+        Uuid::from_bytes(bytes)
+    }
+}
 
 
 impl fmt::Display for Digest {
@@ -240,7 +252,8 @@ pub fn message_reclassified(previous: Option<&Digest>, message: MessageId, class
 /// what it named - one given to read (issue 16) alike, since the model is
 /// given the same; a turn's end (issue 258) by what it says - the turn and,
 /// given up, the reason, not the time - in schemes of their own, and where a
-/// compaction's part ends (issue 387) by its place alone; a message
+/// compaction's part ends (issue 387) by its place alone, a change of who
+/// takes part (issue 408) as `taking_part`; a message
 /// modified, taken back or reclassified as `message_modified`,
 /// `message_revoked` and `message_reclassified`.
 pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> Digest {
@@ -256,6 +269,8 @@ pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> D
             e.opt_digest(previous);
             e.finish()
         }
+        TranscriptEntry::ParticipantJoined { participant, name, by, by_name, .. } => taking_part("caelumora.transcript-participant-joined.v1", previous, participant, name, by, by_name),
+        TranscriptEntry::ParticipantLeft { participant, name, by, by_name, .. } => taking_part("caelumora.transcript-participant-left.v1", previous, participant, name, by, by_name),
     }
 }
 
@@ -275,14 +290,28 @@ fn turn_ended(scheme: &str, previous: Option<&Digest>, turn: TurnId, actor: Opti
     e.finish()
 }
 
+/// The digest of a chain ending in someone joining or leaving (issue 408),
+/// in `scheme`: who - `participant`, called `name` - and by whose act -
+/// `by`, called `by_name` -, as the model is told of it; not when.
+fn taking_part(scheme: &str, previous: Option<&Digest>, participant: &ActorId, name: &str, by: &ActorId, by_name: &str) -> Digest {
+    let mut e = Encoder::new(scheme);
+    e.opt_digest(previous);
+    e.json(&to_json(participant));
+    e.str(name);
+    e.json(&to_json(by));
+    e.str(by_name);
+    e.finish()
+}
+
 /// The digest of a history (issue 06) ending in `entry`, whose predecessor
 /// chain has the digest `previous`: a message said as `message_chain`, so
 /// that every digest recorded before issue 197 names what it named; the
 /// channel's classification fitted into (issue 133), a turn's end (issue
 /// 258) and the start of a step of its plan (issue 263) in schemes of their
 /// own - the step by what it says, not when -, a command carried out (issue
-/// 269) and a context compacted (issue 16) likewise - by what they say, not
-/// when; a message modified, taken back or
+/// 269), a context compacted (issue 16) and a change of who takes part
+/// (issue 408) likewise - by what they say, not when; a message modified,
+/// taken back or
 /// reclassified as `message_modified`, `message_revoked` and
 /// `message_reclassified`.
 pub fn history_chain(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
@@ -336,6 +365,8 @@ pub fn history_chain(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest 
             e.opt_digest(Some(to));
             e.finish()
         }
+        HistoryEntry::ParticipantJoined { participant, name, by, by_name, .. } => taking_part("caelumora.history-participant-joined.v1", previous, participant, name, by, by_name),
+        HistoryEntry::ParticipantLeft { participant, name, by, by_name, .. } => taking_part("caelumora.history-participant-left.v1", previous, participant, name, by, by_name),
     }
 }
 

@@ -243,7 +243,8 @@ state's document (issue 379):
     was last stored, then the document.
 *   **The items are derived.** Beside the chain the store keeps the items as they stand - every
     message with every change since folded into it by the one rule of folding
-    (`HistoryEntry::fold_into`), the marks of turns, steps, commands, activities and compactions -
+    (`HistoryEntry::fold_into`), the marks of turns, steps, commands, activities, compactions and
+    of who joined or left -
     each at the position of the entry that added it (`StandingItems`). They are derived entry by
     entry as the chain grows and rebuilt from it at any time (`HistoryStore::rebuild`); the store
     suite checks that they equal the chain folded.

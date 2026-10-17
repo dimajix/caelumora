@@ -295,7 +295,7 @@ impl ExternalAgentActor {
         // now - every message, and every change of one, as it may have used
         // either version (issue 236).
         state.classifications_given().iter().for_each(|c| work.see(c));
-        let given = state.transcript.messages();
+        let given = work.context.profile.given_messages(&state.transcript, self.id());
         // A task that asked back before the channel was lowered is not
         // taken up: it is cancelled, and the request begins a new one.
         if let Some(asking) = state.remote.asking().cloned() {
@@ -319,8 +319,8 @@ impl ExternalAgentActor {
             work.context.prompts.push(reference);
             parts.push(part.text.clone());
         }
-        let said = given.iter()
-            .map(|m| Said { sender: m.sender_name.clone(), text: work.context.profile.given(m.clone(), self.id(), false).content.unwrap_or_default() })
+        let said = given.into_iter()
+            .map(|m| Said { sender: m.sender_name, text: m.content.unwrap_or_default() })
             .collect();
         trace!("External agent {} is given {:?} after {:?}", self.id(), said, parts);
         let mut stream = self.remote.send(&answering.security_context, state.remote.conversation.as_ref(), OutboundMessage { prompts: parts, said, answers: answers.clone() }).await?;
@@ -826,7 +826,8 @@ impl Actor for ExternalAgentActor {
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {
-        |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::CompleteMessageGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. } | ActorEvent::CommandRequested { .. })
+        |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::CompleteMessageGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. } | ActorEvent::CommandRequested { .. }
+            | ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. })
     }
 
     fn components(&self) -> ComponentConfig {

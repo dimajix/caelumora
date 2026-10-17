@@ -11,9 +11,10 @@ use caelumora_runtime::transport::EventReceiver;
 use anyhow::Result;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::AgentChannelState;
-use caelumora_model::history::fold;
+use caelumora_model::history::{fold, HistoryEntry};
 use caelumora_model::message::Message;
 use caelumora_model::transcript::TranscriptEntry;
+use std::mem;
 use tracing::{debug, trace, warn, Instrument};
 
 impl AgentBody {
@@ -86,7 +87,8 @@ impl AgentBody {
     /// (`perceive`), and so is a message
     /// modified or taken back since (issue 234); a reclassification is recorded
     /// as it is (issue 239), in the history and the transcript where they hold
-    /// the message, the transcript on its active path. Of the requests to respond the last is returned -
+    /// the message, the transcript on its active path, and so is who joined
+    /// or left (issue 408). Of the requests to respond the last is returned -
     /// one answer to the conversation as it stands, in the authority of the
     /// last who asked - and the others are dropped, as is
     /// every other event but the requests to answer again (issue 234), which
@@ -136,6 +138,14 @@ impl AgentBody {
                         state.transcript.reclassify(message, classification);
                         None
                     }
+                    // Who joined or left (issue 408): noted where it came,
+                    // asking nothing of the agent.
+                    ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } => {
+                        if let Some(entry) = event.announced() {
+                            state.note_announced(entry);
+                        }
+                        None
+                    }
                     ActorEvent::ResponseRequested => Some(event),
                     ActorEvent::RetryRequested { .. } => {
                         retries.push(event);
@@ -154,7 +164,8 @@ impl AgentBody {
     /// hears (issues 190, 196, 206): the messages said in the channel from
     /// the position `from` on - where the part of the channel's history it
     /// may see begins - and after the last message its history has that the
-    /// channel's has, as they stand, through `perceive`, and stores its state
+    /// channel's has, as they stand, through `perceive`, and who joined or
+    /// left meanwhile, where it happened (issue 408), and stores its state
     /// with them. Read from the store (issue 379): the agent's history from
     /// its end backwards until a message of it is found in the channel's,
     /// then the channel's entries after it. The one way in that does not
@@ -179,15 +190,28 @@ impl AgentBody {
         }
         let entries = self.runtime.channel_entries(after).await?;
         // As it would have heard them (`Message::is_heard`, issue 258): the
-        // steps of a plan and tool messages are kept in the channel, not heard.
-        let missed: Vec<Message> = fold(&entries).into_iter()
-            .map(|(_, message)| message)
-            .filter(|m| m.sender_id != own && m.is_heard())
-            .collect();
-        if missed.is_empty() {
+        // steps of a plan and tool messages are kept in the channel, not
+        // heard. Who joined or left is noted where it happened among them
+        // (issue 408).
+        let mut said = fold(&entries).into_iter().peekable();
+        let mut heard = Vec::new();
+        let mut missed = false;
+        for node in &entries {
+            if matches!(node.entry, HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. }) {
+                self.perceive(&mut state, mem::take(&mut heard)).await;
+                state.note_announced(node.entry.clone());
+                missed = true;
+            } else if let Some((_, message)) = said.next_if(|(said, _)| said.seq == node.seq) {
+                if message.sender_id != own && message.is_heard() {
+                    heard.push(message);
+                    missed = true;
+                }
+            }
+        }
+        if !missed {
             return Ok(());
         }
-        self.perceive(&mut state, missed).await;
+        self.perceive(&mut state, heard).await;
         self.runtime.store_channel_state(&mut state).await
     }
 }

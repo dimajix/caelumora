@@ -14,6 +14,7 @@ use caelumora_model::confidentiality::ConfidentialityQuestions;
 use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::Message;
 use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext};
+use caelumora_model::value::name::Name;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -37,9 +38,10 @@ struct RunningActor {
     /// an actor that is leaving, though what it sends is still taken.
     sender: Option<Box<dyn EventSender>>,
     /// On whose behalf it was removed, once it was told to stop (issue
-    /// 262): its task still runs - the step it was in, its farewell - and
-    /// `run` announces the removal in this name once the task has ended.
-    leaving: Option<SecurityContext>,
+    /// 262), and what it was called as it left: its task still runs - the
+    /// step it was in, its farewell - and `run` announces the removal in
+    /// this name once the task has ended.
+    leaving: Option<(SecurityContext, Name)>,
 }
 
 impl ChannelLoop {
@@ -78,8 +80,8 @@ impl ChannelLoop {
                         Err(e) => e.id(),
                     };
                     let ended = running.iter().find(|(_, actor)| actor.abort_handle.id() == task).map(|(id, _)| *id);
-                    if let Some(RunningActor { id, leaving: Some(remover), .. }) = ended.and_then(|id| running.remove(&id)) {
-                        self.announce_removal(id, remover, &running).await;
+                    if let Some(RunningActor { id, leaving: Some((remover, name)), .. }) = ended.and_then(|id| running.remove(&id)) {
+                        self.announce_removal(id, name, remover, &running).await;
                     }
                     if join_set.is_empty() {
                         break;
@@ -95,7 +97,7 @@ impl ChannelLoop {
     /// Starts or stops an actor as a participant joined or left (issue 46).
     async fn apply_change(&self, change: ActorChange, running: &mut HashMap<ActorId, RunningActor>, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
         match change {
-            ActorChange::Start(joined) => {
+            ActorChange::Start(joined, adder) => {
                 // Joined before `run` started: already running. Removed
                 // again before `run` got to start it: never started, so that
                 // it cannot run next to whoever joins under its id after it
@@ -107,16 +109,21 @@ impl ChannelLoop {
                 // yet: the removal is announced before anything of the new
                 // actor (issue 262).
                 if running.get(&id).is_some_and(|old| old.leaving.is_some()) {
-                    if let Some(RunningActor { leaving: Some(remover), .. }) = running.remove(&id) {
-                        self.announce_removal(id, remover, running).await;
+                    if let Some(RunningActor { leaving: Some((remover, name)), .. }) = running.remove(&id) {
+                        self.announce_removal(id, name, remover, running).await;
                     }
                 }
                 if !running.contains_key(&id) && still_joined {
                     let handle = self.spawn_actor(&joined, event_tx.clone(), join_set);
                     running.insert(handle.id, handle);
                 }
+                // Once it runs, so that the newcomer hears it first (issue
+                // 408); also if it was removed again before it got to run:
+                // it was added, and its removal follows.
+                let name = joined.actor.name().to_string();
+                self.announce(ActorEvent::ParticipantJoined { participant: id, name }, adder, running).await;
             }
-            ActorChange::Leave(id, remover) => {
+            ActorChange::Leave(id, name, remover) => {
                 // Dropping its inbox closes it; told to leave (`Actor::leave`),
                 // the actor ends its task itself once its state is stored
                 // consistent. Only if it does not - a tool that hangs - is it
@@ -127,7 +134,7 @@ impl ChannelLoop {
                 match running.get_mut(&id) {
                     Some(handle) => {
                         handle.sender = None;
-                        handle.leaving = Some(remover);
+                        handle.leaving = Some((remover, name));
                         let (abort_handle, task) = (handle.abort_handle.clone(), handle.task.clone());
                         let (channel, actor) = (self.id, id);
                         tokio::spawn(async move {
@@ -138,23 +145,33 @@ impl ChannelLoop {
                         });
                         info!("Actor {} is stopping: it left channel {}", id, self.id);
                     }
-                    None => self.announce_removal(id, remover, running).await,
+                    None => self.announce_removal(id, name, remover, running).await,
                 }
             }
         }
     }
 
-    /// Announces that `participant` left, in the name of `remover`'s caller
-    /// (`ParticipantRemoved`, issue 162) - between the events `run` routes,
-    /// once the participant's task has ended: what it sent before is in the
-    /// channel, nothing of it follows (issue 262).
-    async fn announce_removal(&self, participant: ActorId, remover: SecurityContext, running: &HashMap<ActorId, RunningActor>) {
-        let name = self.controllers.actor_name(remover.caller_id).await.unwrap_or_else(|e| {
-            warn!("Cannot name {} for channel {}: {}", remover.caller_id, self.id, e);
-            remover.caller_id.to_string()
+    /// Announces that `participant`, called `name`, left, in the name of
+    /// `remover`'s caller (`ParticipantLeft`, issue 162) - between the
+    /// events `run` routes, once the participant's task has ended: what it
+    /// sent before is in the channel, nothing of it follows (issue 262).
+    async fn announce_removal(&self, participant: ActorId, name: Name, remover: SecurityContext, running: &HashMap<ActorId, RunningActor>) {
+        let removed = ActorEvent::ParticipantLeft { participant, name: name.to_string() };
+        self.announce(removed, remover, running).await;
+    }
+
+    /// Announces `event`, a change of who takes part (issue 408), in the
+    /// channel in the name of `by`'s caller: the channel's own word, which
+    /// enters it without `admission` - that lets no actor say it -, is
+    /// recorded in its history and told to everybody.
+    async fn announce(&self, event: ActorEvent, by: SecurityContext, running: &HashMap<ActorId, RunningActor>) {
+        let name = self.controllers.actor_name(by.caller_id).await.unwrap_or_else(|e| {
+            warn!("Cannot name {} for channel {}: {}", by.caller_id, self.id, e);
+            by.caller_id.to_string()
         });
-        let removed = Answering::in_channel(self.session_id, self.id, name, remover).envelope(ActorEvent::ParticipantRemoved { participant });
-        self.process_envelope(removed, running).await;
+        let envelope = Answering::in_channel(self.session_id, self.id, name, by).envelope(event);
+        debug!("Announcing {}", envelope.describe());
+        self.enter(envelope, running).await;
     }
 
     async fn handle_actor_event(&self, maybe_event: Option<Envelope>, running: &HashMap<ActorId, RunningActor>) -> bool {
@@ -191,6 +208,12 @@ impl ChannelLoop {
             self.reject(&event, reason, running);
             return;
         }
+        self.enter(event, running).await;
+    }
+
+    /// Lets `event` enter the channel, admitted or the channel's own: its
+    /// mentions resolved, recorded, appended to the history and routed.
+    async fn enter(&self, event: Envelope, running: &HashMap<ActorId, RunningActor>) {
         let event = self.resolve_mentions(event);
         self.record_receive_event(&event).await;
         self.append_history(&event).await;
@@ -266,7 +289,9 @@ impl ChannelLoop {
     /// - what the channel records of a turn besides its messages - where a
     ///   step of its plan began, a command or an activity it carried out,
     ///   how it ended - and the start of an activity come from an agent in
-    ///   its own name (issue 284): nobody else has turns.
+    ///   its own name (issue 284): nobody else has turns;
+    /// - who joined or left is the channel's own word (`announce`, issue
+    ///   408), never an actor's.
     async fn admission(&self, event: &Envelope) -> Result<(), Rejection> {
         let context = &event.security;
         let messages = event.event.messages();
@@ -337,6 +362,7 @@ impl ChannelLoop {
                 let sender = event.context.sender_id;
                 (sender.as_agent_id().is_some() && context.caller_id == sender).then_some(()).ok_or(Rejection::Invalid)
             }
+            event if event.is_announcement() => Err(Rejection::Invalid),
             _ => Ok(()),
         }?;
         for message in messages {
@@ -433,8 +459,10 @@ impl ChannelLoop {
 
             // Do not propagate message to sender again - unless the
             // moderator sends something of its own in another name, e.g. a
-            // `ChainCutOff` to the agent whose chain it cut off (issue 200).
-            if target_id == event.context.sender_id && route.1.context.sender_id == event.context.sender_id {
+            // `ChainCutOff` to the agent whose chain it cut off (issue 200),
+            // or the channel announces something in the sender's name, which
+            // it did not send itself (issue 408).
+            if target_id == event.context.sender_id && route.1.context.sender_id == event.context.sender_id && !event.event.is_announcement() {
                 continue;
             }
             // A cancelled channel stays quiet until it is woken: what was said
@@ -531,6 +559,14 @@ impl ChannelLoop {
                 });
                 true
             }
+            // Who joined or left, where it happened (issue 408).
+            event if event.is_announcement() => match envelope.announced() {
+                Some(entry) => {
+                    state.history.record(entry);
+                    true
+                }
+                None => false,
+            },
             ActorEvent::PlanStepStarted { turn_id, step_index, total_steps, description } => {
                 state.history.record(HistoryEntry::PlanStepStarted {
                     turn_id: *turn_id,
@@ -764,6 +800,30 @@ mod tests {
         let history: Vec<_> = channel.history().await.iter().filter_map(|m| m.content.clone()).collect();
         assert_eq!(history, ["its own"], "nor the history");
         running.abort();
+    }
+
+    #[tokio::test]
+    async fn who_joined_or_left_is_the_channel_s_word_alone() {
+        let alice = user("alice");
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
+        let her = ActorId::User(alice.id);
+        let stranger = ActorId::User(UserId::new());
+        let from_her = |event| Envelope::new(SecurityContext::new(her, channel.session_id, channel.id), EventContext { sender_id: her, ..EventContext::default() }, event);
+        let (to_her, mut hers) = mpsc::channel(16);
+        let actors = HashMap::from([(her, RunningActor { id: her, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(to_her))), leaving: None })]);
+
+        // In her own name, but no actor's to say (issue 408).
+        channel.process_envelope(from_her(ActorEvent::ParticipantJoined { participant: stranger, name: "mallory".to_string() }), &actors).await;
+        channel.process_envelope(from_her(ActorEvent::ParticipantLeft { participant: her, name: "alice".to_string() }), &actors).await;
+
+        assert!(channel.history_entries().await.is_empty(), "nothing is recorded");
+        let mut rejected = Vec::new();
+        while let Ok(envelope) = hers.try_recv() {
+            if let ActorEvent::MessageRejected { rejected: kind, reason, .. } = envelope.event {
+                rejected.push((kind, reason));
+            }
+        }
+        assert_eq!(rejected, [("ParticipantJoined".to_string(), Rejection::Invalid), ("ParticipantLeft".to_string(), Rejection::Invalid)], "and she is told so");
     }
 
     #[tokio::test]
@@ -1037,7 +1097,7 @@ mod tests {
                 if envelope.context.sender_id == ActorId::Agent(agent) && matches!(envelope.event, ActorEvent::TurnGivenUp { .. }) {
                     farewell = true;
                 }
-                if let ActorEvent::ParticipantRemoved { participant } = envelope.event {
+                if let ActorEvent::ParticipantLeft { participant, .. } = envelope.event {
                     break ((envelope.context.sender_id, envelope.context.sender_name, participant), farewell);
                 }
             }
@@ -1069,7 +1129,8 @@ mod tests {
     /// An actor told to stop whose task has not ended: no inbox, and who
     /// removed it.
     fn leaving_actor(id: ActorId, remover: SecurityContext) -> RunningActor {
-        RunningActor { id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: None, leaving: Some(remover) }
+        let name = Name::new("helper").expect("a name");
+        RunningActor { id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: None, leaving: Some((remover, name)) }
     }
 
     #[tokio::test]
@@ -1102,11 +1163,13 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let mut running = HashMap::from([(participant, leaving_actor(participant, context.clone()))]);
-        channel.apply_change(ActorChange::Start(joined), &mut running, &event_tx, &mut join_set).await;
+        channel.apply_change(ActorChange::Start(joined, context.clone()), &mut running, &event_tx, &mut join_set).await;
 
         let announced = events.try_recv().expect("the removal is announced");
-        assert!(matches!(announced.event, ActorEvent::ParticipantRemoved { participant: p } if p == participant), "{}", announced.describe());
+        assert!(matches!(announced.event, ActorEvent::ParticipantLeft { participant: p, .. } if p == participant), "{}", announced.describe());
         assert_eq!(announced.context.sender_id, context.caller_id, "in the remover's name");
+        let added = events.try_recv().expect("the join is announced after it");
+        assert!(matches!(added.event, ActorEvent::ParticipantJoined { participant: p, .. } if p == participant), "{}", added.describe());
         assert!(running.get(&participant).is_some_and(|actor| actor.leaving.is_none()), "and then the new actor runs");
         join_set.abort_all();
     }

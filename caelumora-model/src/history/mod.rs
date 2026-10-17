@@ -1,9 +1,9 @@
 //! The history of a channel as an agent keeps it (issue 06): the chain of
 //! what happened in it - messages said, each of the agent's own with what it
 //! was produced from, reclassifications (issue 133), changes to what was
-//! said (issue 234), where the steps of a plan began (issue 263) and how
-//! turns ended (issue 258) - read into the messages as they stand (issue
-//! 197).
+//! said (issue 234), where the steps of a plan began (issue 263), how
+//! turns ended (issue 258) and who joined or left (issue 408) - read into
+//! the messages as they stand (issue 197).
 
 use crate::actor::ActorId;
 use crate::chain::{Chain, Node};
@@ -78,6 +78,15 @@ pub enum HistoryEntry {
     /// `output` says what came of it: recorded where it happened, with what
     /// it said, which is everybody's.
     ActivityFinished { turn_id: TurnId, actor: ActorId, activity: String, output: String, at: DateTime<Utc> },
+    /// `participant`, called `name` then, joined the channel at `at`, by
+    /// the act of `by`, called `by_name` then - the participant itself if
+    /// it joined by itself, `ActorId::System` if the runtime added it
+    /// (issue 408): recorded where it happened among what was said, with
+    /// the names as they were, so that it reads the same after a renaming.
+    ParticipantJoined { participant: ActorId, name: String, by: ActorId, by_name: String, at: DateTime<Utc> },
+    /// `participant` left the channel, as `ParticipantJoined` says - `by`
+    /// who removed it, the participant itself if it left by itself.
+    ParticipantLeft { participant: ActorId, name: String, by: ActorId, by_name: String, at: DateTime<Utc> },
 }
 
 /// The conversation as it happened - a chain like a `Transcript`. What it
@@ -291,7 +300,7 @@ impl Chain<HistoryEntry> {
     /// of its plan began (issue 263), before the messages of the step, a
     /// command carried out (issue 269) or an activity ended (issue 284),
     /// before the turn's end, a compaction (issue 16), before what replaced
-    /// the older messages. A change is recorded by its own method -
+    /// the older messages, someone added or removed (issue 408). A change is recorded by its own method -
     /// `modify`, `revoke`, `reclassify`, `fit_into` -, which says whether it
     /// applies.
     pub fn record(&mut self, item: HistoryEntry) {
@@ -308,13 +317,14 @@ impl Chain<HistoryEntry> {
 impl HistoryEntry {
     /// Whether it is an item of its history - a message said, the start of a
     /// plan's step, a command carried out, an activity ended, a compaction, a
-    /// turn's end - rather than a change of what was said before: what a
+    /// turn's end, a change of who takes part - rather than a change of what was said before: what a
     /// reader of the history is given as it stands (`StandingItems`), a
     /// change being in the message it changes.
     pub(crate) fn is_item(&self) -> bool {
         match self {
             HistoryEntry::Said { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
-            | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => true,
+            | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
+            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => true,
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => false,
         }
     }
@@ -325,7 +335,7 @@ impl HistoryEntry {
             HistoryEntry::Said { message, .. } => Some(message),
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
-            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => None,
+            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => None,
         }
     }
 
@@ -349,7 +359,7 @@ impl HistoryEntry {
             }
             HistoryEntry::Said { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
-            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => false,
+            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => false,
         }
     }
 
@@ -359,7 +369,8 @@ impl HistoryEntry {
             HistoryEntry::Modified { message } => Some(message.id),
             HistoryEntry::Revoked { message, .. } | HistoryEntry::Reclassified { message, .. } => Some(*message),
             HistoryEntry::Said { .. } | HistoryEntry::Fitted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
-            | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => None,
+            | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
+            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => None,
         }
     }
 
@@ -371,7 +382,7 @@ impl HistoryEntry {
             HistoryEntry::Said { message, context } => Some((context.as_ref()?, message.turn_id?)),
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
-            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } => None,
+            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => None,
         }
     }
 }

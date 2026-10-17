@@ -460,6 +460,24 @@ impl AgentChannelState {
         }
     }
 
+    /// Takes note of `entry` of the channel's history, which the agent is
+    /// told of rather than hears - who joined or left (issue 408) -, the
+    /// same for both kinds of agent: into its history, and into its
+    /// transcript, where its model is told of it
+    /// (`TranscriptEntry::of_announced`). A turn under way has seen it, as
+    /// what is heard (`perceive`). Any other entry is not noted.
+    pub fn note_announced(&mut self, entry: HistoryEntry) {
+        let Some(told) = TranscriptEntry::of_announced(&entry) else {
+            warn!("An entry of the history that is not announced was to be noted");
+            return;
+        };
+        self.history.record(entry);
+        self.transcript.record(told);
+        if let Some(turn) = self.turn.as_mut() {
+            turn.work.context.transcript = self.transcript.digest();
+        }
+    }
+
     /// Records `message`, said by the turn under way (issues 136, 260): the
     /// turn's from now on (`Message::turn_id`, issue 235), whoever built it,
     /// into the transcript and into the history with what it was produced
@@ -653,9 +671,11 @@ impl AgentChannelState {
                     }
                     taken_back.push(step.id);
                 }
-                // Anything else since, a compaction too: the message may be
-                // in a summary already (issue 387).
-                (TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } | TranscriptEntry::Compacted { .. }, _) => return Err(RetryRefused::NotLast),
+                // Anything else since - a compaction too: the message may be
+                // in a summary already (issue 387) -, someone who joined or
+                // left as well.
+                (TranscriptEntry::Message(_) | TranscriptEntry::Given { .. } | TranscriptEntry::TurnFinished { .. } | TranscriptEntry::TurnGivenUp { .. } | TranscriptEntry::Compacted { .. }
+                | TranscriptEntry::ParticipantJoined { .. } | TranscriptEntry::ParticipantLeft { .. }, _) => return Err(RetryRefused::NotLast),
             }
         }
         Ok(taken_back)

@@ -10,6 +10,7 @@ use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::ModelProfile;
 use caelumora_model::history::HistoryEntry;
+use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::message::{MessageEvent, MessageRole};
 use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::tool::{Tool, ToolResultStatus};
@@ -317,6 +318,33 @@ async fn what_a_user_says_during_a_turn_is_answered_after_it() {
     let heard = |call: &[String], text: &str| call.iter().any(|c| c.contains(text));
     assert!(heard(&seen[0], "hello") && !heard(&seen[0], "and this too"), "the running turn does not see it");
     assert!(heard(&seen[1], "and this too"), "the next one does");
+    running.abort();
+}
+
+#[tokio::test]
+async fn an_agent_takes_note_of_who_left_without_responding() {
+    let model = Arc::new(Gated {
+        answers: Mutex::new(["first", "second"].into()),
+        gate: Arc::new(Semaphore::new(1)),
+        seen: Default::default(),
+    });
+    let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
+    answered(&mut events, agent).await;
+
+    channel.remove_participant(&context, context.initiator_id).await.expect("she may leave her channel");
+
+    // In its history and its transcript, where the next turn's model is
+    // told of it (issue 408); it asks nobody to respond.
+    let state = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let state = channel.stored_agent_channel_state(agent).await.unwrap();
+            if state.transcript.entries().any(|node| matches!(node.entry, TranscriptEntry::ParticipantLeft { .. })) { break state }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("the agent takes note of it");
+    assert!(matches!(state.history.last().map(|node| &node.entry), Some(HistoryEntry::ParticipantLeft { participant, by, .. }) if *participant == context.initiator_id && *by == context.initiator_id));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(model.seen.lock().unwrap().len(), 1, "no turn begins for it");
     running.abort();
 }
 
@@ -1209,15 +1237,21 @@ async fn an_agent_removed_while_a_tool_runs_gives_up_its_turn_and_keeps_the_call
     assert!(interrupted.contains("interrupted"), "the call that ran stays, with how it ended: {interrupted}");
 
     // The agent tells the channel of its turn's end as it leaves, and
-    // the channel records it after the call it said (issues 258, 262).
-    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+    // the channel records it after the call it said (issues 258, 262), and
+    // that it left after that (issue 408).
+    let entries = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let last = channel.last_history_entry().await;
-            if let Some(HistoryEntry::TurnGivenUp { actor, reason, .. }) = last { break (actor, reason) }
+            let entries = channel.history_entries().await;
+            if matches!(entries.last(), Some(HistoryEntry::ParticipantLeft { .. })) { break entries }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-    }).await.expect("the channel records the turn's end");
-    assert_eq!(ended, (ActorId::Agent(agent), GivenUpReason::Left));
+    }).await.expect("the channel records that it left");
+    let ended = match &entries[entries.len() - 2] {
+        HistoryEntry::TurnGivenUp { actor, reason, .. } => Some((*actor, reason.clone())),
+        _ => None,
+    };
+    assert_eq!(ended, Some((ActorId::Agent(agent), GivenUpReason::Left)), "the turn's end comes before: {entries:?}");
+    assert!(matches!(entries.last(), Some(HistoryEntry::ParticipantLeft { participant, by, .. }) if *participant == ActorId::Agent(agent) && *by == context.caller_id), "in the name of who removed it");
     assert!(channel.whole_history().await.iter().any(|m| m.tool_calls.iter().any(|c| c.function_name == "sleep")), "what it said stays");
     running.abort();
 }

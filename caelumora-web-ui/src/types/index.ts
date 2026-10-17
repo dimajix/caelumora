@@ -641,6 +641,9 @@ export interface Message {
   // words, as "compacting its context" -, `underWay` until it ended. One
   // ended is part of the history, with what came of it as the content.
   activity?: {activity: string; agent: string; underWay?: boolean};
+  // UI only: someone `joined` or `left` the channel (issue 408) - the
+  // content says who and by whose act. Part of the history.
+  participant?: 'joined' | 'left';
   // UI only: its sender was removed from the channel before its tool calls
   // were answered (issue 162) - those without a result never will be.
   abandoned?: boolean;
@@ -747,11 +750,17 @@ export interface ActorEvent {
   ActivityStarted?: { turn_id: string; activity: string };
   ActivityFinished?: { turn_id: string; activity: string; output: string };
   /**
-   * `participant` was removed from the channel by the envelope's sender
-   * (issue 162); nothing of it follows, so whatever of it was under way has
-   * ended.
+   * `participant`, called `name`, joined the channel (issue 408), by the act
+   * of the envelope's sender: themselves, someone who added them, or the
+   * system. Part of the history.
    */
-  ParticipantRemoved?: { participant: ActorId };
+  ParticipantJoined?: { participant: ActorId; name: string };
+  /**
+   * `participant`, called `name`, left the channel (issues 162, 408), by the
+   * act of the envelope's sender, as `ParticipantJoined`; nothing of it
+   * follows, so whatever of it was under way has ended. Part of the history.
+   */
+  ParticipantLeft?: { participant: ActorId; name: string };
   /**
    * A chain between agents reached its limit (issue 200): the response ending
    * in `message` was delivered, but nobody was asked to respond to it -
@@ -1088,7 +1097,11 @@ export type HistoryItem<M> =
   /** An agent ended something it did of its own accord, and what came of it (issue 284). */
   | {activity_finished: {turn_id: string; actor: ActorId; activity: string; output: string; at: string}}
   /** An agent replaced its context `from` by `to` (issue 16); in an agent's history only. */
-  | {compacted: {turn_id: string; actor: ActorId; from: string; to: string; at: string}};
+  | {compacted: {turn_id: string; actor: ActorId; from: string; to: string; at: string}}
+  /** Someone joined the channel, by the act of `by` (issue 408); the names as they were then. */
+  | {participant_joined: {participant: ActorId; name: string; by: ActorId; by_name: string; at: string}}
+  /** Someone left the channel, by the act of `by` (issue 408). */
+  | {participant_left: {participant: ActorId; name: string; by: ActorId; by_name: string; at: string}};
 
 /**
  * A page of a history (issue 218): its items, oldest first, and `earlier`,

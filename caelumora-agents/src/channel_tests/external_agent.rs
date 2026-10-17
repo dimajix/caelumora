@@ -1168,13 +1168,13 @@ async fn a_followed_task_whose_stream_breaks_says_nothing_and_stays_open() {
 }
 
 #[tokio::test]
-async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() {
+async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_since() {
     use crate::external::ExternalEvent;
     use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
     use caelumora_model::scope::Scope;
 
     let answer = |text: &str| vec![Ok(ExternalEvent::Message(text.to_string())), Ok(ExternalEvent::Completed)];
-    let remote = Arc::new(ScriptedExternalAgent::answering(vec![answer("Hello."), answer("Hi, bob.")]));
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![answer("Hello."), answer("Hi, bob."), answer("Back.")]));
     let store = Arc::new(MemoryStore::new());
     let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
     registry.register(
@@ -1240,5 +1240,23 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_since() 
     assert_eq!(second.len(), 1, "{second:?}");
     assert!(second[0].contains("- bob (@bob), a person.\n"), "the whole roster again: {}", second[0]);
     assert!(second[0].ends_with("Since you were last told who is here:\n- Joined: bob (@bob), a person."), "{}", second[0]);
+    let told = |call: usize| sent[call].1.said.iter().map(|said| said.text.clone()).collect::<Vec<_>>();
+    assert_eq!(told(1), ["Channel notice: @alice added @bob to the channel.", "bob is here"], "and told that bob joined, where it happened (issue 408)");
+
+    // Who joined or left while it was away is caught up with in order.
+    channel.remove_participant(&alice_ctx, ActorId::Agent(hermes.id)).await.unwrap();
+    channel.remove_participant(&alice_ctx, ActorId::User(bob.id)).await.unwrap();
+    channel.add_participant(&alice_ctx, ActorId::Agent(hermes.id), HistoryAccess::All).await.unwrap();
+    let waiting = answered(&mut events);
+    channel.user_actor(alice.id).unwrap().send_message("welcome back".to_string(), None).await.unwrap();
+    waiting.await;
+    let sent = remote.sent.lock().unwrap().clone();
+    let told = sent[2].1.said.iter().map(|said| said.text.clone()).collect::<Vec<_>>();
+    assert_eq!(told, [
+        "Channel notice: @alice removed you from the channel.",
+        "Channel notice: @alice removed @bob from the channel.",
+        "Channel notice: @alice added you to the channel.",
+        "welcome back",
+    ]);
     manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
 }

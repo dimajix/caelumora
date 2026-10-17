@@ -78,7 +78,7 @@ import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {activityNotice, activityUnderWay, chatMessages, chatRows, commandNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, mergeToolResults, planStepMark} from '../messages';
+import {activityNotice, activityUnderWay, chatMessages, chatRows, commandNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, mergeToolResults, participantNotice, planStepMark} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -972,16 +972,27 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             timestamp: envelope.timestamp,
           };
           setMessages(prev => notice.id && prev.some(m => m.id === notice.id) ? prev.map(m => m.id === notice.id ? notice : m) : [...prev, notice]);
-        } else if (actorEvent.ParticipantRemoved) {
-          // Nothing of the removed participant follows (issue 162): what it
-          // had under way has ended - its answer, its calls of tools.
-          const removed = actorKey(actorEvent.ParticipantRemoved.participant);
-          setMessages(prev => prev.map(m =>
-            m.sender_id && actorKey(m.sender_id) === removed && m.tool_calls?.some(c => !m.tool_results?.some(r => r.id === c.id))
-              ? {...m, abandoned: true}
-              : m
-          ));
-          setAnswers(prev => prev.filter(a => a.sender !== removed));
+        } else if (actorEvent.ParticipantJoined) {
+          // Part of the history (issue 408), kept once by whom and when.
+          const {participant, name} = actorEvent.ParticipantJoined;
+          const notice = participantNotice('joined', participant, name, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp);
+          setMessages(prev => prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
+        } else if (actorEvent.ParticipantLeft) {
+          // Nothing of the participant that left follows (issue 162): what
+          // it had under way has ended - its answer, its calls of tools.
+          // That it left is part of the history (issue 408).
+          const {participant, name} = actorEvent.ParticipantLeft;
+          const left = actorKey(participant);
+          const notice = participantNotice('left', participant, name, envelope.context.sender_id, envelope.context.sender_name, envelope.timestamp);
+          setMessages(prev => {
+            const ended = prev.map(m =>
+              m.sender_id && actorKey(m.sender_id) === left && m.tool_calls?.some(c => !m.tool_results?.some(r => r.id === c.id))
+                ? {...m, abandoned: true}
+                : m
+            );
+            return ended.some(m => m.id === notice.id) ? ended : [...ended, notice];
+          });
+          setAnswers(prev => prev.filter(a => a.sender !== left));
         } else if (actorEvent.ChainCutOff) {
           // Like a failed turn: shown, but not part of the history.
           const notice: Message = {
@@ -1378,7 +1389,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   // One message of the chat, as its kind shows it; `key` for the list it
   // is rendered in.
-  const renderMessage = (msg: Message, key: React.Key) => msg.activity ? (
+  const renderMessage = (msg: Message, key: React.Key) => msg.participant ? (
+    <div
+      key={key}
+      className="flex items-center justify-center gap-2 text-xs text-gray-500 dark:text-gray-400"
+      title={formatTimestamp(msg.timestamp)?.full}
+    >
+      {msg.participant === 'joined' ? <UserPlus size={14} /> : <UserMinus size={14} />}
+      <span>{msg.content}</span>
+    </div>
+  ) : msg.activity ? (
     <div
       key={key}
       className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"

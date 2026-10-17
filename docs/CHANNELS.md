@@ -478,12 +478,29 @@ one starts under the same id. An actor removed before the run loop started it is
 
 ### How others learn of it
 
-A leave is announced on the event bus like every change of membership. In the channel itself, the
-removal is announced with `ParticipantRemoved`, in the name of whoever removed the participant -
-`System` if the runtime did - once the actor's task has ended, and at the latest before an actor
-starts under the same id. Until then the channel takes what the actor still sends; after it, nothing
-of the actor enters the channel. That is how a frontend ends what an actor aborted without a word
-left under way. Every moderator forwards it to the users only, and it is never stored.
+A join or a leave is announced on the event bus like every change of membership
+(`channel::JOINED`, `channel::LEFT`). In the channel itself, it is the channel's own word (issue
+408): `ParticipantJoined` and `ParticipantLeft`, which no actor may send (`admission` refuses them),
+told in the name of whoever made the change - who added or removed the participant, the participant
+itself if it joined by itself, `System` if the runtime did, as for an agent deleted or restored. The
+event is named for what happened to the participant; who made it happen is its sender. Each
+carries the participant's name as it was, so that it reads the same after a renaming.
+
+*   **Recorded where it happened.** The channel keeps it in its history
+    (`HistoryEntry::ParticipantJoined`, `ParticipantLeft`, with who made it and when), among what
+    was said, as it keeps the end of a turn.
+*   **A join** is announced as the newcomer's actor starts, after where its view of the history
+    begins was fixed: the newcomer hears it first, whatever it was granted of the history before.
+*   **A leave** is announced once the actor's task has ended, and at the latest before an actor
+    starts under the same id. Until then the channel takes what the actor still sends; after it,
+    nothing of the actor enters the channel. That is how a frontend ends what an actor aborted
+    without a word left under way.
+*   **Told to everybody**: every moderator forwards it to the users and the agents, also to whoever
+    it is told in the name of - nothing of theirs is echoed back to them; it is no word of theirs.
+    An agent takes note of it without responding (see [AGENT-TURN.md](AGENT-TURN.md)).
+
+A resting agent removed from a channel changes the document alone (above): nothing runs that could
+leave, and nothing is announced in the channel.
 
 A removed user's live stream of the channel ends because it is theirs: it is followed through their
 actor, which ends when it is stopped, and the stream then finds them no longer a participant (issue

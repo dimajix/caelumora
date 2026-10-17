@@ -218,6 +218,18 @@ impl ModelProfile {
         self.sender_format.given(message, agent, self.sender_style)
     }
 
+    /// What a receiver that keeps its own conversation - the remote agent
+    /// of an external agent - is given of the active path of `transcript`,
+    /// for `agent`: its messages as they stand (`Transcript::messages`) and,
+    /// where someone joined or left the channel, what it is told of that
+    /// (issue 408), each as `given` makes it.
+    pub fn given_messages(&self, transcript: &Transcript, agent: ActorId) -> Vec<Message> {
+        as_they_stand(transcript.entries())
+            .filter_map(|(node, message)| message.or_else(|| participant_notice(&node.entry, &node.digest, agent, self.sender_style)))
+            .map(|message| self.given(message, agent, false))
+            .collect()
+    }
+
     /// What the model is to be told of how the senders of messages are
     /// marked, `None` if they are not (issue 135): without it, models
     /// imitate the marker in their answers (`work/sender_names/RESULTS.md`,
@@ -560,12 +572,16 @@ impl<'a> ContextResolver<'a> {
             });
             let mut given = Vec::new();
             // The end of a turn is no message; one given up is told where it
-            // stands. A part may have been placed after either.
+            // stands, and so is who joined or left. A part may have been
+            // placed after any of them.
             if let Some(message) = message {
                 given.push(ContextItem::Conversation { message: profile.given(message, agent, in_turn) });
             }
             if let TranscriptEntry::TurnGivenUp { turn_id, reason, at } = &node.entry {
                 given.push(ContextItem::Conversation { message: profile.given(given_up_notice(*turn_id, reason, *at), agent, false) });
+            }
+            if let Some(notice) = participant_notice(&node.entry, &node.digest, agent, profile.sender_style) {
+                given.push(ContextItem::Conversation { message: profile.given(notice, agent, false) });
             }
             let parts = after_entry(Some(node.digest))?;
             placed += parts.len();
@@ -608,6 +624,50 @@ fn given_up_notice(turn: TurnId, reason: &GivenUpReason, at: DateTime<Utc>) -> M
         internal: true,
         turn_id: Some(turn),
         ..Message::new(Classification::PUBLIC)
+    }
+}
+
+/// What the model of `agent` is told of `entry`, whose digest is `digest`,
+/// if someone joined or left the channel (issue 408): who, and who made
+/// them, named in `style` as the senders of messages are - the agent itself
+/// as "you". A fixed text of the runtime's, marked as the channel's notice,
+/// so that it reads as no participant's, given as a system message where
+/// the model keeps one (`ModelProfile::place_system_messages`); its id is
+/// the entry's, so that it is the same each time it is resolved. `None` for
+/// any other entry.
+fn participant_notice(entry: &TranscriptEntry, digest: &Digest, agent: ActorId, style: SenderStyle) -> Option<Message> {
+    let named = |actor: ActorId, name: &str, you: &str| if actor == agent { you.to_string() } else { style.of(name) };
+    let was = |participant: ActorId| if participant == agent { "were" } else { "was" };
+    let notice = |text: String, at: DateTime<Utc>| Message {
+        id: MessageId(digest.as_uuid()),
+        timestamp: at,
+        role: MessageRole::System,
+        content: Some(format!("Channel notice: {text}")),
+        sender_id: ActorId::System,
+        ..Message::new(Classification::PUBLIC)
+    };
+    match entry {
+        TranscriptEntry::ParticipantJoined { participant, name, by, by_name, at } => {
+            let text = if by == participant {
+                format!("{} joined the channel.", named(*participant, name, "You"))
+            } else if *by == ActorId::System {
+                format!("{} {} added to the channel.", named(*participant, name, "You"), was(*participant))
+            } else {
+                format!("{} added {} to the channel.", named(*by, by_name, "You"), named(*participant, name, "you"))
+            };
+            Some(notice(text, *at))
+        }
+        TranscriptEntry::ParticipantLeft { participant, name, by, by_name, at } => {
+            let text = if by == participant {
+                format!("{} left the channel.", named(*participant, name, "You"))
+            } else if *by == ActorId::System {
+                format!("{} {} removed from the channel.", named(*participant, name, "You"), was(*participant))
+            } else {
+                format!("{} removed {} from the channel.", named(*by, by_name, "You"), named(*participant, name, "you"))
+            };
+            Some(notice(text, *at))
+        }
+        _ => None,
     }
 }
 
@@ -703,6 +763,51 @@ mod tests {
         assert_eq!(state.transcript.messages()[0].content, alice.content, "the transcript keeps it as received");
         let seen = resolver.resolve(&reference(SenderFormat::None), TurnId::new(), agent).expect("resolved");
         assert_eq!(contents(&seen.items), ["question", "answer"]);
+    }
+
+    #[test]
+    fn who_joined_or_left_is_told_where_it_happened_as_the_channel_s_notice() {
+        let agent = ActorId::Agent(AgentId::new());
+        let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let at = Utc::now();
+        let mut state = AgentChannelState::default();
+        state.transcript.push(Message { sender_id: alice, sender_name: "Alice".to_string(), role: MessageRole::User, ..text("hello") });
+        let joined = |participant: ActorId, name: &str, by: ActorId, by_name: &str| TranscriptEntry::ParticipantJoined { participant, name: name.to_string(), by, by_name: by_name.to_string(), at };
+        let left = |participant: ActorId, name: &str, by: ActorId, by_name: &str| TranscriptEntry::ParticipantLeft { participant, name: name.to_string(), by, by_name: by_name.to_string(), at };
+        state.transcript.record(joined(bob, "Bob", alice, "Alice"));
+        state.transcript.record(joined(agent, "Helper", alice, "Alice"));
+        state.transcript.record(joined(bob, "Bob", bob, "Bob"));
+        state.transcript.record(joined(agent, "Helper", ActorId::System, "system"));
+        state.transcript.record(left(bob, "Bob", alice, "Alice"));
+        state.transcript.record(left(bob, "Bob", bob, "Bob"));
+        state.transcript.record(left(bob, "Bob", ActorId::System, "system"));
+        let reference = ContextRef { transcript: state.transcript.digest(), profile: ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() }, ..ContextRef::default() };
+
+        let resolver = ContextResolver::of(&state);
+        let seen = resolver.resolve(&reference, TurnId::new(), agent).expect("resolved");
+        assert_eq!(contents(&seen.items), [
+            "@alice: hello",
+            "Channel notice: @alice added @bob to the channel.",
+            "Channel notice: @alice added you to the channel.",
+            "Channel notice: @bob joined the channel.",
+            "Channel notice: You were added to the channel.",
+            "Channel notice: @alice removed @bob from the channel.",
+            "Channel notice: @bob left the channel.",
+            "Channel notice: @bob was removed from the channel.",
+        ], "in the order it happened, unmarked by any participant");
+        assert!(seen.items[1..].iter().all(|item| item.role() == MessageRole::User), "not as a system message, which the model would move (issue 49)");
+        let again = resolver.resolve(&reference, TurnId::new(), agent).expect("resolved");
+        assert_eq!(ids(&seen.items), ids(&again.items), "the same each time it is resolved");
+        let told: Vec<_> = reference.profile.given_messages(&state.transcript, agent).into_iter().filter_map(|m| m.content).collect();
+        assert_eq!(told, contents(&seen.items), "what a remote agent is given, too");
+    }
+
+    /// The ids of the messages among `items`.
+    fn ids(items: &[ContextItem]) -> Vec<MessageId> {
+        items.iter().filter_map(|item| match item {
+            ContextItem::Conversation { message } => Some(message.id),
+            ContextItem::Prompt { .. } => None,
+        }).collect()
     }
 
     #[test]

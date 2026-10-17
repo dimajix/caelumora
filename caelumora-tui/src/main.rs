@@ -255,9 +255,20 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
                     Some(ActorEvent::ActivityFinished { output, .. }) => {
                         println!("\r{}", output);
                     }
-                    Some(ActorEvent::ParticipantRemoved { participant }) => {
-                        let removed = handles.get(&participant).map(|handle| format!("@{handle}")).unwrap_or_else(|| participant.to_string());
-                        println!("\r{} removed {} from the channel", sender, removed);
+                    // Who joined or left (issue 408), by whose act.
+                    Some(ActorEvent::ParticipantJoined { participant, name }) => {
+                        match sender_id {
+                            Some(by) if by == participant => println!("\r{} joined the channel", name),
+                            Some(ActorId::System) => println!("\r{} was added to the channel", name),
+                            _ => println!("\r{} added {} to the channel", sender, name),
+                        }
+                    }
+                    Some(ActorEvent::ParticipantLeft { participant, name }) => {
+                        match sender_id {
+                            Some(by) if by == participant => println!("\r{} left the channel", name),
+                            Some(ActorId::System) => println!("\r{} was removed from the channel", name),
+                            _ => println!("\r{} removed {} from the channel", sender, name),
+                        }
                     }
                     Some(ActorEvent::ApprovalRequested(request)) => {
                         pending_approvals.insert(request.id.0, request.agent_id);
