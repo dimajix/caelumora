@@ -48,13 +48,16 @@ impl Turn<'_> {
     /// Moves the plan on to step `next`: gives the model the instruction for
     /// it and returns the `PlanStepStarted` to announce - or, with no such
     /// step, gives it the instruction to write the final answer, which is no
-    /// step and announces nothing (an empty plan finalizes at once). Called
-    /// when a plan is accepted or extended, and each time a step converges.
+    /// step and announces nothing (an empty plan finalizes at once). Either
+    /// may call the model as often as a turn without a plan (issue 412).
+    /// Called when a plan is accepted or extended, and each time a step
+    /// converges.
     /// The instructions are system text placed after the turn's messages so
     /// far (`place_turn_prompt`, issue 49): where the model keeps system
     /// messages only at the start, they are given as user messages.
     pub(crate) fn advance_plan(&mut self, next: usize) -> Option<ActorEvent> {
         let plan = self.plan()?.plan.clone();
+        self.count_model_calls_anew();
         match plan.steps.get(next) {
             Some(step) => {
                 self.place_turn_prompt(MessageRole::System, plan_step_instruction(next + 1, plan.steps.len(), step));
@@ -254,6 +257,33 @@ mod tests {
             }
             other => panic!("expected PlanStepStarted, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn each_step_of_a_plan_and_its_final_answer_may_call_the_model_as_often_as_a_turn() {
+        let mut state = AgentChannelState::default();
+        let mut turn = Turn::begun(AgentId::default(), &mut state);
+        turn.set_context(Vec::new(), Vec::new());
+        turn.set_plan(plan_of(&["first", "second"]));
+        let use_up = |turn: &mut Turn| {
+            while turn.may_call_model() {
+                turn.count_model_call();
+            }
+        };
+
+        use_up(&mut turn);
+        turn.advance_plan(0);
+        assert!(turn.may_call_model(), "the first step begins with calls of its own");
+        use_up(&mut turn);
+        turn.try_compaction();
+        turn.plan_converged();
+        assert_eq!(turn.plan().unwrap().progress, PlanProgress::Step(1));
+        assert!(turn.may_call_model(), "so does the second");
+        assert!(turn.may_compact(), "and may be compacted for");
+        use_up(&mut turn);
+        turn.plan_converged();
+        assert_eq!(turn.plan().unwrap().progress, PlanProgress::Finalizing);
+        assert!(turn.may_call_model(), "and the final answer");
     }
 
     #[test]

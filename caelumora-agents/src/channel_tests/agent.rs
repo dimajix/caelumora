@@ -498,6 +498,56 @@ async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
 }
 
 #[tokio::test]
+async fn a_plan_whose_steps_need_more_calls_than_a_turn_runs_to_its_end() {
+    use caelumora_model::tool::{ToolCall, ToolVisibility};
+
+    // Two steps, each calling a tool more than half as often as a turn may
+    // call its model (issue 412).
+    let said = |content: &str| Message { role: MessageRole::Assistant, content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+    let plan = Message {
+        role: MessageRole::Assistant,
+        tool_calls: vec![ToolCall {
+            id: Some("plan".to_string()),
+            function_name: "create_plan".to_string(),
+            arguments: serde_json::json!({ "summary": "two steps", "steps": [{ "description": "first" }, { "description": "second" }] }),
+            visibility: ToolVisibility::SHOWN,
+            presentation: Default::default(),
+        }],
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+    let (calculate, calculator) = calculator();
+    let calls = MAX_MODEL_CALLS / 2 + 1;
+    let step = |done: &str| (0..calls).map(|_| Message { id: MessageId::new(), ..calculate.clone() }).chain([said(done)]).collect::<Vec<_>>();
+    let script: VecDeque<Message> = [plan].into_iter().chain(step("first done")).chain(step("second done")).chain([said("all done")]).collect();
+    assert!(script.len() > MAX_MODEL_CALLS as usize, "more calls than a turn without a plan may make");
+    let components = ComponentConfig { component_nodes: [ComponentDescriptor {
+        id: "plan".to_string(),
+        kind: CREATE_PLAN_TOOL_KIND.to_string(),
+        params: Value::Null,
+        tags: vec![],
+        fail_policy: ComponentFailPolicy::FailClosed,
+    }].into_iter().chain(calculator.component_nodes).collect() };
+    let Stuck { agent, helper, mut events, running, .. } =
+        with_an_agent(Arc::new(Scripted(Mutex::new(script))), components).await;
+
+    let final_messages = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = events.recv().await.expect("the channel is running");
+            if envelope.context.sender_id != ActorId::Agent(agent) { continue }
+            match envelope.event {
+                ActorEvent::TurnFinished { messages, .. } => break messages,
+                ActorEvent::TurnGivenUp { reason, .. } => panic!("given up: {reason:?}"),
+                _ => {}
+            }
+        }
+    }).await.expect("the turn ends");
+    let contents: Vec<_> = final_messages.iter().filter_map(|m| m.content.as_deref()).collect();
+    assert_eq!(contents, ["all done"], "the plan came to its final answer");
+    settled(&helper, ActorState::Idle).await;
+    running.abort();
+}
+
+#[tokio::test]
 async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_answer() {
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
@@ -773,7 +823,7 @@ async fn a_turn_that_reaches_the_limit_of_model_calls_is_given_up_and_may_be_ans
     let results = turns[0].2.iter().filter(|m| m.role == MessageRole::Tool).count();
     assert_eq!(results, MAX_MODEL_CALLS as usize, "a result for every call");
     let told = given_next(&stored, agent).last().and_then(|m| m.content.clone()).unwrap_or_default();
-    assert!(told.contains("because it asked the model as often as one turn may"), "{told}");
+    assert!(told.contains("because it asked the model as often as one answer, or one step of a plan, may"), "{told}");
 
     // It may be asked to answer anew.
     let alice = channel.user_actor(alice_of(&context)).unwrap();

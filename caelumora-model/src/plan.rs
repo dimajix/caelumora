@@ -14,6 +14,13 @@ pub struct Plan {
     pub steps: Vec<PlanStep>,
 }
 
+impl Plan {
+    /// How many steps a plan may have, those it is extended by included
+    /// (issue 412): each step may call the model as often as a turn, so the
+    /// steps bound what a plan may cost.
+    pub const MAX_STEPS: usize = 20;
+}
+
 /// Which part of an approved plan's sequential execution is currently in
 /// progress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -5,7 +5,7 @@ use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::prompt::{ContextError, titled, Prompt, PromptProvider};
 use crate::situation::Situation;
-use crate::tool::{arguments, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::question::Answers;
 use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
@@ -91,14 +91,14 @@ impl ToolProvider for CreatePlanToolProvider {
     fn tools(&self) -> Vec<Tool> {
         vec![Tool {
             name: CREATE_PLAN_TOOL_NAME.to_string(),
-            description: "Submit your structured multi-step plan for the user's request. Call \
+            description: format!("Submit your structured multi-step plan for the user's request. Call \
                 this once you have gathered enough information (using other tools if needed) to \
                 describe how you will address the request. For simple requests that need no \
                 research or multiple steps, just answer directly instead of calling this. If a \
                 plan is already in progress, calling this again appends the given steps to it \
                 instead of replacing it - use that to add more work once you discover it's \
-                needed, whether mid-step or after the original steps are done."
-                .to_string(),
+                needed, whether mid-step or after the original steps are done. A plan has at \
+                most {} steps, those appended included.", Plan::MAX_STEPS),
             parameters: ToolParameters::object(
                 [
                     ("summary", ToolParameters::string("One-sentence summary of the overall approach")),
@@ -124,6 +124,15 @@ impl ToolProvider for CreatePlanToolProvider {
 
     async fn execute(&self, _name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
         let incoming = parse_plan(params)?;
+        // A plan larger than a plan may be is the model's to correct; the
+        // plan in play stays as it was (issue 412).
+        let steps = turn.plan().map_or(0, |state| state.plan.steps.len()) + incoming.steps.len();
+        if steps > Plan::MAX_STEPS {
+            return Err(ToolError::InvalidParameter(format!(
+                "the plan would have {steps} steps, but a plan has at most {}: make the steps larger",
+                Plan::MAX_STEPS
+            )));
+        }
         // What it answers tells nothing: classified as the turn (issue 168).
         match turn.take_plan() {
             Some(mut state) => {
@@ -177,7 +186,6 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::ToolError;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use serde_json::json;
 
@@ -281,6 +289,25 @@ mod tests {
         let result = provider.execute(CREATE_PLAN_TOOL_NAME, &json!({}), None, &mut turn).await;
         assert!(matches!(result, Err(ToolError::InvalidParameter(_))), "the model is asked to correct the call: {result:?}");
         assert!(turn.plan().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_plan_has_at_most_its_number_of_steps_those_appended_included() {
+        let provider = CreatePlanToolProvider;
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
+        let steps = |n: usize| json!({ "summary": "work", "steps": (0..n).map(|i| json!({ "description": format!("step {i}") })).collect::<Vec<_>>() });
+
+        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &steps(Plan::MAX_STEPS + 1), None, &mut turn).await;
+        assert!(matches!(&result, Err(ToolError::InvalidParameter(m)) if m.contains("at most 20")), "the model is asked to correct the call: {result:?}");
+        assert!(turn.plan().is_none());
+
+        provider.execute(CREATE_PLAN_TOOL_NAME, &steps(Plan::MAX_STEPS - 1), None, &mut turn).await.expect("one step less than it may have");
+        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &steps(2), None, &mut turn).await;
+        assert!(matches!(result, Err(ToolError::InvalidParameter(_))), "appended, it would have one too many: {result:?}");
+        assert_eq!(turn.plan().expect("the plan stays").plan.steps.len(), Plan::MAX_STEPS - 1, "as it was");
+        provider.execute(CREATE_PLAN_TOOL_NAME, &steps(1), None, &mut turn).await.expect("the last step it may have");
+        assert_eq!(turn.plan().unwrap().plan.steps.len(), Plan::MAX_STEPS);
     }
 
     #[test]

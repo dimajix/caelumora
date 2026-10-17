@@ -49,11 +49,12 @@ behind it, in order, then commit once (`AgentBody::take_in`):
 *   **`Planning`** calls the model with the context and the agent's tools and streams the answer.
     With tool calls it registers them for approval where their tool requires it and goes to
     `ExecutingTools`; otherwise to `Reflecting`. A turn makes at most `MAX_MODEL_CALLS` model calls,
-    counted across a restart; one that would make another is given up as `CallLimit` (issue 411),
-    its users are told, and the agent may be asked to answer anew. The limit is a safety net
-    against a model that does not come to an end; reaching it is no answer. Before a call whose
-    context is too full by its `CompactionPolicy`, it goes to `Busy` instead (see
-    [Compaction](#compaction)) - not at the limit, where the call would not be made.
+    counted across a restart, and each step of its plan and the plan's final answer as many again
+    (issue 412); one that would make another is given up as `CallLimit` (issue 411), its users are
+    told, and the agent may be asked to answer anew. The limit is a safety net against a model that
+    does not come to an end; reaching it is no answer. Before a call whose context is too full by
+    its `CompactionPolicy`, it goes to `Busy` instead (see [Compaction](#compaction)) - not at the
+    limit, where the call would not be made.
 *   **`Busy`** does something of the agent's own accord, besides answering - the counterpart of
     `CarryingOutCommand`, which it does when asked. So far that is compacting its context; it
     tells the users what it does (`ActivityStarted`) and what came of it (`ActivityFinished`), and
@@ -88,6 +89,12 @@ While a plan runs, the messages of its steps are *internal*: kept like every mes
 as intermediate, but heard by no other participant and not the answer. The answer after the last
 step is. The instructions for the steps are prompt parts, not messages (see [Instructions within a
 turn](#instructions-within-a-turn)).
+
+A plan runs within its turn, and each of its steps, and its final answer, may call the model
+`MAX_MODEL_CALLS` times, as a turn without a plan may (issue 412): the count begins anew with each
+(`Turn::advance_plan`). A step that would call it once more gives the turn up, as a turn does. What
+a plan may cost is bounded by its steps: `create_plan` refuses a plan of more than
+`Plan::MAX_STEPS`, those it is extended by included, and the plan in play stays as it was.
 
 The agent announces its state to the users as it changes (`StateChanged`), each state once, in its
 own contexts rather than a turn's: its state is the agent's, not part of an answer. One move is not
