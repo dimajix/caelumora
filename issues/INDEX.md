@@ -468,6 +468,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [409](409-participant-and-member.md) | done | Who takes part in a session or channel is a participant in the model and its operations, but a member in the views, the REST API and the web UI, and "member" also names who belongs to a group; and that taking part began or ended is told as joined/left on the event bus but as added on the session. |
 | [427](427-local-terminal-in-a-crate-of-its-own.md) | rejected | The `local` storage of workspaces, whose shell runs commands on Caelumora's host as its user, is built into the runtime crate, so no deployment can be built without it and the core names one storage of its own beside those of plugins. |
 | [428](428-workspace-tools-in-a-crate-of-their-own.md) | done | The `terminal_tool` and the `workspace_prompt_provider`, which give an agent the session's workspace, are part of the agents crate, while the tools of other subjects - artifacts, skills, MCP - are plugins. |
+| [429](429-message-framing-configured-three-times.md) | open | `ollama_client`, `a2a_agent` and `decision_policy` each declare `sender_format`, `sender_style` and - the first two - `message_times` with their defaults in a configuration of their own and copy them into a `ModelProfile` by hand, so that a new setting of the framing is added in three places and missing in one goes unnoticed. |
 
 ## Integrations
 
