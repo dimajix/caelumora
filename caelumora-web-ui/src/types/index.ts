@@ -53,8 +53,8 @@ export interface Description {
 /** Serialized `ActorId`: `"None"` or an object like `{ "Agent": "<uuid>" }`. */
 export type ActorId = string | Record<string, string>;
 
-/** What kind of participant an actor is. */
-export type ParticipantKind = 'user' | 'agent' | 'approver';
+/** What kind of participant an actor is; a channel's approver is none (issue 420). */
+export type ParticipantKind = 'user' | 'agent';
 
 /** Whether an agent runs here or elsewhere (issues 179, 244). */
 export type PersonalityKind = 'internal' | 'external';
@@ -108,7 +108,7 @@ export interface ChannelParticipant {
   can_cancel: boolean;
   /**
    * Where it stands now (issue 243), kept up by `StateChanged`; absent for a
-   * user or an approver, and in a channel that does not run.
+   * user, and in a channel that does not run.
    */
   state?: ActorState;
   /**
@@ -911,7 +911,18 @@ export interface CreateChannelRequest {
   language?: string;
   /** Whether its participants work on the session's workspace in it (issue 253); yes if absent. */
   uses_workspace?: boolean;
+  /**
+   * The actors that belong to the channel itself (issue 420); none if absent.
+   * A channel without an approver approves nothing.
+   */
+  internal_actors?: InternalActorRequest[];
 }
+
+/** How an approver decides on a tool call (`ApprovalStrategy`). */
+export type ApprovalStrategy = 'Any' | 'Majority' | 'All' | 'DenyOnFirst';
+
+/** An internal actor of a channel to create (issue 420): an approver, deciding by `strategy` - `Any` if absent. */
+export type InternalActorRequest = {Approver: {strategy?: ApprovalStrategy}};
 
 /**
  * How much of a channel's history a participant added later may see

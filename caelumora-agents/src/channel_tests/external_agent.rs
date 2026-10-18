@@ -100,6 +100,7 @@ async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: Compon
         name: Name::new("main").unwrap(),
         components: moderation_components(None, Some("broadcast_policy")),
         participants: vec![Participant::User(alice.id), Participant::Agent(agent_id)],
+        internal_actors: Vec::new(),
         security_attributes: SecurityAttributes::default(),
         classification: Classification::CHANNEL_DEFAULT,
         language: None,

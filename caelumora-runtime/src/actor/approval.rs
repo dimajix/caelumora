@@ -385,8 +385,7 @@ mod tests {
     use crate::runtime::{ChannelRuntime, RuntimeManager};
     use crate::transport::{InMemoryEventReceiver, InMemoryEventSender};
     use caelumora_model::agent::{Agent, Personality, PersonalityId};
-    use caelumora_model::approval::ApproverId;
-    use caelumora_model::channel::{Channel, ChannelId, Participant, moderation_components};
+    use caelumora_model::channel::{Channel, ChannelId, InternalActor, Participant, moderation_components};
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::security::{OwnershipPolicy, Grant, Subject};
     use caelumora_model::session::SessionId;
@@ -443,9 +442,8 @@ mod tests {
         store.entity_stores().agents.create(&system, &stored).await.unwrap();
 
         let runtime = TestRuntime { store: Arc::clone(&store), access_policy: Arc::new(OwnershipPolicy::new()), ..Default::default() }.build();
-        let approver = Approver { id: ApproverId::new(), strategy };
-        let mut participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
-        participants.push(Participant::Approver(approver.clone()));
+        let approver = Approver::new(strategy);
+        let participants: Vec<Participant> = ids.iter().map(|id| Participant::User(*id)).collect();
         let channel = Channel {
             summary: None, briefing: None,
             approval_rules: Vec::new(),
@@ -458,6 +456,7 @@ mod tests {
             language: None,
             history_limits: Vec::new(),
             participants,
+            internal_actors: vec![InternalActor::Approver(approver.clone())],
             security_attributes: SecurityAttributes::owned_by(ActorId::User(ids[0])),
             deleted: None,
             former: Vec::new(),

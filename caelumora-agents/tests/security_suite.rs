@@ -1278,7 +1278,7 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
     let session = world.shared_session(&[reader], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let participants = if in_side { vec![ActorId::Agent(reader)] } else { vec![] };
-    let side = session.create_channel(&World::as_user(world.alice), ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None }).await.expect("hers");
+    let side = session.create_channel(&World::as_user(world.alice), ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.expect("hers");
     side.user_actor(world.alice).expect("she takes part").send_message("only for side".to_string(), None).await.expect("said");
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let his = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap();
@@ -1635,14 +1635,16 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_be
 
 /// Making a session from a template: reading the template, then creating
 /// the session - before anything is found or made for it (issue 312) -,
-/// reading its owner, everyone's clearance for the channels and the store
-/// creating the session again and its channels; then, once it is made,
-/// finding or making the agents - creating each, the session read where it
-/// may lie, before its personality is read, and the store creating it
-/// again - and taking each in as anyone is taken into a running session
-/// (issue 227): changing the session and the channel, the agent read, its
-/// personality in its own name and its clearance, and the store storing
-/// the session and the channel.
+/// reading its owner and the store creating the session again and its
+/// channels, built empty; then, once it is made, finding or making the
+/// agents - creating each, the session read where it may lie, before its
+/// personality is read, and the store creating it again - and taking each
+/// into the session as anyone is taken into a running session (issue 227):
+/// changing the session, the agent read, its personality in its own name,
+/// and the store storing the session. Then the template's users and agents
+/// join the channels that name them as their founders (issue 420): each
+/// cleared, an agent's personality read in its name as its actor is built,
+/// and nothing more - neither changing the channel nor reading it.
 #[tokio::test]
 async fn making_a_session_needs_the_template_the_personalities_and_creating_what_is_made() {
     let world = agent_testing::world().await;
@@ -1657,7 +1659,6 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: GetSessionTemplate(system's) yes",
         "alice: CreateSession(alice's) yes",
         "alice: GetUser(system's) yes",
-        "alice: JoinChannel(alice) yes",
         "alice: CreateSession(alice's) yes",
         "alice: CreateChannel(alice's) yes",
         // Its agent, found or made once the session is.
@@ -1665,24 +1666,17 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: CreateAgent(alice's) yes",
         "alice: GetPersonality(bob's) yes",
         "alice: CreateAgent(alice's) yes",
-        // And taken in: into the session and its channel at once.
+        // And taken into the session.
         "alice: UpdateSession(alice's) yes",
-        "alice: GetChannel(alice's) yes",
-        "alice: JoinChannel(alice) yes",
-        "alice: UpdateChannel(alice's) yes",
         "alice: GetAgent(alice's) yes",
         "alice as helper: GetPersonality(bob's) yes",
-        "alice: JoinChannel(helper) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
-        // The channel takes it in, its actor built.
-        "alice: UpdateChannel(alice's) yes",
+        // The channel's founders join it, the agent's actor built.
+        "alice: JoinChannel(alice) yes",
         "alice as helper: GetPersonality(bob's) yes",
         "alice: JoinChannel(helper) yes",
-        "alice: GetChannel(alice's) yes",
-        "alice: JoinChannel(alice) yes",
-        "alice: UpdateChannel(alice's) yes",
-    ]), "the agent's personality is asked for in its name twice: whether it is cleared, and as its actor is built");
+    ]), "the agent's personality is asked for in its name twice: as it is taken into the session, and as its actor is built");
     world.manager.stop(&alice, session.id()).await.unwrap();
 
     // Again: the agent is found, not made - its personality is not read
@@ -1707,7 +1701,6 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: GetSessionTemplate(alice's) yes",
         "alice: CreateSession(alice's) yes",
         "alice: GetUser(system's) yes",
-        "alice: JoinChannel(alice) yes",
         "alice: CreateSession(alice's) yes",
         "alice: CreateChannel(alice's) yes",
         "alice: List(agent) yes",

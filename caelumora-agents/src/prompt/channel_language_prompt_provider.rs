@@ -184,7 +184,8 @@ mod tests {
         let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
         store.entity_stores().agents.create(&system, &agent).await.unwrap();
         let session_id = SessionId::new();
-        let channel = Channel::build(session_id, ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, language("de"), vec![Participant::Agent(agent.id)]);
+        let mut channel = Channel::build(session_id, ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, language("de"));
+        channel.participants = vec![Participant::Agent(agent.id)];
         let now = Utc::now();
         let session = Session {
             summary: None, briefing: None,

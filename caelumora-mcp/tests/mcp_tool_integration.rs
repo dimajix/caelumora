@@ -108,7 +108,7 @@ async fn build_container(params: Value) -> ComponentContainer {
 /// an actor in a channel that is attached to no session, so it reaches none.
 fn detached_actor_runtime() -> ActorRuntime {
     let session = bare_session(SessionId::new());
-    let channel = Channel::build(session.id, ActorId::None, Name::new("detached").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
+    let channel = Channel::build(session.id, ActorId::None, Name::new("detached").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None);
     detached_actor_runtime_in(runtime(&Arc::new(MemoryStore::new())), session, channel)
 }
 

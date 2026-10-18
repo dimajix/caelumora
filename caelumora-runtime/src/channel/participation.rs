@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
-use caelumora_model::channel::{Channel, ChannelId, Participant};
+use caelumora_model::channel::{Channel, ChannelId, InternalActor, Participant};
 use crate::controller::{AgentController, ControllerManager, PersonalityController, UserController};
 use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::approval::Approver;
@@ -31,7 +31,8 @@ pub(crate) struct ResolvedParticipant {
 }
 
 /// What a participant is resolved to: the instance's controller of its
-/// user or agent (issue 121), or the approver itself. An agent comes with
+/// user or agent (issue 121) - or, for an internal actor of the channel
+/// (issue 420), the approver itself. An agent comes with
 /// the controller of its personality (issue 406), whose kind says how its
 /// actor is built (issue 179, `AgentKinds`). What it is cleared for follows
 /// from it as well (`ResolvedParticipant::clearances`).
@@ -77,7 +78,6 @@ impl Participation {
         let at = |kind| ResolvedParticipant { kind, session_id, channel_id };
         let agent = match participant {
             Participant::User(id) => return Ok(self.controllers.user_controller(*id).await.optional()?.map(|user| at(ResolvedKind::User(user)))),
-            Participant::Approver(approver) => return Ok(Some(at(ResolvedKind::Approver(approver.clone())))),
             Participant::Agent(id) => {
                 if !self.agent_exists(*id).await? {
                     return Ok(None);
@@ -168,15 +168,16 @@ impl Participation {
         self.require_cleared(resolved, context, classification)
     }
 
-    /// Nothing if every participant of `channel` that still exists may take
-    /// part in it (`require_admissible`) - asked before anything of a new or
-    /// restored channel or session is stored.
+    /// Nothing if every one of `participants` that still exists may take
+    /// part in `channel` (`require_admissible`) - asked before anything of a
+    /// new or restored channel is stored: of the founders of a new one
+    /// (issue 420), of the participants of a restored one.
     ///
     /// # Errors
     /// `ChannelError::OutOfScope` or `NotCleared` for the first who may not;
     /// whatever reading a participant reports.
-    pub(crate) async fn require_admitted(&self, context: &SecurityContext, channel: &Channel) -> Result<()> {
-        for participant in &channel.participants {
+    pub(crate) async fn require_admitted(&self, context: &SecurityContext, channel: &Channel, participants: &[Participant]) -> Result<()> {
+        for participant in participants {
             if let Some(resolved) = self.resolve(participant, channel.session_id, Some(channel.id)).await? {
                 self.require_admissible(&resolved, context, &channel.classification)?;
             }
@@ -186,14 +187,23 @@ impl Participation {
 }
 
 impl ResolvedParticipant {
-    /// An approver taking part in channel `channel_id` of session
-    /// `session_id` - in tests, as the participant of an actor of whatever kind
-    /// the channel only looks up.
+    /// `internal`, an internal actor of channel `channel_id` of session
+    /// `session_id` (issue 420): what its actor is built from, nothing to
+    /// resolve.
+    pub(crate) fn internal(internal: &InternalActor, session_id: SessionId, channel_id: ChannelId) -> Self {
+        let kind = match internal {
+            InternalActor::Approver(approver) => ResolvedKind::Approver(approver.clone()),
+        };
+        Self { kind, session_id, channel_id: Some(channel_id) }
+    }
+
+    /// An approver of channel `channel_id` of session `session_id` - in
+    /// tests, as the participant of an actor of whatever kind the channel
+    /// only looks up.
     #[cfg(test)]
     pub(crate) fn approver(session_id: SessionId, channel_id: ChannelId) -> Self {
-        use caelumora_model::approval::{ApprovalStrategy, ApproverId};
-        let approver = Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any };
-        Self { kind: ResolvedKind::Approver(approver), session_id, channel_id: Some(channel_id) }
+        use caelumora_model::approval::ApprovalStrategy;
+        Self::internal(&InternalActor::Approver(Approver::new(ApprovalStrategy::default())), session_id, channel_id)
     }
 
     /// What its actor is built from.
@@ -326,9 +336,8 @@ mod tests {
                 // A channel of only `participant` - and its approver, who is
                 // cleared for anything.
                 let ActorId::Agent(id) = participant else { unreachable!("agents only") };
-                let channel = Channel::build(SessionId::new(), alice_id, Name::new("probe").unwrap(),
-                    Default::default(), classification, None, vec![Participant::Agent(id)]);
-                runtime.participation().require_admitted(&alice_ctx, &channel).await.is_ok()
+                let channel = Channel::build(SessionId::new(), alice_id, Name::new("probe").unwrap(), Default::default(), classification, None);
+                runtime.participation().require_admitted(&alice_ctx, &channel, &[Participant::Agent(id)]).await.is_ok()
             }
         };
         assert!(cleared(hers, &hr).await, "an agent that names no roles is cleared as its owner");

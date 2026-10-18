@@ -118,6 +118,7 @@ pub fn is_forbidden(error: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::actor::ActorId;
     use caelumora_model::channel::ChannelId;
 
     /// An error of a type of another crate's, holding one of the runtime's.
@@ -127,9 +128,9 @@ mod tests {
 
     #[test]
     fn finds_the_disclosable_error_inside_a_context_chain() {
-        let channel = ChannelError::ApproverStays { channel: ChannelId::new() };
+        let channel = ChannelError::NotAParticipant { participant: ActorId::System, channel: ChannelId::new() };
         let shown = channel.to_string();
-        let error = anyhow::Error::new(channel).context("removing the approver");
+        let error = anyhow::Error::new(channel).context("removing a participant");
         assert_eq!(user_message(&error), Some(shown));
     }
 
@@ -137,7 +138,7 @@ mod tests {
     /// error that may be shown is shown, whoever knows its type (issue 370).
     #[test]
     fn another_crate_judges_its_own_types_and_the_outermost_is_shown() {
-        let inner = ChannelError::ApproverStays { channel: ChannelId::new() };
+        let inner = ChannelError::NotAParticipant { participant: ActorId::System, channel: ChannelId::new() };
         let shown = inner.to_string();
         let error = anyhow::Error::new(Others(inner));
 

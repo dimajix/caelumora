@@ -98,9 +98,6 @@ pub enum ChannelError {
     /// (issue 120).
     #[error("{participant} of the session of channel {channel} no longer exists")]
     ParticipantGone { participant: ActorId, channel: ChannelId },
-    /// Every channel keeps its approver.
-    #[error("the approver of channel {channel} cannot be removed")]
-    ApproverStays { channel: ChannelId },
     /// A message classified so that it may not enter the channel - above
     /// it, for an audience the channel's would not be covered by, or with a
     /// compartment that is not configured or may not be given (issue 133).
@@ -216,7 +213,8 @@ pub struct ChannelLoop {
     participation: Arc<Participation>,
     /// What builds the actors of its agents, as their kind says (issue 370).
     agent_kinds: Arc<AgentKinds>,
-    /// The actors of the participants, each with what it was built from -
+    /// The actors of the participants and of the channel's internal actors
+    /// (issue 420), each with what it was built from -
     /// what a reclassification asks its clearances of; replaced as a whole
     /// when someone joins or leaves (issue 46), so that every reader sees
     /// one set.
@@ -320,6 +318,15 @@ impl ChannelLoop {
             run_lock: Mutex::new(()),
         });
         channel_loop.runtime.attach(&channel_loop);
+        // Its internal actors (issue 420), which are its own: nothing to
+        // resolve, nothing to leave out. `run` starts their tasks with the
+        // participants'.
+        let internal_actors = channel_loop.channel.load().internal_actors.clone();
+        for internal in &internal_actors {
+            let resolved = ResolvedParticipant::internal(internal, session_id, id);
+            let actor = channel_loop.create_actor(&resolved).await?;
+            channel_loop.adopt(Arc::from(actor), resolved).await;
+        }
         // The participants the channel has; `run` starts their tasks.
         let participants = channel_loop.channel.load().participants.clone();
         for participant in &participants {

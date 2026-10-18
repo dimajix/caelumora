@@ -29,10 +29,9 @@ interface NewChannelDialogProps {
 }
 
 export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user, onCreated, onClose}) => {
-  // Everyone but the user, who takes part anyway, and approvers, which every
-  // channel gets by itself.
+  // Everyone but the user, who takes part anyway.
   const candidates = (session.participants ?? [])
-    .filter(p => p.kind !== 'approver' && !isUser(p.id, user))
+    .filter(p => !isUser(p.id, user))
     .sort((l, r) => l.name.localeCompare(r.name));
   const [name, setName] = useState('');
   const [responderPolicy, setResponderPolicy] = useState(DEFAULT_RESPONDER_POLICY);
@@ -91,6 +90,9 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
         participants: candidates.filter(p => chosen.has(actorKey(p.id))).map(p => p.id),
         language: language.trim() || undefined,
         uses_workspace: usesWorkspace,
+        // The channel has what it is given (issue 420): an approver, so
+        // that its tool calls can be approved.
+        internal_actors: [{Approver: {strategy: 'Any'}}],
       });
       onCreated(channel);
     } catch (error) {

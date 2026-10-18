@@ -27,7 +27,8 @@ use chrono::Utc;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId, PersonalityKind};
-use caelumora_model::channel::{moderation_components, Channel, Participant};
+use caelumora_model::approval::{ApprovalStrategy, Approver};
+use caelumora_model::channel::{moderation_components, Channel, InternalActor, Participant};
 use caelumora_model::config::{BackendConfig, WorkspacesConfig};
 use serde_json::{json, Value};
 use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityPolicy, ConfidentialityRules, Confidentiality, Place};
@@ -42,7 +43,7 @@ use caelumora_model::security::{ActionType, AllowAllPolicy, Grant, OwnershipPoli
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::{ComponentStore, StoreBackend, StoreError};
 use caelumora_model::store::memory::MemoryStore;
-use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
+use caelumora_model::template::{ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::user::{User, UserId};
 use crate::component::ComponentRegistry;
 use crate::runtime::{ActorRuntime, RuntimeManager};
@@ -381,6 +382,7 @@ impl World {
                 components: quiet(),
                 classification: Classification::general(Confidentiality::Internal),
                 participants: vec!["user".to_string(), agent.to_string()],
+                internal_actors: vec![InternalActorTemplate::Approver { strategy: ApprovalStrategy::Any }],
             }],
             security_attributes: attributes(owner, contributors),
             commands: Default::default(),
@@ -414,7 +416,9 @@ impl World {
         let users: Vec<Participant> = std::iter::once(self.alice).chain(others.iter().copied()).map(Participant::User).collect();
         let in_channel: Vec<Participant> = users.iter().cloned().chain(agents.iter().map(|a| Participant::Agent(*a))).collect();
         let in_session: Vec<Participant> = in_channel.iter().cloned().chain(waiting.iter().map(|a| Participant::Agent(*a))).collect();
-        let channel = Channel::build(SessionId::new(), alice, Name::new("main").unwrap(), quiet(), Classification::general(Confidentiality::Internal), None, in_channel);
+        let mut channel = Channel::build(SessionId::new(), alice, Name::new("main").unwrap(), quiet(), Classification::general(Confidentiality::Internal), None);
+        channel.participants = in_channel;
+        channel.internal_actors = vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
         let session = Session {
             summary: None, briefing: None,
             approval_rules: Vec::new(),

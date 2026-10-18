@@ -55,6 +55,13 @@ impl ChannelLoop {
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let mut running = self.spawn_actors(event_tx.clone(), &mut join_set);
+        // Who joined before it ran - the founders of a channel just created
+        // (issue 420) - is announced before anything is routed: their actors
+        // run already, and what one of them says must come after the joins
+        // of all who hear it.
+        while let Ok(change) = changes_rx.try_recv() {
+            self.apply_change(change, &mut running, &event_tx, &mut join_set).await;
+        }
 
         loop {
             tokio::select! {

@@ -909,7 +909,7 @@ mod tests {
         let providers = providers.into_iter().map(|(id, facet)| ComponentImpl { id: id.to_string(), fail_policy: Default::default(), facet }).collect();
         let config = AppConfig { approvals: ApprovalsConfig { rules: places.system }, ..Default::default() };
         let session = Session { approval_rules: places.session, ..bare_session(SessionId::new()) };
-        let mut channel = Channel::build(session.id, ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
+        let mut channel = Channel::build(session.id, ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None);
         channel.approval_rules = places.channel;
         let runtime = detached_actor_runtime_in(TestRuntime { access_policy, confidentiality, config, ..Default::default() }.build(), session, channel);
         let (session, channel) = (Arc::clone(runtime.session_controller()), Arc::clone(runtime.channel_controller()));

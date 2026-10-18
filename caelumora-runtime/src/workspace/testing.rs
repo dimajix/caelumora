@@ -7,7 +7,8 @@ use crate::runtime::RuntimeManager;
 use crate::session::SessionLoop;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
-use caelumora_model::channel::{Channel, Participant};
+use caelumora_model::approval::{ApprovalStrategy, Approver};
+use caelumora_model::channel::{Channel, InternalActor, Participant};
 use caelumora_model::config::{BackendConfig, WorkspacesConfig};
 use serde_json::json;
 use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
@@ -69,7 +70,9 @@ pub async fn session_with_workspace() -> WithWorkspace {
     let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(owner));
     store.entity_stores().agents.create(&system, &agent).await.unwrap();
     let session_id = SessionId::new();
-    let channel = Channel::build(session_id, ActorId::User(owner), Name::new("main").unwrap(), Default::default(), internal, None, vec![Participant::User(owner), Participant::Agent(agent.id)]);
+    let mut channel = Channel::build(session_id, ActorId::User(owner), Name::new("main").unwrap(), Default::default(), internal, None);
+    channel.participants = vec![Participant::User(owner), Participant::Agent(agent.id)];
+    channel.internal_actors = vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
     let now = Utc::now();
     let session = Session {
         summary: None, briefing: None,

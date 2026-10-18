@@ -820,7 +820,6 @@ mod tests {
     use caelumora_model::work::TurnId;
     use chrono::Utc;
     use std::time::Duration;
-    use uuid::Uuid;
 
     fn as_user(id: UserId) -> Viewer {
         Viewer::new(SecurityContext::new(ActorId::User(id), Default::default(), Default::default()))
@@ -933,7 +932,7 @@ mod tests {
         let main = main_channel(&session);
         let running = manager.create(as_user(alice.id).context(), session, vec![main]).await.unwrap();
         // Alice's alone: bob takes part in the session, not in this channel.
-        let hers = running.create_channel(as_user(alice.id).context(), ChannelSpec { name: "private".to_string(), components: Default::default(), classification: None, language: None, uses_workspace: None, participants: vec![] }).await.unwrap().id();
+        let hers = running.create_channel(as_user(alice.id).context(), ChannelSpec { name: "private".to_string(), components: Default::default(), classification: None, language: None, uses_workspace: None, participants: vec![], internal_actors: Vec::new() }).await.unwrap().id();
         let id = running.id();
 
         let check = |state: &'static str| {
@@ -983,24 +982,24 @@ mod tests {
 
     #[tokio::test]
     async fn a_channel_is_described_with_handles_only_for_who_can_be_mentioned() {
-        use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
+        use caelumora_model::approval::{ApprovalStrategy, Approver};
+        use caelumora_model::channel::InternalActor;
 
         let (store, manager) = owned_runtime(Default::default());
         let alice = user("Alice Example");
         let gone = UserId::new();
-        let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::Any };
         let mut session = make_session("s", ActorId::User(alice.id));
         session.participants = record_users(&manager, &[&alice]).await;
         let mut channel = main_channel(&session);
-        channel.participants.extend([Participant::User(gone), Participant::Approver(approver)]);
+        channel.participants.push(Participant::User(gone));
+        channel.internal_actors.push(InternalActor::Approver(Approver::new(ApprovalStrategy::Any)));
         stored_session(&store, &session).await;
         stored_channel(&store, &channel).await;
 
         let view = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap().snapshot(Detail::PARTICIPANTS).await;
-        let [alice, gone, approver] = view.participants.as_slice() else { panic!("three participants, in order: {view:?}") };
+        let [alice, gone] = view.participants.as_slice() else { panic!("two participants, in order, and the approver none of them (issue 420): {view:?}") };
         assert_eq!((alice.name.as_deref(), alice.handle.as_deref()), (Some("Alice Example"), Some("alice-example")));
         assert_eq!((gone.name.as_deref(), gone.handle.as_deref()), (None, None), "a deleted user is listed, but cannot be mentioned");
-        assert!(approver.handle.is_none(), "an approver cannot be mentioned");
         assert!(view.participants.iter().all(|m| !m.can_read_context), "no participant is an agent");
     }
 
@@ -1026,7 +1025,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_participants_profile_says_who_it_is_to_everybody_in_the_channel() {
-        use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
         use caelumora_model::user::UserProfile;
 
         let (store, manager) = owned_runtime(Default::default());
@@ -1038,13 +1036,10 @@ mod tests {
         let mut personality = store.entity_stores().personalities.get(&system, remote.personality_id).await.unwrap();
         personality.introduction = Some(Introduction::new("Answers questions about the weather.").unwrap());
         store.entity_stores().personalities.update(&system, &personality).await.unwrap();
-        let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::Any };
-
         let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(remote.id));
-        let mut channel = main_channel(&session);
-        channel.participants.push(Participant::Approver(approver));
+        let channel = main_channel(&session);
         store.entity_stores().user_profiles.create(&system, &UserProfile::new(alice.id, Some(Introduction::new("I run the project.").unwrap()))).await.unwrap();
         stored_session(&store, &session).await;
         stored_channel(&store, &channel).await;
@@ -1054,14 +1049,13 @@ mod tests {
         assert!(plain.participants.iter().all(|m| m.introduction.is_none() && m.personality.is_none() && m.owner.is_none()), "only with PROFILE: {plain:?}");
 
         let view = for_bob.snapshot(Detail::PARTICIPANTS | Detail::PROFILE).await;
-        let [alice_seen, bob_seen, agent, approver_seen] = view.participants.as_slice() else { panic!("four participants, in order: {view:?}") };
+        let [alice_seen, bob_seen, agent] = view.participants.as_slice() else { panic!("three participants, in order: {view:?}") };
         assert_eq!(alice_seen.introduction.as_deref(), Some("I run the project."), "as she introduces herself");
         assert_eq!((alice_seen.personality.as_deref(), alice_seen.owner), (None, None), "a user has neither personality nor owner");
         assert_eq!(bob_seen.introduction, None, "bob did not introduce himself");
         assert_eq!(agent.introduction.as_deref(), Some("Answers questions about the weather."), "as its personality introduces it");
         assert_eq!((agent.personality.as_deref(), agent.personality_kind), (Some("plain"), Some(PersonalityKind::External)), "public, though bob may not read the personality");
         assert_eq!((agent.owner, agent.owner_name.as_deref()), (Some(ActorId::User(carol.id)), Some("carol")), "named although carol is not in the session");
-        assert_eq!((&approver_seen.introduction, &approver_seen.personality, approver_seen.owner), (&None, &None, None), "an approver is nobody to introduce");
 
         let alone = for_bob.participant(ActorId::Agent(remote.id)).await.unwrap().snapshot(Detail::PROFILE).await;
         assert_eq!(&alone, agent, "a participant asked for alone is shown as in the list");

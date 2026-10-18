@@ -122,6 +122,7 @@ fn session_template() -> SessionTemplate {
             components: moderation_components(None, Some("broadcast_policy")),
             classification: Classification::CHANNEL_DEFAULT,
             participants: vec!["user".to_string()],
+            internal_actors: Vec::new(),
         }],
         deleted: None,
     }
@@ -159,6 +160,7 @@ fn channel() -> Channel {
         history_limits: Vec::new(),
         former: Vec::new(),
         participants: Vec::new(),
+        internal_actors: Vec::new(),
         security_attributes: Default::default(),
         deleted: None,
     }

@@ -164,8 +164,7 @@ const INTERRUPTIBLE: ActorState[] = ['Planning', 'ExecutingTools', 'WaitingForUs
 /**
  * The dot that shows where a participant stands (issue 243): an agent's state as
  * a colour, the state itself as its title - `Busy` with what it does of its
- * own accord, `activity`, as it said it last (issue 284). A user or an
- * approver has none.
+ * own accord, `activity`, as it said it last (issue 284). A user has none.
  */
 function stateDot(participant: ChannelParticipant, activity?: string): {className: string; title: string} | null {
   if (participant.kind !== 'agent') return null;
@@ -665,18 +664,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
 
   /** What can be done with `participant` of the channel: what it offers (issue 230). */
   const participantActions = (participant: ChannelParticipant): MenuAction[] => [
-    // Who it is is public (issue 244); an approver is nobody to introduce.
-    ...(participant.kind !== 'approver' ? [{
+    // Who it is is public (issue 244).
+    {
       label: 'Show profile', icon: IdCard, title: `Show who ${participant.name} is`,
       onSelect: () => showOf(participant, 'profile'),
-    }] : []),
+    },
     ...contextActions(participant),
     ...(participant.can_read_tools ? [{
       label: 'Show tools', icon: Wrench, title: `Show the tools of ${participant.name}`,
       onSelect: () => showOf(participant, 'tools'),
     }] : []),
-    // The approver belongs to every channel and cannot be removed.
-    ...(channel?.can_change && participant.kind !== 'approver' ? [{
+    ...(channel?.can_change ? [{
       label: 'Remove from channel', icon: UserMinus, danger: true, title: `Remove ${participant.name} from the channel`,
       onSelect: () => void removeParticipant(participant),
     }] : []),
