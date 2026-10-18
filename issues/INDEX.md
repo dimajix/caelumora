@@ -466,7 +466,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [398](398-given-means-four-things.md) | done | Around the transcript "given" names a message given to read, which messages the transcript holds, and the directory of the prompt texts and tool sets. |
 | [399](399-turn-and-agent-work-overlap.md) | done | `Turn` passes on nine of `AgentWork`'s methods to read and not the others, and `AgentWork` names its session, its workspace and the workspace's terminal by no common rule and fails in three shapes, so neither the line between the two types nor the one between views and handles can be read off their methods. |
 | [409](409-participant-and-member.md) | done | Who takes part in a session or channel is a participant in the model and its operations, but a member in the views, the REST API and the web UI, and "member" also names who belongs to a group; and that taking part began or ended is told as joined/left on the event bus but as added on the session. |
-| [427](427-local-terminal-in-a-crate-of-its-own.md) | open | The `local` storage of workspaces, whose shell runs commands on Caelumora's host as its user, is built into the runtime crate, so no deployment can be built without it and the core names one storage of its own beside those of plugins. |
+| [427](427-local-terminal-in-a-crate-of-its-own.md) | rejected | The `local` storage of workspaces, whose shell runs commands on Caelumora's host as its user, is built into the runtime crate, so no deployment can be built without it and the core names one storage of its own beside those of plugins. |
 
 ## Integrations
 

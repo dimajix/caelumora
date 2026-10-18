@@ -1,8 +1,7 @@
 # 427 — The `local` storage of workspaces is part of the runtime crate
 
-**Status:** open
+**Status:** rejected
 **Type:** refactoring
-**Priority:** low
 **Area:** Code structure
 **Summary:** The `local` storage of workspaces, whose shell runs commands on Caelumora's host as its user, is built into the runtime crate, so no deployment can be built without it and the core names one storage of its own beside those of plugins.
 
@@ -99,3 +98,10 @@ The gain is mostly structural; nothing is broken, hence the priority.
 - **2026-10-18** — Opened from the maintainer's question whether the `local` storage could move
   into a crate of its own. Feasible: the terminal's API is public since issue 327. The decision
   between options A, B and C for the tests is open.
+- **2026-10-18** — Rejected. Option B would implement the terminal's contract a second time for
+  the tests alone - its files in memory beside `local`'s on disk, which could drift apart unseen -
+  and fake the shell where the reaper's tests are to show that real processes end. Option A avoids
+  that but rebuilds the tests of every suite around a plugin, and leaves the runtime's unit tests
+  without a workspace. Neither is worth what the move gains: `local` stays in the core (option C),
+  as issue 327 decided. Moving the terminal tool into a crate of its own would not have helped
+  either, since the dependency in question is the runtime's own.
