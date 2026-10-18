@@ -7,14 +7,18 @@
 //! history without holding it - always as a reader, who is given what of
 //! each entry they may see (`Recorded::as_seen_by`, issue 417): a predicate
 //! over what the store keeps of an entry and the reader's ranges, which a
-//! database answers as a `WHERE`.
+//! database answers as a `WHERE`. What else a page keeps - the messages of
+//! one sender, those heard, those of a classification the reader may copy -
+//! is a condition as data as well (`Filter<HistoryField>`, issue 421).
 
 use crate::actor::ActorId;
 use crate::chain::{Node, Position};
 use crate::channel::ChannelId;
+use crate::confidentiality::{Classification, Compartments, Confidentiality, Reading};
 use crate::digest::Digest;
 use crate::history::{HistoryEntry, HistoryPage, Reader, Recorded, EVERY_POSITION};
-use crate::message::MessageId;
+use crate::message::{MessageId, MessageRole};
+use crate::store::query::{meeting, Field, Filter};
 use crate::store::StoreResult;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -22,14 +26,102 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::Range;
 
-/// Which items a page holds (`HistoryStore::page`): a viewer reading a
-/// channel entry by entry keeps what was released to it, a search what it
-/// looks for.
-pub type Keep<'a> = dyn Fn(&HistoryEntry) -> bool + Send + Sync + 'a;
+/// What a page of a history may be filtered by (`HistoryStore::page`,
+/// issue 421): where it lies in an item as it is recorded (`Recorded`) -
+/// what a database keeps as columns of its row. The fields of a message are
+/// there only for a message said.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryField {
+    /// The message said; absent for every other entry.
+    Message,
+    Sender,
+    Role,
+    Internal,
+    Content,
+    Mentions,
+    Level,
+    Compartments,
+    /// An element of a collection itself, inside `Filter::Any`.
+    Element,
+}
 
-/// Keeps every item.
-pub fn every(_: &HistoryEntry) -> bool {
-    true
+impl Field for HistoryField {
+    fn path(self) -> &'static [&'static str] {
+        match self {
+            HistoryField::Message => &["entry", "said", "message"],
+            HistoryField::Sender => &["entry", "said", "message", "sender_id"],
+            HistoryField::Role => &["entry", "said", "message", "role"],
+            HistoryField::Internal => &["entry", "said", "message", "internal"],
+            HistoryField::Content => &["entry", "said", "message", "content"],
+            HistoryField::Mentions => &["entry", "said", "message", "mentions"],
+            HistoryField::Level => &["entry", "said", "message", "classification", "level"],
+            HistoryField::Compartments => &["entry", "said", "message", "classification", "compartments"],
+            HistoryField::Element => &[],
+        }
+    }
+}
+
+/// The conditions a page of a history is read by.
+impl Filter<HistoryField> {
+    /// A message said.
+    pub fn said() -> Self {
+        Filter::negated(Filter::IsNull(HistoryField::Message))
+    }
+
+    /// A message `sender` said.
+    pub fn said_by(sender: ActorId) -> Self {
+        Filter::all_of([Filter::said(), Filter::eq(HistoryField::Sender, sender)])
+    }
+
+    /// A message with words in it.
+    pub fn written() -> Self {
+        Filter::all_of([Filter::negated(Filter::IsNull(HistoryField::Content)), Filter::negated(Filter::eq(HistoryField::Content, ""))])
+    }
+
+    /// A message containing `words` (`Filter::Contains`).
+    pub fn containing(words: &str) -> Self {
+        Filter::contains(HistoryField::Content, words)
+    }
+
+    /// A message the other participants hear (`Message::is_heard`): words
+    /// of a person or an agent, not a step of a plan under way.
+    pub fn heard() -> Self {
+        Filter::all_of([
+            Filter::is_in(HistoryField::Role, [MessageRole::User, MessageRole::Assistant]),
+            Filter::eq(HistoryField::Internal, false),
+            Filter::written(),
+        ])
+    }
+
+    /// A message mentioning `actor`.
+    pub fn mentioning(actor: ActorId) -> Self {
+        Filter::any(HistoryField::Mentions, Filter::eq(HistoryField::Element, actor))
+    }
+
+    /// What `reading` lets a reader read of a channel, with the configured
+    /// `compartments`: no condition for the whole, else the messages whose
+    /// classification it admits (`Reading::admits`) - as a condition over
+    /// their level and compartments.
+    pub fn readable(reading: &Reading, compartments: &Compartments) -> Option<Self> {
+        match reading {
+            Reading::Whole => None,
+            Reading::Nothing => Some(Filter::nothing()),
+            Reading::Released(into) => Some(Filter::all_of([Filter::said(), Filter::flowing_into(into, compartments)])),
+        }
+    }
+
+    /// A message classified so that it flows into `into`
+    /// (`Classification::flows_to`): of its level or lower, and general, or
+    /// meant for a compartment each of the destination's may read.
+    fn flowing_into(into: &Classification, compartments: &Compartments) -> Self {
+        let levels = Confidentiality::LEVELS.into_iter().filter(|level| *level <= into.level());
+        let meant_for_each = match into.compartments().is_empty() {
+            true => Filter::nothing(),
+            false => Filter::all_of(into.compartments().iter()
+                .map(|reader| Filter::any(HistoryField::Compartments, Filter::is_in(HistoryField::Element, compartments.readable_by(reader))))),
+        };
+        Filter::all_of([Filter::is_in(HistoryField::Level, levels), Filter::Or(vec![Filter::IsNull(HistoryField::Compartments), meant_for_each])])
+    }
 }
 
 /// The read side of the histories a store keeps (issue 379), one per channel
@@ -41,14 +133,15 @@ pub fn every(_: &HistoryEntry) -> bool {
 pub trait HistoryStore: Debug + Send + Sync {
     /// The last `limit` items - at least one - before the position `before`,
     /// the last ones without it, none before the position `from`, of those
-    /// `reader` may see as they may see them and `keep` keeps: a page of the
+    /// `reader` may see as they may see them and that meet `filter`, judged
+    /// on the item as it is recorded: a page of the
     /// history as it stands (issue 218), oldest first, with `earlier` set if
     /// an older item from `from` on is kept, and the digest of the history
     /// as it was read. The page counts what its reader sees; where their
     /// view begins is the store's to know (`memberships`), `from` only
     /// bounds a query - what is new since a reader last read. Read backwards
     /// in the cost of the page and of what it passes over.
-    async fn page(&self, channel: ChannelId, reader: &Reader, from: Position, before: Option<Position>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage>;
+    async fn page(&self, channel: ChannelId, reader: &Reader, from: Position, before: Option<Position>, limit: usize, filter: Option<&Filter<HistoryField>>) -> StoreResult<HistoryPage>;
 
     /// The item that said the message `id` - `HistoryEntry::Said`, its
     /// message as it stands, with what it was produced from - and its
@@ -245,10 +338,16 @@ impl From<StandingItems> for Vec<(Position, Recorded)> {
 }
 
 /// The item at the position `seq` as `reader`, with `ranges` as theirs
-/// (`Memberships::of_reader`), may see it, if `keep` keeps that: what a
+/// (`Memberships::of_reader`), may see it, if it meets `filter`: what a
 /// store returns of an item it read.
-pub(crate) fn seen(reader: &Reader, ranges: &[Range<Position>], keep: &Keep<'_>, (seq, item): &(Position, Recorded)) -> Option<(Position, HistoryEntry)> {
-    item.as_seen_by(*seq, reader, ranges).filter(|entry| keep(entry)).map(|entry| (*seq, entry))
+///
+/// # Errors
+/// `StoreError::Validation` if the item cannot be judged by `filter`.
+pub(crate) fn seen(reader: &Reader, ranges: &[Range<Position>], filter: Option<&Filter<HistoryField>>, (seq, item): &(Position, Recorded)) -> StoreResult<Option<(Position, HistoryEntry)>> {
+    if !item.seen_by(*seq, reader, ranges) || meeting(item, filter)?.is_none() {
+        return Ok(None);
+    }
+    Ok(item.as_seen_by(*seq, reader, ranges).map(|entry| (*seq, entry)))
 }
 
 /// The entries of `nodes` that `reader`, with `ranges` as theirs, may see,
@@ -259,27 +358,40 @@ pub(crate) fn seen_nodes<'a>(reader: &Reader, ranges: &[Range<Position>], nodes:
 }
 
 /// The page that `newest` - items newest first, as `reader` may see them and
-/// `keep` keeps (`seen`), as a store reads them backwards from a position -
-/// gives: the first `limit` of them - at least one - from the position
-/// `from` on, oldest first, and `earlier` if one more is there; read from
-/// the history `digest` names.
-pub(crate) fn page_of(newest: impl IntoIterator<Item = (Position, HistoryEntry)>, from: Position, limit: usize, digest: Option<Digest>) -> HistoryPage {
+/// as they meet a filter (`seen`), as a store reads them backwards from a
+/// position - gives: the first `limit` of them - at least one - from the
+/// position `from` on, oldest first, and `earlier` if one more is there;
+/// read from the history `digest` names. Reads no further than that.
+///
+/// # Errors
+/// The first error among the items it reads.
+pub(crate) fn page_of(newest: impl IntoIterator<Item = StoreResult<Option<(Position, HistoryEntry)>>>, from: Position, limit: usize, digest: Option<Digest>) -> StoreResult<HistoryPage> {
     let limit = limit.max(1);
-    let mut read: Vec<(Position, HistoryEntry)> = newest.into_iter().take_while(|(seq, _)| *seq >= from).take(limit + 1).collect();
+    let mut read: Vec<(Position, HistoryEntry)> = Vec::new();
+    for item in newest {
+        if read.len() > limit {
+            break;
+        }
+        let Some((seq, entry)) = item? else { continue };
+        if seq < from {
+            break;
+        }
+        read.push((seq, entry));
+    }
     let earlier = (read.len() > limit).then(|| {
         read.truncate(limit);
         read.last().map(|(seq, _)| *seq)
     }).flatten();
     read.reverse();
-    HistoryPage { items: read, earlier, digest }
+    Ok(HistoryPage { items: read, earlier, digest })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::history::testing::items_of;
-    use crate::confidentiality::Classification;
-    use crate::actor::ActorId;
+    use crate::confidentiality::Compartment;
+    use crate::user::UserId;
     use crate::history::{Audience, History};
     use crate::message::Message;
     use crate::message::tests::{id, make_message};
@@ -322,19 +434,82 @@ mod tests {
         assert_eq!(items.newest_before(Position::MAX).count(), 3, "an item is added once");
     }
 
+    /// `newest` as a store gives them to `page_of`, each seen.
+    fn all_seen(newest: impl IntoIterator<Item = (Position, HistoryEntry)>) -> impl Iterator<Item = StoreResult<Option<(Position, HistoryEntry)>>> {
+        newest.into_iter().map(|item| Ok(Some(item)))
+    }
+
     #[test]
     fn a_page_is_cut_from_the_newest_items() {
-        let newest = |n: u64| (0..n).rev().map(|seq| (Position::new(seq), HistoryEntry::Said { message: make_message(id(seq as u128 + 1)) }));
-        let page = page_of(newest(5), Position::START, 2, None);
+        let message = |seq: u64| Message { content: Some(if seq.is_multiple_of(2) { "odd" } else { "even" }.to_string()), ..make_message(id(seq as u128 + 1)) };
+        let newest = |n: u64| (0..n).rev().map(move |seq| (Position::new(seq), HistoryEntry::Said { message: message(seq) }));
+        let page = page_of(all_seen(newest(5)), Position::START, 2, None).unwrap();
         assert_eq!((page.entries().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(1).unwrap().1), label(&newest(5).next().unwrap().1)], Some(Position::new(3))));
-        let page = page_of(newest(5), Position::new(3), 5, None);
+        let page = page_of(all_seen(newest(5)), Position::new(3), 5, None).unwrap();
         assert_eq!((page.items.len(), page.earlier), (2, None), "none before where the view begins");
-        assert_eq!(page_of(newest(0), Position::START, 5, None).items.len(), 0);
-        assert_eq!(page_of(newest(3), Position::START, 0, None).items.len(), 1, "at least one");
-        let odd = |item: &HistoryEntry| item.said().is_some_and(|m| m.id.0.as_u128() % 2 == 1);
-        let kept = newest(5).map(|(seq, entry)| (seq, Recorded::new(entry, ActorId::None, Audience::Everybody)));
-        let page = page_of(kept.filter_map(|item| seen(&Reader::Channel, &[], &odd, &item)), Position::START, 2, None);
+        assert_eq!(page_of(all_seen(newest(0)), Position::START, 5, None).unwrap().items.len(), 0);
+        assert_eq!(page_of(all_seen(newest(3)), Position::START, 0, None).unwrap().items.len(), 1, "at least one");
+        let odd = Filter::containing("odd");
+        let kept: Vec<(Position, Recorded)> = newest(5).map(|(seq, entry)| (seq, Recorded::new(entry, ActorId::None, Audience::Everybody))).collect();
+        let page = page_of(kept.iter().map(|item| seen(&Reader::Channel, &[], Some(&odd), item)), Position::START, 2, None).unwrap();
         assert_eq!((page.entries().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(2).unwrap().1), label(&newest(5).next().unwrap().1)], Some(Position::new(2))), "a page of those kept, full, and an older one kept");
+    }
+
+    /// Whether `filter` keeps `entry`, recorded as everybody was given it.
+    fn keeps(filter: &Filter<HistoryField>, entry: HistoryEntry) -> bool {
+        let item = (Position::START, Recorded::new(entry, ActorId::System, Audience::Everybody));
+        seen(&Reader::Channel, &[], Some(filter), &item).unwrap().is_some()
+    }
+
+    /// Issue 421: what a page keeps is a condition over the message as it
+    /// is recorded.
+    #[test]
+    fn a_filter_reads_a_message_as_it_is_recorded() {
+        let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let said = |message: Message| HistoryEntry::Said { message };
+        let by_alice = Message { sender_id: alice, content: Some("Zoë likes tea".to_string()), mentions: vec![bob], ..make_message(id(1)) };
+        let other = HistoryEntry::ResponseRequested { by: alice, at: Utc::now() };
+
+        assert!(keeps(&Filter::said(), said(by_alice.clone())) && !keeps(&Filter::said(), other.clone()), "a message said");
+        assert!(keeps(&Filter::said_by(alice), said(by_alice.clone())) && !keeps(&Filter::said_by(bob), said(by_alice.clone())));
+        assert!(!keeps(&Filter::said_by(alice), other), "whoever asked for it, it is no message");
+        assert!(keeps(&Filter::negated(Filter::said_by(bob)), said(by_alice.clone())));
+        assert!(keeps(&Filter::containing("ZOE LIKES"), said(by_alice.clone())) && !keeps(&Filter::containing("coffee"), said(by_alice.clone())), "words, as names are compared");
+        assert!(keeps(&Filter::mentioning(bob), said(by_alice.clone())) && !keeps(&Filter::mentioning(alice), said(by_alice.clone())));
+
+        for message in [Message { content: None, ..by_alice.clone() }, Message { content: Some(String::new()), ..by_alice.clone() }] {
+            assert!(!keeps(&Filter::written(), said(message.clone())) && !keeps(&Filter::heard(), said(message)), "without words");
+        }
+        for message in [by_alice.clone(), Message { role: MessageRole::Assistant, ..by_alice.clone() }, Message { role: MessageRole::Tool, ..by_alice.clone() }, Message { internal: true, ..by_alice.clone() }] {
+            assert_eq!(keeps(&Filter::heard(), said(message.clone())), message.is_heard(), "heard as {:?}, internal {}", message.role, message.internal);
+        }
+    }
+
+    /// Issue 421: what may be copied of a channel is read as a condition
+    /// over the level and compartments of a message - the same as the
+    /// rule it stands for.
+    #[test]
+    fn what_may_be_copied_is_read_as_the_flow_rule_decides() {
+        let compartments = Compartments::new([(Compartment::new("hr"), vec![Compartment::new("finance")]), (Compartment::new("finance"), vec![]), (Compartment::new("legal"), vec![])]).unwrap();
+        let classified = |level, names: &[&str]| Classification::new(level, names.iter().map(|name| Compartment::new(*name))).unwrap();
+        let mut samples = vec![Classification::PUBLIC];
+        for level in [Confidentiality::Internal, Confidentiality::Confidential, Confidentiality::StrictlyConfidential] {
+            for names in [&[][..], &["hr"], &["finance"], &["legal"], &["hr", "finance"], &["finance", "legal"]] {
+                samples.push(classified(level, names));
+            }
+        }
+        let mut readings = vec![Reading::Nothing, Reading::Whole];
+        readings.extend(samples.iter().cloned().map(Reading::Released));
+        for reading in &readings {
+            let filter = Filter::readable(reading, &compartments);
+            for classification in &samples {
+                let message = HistoryEntry::Said { message: Message { classification: classification.clone(), ..make_message(id(1)) } };
+                let kept = filter.as_ref().is_none_or(|filter| keeps(filter, message));
+                assert_eq!(kept, reading.admits(classification, &compartments), "{classification} under {reading:?}");
+            }
+        }
+        let other = HistoryEntry::ResponseRequested { by: ActorId::System, at: Utc::now() };
+        assert!(!keeps(&Filter::readable(&Reading::Released(Classification::PUBLIC), &compartments).unwrap(), other), "messages only");
     }
 
     /// Issue 417: who was a member when is read off the chain - from a

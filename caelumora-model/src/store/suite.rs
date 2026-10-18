@@ -18,7 +18,7 @@ use crate::scope::{Scoped, Scope};
 use crate::security::{AclEntry, Secured, SecurityAttributes, SecurityContext};
 use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityKind, EntityStore, EntityStores, Journaled, NoEntity, StateStore, StoreError, Stored};
-use crate::store::history::{every, HistoryStore};
+use crate::store::history::HistoryStore;
 use crate::store::transcript::TranscriptStore;
 use crate::actor::EventContext;
 use crate::context::ModelProfile;
@@ -698,7 +698,7 @@ async fn all_pages(histories: &dyn HistoryStore, key: ChannelId, from: Position,
     let mut pages = Vec::new();
     let mut before = None;
     loop {
-        let page = histories.page(key, &Reader::Channel, from, before, limit, &every).await.expect("a page");
+        let page = histories.page(key, &Reader::Channel, from, before, limit, None).await.expect("a page");
         assert!(page.items.len() <= limit, "no more than asked for");
         pages.push(page.entries().map(standing).collect::<Vec<_>>());
         match page.earlier {
@@ -720,7 +720,7 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     use crate::confidentiality::Confidentiality;
     let (channel, agent) = (ChannelId::new(), AgentId::new());
     let key = channel;
-    assert!(histories.page(key, &Reader::Channel, Position::START, None, 10, &every).await.unwrap().items.is_empty(), "no history yet");
+    assert!(histories.page(key, &Reader::Channel, Position::START, None, 10, None).await.unwrap().items.is_empty(), "no history yet");
     assert!(histories.said(key, &Reader::Channel, id(1)).await.unwrap().is_none());
 
     let mut state = ChannelState::new(channel);
@@ -740,20 +740,20 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     let expected: Vec<String> = items_of(&state.history).iter().map(standing).collect();
 
     assert_eq!(all_pages(histories, key, Position::START, 70).await, expected, "the items as they stand, page by page");
-    let last = histories.page(key, &Reader::Channel, Position::START, None, 3, &every).await.unwrap();
+    let last = histories.page(key, &Reader::Channel, Position::START, None, 3, None).await.unwrap();
     assert_eq!((last.entries().map(standing).collect::<Vec<_>>(), last.earlier), (expected[597..].to_vec(), Some(Position::new(597))));
     let from_middle = all_pages(histories, key, Position::new(250), 100).await;
     assert_eq!(from_middle, expected[250..].to_vec(), "none before where a view begins");
     let (at, first) = histories.said(key, &Reader::Channel, id(1)).await.unwrap().expect("said");
     assert_eq!((at, first.said().and_then(|m| m.content.as_deref())), (Position::START, Some("changed")), "as it stands, where it was said");
     assert!(histories.said(key, &Reader::Channel, id(300)).await.unwrap().is_some_and(|(_, item)| item.said().is_some_and(|m| m.revoked.is_some())));
-    assert_eq!(histories.page(key, &Reader::Channel, Position::START, None, 1, &every).await.unwrap().digest, state.history.digest(), "read from the history as it is");
+    assert_eq!(histories.page(key, &Reader::Channel, Position::START, None, 1, None).await.unwrap().digest, state.history.digest(), "read from the history as it is");
     let entries = histories.entries(key, &Reader::Channel, Position::new(598)).await.unwrap();
     assert_eq!(entries.iter().map(|node| node.seq.get()).collect::<Vec<_>>(), state.history.from(Position::new(598)).map(|node| node.seq.get()).collect::<Vec<_>>(), "the chain itself from a position on");
     assert!(histories.entries(key, &Reader::Channel, Position::new(10_000)).await.unwrap().is_empty());
 
-    let revoked = |item: &HistoryEntry| item.said().is_some_and(|m| m.revoked.is_some() || m.content.as_deref() == Some("changed"));
-    let kept = histories.page(key, &Reader::Channel, Position::START, None, 5, &revoked).await.unwrap();
+    let changed_or_revoked = Filter::Or(vec![Filter::containing("changed"), Filter::all_of([Filter::said(), Filter::negated(Filter::written())])]);
+    let kept = histories.page(key, &Reader::Channel, Position::START, None, 5, Some(&changed_or_revoked)).await.unwrap();
     assert_eq!((kept.items.len(), kept.earlier), (2, None), "a page of those kept, read back as far as there are any");
 
     histories.rebuild(key).await.expect("rebuild");
@@ -796,14 +796,14 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     assert_eq!(histories.memberships(key, other).await.unwrap(), vec![EVERY_POSITION], "a member from what was shared, and still");
     assert!(histories.memberships(key, stranger).await.unwrap().is_empty());
     let last = |page: HistoryPage| page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect::<Vec<_>>();
-    assert_eq!(last(histories.page(key, &Reader::Participant(user), Position::START, None, 2, &every).await.unwrap()), [id(602), id(603)]);
+    assert_eq!(last(histories.page(key, &Reader::Participant(user), Position::START, None, 2, None).await.unwrap()), [id(602), id(603)]);
     // Newest first, what they see: the answer, their join and share, the other's join, 601.
-    assert_eq!(last(histories.page(key, &Reader::Participant(other), Position::START, None, 5, &every).await.unwrap()), [id(601), id(602)], "a page is filled with what they may see");
+    assert_eq!(last(histories.page(key, &Reader::Participant(other), Position::START, None, 5, None).await.unwrap()), [id(601), id(602)], "a page is filled with what they may see");
     let seen = histories.entries(key, &Reader::Participant(other), Position::new(600)).await.unwrap();
     assert_eq!(seen.iter().filter_map(|node| node.entry.said()).map(|m| m.id).collect::<Vec<_>>(), [id(601), id(602)], "and so is the chain");
 
     states.delete_channel_state(channel).await.expect("delete");
-    assert!(histories.page(key, &Reader::Channel, Position::START, None, 10, &every).await.unwrap().items.is_empty(), "the channel's history is gone with its state");
+    assert!(histories.page(key, &Reader::Channel, Position::START, None, 10, None).await.unwrap().items.is_empty(), "the channel's history is gone with its state");
 }
 
 /// A transcript kept apart from its state (issue 380): written by the put,

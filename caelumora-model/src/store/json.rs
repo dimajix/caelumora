@@ -1080,7 +1080,7 @@ mod tests {
 
     #[tokio::test]
     async fn items_behind_their_chain_and_entries_past_its_head_are_what_a_crash_leaves() {
-        use crate::store::history::{every, HistoryStore};
+        use crate::store::history::HistoryStore;
         let dir = tempdir().unwrap();
         let store = store(dir.path());
         let channel = ChannelId::new();
@@ -1099,7 +1099,7 @@ mod tests {
         write("items-head.json", &serde_json::json!({ "end": 1 }));
         let loaded = store.get_channel_state(channel).await.unwrap();
         assert_eq!(loaded.history.end().get(), 3);
-        assert_eq!(store.page(key, &Reader::Channel, Position::START, None, 10, &every).await.unwrap().items.len(), 3, "the items are derived anew from the chain");
+        assert_eq!(store.page(key, &Reader::Channel, Position::START, None, 10, None).await.unwrap().items.len(), 3, "the items are derived anew from the chain");
         assert_eq!(read("items-head.json")["end"], serde_json::json!(3));
 
         // As if the crash came after the chain, before its head.

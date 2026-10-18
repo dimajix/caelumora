@@ -130,7 +130,8 @@ Every list of the entity store takes a query (`caelumora_model::store::query`) a
     variant alone (`FieldValue::variant`) an object that has its key or the string of a variant that
     holds nothing - as `?` in Postgres.
 *   **A name prefix** (`Filter::NamePrefix`) compares a name as names are compared - regardless of
-    case, accents and runs of whitespace -, for a search by what one has typed so far.
+    case, accents and runs of whitespace -, for a search by what one has typed so far; **words in a
+    text** (`Filter::Contains`) are compared the same way, for a search of what was written.
 *   **Scope conditions** are made by the scope (`Scope::within`, `Scope::seen_from`), so that the
     rule lives with `Scope`.
 *   **A limit and a cursor**, in the order of the entities' ids. A page cut short hands out the
@@ -260,8 +261,8 @@ participant (issue 417), and is kept apart from the channel state's document (is
     as the chain grows and rebuilt from it at any time (`HistoryStore::rebuild`); the store suite
     checks that the items equal the chain folded, and what each reader is given.
 *   **The read side is the `HistoryStore`**, handed out by the `StoreBackend` beside the
-    `StateStore`: a page of items before a position, of those a filter keeps, with the digest it was
-    read from; the item that said a message, with what it was produced from; the chain from a
+    `StateStore`: a page of items before a position, of those that meet a filter, with the digest
+    it was read from; the item that said a message, with what it was produced from; the chain from a
     position. Every read is a reader's (`Reader`): a participant, given what went to them and what
     they sent - the latter in full; an outsider - a session's owner who takes no part, a reader from
     another channel -, given what went to every member; a newcomer, before its join is recorded,
@@ -271,6 +272,11 @@ participant (issue 417), and is kept apart from the channel state's document (is
     the channel everything; a participant what it sent, and what went to it by name or to every
     member of its kind while it was one; an outsider what went to every member. A database answers
     it as a `WHERE` over the items and a table of the ranges; a page counts what its reader sees.
+    The filter is data too (issue 421): a `Filter` of the entity stores' queries over the fields of
+    an item as it is recorded (`HistoryField`) - a message said, its sender, role and words, whom it
+    mentions, its level and compartments -, made by the reader's needs (`Filter::said_by`, `heard`,
+    `containing`, `readable` for what a reader from another channel may read) and judged on the
+    item before its form is chosen, so that a database adds it to the same `WHERE`.
     In which form is `Recorded::as_seen_by`: as it was recorded for its sender, as everybody was
     given it (`Message::published`) for anyone else. Whatever reads a history without holding it
     reads there, whether the channel runs or not: the views - a page over REST, a message, what an

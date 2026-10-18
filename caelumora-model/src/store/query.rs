@@ -15,7 +15,8 @@ use uuid::Uuid;
 
 /// A field of a kind that a query may name: where it lies in the document
 /// as it is serialized. A field used inside `Filter::Any` lies within an
-/// element of the collection, its path relative to it.
+/// element of the collection, its path relative to it - the element itself
+/// for an empty path.
 pub trait Field: Copy + Debug + Send + Sync + 'static {
     fn path(self) -> &'static [&'static str];
 }
@@ -41,6 +42,8 @@ pub enum FieldValue {
     Uuid(Uuid),
     /// A string - a unit variant as serde writes it, `"GlobalScope"`.
     Text(String),
+    /// A flag.
+    Bool(bool),
     /// A variant as serde writes it, `{"User": "…"}`: an object that has
     /// the key, with a value meeting the inner one. It need not have only
     /// that key - containment, as `@>` in Postgres -, so that a value names
@@ -68,6 +71,7 @@ impl FieldValue {
         match self {
             FieldValue::Uuid(id) => found.as_str().and_then(|text| Uuid::parse_str(text).ok()) == Some(*id),
             FieldValue::Text(text) => found.as_str() == Some(text.as_str()),
+            FieldValue::Bool(flag) => found.as_bool() == Some(*flag),
             FieldValue::Tagged(tag, value) => found.get(tag).is_some_and(|inner| value.matches(inner)),
             FieldValue::Variant(tag) => found.as_str() == Some(tag) || found.get(tag).is_some(),
         }
@@ -83,6 +87,12 @@ impl From<Uuid> for FieldValue {
 impl From<&str> for FieldValue {
     fn from(text: &str) -> Self {
         FieldValue::Text(text.to_string())
+    }
+}
+
+impl From<bool> for FieldValue {
+    fn from(flag: bool) -> Self {
+        FieldValue::Bool(flag)
     }
 }
 
@@ -106,6 +116,11 @@ pub enum Filter<F: Field> {
     /// by what one has typed so far (issue 221). A database compares the
     /// folded forms with `LIKE`.
     NamePrefix(F, String),
+    /// The field, a text, contains the words as names are compared -
+    /// regardless of case, accents and runs of whitespace: a search of what
+    /// was written (issue 421). A database compares the folded forms with
+    /// `LIKE '%…%'`.
+    Contains(F, String),
 }
 
 impl<F: Field> Filter<F> {
@@ -129,6 +144,26 @@ impl<F: Field> Filter<F> {
         Filter::NamePrefix(field, prefix.to_string())
     }
 
+    /// `field`, a text, contains `words` as names are compared.
+    pub fn contains(field: F, words: &str) -> Self {
+        Filter::Contains(field, words.to_string())
+    }
+
+    /// Every one of `conditions`; any document if there is none.
+    pub fn all_of(conditions: impl IntoIterator<Item = Filter<F>>) -> Self {
+        Filter::And(conditions.into_iter().collect())
+    }
+
+    /// No document.
+    pub fn nothing() -> Self {
+        Filter::Or(Vec::new())
+    }
+
+    /// Not `condition`.
+    pub fn negated(condition: Filter<F>) -> Self {
+        Filter::Not(Box::new(condition))
+    }
+
     /// Whether `document` - an entity as it is serialized, or an element of
     /// a collection in it - meets the condition.
     pub fn matches(&self, document: &Value) -> bool {
@@ -144,6 +179,7 @@ impl<F: Field> Filter<F> {
                 _ => false,
             },
             Filter::NamePrefix(field, prefix) => lookup(document, *field).and_then(Value::as_str).is_some_and(|name| fold(name).starts_with(&fold(prefix))),
+            Filter::Contains(field, words) => lookup(document, *field).and_then(Value::as_str).is_some_and(|text| fold(text).contains(&fold(words))),
         }
     }
 }
@@ -275,6 +311,7 @@ mod tests {
         Tags,
         Tag,
         Missing,
+        Itself,
     }
 
     impl Field for Doc {
@@ -284,6 +321,7 @@ mod tests {
                 Doc::Tags => &["tags"],
                 Doc::Tag => &["name"],
                 Doc::Missing => &["missing"],
+                Doc::Itself => &[],
             }
         }
     }
@@ -300,6 +338,17 @@ mod tests {
     }
 
     #[test]
+    fn a_text_contains_words_as_names_are_compared() {
+        let written = |text: &str| json!({ "owner": { "id": text } });
+        let containing = |words: &str| Filter::contains(Doc::Owner, words);
+        assert!(containing("ZOË").matches(&written("I met zoe today")), "regardless of case and accents");
+        assert!(containing("met  zoe").matches(&written("I met\nZoë")), "and of runs of whitespace");
+        assert!(!containing("bob").matches(&written("I met Zoë")));
+        assert!(containing("").matches(&written("anything")), "no words are in every text");
+        assert!(!containing("x").matches(&json!({ "owner": { "id": true } })), "a text only");
+    }
+
+    #[test]
     fn a_filter_reads_a_document_by_paths() {
         let document = json!({ "owner": { "id": "alice" }, "tags": [{ "name": "a" }, { "name": "b" }] });
         assert!(Filter::eq(Doc::Owner, "alice").matches(&document));
@@ -309,9 +358,14 @@ mod tests {
         assert!(Filter::any(Doc::Tags, Filter::eq(Doc::Tag, "b")).matches(&document), "an element of the collection");
         assert!(!Filter::any(Doc::Tags, Filter::eq(Doc::Tag, "c")).matches(&document));
         assert!(!Filter::any(Doc::Owner, Filter::eq(Doc::Tag, "a")).matches(&document), "what is no collection has no element");
+        let names = json!({ "tags": ["a", "b"] });
+        assert!(Filter::any(Doc::Tags, Filter::eq(Doc::Itself, "b")).matches(&names), "an element itself, by the empty path");
+        assert!(!Filter::any(Doc::Tags, Filter::eq(Doc::Itself, "c")).matches(&names));
         let both = Filter::And(vec![Filter::eq(Doc::Owner, "alice"), Filter::Not(Box::new(Filter::IsNull(Doc::Tags)))]);
         assert!(both.matches(&document));
         assert!(Filter::Or(vec![Filter::eq(Doc::Owner, "bob"), Filter::IsNull(Doc::Missing)]).matches(&document));
+        assert!(Filter::<Doc>::all_of([]).matches(&document) && !Filter::<Doc>::nothing().matches(&document));
+        assert!(Filter::eq(Doc::Owner, true).matches(&json!({ "owner": { "id": true } })) && !Filter::eq(Doc::Owner, true).matches(&document), "a flag");
     }
 
     /// A value meets what serde writes: an id the string of its UUID, a

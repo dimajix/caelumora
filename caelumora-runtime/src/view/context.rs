@@ -18,7 +18,7 @@ use caelumora_model::history::{HistoryPage, Reader};
 use caelumora_model::history::History;
 use caelumora_model::message::MessageId;
 use caelumora_model::note::Note;
-use caelumora_model::store::history::{every, HistoryStore};
+use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::store::StoreError;
 use caelumora_model::transcript::Transcript;
@@ -153,7 +153,7 @@ impl AgentContextView {
     /// # Errors
     /// `Failed` if the history cannot be read.
     pub async fn history_page(&self, before: Option<Position>, limit: usize) -> Result<HistoryPage, AgentContextError> {
-        self.histories.page(self.channel, &self.reading_as(), Position::START, before, limit, &every).await
+        self.histories.page(self.channel, &self.reading_as(), Position::START, before, limit, None).await
             .map_err(|source| AgentContextError::Failed { actor: self.actor(), message: None, source })
     }
 

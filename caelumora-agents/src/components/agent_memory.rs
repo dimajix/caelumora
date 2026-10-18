@@ -234,7 +234,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::confidentiality::{ConfidentialityRules, Compartments, Place};
+    use caelumora_model::confidentiality::{ConfidentialityRules, Compartments, Reading, Place};
     use caelumora_runtime::transport::Discard;
     use crate::testing::TestAgents;
     use caelumora_runtime::testing::TestRuntime;
@@ -535,8 +535,11 @@ mod tests {
     struct OnlyFor(Option<ActorId>, Compartments);
     impl ConfidentialityPolicy for OnlyFor {
         fn may_publish(&self, _: &SecurityContext, _: &Classification, _: &Classification) -> bool { true }
-        fn may_copy(&self, context: &SecurityContext, _: &Place, _: &Place) -> bool {
-            Some(context.principal_id) == self.0
+        fn copyable(&self, context: &SecurityContext, _: ChannelId, _: &SessionPrivacy, _: &Place) -> Reading {
+            match Some(context.principal_id) == self.0 {
+                true => Reading::Whole,
+                false => Reading::Nothing,
+            }
         }
         fn cleared(&self, _: &SecurityContext, _: ActorId, _: &[RoleId], _: &Classification) -> bool { true }
         fn compartments(&self) -> &Compartments { &self.1 }

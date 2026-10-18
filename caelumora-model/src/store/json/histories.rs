@@ -17,7 +17,8 @@ use crate::chain::{Node, Position};
 use crate::channel::ChannelId;
 use crate::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use crate::message::MessageId;
-use crate::store::history::{every, page_of, seen, seen_nodes, HistoryStore, Keep, Memberships, StandingItems};
+use crate::store::history::{page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems};
+use crate::store::query::Filter;
 use crate::store::{StoreError, StoreResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -178,7 +179,7 @@ impl JsonFileStore {
 
 #[async_trait]
 impl HistoryStore for JsonFileStore {
-    async fn page(&self, channel: ChannelId, reader: &Reader, from: Position, before: Option<Position>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
+    async fn page(&self, channel: ChannelId, reader: &Reader, from: Position, before: Option<Position>, limit: usize, filter: Option<&Filter<HistoryField>>) -> StoreResult<HistoryPage> {
         let dir = self.history_dir(channel);
         let head = read_head(&dir).await?;
         let items_end = read_items_end(&dir).await?;
@@ -190,13 +191,15 @@ impl HistoryStore for JsonFileStore {
         let ranges = read_memberships(&dir).await?.of_reader(reader);
         let mut segment = before.previous().map(segment_of);
         while let Some(from_here) = segment {
-            newest.extend(read_items(&dir, from_here).await?.newest_before(before).filter(|(seq, _)| *seq >= from).filter_map(|item| seen(reader, &ranges, keep, item)));
+            for item in read_items(&dir, from_here).await?.newest_before(before).take_while(|(seq, _)| *seq >= from) {
+                newest.extend(seen(reader, &ranges, filter, item)?);
+            }
             if newest.len() > limit || from_here <= from {
                 break;
             }
             segment = segment_before(from_here);
         }
-        Ok(page_of(newest, from, limit, head.head))
+        page_of(newest.into_iter().map(|item| Ok(Some(item))), from, limit, head.head)
     }
 
     async fn said(&self, channel: ChannelId, reader: &Reader, id: MessageId) -> StoreResult<Option<(Position, HistoryEntry)>> {
@@ -205,7 +208,7 @@ impl HistoryStore for JsonFileStore {
         while let Some(from) = segment {
             if let Some(found) = read_items(&dir, from).await?.said(id) {
                 let ranges = read_memberships(&dir).await?.of_reader(reader);
-                return Ok(seen(reader, &ranges, &every, found));
+                return seen(reader, &ranges, None, found);
             }
             segment = segment_before(from);
         }

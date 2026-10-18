@@ -1,6 +1,7 @@
 use crate::actor::ActorId;
 use crate::confidentiality::{Classification, Visibility};
 use crate::context::ContextRef;
+use crate::store::query::FieldValue;
 use crate::tool::{ToolCall, ToolCallResult};
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
@@ -18,6 +19,18 @@ pub enum MessageRole {
     Assistant,
     System,
     Tool,
+}
+
+/// A role as a query compares it: as serde writes it, `"User"`.
+impl From<MessageRole> for FieldValue {
+    fn from(role: MessageRole) -> Self {
+        FieldValue::from(match role {
+            MessageRole::User => "User",
+            MessageRole::Assistant => "Assistant",
+            MessageRole::System => "System",
+            MessageRole::Tool => "Tool",
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -369,6 +382,12 @@ pub(crate) mod tests {
     use uuid::Uuid;
     use chrono::Duration;
     use crate::confidentiality::Confidentiality;
+    use crate::store::query::meets_exactly_its_equals;
+
+    #[test]
+    fn a_role_meets_exactly_its_serialized_form() {
+        meets_exactly_its_equals(&[MessageRole::User, MessageRole::Assistant, MessageRole::System, MessageRole::Tool]);
+    }
 
     /// A message from a user with id `id`.
     pub(crate) fn make_message(id: MessageId) -> Message {

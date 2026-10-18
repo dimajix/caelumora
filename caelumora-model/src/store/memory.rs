@@ -11,7 +11,7 @@ use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use crate::removal::{Deletable, Removal};
 use crate::security::{ActionType, AllowAllPolicy, SecurityContext, AccessPolicy};
 use crate::store::access::{name_free, Access};
-use crate::store::history::{every, page_of, seen, seen_nodes, HistoryStore, Keep, Memberships, StandingItems};
+use crate::store::history::{page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems};
 use crate::store::kept_chain::KeptChain;
 use crate::store::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
 use crate::transcript::{known, Transcript, TranscriptEntry};
@@ -481,20 +481,22 @@ impl StateStore for MemoryStore {
 
 #[async_trait]
 impl HistoryStore for MemoryStore {
-    async fn page(&self, channel: ChannelId, reader: &Reader, from: Position, before: Option<Position>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
-        Ok(read_lock(&self.histories, |all| match all.get(&channel) {
+    async fn page(&self, channel: ChannelId, reader: &Reader, from: Position, before: Option<Position>, limit: usize, filter: Option<&Filter<HistoryField>>) -> StoreResult<HistoryPage> {
+        read_lock(&self.histories, |all| match all.get(&channel) {
             Some(kept) => {
                 let ranges = kept.memberships.of_reader(reader);
-                page_of(kept.items.newest_before(before.unwrap_or(Position::MAX)).filter_map(|item| seen(reader, &ranges, keep, item)), from, limit, kept.chain.head())
+                let newest = kept.items.newest_before(before.unwrap_or(Position::MAX)).take_while(|(seq, _)| *seq >= from);
+                page_of(newest.map(|item| seen(reader, &ranges, filter, item)), from, limit, kept.chain.head())
             }
-            None => HistoryPage::default(),
-        }))
+            None => Ok(HistoryPage::default()),
+        })
     }
 
     async fn said(&self, channel: ChannelId, reader: &Reader, id: MessageId) -> StoreResult<Option<(Position, HistoryEntry)>> {
-        Ok(read_lock(&self.histories, |all| all.get(&channel).and_then(|kept| {
-            kept.items.said(id).and_then(|item| seen(reader, &kept.memberships.of_reader(reader), &every, item))
-        })))
+        read_lock(&self.histories, |all| match all.get(&channel).and_then(|kept| kept.items.said(id).map(|item| (kept, item))) {
+            Some((kept, item)) => seen(reader, &kept.memberships.of_reader(reader), None, item),
+            None => Ok(None),
+        })
     }
 
     async fn entries(&self, channel: ChannelId, reader: &Reader, from: Position) -> StoreResult<Vec<Node<HistoryEntry>>> {

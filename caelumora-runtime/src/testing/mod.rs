@@ -31,7 +31,7 @@ use caelumora_model::approval::{ApprovalStrategy, Approver};
 use caelumora_model::channel::{moderation_components, Channel, InternalActor, Participant};
 use caelumora_model::config::{BackendConfig, WorkspacesConfig};
 use serde_json::{json, Value};
-use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityPolicy, ConfidentialityRules, Confidentiality, Place};
+use caelumora_model::confidentiality::{Classification, Clearance, Compartments, ConfidentialityPolicy, ConfidentialityRules, Confidentiality, Reading, Place};
 use caelumora_model::role::{RoleId, Roles};
 use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::value::name::{Name, ScopedName};
@@ -41,6 +41,7 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{ActionType, AllowAllPolicy, Grant, OwnershipPolicy, Reclassified, SecurityAttributes, SecurityContext, AccessPolicy, Subject};
 use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::store::{ComponentStore, StoreBackend, StoreError};
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::template::{ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate, SessionTemplateId};
@@ -141,10 +142,11 @@ impl ConfidentialityPolicy for Recorder {
         allowed
     }
 
-    fn may_copy(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool {
-        let allowed = self.rules.may_copy(context, from, into);
-        self.record(context, "CopyInformation".to_string(), allowed);
-        allowed
+    /// Recorded as allowed if anything may be copied.
+    fn copyable(&self, context: &SecurityContext, channel: ChannelId, session: &SessionPrivacy, into: &Place) -> Reading {
+        let reading = self.rules.copyable(context, channel, session, into);
+        self.record(context, "CopyInformation".to_string(), reading != Reading::Nothing);
+        reading
     }
 
     fn cleared(&self, context: &SecurityContext, participant: ActorId, roles: &[RoleId], classification: &Classification) -> bool {

@@ -1,7 +1,6 @@
 //! A channel as its viewer reached it, and its participants.
 
 use super::participant::{participant_state, AgentParticipant, ParticipantState};
-use super::ChannelReading;
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
 use crate::actor::user::ChannelWatch;
 use crate::channel::ChannelLoop;
@@ -15,7 +14,7 @@ use caelumora_model::channel::{Channel, Participant};
 use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::confidentiality::Place;
+use caelumora_model::confidentiality::{Reading, Place};
 use caelumora_model::digest::Digest;
 use caelumora_model::history::{HistoryEntry, HistoryPage, Reader};
 use caelumora_model::message::{Message, MessageId};
@@ -24,7 +23,8 @@ use caelumora_model::removal::Removal;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement};
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{ChannelSnapshot, Detail, ChannelParticipantSnapshot, PublishedNotes, Unread};
-use caelumora_model::store::history::{every, Keep};
+use caelumora_model::store::history::HistoryField;
+use caelumora_model::store::query::Filter;
 use caelumora_model::store::{StoreError, StoreResultExt};
 use caelumora_model::tool::ToolSet;
 use caelumora_model::value::language::Language;
@@ -43,12 +43,13 @@ pub struct ChannelView {
     channel: Arc<Channel>,
     /// Its loop, if it runs.
     running: Option<Arc<ChannelLoop>>,
-    readable: ChannelReading,
+    /// How far the viewer reads it (`channel_reading`).
+    reading: Reading,
 }
 
 impl ChannelView {
-    pub(super) fn of(session: SessionView, channel: Arc<Channel>, running: Option<Arc<ChannelLoop>>, readable: ChannelReading) -> Self {
-        Self { session, channel, running, readable }
+    pub(super) fn of(session: SessionView, channel: Arc<Channel>, running: Option<Arc<ChannelLoop>>, reading: Reading) -> Self {
+        Self { session, channel, running, reading }
     }
 
     /// The views the channel was reached through - what a plugin's
@@ -58,9 +59,9 @@ impl ChannelView {
     }
 
     /// How the viewer reads the channel: as a whole, or only what was
-    /// released to where they read from (issue 133).
-    pub fn reading(&self) -> ChannelReading {
-        self.readable
+    /// released to where they read from (issues 133, 421).
+    pub fn reading(&self) -> &Reading {
+        &self.reading
     }
 
     /// The session the channel belongs to.
@@ -158,10 +159,7 @@ impl ChannelView {
     /// `classification`: every one if it reads the channel as a whole, else
     /// those released to where it reads from.
     pub(super) fn may_read_entry(&self, classification: &Classification) -> bool {
-        match self.readable {
-            ChannelReading::Whole => true,
-            ChannelReading::Released => self.views().may_copy_from(&self.place(classification)),
-        }
+        self.reading.admits(classification, self.views().confidentiality().compartments())
     }
 
     /// What a read of a channel read entry by entry answers when nothing
@@ -228,8 +226,7 @@ impl ChannelView {
         }
         let not_found = || ViewError::ParticipantNotFound { channel: self.channel.id, actor };
         let ActorId::Agent(agent) = actor else { return Err(not_found()) };
-        let said_by = |item: &HistoryEntry| item.said().is_some_and(|m| m.sender_id == actor);
-        if self.history_page_of(None, 1, &said_by).await?.items.is_empty() {
+        if self.history_page_of(None, 1, Some(Filter::said_by(actor))).await?.items.is_empty() {
             return Err(not_found());
         }
         Ok(ParticipantView::of_former(self.clone(), Participant::Agent(agent), None).await)
@@ -279,20 +276,20 @@ impl ChannelView {
     /// `Failed` if the history cannot be read; `NoChannelNamed` if nothing
     /// of a channel read entry by entry can be on this page.
     pub async fn history_page(&self, before: Option<Position>, limit: usize) -> ViewResult<HistoryPage> {
-        self.history_page_of(before, limit, &every).await
+        self.history_page_of(before, limit, None).await
     }
 
-    /// A page of the items of the history `keep` keeps, as `history_page`
-    /// gives them: what a search of the history reads - the last messages
-    /// containing a word, those of one sender.
+    /// A page of the items of the history that meet `filter`, as
+    /// `history_page` gives them: what a search of the history reads - the
+    /// last messages containing words, those of one sender.
     ///
     /// # Errors
     /// As `history_page`.
-    pub async fn history_page_of(&self, before: Option<Position>, limit: usize, keep: &Keep<'_>) -> ViewResult<HistoryPage> {
-        let readable = |item: &HistoryEntry| self.may_read_item(item) && keep(item);
-        let page = self.views().histories().page(self.channel.id, &self.reading_as(), Position::START, before, limit, &readable).await
+    pub async fn history_page_of(&self, before: Option<Position>, limit: usize, filter: Option<Filter<HistoryField>>) -> ViewResult<HistoryPage> {
+        let filter = self.readable_items(filter);
+        let page = self.views().histories().page(self.channel.id, &self.reading_as(), Position::START, before, limit, filter.as_ref()).await
             .map_err(|e| self.failed_reading(e))?;
-        if self.readable == ChannelReading::Released && page.items.is_empty() {
+        if self.reading != Reading::Whole && page.items.is_empty() {
             return Err(self.nothing_released());
         }
         Ok(page)
@@ -310,7 +307,7 @@ impl ChannelView {
         let seen = said.and_then(|(_, item)| item.said().cloned());
         match seen {
             Some(message) if self.may_read_entry(&message.classification) => Ok(message),
-            _ if self.readable == ChannelReading::Released => Err(self.nothing_released()),
+            _ if self.reading != Reading::Whole => Err(self.nothing_released()),
             _ => Err(ViewError::MessageNotFound { channel: self.channel.id, message: id }),
         }
     }
@@ -328,9 +325,9 @@ impl ChannelView {
     fn reading_as(&self) -> Reader {
         let reader = self.reader();
         let took_part = self.lists(reader) || self.channel.former.iter().any(|left| left.participant.actor_id() == reader);
-        match self.readable {
-            ChannelReading::Whole if took_part => Reader::Participant(reader),
-            ChannelReading::Whole | ChannelReading::Released => Reader::Outsider,
+        match self.reading {
+            Reading::Whole if took_part => Reader::Participant(reader),
+            _ => Reader::Outsider,
         }
     }
 
@@ -340,14 +337,15 @@ impl ChannelView {
         ViewError::failed(error, format!("reading the history of channel {}", self.channel.id))
     }
 
-    /// Whether the viewer may read `item` of the history: every one if it
-    /// reads the channel as a whole; else the messages released, and nothing
-    /// of how turns ended - that would tell of work in the channel whose
-    /// messages are not released (issue 258).
-    fn may_read_item(&self, item: &HistoryEntry) -> bool {
-        match self.readable {
-            ChannelReading::Whole => true,
-            ChannelReading::Released => item.said().is_some_and(|message| self.may_read_entry(&message.classification)),
+    /// The items of the history the viewer may read that meet `filter`, as
+    /// one condition for the store (issue 421): every item if they read the
+    /// channel as a whole; else the messages released, and nothing of how
+    /// turns ended - that would tell of work in the channel whose messages
+    /// are not released (issue 258).
+    fn readable_items(&self, filter: Option<Filter<HistoryField>>) -> Option<Filter<HistoryField>> {
+        match (Filter::readable(&self.reading, self.views().confidentiality().compartments()), filter) {
+            (Some(readable), Some(filter)) => Some(Filter::all_of([readable, filter])),
+            (readable, filter) => readable.or(filter),
         }
     }
 
@@ -366,7 +364,7 @@ impl ChannelView {
                 published.push(notes);
             }
         }
-        if self.readable == ChannelReading::Released && published.iter().all(|p| p.notes.is_empty()) {
+        if self.reading != Reading::Whole && published.iter().all(|p| p.notes.is_empty()) {
             return Err(self.nothing_released());
         }
         Ok(published)
@@ -398,7 +396,7 @@ impl ChannelView {
     fn shows_approvals(&self) -> bool {
         let viewer = self.views().viewer().context().caller_id;
         let takes_part = self.channel.participants.iter().any(|p| matches!(p, Participant::User(_)) && p.actor_id() == viewer);
-        takes_part && self.readable == ChannelReading::Whole
+        takes_part && self.reading == Reading::Whole
     }
 
     /// The channel as the viewer sees it at this moment (issue 80), with
@@ -461,14 +459,15 @@ impl ChannelView {
         })?;
         let read_up_to = state.read.map(|read| read.message);
         let from = state.unread_from();
-        let new = |item: &HistoryEntry| self.may_read_item(item) && item.said().is_some_and(|message| message.sender_id != viewer && message.is_heard());
-        let mentioning = |item: &HistoryEntry| new(item) && item.said().is_some_and(|message| message.mentions.contains(&viewer));
+        let new = || Filter::all_of([Filter::heard(), Filter::negated(Filter::said_by(viewer))]);
+        let (new, mentioning) = (self.readable_items(Some(new())), self.readable_items(Some(Filter::all_of([new(), Filter::mentioning(viewer)]))));
         let key = self.channel.id;
         let reader = Reader::Participant(viewer);
-        let counted = self.views().histories().page(key, &reader, from, None, Unread::CAP, &new).await.map_err(|e| self.failed_reading(e))?;
+        let counted = self.views().histories().page(key, &reader, from, None, Unread::CAP, new.as_ref()).await.map_err(|e| self.failed_reading(e))?;
         // A mention among those not counted is looked for on its own.
-        let mentioned = counted.entries().any(mentioning) || (counted.items.len() == Unread::CAP
-            && !self.views().histories().page(key, &reader, from, None, 1, &mentioning).await.map_err(|e| self.failed_reading(e))?.items.is_empty());
+        let mentions_viewer = |item: &HistoryEntry| item.said().is_some_and(|message| message.mentions.contains(&viewer));
+        let mentioned = counted.entries().any(mentions_viewer) || (counted.items.len() == Unread::CAP
+            && !self.views().histories().page(key, &reader, from, None, 1, mentioning.as_ref()).await.map_err(|e| self.failed_reading(e))?.items.is_empty());
         Ok(Some(Unread { messages: counted.items.len(), mentioned, read_up_to }))
     }
 }
@@ -780,7 +779,7 @@ impl ParticipantView {
     /// `Failed` if its state cannot be read.
     pub async fn context(&self) -> ViewResult<AgentContextView> {
         let agent = self.readable_agent().await?;
-        if self.channel.readable == ChannelReading::Released {
+        if self.channel.reading != Reading::Whole {
             let attributes = self.state.attributes().ok_or(ViewError::NoContext { actor: self.id() })?;
             return Err(ViewError::Forbidden { actor: self.id(), refused: ActionType::ReadAgentContext(attributes).refused() });
         }
@@ -883,7 +882,7 @@ impl ParticipantView {
 impl ChannelView {
     /// Of `notes`, those the viewer may read (`may_read_entry`).
     fn released(&self, notes: Vec<Note>) -> Vec<Note> {
-        if self.readable == ChannelReading::Whole {
+        if self.reading == Reading::Whole {
             return notes;
         }
         notes.into_iter().filter(|note| self.may_read_entry(&note.classification)).collect()

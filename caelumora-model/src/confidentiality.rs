@@ -20,6 +20,7 @@ use crate::privacy::SessionPrivacy;
 use crate::role::{RoleId, Roles};
 use crate::security::{ActionType, SecurityContext, AccessPolicy};
 use crate::session::ChannelId;
+use crate::store::query::FieldValue;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -35,6 +36,18 @@ pub enum Confidentiality {
     Internal,
     Confidential,
     StrictlyConfidential,
+}
+
+impl Confidentiality {
+    /// Every level, from the lowest to the highest.
+    pub const LEVELS: [Confidentiality; 4] = [Confidentiality::Public, Confidentiality::Internal, Confidentiality::Confidential, Confidentiality::StrictlyConfidential];
+}
+
+/// A level as a query compares it: as serde writes it, `"internal"`.
+impl From<Confidentiality> for FieldValue {
+    fn from(level: Confidentiality) -> Self {
+        FieldValue::Text(level.to_string())
+    }
 }
 
 impl fmt::Display for Confidentiality {
@@ -61,6 +74,13 @@ impl Compartment {
 
     pub fn name(&self) -> &str {
         &self.0
+    }
+}
+
+/// A compartment as a query compares it: its name.
+impl From<&Compartment> for FieldValue {
+    fn from(compartment: &Compartment) -> Self {
+        FieldValue::Text(compartment.0.clone())
     }
 }
 
@@ -369,6 +389,12 @@ impl Compartments {
         reader == source || self.reads.get(reader).is_some_and(|readable| readable.contains(source))
     }
 
+    /// The compartments whose audience `reader`'s may read (`may_read`):
+    /// itself, and those it reads.
+    pub fn readable_by<'a>(&'a self, reader: &'a Compartment) -> impl Iterator<Item = &'a Compartment> {
+        std::iter::once(reader).chain(self.reads.get(reader).into_iter().flatten().filter(move |source| *source != reader))
+    }
+
     /// Nothing if every compartment of `classification` is configured.
     pub fn check(&self, classification: &Classification) -> Result<(), ClassificationError> {
         match classification.compartments.iter().find(|c| !self.reads.contains_key(*c)) {
@@ -425,7 +451,7 @@ impl Clearances {
     }
 }
 
-/// One side of a copy (`ConfidentialityPolicy::may_copy`): a channel, the
+/// One side of a copy (`ConfidentialityQuestions::may_copy_information`): a channel, the
 /// classification of what is read there or of the channel that reads, and
 /// the session it belongs to as privacy sees it (issue 134). Whether two
 /// places are one channel, or in one session, is told by their ids.
@@ -434,6 +460,34 @@ pub struct Place {
     pub channel: ChannelId,
     pub classification: Classification,
     pub session: SessionPrivacy,
+}
+
+/// How far a reader reads what lies at a place (issues 133, 421): the whole,
+/// what was released to it - each entry classified so that it flows into a
+/// classification, the reader's -, or nothing. A reader's relation to a
+/// channel: the bound is the reader's, the channel decides whether it holds
+/// at all (its session's consent) or is not needed (it flows whole). Asked
+/// of a `ConfidentialityPolicy` as what of a channel may be copied into a
+/// place, once; data rather than a decision for each entry, so that a store
+/// reads only what may be read (`HistoryField`). How far, not who reads -
+/// that is `history::Reader`, whom a store gives which entries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reading {
+    Whole,
+    Released(Classification),
+    Nothing,
+}
+
+impl Reading {
+    /// Whether the reader reads what is classified `classification`, with
+    /// the configured `compartments`.
+    pub fn admits(&self, classification: &Classification, compartments: &Compartments) -> bool {
+        match self {
+            Reading::Whole => true,
+            Reading::Released(into) => classification.flows_to(into, compartments),
+            Reading::Nothing => false,
+        }
+    }
 }
 
 /// The flow decisions (issues 133, 304): whether information may go where
@@ -449,9 +503,12 @@ pub trait ConfidentialityPolicy: fmt::Debug + Send + Sync {
     /// history, an agent's context, a storage that keeps it.
     fn may_publish(&self, context: &SecurityContext, classification: &Classification, into: &Classification) -> bool;
 
-    /// Whether what lies at `from` may be copied, in `context`, to `into`,
-    /// where an agent reads it (issues 17, 134, 264).
-    fn may_copy(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool;
+    /// What of the channel `channel`, in a session with the privacy
+    /// `session`, may be copied, in `context`, to `into`, where an agent
+    /// reads it (issues 17, 134, 264): not a decision for each
+    /// classification, but which classifications - data, so that a store
+    /// reads only what may be copied (issue 421).
+    fn copyable(&self, context: &SecurityContext, channel: ChannelId, session: &SessionPrivacy, into: &Place) -> Reading;
 
     /// Whether `participant`, by `roles`, is cleared for what is classified
     /// `classification` - asked in `context`, which may be another's: whoever
@@ -473,8 +530,13 @@ pub trait ConfidentialityPolicy: fmt::Debug + Send + Sync {
 /// for an act, answering a refusal with the act's own error and logging it
 /// alike (issue 304).
 pub trait ConfidentialityQuestions {
-    /// Whether what is at `from` may be copied to `into` in `context`: a
-    /// channel into itself always, without asking.
+    /// What of the channel `channel`, in a session with the privacy
+    /// `session`, may be copied to `into` in `context`: of a channel into
+    /// itself the whole, without asking.
+    fn copyable_information(&self, context: &SecurityContext, channel: ChannelId, session: &SessionPrivacy, into: &Place) -> Reading;
+
+    /// Whether what is at `from` may be copied to `into` in `context`
+    /// (`copyable_information`).
     fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool;
 
     /// Whether `context` is cleared for `classification` by the roles of its
@@ -516,8 +578,15 @@ pub trait ConfidentialityQuestions {
 }
 
 impl<T: ConfidentialityPolicy + ?Sized> ConfidentialityQuestions for T {
+    fn copyable_information(&self, context: &SecurityContext, channel: ChannelId, session: &SessionPrivacy, into: &Place) -> Reading {
+        match channel == into.channel {
+            true => Reading::Whole,
+            false => self.copyable(context, channel, session, into),
+        }
+    }
+
     fn may_copy_information(&self, context: &SecurityContext, from: &Place, into: &Place) -> bool {
-        from.channel == into.channel || self.may_copy(context, from, into)
+        self.copyable_information(context, from.channel, &from.session, into).admits(&from.classification, self.compartments())
     }
 
     fn cleared_for(&self, context: &SecurityContext, classification: &Classification) -> bool {
@@ -606,16 +675,18 @@ impl ConfidentialityPolicy for ConfidentialityRules {
         self.compartments.check(classification).is_ok() && classification.flows_to(into, &self.compartments)
     }
 
-    /// A channel into itself always; within a session as the
-    /// classifications decide; beyond it only where the session of `from`
-    /// permits it as well (issue 134) - whatever the classification,
-    /// `public` included.
-    fn may_copy(&self, _context: &SecurityContext, from: &Place, into: &Place) -> bool {
-        if from.channel == into.channel {
-            return true;
+    /// A channel into itself the whole; within a session what flows into
+    /// `into`; beyond it only where the session of the channel permits it
+    /// as well (issue 134), and nothing otherwise - whatever the
+    /// classification, `public` included.
+    fn copyable(&self, _context: &SecurityContext, channel: ChannelId, session: &SessionPrivacy, into: &Place) -> Reading {
+        if channel == into.channel {
+            return Reading::Whole;
         }
-        let consented = from.session.id == into.session.id || from.session.permits(&into.session);
-        consented && from.classification.flows_to(&into.classification, &self.compartments)
+        match session.id == into.session.id || session.permits(&into.session) {
+            true => Reading::Released(into.classification.clone()),
+            false => Reading::Nothing,
+        }
     }
 
     /// By the clearances the configured roles grant. Without roles
@@ -658,6 +729,18 @@ impl Visibility {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::query::meets_exactly_its_equals;
+
+    #[test]
+    fn a_level_and_a_compartment_meet_exactly_their_serialized_forms() {
+        meets_exactly_its_equals(&Confidentiality::LEVELS);
+        let samples = [Compartment::new("hr"), Compartment::new("finance")];
+        for compartment in &samples {
+            for other in &samples {
+                assert_eq!(FieldValue::from(compartment).matches(&serde_json::to_value(other).unwrap()), compartment == other);
+            }
+        }
+    }
     use crate::agent::AgentId;
     use crate::user::UserId;
     use crate::tool::{ToolCall, ToolCallResult};
@@ -917,8 +1000,8 @@ mod tests {
         let (rules, session) = (ConfidentialityRules::default(), SessionId::new());
         let (team, secret) = (place(session, Internal, &[]), place(session, Confidential, &[]));
         for reader in [someone(), someone()] {
-            assert!(rules.may_copy(&reader, &team, &secret));
-            assert!(!rules.may_copy(&reader, &secret, &team));
+            assert!(rules.may_copy_information(&reader, &team, &secret));
+            assert!(!rules.may_copy_information(&reader, &secret, &team));
         }
     }
 
@@ -926,10 +1009,10 @@ mod tests {
     fn reading_a_channel_follows_the_flow_rule_with_the_configured_compartments() {
         let (rules, session, alice) = (hr_reads_finance(), SessionId::new(), someone());
         let (hr, finance, general) = (place(session, Internal, &["hr"]), place(session, Internal, &["finance"]), place(session, Internal, &[]));
-        assert!(rules.may_copy(&alice, &finance, &hr), "HR reads finance");
-        assert!(!rules.may_copy(&alice, &hr, &finance), "not the other way round");
-        assert!(!rules.may_copy(&alice, &hr, &general), "nor a general channel");
-        assert!(rules.may_copy(&alice, &general, &hr), "what is general flows anywhere");
+        assert!(rules.may_copy_information(&alice, &finance, &hr), "HR reads finance");
+        assert!(!rules.may_copy_information(&alice, &hr, &finance), "not the other way round");
+        assert!(!rules.may_copy_information(&alice, &hr, &general), "nor a general channel");
+        assert!(rules.may_copy_information(&alice, &general, &hr), "what is general flows anywhere");
     }
 
     #[test]
@@ -946,22 +1029,22 @@ mod tests {
         let reader = in_session(hers(PrivacyConfig::Private, &[]), Internal, &[]);
         let elsewhere = |policy, level| in_session(hers(policy, &[bob]), level, &[]);
         let agent = SecurityContext::new(ActorId::Agent(AgentId::new()), Default::default(), Default::default());
-        assert!(!rules.may_copy(&agent, &elsewhere(PrivacyConfig::Private, Internal), &reader), "a private session is read by no other");
-        assert!(!rules.may_copy(&agent, &elsewhere(PrivacyConfig::Private, Public), &reader), "not even what is public");
-        assert!(rules.may_copy(&agent, &elsewhere(PrivacyConfig::SameOwner, Internal), &reader), "her other sessions, where she lets them");
-        assert!(rules.may_copy(&agent, &elsewhere(PrivacyConfig::SharedAudience, Internal), &reader), "she took part there");
-        assert!(!rules.may_copy(&agent, &elsewhere(PrivacyConfig::SameOwner, Confidential), &reader), "and still only what flows into the reader");
+        assert!(!rules.may_copy_information(&agent, &elsewhere(PrivacyConfig::Private, Internal), &reader), "a private session is read by no other");
+        assert!(!rules.may_copy_information(&agent, &elsewhere(PrivacyConfig::Private, Public), &reader), "not even what is public");
+        assert!(rules.may_copy_information(&agent, &elsewhere(PrivacyConfig::SameOwner, Internal), &reader), "her other sessions, where she lets them");
+        assert!(rules.may_copy_information(&agent, &elsewhere(PrivacyConfig::SharedAudience, Internal), &reader), "she took part there");
+        assert!(!rules.may_copy_information(&agent, &elsewhere(PrivacyConfig::SameOwner, Confidential), &reader), "and still only what flows into the reader");
     }
 
     #[test]
     fn what_is_released_below_its_channel_is_read_where_the_channel_is_not() {
         let (rules, session, alice) = (hr_reads_finance(), SessionId::new(), someone());
         let (hr, finance) = (place(session, Confidential, &["hr"]), place(session, Confidential, &["finance"]));
-        assert!(!rules.may_copy(&alice, &hr, &finance), "finance does not read HR");
+        assert!(!rules.may_copy_information(&alice, &hr, &finance), "finance does not read HR");
         let released = Place { classification: classified(Confidential, &["hr", "finance"]), ..hr.clone() };
-        assert!(rules.may_copy(&alice, &released, &finance), "but what HR released to it");
+        assert!(rules.may_copy_information(&alice, &released, &finance), "but what HR released to it");
         let elsewhere = place(SessionId::new(), Confidential, &["finance"]);
-        assert!(!rules.may_copy(&alice, &released, &elsewhere), "not from another session");
+        assert!(!rules.may_copy_information(&alice, &released, &elsewhere), "not from another session");
     }
 
     #[test]
@@ -983,7 +1066,7 @@ mod tests {
         struct DenyAll(Compartments);
         impl ConfidentialityPolicy for DenyAll {
             fn may_publish(&self, _: &SecurityContext, _: &Classification, _: &Classification) -> bool { false }
-            fn may_copy(&self, _: &SecurityContext, _: &Place, _: &Place) -> bool { false }
+            fn copyable(&self, _: &SecurityContext, _: ChannelId, _: &SessionPrivacy, _: &Place) -> Reading { Reading::Nothing }
             fn cleared(&self, _: &SecurityContext, _: ActorId, _: &[RoleId], _: &Classification) -> bool { false }
             fn compartments(&self) -> &Compartments { &self.0 }
             fn roles(&self) -> Option<&Roles> { None }
