@@ -9,6 +9,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::{Channel, ChannelField, Participant};
 use caelumora_model::value::language::Language;
+use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
@@ -113,6 +114,11 @@ impl SessionView {
     /// own (issue 425), if any.
     pub fn language(&self) -> Option<&Language> {
         self.session.language.as_ref()
+    }
+
+    /// The time zone the session is held in (issue 424), `None` for UTC.
+    pub fn time_zone(&self) -> Option<TimeZone> {
+        self.session.time_zone
     }
 
     /// The session as privacy sees it now (issue 134).
@@ -417,6 +423,7 @@ impl SessionView {
             summary: self.session.summary.clone(),
             briefing: self.session.briefing.clone().filter(|_| detail.contains(Detail::BRIEFING)),
             language: self.session.language.clone(),
+            time_zone: self.session.time_zone,
             privacy: self.session.privacy,
             approval_rules: self.session.approval_rules.clone(),
             can_change: self.may_change().await,

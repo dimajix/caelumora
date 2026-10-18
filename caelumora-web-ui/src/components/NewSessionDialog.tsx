@@ -3,7 +3,8 @@
 // the session alone, in a storage the user chooses and classified as they say. Everything is preset,
 // so that opening the dialog and pressing Enter makes a session as the template has it. It is held
 // in the language its template names, else in the one the user prefers (issues 331, 425): the server
-// holds it in none unless asked, and its channels without a language of their own follow it.
+// holds it in none unless asked, and its channels without a language of their own follow it. Its time
+// zone is the template's, else the browser's (issue 424); the server holds it in UTC unless asked.
 
 import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
@@ -18,6 +19,8 @@ import {ClassificationFields} from './ClassificationFields';
 import {ShareSelect, type Share} from './ShareSelect';
 import {LanguageField} from './LanguageField';
 import {languageLabel} from '../language';
+import {TimeZoneField} from './TimeZoneField';
+import {browserTimeZone} from '../timeZone';
 
 /** What the workspace select offers besides the user's workspaces, which it names by their id. */
 const AS_TEMPLATE = 'template';
@@ -48,6 +51,8 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
   const [preferredLanguage, setPreferredLanguage] = useState<string | null>(null);
   // `null` while the user has not changed the language, which then follows the template.
   const [language, setLanguage] = useState<string | null>(null);
+  // `null` while the user has not changed the time zone, which then follows the template.
+  const [timeZone, setTimeZone] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -73,6 +78,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
   const template = templates?.find(t => t.id === templateId) ?? templates?.[0];
   const sessionName = name ?? (template ? `New ${template.name}` : '');
   const sessionLanguage = language ?? template?.language ?? preferredLanguage ?? '';
+  const sessionTimeZone = timeZone ?? template?.time_zone ?? browserTimeZone() ?? '';
   // Only one's own is attached; one made for another session is used there alone.
   const offered = workspaces.filter(w => w.can_change && w.scope !== 'session');
   const fallback = template?.workspace ? AS_TEMPLATE : NONE;
@@ -99,7 +105,13 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
     setIsCreating(true);
     setProblem(null);
     try {
-      const session = await api.createSession(template.id, sessionName.trim(), sessionLanguage.trim() || undefined, workspaceRequest());
+      const session = await api.createSession({
+        template_id: template.id,
+        name: sessionName.trim(),
+        language: sessionLanguage.trim() || undefined,
+        time_zone: sessionTimeZone.trim() || undefined,
+        workspace: workspaceRequest(),
+      });
       saveLastTemplate(template.id);
       onCreated(session);
     } catch (error) {
@@ -180,6 +192,13 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
             onChange={setLanguage}
             empty={template?.language ? `As the template says: ${languageLabel(template.language)}` : 'None'}
             hint="the agents of its channels are told to write in it, unless a channel has a language of its own."
+          />
+
+          <TimeZoneField
+            value={sessionTimeZone}
+            onChange={setTimeZone}
+            empty={template?.time_zone ? `As the template says: ${template.time_zone}` : 'UTC'}
+            hint="its agents are given the times of messages in it."
           />
 
           <label className="block space-y-1">

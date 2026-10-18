@@ -77,6 +77,7 @@ impl AgentBody {
             answering.security_context.clone(),
             classification,
             self.profile,
+            self.runtime.session_time_zone(),
             kept,
         );
         let Some(mut turn) = self.turn(state) else {

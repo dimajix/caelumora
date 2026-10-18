@@ -23,7 +23,7 @@ use self::translation::{wire_message, Translation, ACCEPTED_OUTPUT_MODES};
 use self::wire::{method, SendConfiguration, SendMessageParams, StreamResponse, TaskParams, WireTask, TASK_NOT_CANCELABLE};
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{ModelProfile, SenderFormat, SenderStyle};
+use caelumora_model::context::{message_times_by_default, ModelProfile, SenderFormat, SenderStyle};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
@@ -69,6 +69,10 @@ struct A2aAgentConfig {
     sender_format: SenderFormat,
     #[serde(default)]
     sender_style: SenderStyle,
+    /// Whether the marker says when a message was written too, in the
+    /// session's time zone (issue 424) - unless told otherwise.
+    #[serde(default = "message_times_by_default")]
+    message_times: bool,
 }
 
 impl A2aAgentConfig {
@@ -96,7 +100,7 @@ impl A2aAgentComponent {
         if let Err(e) = client.streaming(security).await {
             warn!("A2A agent component '{}' cannot read its agent card yet: {}", id, e);
         }
-        let profile = ModelProfile { sender_format: config.sender_format, sender_style: config.sender_style, ..ModelProfile::default() };
+        let profile = ModelProfile { sender_format: config.sender_format, sender_style: config.sender_style, message_times: config.message_times, ..ModelProfile::default() };
         Ok(Self { client: Arc::new(client), classification: config.classification, profile })
     }
 
@@ -347,8 +351,9 @@ mod tests {
         let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": "https://hermes.example/" } })).unwrap();
         assert_eq!(config.timeout(), Duration::from_secs(30));
         assert_eq!((config.sender_format, config.sender_style), (SenderFormat::Prefix, SenderStyle::Handle), "told who said what (issue 135)");
-        let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": "x" }, "sender_format": "none", "sender_style": "name" })).unwrap();
-        assert_eq!((config.sender_format, config.sender_style), (SenderFormat::None, SenderStyle::Name));
+        assert!(config.message_times, "and when (issue 424)");
+        let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": "x" }, "sender_format": "none", "sender_style": "name", "message_times": false })).unwrap();
+        assert_eq!((config.sender_format, config.sender_style, config.message_times), (SenderFormat::None, SenderStyle::Name, false));
         assert!(serde_json::from_value::<A2aAgentConfig>(json!({ "endpoint": { "url": "x" }, "roles": [] })).is_err(), "nothing unknown");
         assert!(serde_json::from_value::<A2aAgentConfig>(json!({ "endpoint": { "url": "x", "timeout": 3 } })).is_err(), "nothing unknown in the endpoint");
     }

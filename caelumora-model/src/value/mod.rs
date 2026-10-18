@@ -2,8 +2,9 @@
 //! rules allow has a type of its own, made only through its constructor and
 //! checked again when it is read - so that it cannot hold anything else,
 //! wherever it comes from. One file per subject: `name` (`Name`,
-//! `ScopedName`), `language` (`Language`), `text` (`Text<R>`, free text
-//! with a rule: `Summary`, `Briefing`, `Introduction`, `Description`).
+//! `ScopedName`), `language` (`Language`), `time_zone` (`TimeZone`), `text`
+//! (`Text<R>`, free text with a rule: `Summary`, `Briefing`,
+//! `Introduction`, `Description`).
 //!
 //! What they share is here: one error, `ValueError`, naming the field, and
 //! `impl_value!`, which gives every such type the same API next to its own
@@ -109,3 +110,4 @@ macro_rules! impl_value {
 pub mod language;
 pub mod name;
 pub mod text;
+pub mod time_zone;

@@ -68,7 +68,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [55](55-notes-by-reflection.md) | open | medium | feature | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |
 | [57](57-prompt-catalogue.md) | open | medium | question | The prompts the runtime gives models are English constants spread through the code, in one variant for every language and model. |
 | [166](166-memory-as-topic-documents.md) | open | medium | feature | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
-| [424](424-time-in-the-prompt.md) | open | medium | feature | A model is given the messages of its channel without when they were said and is never told the current date and time, so it cannot tell a message of a minute ago from one of last week, answers questions about today from its training cutoff, and a session has no time zone that times could be given in. |
 
 ## Maintenance
 

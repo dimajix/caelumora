@@ -339,7 +339,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [410](410-roster-changes-told-twice.md) | done | An external agent whose roster is told `changes_only` learns of a join or a leave twice - from the roster's "Since you were last told who is here" and from the channel's notice in what it is given - and the two can disagree. |
 | [412](412-plan-budget.md) | done | A plan is carried out within one turn, and a turn may ask its model 25 times at most, so a plan of nine steps has fewer than three calls per step - too few for a step that writes a file, finds its mistake and writes it again - and a plan that runs out ends unfinished. |
 | [413](413-compaction-restores-unused-skills.md) | open | After a compaction, the `skills` component gives the agent again every skill loaded in the part that was summarised, whether the work still needs it or not, so a context just made smaller is filled with instructions from an earlier task. |
-| [424](424-time-in-the-prompt.md) | open | A model is given the messages of its channel without when they were said and is never told the current date and time, so it cannot tell a message of a minute ago from one of last week, answers questions about today from its training cutoff, and a session has no time zone that times could be given in. |
+| [424](424-time-in-the-prompt.md) | done | A model is given the messages of its channel without when they were said and is never told the current date and time, so it cannot tell a message of a minute ago from one of last week, answers questions about today from its training cutoff, and a session has no time zone that times could be given in. |
 
 ## Maintenance
 

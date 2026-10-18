@@ -3,6 +3,7 @@
 use crate::scope::ScopeKind;
 use caelumora_model::template::{ScopeTemplate, SessionTemplate, SessionTemplateId};
 use caelumora_model::value::language::Language;
+use caelumora_model::value::time_zone::TimeZone;
 use serde::Serialize;
 
 /// A session template, as a client offers it for a new session - its id,
@@ -16,6 +17,9 @@ pub struct TemplateResponse {
     /// The language its sessions are held in unless another is asked for
     /// (issue 425); `null` for none in particular.
     pub language: Option<Language>,
+    /// The time zone its sessions are held in unless another is asked for
+    /// (issue 424); `null` for none - a client then offers its user's.
+    pub time_zone: Option<TimeZone>,
     /// The workspace its sessions have unless another is chosen (issue
     /// 266); absent if it names none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -43,6 +47,6 @@ impl From<&SessionTemplate> for TemplateResponse {
             };
             Some(TemplateWorkspaceResponse { name: w.name.to_string(), scope, storage: w.storage.clone() })
         });
-        Self { id: template.id, name: template.name.to_string(), description: template.description.as_ref().map(ToString::to_string).unwrap_or_default(), language: template.language.clone(), workspace }
+        Self { id: template.id, name: template.name.to_string(), description: template.description.as_ref().map(ToString::to_string).unwrap_or_default(), language: template.language.clone(), time_zone: template.time_zone, workspace }
     }
 }

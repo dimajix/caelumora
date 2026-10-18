@@ -25,7 +25,8 @@
 # it. A component of an included one must not be written again beside it.
 
 components:
-# Who is in the channel, which language it speaks and what it is about.
+# Who is in the channel, which language it speaks, what it is about and
+# what time it is.
 - id: channel-context
   components:
   - id: channel-participants
@@ -36,6 +37,9 @@ components:
     fail_policy: FailClosed
   - id: channel-briefing
     kind: channel_briefing_prompt_provider
+    fail_policy: FailClosed
+  - id: current-time
+    kind: current_time_prompt_provider
     fail_policy: FailClosed
 # What every agent run here needs to take part in a channel.
 - id: agent-basics

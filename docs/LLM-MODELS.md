@@ -28,6 +28,7 @@ component_defaults:
 |---|---|---|
 | `sender_format` | `xml` | Attributes every message right (6 of 6 probes, 30 answers); with `prefix` it reads "@carol: ... Alice, what's our budget?" as Alice asking, every time, and a sixth of its answers begin with a marker of their own (`RESULTS.md`, findings 19-20) |
 | `sender_style` | `handle` | No difference to attribution; the model addresses senders as the roster names them (`@carol`) |
+| `message_times` | `true` (default) | With the times it dates what was said right - a review "tomorrow" three days ago is the 13th, not tomorrow - in English and in German channels alike; without them it takes every message for one of now. No answer wrote a time of its own (`work/message_times/RESULTS.md`, findings 1, 2, 7) |
 | `context_size` | as much as the machine holds, e.g. `65536` | The model was trained for 262144 tokens; unless told, Ollama loads it with its own default, which may be far fewer, and cuts a longer prompt off without saying so. Set, the gauge in the web UI knows the size |
 | `think` | left out | Ollama's default for the model; not measured |
 | `reasoning_history` | `current_turn` (default) | What reasoning models document; not measured for gemma4 |
@@ -60,6 +61,17 @@ Every model needs the format explained, which the roster part does
 answers. Whatever the format, a marker is a claim: a participant can write another's into their own
 message, and the models measured believe it (findings 8 and 12-18). Nothing with
 consequences may rest on whom the model believes said something.
+
+## Telling when something was said
+
+Measured on 2026-10-18 for gemma4:26b alone (`work/message_times/RESULTS.md`): with the times on
+the messages of others, the model answers questions that need them - whether something is past, how
+long ago something began, on which day something was said - where without them it cannot; the
+weekday is surer in the written form than in a numeric one, and an English form does not pull the
+answers of a German channel into English. Times on the agent's own messages make it begin about
+half of its answers with a time of its own, made up - which is why they never carry one. Other
+models are not measured; `message_times: false` turns the times off for one that handles them
+badly.
 
 ## External agents
 

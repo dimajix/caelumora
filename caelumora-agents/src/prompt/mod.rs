@@ -9,6 +9,7 @@
 pub mod channel_briefing_prompt_provider;
 pub mod channel_language_prompt_provider;
 pub mod channel_participants_prompt_provider;
+pub mod current_time_prompt_provider;
 pub mod external_context_provider;
 pub mod static_system_prompt_provider;
 pub mod tool_sets_prompt_provider;
@@ -49,8 +50,17 @@ impl PromptPosition {
     /// `ComponentError::InvalidConfig` if it is neither `start` nor
     /// `before_turn_input`.
     pub fn of_params(params: &Value) -> Result<Self, ComponentError> {
+        Self::of_params_or(params, Self::default())
+    }
+
+    /// The parameter `position` of `params`, `default` if it has none - for
+    /// a provider whose part does not belong at the start.
+    ///
+    /// # Errors
+    /// As `of_params`.
+    pub fn of_params_or(params: &Value, default: Self) -> Result<Self, ComponentError> {
         match params.get("position") {
-            None => Ok(Self::default()),
+            None => Ok(default),
             Some(value) => serde_json::from_value(value.clone())
                 .map_err(|_| ComponentError::InvalidConfig("parameter 'position' must be \"start\" or \"before_turn_input\"".to_string())),
         }
@@ -229,6 +239,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     channel_briefing_prompt_provider::register(registry);
     channel_language_prompt_provider::register(registry);
     channel_participants_prompt_provider::register(registry);
+    current_time_prompt_provider::register(registry);
     external_context_provider::register(registry);
     static_system_prompt_provider::register(registry);
     tool_sets_prompt_provider::register(registry);

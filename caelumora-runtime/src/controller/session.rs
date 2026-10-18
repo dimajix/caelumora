@@ -61,6 +61,17 @@ impl SessionController {
         self.update(ctx, SessionUpdateEvent::LanguageChanged(language.map(String::from))).await
     }
 
+    /// Has the session held in the time zone `time_zone` - or in UTC - on
+    /// behalf of `ctx` (`UpdateSession`, issue 424), as [`Self::update`]
+    /// does.
+    ///
+    /// # Errors
+    /// `StoreError::Invalid` if `time_zone` is no time zone, otherwise see
+    /// [`Self::update`].
+    pub async fn update_time_zone(&self, ctx: &SecurityContext, time_zone: Option<&str>) -> StoreResult<()> {
+        self.update(ctx, SessionUpdateEvent::TimeZoneChanged(time_zone.map(String::from))).await
+    }
+
     /// Changes the session's privacy policy on behalf of `ctx` (issue 134),
     /// as [`Self::update`] does.
     ///
@@ -196,7 +207,7 @@ mod tests {
 
     fn session() -> Session {
         Session {
-            summary: None, briefing: None, language: None,
+            summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
             commands: Default::default(),

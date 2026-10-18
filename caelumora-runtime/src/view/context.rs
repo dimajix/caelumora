@@ -215,7 +215,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let question = Message { id: MessageId::new(), role: MessageRole::User, content: Some("question".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         state.perceive(vec![question.clone()]);
-        state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, Default::default());
+        state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, Default::default(), Default::default());
         let step = Message { id: MessageId::new(), sender_id: actor, role: MessageRole::Assistant, content: Some("thinking".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let sent = state.said(step.clone());
         // Its channel's history, as it records what was said (issue 417).
@@ -244,7 +244,7 @@ mod tests {
         history.push(question.clone());
         let answer = produced("answer");
         let before = state.transcript.push(answer.clone());
-        history.push(Message { produced_from: Some(ContextRef { transcript: before, prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default() }), ..answer.clone() });
+        history.push(Message { produced_from: Some(ContextRef { transcript: before, prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default(), time_zone: Default::default() }), ..answer.clone() });
         let view = AgentContextView::of_state(actor, state.clone(), history.clone()).await;
 
         let seen = view.context_of(answer.id).await.expect("the agent produced it");
@@ -280,14 +280,14 @@ mod tests {
         let system = PromptRef { text: prompt("system"), role: MessageRole::System, after: None, classification: Some(confidential.clone()) };
         state.prompts.keep(system.text, || "system".to_string());
         let told = produced("told");
-        history.push(Message { produced_from: Some(ContextRef { transcript: before, prompts: vec![system], tools: None, knowledge: Vec::new(), profile: Default::default() }), ..told.clone() });
+        history.push(Message { produced_from: Some(ContextRef { transcript: before, prompts: vec![system], tools: None, knowledge: Vec::new(), profile: Default::default(), time_zone: Default::default() }), ..told.clone() });
         let seen = AgentContextView::of_state(actor, state.clone(), history.clone()).await.context_of(told.id).await.expect("resolved");
         assert!(matches!(&seen.items[0], ContextItem::Prompt { classification: Some(c), .. } if *c == confidential));
 
         // A reference to a prompt that was never kept cannot be resolved.
         let lost = produced("lost");
         let gone = PromptRef { text: prompt("gone"), role: MessageRole::System, after: None, classification: None };
-        history.push(Message { produced_from: Some(ContextRef { transcript: before, prompts: vec![gone], tools: None, knowledge: Vec::new(), profile: Default::default() }), ..lost.clone() });
+        history.push(Message { produced_from: Some(ContextRef { transcript: before, prompts: vec![gone], tools: None, knowledge: Vec::new(), profile: Default::default(), time_zone: Default::default() }), ..lost.clone() });
         let view = AgentContextView::of_state(actor, state, history).await;
         assert!(matches!(view.context_of(lost.id).await, Err(AgentContextError::Unavailable { .. })));
     }

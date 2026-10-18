@@ -22,7 +22,7 @@ pub async fn create_session(
 ) -> Result<Json<SessionResponse>, ApiError> {
     // The logged-in user owns the session and is its template's "user".
     let template_id = SessionTemplateId(payload.template_id);
-    let session_loop = state.session_manager.create_from_template(&user.security_context(), template_id, payload.name.as_deref(), payload.language.as_deref(), payload.workspace.map(Into::into)).await?;
+    let session_loop = state.session_manager.create_from_template(&user.security_context(), template_id, payload.name.as_deref(), payload.language.as_deref(), payload.time_zone.as_deref(), payload.workspace.map(Into::into)).await?;
 
     Ok(Json(SessionResponse::from(&**session_loop.session())))
 }
@@ -130,6 +130,25 @@ pub async fn set_session_language(
     let session_loop = ensure_session(&state, &user, session_id).await?;
 
     session_loop.update_language(&user.security_context(), language.as_deref()).await?;
+
+    Ok(Json(session_view(&state, &user, session_id).await?))
+}
+
+/// Has session `id` held in the time zone the body names - an IANA name
+/// such as `"Europe/Berlin"` - or in UTC (`null`, issue 424): whoever may
+/// change the session. Its agents' models are given the times of messages
+/// in it from their next turn on. Answers with the session as the user sees
+/// it now.
+pub async fn set_session_time_zone(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+    Json(time_zone): Json<Option<String>>,
+) -> Result<Json<SessionSnapshot>, ApiError> {
+    let session_id = SessionId(id);
+    let session_loop = ensure_session(&state, &user, session_id).await?;
+
+    session_loop.update_time_zone(&user.security_context(), time_zone.as_deref()).await?;
 
     Ok(Json(session_view(&state, &user, session_id).await?))
 }

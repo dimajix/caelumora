@@ -131,7 +131,7 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| tools.len()), Ok(2), "all of them, wherever");
 
     let mut agent_channel_state = AgentChannelState::default();
-    agent_channel_state.begin_turn(Default::default(), Default::default(), Default::default(), Default::default());
+    agent_channel_state.begin_turn(Default::default(), Default::default(), Default::default(), Default::default(), Default::default());
     let states = AgentStates::new(Arc::new(MemoryStore::new()), Arc::new(()));
     let agent_id = AgentId::default();
     let agent_state = states.get(agent_id, Default::default()).await.expect("the state of the agent was loaded");

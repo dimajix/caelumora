@@ -14,6 +14,7 @@ use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::security::Grant;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::value::language::Language;
+use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,10 @@ pub struct CreateSessionRequest {
     /// own (issue 425), a BCP 47 tag; the template's if absent.
     #[serde(default)]
     pub language: Option<String>,
+    /// The time zone it is held in (issue 424), an IANA name such as
+    /// `Europe/Berlin`; the template's if absent, else UTC.
+    #[serde(default)]
+    pub time_zone: Option<String>,
     /// Its workspace in place of the template's (issue 266); the
     /// template's if absent.
     #[serde(default)]
@@ -78,19 +83,21 @@ pub struct SessionResponse {
     /// The language its channels are held in where they hold none of their
     /// own (issue 425); `null` for none in particular.
     pub language: Option<Language>,
+    /// The time zone it is held in (issue 424); `null` for UTC.
+    pub time_zone: Option<TimeZone>,
     /// Whom the session lets read what was said in it (issue 134).
     pub privacy: PrivacyConfig,
 }
 
 impl From<&Session> for SessionResponse {
     fn from(session: &Session) -> Self {
-        Self { id: session.id, name: session.name.to_string(), summary: session.summary.clone(), language: session.language.clone(), privacy: session.privacy }
+        Self { id: session.id, name: session.name.to_string(), summary: session.summary.clone(), language: session.language.clone(), time_zone: session.time_zone, privacy: session.privacy }
     }
 }
 
 impl From<snapshot::SessionSnapshot> for SessionResponse {
     fn from(view: snapshot::SessionSnapshot) -> Self {
-        Self { id: view.id, name: view.name, summary: view.summary, language: view.language, privacy: view.privacy }
+        Self { id: view.id, name: view.name, summary: view.summary, language: view.language, time_zone: view.time_zone, privacy: view.privacy }
     }
 }
 
@@ -197,6 +204,8 @@ pub struct SessionSnapshot {
     /// The language its channels are held in where they hold none of their
     /// own (issue 425); `null` for none in particular.
     pub language: Option<Language>,
+    /// The time zone it is held in (issue 424); `null` for UTC.
+    pub time_zone: Option<TimeZone>,
     /// Whom the session lets read what was said in it (issue 134).
     pub privacy: PrivacyConfig,
     /// What it restricts of the tool calls made in any of its channels
@@ -223,6 +232,7 @@ impl From<snapshot::SessionSnapshot> for SessionSnapshot {
             summary: view.summary,
             briefing: view.briefing,
             language: view.language,
+            time_zone: view.time_zone,
             privacy: view.privacy,
             approval_rules: view.approval_rules,
             can_change: view.can_change,

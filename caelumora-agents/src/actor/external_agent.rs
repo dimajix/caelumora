@@ -283,10 +283,11 @@ impl ExternalAgentActor {
         // `work` is written as what it has seen - what the remote agent
         // brings in itself, and all it was given in this channel (issue 212).
         answering.send(ActorEvent::ResponseStarted { turn_id: work.turn_id }, output).await?;
-        // How it is given what was said, recorded with the context of what
-        // comes of it, so that the context is resolved as it was given
-        // (issue 135).
+        // How it is given what was said, and in which time zone, recorded
+        // with the context of what comes of it, so that the context is
+        // resolved as it was given (issues 135, 424).
         work.context.profile = self.remote.profile();
+        work.context.time_zone = self.body.runtime.session_time_zone();
         let brought = self.remote.classification().unwrap_or_else(|| work.classification.clone());
         if !self.body.runtime.confidentiality().may_publish(&work.security_context, &brought, &work.classification) {
             return Ok(Ending::Failed(format!("its answers are classified {brought}, which may not be published in this channel ({})", work.classification)));
@@ -296,7 +297,7 @@ impl ExternalAgentActor {
         // now - every message, and every change of one, as it may have used
         // either version (issue 236).
         state.classifications_given().iter().for_each(|c| work.see(c));
-        let given = work.context.profile.given_messages(&state.transcript, self.id());
+        let given = work.context.profile.given_messages(&state.transcript, self.id(), work.context.time_zone);
         // A task that asked back before the channel was lowered is not
         // taken up: it is cancelled, and the request begins a new one.
         if let Some(asking) = state.remote.asking().cloned() {

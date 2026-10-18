@@ -103,7 +103,7 @@ fn personality() -> Personality {
 fn session_template() -> SessionTemplate {
     SessionTemplate {
         access: Vec::new(),
-        summary: None, briefing: None, language: None,
+        summary: None, briefing: None, language: None, time_zone: None,
         approval_rules: Vec::new(),
         workspace: None,
         security_attributes: Default::default(),
@@ -130,7 +130,7 @@ fn session_template() -> SessionTemplate {
 
 fn session() -> Session {
     Session {
-        summary: None, briefing: None, language: None,
+        summary: None, briefing: None, language: None, time_zone: None,
         approval_rules: Vec::new(),
         workspace: None,
         commands: Default::default(),
@@ -879,7 +879,7 @@ pub(crate) async fn given_store_behaves(states: &dyn StateStore, transcripts: &d
     states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
     assert!(state.prompts.changes().is_empty(), "the texts are marked stored");
 
-    state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default());
+    state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default());
     state.offer_tools(sets.clone());
     let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
     state.turn.as_mut().expect("a turn").work.context.prompts.push(system.clone());

@@ -404,6 +404,15 @@ stored transcript keeps the message as received. How messages are marked is expl
 with the roster ([who is in the channel](#who-is-in-the-channel)); without that, models imitate the
 marker. An external agent is given what was said by the same rule.
 
+Where the profile says so (`message_times`, the default of the components that configure it), the
+marker says when the message was written too - `@alice (Sun 18 Oct 2026, 14:32): text`, `<message
+from="@alice" at="Sun 18 Oct 2026, 14:32">` - in the session's time zone, in one form for every
+language, and never on the agent's own messages: a model whose own messages carry a time begins its
+answers with one of its own. Without the times, a model takes a message of days ago for one of now
+(`work/message_times/RESULTS.md`). The time zone is fixed when the turn begins and recorded with the
+context beside the profile (`ContextRef::time_zone`), so that what the model was given is told the
+same after the session's changed. `read_history` writes the times of what it reads alike.
+
 A marker is a claim like any text: a participant can write another's into their own message, and
 models believe it. Nothing with consequences may rest on whom the model believes said something.
 
@@ -561,6 +570,15 @@ changed, without an account of its own of what changed: that is the notices' (is
 `channel_language_prompt_provider` tells the agent the language its channel is held in - its own,
 else its session's (see [CHANNELS.md](CHANNELS.md#its-language)) -, by name rather than by tag
 alone, since a model follows a name more surely. Nothing is translated.
+
+### The current time
+
+`current_time_prompt_provider` tells the agent the date and time as its turn's context is built, in
+the time zone the turn records (see [who said what](#who-said-what)). With the times of messages
+alone a model takes the last one's for now, which is wrong for a turn that comes later - after
+`/wakeup`, after a long queue. It changes with every turn, so it goes before the turn's input, not
+into the system prompt, whose every change invalidates the cache. Within a turn it stays as it was
+read when the turn began, also through a long plan.
 
 ### What the session and channel are for
 

@@ -154,6 +154,7 @@ impl AgentActor {
             security_context,
             classification,
             self.llm_client.profile(),
+            self.body.runtime.session_time_zone(),
         );
         self.body.control.begin_turn(turn_id);
         let mut turn = self.turn_under_way(state)?;
@@ -1081,7 +1082,7 @@ mod tests {
         let agent = AgentId::new();
         let channel = Classification::general(Confidentiality::Confidential);
         let mut agent_channel_state = AgentChannelState::default();
-        agent_channel_state.begin_turn(Default::default(), Default::default(), channel.clone(), Default::default());
+        agent_channel_state.begin_turn(Default::default(), Default::default(), channel.clone(), Default::default(), Default::default());
         agent_channel_state.offer_tools(vec![ToolSet::new("tools", "some tools", vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)])]);
         let mut turn = Turn::under_way(agent, &mut agent_channel_state);
 
@@ -1112,7 +1113,7 @@ mod tests {
         let both = || vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY), tool("without_result", ToolVisibility::WITHOUT_RESULT)];
         let reasoning = |tools: Vec<Tool>, personality: Visibility, private_knowledge: bool, calls: &[&str], complete: bool| {
             let mut agent_channel_state = AgentChannelState::default();
-            agent_channel_state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, Default::default());
+            agent_channel_state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, Default::default(), Default::default());
             agent_channel_state.offer_tools(vec![ToolSet::new("tools", "some tools", tools)]);
             let mut turn = Turn::under_way(agent, &mut agent_channel_state);
             if private_knowledge {

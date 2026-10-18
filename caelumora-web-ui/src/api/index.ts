@@ -33,7 +33,6 @@ import type {
   SessionResponse,
   SessionSnapshot,
   SessionTemplate,
-  SessionWorkspaceRequest,
   ArtifactResponse,
   Compartment,
   ProfileRequest,
@@ -206,16 +205,10 @@ export const api = {
   },
 
   /**
-   * A session from the template `templateId`, held in `language` and with `workspace` in place of
-   * the template's if given (issues 266, 425).
+   * A session as `payload` asks for it: from its template, held in the language and time zone and
+   * with the workspace it names in place of the template's (issues 266, 424, 425).
    */
-  async createSession(templateId: string, name: string, language?: string, workspace?: SessionWorkspaceRequest): Promise<SessionResponse> {
-    const payload: CreateSessionRequest = {
-      template_id: templateId,
-      name: name,
-      language,
-      workspace,
-    };
+  async createSession(payload: CreateSessionRequest): Promise<SessionResponse> {
     const res = await request(`/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -648,6 +641,20 @@ export const api = {
       body: JSON.stringify(language),
     });
     await ensureOk(res, 'Failed to change the language');
+    return res.json();
+  },
+
+  /**
+   * Has the session held in the time zone `timeZone`, an IANA name - UTC if `null` (issue 424);
+   * answers with the session as it is now.
+   */
+  async setSessionTimeZone(sessionId: string, timeZone: string | null): Promise<SessionSnapshot> {
+    const res = await request(`/sessions/${sessionId}/time-zone`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(timeZone),
+    });
+    await ensureOk(res, 'Failed to change the time zone');
     return res.json();
   },
 

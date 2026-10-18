@@ -271,7 +271,7 @@ mod tests {
 
     fn session(owner: ActorId, contributors: Vec<ActorId>) -> Session {
         Session {
-            summary: None, briefing: None, language: None,
+            summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
             id: SessionId::new(),
