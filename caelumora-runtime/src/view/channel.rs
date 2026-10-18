@@ -461,7 +461,7 @@ impl ChannelView {
         let reader = Reader::Participant(viewer);
         let counted = self.views().histories().page(key, &reader, from, None, Unread::CAP, &new).await.map_err(|e| self.failed_reading(e))?;
         // A mention among those not counted is looked for on its own.
-        let mentioned = counted.items.iter().any(mentioning) || (counted.items.len() == Unread::CAP
+        let mentioned = counted.entries().any(mentioning) || (counted.items.len() == Unread::CAP
             && !self.views().histories().page(key, &reader, from, None, 1, &mentioning).await.map_err(|e| self.failed_reading(e))?.items.is_empty());
         Ok(Some(Unread { messages: counted.items.len(), mentioned, read_up_to }))
     }

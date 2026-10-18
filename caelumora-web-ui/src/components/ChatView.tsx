@@ -78,7 +78,7 @@ import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {activityNotice, activityUnderWay, chatMessages, chatRows, commandNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, mayBeAnsweredAgain, mergeToolResults, participantNotice, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
+import {activityNotice, activityUnderWay, chainCutOffNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, messageRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, mayBeAnsweredAgain, mergeToolResults, participantNotice, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -747,18 +747,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             .then(participant => { if (participant.usage) setUsage(prev => ({...prev, [answerer]: participant.usage!})); })
             .catch(error => reportError('Failed to read what the agent used', error));
         };
+        // A notice the history records, shown once: live, and from the
+        // history the snapshot or a page read (issue 417).
+        const showOnce = (notice: Message) => setMessages(prev => notice.id && prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
+        const position = envelope.context.position;
         if (actorEvent === 'ResponseRequested') {
-          // Someone asks you to respond (issue 278): shown, but not part of
-          // the history - an agent is asked so, too, but a user only by a
-          // nudge.
-          const notice: Message = {
-            role: 'System',
-            content: null,
-            sender_name: answererName ?? undefined,
-            nudged: true,
-            timestamp: envelope.timestamp,
-          };
-          setMessages(prev => [...prev, notice]);
+          // Someone asks you to respond (issue 278) - an agent is asked so,
+          // too, but a user only by a nudge.
+          showOnce(nudgeNotice(answererName ?? undefined, envelope.timestamp, position));
         } else if (typeof actorEvent === 'string') {
           // The other payload-less events have nothing to show.
         } else if (actorEvent.ResponseStarted) {
@@ -837,21 +833,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           // as `MessageRevoked` says.
           setAnswers(prev => withAnswer(prev.filter(a => a.sender !== answerer), answerer, answererName, a => a));
         } else if (actorEvent.RetryRejected) {
-          // Shown, but not part of the history.
-          const notice: Message = {
-            role: 'System',
-            content: null,
-            sender_name: envelope.context.sender_name,
-            retryRejected: actorEvent.RetryRejected.reason,
-            timestamp: envelope.timestamp,
-          };
-          setMessages(prev => [...prev, notice]);
+          showOnce(retryRejectedNotice(actorEvent.RetryRejected.reason, envelope.context.sender_name, envelope.timestamp, position));
         } else if (actorEvent.MessageRejected) {
           // What the user sent, which the channel did not let in (issue
           // 304). A message of theirs, shown as they sent it, is marked as
-          // not let in. Anything else is told in a notice, not part of the
-          // history; a change of a message, shown as they made it, is
-          // undone by what the channel holds.
+          // not let in - after a reload, the history's notice stands in its
+          // place. Anything else is told in a notice; a change of a
+          // message, shown as they made it, is undone by what the channel
+          // holds.
           const {rejected, message, reason} = actorEvent.MessageRejected;
           if (message && rejected === 'CompleteMessageGenerated') {
             setMessages(prev => prev.map(m => m.id === message ? {...m, rejected: reason} : m));
@@ -861,13 +850,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                 .then(standing => setMessages(prev => prev.map(m => m.id === message ? standing : m)))
                 .catch(error => reportError('Failed to read the message back', error));
             }
-            const notice: Message = {
-              role: 'System',
-              content: null,
-              messageRejected: {rejected, reason},
-              timestamp: envelope.timestamp,
-            };
-            setMessages(prev => [...prev, notice]);
+            showOnce(messageRejectedNotice(rejected, reason, envelope.timestamp, position));
           }
         } else if (actorEvent.ApprovalRequested) {
           // Asked again by an agent that resumed its turn (issue 172), or
@@ -919,8 +902,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           const {command, args, output, to, turn_id} = actorEvent.CommandExecuted;
           if (turn_id) {
             // Carried out by an agent (issue 269): part of the history,
-            // kept once by its turn - live with what it answered, and to
-            // whom: the stream carries `to` only to the issuer.
+            // kept once by its turn, with what it answered, and to whom.
             const notice = commandNotice(turn_id, command, args, envelope.context.sender_id, envelope.context.sender_name, undefined, envelope.timestamp, {output, private: to !== null});
             setMessages(prev => prev.some(m => m.id === notice.id) ? prev.map(m => m.id === notice.id ? notice : m) : [...prev, notice]);
             // A command turn ends without `TurnFinished`, and may have
@@ -928,15 +910,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             // read again.
             readUsage();
           } else {
-            // A command of the channel: shown, but not part of the history.
-            const notice: Message = {
-              role: 'System',
-              content: output,
-              sender_name: envelope.context.sender_name,
-              commandOutput: {command, private: false},
-              timestamp: envelope.timestamp,
-            };
-            setMessages(prev => [...prev, notice]);
+            // A command of the channel, part of the history (issue 417).
+            showOnce(channelCommandNotice(command, output, envelope.context.sender_name, envelope.timestamp, position));
           }
         } else if (actorEvent.ActivityStarted) {
           // An agent does something of its own accord (issue 284): its
@@ -965,17 +940,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           setMessages(prev => prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
         } else if (actorEvent.CommandFailed) {
           // An agent did not carry out a command (issue 269): for the issuer
-          // alone, and gone on reload - nothing happened. In the place of its
+          // alone, part of the history (issue 417). In the place of its
           // start, if it began.
           const {command, reason, turn_id} = actorEvent.CommandFailed;
-          const notice: Message = {
-            id: turn_id ? `command:${turn_id}` : undefined,
-            role: 'System',
-            content: reason,
-            sender_name: envelope.context.sender_name,
-            commandOutput: {command, private: true, agent: envelope.context.sender_name, failed: true},
-            timestamp: envelope.timestamp,
-          };
+          const notice = commandFailedNotice(turn_id, command, reason, envelope.context.sender_name, envelope.timestamp, position);
           setMessages(prev => notice.id && prev.some(m => m.id === notice.id) ? prev.map(m => m.id === notice.id ? notice : m) : [...prev, notice]);
         } else if (actorEvent.ParticipantJoined) {
           // Part of the history (issue 408), kept once by whom and when.
@@ -999,14 +967,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           });
           setAnswers(prev => prev.filter(a => a.sender !== left));
         } else if (actorEvent.ChainCutOff) {
-          // Like a failed turn: shown, but not part of the history.
-          const notice: Message = {
-            role: 'System',
-            content: null,
-            chainCutOff: {maxAgentHops: actorEvent.ChainCutOff.max_agent_hops, notAsked: actorEvent.ChainCutOff.not_asked},
-            timestamp: envelope.timestamp,
-          };
-          setMessages(prev => [...prev, notice]);
+          const {max_agent_hops, not_asked} = actorEvent.ChainCutOff;
+          showOnce(chainCutOffNotice(max_agent_hops, not_asked, envelope.timestamp, position));
         } else if (actorEvent.PlanStepStarted) {
           // Heads the messages of the step that follow (issue 263), as the
           // history's mark of it does after a reload.

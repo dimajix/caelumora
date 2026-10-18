@@ -92,12 +92,15 @@ session are handled in one place:
     does not start it (issue 386). The snapshot sent at each stop and start replaces what was shown,
     so a participant's state and an answer under way are gone with the channel that ran them.
 
-Messages can arrive twice, in the snapshot and as an event; they are dropped by id.
+Messages can arrive twice, in the snapshot and as an event; they are dropped by id. A notice is
+dropped by the position of its entry in the channel's history: an event carries it as `position`,
+the item it is read as later as `seq` (issue 417).
 
-What the server announces but does not store - a turn given up, the channel-wide answer of a
-command, a chain cut off, a nudge, a refusal to let something into the channel, a retry rejected -
-is shown live and gone on reload. Everything else is applied as the server reads it, so that a
-reload shows the same.
+What the user was shown is what the channel's history recorded for them, so a reload shows the
+same: a turn given up, the answer of a command - the channel's and an agent's, a private one to its
+issuer -, a command not carried out, a chain cut off, a nudge, a refusal to let something into the
+channel, a retry rejected (issue 417). A message of theirs that was not let in is marked live; after
+a reload, the notice of its refusal stands in its place, since the message entered nothing.
 
 ## What it shows
 

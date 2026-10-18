@@ -1,7 +1,7 @@
 //! Channels and what is done in them: making and changing one, its participants, messages,
 //! approvals, answers to questions and commands.
 
-use crate::history::{HistoryItemResponse, HistoryPageResponse};
+use crate::history::{HistoryPageItem, HistoryPageResponse};
 use crate::session::{ParticipantKind, UNKNOWN};
 use caelumora_model::snapshot;
 use caelumora_model::actor::{ActorId, ActorState};
@@ -29,7 +29,7 @@ use uuid::Uuid;
 #[derive(Debug, Serialize)]
 pub struct ChannelSnapshot {
     pub channel: ChannelResponse,
-    pub items: Vec<HistoryItemResponse<Message>>,
+    pub items: Vec<HistoryPageItem<Message>>,
     pub earlier: Option<u64>,
     /// The notes every agent of the channel published (issue 17); a change
     /// is announced as the channel's `agent_state_changed` on the event

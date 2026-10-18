@@ -43,7 +43,7 @@ interface HistoryPanelProps {
 type Row =
   | {kind: 'message'; message: Message}
   | {kind: 'givenUp'; turnId: string; reason: GivenUpReason; at: string}
-  | {kind: 'command'; turnId: string; command: string; args: string; issuer: ActorId; at: string}
+  | {kind: 'command'; turnId: string | null; command: string; args: string; issuer: ActorId; at: string}
   | {kind: 'compacted'; turnId: string; at: string}
   | {kind: 'participant'; notice: Message};
 
@@ -248,7 +248,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
   const rowView = (row: Row, idx: number) => {
     switch (row.kind) {
       case 'givenUp': return givenUpView(row.reason, row.at, `given-up-${row.turnId}`);
-      case 'command': return commandView(row, `command-${row.turnId}`);
+      case 'command': return commandView(row, `command-${row.turnId ?? idx}`);
       case 'compacted': return compactedView(row.at, `compacted-${row.turnId}-${idx}`);
       case 'participant': return participantView(row.notice, row.notice.id ?? `participant-${idx}`);
       case 'message': return messageView(row.message, row.message.id ?? `message-${idx}`);

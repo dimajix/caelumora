@@ -7,7 +7,8 @@
 //! it was sent by and whom it went to (`Recorded`, issue 417), and read only
 //! for a reader, who is given what of it they may see (`Recorded::as_seen_by`).
 
-use crate::actor::ActorId;
+use crate::actor::{ActorId, Rejection, RetryTarget};
+use crate::agent::RetryRefused;
 use crate::chain::{Chain, Node};
 use crate::confidentiality::Classification;
 use crate::context::ContextRef;
@@ -64,13 +65,12 @@ pub enum HistoryEntry {
     /// is said in that step, until the next one begins or the turn gives
     /// its final answer. `description` is the step as the plan words it.
     PlanStepStarted { turn_id: TurnId, actor: ActorId, step_index: usize, total_steps: usize, description: String, at: DateTime<Utc> },
-    /// `actor`, an agent, carried out the command `command` with `args` in
-    /// its turn `turn_id` at `at`, on the word of `issuer` (issue 269):
-    /// recorded before the turn's end, without what it answered - a private
-    /// answer is the issuer's, the history everybody's. A command refused
-    /// or failed did nothing and leaves no entry; a command the session
-    /// runs is never recorded.
-    CommandExecuted { turn_id: TurnId, actor: ActorId, issuer: ActorId, command: String, args: String, at: DateTime<Utc> },
+    /// `actor` carried out the command `command` with `args` at `at`, on the
+    /// word of `issuer`, and answered `output` (issues 269, 417) - to `to`
+    /// alone if it is private, to every user otherwise: an agent in its turn
+    /// `turn_id`, recorded before the turn's end; the session (`/wakeup`),
+    /// without a turn, in the name of whoever asked.
+    CommandExecuted { turn_id: Option<TurnId>, actor: ActorId, issuer: ActorId, command: String, args: String, output: String, to: Option<ActorId>, at: DateTime<Utc> },
     /// `actor`, an agent, replaced its context in its turn `turn_id` at
     /// `at` (issue 16): `from`, the transcript as it stood, by `to`, the
     /// head of a branch of its own that begins anew - what replaces the
@@ -102,6 +102,31 @@ pub enum HistoryEntry {
     /// (`HistoryAccess`), fixed as a position; the channel's document keeps
     /// the same as the index its views read (`HistoryLimit`).
     HistoryShared { participant: ActorId, from: u64, by: ActorId, by_name: String, at: DateTime<Utc> },
+    /// `actor`, an agent, did not carry out the command `command` asked by
+    /// `to`, for `reason` (issues 269, 417), told to `to` alone at `at`;
+    /// `turn_id` if it had begun it. Nothing it did stays.
+    CommandFailed { turn_id: Option<TurnId>, actor: ActorId, command: String, reason: String, to: ActorId, at: DateTime<Utc> },
+    /// `actor`, an agent, answers again instead of `target` (issues 234,
+    /// 417), told to the users at `at`.
+    RetryAccepted { target: RetryTarget, actor: ActorId, at: DateTime<Utc> },
+    /// `actor`, an agent, does not answer again instead of `target`, for
+    /// `reason` (issues 234, 417), told to the users at `at`.
+    RetryRejected { target: RetryTarget, reason: RetryRefused, actor: ActorId, at: DateTime<Utc> },
+    /// A chain between agents reached its limit at `at` (issues 200, 417):
+    /// the response ending in `message` asked nobody to respond, as more
+    /// than `max_agent_hops` hops since the last user's message; `not_asked`
+    /// are the agents it mentioned. Told by the moderator, in the system's
+    /// name, to whom it names.
+    ChainCutOff { message: MessageId, max_agent_hops: u32, not_asked: Vec<ActorId>, at: DateTime<Utc> },
+    /// What its sender sent - an event of the kind `rejected`, about
+    /// `message` if it is one - was not let into the channel at `at`, for
+    /// `reason` (issues 304, 417): told to the sender alone, in the system's
+    /// name. What was rejected entered nothing and is not recorded.
+    MessageRejected { rejected: String, message: Option<MessageId>, reason: Rejection, at: DateTime<Utc> },
+    /// Whom it went to was asked to respond at `at` (issue 417) - to what
+    /// `by` said or nudged -, as the moderator decided: in the system's
+    /// name, to those asked.
+    ResponseRequested { by: ActorId, at: DateTime<Utc> },
 }
 
 /// What happened in a channel, recorded (issue 417): the entry, the actor
@@ -186,7 +211,7 @@ impl Recorded {
         };
         let reaches = own || match (&self.audience, reader) {
             (Audience::Everybody, Reader::Participant(actor)) => self.entry.concerns(*actor),
-            (Audience::Everybody, _) => self.entry.reaches(true, false),
+            (Audience::Everybody, _) => self.entry.reaches(None),
             (Audience::Only(only), Reader::Participant(actor)) => only.contains(actor),
             (Audience::Only(_), _) => false,
         };
@@ -246,8 +271,10 @@ pub const WINDOW: u64 = 200;
 /// history it was read from.
 #[derive(Debug, Clone, Default)]
 pub struct HistoryPage {
-    /// The items, oldest first.
-    pub items: Vec<HistoryEntry>,
+    /// The items, oldest first, each at the position of the entry that
+    /// added it (issue 417): what a client tells an item by, and the live
+    /// event that announced it (`EventContext::position`).
+    pub items: Vec<(u64, HistoryEntry)>,
     /// The position of the oldest of `items`: what the page before this one
     /// is read before (`HistoryStore::page`); `None` if there is no older
     /// item to be had.
@@ -257,12 +284,20 @@ pub struct HistoryPage {
     pub digest: Option<Digest>,
 }
 
+impl HistoryPage {
+    /// The items without their positions, oldest first.
+    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &HistoryEntry> {
+        self.items.iter().map(|(_, entry)| entry)
+    }
+}
+
 impl Chain<Recorded> {
     /// The turn of `author` given up, and why, if its end is the last thing
-    /// on the active path (issue 259): what may be asked for anew as long as
-    /// nothing followed it.
+    /// of the conversation on the active path (issue 259,
+    /// `HistoryEntry::is_conversation`): what may be asked for anew as long
+    /// as nothing followed it - a notice or a request does not count.
     pub fn turn_given_up_last(&self, author: ActorId) -> Option<(TurnId, GivenUpReason)> {
-        match self.last().map(|node| &node.entry.entry) {
+        match self.entries().rev().map(|node| &node.entry.entry).find(|entry| entry.is_conversation()) {
             Some(HistoryEntry::TurnGivenUp { turn_id, actor, reason, .. }) if *actor == author => Some((*turn_id, reason.clone())),
             _ => None,
         }
@@ -368,7 +403,9 @@ impl Chain<Recorded> {
             HistoryEntry::Reclassified { message, classification } => self.is_changed(*message, |m| m.reclassify(classification)),
             HistoryEntry::Fitted { .. } | HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
-            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. } => true,
+            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => true,
         };
         if applies {
             self.push_with(recorded, digest::history_chain);
@@ -378,17 +415,36 @@ impl Chain<Recorded> {
 }
 
 impl HistoryEntry {
-    /// Whether it is an item of its history - a message said, the start of a
-    /// plan's step, a command carried out, an activity ended, a compaction, a
-    /// turn's end, a change of who takes part - rather than a change of what was said before: what a
-    /// reader of the history is given as it stands (`StandingItems`), a
-    /// change being in the message it changes.
+    /// Whether it is an item of its history - a message said or given, the
+    /// start of a plan's step, a command carried out or not, an activity
+    /// ended, a compaction, a turn's end, a change of who takes part, a
+    /// notice, a request - rather than a change of what was said before:
+    /// what a reader of the history is given as it stands
+    /// (`StandingItems`), a change being in the message it changes.
     pub(crate) fn is_item(&self) -> bool {
         match self {
             HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
-            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. } => true,
+            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => true,
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => false,
+        }
+    }
+
+    /// Whether it is part of the conversation - something said, given or
+    /// done in it, a change of it, a turn's end, a change of who takes
+    /// part -, rather than what was only told or asked about it: a notice,
+    /// a request to respond, what a newcomer was given. What "the last
+    /// thing" in a channel is read among (issue 417).
+    pub fn is_conversation(&self) -> bool {
+        match self {
+            HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
+            | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
+            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. }
+            | HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => true,
+            HistoryEntry::HistoryShared { .. } | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. }
+            | HistoryEntry::ChainCutOff { .. } | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => false,
         }
     }
 
@@ -398,7 +454,9 @@ impl HistoryEntry {
             HistoryEntry::Said { message } => Some(message),
             HistoryEntry::Given { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
-            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. } => None,
+            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => None,
         }
     }
 
@@ -422,7 +480,9 @@ impl HistoryEntry {
             }
             HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
-            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. } => false,
+            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => false,
         }
     }
 
@@ -433,7 +493,9 @@ impl HistoryEntry {
             HistoryEntry::Revoked { message, .. } | HistoryEntry::Reclassified { message, .. } => Some(*message),
             HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::Fitted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
-            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. } => None,
+            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => None,
         }
     }
 
@@ -447,22 +509,26 @@ impl HistoryEntry {
     /// agent was given and a compaction to nobody. Whether it went back to its sender is not this
     /// rule's: a reader is given what it sent itself.
     pub fn concerns(&self, participant: ActorId) -> bool {
-        match self {
-            HistoryEntry::HistoryShared { participant: shared_with, .. } => participant == *shared_with,
-            _ => self.reaches(matches!(participant, ActorId::User(_)), matches!(participant, ActorId::Agent(_))),
-        }
+        self.reaches(Some(participant))
     }
 
-    /// Whether the entry concerns a user, if `user`, or an agent, if
-    /// `agent` (`concerns`).
-    fn reaches(&self, user: bool, agent: bool) -> bool {
+    /// Whether the entry concerns `reader` (`concerns`), or - `None` - an
+    /// outsider, who is given what goes to every user and is named by
+    /// nothing.
+    fn reaches(&self, reader: Option<ActorId>) -> bool {
+        let user = reader.is_none_or(|reader| matches!(reader, ActorId::User(_)));
+        let agent = reader.is_some_and(|reader| matches!(reader, ActorId::Agent(_)));
+        let named = |actor: &ActorId| reader == Some(*actor);
         match self {
+            HistoryEntry::HistoryShared { participant, .. } => named(participant),
+            HistoryEntry::CommandExecuted { to: Some(to), .. } | HistoryEntry::CommandFailed { to, .. } => user && named(to),
             HistoryEntry::Said { message } => user || (agent && message.is_heard()),
             HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => user || agent,
-            HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
-            | HistoryEntry::ActivityFinished { .. } => user,
-            HistoryEntry::Compacted { .. } | HistoryEntry::Given { .. } | HistoryEntry::HistoryShared { .. } => false,
+            HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { to: None, .. }
+            | HistoryEntry::ActivityFinished { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } => user,
+            HistoryEntry::Compacted { .. } | HistoryEntry::Given { .. } | HistoryEntry::ChainCutOff { .. } | HistoryEntry::MessageRejected { .. }
+            | HistoryEntry::ResponseRequested { .. } => false,
         }
     }
 
@@ -477,7 +543,9 @@ impl HistoryEntry {
             HistoryEntry::Given { .. } => None,
             HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. } | HistoryEntry::TurnFinished { .. }
             | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. }
-            | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. } => Some(self.clone()),
+            | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => Some(self.clone()),
         }
     }
 
@@ -490,8 +558,10 @@ impl HistoryEntry {
         match self {
             HistoryEntry::Said { message } | HistoryEntry::Given { message } | HistoryEntry::Modified { message } => message.sender_id,
             HistoryEntry::TurnFinished { actor, .. } | HistoryEntry::TurnGivenUp { actor, .. } | HistoryEntry::PlanStepStarted { actor, .. }
-            | HistoryEntry::CommandExecuted { actor, .. } | HistoryEntry::Compacted { actor, .. } | HistoryEntry::ActivityFinished { actor, .. } => *actor,
+            | HistoryEntry::CommandExecuted { actor, .. } | HistoryEntry::Compacted { actor, .. } | HistoryEntry::ActivityFinished { actor, .. }
+            | HistoryEntry::CommandFailed { actor, .. } | HistoryEntry::RetryAccepted { actor, .. } | HistoryEntry::RetryRejected { actor, .. } => *actor,
             HistoryEntry::ParticipantJoined { by, .. } | HistoryEntry::ParticipantLeft { by, .. } | HistoryEntry::HistoryShared { by, .. } => *by,
+            HistoryEntry::ChainCutOff { .. } | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => ActorId::System,
             HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. } => ActorId::None,
         }
     }
@@ -504,7 +574,9 @@ impl HistoryEntry {
             HistoryEntry::Said { message } => Some((message.produced_from.as_ref()?, message.turn_id?)),
             HistoryEntry::Given { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
-            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. } => None,
+            | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
+            | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
+            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => None,
         }
     }
 }
@@ -578,6 +650,15 @@ mod tests {
             ActorEvent::MessageModified(heard.clone()),
             ActorEvent::MessageRevoked { message: heard.id, at: Utc::now() },
             ActorEvent::MessageReclassified { message: heard.id, classification: Classification::PUBLIC },
+            ActorEvent::CommandExecuted { command: "mark".to_string(), args: String::new(), output: "yours".to_string(), to: Some(user), turn_id: Some(turn_id) },
+            ActorEvent::CommandExecuted { command: "wakeup".to_string(), args: String::new(), output: "woke".to_string(), to: None, turn_id: None },
+            ActorEvent::CommandFailed { command: "mark".to_string(), reason: "no".to_string(), to: user, turn_id: None },
+            ActorEvent::RetryAccepted { target: RetryTarget::Turn(turn_id) },
+            ActorEvent::RetryRejected { target: RetryTarget::Turn(turn_id), reason: RetryRefused::NotLast },
+            ActorEvent::ChainCutOff { message: heard.id, max_agent_hops: 3, not_asked: vec![agent] },
+            ActorEvent::MessageRejected { rejected: "MessageModified".to_string(), message: Some(heard.id), reason: Rejection::Invalid },
+            ActorEvent::ResponseRequested,
+            ActorEvent::HistoryShared { participant: user, from: 3 },
         ];
         for event in events {
             let kind = event.kind();
@@ -599,6 +680,11 @@ mod tests {
         history.record(HistoryEntry::TurnGivenUp { turn_id: turn, actor: agent, reason: GivenUpReason::Left, at: Utc::now() });
         assert_eq!(history.turn_given_up_last(agent), Some((turn, GivenUpReason::Left)));
         assert_eq!(history.turn_given_up_last(other), None, "another agent's");
+        // What was only told or asked of it is no part of the conversation
+        // (issue 417).
+        history.record(HistoryEntry::RetryRejected { target: RetryTarget::Turn(turn), reason: RetryRefused::NotLast, actor: other, at: Utc::now() });
+        history.record(HistoryEntry::ResponseRequested { by: other, at: Utc::now() });
+        assert_eq!(history.turn_given_up_last(agent), Some((turn, GivenUpReason::Left)), "a notice and a request do not count");
         history.push(make_message(id(2)));
         assert_eq!(history.turn_given_up_last(agent), None, "something followed it");
     }

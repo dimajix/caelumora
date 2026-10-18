@@ -1,9 +1,10 @@
 //! Histories (issue 258): what was said and how turns went, item by item.
 
-use caelumora_model::actor::ActorId;
+use caelumora_model::actor::{ActorId, Rejection, RetryTarget};
+use caelumora_model::agent::RetryRefused;
 use caelumora_model::digest::Digest;
 use caelumora_model::history::{HistoryEntry, HistoryPage};
-use caelumora_model::message::Message;
+use caelumora_model::message::{Message, MessageId};
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::work::TurnId;
 use chrono::{DateTime, Utc};
@@ -15,7 +16,11 @@ use serde::{Deserialize, Serialize};
 /// whose it was. Written as an object named by its kind: `{"said": …}`,
 /// `{"plan_step_started": {…}}`, `{"turn_finished": {…}}`,
 /// `{"turn_given_up": {…}}`, `{"command_executed": {…}}`, `{"compacted": {…}}`,
-/// `{"participant_joined": {…}}`, `{"participant_left": {…}}`.
+/// `{"participant_joined": {…}}`, `{"participant_left": {…}}`, and the
+/// notices a reader was given (issue 417): `{"command_failed": {…}}`,
+/// `{"retry_accepted": {…}}`, `{"retry_rejected": {…}}`,
+/// `{"chain_cut_off": {…}}`, `{"message_rejected": {…}}`,
+/// `{"response_requested": {…}}`.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryItemResponse<M> {
@@ -23,8 +28,10 @@ pub enum HistoryItemResponse<M> {
     TurnFinished { turn_id: TurnId, actor: ActorId, at: DateTime<Utc> },
     TurnGivenUp { turn_id: TurnId, actor: ActorId, reason: GivenUpReason, at: DateTime<Utc> },
     PlanStepStarted { turn_id: TurnId, actor: ActorId, step_index: usize, total_steps: usize, description: String, at: DateTime<Utc> },
-    /// An agent carried out a command in its turn (issue 269).
-    CommandExecuted { turn_id: TurnId, actor: ActorId, issuer: ActorId, command: String, args: String, at: DateTime<Utc> },
+    /// A command was carried out (issues 269, 417): by an agent in its turn
+    /// `turn_id`, or by the session without one; what it answered, to `to`
+    /// alone if that is private.
+    CommandExecuted { turn_id: Option<TurnId>, actor: ActorId, issuer: ActorId, command: String, args: String, output: String, to: Option<ActorId>, at: DateTime<Utc> },
     /// An agent replaced its context `from` by `to` in its turn (issue 16);
     /// in an agent's history only.
     Compacted { turn_id: TurnId, actor: ActorId, from: Digest, to: Digest, at: DateTime<Utc> },
@@ -36,6 +43,31 @@ pub enum HistoryItemResponse<M> {
     ParticipantJoined { participant: ActorId, name: String, by: ActorId, by_name: String, at: DateTime<Utc> },
     /// Someone left the channel, as `ParticipantJoined` says.
     ParticipantLeft { participant: ActorId, name: String, by: ActorId, by_name: String, at: DateTime<Utc> },
+    /// An agent did not carry out a command of `to`'s, for `reason` (issue
+    /// 269).
+    CommandFailed { turn_id: Option<TurnId>, actor: ActorId, command: String, reason: String, to: ActorId, at: DateTime<Utc> },
+    /// An agent answers again instead of `target` (issue 234).
+    RetryAccepted { target: RetryTarget, actor: ActorId, at: DateTime<Utc> },
+    /// An agent does not answer again instead of `target`, for `reason`.
+    RetryRejected { target: RetryTarget, reason: RetryRefused, actor: ActorId, at: DateTime<Utc> },
+    /// A chain between agents reached its limit (issue 200).
+    ChainCutOff { message: MessageId, max_agent_hops: u32, not_asked: Vec<ActorId>, at: DateTime<Utc> },
+    /// What the reader sent was not let into the channel (issue 304).
+    MessageRejected { rejected: String, message: Option<MessageId>, reason: Rejection, at: DateTime<Utc> },
+    /// The reader was asked to respond, to what `by` said or nudged (issues
+    /// 278, 417).
+    ResponseRequested { by: ActorId, at: DateTime<Utc> },
+}
+
+/// An item of a page of a history (issue 417): the item, and `seq`, the
+/// position of the entry that added it - what a client tells it by, and
+/// the live event that announced it (the envelope's `position`). Written as
+/// the item's object with `"seq"` beside its kind: `{"seq": 7, "said": …}`.
+#[derive(Debug, Serialize)]
+pub struct HistoryPageItem<M> {
+    pub seq: u64,
+    #[serde(flatten)]
+    pub item: HistoryItemResponse<M>,
 }
 
 impl<M> HistoryItemResponse<M> {
@@ -50,13 +82,19 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::TurnFinished { turn_id, actor, at } => Some(Self::TurnFinished { turn_id, actor, at }),
             HistoryEntry::TurnGivenUp { turn_id, actor, reason, at } => Some(Self::TurnGivenUp { turn_id, actor, reason, at }),
             HistoryEntry::PlanStepStarted { turn_id, actor, step_index, total_steps, description, at } => Some(Self::PlanStepStarted { turn_id, actor, step_index, total_steps, description, at }),
-            HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, at } => Some(Self::CommandExecuted { turn_id, actor, issuer, command, args, at }),
+            HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, output, to, at } => Some(Self::CommandExecuted { turn_id, actor, issuer, command, args, output, to, at }),
             HistoryEntry::Compacted { turn_id, actor, from, to, at } => Some(Self::Compacted { turn_id, actor, from, to, at }),
             HistoryEntry::ActivityFinished { turn_id, actor, activity, output, at } => Some(Self::ActivityFinished { turn_id, actor, activity, output, at }),
             HistoryEntry::ParticipantJoined { participant, name, by, by_name, at } => Some(Self::ParticipantJoined { participant, name, by, by_name, at }),
             HistoryEntry::ParticipantLeft { participant, name, by, by_name, at } => Some(Self::ParticipantLeft { participant, name, by, by_name, at }),
-            // What a newcomer was given of the history records the
-            // delivery; no client shows it yet (issue 417).
+            HistoryEntry::CommandFailed { turn_id, actor, command, reason, to, at } => Some(Self::CommandFailed { turn_id, actor, command, reason, to, at }),
+            HistoryEntry::RetryAccepted { target, actor, at } => Some(Self::RetryAccepted { target, actor, at }),
+            HistoryEntry::RetryRejected { target, reason, actor, at } => Some(Self::RetryRejected { target, reason, actor, at }),
+            HistoryEntry::ChainCutOff { message, max_agent_hops, not_asked, at } => Some(Self::ChainCutOff { message, max_agent_hops, not_asked, at }),
+            HistoryEntry::MessageRejected { rejected, message, reason, at } => Some(Self::MessageRejected { rejected, message, reason, at }),
+            HistoryEntry::ResponseRequested { by, at } => Some(Self::ResponseRequested { by, at }),
+            // What a newcomer was given of the history records a delivery;
+            // no client shows it (issue 417).
             HistoryEntry::HistoryShared { .. } => None,
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
         }
@@ -89,11 +127,11 @@ impl HistoryQuery {
 }
 
 /// A page of a history (issue 218), as the API gives it: its items, oldest
-/// first, and `earlier`, what to ask for the page before it with
-/// (`?before=`) - `null` if there is none.
+/// first, each with its position, and `earlier`, what to ask for the page
+/// before it with (`?before=`) - `null` if there is none.
 #[derive(Debug, Serialize)]
 pub struct HistoryPageResponse<M> {
-    pub items: Vec<HistoryItemResponse<M>>,
+    pub items: Vec<HistoryPageItem<M>>,
     pub earlier: Option<u64>,
 }
 
@@ -102,9 +140,9 @@ impl<M> HistoryPageResponse<M> {
     /// whether what it was produced from is recorded
     /// (`HistoryEntry::context`).
     pub fn of(page: HistoryPage, mut said: impl FnMut(Message, bool) -> M) -> Self {
-        let items = page.items.into_iter().filter_map(|entry| {
+        let items = page.items.into_iter().filter_map(|(seq, entry)| {
             let recorded = entry.context().is_some();
-            HistoryItemResponse::of(entry, |message| said(message, recorded))
+            HistoryItemResponse::of(entry, |message| said(message, recorded)).map(|item| HistoryPageItem { seq, item })
         }).collect();
         Self { items, earlier: page.earlier }
     }
@@ -146,9 +184,9 @@ mod tests {
         assert_eq!((json["plan_step_started"]["step_index"].clone(), json["plan_step_started"]["total_steps"].clone()), (serde_json::json!(1), serde_json::json!(3)));
         assert_eq!(json["plan_step_started"]["description"], "second");
         let issuer = ActorId::User(UserId::new());
-        let command = HistoryItemResponse::<Message>::of(HistoryEntry::CommandExecuted { turn_id: turn, actor, issuer, command: "compact".to_string(), args: String::new(), at: Utc::now() }, |m| m).unwrap();
-        let json = serde_json::to_value(command).unwrap();
-        assert_eq!(json["command_executed"]["command"], "compact");
+        let command = HistoryItemResponse::<Message>::of(HistoryEntry::CommandExecuted { turn_id: Some(turn), actor, issuer, command: "compact".to_string(), args: String::new(), output: "done".to_string(), to: None, at: Utc::now() }, |m| m).unwrap();
+        let json = serde_json::to_value(HistoryPageItem { seq: 7, item: command }).unwrap();
+        assert_eq!((json["seq"].clone(), json["command_executed"]["command"].clone(), json["command_executed"]["output"].clone()), (serde_json::json!(7), serde_json::json!("compact"), serde_json::json!("done")), "beside its kind, its position");
         assert_eq!(json["command_executed"]["issuer"], serde_json::to_value(issuer).unwrap());
         let (from, to) = (digest::content(b"before"), digest::content(b"after"));
         let compacted = HistoryItemResponse::<Message>::of(HistoryEntry::Compacted { turn_id: turn, actor, from, to, at: Utc::now() }, |m| m).unwrap();

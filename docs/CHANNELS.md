@@ -261,6 +261,15 @@ while it answers: the channel takes what a removed actor sends until its task ha
 no end in anyone's name. A turn whose agent was aborted after the grace, saying nothing, stays
 without an end: nobody ended it.
 
+**Everything shown is recorded** (issue 417). Every entry says who sent it and whom it went to:
+everybody it concerns by the rule every channel delivers by, or those the moderator named. What a
+participant was shown live is what the history holds for them, in the same order - also what went
+to them alone: the answer to a request to answer again, a command's answer and a command not carried
+out, a chain cut off, a refusal, a request to respond, each notice and request recorded in the
+system's name as the channel sends it. What it delivers carries the position of its entry
+(`EventContext::position`), the `seq` of the item a client reads it as later. Not recorded: what
+streams, a beginning whose end is recorded, where an actor stands, approvals and questions.
+
 **The channel decides what enters it.** Every event an actor sends is admitted or refused by the
 channel's loop, one after another, as it takes it in (`ChannelLoop::admission`) - against the
 channel as it is at that moment, so that nothing changes between a check and the entry. An actor
@@ -282,7 +291,8 @@ flow in:
 
 A message is admitted as it arrives, so one said after the channel was lowered below its turn is
 refused. What is refused is written nowhere and delivered to nobody. The channel tells its sender
-alone why, in the system's name (`MessageRejected`, with a `Rejection`), never in the history. A
+alone why, in the system's name (`MessageRejected`, with a `Rejection`), recorded to the sender
+alone (issue 417). A
 user's actor shows what its user sends before it forwards it, so that the refusal always follows
 what it refuses (see [WEB-UI.md](WEB-UI.md)). What an agent said that the channel refused stays in
 its own transcript only.
@@ -358,9 +368,10 @@ naming a message or a turn.
 *   **An external agent** rejects every request to answer again: its remote agent keeps what it was
     given, and nothing here takes the answer back from it.
 
-Whether a retry was accepted is told to the users and never written to the history. Whether a viewer
-may ask is part of each participant's snapshot - the viewer's `RetryMessage`, of an agent whose kind
-answers again - so a client offers it only where it is permitted and can succeed.
+Whether a retry was accepted is told to the users and recorded for them (`RetryAccepted`,
+`RetryRejected`, issue 417). Whether a viewer may ask is part of each participant's snapshot - the
+viewer's `RetryMessage`, of an agent whose kind answers again - so a client offers it only where it
+is permitted and can succeed.
 
 ## Participants
 
@@ -588,8 +599,9 @@ message of the user had mentioned them - no policy consulted, no chain between a
     agent.
 *   **Not into a second turn.** An agent in a turn would take the request in after it and answer
     twice, so the nudge is refused while it responds.
-*   **Nothing remains of it** but the answer: the history keeps no entry, nobody but the one asked
-    is shown the request, and the command answers the issuer alone.
+*   **What remains of it** is the request to respond, recorded to the one asked (issue 417), and
+    the answer: nobody but the one asked is shown the request, and the command answers the issuer
+    alone.
 
 ### Refusals
 
@@ -850,9 +862,9 @@ counted with the envelope (`EventContext::agent_hops`); an agent's answer carrie
 request it answers. Once a request would exceed the moderator's `max_agent_hops` (default 3), it
 asks nobody - nor its policy, so a rotation is left as it is. The message is still delivered, and
 the moderator says that the chain was cut off (`ChainCutOff`, in the system's name), to the users
-and to the agents involved - the sender and those it mentioned - never to the history. Since it is
-sent in another name, the channel delivers it to the sender too. With `max_agent_hops: 0`, agents
-answer only users.
+and to the agents involved - the sender and those it mentioned -, recorded to them (issue 417).
+Since it is sent in another name, the channel delivers it to the sender too. With
+`max_agent_hops: 0`, agents answer only users.
 
 A user's message starts a new chain. What an external agent says unasked when a long task ends
 continues the context of its answer to the request that began the task, so it is as many hops away

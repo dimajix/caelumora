@@ -5,7 +5,7 @@ use super::{stopped, ActorChange, ChannelActor, ChannelLoop};
 use crate::actor::Answering;
 use crate::logging::envelope_span;
 use crate::moderator::Routing;
-use caelumora_model::history::{Audience, Recorded};
+use caelumora_model::history::{Audience, HistoryEntry, Recorded};
 use crate::transport::{EventSender, TransportError};
 use crate::transport::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
 use anyhow::{anyhow, Result};
@@ -210,7 +210,7 @@ impl ChannelLoop {
         // The full envelope carries message content: trace level only.
         trace!("Envelope: {:?}", event);
         if let Err(reason) = self.admission(&event).await {
-            self.reject(&event, reason, running);
+            self.reject(&event, reason, running).await;
             return;
         }
         self.enter(event, running).await;
@@ -230,9 +230,9 @@ impl ChannelLoop {
             None => None,
         };
         let audience = routing.as_ref().map_or_else(|| Audience::Only(Vec::new()), |routing| routing.audience.clone());
-        self.append_history(&event, audience).await;
+        let position = self.append_history(&event, audience).await;
         if let Some(shown) = shown {
-            self.route_event(running, shown, routing).await;
+            self.route_event(running, shown, routing, position).await;
         }
     }
 
@@ -412,13 +412,16 @@ impl ChannelLoop {
 
     /// Tells the sender of `event`, which the channel did not let in, why
     /// (`MessageRejected`, issue 304) - it alone, in the channel's name; not
-    /// one that left, whose inbox is closed.
-    fn reject(&self, event: &Envelope, reason: Rejection, running: &HashMap<ActorId, RunningActor>) {
+    /// one that left, whose inbox is closed. The notice is recorded, to the
+    /// sender alone, so that it is shown after a reload (issue 417); what
+    /// was rejected entered nothing and is not.
+    async fn reject(&self, event: &Envelope, reason: Rejection, running: &HashMap<ActorId, RunningActor>) {
         warn!("Dropped {}: {}", event.describe(), reason);
         let sender = event.context.sender_id;
         let Some(inbox) = running.get(&sender).and_then(|actor| actor.sender.as_ref()) else { return };
         let rejected = ActorEvent::MessageRejected { rejected: event.event.kind().to_string(), message: event.event.subject_message(), reason };
-        let envelope = Answering::in_channel(self.session_id, self.id, ActorId::System.to_string(), SecurityContext::system()).replying_to(&event.context).envelope(rejected);
+        let mut envelope = Answering::in_channel(self.session_id, self.id, ActorId::System.to_string(), SecurityContext::system()).replying_to(&event.context).envelope(rejected);
+        envelope.context.position = self.append_history(&envelope, Audience::Only(vec![sender])).await;
         if let Err(e) = inbox.try_send(envelope) {
             warn!("Could not tell {} that channel {} did not let in what it sent: {:?}", sender, self.id, e);
         }
@@ -442,7 +445,7 @@ impl ChannelLoop {
         event
     }
 
-    async fn route_event(&self, running: &HashMap<ActorId, RunningActor>, event: Envelope, routing: Option<Routing>) {
+    async fn route_event(&self, running: &HashMap<ActorId, RunningActor>, event: Envelope, routing: Option<Routing>, position: Option<u64>) {
         // Asked for by an actor - a user's actor asks with every message it
         // sends (issue 90); the channel does not decide by itself.
         if matches!(event.event, ActorEvent::WakeupRequested) {
@@ -456,17 +459,17 @@ impl ChannelLoop {
         }
 
         if let Some(routing) = routing {
-            self.route_event_impl(running, &event, routing).await;
+            self.route_event_impl(running, &event, routing, position).await;
         }
         #[cfg(any(test, feature = "test-support"))]
         let _ = self.observed.send(event);
     }
 
-    async fn route_event_impl(&self, running: &HashMap<ActorId, RunningActor>, event: &Envelope, routing: Routing) {
+    async fn route_event_impl(&self, running: &HashMap<ActorId, RunningActor>, event: &Envelope, routing: Routing, position: Option<u64>) {
         let span_id = event.context.span_id;
         let span_depth = event.context.span_depth + 1;
-        let decision = self.deliveries(event, routing);
         let quiet = self.quiet.load(Ordering::SeqCst);
+        let decision = self.deliveries(event, routing, position, quiet).await;
 
         // Whom the moderator asks to respond is woken first, before anything
         // of the decision is delivered: a sleeping agent ignores a
@@ -498,14 +501,6 @@ impl ChannelLoop {
             if target_id == event.context.sender_id && route.1.context.sender_id == event.context.sender_id && !event.event.is_announcement() {
                 continue;
             }
-            // A cancelled channel stays quiet until it is woken: what was said
-            // still reaches everyone, so that every transcript keeps up with
-            // the history, but nobody is asked to answer it.
-            if quiet && matches!(route.1.event, ActorEvent::ResponseRequested) {
-                debug!(to = %target_id, "Not asking for a response: the channel is quiet after a cancel");
-                continue;
-            }
-
             let mut target_event = route.1;
             let sender_id = target_event.context.sender_id;
             let event_desc = target_event.describe();
@@ -540,29 +535,47 @@ impl ChannelLoop {
         }
     }
 
-    /// What the channel delivers of `event` as `routing` decided (issue
-    /// 418), each envelope built here: the event as it entered, to whom it
-    /// concerns among the actors (`Envelope::concerns`) or whom the
-    /// moderator named; each notice of the moderator's to whom it names, in
-    /// the system's name; a request to respond to each it asks, in the
-    /// event's contexts, with the hops it counted. Whom none of it goes
-    /// back to is `route_event_impl`'s to see to.
-    fn deliveries(&self, event: &Envelope, routing: Routing) -> Vec<(ActorId, Envelope)> {
+    /// What the channel delivers of `event`, recorded at `position`, as
+    /// `routing` decided (issue 418), each envelope built here and stamped
+    /// with the position of its entry (issue 417): the event as it entered,
+    /// to whom it concerns among the actors (`Envelope::concerns`) or whom
+    /// the moderator named; each notice of the moderator's to whom it names,
+    /// in the system's name; a request to respond to each it asks, in the
+    /// event's contexts, with the hops it counted - unless the channel is
+    /// `quiet` after a cancel: what was said still reaches everyone, so that
+    /// every transcript keeps up with the history, but nobody is asked to
+    /// answer it. Each notice and request is recorded, in the system's name,
+    /// to whom it goes, before it is delivered. Whom none of it goes back to
+    /// is `route_event_impl`'s to see to.
+    async fn deliveries(&self, event: &Envelope, routing: Routing, position: Option<u64>, quiet: bool) -> Vec<(ActorId, Envelope)> {
         let Routing { audience, ask, agent_hops, notices } = routing;
         let deliver_to = match audience {
             Audience::Everybody => self.actors.load().keys().copied().filter(|id| event.concerns(*id)).collect(),
             Audience::Only(only) => only,
         };
-        let mut deliveries: Vec<(ActorId, Envelope)> = deliver_to.into_iter().map(|id| (id, event.clone())).collect();
+        let mut delivered = event.clone();
+        delivered.context.position = position;
+        let mut deliveries: Vec<(ActorId, Envelope)> = deliver_to.into_iter().map(|id| (id, delivered.clone())).collect();
         for (recipients, notice) in notices {
             let mut told = event.forward(notice.into());
             told.context.sender_id = ActorId::System;
             told.context.sender_name = ActorId::System.fixed_name().unwrap_or_default().to_string();
+            told.context.position = self.append_history(&told, Audience::Only(recipients.clone())).await;
             deliveries.extend(recipients.into_iter().map(|id| (id, told.clone())));
         }
-        let mut request = event.forward(ActorEvent::ResponseRequested);
-        request.context.agent_hops = agent_hops;
-        deliveries.extend(ask.into_iter().map(|id| (id, request.clone())));
+        if quiet {
+            if !ask.is_empty() {
+                debug!("Not asking for a response: the channel is quiet after a cancel");
+            }
+        } else if !ask.is_empty() {
+            let mut request = event.forward(ActorEvent::ResponseRequested);
+            request.context.agent_hops = agent_hops;
+            request.context.position = match request.entry() {
+                Some(entry) => self.record(entry, ActorId::System, Audience::Only(ask.clone())).await,
+                None => None,
+            };
+            deliveries.extend(ask.into_iter().map(|id| (id, request.clone())));
+        }
         deliveries
     }
 
@@ -576,21 +589,32 @@ impl ChannelLoop {
     /// joined or left where it happened (issue 408), and a change of a
     /// message, admitted, so that it applies (`admission`, issues 234, 304).
     /// Stored at once; what others hear of a message, as everybody may see
-    /// it, is announced as news once it is stored (issue 404).
-    async fn append_history(&self, envelope: &Envelope, audience: Audience) {
-        let Some(entry) = envelope.entry() else { return };
+    /// it, is announced as news once it is stored (issue 404). Returns the
+    /// position of its entry, which what is delivered of it carries; `None`
+    /// if nothing was recorded.
+    async fn append_history(&self, envelope: &Envelope, audience: Audience) -> Option<u64> {
+        let entry = envelope.entry()?;
+        self.record(entry, envelope.context.sender_id, audience).await
+    }
+
+    /// Records `entry`, sent by `sender` to `audience`, in the channel's
+    /// history and stores it (`append_history`); returns its position, or
+    /// `None` if it was not recorded - a change of a message that changes
+    /// nothing.
+    async fn record(&self, entry: HistoryEntry, sender: ActorId, audience: Audience) -> Option<u64> {
         let said = entry.published().and_then(|entry| entry.said().cloned()).filter(Message::is_heard);
         let mut state = self.state.lock().await;
-        let changed = state.history.enter(Recorded::new(entry, envelope.context.sender_id, audience));
-
-        if changed {
-            match self.store_state(&mut state).await {
-                Ok(()) => if let Some(message) = said {
-                    self.channel.announce_said(&message);
-                },
-                Err(e) => warn!("Cannot store state of channel {}: {}", self.id, e),
-            }
+        if !state.history.enter(Recorded::new(entry, sender, audience)) {
+            return None;
         }
+        let position = state.history.end().checked_sub(1);
+        match self.store_state(&mut state).await {
+            Ok(()) => if let Some(message) = said {
+                self.channel.announce_said(&message);
+            },
+            Err(e) => warn!("Cannot store state of channel {}: {}", self.id, e),
+        }
+        position
     }
 
     /// Stores `state`, the channel's, and then lets go of what its history
@@ -645,7 +669,7 @@ mod tests {
     /// recorded it: decided by its moderator, then delivered.
     async fn routed(channel: &ChannelLoop, running: &HashMap<ActorId, RunningActor>, event: Envelope) {
         let routing = channel.decide(&event).await;
-        channel.route_event(running, event, routing).await;
+        channel.route_event(running, event, routing, None).await;
     }
 
     #[tokio::test]
@@ -811,7 +835,12 @@ mod tests {
         channel.process_envelope(from_her(ActorEvent::ParticipantJoined { participant: stranger, name: "mallory".to_string() }), &actors).await;
         channel.process_envelope(from_her(ActorEvent::ParticipantLeft { participant: her, name: "alice".to_string() }), &actors).await;
 
-        assert!(channel.history_entries().await.is_empty(), "nothing is recorded");
+        let recorded = channel.history_entries().await;
+        assert!(matches!(recorded.as_slice(), [HistoryEntry::MessageRejected { .. }, HistoryEntry::MessageRejected { .. }]),
+            "nothing of it is recorded, only that it was not let in (issue 417): {recorded:?}");
+        let state = channel.state.lock().await;
+        assert!(state.history.entries().all(|node| node.entry.sender == ActorId::System && node.entry.audience == Audience::Only(vec![her])), "told to her alone, in the system's name");
+        drop(state);
         let mut rejected = Vec::new();
         while let Ok(envelope) = hers.try_recv() {
             if let ActorEvent::MessageRejected { rejected: kind, reason, .. } = envelope.event {
@@ -1246,7 +1275,8 @@ mod tests {
         );
         let recorded = |channel: Arc<ChannelLoop>| async move {
             let state = channel.state.lock().await;
-            state.history.last().map(|node| (node.entry.sender, node.entry.audience.clone()))
+            let said = state.history.entries().find(|node| node.entry.entry.said().is_some()).map(|node| (node.entry.sender, node.entry.audience.clone()));
+            said
         };
 
         let everybody = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
@@ -1256,6 +1286,35 @@ mod tests {
         let to_bob = channel_moderated_by(&[&alice, &bob], Arc::new(AskBack(ActorId::User(bob.id)))).await;
         to_bob.enter(said("psst"), &HashMap::new()).await;
         assert_eq!(recorded(Arc::clone(&to_bob)).await, Some((ActorId::User(alice.id), Audience::Only(vec![ActorId::User(bob.id)]))), "to whom the moderator named");
+        let state = to_bob.state.lock().await;
+        let asked = state.history.last().map(|node| (node.entry.entry.clone(), node.entry.sender, node.entry.audience.clone()));
+        assert!(matches!(asked, Some((HistoryEntry::ResponseRequested { by, .. }, ActorId::System, Audience::Only(ref only))) if by == ActorId::User(alice.id) && *only == [ActorId::User(bob.id)]),
+            "and whom it asked to respond, after it, in the system's name: {asked:?}");
+    }
+
+    /// Issue 417: what the channel delivers carries the position of its
+    /// entry - the event as it entered, and the request to respond the
+    /// channel records after it -, so that a client tells the live event
+    /// from the item it reads later.
+    #[tokio::test]
+    async fn what_is_delivered_carries_the_position_of_its_entry() {
+        let (alice, bob) = (user("alice"), user("bob"));
+        let channel = channel_moderated_by(&[&alice, &bob], Arc::new(AskBack(ActorId::User(bob.id)))).await;
+        let (tx, mut rx) = mpsc::channel(8);
+        let his = ActorId::User(bob.id);
+        let abort_handle = tokio::spawn(async {}).abort_handle();
+        let running = HashMap::from([(his, RunningActor { id: his, abort_handle, task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(tx))), leaving: None })]);
+        let hers = ActorId::User(alice.id);
+        let said = Message { sender_id: hers, role: MessageRole::User, content: Some("hello".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        channel.enter(Envelope::new(SecurityContext::default(), EventContext { sender_id: hers, ..EventContext::default() }, ActorEvent::CompleteMessageGenerated(said)), &running).await;
+
+        let state = channel.state.lock().await;
+        let at = |position: Option<u64>| position.and_then(|seq| state.history.at(seq)).map(|node| node.entry.entry.clone());
+        let delivered = rx.try_recv().expect("delivered");
+        assert!(matches!(at(delivered.context.position), Some(HistoryEntry::Said { .. })), "the message, at its entry: {:?}", delivered.context.position);
+        let asked = rx.try_recv().expect("and he is asked");
+        assert!(matches!(at(asked.context.position), Some(HistoryEntry::ResponseRequested { .. })), "the request, at its own: {:?}", asked.context.position);
+        assert!(asked.context.position > delivered.context.position, "recorded after it");
     }
 
     /// Issue 417: what only its sender's owner sees enters the channel and is

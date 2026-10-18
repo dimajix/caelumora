@@ -265,15 +265,22 @@ which answer is under way after a reload, by the id rather than by who sent what
 message carries none: it is said outside of any turn. A turn ends with `TurnFinished` or
 `TurnGivenUp` and its reason; a stopped agent sends neither. What an agent does of its own accord
 within a turn - compacting its context - begins with `ActivityStarted` and ends with
-`ActivityFinished`, which says what came of it, or with the turn's being given up.
+`ActivityFinished`, which says what came of it, or with the turn's being given up. An event the
+channel's history records carries the position of its entry (`context.position`, issue 417): the
+`seq` of the item a client reads it as later.
 
 A history - the channel's, and an agent's, which is the channel's as the agent saw it (issue 417) -
-is a list of items in the order they happened: messages said, where a step of a plan began, how
-turns ended, commands an agent carried out, what an agent did of its own accord and what came of it
-(`activity_finished`), who joined or left the channel, by whose act and named as they were then
-(`participant_joined`, `participant_left`), and - in an agent's history only - compactions of its
-context and what it was given to read, as said items. Read from another channel, a history holds
-only the messages released, and neither a turn's end nor the start of a step.
+is a list of items in the order they happened, each with its position (`seq`): messages said, where
+a step of a plan began, how turns ended, commands carried out with what they answered
+(`command_executed`) or not (`command_failed`), what an agent did of its own accord and what came of
+it (`activity_finished`), who joined or left the channel, by whose act and named as they were then
+(`participant_joined`, `participant_left`), the notices its reader was given - an answer to a
+request to answer again (`retry_accepted`, `retry_rejected`), a chain cut off (`chain_cut_off`),
+something of theirs not let in (`message_rejected`), a request to respond (`response_requested`) -,
+and - in an agent's history only - compactions of its context and what it was given to read, as
+said items. A reader is given what went to them: a private answer, a refusal, a request to the
+one it went to. Read from another channel, a history holds only the messages released, and neither
+a turn's end nor the start of a step.
 
 Both histories are read in pages, alike (issue 218): `?limit=` items (50 unless asked, at most 200)
 before `?before=`, the last ones without it, as `{"items": […], "earlier": …}`. `earlier` is the
@@ -341,7 +348,7 @@ state they start from:
 
 The order matters: the server subscribes *first* and reads the state afterwards, so nothing that
 happens while the snapshot is assembled is lost. The price is that an event may arrive twice;
-clients drop duplicates by `MessageId` or entity id.
+clients drop duplicates by `MessageId`, entity id, or the position of a history's entry.
 
 When a client falls behind and events are lost, a client that asked for snapshots is sent a fresh
 one instead of a note that something is missing. This holds on both streams.

@@ -498,7 +498,8 @@ as it is then, so that nothing changes between the check and the entry. The acto
 nothing of the policy. So a message, a change of one, a reclassification, a request to answer
 again, an answer to questions and an answer to an approval request are each asked once, in the
 sender's name - first whether it may act so, then the flow of what it carries -, and what is refused
-is answered to its sender alone (`MessageRejected`), never written to the history.
+is answered to its sender alone (`MessageRejected`), recorded to it alone; what was refused entered
+nothing and is not recorded (issue 417).
 
 ## The security suite
 

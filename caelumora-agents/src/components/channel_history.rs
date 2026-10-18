@@ -89,7 +89,7 @@ impl ToolProvider for ChannelHistoryComponent {
         // (issue 379).
         let query = query.map(str::to_lowercase);
         let page = channel.history_page_of(None, last, &|item| wanted(item, query.as_deref())).await?;
-        let messages: Vec<&Message> = page.items.iter().filter_map(HistoryEntry::said).collect();
+        let messages: Vec<&Message> = page.entries().filter_map(HistoryEntry::said).collect();
         let more = page.earlier.is_some();
         // What was read is classified as the messages given (issue 168).
         let classification = Classification::join_all(messages.iter().map(|m| &m.classification));

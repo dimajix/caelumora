@@ -699,7 +699,7 @@ async fn all_pages(histories: &dyn HistoryStore, key: ChannelId, from: u64, limi
     loop {
         let page = histories.page(key, &Reader::Channel, from, before, limit, &every).await.expect("a page");
         assert!(page.items.len() <= limit, "no more than asked for");
-        pages.push(page.items.iter().map(standing).collect::<Vec<_>>());
+        pages.push(page.entries().map(standing).collect::<Vec<_>>());
         match page.earlier {
             Some(earlier) => before = Some(earlier),
             None => break,
@@ -740,7 +740,7 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
 
     assert_eq!(all_pages(histories, key, 0, 70).await, expected, "the items as they stand, page by page");
     let last = histories.page(key, &Reader::Channel, 0, None, 3, &every).await.unwrap();
-    assert_eq!((last.items.iter().map(standing).collect::<Vec<_>>(), last.earlier), (expected[597..].to_vec(), Some(597)));
+    assert_eq!((last.entries().map(standing).collect::<Vec<_>>(), last.earlier), (expected[597..].to_vec(), Some(597)));
     let from_middle = all_pages(histories, key, 250, 100).await;
     assert_eq!(from_middle, expected[250..].to_vec(), "none before where a view begins");
     let (at, first) = histories.said(key, &Reader::Channel, id(1)).await.unwrap().expect("said");
@@ -786,7 +786,7 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     assert!(histories.said(key, &Reader::Participant(user), id(603)).await.unwrap().is_some(), "what went to them alone");
     assert!(histories.said(key, &Reader::Participant(other), id(603)).await.unwrap().is_none(), "not to another");
     assert!(histories.said(key, &Reader::Outsider, id(603)).await.unwrap().is_none(), "nor to an outsider");
-    let last = |page: HistoryPage| page.items.iter().filter_map(HistoryEntry::said).map(|m| m.id).collect::<Vec<_>>();
+    let last = |page: HistoryPage| page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect::<Vec<_>>();
     assert_eq!(last(histories.page(key, &Reader::Participant(user), 0, None, 2, &every).await.unwrap()), [id(602), id(603)]);
     assert_eq!(last(histories.page(key, &Reader::Participant(other), 0, None, 2, &every).await.unwrap()), [id(601), id(602)], "a page is filled with what they may see");
     let seen = histories.entries(key, &Reader::Participant(other), 600).await.unwrap();

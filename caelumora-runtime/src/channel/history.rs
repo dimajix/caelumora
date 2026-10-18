@@ -29,7 +29,7 @@ async fn start_of(histories: &dyn HistoryStore, channel: ChannelId, access: Hist
     let mut before = None;
     while !access.read_enough(&newest, now) {
         let page = histories.page(channel, &Reader::Outsider, 0, before, READ_PAGE, &said).await?;
-        newest.extend(page.items.iter().rev().filter_map(HistoryEntry::said).cloned());
+        newest.extend(page.entries().rev().filter_map(HistoryEntry::said).cloned());
         match page.earlier {
             Some(earlier) => before = Some(earlier),
             None => break,

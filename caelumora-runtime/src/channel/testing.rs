@@ -196,7 +196,7 @@ impl ChannelLoop {
     /// The entries `participant` sees of the history, as `visible_messages`
     /// reads them: who joined or left among them (issue 408).
     pub async fn visible_entries(&self, participant: ActorId) -> Vec<HistoryEntry> {
-        self.history_store.page(self.id, &Reader::Participant(participant), self.visible_from(participant), None, 10_000, &every).await.expect("the history is read").items
+        self.history_store.page(self.id, &Reader::Participant(participant), self.visible_from(participant), None, 10_000, &every).await.expect("the history is read").entries().cloned().collect()
     }
 
     /// The position from which on `participant` sees the history

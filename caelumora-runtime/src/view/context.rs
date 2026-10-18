@@ -198,7 +198,7 @@ mod tests {
 
     /// The items of the agent's history as the view reads them.
     async fn items_of(view: &AgentContextView) -> Vec<HistoryEntry> {
-        view.history_page(None, 1000).await.expect("read").items
+        view.history_page(None, 1000).await.expect("read").entries().cloned().collect()
     }
 
     #[tokio::test]

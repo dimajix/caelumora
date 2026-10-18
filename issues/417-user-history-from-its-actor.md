@@ -543,3 +543,26 @@ Each step is reviewable on its own; 1-2 change no behaviour.
     delivered `HistoryShared`: a restored agent and one started with its channel catch up the
     same way, and the agents' filters let the event pass by.
   - **Who granted it reads it**, as its sender; the clients do not show it yet (step 6).
+- 2026-10-17: Step 6 done. Everything shown is recorded: `CommandExecuted` with its output and
+  whom it was answered to, the session's too; `CommandFailed`, `RetryAccepted`, `RetryRejected` as
+  their actors send them; `ChainCutOff` and `ResponseRequested` recorded by the channel in the
+  system's name, to whom the moderator names or asks, before they are delivered; `MessageRejected`
+  from `reject`, to the sender alone. `HistoryEntry::is_conversation` leaves notices and requests
+  out of "the last thing" (`turn_given_up_last`). What the channel delivers carries the position
+  of its entry (`EventContext::position`); a page's items carry theirs (`HistoryPage::items` as
+  `(seq, entry)`, over REST `{"seq": …, <kind>: …}`). The REST items and the web UI show the
+  notices from the history, and the chat keeps each once by `entry:<position>`. Tested: the
+  entries' rule against the envelopes' for every new kind, a turn given up found past a notice, the
+  rejections recorded to their sender alone in the system's name, the request recorded after what
+  it answers, the positions delivered, a command's failure to its issuer alone, and in the agents'
+  security suite a private answer on its issuer's page alone. Where it differs from the design
+  above:
+  - **`ResponseRequested` carries only `by`**: whom it asked is its audience, and what it answers
+    is the entry before it. A quiet channel asks nobody, and records no request.
+  - **The rule of delivery is read off the entry**, so `CommandExecuted` and `CommandFailed` carry
+    `to`. A private answer to a command is no longer on the pages of other users, who were not
+    shown it either; before, they read the command without its answer.
+  - **A message of a user's that was not let in** is marked live, as before; after a reload, the
+    notice of its refusal stands in its place - the message entered nothing.
+  - **A change of a message counts as conversation**: a retry after a turn given up is refused
+    once something was changed after it, as before.

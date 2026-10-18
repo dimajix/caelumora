@@ -354,14 +354,52 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             e.str(description);
             e.finish()
         }
-        HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, .. } => {
-            let mut e = Encoder::new("caelumora.history-command-executed.v1");
+        HistoryEntry::CommandExecuted { turn_id, actor, issuer, command, args, output, to, .. } => {
+            let mut e = Encoder::new("caelumora.history-command-executed.v2");
             e.opt_digest(previous);
-            e.bytes(turn_id.0.as_bytes());
-            e.json(&to_json(actor));
-            e.json(&to_json(issuer));
+            e.json(&serde_json::json!([turn_id, actor, issuer, to]));
             e.str(command);
             e.str(args);
+            e.str(output);
+            e.finish()
+        }
+        HistoryEntry::CommandFailed { turn_id, actor, command, reason, to, .. } => {
+            let mut e = Encoder::new("caelumora.history-command-failed.v1");
+            e.opt_digest(previous);
+            e.json(&serde_json::json!([turn_id, actor, to]));
+            e.str(command);
+            e.str(reason);
+            e.finish()
+        }
+        HistoryEntry::RetryAccepted { target, actor, .. } => {
+            let mut e = Encoder::new("caelumora.history-retry-accepted.v1");
+            e.opt_digest(previous);
+            e.json(&serde_json::json!([target, actor]));
+            e.finish()
+        }
+        HistoryEntry::RetryRejected { target, reason, actor, .. } => {
+            let mut e = Encoder::new("caelumora.history-retry-rejected.v1");
+            e.opt_digest(previous);
+            e.json(&serde_json::json!([target, reason, actor]));
+            e.finish()
+        }
+        HistoryEntry::ChainCutOff { message, max_agent_hops, not_asked, .. } => {
+            let mut e = Encoder::new("caelumora.history-chain-cut-off.v1");
+            e.opt_digest(previous);
+            e.json(&serde_json::json!([message, max_agent_hops, not_asked]));
+            e.finish()
+        }
+        HistoryEntry::MessageRejected { rejected, message, reason, .. } => {
+            let mut e = Encoder::new("caelumora.history-message-rejected.v1");
+            e.opt_digest(previous);
+            e.str(rejected);
+            e.json(&serde_json::json!([message, reason]));
+            e.finish()
+        }
+        HistoryEntry::ResponseRequested { by, .. } => {
+            let mut e = Encoder::new("caelumora.history-response-requested.v1");
+            e.opt_digest(previous);
+            e.json(&to_json(by));
             e.finish()
         }
         HistoryEntry::ActivityFinished { turn_id, actor, activity, output, .. } => {

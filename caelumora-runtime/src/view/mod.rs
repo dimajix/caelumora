@@ -793,7 +793,7 @@ mod tests {
 
     /// The messages of `page`.
     fn messages(page: &HistoryPage) -> Vec<Message> {
-        page.items.iter().filter_map(HistoryEntry::said).cloned().collect()
+        page.entries().filter_map(HistoryEntry::said).cloned().collect()
     }
     use crate::channel::ChannelLoop;
     use crate::group::keep_participants;
@@ -908,7 +908,7 @@ mod tests {
         let texts = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
         assert_eq!(texts(seen.transcript().messages()), ["later"], "what it is given next, not what it was given or answered");
         assert_eq!(seen.private_notes(), (Vec::new(), None), "an external agent writes none");
-        assert!(!seen.history_page(None, 100).await.unwrap().items.iter().any(|item| matches!(item, HistoryEntry::TurnGivenUp { .. })));
+        assert!(!seen.history_page(None, 100).await.unwrap().entries().any(|item| matches!(item, HistoryEntry::TurnGivenUp { .. })));
         let context = seen.context_of(answer.id).await.expect("what the call was given (issue 205)");
         assert_eq!(context.items.len(), 1, "the messages of the one call, no prompt parts");
         assert!(matches!(&context.items[0], ContextItem::Conversation { message } if message.id == question.id));
@@ -1184,7 +1184,7 @@ mod tests {
         let as_helper = Viewer::new(SecurityContext::new(ActorId::User(alice.id), session.id, channel.id).next(ActorId::Agent(helper.id), ActorId::User(alice.id), ActorId::User(alice.id)));
         assert_eq!(texts(&messages(&whole(&reach(as_helper).await).await.unwrap())), ["second"], "the agent reads with its own limit, not its owner's");
         // In pages (issue 218), with the same limits.
-        let page_texts = |page: &HistoryPage| page.items.iter().filter_map(HistoryEntry::said).filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+        let page_texts = |page: &HistoryPage| page.entries().filter_map(HistoryEntry::said).filter_map(|m| m.content.clone()).collect::<Vec<_>>();
         let last = for_alice.history_page(None, 1).await.unwrap();
         assert_eq!(page_texts(&last), ["second"]);
         let before = for_alice.history_page(last.earlier, 1).await.unwrap();
@@ -1506,7 +1506,7 @@ mod tests {
         assert_eq!(released.items.len(), 1, "nothing of how turns ended: it would tell of work whose messages are not released (issue 258)");
         assert_eq!(texts(released), ["the date"]);
         let page = secret_from_team.history_page(None, 10).await.unwrap();
-        assert_eq!(page.items.iter().filter_map(HistoryEntry::said).filter_map(|m| m.content.as_deref()).collect::<Vec<_>>(), ["the date"], "a page of what was released (issue 218)");
+        assert_eq!(page.entries().filter_map(HistoryEntry::said).filter_map(|m| m.content.as_deref()).collect::<Vec<_>>(), ["the date"], "a page of what was released (issue 218)");
         assert!(matches!(secret_from_team.message(plan.id).await, Err(ViewError::NoChannelNamed(_))), "what was not released is not found");
         let notes = secret_from_team.notes().await.unwrap();
         assert_eq!(notes[0].notes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["noted openly"]);

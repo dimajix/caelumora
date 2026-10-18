@@ -634,8 +634,8 @@ export interface Message {
   // `private` if only the issuer sees it. One an agent carried out (issue
   // 269) also names the `agent`, its `args` and, from the history, the
   // `issuer`; `failed` if the agent did not carry it out, `underWay` while
-  // it carries it out (issue 299). A command of the channel is never part of
-  // the history, one an agent carried out is - without what it answered.
+  // it carries it out (issue 299). Part of the history, with what it
+  // answered, for whom it was answered (issue 417).
   commandOutput?: {command: string; private: boolean; args?: string; agent?: string; issuer?: string; failed?: boolean; underWay?: boolean};
   // UI only: something an agent did of its own accord (issue 284) - its
   // words, as "compacting its context" -, `underWay` until it ended. One
@@ -647,20 +647,20 @@ export interface Message {
   // UI only: its sender was removed from the channel before its tool calls
   // were answered (issue 162) - those without a result never will be.
   abandoned?: boolean;
-  // UI only: a chain between agents was cut off at its limit (issue 200),
-  // a notice that is gone on reload; `notAsked` are the agents mentioned.
+  // UI only: a chain between agents was cut off at its limit (issue 200);
+  // `notAsked` are the agents mentioned. Part of the history (issue 417).
   chainCutOff?: {maxAgentHops: number; notAsked: ActorId[]};
-  // UI only: `sender_name` asks you to respond (issue 278), a notice that
-  // is gone on reload - a nudge leaves nothing in the history.
+  // UI only: `sender_name` asks you to respond (issue 278), part of the
+  // history as the request it is (issue 417).
   nudged?: boolean;
   // UI only: the sender would not answer again instead of a message (issue
-  // 234), a notice that is gone on reload.
+  // 234). Part of the history (issue 417).
   retryRejected?: RetryRefused;
   // UI only: the channel did not let this message of the user's in, for
   // `rejected` (issue 304) - it is in no history, and gone on reload.
   rejected?: Rejection;
-  // UI only: the channel did not let in what the user sent (issue 304), a
-  // notice that is gone on reload.
+  // UI only: the channel did not let in what the user sent (issue 304).
+  // Part of the history, also for a message of theirs (issue 417).
   messageRejected?: {rejected: string; reason: Rejection};
   // UI only: a step of the plan of the turn `turn_id` began here (issue
   // 263) - not shown itself, but heading the messages of the step.
@@ -844,6 +844,12 @@ export interface EventContext {
   correlation_id: string;
   span_id: string;
   span_depth: number;
+  /**
+   * The position in the channel's history of the entry the event was
+   * delivered as (issue 417): the `seq` of the item it is read as later.
+   * Absent for what the history does not record.
+   */
+  position?: number;
 }
 
 export interface Envelope {
@@ -1093,14 +1099,23 @@ export type GivenUpReason =
 /**
  * An item of a history (issue 258): a message said - `M`, a `Message` of the
  * channel or a `HistoryMessage` of an agent - or how a turn ended, and whose
- * it was.
+ * it was; a notice its reader was given (issue 417). `seq` is the position
+ * of the entry that added it: what a live event that announced it carries
+ * as its `position`.
  */
-export type HistoryItem<M> =
+export type HistoryItem<M> = {seq: number} & HistoryItemKind<M>;
+
+/** What an item of a history is (`HistoryItem`), named by its kind. */
+export type HistoryItemKind<M> =
   | {said: M}
   | {plan_step_started: {turn_id: string; actor: ActorId; step_index: number; total_steps: number; description: string; at: string}}
   | {turn_finished: {turn_id: string; actor: ActorId; at: string}}
   | {turn_given_up: {turn_id: string; actor: ActorId; reason: GivenUpReason; at: string}}
-  | {command_executed: {turn_id: string; actor: ActorId; issuer: ActorId; command: string; args: string; at: string}}
+  /**
+   * A command was carried out (issues 269, 417): by an agent in its turn, or
+   * by the session without one; what it answered, to `to` alone if private.
+   */
+  | {command_executed: {turn_id: string | null; actor: ActorId; issuer: ActorId; command: string; args: string; output: string; to: ActorId | null; at: string}}
   /** An agent ended something it did of its own accord, and what came of it (issue 284). */
   | {activity_finished: {turn_id: string; actor: ActorId; activity: string; output: string; at: string}}
   /** An agent replaced its context `from` by `to` (issue 16); in an agent's history only. */
@@ -1108,7 +1123,19 @@ export type HistoryItem<M> =
   /** Someone joined the channel, by the act of `by` (issue 408); the names as they were then. */
   | {participant_joined: {participant: ActorId; name: string; by: ActorId; by_name: string; at: string}}
   /** Someone left the channel, by the act of `by` (issue 408). */
-  | {participant_left: {participant: ActorId; name: string; by: ActorId; by_name: string; at: string}};
+  | {participant_left: {participant: ActorId; name: string; by: ActorId; by_name: string; at: string}}
+  /** An agent did not carry out a command of `to`'s (issue 269). */
+  | {command_failed: {turn_id: string | null; actor: ActorId; command: string; reason: string; to: ActorId; at: string}}
+  /** An agent answers again instead of `target` (issue 234). */
+  | {retry_accepted: {target: RetryTarget; actor: ActorId; at: string}}
+  /** An agent does not answer again instead of `target` (issue 234). */
+  | {retry_rejected: {target: RetryTarget; reason: RetryRefused; actor: ActorId; at: string}}
+  /** A chain between agents reached its limit (issue 200). */
+  | {chain_cut_off: {message: string; max_agent_hops: number; not_asked: ActorId[]; at: string}}
+  /** What the reader sent was not let into the channel (issue 304). */
+  | {message_rejected: {rejected: string; message: string | null; reason: Rejection; at: string}}
+  /** The reader was asked to respond, to what `by` said or nudged (issues 278, 417). */
+  | {response_requested: {by: ActorId; at: string}};
 
 /**
  * A page of a history (issue 218): its items, oldest first, and `earlier`,

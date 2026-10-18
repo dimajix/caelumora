@@ -208,7 +208,7 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
     assert_eq!(recorded.said().and_then(|m| m.reasoning.as_deref()), Some("weighing"), "the record holds it, for the agent");
     let for_bob = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
     let page = for_bob.history_page(None, 10).await.unwrap();
-    let on_his_page = page.items.iter().filter_map(HistoryEntry::said).find(|m| m.id == answered.id).expect("on bob's page");
+    let on_his_page = page.entries().filter_map(HistoryEntry::said).find(|m| m.id == answered.id).expect("on bob's page");
     assert_eq!(on_his_page.reasoning, None, "nor on a page");
     assert_eq!(for_bob.message(answered.id).await.unwrap().reasoning, None, "nor read by its id");
 
@@ -2124,6 +2124,41 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
     let mut hers = main.user_actor(world.alice).unwrap().watch();
     main.user_actor(world.alice).unwrap().execute_command("seal", "@helper").await.expect("hers, as its owner");
     assert!(matches!(shown(&mut hers, "CommandExecuted").await, ActorEvent::CommandExecuted { ref output, .. } if output == "seal: done"));
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// What an agent answers to a command privately (issue 269) is recorded
+/// with its answer, to the issuer alone (issue 417): bob reads his `/mark`
+/// and what it answered on his page, alice - the agent's owner, taking part
+/// - finds nothing of it on hers.
+#[tokio::test]
+async fn a_private_answer_to_a_command_is_on_its_issuers_page_alone() {
+    use caelumora_model::history::HistoryEntry;
+    let (world, session, main, _, mut his) = with_a_commanded_agent().await;
+    main.user_actor(world.bob).unwrap().execute_command("mark", "@helper").await.expect("his to ask for");
+    shown(&mut his, "CommandExecuted").await;
+
+    let answers = |user| {
+        let (manager, session, channel) = (&world.manager, session.id(), main.id());
+        async move {
+            let view = manager.views(Viewer::new(World::as_user(user))).session(session).await.unwrap().channel(channel).await.unwrap();
+            view.history_page(None, 50).await.unwrap().entries()
+                .filter_map(|entry| match entry {
+                    HistoryEntry::CommandExecuted { output, .. } => Some(output.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        }
+    };
+    let recorded = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let seen = answers(world.bob).await;
+            if !seen.is_empty() { break seen }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("recorded");
+    assert_eq!(recorded, ["mark: done"], "his, with what it answered");
+    assert!(answers(world.alice).await.is_empty(), "nothing of it on hers");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

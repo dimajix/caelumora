@@ -186,7 +186,7 @@ pub(crate) fn page_of(newest: impl IntoIterator<Item = (u64, HistoryEntry)>, fro
         read.last().map(|(seq, _)| *seq)
     }).flatten();
     read.reverse();
-    HistoryPage { items: read.into_iter().map(|(_, item)| item).collect(), earlier, digest }
+    HistoryPage { items: read, earlier, digest }
 }
 
 #[cfg(test)]
@@ -241,7 +241,7 @@ mod tests {
     fn a_page_is_cut_from_the_newest_items() {
         let newest = |n: u64| (0..n).rev().map(|seq| (seq, HistoryEntry::Said { message: make_message(id(seq as u128 + 1)) }));
         let page = page_of(newest(5), 0, 2, None);
-        assert_eq!((page.items.iter().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(1).unwrap().1), label(&newest(5).next().unwrap().1)], Some(3)));
+        assert_eq!((page.entries().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(1).unwrap().1), label(&newest(5).next().unwrap().1)], Some(3)));
         let page = page_of(newest(5), 3, 5, None);
         assert_eq!((page.items.len(), page.earlier), (2, None), "none before where the view begins");
         assert_eq!(page_of(newest(0), 0, 5, None).items.len(), 0);
@@ -249,6 +249,6 @@ mod tests {
         let odd = |item: &HistoryEntry| item.said().is_some_and(|m| m.id.0.as_u128() % 2 == 1);
         let kept = newest(5).map(|(seq, entry)| (seq, Recorded::new(entry, ActorId::None, Audience::Everybody)));
         let page = page_of(kept.filter_map(|item| seen(&Reader::Channel, &odd, &item)), 0, 2, None);
-        assert_eq!((page.items.iter().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(2).unwrap().1), label(&newest(5).next().unwrap().1)], Some(2)), "a page of those kept, full, and an older one kept");
+        assert_eq!((page.entries().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(2).unwrap().1), label(&newest(5).next().unwrap().1)], Some(2)), "a page of those kept, full, and an older one kept");
     }
 }

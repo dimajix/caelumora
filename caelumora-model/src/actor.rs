@@ -125,6 +125,10 @@ pub enum ActorEvent {
     /// users it asked them of - `shown_to`, or every user - so that their
     /// frontends no longer offer to answer.
     QuestionClosed { id: QuestionId, shown_to: Option<Vec<ActorId>> },
+    /// Asks its receiver to respond to the event whose contexts it carries
+    /// (issue 45): built by the channel for each its moderator asks, and
+    /// recorded in the system's name to them (`HistoryEntry::
+    /// ResponseRequested`, issue 417).
     ResponseRequested,
     /// An answer begins: the turn `turn_id` of the sender (issue 235) - an
     /// agent's turn or an external agent's work - whose messages carry the
@@ -221,10 +225,9 @@ pub enum ActorEvent {
     /// is theirs, `None` if it is everybody's - the issuer is the security
     /// context's initiator either way.
     ///
-    /// Shown to users, never heard by agents. A command of the session is
-    /// never written to the history - it addresses the system -; one an
-    /// agent carried out is recorded by the channel, without the output
-    /// (`HistoryEntry::CommandExecuted`).
+    /// Shown to users, never heard by agents. Recorded by the channel with
+    /// its output, to whom it went (`HistoryEntry::CommandExecuted`, issue
+    /// 417).
     CommandExecuted {
         command: String,
         args: String,
@@ -248,8 +251,9 @@ pub enum ActorEvent {
     /// invalid, or it failed. `reason` is worded for the issuer, `to`, as
     /// `CommandError` words it - never the error itself, which stays in
     /// the log. `turn_id` is the turn it had begun in, if it told the
-    /// issuer so (`CommandStarted`). Shown to the issuer alone and never
-    /// written to a history: nothing happened.
+    /// issuer so (`CommandStarted`). Shown to the issuer alone, and
+    /// recorded to them alone (`HistoryEntry::CommandFailed`, issue 417):
+    /// nothing else happened.
     CommandFailed {
         command: String,
         reason: String,
@@ -320,7 +324,9 @@ pub enum ActorEvent {
     /// `ActorId::System`, to the users of the channel and to the agents
     /// involved: the sender of the response and those it mentioned.
     ///
-    /// Never written to the history; an agent takes no note of it.
+    /// Recorded by the channel to whom it was told
+    /// (`HistoryEntry::ChainCutOff`, issue 417); an agent takes no note of
+    /// it.
     ChainCutOff {
         message: MessageId,
         max_agent_hops: u32,
@@ -367,13 +373,15 @@ pub enum ActorEvent {
     /// The agent answers again instead of `target` (issues 234, 235): it
     /// takes back what it replaces (`MessageRevoked`) - nothing of a turn
     /// that was under way, which it gave up - and answers in a turn of its
-    /// own. Shown to users and never written to the history.
+    /// own. Shown to users, and recorded (`HistoryEntry::RetryAccepted`,
+    /// issue 417).
     RetryAccepted {
         target: RetryTarget,
     },
     /// The agent does not answer again instead of `target`, for `reason`
     /// (issue 234) - one of a known few, which a user interface words
-    /// itself. Shown to users and never written to the history.
+    /// itself. Shown to users, and recorded (`HistoryEntry::RetryRejected`,
+    /// issue 417).
     RetryRejected {
         target: RetryTarget,
         reason: RetryRefused,
@@ -396,8 +404,9 @@ pub enum ActorEvent {
     /// message it was or was about, if any, and `reason` is one of a known
     /// few, which a user interface words itself - the channel's one decision
     /// of what enters it, made in order as it takes the event in. Sent by the
-    /// channel to the event's sender alone, and never written to the
-    /// history: nothing entered it.
+    /// channel to the event's sender alone, and recorded to it alone
+    /// (`HistoryEntry::MessageRejected`, issue 417); what was rejected
+    /// entered nothing.
     MessageRejected {
         rejected: String,
         message: Option<MessageId>,
@@ -545,6 +554,13 @@ pub struct EventContext {
     pub correlation_id: Uuid,
     pub span_id: Uuid,
     pub span_depth: i32,
+    /// The position in its channel's history of the entry it was delivered
+    /// as (issue 417), stamped by the channel as it delivers it: what a
+    /// client tells the live event from the item it reads later by. `None`
+    /// for what the history does not record, and for what was not
+    /// delivered by a channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<u64>,
     /// How many times since the last message of a user an agent's message
     /// made another agent respond (issue 45). A user's message starts at 0;
     /// `next` keeps it, and the moderator counts a hop when it asks an agent
@@ -564,6 +580,7 @@ impl EventContext {
             correlation_id: Uuid::default(),
             span_id: Uuid::new_v4(),
             span_depth: 0,
+            position: None,
             agent_hops: 0,
         }
     }
@@ -578,6 +595,7 @@ impl EventContext {
             correlation_id: self.event_id,
             span_id: self.span_id,
             span_depth: self.span_depth + 1,
+            position: None,
             agent_hops: self.agent_hops,
         }
     }
@@ -650,15 +668,18 @@ impl Envelope {
 
     /// What a channel's history records of this envelope (issue 417): a
     /// message said, a step of it included (issue 258); how a turn ended;
-    /// where a step of its plan began (issue 263); a command an agent
-    /// carried out (issue 269) - who asked is the initiator; what came of
-    /// what an agent did of its own accord (issue 284); who joined or left,
-    /// by its sender (issue 408); a change of a message (issue 234); what an
-    /// agent was given and a compaction of its context (issue 417). Every
-    /// mark in the name of its sender, when it was sent. `None` for what the
-    /// history does not record: what streams, a beginning whose end is
-    /// recorded, where an actor stands, what only asks, approvals and
-    /// questions, a command of the session.
+    /// where a step of its plan began (issue 263); a command carried out,
+    /// with its answer, or not (issue 269) - who asked is the initiator;
+    /// what came of what an agent did of its own accord (issue 284); who
+    /// joined or left, by its sender (issue 408); a change of a message
+    /// (issue 234); what an agent was given and a compaction of its context;
+    /// the answer to a request to answer again, a chain cut off, a rejection
+    /// and a request to respond (issue 417). Every mark in the name of its
+    /// sender, when it was sent. `None` for what the history does not
+    /// record: what streams, a beginning whose end is recorded, where an
+    /// actor stands, what asks for an answer to be redone, a command or a
+    /// nudge asked for - recorded as what comes of them -, approvals and
+    /// questions.
     pub fn entry(&self) -> Option<HistoryEntry> {
         let actor = self.context.sender_id;
         let at = self.timestamp;
@@ -671,9 +692,19 @@ impl Envelope {
             ActorEvent::PlanStepStarted { turn_id, step_index, total_steps, description } => {
                 HistoryEntry::PlanStepStarted { turn_id: *turn_id, actor, step_index: *step_index, total_steps: *total_steps, description: description.clone(), at }
             }
-            ActorEvent::CommandExecuted { turn_id: Some(turn_id), command, args, .. } => {
-                HistoryEntry::CommandExecuted { turn_id: *turn_id, actor, issuer: self.security.initiator_id, command: command.clone(), args: args.clone(), at }
+            ActorEvent::CommandExecuted { command, args, output, to, turn_id } => HistoryEntry::CommandExecuted {
+                turn_id: *turn_id, actor, issuer: self.security.initiator_id, command: command.clone(), args: args.clone(), output: output.clone(), to: *to, at,
+            },
+            ActorEvent::CommandFailed { command, reason, to, turn_id } => {
+                HistoryEntry::CommandFailed { turn_id: *turn_id, actor, command: command.clone(), reason: reason.clone(), to: *to, at }
             }
+            ActorEvent::RetryAccepted { target } => HistoryEntry::RetryAccepted { target: *target, actor, at },
+            ActorEvent::RetryRejected { target, reason } => HistoryEntry::RetryRejected { target: *target, reason: *reason, actor, at },
+            ActorEvent::ChainCutOff { message, max_agent_hops, not_asked } => {
+                HistoryEntry::ChainCutOff { message: *message, max_agent_hops: *max_agent_hops, not_asked: not_asked.clone(), at }
+            }
+            ActorEvent::MessageRejected { rejected, message, reason } => HistoryEntry::MessageRejected { rejected: rejected.clone(), message: *message, reason: *reason, at },
+            ActorEvent::ResponseRequested => HistoryEntry::ResponseRequested { by: actor, at },
             ActorEvent::ActivityFinished { turn_id, activity, output } => HistoryEntry::ActivityFinished { turn_id: *turn_id, actor, activity: activity.clone(), output: output.clone(), at },
             ActorEvent::ParticipantJoined { participant, name } => {
                 HistoryEntry::ParticipantJoined { participant: *participant, name: name.clone(), by: actor, by_name: self.context.sender_name.clone(), at }
@@ -689,11 +720,10 @@ impl Envelope {
             ActorEvent::MessageReclassified { message, classification } => HistoryEntry::Reclassified { message: *message, classification: classification.clone() },
             ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalGranted(_) | ActorEvent::ApprovalDenied(_) | ActorEvent::ApprovalTimedOut(_)
             | ActorEvent::ApprovalRequestWithdrawn { .. } | ActorEvent::QuestionRequested(_) | ActorEvent::QuestionAnswered { .. }
-            | ActorEvent::QuestionDeclined { .. } | ActorEvent::QuestionClosed { .. } | ActorEvent::ResponseRequested | ActorEvent::ResponseStarted { .. }
+            | ActorEvent::QuestionDeclined { .. } | ActorEvent::QuestionClosed { .. } | ActorEvent::ResponseStarted { .. }
             | ActorEvent::StateChanged(_) | ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_) | ActorEvent::WakeupRequested
-            | ActorEvent::PlanStepFinished { .. } | ActorEvent::CommandRequested { .. } | ActorEvent::NudgeRequested { .. } | ActorEvent::CommandExecuted { turn_id: None, .. }
-            | ActorEvent::CommandStarted { .. } | ActorEvent::CommandFailed { .. } | ActorEvent::ActivityStarted { .. } | ActorEvent::ChainCutOff { .. }
-            | ActorEvent::RetryRequested { .. } | ActorEvent::RetryAccepted { .. } | ActorEvent::RetryRejected { .. } | ActorEvent::MessageRejected { .. } => return None,
+            | ActorEvent::PlanStepFinished { .. } | ActorEvent::CommandRequested { .. } | ActorEvent::NudgeRequested { .. }
+            | ActorEvent::CommandStarted { .. } | ActorEvent::ActivityStarted { .. } | ActorEvent::RetryRequested { .. } => return None,
         })
     }
 

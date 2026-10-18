@@ -90,7 +90,9 @@ async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_by_the_agent_al
     assert_eq!((command.as_str(), to, turn_id), ("mark", ActorId::User(alice), None), "to her alone");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.notes.current().is_empty() && state.turn.is_none(), "nothing staged, no turn left");
-    assert_eq!(channel.history_entries().await.len(), before, "nothing in the channel's history");
+    let recorded = channel.history_entries().await.split_off(before);
+    assert!(matches!(recorded.as_slice(), [HistoryEntry::CommandFailed { to, .. }] if *to == ActorId::User(alice)),
+        "in the channel's history only that it was refused, to her (issue 417): {recorded:?}");
     running.abort();
 }
 
@@ -114,7 +116,13 @@ async fn a_command_that_fails_is_told_to_the_issuer_and_leaves_nothing_behind() 
     assert!(state.turn.is_none());
     let ended = |node: &Node<TranscriptEntry>| matches!(node.entry, TranscriptEntry::TurnFinished { turn_id, .. } | TranscriptEntry::TurnGivenUp { turn_id, .. } if turn_id == begun);
     assert!(!state.transcript.all_entries().any(ended), "no turn's end in its transcript: nothing happened");
-    assert_eq!(channel.history_entries().await.len(), before, "nor in the channel's history");
+    let recorded = channel.history_entries().await.split_off(before);
+    assert!(matches!(recorded.as_slice(), [HistoryEntry::CommandFailed { turn_id: Some(turn_id), .. }] if *turn_id == begun),
+        "in the channel's history only that it failed (issue 417): {recorded:?}");
+    for (reader, told) in [(ActorId::User(alice), 1), (ActorId::User(UserId::new()), 0)] {
+        let seen = channel.visible_entries(reader).await.iter().filter(|e| matches!(e, HistoryEntry::CommandFailed { .. })).count();
+        assert_eq!(seen, told, "told to her alone: {reader}");
+    }
     running.abort();
 }
 
