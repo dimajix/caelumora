@@ -421,7 +421,17 @@ Each step is reviewable on its own; 1-2 change no behaviour.
    `MessageRejected` from `reject`; `CommandExecuted` with its output; `position` stamped at
    delivery, items with `seq`; the REST items and the web UI render them from the history.
    Feature: nothing is gone on reload.
-7. **Documents**, and 05, 140 and 404's read mark as they stand after this.
+7. **Who sees what is a predicate of the store.** Whom an entry went to is resolved as it is
+   recorded, into what a store can filter by: `sender`, the audience - every member at the time
+   of these kinds (users, agents, both), or these alone - and whether anything of it is published
+   for others. Membership is read from the chain alone: every member has its `ParticipantJoined`,
+   `ParticipantLeft` carries the position from which the leaver was given nothing. Beside the
+   items the store derives each member's visible ranges - from the `from` of its `HistoryShared`
+   to the end of its membership - rebuilt with them. A page counts what its reader sees, and
+   `HistoryStore::page` takes no `from`; `HistoryLimit` goes. `HistoryShared` is recorded only
+   where something is shared, in the system's name. Depends on every founder joining by the one
+   way in ([420](420-channel-built-empty.md)).
+8. **Documents**, and 05, 140 and 404's read mark as they stand after this.
 
 ## Done when
 
@@ -438,6 +448,8 @@ Each step is reviewable on its own; 1-2 change no behaviour.
   from the channel's history.
 - The store suite checks the readers, the audience, the projection and the items against the chain
   folded.
+- Which entries a reader is given is a predicate over what a row holds and the reader's visible
+  ranges - one `WHERE` for a database -, and a page counts the entries its reader sees.
 - The documents named above describe the one history and its reader.
 
 ## History
@@ -566,3 +578,12 @@ Each step is reviewable on its own; 1-2 change no behaviour.
     notice of its refusal stands in its place - the message entered nothing.
   - **A change of a message counts as conversation**: a retry after a turn given up is refused
     once something was changed after it, as before.
+- 2026-10-18: Step 7 added to the plan, the documents move to step 8. Who sees what was decided
+  by `as_seen_by` after the read - a `match` over the kind of entry and the kind of reader - which
+  no database can filter by, and a page passed over what its reader does not see. Decided: the
+  audience is resolved as an entry is recorded, membership is read from the chain alone
+  (`ParticipantJoined` for every member, `ParticipantLeft` with the position from which the leaver
+  was given nothing, so that issue 262's order stays), the store keeps each member's visible
+  ranges beside the items, and a page counts what its reader sees. That founders join by the same
+  way as everybody else - a channel built empty, its participants added - and that `Keep` becomes
+  data a store can filter by are issues of their own (420, 421).
