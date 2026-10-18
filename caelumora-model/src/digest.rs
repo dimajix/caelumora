@@ -8,6 +8,7 @@
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
+use crate::context::FrameRef;
 use crate::history::{HistoryEntry, Recorded};
 use crate::message::{Message, MessageId};
 use crate::transcript::TranscriptEntry;
@@ -512,6 +513,16 @@ pub fn tool_sets(sets: &[ToolSet]) -> Digest {
             e.json(&to_json(tool));
         }
     }
+    e.finish()
+}
+
+/// The digest of the frame of a context (issue 426): all of it - the
+/// references to its prompt parts, its tools and the knowledge read, the
+/// profile and the time zone -, by which it is kept once and a message names
+/// it (`Message::context_frame`).
+pub fn frame(frame: &FrameRef) -> Digest {
+    let mut e = Encoder::new("caelumora.frame.v1");
+    e.json(&to_json(frame));
     e.finish()
 }
 

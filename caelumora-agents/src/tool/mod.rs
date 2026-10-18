@@ -764,7 +764,7 @@ mod tests {
     use caelumora_model::channel::Channel;
     use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::note::NoteId;
-    use caelumora_model::context::ContextRef;
+    use caelumora_model::context::{ContextRef, FrameRef};
     use caelumora_model::turn::TurnState;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
@@ -1136,7 +1136,7 @@ mod tests {
     fn offering(work: Work, tool_sets: Vec<ToolSet>) -> AgentChannelState {
         let mut state = AgentChannelState::default();
         let tools = state.keep_offer(tool_sets);
-        state.turn = Some(TurnState { work: Work { context: ContextRef { tools, ..work.context }, ..work }, ..Default::default() });
+        state.turn = Some(TurnState { work: Work { context: ContextRef { frame: FrameRef { tools, ..work.context.frame }, ..work.context }, ..work }, ..Default::default() });
         state
     }
 

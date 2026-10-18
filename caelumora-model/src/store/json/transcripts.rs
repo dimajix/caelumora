@@ -6,15 +6,18 @@
 //! which a database's indexes are for.
 //!
 //! Beside it the prompt texts and the tool sets the agent's model was given
-//! (issue 383), in `<agent>.given`: a file per digest, `prompt-<digest>.json`
-//! and `tools-<digest>.json`, read by its digest and written once - one
-//! there already is not written again.
+//! (issue 383), and the frames of the contexts its messages were produced
+//! from (issue 426), in `<agent>.given`: a file per digest,
+//! `prompt-<digest>.json`, `tools-<digest>.json` and `frame-<digest>.json`,
+//! read by its digest and written once - one there already is not written
+//! again.
 
 use super::chains::{self, read_chain, read_head, segment_before, segment_of, SEGMENT};
 use super::{read_json_opt, size_of, to_backend_error, write_json_atomic, JsonFileStore};
 use crate::agent::{AgentChannelState, AgentId};
 use crate::chain::{Node, Position};
 use crate::channel::ChannelId;
+use crate::context::FrameRef;
 use crate::digest::Digest;
 use crate::kept::Kept;
 use crate::message::{Message, MessageId};
@@ -67,20 +70,23 @@ impl JsonFileStore {
         Ok(())
     }
 
-    /// The directory of the prompt texts and tool sets of `agent` in
+    /// The directory of the prompt texts, tool sets and frames of `agent` in
     /// `channel`, beside the snapshot of its state.
     pub(super) fn given_dir(&self, agent: AgentId, channel: ChannelId) -> PathBuf {
         self.agent_channel_state_path(agent, channel).with_extension("given")
     }
 
-    /// Writes the prompt texts and the tool sets `state`, that of `agent` in
-    /// `channel`, kept since they were last stored, and marks them stored.
+    /// Writes the prompt texts, the tool sets and the frames `state`, that
+    /// of `agent` in `channel`, kept since they were last stored, and marks
+    /// them stored.
     pub(super) async fn append_given(&self, agent: AgentId, channel: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
         let dir = self.given_dir(agent, channel);
         write_kept(&dir, "prompt", &state.prompts).await?;
         write_kept(&dir, "tools", &state.offered_tools).await?;
+        write_kept(&dir, "frame", &state.frames).await?;
         state.prompts.mark_stored();
         state.offered_tools.mark_stored();
+        state.frames.mark_stored();
         Ok(())
     }
 
@@ -134,5 +140,9 @@ impl TranscriptStore for JsonFileStore {
 
     async fn offered_tools(&self, agent: AgentId, channel: ChannelId, digest: Digest) -> StoreResult<Option<Vec<ToolSet>>> {
         read_json_opt(&given_path(&self.given_dir(agent, channel), "tools", digest)).await
+    }
+
+    async fn frame(&self, agent: AgentId, channel: ChannelId, digest: Digest) -> StoreResult<Option<FrameRef>> {
+        read_json_opt(&given_path(&self.given_dir(agent, channel), "frame", digest)).await
     }
 }

@@ -11,7 +11,6 @@ use crate::actor::{ActorId, Rejection, RetryTarget};
 use crate::agent::RetryRefused;
 use crate::chain::{Chain, Node, Position};
 use crate::confidentiality::Classification;
-use crate::context::ContextRef;
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
 use crate::turn::GivenUpReason;
@@ -622,12 +621,16 @@ impl HistoryEntry {
         }
     }
 
-    /// What the message it says was produced from, and in which turn, if
-    /// this is one said and both are known: whether what its author saw can
-    /// be shown (issue 207).
-    pub fn context(&self) -> Option<(&ContextRef, TurnId)> {
+    /// What the message it says was produced from - the digests of the
+    /// transcript before it and of the frame around it (issue 426) -, and in
+    /// which turn, if this is one said and both are known: whether what its
+    /// author saw can be shown (issue 207).
+    pub fn context(&self) -> Option<(Option<Digest>, Digest, TurnId)> {
         match self {
-            HistoryEntry::Said { message } => Some((message.produced_from.as_ref()?, message.turn_id?)),
+            HistoryEntry::Said { message } => {
+                let (transcript, frame) = message.produced_from()?;
+                Some((transcript, frame, message.turn_id?))
+            }
             HistoryEntry::Given { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
             | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
@@ -640,6 +643,7 @@ impl HistoryEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::FrameRef;
     use crate::confidentiality::Confidentiality;
     use crate::digest::message_chain;
     use crate::message::tests::{id, make_message};
@@ -658,7 +662,7 @@ mod tests {
         const ALL: &[Range<Position>] = &[EVERY_POSITION];
         let (agent, other, user, approver) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()), ActorId::Approver(Default::default()));
         let hidden = ToolCall { id: Some("1".to_string()), function_name: "look".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
-        let answer = Message { sender_id: agent, role: MessageRole::Assistant, content: Some("found it".to_string()), tool_calls: vec![hidden], turn_id: Some(TurnId::new()), produced_from: Some(ContextRef::default()), ..make_message(id(1)) };
+        let answer = Message { sender_id: agent, role: MessageRole::Assistant, content: Some("found it".to_string()), tool_calls: vec![hidden], turn_id: Some(TurnId::new()), ..make_message(id(1)) }.produced_from_context(None, digest::frame(&FrameRef::default()));
         let said = Recorded::new(HistoryEntry::Said { message: answer }, agent, Audience::Everybody);
         let calls = |entry: Option<HistoryEntry>| entry.as_ref().and_then(HistoryEntry::said).map(|m| (m.tool_calls.len(), m.content.clone()));
 
@@ -829,17 +833,18 @@ mod tests {
 
     #[test]
     fn a_history_keeps_what_its_messages_were_produced_from() {
-        let reference = ContextRef { transcript: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default(), time_zone: Default::default() };
+        let transcript = Some(message_chain(None, &make_message(id(9))));
+        let frame = digest::frame(&FrameRef::default());
         let turn = TurnId::new();
         let mut history = History::default();
         history.extend(vec![make_message(id(1))]);
-        history.push(Message { turn_id: Some(turn), produced_from: Some(reference.clone()), ..make_message(id(2)) });
+        history.push(Message { turn_id: Some(turn), ..make_message(id(2)) }.produced_from_context(transcript, frame));
 
         let loaded: History = serde_json::from_value(serde_json::to_value(&history).unwrap()).unwrap();
         let entries: Vec<_> = loaded.all_entries().collect();
         assert_eq!(entries[0].entry.entry.context(), None, "said by someone else");
-        assert_eq!(entries[1].entry.entry.context(), Some((&reference, turn)), "with the turn it was produced in");
-        assert_eq!(recorded_context(&loaded, id(2)), Some((reference.clone(), turn)), "found by its message");
+        assert_eq!(entries[1].entry.entry.context(), Some((transcript, frame, turn)), "with the turn it was produced in");
+        assert_eq!(recorded_context(&loaded, id(2)), Some((transcript, frame, turn)), "found by its message");
         assert_eq!(recorded_context(&loaded, id(1)), None);
         assert_eq!(loaded.digest(), history.digest());
     }

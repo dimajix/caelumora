@@ -92,7 +92,7 @@ impl Turn<'_> {
     pub(super) fn name_plan_again(&mut self, replaced: Option<Digest>) {
         let Some(PlanState { plan, progress }) = self.plan().cloned() else { return };
         let texts: HashSet<Digest> = plan_texts(&plan).iter().map(|text| prompt(text)).collect();
-        let prompts = &self.current().work.context.prompts;
+        let prompts = &self.current().work.context.frame.prompts;
         let of_plan: Vec<usize> = prompts.iter().enumerate().filter(|(_, part)| texts.contains(&part.text)).map(|(at, _)| at).collect();
         let Some(&current) = of_plan.last() else { return };
         if !of_plan.iter().any(|&at| prompts[at].after == replaced) {
@@ -101,10 +101,10 @@ impl Turn<'_> {
         let after = prompts[current].after;
         let dropped: HashSet<usize> = of_plan.into_iter().filter(|&at| at == current || prompts[at].after == replaced).collect();
         let kept = prompts.iter().enumerate().filter(|(at, _)| !dropped.contains(at)).map(|(_, part)| part.clone()).collect();
-        self.current_mut().work.context.prompts = kept;
+        self.current_mut().work.context.frame.prompts = kept;
         let label = self.situation().label();
         let overview = self.keep_prompt(MessageRole::System, plan_overview_instruction(&plan, progress), after, Some(label));
-        self.current_mut().work.context.prompts.push(overview);
+        self.current_mut().work.context.frame.prompts.push(overview);
     }
 
     /// Moves the plan on after the model answered without calling a tool:

@@ -96,8 +96,8 @@ impl Work {
     /// (`see`). Recorded once.
     pub fn record_knowledge(&mut self, reference: KnowledgeRef) {
         self.see_classified(reference.classification.as_ref());
-        if !self.context.knowledge.contains(&reference) {
-            self.context.knowledge.push(reference);
+        if !self.context.frame.knowledge.contains(&reference) {
+            self.context.frame.knowledge.push(reference);
         }
     }
 
@@ -136,7 +136,7 @@ mod tests {
         };
 
         work.take_in_context(&[part(Some(Classification::PUBLIC))], vec![read.clone()]);
-        assert_eq!(work.context.knowledge, [read], "the knowledge recorded");
+        assert_eq!(work.context.frame.knowledge, [read], "the knowledge recorded");
         assert_eq!(work.label(), internal, "and seen");
         work.take_in_context(&[part(None)], Vec::new());
         assert_eq!(work.label(), confidential, "a part that does not say counts as the channel");

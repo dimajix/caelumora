@@ -7,7 +7,7 @@ use super::Turn;
 use anyhow::{Context, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{ContextItem, ContextRef, ContextResolver, KnowledgeRef, PromptPart, PromptRef};
+use caelumora_model::context::{ContextItem, ContextRef, ContextResolver, FrameRef, KnowledgeRef, PromptPart, PromptRef};
 use caelumora_model::digest::Digest;
 use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::tool::{Tool, ToolSet};
@@ -41,7 +41,7 @@ impl Turn<'_> {
     /// # Errors
     /// If the transcript holds no entry `last`.
     pub fn context_until(&self, last: Digest) -> Result<Vec<Message>> {
-        let reference = ContextRef { transcript: Some(last), profile: self.current().work.context.profile, ..ContextRef::default() };
+        let reference = ContextRef { transcript: Some(last), frame: FrameRef { profile: self.current().work.context.frame.profile, ..FrameRef::default() } };
         let resolved = ContextResolver::of(self.agent_channel_state)
             .resolve(&reference, self.turn_id(), ActorId::Agent(self.agent_id))
             .context("the transcript holds no such entry")?;
@@ -83,7 +83,7 @@ impl Turn<'_> {
         let prompts = parts.into_iter()
             .map(|PromptPart { role, text, after, classification, .. }| self.agent_channel_state.keep_prompt(role, text, after, classification))
             .collect();
-        self.current_mut().work.context.prompts = prompts;
+        self.current_mut().work.context.frame.prompts = prompts;
     }
 
     /// Keeps the text of a prompt part once by digest, and returns the
@@ -106,7 +106,7 @@ impl Turn<'_> {
         let after = self.current().work.context.transcript;
         // Written by the runtime from what the turn produced: as the turn.
         let prompt = self.keep_prompt(role, text, after, Some(self.situation().label()));
-        self.current_mut().work.context.prompts.push(prompt);
+        self.current_mut().work.context.frame.prompts.push(prompt);
     }
 }
 
@@ -225,7 +225,7 @@ mod tests {
             turn.commit(false, &Discard).await;
             (before, after)
         };
-        let knowledge_of = |said: &Message| said.produced_from.clone().expect("sent with what it was produced from").knowledge;
+        let knowledge_of = |said: &Message| state.context_of(said).expect("sent with what it was produced from").frame.knowledge;
         assert!(knowledge_of(&before).is_empty(), "produced before the read");
         assert_eq!(knowledge_of(&after), vec![read], "produced after it, recorded once");
 
@@ -269,7 +269,7 @@ mod tests {
         // The same tools, treated otherwise: offered so then.
         let fourths = take_turn(&mut state, vec![tool("echo", true), tool("notes", false)], &[&fourth]);
 
-        let offered = |said: &Message| ContextResolver::of(&state).resolve(said.produced_from.as_ref().expect("sent with it"), said.turn_id.expect("a turn's"), ActorId::Agent(agent))
+        let offered = |said: &Message| ContextResolver::of(&state).resolve(&state.context_of(said).expect("sent with it"), said.turn_id.expect("a turn's"), ActorId::Agent(agent))
             .expect("everything it names is here").tool_sets.into_iter().flat_map(|set| set.tools).map(|t| (t.name, t.requires_approval)).collect::<Vec<_>>();
         let named = |offer: Vec<(String, bool)>| offer.into_iter().map(|(name, asks)| format!("{name}{}", if asks { "?" } else { "" })).collect::<Vec<_>>();
         assert_eq!(named(offered(&firsts[0])), ["echo", "notes?"]);

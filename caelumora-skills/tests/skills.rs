@@ -103,7 +103,7 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
     assert_eq!(loaded.value, serde_json::json!({ "status": "loaded", "name": "release-notes", "skill_id": made.id }), "the result only names it");
     assert_eq!(loaded.classification, Some(internal.clone()), "classified as the skill, as the catalogue names it");
     drop(turn);
-    let read = state.turn.as_ref().unwrap().work.context.knowledge.clone();
+    let read = state.turn.as_ref().unwrap().work.context.frame.knowledge.clone();
     let as_read = |source: &KnowledgeSource| source.about::<Skill>() == Some((made.id, Some(skill::digest("1. Collect.\n2. Group."))));
     assert!(matches!(read.as_slice(), [KnowledgeRef { source, .. }] if as_read(source)), "{read:?}");
     let given = state.transcript.last().map(|node| &node.entry);

@@ -2,14 +2,16 @@
 //! 47, 49, 63; see `docs/AGENT-TURN.md`).
 //!
 //! What is stored are facts: the agent's `Transcript`, and the text of every
-//! prompt part and every set of tools offered once by digest. What the model is given is not stored but
-//! resolved from them:
+//! prompt part, every set of tools offered and every frame once by digest.
+//! What the model is given is not stored but resolved from them:
 //!
 //! - A turn holds a [`ContextRef`] for its next message: the transcript so
-//!   far, the prompt parts placed in it, the tools offered, the knowledge
-//!   read and the rules of the agent's model ([`ModelProfile`]). Every
-//!   message it says goes into the transcript at once, and into the history
-//!   with the reference as it stood for that message (issue 260).
+//!   far and the frame around it ([`FrameRef`]) - the prompt parts placed
+//!   in it, the tools offered, the knowledge read and the rules of the
+//!   agent's model ([`ModelProfile`]). Every message it says goes into the
+//!   transcript at once, and into the history with the reference as it
+//!   stood for that message (issue 260): the digest of its transcript and
+//!   that of its frame, which is kept once (issue 426).
 //! - The [`ContextResolver`] resolves a reference against the transcript
 //!   and the prompt texts - for the next model call as for a message produced
 //!   earlier. What the model was given and what is told as given therefore
@@ -210,7 +212,7 @@ pub struct ModelProfile {
     #[serde(default)]
     pub sender_style: SenderStyle,
     /// Whether the marker says when the message was written too (issue 424),
-    /// in the time zone of the context (`ContextRef::time_zone`). Never on
+    /// in the time zone of the context (`FrameRef::time_zone`). Never on
     /// the agent's own messages, which carry no marker: a model whose own
     /// messages carry a time begins its answers with one of its own
     /// (`work/message_times/RESULTS.md`, finding 2). Nothing where senders
@@ -407,16 +409,24 @@ pub struct PromptPart {
 
 /// What an agent's model saw when it produced a message (issue 06): the
 /// digest of its `Transcript` before the message - `None` if it was
-/// empty - the prompt parts of that turn, each where it was placed (issue
-/// 47), the tools it was offered (issue 137), the knowledge from other
-/// places read before the message was produced (issue 17), and the rules of
-/// the model (issue 63). A turn keeps one for its next message
-/// (`Work::context` of its `TurnState`); resolved by the
+/// empty -, and the frame around it (issue 426). A turn keeps one for its
+/// next message (`Work::context` of its `TurnState`); resolved by the
 /// [`ContextResolver`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextRef {
     /// The digest of the agent's transcript before the message.
     pub transcript: Option<Digest>,
+    pub frame: FrameRef,
+}
+
+/// What an agent's model was given around its transcript (issue 426): the
+/// prompt parts of the turn, each where it was placed (issue 47), the tools
+/// it was offered (issue 137), the knowledge from other places read before
+/// the message was produced (issue 17), and the rules of the model (issue
+/// 63). Set by the turn, apart from the transcript, which moves on with
+/// every message it says.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrameRef {
     pub prompts: Vec<PromptRef>,
     /// The digest of the tool sets the model was offered
     /// (`crate::digest::tool_sets`), `None` if it was offered none.
@@ -510,8 +520,8 @@ impl<'a> ContextResolver<'a> {
     pub fn resolve(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Option<ResolvedContext> {
         let (mut items, entries) = self.given_path(reference, turn, agent)?;
         items.extend(entries.into_iter().flat_map(|(_, given)| given));
-        reference.profile.place_system_messages(&mut items);
-        let tool_sets = match &reference.tools {
+        reference.frame.profile.place_system_messages(&mut items);
+        let tool_sets = match &reference.frame.tools {
             Some(digest) => self.offered_tools.get(digest)?.clone(),
             None => Vec::new(),
         };
@@ -583,11 +593,11 @@ impl<'a> ContextResolver<'a> {
                 _ => None,
             })
             .collect();
-        let profile = &reference.profile;
+        let profile = &reference.frame.profile;
         // The parts after the transcript entry `after` - `None`: before
         // everything.
         let after_entry = |after: Option<Digest>| -> Option<Vec<ContextItem>> {
-            reference.prompts.iter()
+            reference.frame.prompts.iter()
                 .filter(|p| p.after == after)
                 .map(|p| Some(ContextItem::Prompt { digest: p.text, role: p.role, text: self.prompts.get(&p.text)?.clone(), classification: p.classification.clone() }))
                 .collect()
@@ -606,13 +616,13 @@ impl<'a> ContextResolver<'a> {
             // stands, and so is who joined or left. A part may have been
             // placed after any of them.
             if let Some(message) = message {
-                given.push(ContextItem::Conversation { message: profile.given(message, agent, in_turn, reference.time_zone) });
+                given.push(ContextItem::Conversation { message: profile.given(message, agent, in_turn, reference.frame.time_zone) });
             }
             if let TranscriptEntry::TurnGivenUp { turn_id, reason, at } = &node.entry {
-                given.push(ContextItem::Conversation { message: profile.given(given_up_notice(*turn_id, reason, *at), agent, false, reference.time_zone) });
+                given.push(ContextItem::Conversation { message: profile.given(given_up_notice(*turn_id, reason, *at), agent, false, reference.frame.time_zone) });
             }
             if let Some(notice) = participant_notice(&node.entry, &node.digest, agent, profile.sender_style) {
-                given.push(ContextItem::Conversation { message: profile.given(notice, agent, false, reference.time_zone) });
+                given.push(ContextItem::Conversation { message: profile.given(notice, agent, false, reference.frame.time_zone) });
             }
             let parts = after_entry(Some(node.digest))?;
             placed += parts.len();
@@ -620,7 +630,7 @@ impl<'a> ContextResolver<'a> {
             entries.push((node, given));
         }
         // Every part was placed, none after what is not there.
-        (placed == reference.prompts.len()).then_some((leading, entries))
+        (placed == reference.frame.prompts.len()).then_some((leading, entries))
     }
 }
 
@@ -811,7 +821,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.transcript.push(alice.clone());
         state.transcript.push(Message { sender_id: agent, role: MessageRole::Assistant, ..text("answer") });
-        let reference = |sender_format| ContextRef { transcript: state.transcript.digest(), profile: ModelProfile { sender_format, ..ModelProfile::default() }, ..ContextRef::default() };
+        let reference = |sender_format| ContextRef { transcript: state.transcript.digest(), frame: FrameRef { profile: ModelProfile { sender_format, ..ModelProfile::default() }, ..FrameRef::default() } };
 
         let resolver = ContextResolver::of(&state);
         let seen = resolver.resolve(&reference(SenderFormat::Prefix), TurnId::new(), agent).expect("resolved");
@@ -837,7 +847,7 @@ mod tests {
         state.transcript.record(left(bob, "Bob", alice, "Alice"));
         state.transcript.record(left(bob, "Bob", bob, "Bob"));
         state.transcript.record(left(bob, "Bob", ActorId::System, "system"));
-        let reference = ContextRef { transcript: state.transcript.digest(), profile: ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() }, ..ContextRef::default() };
+        let reference = ContextRef { transcript: state.transcript.digest(), frame: FrameRef { profile: ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() }, ..FrameRef::default() } };
 
         let resolver = ContextResolver::of(&state);
         let seen = resolver.resolve(&reference, TurnId::new(), agent).expect("resolved");
@@ -854,7 +864,7 @@ mod tests {
         assert!(seen.items[1..].iter().all(|item| item.role() == MessageRole::User), "not as a system message, which the model would move (issue 49)");
         let again = resolver.resolve(&reference, TurnId::new(), agent).expect("resolved");
         assert_eq!(ids(&seen.items), ids(&again.items), "the same each time it is resolved");
-        let told: Vec<_> = reference.profile.given_messages(&state.transcript, agent, Default::default()).into_iter().filter_map(|m| m.content).collect();
+        let told: Vec<_> = reference.frame.profile.given_messages(&state.transcript, agent, Default::default()).into_iter().filter_map(|m| m.content).collect();
         assert_eq!(told, contents(&seen.items), "what a remote agent is given, too");
     }
 
@@ -879,13 +889,15 @@ mod tests {
         }
         let reference = ContextRef {
             transcript: whole,
-            prompts: vec![
-                PromptRef { text: prompt("system"), role: MessageRole::System, after: None, classification: None },
-                PromptRef { text: prompt("notes"), role: MessageRole::User, after: before_question, classification: None },
-            ],
-            tools: None,
-            knowledge: Vec::new(),
-            profile: ModelProfile::default(), time_zone: Default::default(),
+            frame: FrameRef {
+                prompts: vec![
+                    PromptRef { text: prompt("system"), role: MessageRole::System, after: None, classification: None },
+                    PromptRef { text: prompt("notes"), role: MessageRole::User, after: before_question, classification: None },
+                ],
+                tools: None,
+                knowledge: Vec::new(),
+                profile: ModelProfile::default(), time_zone: Default::default(),
+            },
         };
 
         let resolver = ContextResolver::of(&state);
@@ -894,10 +906,10 @@ mod tests {
         assert_eq!(contents(&seen.items), ["prompt:system", "earlier", "prompt:notes", "question"]);
 
         let mut elsewhere = reference.clone();
-        elsewhere.prompts[1].after = Some(prompt("not an entry"));
+        elsewhere.frame.prompts[1].after = Some(prompt("not an entry"));
         assert!(resolver.resolve(&elsewhere, turn, ActorId::None).is_none(), "a part after an entry that is not in the prefix");
         let mut forgotten = reference;
-        forgotten.prompts[0].text = prompt("never recorded");
+        forgotten.frame.prompts[0].text = prompt("never recorded");
         assert!(resolver.resolve(&forgotten, turn, ActorId::None).is_none(), "a part whose text was not kept");
     }
 
@@ -920,7 +932,7 @@ mod tests {
         state.said(Message { sender_id: agent, role: MessageRole::Tool, ..text(&"x".repeat(40)) });
         assert_eq!(measure(&state), (vec![98, 100, 101, 111], true),
             "before the call as it measured, back from it and on from it estimated - the call as the model is given it, without its reasoning");
-        state.turn.as_mut().unwrap().work.context.profile.reasoning_history = ReasoningHistory::CurrentTurn;
+        state.turn.as_mut().unwrap().work.context.frame.profile.reasoning_history = ReasoningHistory::CurrentTurn;
         assert_eq!(measure(&state).0[2], 201, "with it where it is given back");
 
         let kept_from = state.transcript.entries().find(|n| n.entry.message().is_some_and(|m| m.id == first.id)).map(|n| n.digest);
@@ -943,7 +955,7 @@ mod tests {
 
     /// A turn of `state` begun on its transcript as it stands.
     fn begin(state: &mut AgentChannelState, profile: ModelProfile) {
-        let context = ContextRef { transcript: state.transcript.digest(), profile, ..ContextRef::default() };
+        let context = ContextRef { transcript: state.transcript.digest(), frame: FrameRef { profile, ..FrameRef::default() } };
         let work = Work { turn_id: TurnId::new(), context, ..Default::default() };
         state.turn = Some(TurnState { work, ..TurnState::default() });
     }
@@ -953,7 +965,7 @@ mod tests {
     fn place(state: &mut AgentChannelState, role: MessageRole, text: &str) {
         state.prompts.keep(prompt(text), || text.to_string());
         let turn = state.turn.as_mut().unwrap();
-        turn.work.context.prompts.push(PromptRef { text: prompt(text), role, after: turn.work.context.transcript, classification: None });
+        turn.work.context.frame.prompts.push(PromptRef { text: prompt(text), role, after: turn.work.context.transcript, classification: None });
     }
 
     #[test]
@@ -982,8 +994,8 @@ mod tests {
         // (issues 260, 417), resolves to what the model was given for it -
         // while the turn is under way and once it ended.
         let seen = |state: &AgentChannelState, message: &Message| {
-            let context = message.produced_from.as_ref().expect("sent with what it was produced from");
-            contents(&ContextResolver::of(state).resolve(context, turn_id, agent).expect("everything it names is here").items)
+            let context = state.context_of(message).expect("sent with what it was produced from");
+            contents(&ContextResolver::of(state).resolve(&context, turn_id, agent).expect("everything it names is here").items)
         };
         assert_eq!(seen(&state, &second), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
         assert_eq!(state.transcript.digest(), next.transcript, "the turn's context names the transcript's head");
@@ -1039,7 +1051,7 @@ mod tests {
         state.offered_tools.keep(digest, || offered.clone());
 
         let resolver = ContextResolver::of(&state);
-        let with = |tools| ContextRef { tools, ..ContextRef::default() };
+        let with = |tools| ContextRef { frame: FrameRef { tools, ..FrameRef::default() }, ..ContextRef::default() };
         assert_eq!(resolver.resolve(&with(Some(digest)), TurnId::new(), ActorId::None).expect("the set is kept").tool_sets, offered);
         assert!(resolver.resolve(&with(None), TurnId::new(), ActorId::None).expect("no tools offered").tool_sets.is_empty());
         assert!(resolver.resolve(&with(Some(prompt("never recorded"))), TurnId::new(), ActorId::None).is_none(), "a set that was not kept");
@@ -1055,7 +1067,7 @@ mod tests {
             let mut state = state.clone();
             state.prompts.keep(prompt("system prompt"), || "system prompt".to_string());
             begin(&mut state, ModelProfile { system_messages, ..ModelProfile::default() });
-            state.turn.as_mut().unwrap().work.context.prompts.push(PromptRef { text: prompt("system prompt"), role: MessageRole::System, after: None, classification: None });
+            state.turn.as_mut().unwrap().work.context.frame.prompts.push(PromptRef { text: prompt("system prompt"), role: MessageRole::System, after: None, classification: None });
             place(&mut state, MessageRole::System, "instruction");
             let next = state.turn.as_ref().unwrap().work.context.clone();
             ContextResolver::of(&state).resolve(&next, TurnId::new(), ActorId::None).expect("everything it names is here")
@@ -1084,7 +1096,7 @@ mod tests {
         let aside = state.transcript.messages()[1].id;
         state.transcript.revoke(aside, at);
         let notes = PromptRef { text: prompt("notes"), role: MessageRole::User, after: after_question, classification: None };
-        let now = ContextRef { transcript: state.transcript.digest(), prompts: vec![notes], ..ContextRef::default() };
+        let now = ContextRef { transcript: state.transcript.digest(), frame: FrameRef { prompts: vec![notes], ..FrameRef::default() } };
 
         let resolver = ContextResolver::of(&state);
         assert_eq!(contents(&resolver.resolve(&then, TurnId::new(), ActorId::None).expect("resolved").items), ["question", "aside"], "what the model saw then");

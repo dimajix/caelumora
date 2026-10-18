@@ -624,7 +624,7 @@ pub async fn message_context(
     let seen = view.context_of(MessageId(mid)).await?;
     // What set the message's label, of the parts classified (issue 170).
     let label = view.classification_of(MessageId(mid)).await?.unwrap_or_default();
-    let mut classified: Vec<&Classification> = seen.reference.knowledge.iter().filter_map(|k| k.classification.as_ref()).collect();
+    let mut classified: Vec<&Classification> = seen.reference.frame.knowledge.iter().filter_map(|k| k.classification.as_ref()).collect();
     for item in &seen.items {
         match item {
             ContextItem::Prompt { classification, .. } => classified.extend(classification),
@@ -635,8 +635,8 @@ pub async fn message_context(
         }
     }
     let causes = LabelCauses::new(label, classified);
-    let mut knowledge = Vec::with_capacity(seen.reference.knowledge.len());
-    for read in &seen.reference.knowledge {
+    let mut knowledge = Vec::with_capacity(seen.reference.frame.knowledge.len());
+    for read in &seen.reference.frame.knowledge {
         knowledge.push(knowledge_response(channel.session(), read, &causes).await);
     }
     Ok(Json(MessageContextResponse {
@@ -645,7 +645,7 @@ pub async fn message_context(
         transcript_digest: seen.reference.transcript,
         items: seen.items.into_iter().map(|item| SeenItemResponse::of(item, &causes)).collect(),
         knowledge,
-        tools_digest: seen.reference.tools,
+        tools_digest: seen.reference.frame.tools,
         tool_sets: seen.tool_sets,
     }))
 }

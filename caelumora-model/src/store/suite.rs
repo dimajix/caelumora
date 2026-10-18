@@ -866,10 +866,11 @@ pub(crate) async fn transcript_store_behaves(states: &dyn StateStore, transcript
 }
 
 /// The prompt texts and the tool sets an agent's model was given (issue
-/// 383): written by the put of its state, apart from its document, each
-/// once by its digest - written again as the same -, read by digest; a
-/// state loaded holds those its turn under way names, and none between
-/// turns; gone with the state.
+/// 383), and the frames of its contexts (issue 426): written by the put of
+/// its state, apart from its document, each once by its digest - written
+/// again as the same -, read by digest; a state loaded holds the texts and
+/// sets its turn under way names, none between turns, and no frame; gone
+/// with the state.
 pub(crate) async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn TranscriptStore) {
     let (channel, agent) = (ChannelId::new(), AgentId::new());
     let sets = vec![ToolSet::new("calc", "calculates", Vec::new())];
@@ -882,21 +883,28 @@ pub(crate) async fn given_store_behaves(states: &dyn StateStore, transcripts: &d
     state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default());
     state.offer_tools(sets.clone());
     let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
-    state.turn.as_mut().expect("a turn").work.context.prompts.push(system.clone());
+    state.turn.as_mut().expect("a turn").work.context.frame.prompts.push(system.clone());
+    let context = state.turn.as_ref().expect("a turn").work.context.clone();
+    let frame = state.keep_frame(&context.frame);
     states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
     assert!(state.offered_tools.changes().is_empty(), "the tool sets are marked stored");
+    assert!(state.frames.changes().is_empty(), "the frames too");
 
     let read = transcripts.prompts(agent, channel, &[before.text, system.text, digest::prompt("never")]).await.unwrap();
     let expected: BTreeMap<_, _> = [(before.text, "before".to_string()), (system.text, "system".to_string())].into_iter().collect();
     assert_eq!(read, expected, "those kept, by their digests");
     assert_eq!(transcripts.offered_tools(agent, channel, offer).await.unwrap(), Some(sets.clone()));
     assert!(transcripts.offered_tools(agent, channel, digest::prompt("never")).await.unwrap().is_none());
+    assert_eq!(transcripts.frame(agent, channel, frame).await.unwrap(), Some(context.frame.clone()));
+    assert_eq!(transcripts.context(agent, channel, context.transcript, frame).await.unwrap(), Some(context.clone()), "a message's context, whole");
+    assert!(transcripts.context(agent, channel, context.transcript, digest::prompt("never")).await.unwrap().is_none(), "not without its frame");
 
     let loaded = states.get_agent_channel_state(agent, channel).await.expect("get");
     assert_eq!(loaded.prompts.get(&system.text).map(String::as_str), Some("system"), "what its turn under way names");
     assert!(loaded.prompts.get(&before.text).is_none(), "and nothing else");
     assert_eq!(loaded.offered_tools.get(&offer), Some(&sets));
     assert!(loaded.prompts.changes().is_empty() && loaded.offered_tools.changes().is_empty(), "nothing to write again");
+    assert!(loaded.frames.is_empty(), "no frame: the turn holds its own");
 
     let mut next = AgentChannelState::default();
     next.keep_prompt(MessageRole::System, "system".to_string(), None, None);
@@ -907,6 +915,7 @@ pub(crate) async fn given_store_behaves(states: &dyn StateStore, transcripts: &d
 
     states.delete_channel_state(channel).await.expect("delete");
     assert!(transcripts.prompts(agent, channel, &[system.text]).await.unwrap().is_empty(), "gone with the channel's state");
+    assert!(transcripts.frame(agent, channel, frame).await.unwrap().is_none(), "the frames too");
     let elsewhere = ChannelId::new();
     let mut other = AgentChannelState::default();
     other.keep_prompt(MessageRole::System, "system".to_string(), None, None);

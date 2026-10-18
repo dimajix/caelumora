@@ -1,6 +1,6 @@
 # 426 — Every message a turn says is stored with its whole `ContextRef`
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Persistence
@@ -72,3 +72,28 @@ compatibility code).
 
 2026-10-18: Opened from a question of the maintainer how `produced_from` is stored. Estimate of
 1-2 KB per message from the shape of `ContextRef`; no stored data measured.
+
+2026-10-18: Decided: A′ instead of A. A as written saves nothing in all: `ContextRef::transcript`
+moves on with every message said (`AgentChannelState::said`), so no two messages have the same
+reference, and keeping it whole by digest only moves it out of the history - one kept value, and
+in the `JsonFileStore` one file, per message. What repeats is everything besides the transcript,
+which the turn sets: its prompt parts (`set_context`, a step of a plan), its tools
+(`offer_tools`), the knowledge it read, its profile and time zone. So the `ContextRef` is split
+into the transcript and a `FrameRef` holding the rest, and only the `FrameRef` is kept once by
+digest; a message names the digest of its transcript and that of its frame. Rejected besides:
+keeping `ContextRef` whole and leaving out its transcript only where it is kept and digested - a
+reference whose `transcript: None` already means "empty" would then resolve, wrongly and without an
+error, wherever the transcript was not put back. The message stays flat when serialized; both
+digests are fields of their own rather than a struct under `#[serde(flatten)]`, which would read
+every message through serde's buffer. `keep_window` need not hold the frame of the turn under way:
+the turn holds its context whole in `Work::context`. The split is done first, without a change of
+behaviour.
+
+2026-10-18: Done. `ContextRef` is `{ transcript, frame: FrameRef }`. A message names what it was
+produced from by `Message::context_transcript` and `Message::context_frame` (`produced_from`
+gives both); the frame is kept once by digest (`digest::frame`, `AgentChannelState::frames`,
+`keep_frame`) beside the prompt texts - `frame-<digest>.json` in `<agent>.given/` - and read
+through `TranscriptStore::frame` and `context`. The holder lets go of every frame once it is
+stored. An external agent keeps the frame of the call an answer came of as well, and stores its
+state before it sends the answer. Stored histories, and agent states with a turn under way, have
+to be deleted.

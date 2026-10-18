@@ -160,13 +160,13 @@ impl<'a> Situation<'a> {
     /// How the agent's model is given its context (issue 135): what a
     /// prompt part tells of how what it is given is marked.
     pub fn profile(&self) -> ModelProfile {
-        self.work.context.profile
+        self.work.context.frame.profile
     }
 
     /// The time zone the work gives times in (issue 424): its session's as
     /// it began, recorded with its context.
     pub fn time_zone(&self) -> TimeZone {
-        self.work.context.time_zone
+        self.work.context.frame.time_zone
     }
 
     /// The tool sets the work began with, as its model is offered them
@@ -174,7 +174,7 @@ impl<'a> Situation<'a> {
     /// names. None for work that offers no tools, e.g. an external agent's.
     pub fn tool_sets(&self) -> &'a [ToolSet] {
         let state = self.agent_channel_state;
-        self.work.context.tools.and_then(|digest| state.offered_tools.get(&digest)).map(Vec::as_slice).unwrap_or_default()
+        self.work.context.frame.tools.and_then(|digest| state.offered_tools.get(&digest)).map(Vec::as_slice).unwrap_or_default()
     }
 
     /// The agent's own state (issue 62), shared by all its actors.

@@ -886,12 +886,13 @@ mod tests {
         // and the answer came of it.
         state.transcript.extend(vec![question.clone()]);
         let given = ContextRef { transcript: state.transcript.start_anew(), ..Default::default() };
+        let frame = state.keep_frame(&given.frame);
         let later = said("later");
         state.transcript.extend(vec![later.clone()]);
         store.put_agent_channel_state(remote.id, channel.id, &mut state).await.unwrap();
         // Its channel's history, as it records what was said (issue 417).
         let mut channel_state = store.get_channel_state(channel.id).await.unwrap();
-        channel_state.history.extend(vec![question.clone(), Message { produced_from: Some(given), ..answer.clone() }, later]);
+        channel_state.history.extend(vec![question.clone(), answer.clone().produced_from_context(given.transcript, frame), later]);
         store.put_channel_state(channel.id, &mut channel_state).await.unwrap();
 
         let for_alice = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap();
