@@ -309,7 +309,7 @@ mod tests {
         state.transcript.push(Message { sender_id: ActorId::None, ..text(MessageRole::User, "do it") });
         let (step, answer) = (text(MessageRole::Assistant, "step done"), text(MessageRole::Assistant, "all done"));
         let keeps_system = ModelProfile { system_messages: SystemMessages::Anywhere, ..ModelProfile::default() };
-        {
+        let answer = {
             state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), keeps_system);
             let mut turn = Turn::under_way(agent, &mut state);
             turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }], Vec::new());
@@ -322,11 +322,12 @@ mod tests {
             let roles = given(&turn).into_iter().map(|(role, _)| role).collect::<Vec<_>>();
             use MessageRole::{Assistant, System, User};
             assert_eq!(roles, [System, User, System, Assistant, System], "a model that keeps them in place is given system messages");
-            turn.push_message(answer.clone());
+            let answer = turn.push_message(answer.clone());
             turn.commit(false, &Discard).await;
-        }
+            answer
+        };
 
-        let recorded = seen(&state, agent, answer.id).expect("the agent produced it");
+        let recorded = seen(&state, agent, &answer).expect("the agent produced it");
         let order = recorded.iter().map(|item| match item {
             ContextItem::Prompt { text, .. } => text.lines().next().unwrap_or_default().to_string(),
             ContextItem::Conversation { message } => message.content.clone().unwrap_or_default(),

@@ -4,26 +4,27 @@ use super::participant::{participant_state, AgentParticipant, ParticipantState};
 use super::ChannelReading;
 use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
 use crate::actor::user::ChannelWatch;
-use crate::channel::{visible_from, ChannelLoop};
+use crate::channel::ChannelLoop;
 use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
+use caelumora_model::chain::Position;
 use caelumora_model::actor::{ActorDescription, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, PersonalityKind};
 use caelumora_model::approval::ApprovalRequest;
-use caelumora_model::channel::{Channel, HistoryStart, Participant};
+use caelumora_model::channel::{Channel, Participant};
 use caelumora_model::command::Command;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::confidentiality::Place;
 use caelumora_model::digest::Digest;
-use caelumora_model::history::{HistoryEntry, HistoryPage};
+use caelumora_model::history::{HistoryEntry, HistoryPage, Reader};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::note::Note;
 use caelumora_model::removal::Removal;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement};
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{ChannelSnapshot, Detail, ChannelParticipantSnapshot, PublishedNotes, Unread};
-use caelumora_model::store::history::{every, HistoryKey, Keep};
+use caelumora_model::store::history::{every, Keep};
 use caelumora_model::store::{StoreError, StoreResultExt};
 use caelumora_model::tool::ToolSet;
 use caelumora_model::value::language::Language;
@@ -253,17 +254,23 @@ impl ChannelView {
         ParticipantView::of_former(self.clone(), participant.clone(), left).await
     }
 
-    /// Where the viewer's view of the history begins (issue 46): all of it,
-    /// unless they joined later with a limit - what a reader records as read
-    /// (issue 72). An agent reads as itself, not as the owner it acts for:
-    /// its own limit applies, not the owner's.
-    pub fn history_start(&self) -> Option<HistoryStart> {
-        self.channel.history_start_of(self.reader())
+    /// The position from which on the viewer sees the history (issues 46,
+    /// 417): where the first range of their membership begins - all of it,
+    /// `0`, unless they joined later and were given less, or never were a
+    /// member. An agent reads as itself, not as the owner it acts for: its
+    /// own membership counts, not the owner's. What a page holds is the
+    /// store's to decide by every range; this says where it begins.
+    ///
+    /// # Errors
+    /// `Failed` if the history cannot be read.
+    pub async fn visible_from(&self) -> ViewResult<Position> {
+        let ranges = self.views().histories().memberships(self.channel.id, self.reader()).await.map_err(|e| self.failed_reading(e))?;
+        Ok(ranges.first().map_or(Position::START, |range| range.start))
     }
 
-    /// A page of the history as the viewer sees it (issues 46, 218, 379):
-    /// the last `limit` items before the position `before` - the last ones
-    /// without it -, from where the viewer's view begins; of a channel read
+    /// A page of the history as the viewer sees it (issues 46, 218, 379,
+    /// 417): the last `limit` items before the position `before` - the last
+    /// ones without it - of those they see; of a channel read
     /// entry by entry, the messages released to where the viewer reads
     /// from, and nothing of how turns ended. Read from the store, whether the
     /// channel runs or not.
@@ -271,7 +278,7 @@ impl ChannelView {
     /// # Errors
     /// `Failed` if the history cannot be read; `NoChannelNamed` if nothing
     /// of a channel read entry by entry can be on this page.
-    pub async fn history_page(&self, before: Option<u64>, limit: usize) -> ViewResult<HistoryPage> {
+    pub async fn history_page(&self, before: Option<Position>, limit: usize) -> ViewResult<HistoryPage> {
         self.history_page_of(before, limit, &every).await
     }
 
@@ -281,15 +288,10 @@ impl ChannelView {
     ///
     /// # Errors
     /// As `history_page`.
-    pub async fn history_page_of(&self, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> ViewResult<HistoryPage> {
-        let page = match self.visible_from().await? {
-            Some(from) => {
-                let readable = |item: &HistoryEntry| self.may_read_item(item) && keep(item);
-                self.views().histories().page(HistoryKey::Channel(self.channel.id), from, before, limit, &readable).await
-                    .map_err(|e| self.failed_reading(e))?
-            }
-            None => HistoryPage::default(),
-        };
+    pub async fn history_page_of(&self, before: Option<Position>, limit: usize, keep: &Keep<'_>) -> ViewResult<HistoryPage> {
+        let readable = |item: &HistoryEntry| self.may_read_item(item) && keep(item);
+        let page = self.views().histories().page(self.channel.id, &self.reading_as(), Position::START, before, limit, &readable).await
+            .map_err(|e| self.failed_reading(e))?;
         if self.readable == ChannelReading::Released && page.items.is_empty() {
             return Err(self.nothing_released());
         }
@@ -304,9 +306,8 @@ impl ChannelView {
     /// read; `NoChannelNamed` instead of `MessageNotFound` in a channel read
     /// entry by entry.
     pub async fn message(&self, id: MessageId) -> ViewResult<Message> {
-        let from = self.visible_from().await?;
-        let said = self.views().histories().said(HistoryKey::Channel(self.channel.id), id).await.map_err(|e| self.failed_reading(e))?;
-        let seen = said.filter(|(at, _)| from.is_some_and(|from| *at >= from)).and_then(|(_, item)| item.said().cloned());
+        let said = self.views().histories().said(self.channel.id, &self.reading_as(), id).await.map_err(|e| self.failed_reading(e))?;
+        let seen = said.and_then(|(_, item)| item.said().cloned());
         match seen {
             Some(message) if self.may_read_entry(&message.classification) => Ok(message),
             _ if self.readable == ChannelReading::Released => Err(self.nothing_released()),
@@ -320,10 +321,17 @@ impl ChannelView {
         self.views().viewer().context().caller_id
     }
 
-    /// The position from which on the viewer sees the history; `None` if
-    /// they see nothing of it - the message their view begins at is gone.
-    async fn visible_from(&self) -> ViewResult<Option<u64>> {
-        visible_from(self.views().histories().as_ref(), self.channel.id, self.history_start()).await.map_err(|e| self.failed_reading(e))
+    /// As whom the viewer reads the history (issue 417): as the participant
+    /// they are or were, given what went to them and what they sent; as an
+    /// outsider, given what went to everybody, if they take no part in the
+    /// channel or read it from elsewhere, entry by entry.
+    fn reading_as(&self) -> Reader {
+        let reader = self.reader();
+        let took_part = self.lists(reader) || self.channel.former.iter().any(|left| left.participant.actor_id() == reader);
+        match self.readable {
+            ChannelReading::Whole if took_part => Reader::Participant(reader),
+            ChannelReading::Whole | ChannelReading::Released => Reader::Outsider,
+        }
     }
 
     /// That the history could not be read: `error`, logged.
@@ -452,22 +460,20 @@ impl ChannelView {
             ViewError::failed(e, format!("reading what was read of channel {}", self.channel.id))
         })?;
         let read_up_to = state.read.map(|read| read.message);
-        let Some(visible) = self.visible_from().await? else {
-            return Ok(Some(Unread { messages: 0, mentioned: false, read_up_to }));
-        };
-        let from = visible.max(state.unread_from());
+        let from = state.unread_from();
         let new = |item: &HistoryEntry| self.may_read_item(item) && item.said().is_some_and(|message| message.sender_id != viewer && message.is_heard());
         let mentioning = |item: &HistoryEntry| new(item) && item.said().is_some_and(|message| message.mentions.contains(&viewer));
-        let key = HistoryKey::Channel(self.channel.id);
-        let counted = self.views().histories().page(key, from, None, Unread::CAP, &new).await.map_err(|e| self.failed_reading(e))?;
+        let key = self.channel.id;
+        let reader = Reader::Participant(viewer);
+        let counted = self.views().histories().page(key, &reader, from, None, Unread::CAP, &new).await.map_err(|e| self.failed_reading(e))?;
         // A mention among those not counted is looked for on its own.
-        let mentioned = counted.items.iter().any(mentioning) || (counted.items.len() == Unread::CAP
-            && !self.views().histories().page(key, from, None, 1, &mentioning).await.map_err(|e| self.failed_reading(e))?.items.is_empty());
+        let mentioned = counted.entries().any(mentioning) || (counted.items.len() == Unread::CAP
+            && !self.views().histories().page(key, &reader, from, None, 1, &mentioning).await.map_err(|e| self.failed_reading(e))?.items.is_empty());
         Ok(Some(Unread { messages: counted.items.len(), mentioned, read_up_to }))
     }
 }
 
-/// A participant of a channel - a user, an agent, an approver - as the
+/// A participant of a channel - a user or an agent - as the
 /// viewer reached it. What differs between the kinds is its `ParticipantState`;
 /// what the viewer may see of it is decided here, for every kind alike.
 #[derive(Debug, Clone)]
@@ -528,16 +534,16 @@ impl ParticipantView {
     }
 
     /// The handle the participant is `@`-mentioned by (see `crate::mention`), or
-    /// `None` if it cannot be mentioned - approvers, participants that no
-    /// longer exist, names that yield no handle.
+    /// `None` if it cannot be mentioned - participants that no longer exist,
+    /// names that yield no handle.
     pub fn handle(&self) -> Option<String> {
         self.state.handle()
     }
 
     /// How the participant is introduced (issue 176): an agent as its
     /// personality introduces it, a user as they introduce themselves in
-    /// their profile. `None` for an approver, for a participant that has no
-    /// introduction, and for one that no longer exists. Public, like the
+    /// their profile. `None` for a participant that has no introduction, and
+    /// for one that no longer exists. Public, like the
     /// name.
     ///
     /// # Errors

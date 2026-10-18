@@ -200,3 +200,13 @@ the message last read lies before the pages loaded, the line stands at the top -
 not loaded for it; marking is not announced, so what another tab or device read is seen on the next
 listing; and the state has one writer per instance, as an agent's has (several instances: issue
 122).
+
+2026-10-18: As it stands after [417](417-user-history-from-its-actor.md): the read mark's position
+is a `chain::Position`, written as the number it was. What is counted is what the store gives the
+user as a reader - what went to every member while they were one, what went to them by name -, so
+the count needs no start of its own: it runs from the mark, or from the start where nothing was
+read, and a page counts what its reader sees (`HistoryStore::page`, `from` now only the bound of
+what is new). Where a user's view begins is no longer kept in the channel's document but read off
+the history (`HistoryStore::memberships`); a message they were never given cannot be marked, since
+the store does not give it to them (`mark_read` asks `said` as their reader). What a user said
+before they left, and anything said after, stays as it was: their own words they see, others' not.

@@ -118,6 +118,9 @@ impl AgentBody {
                 ActorEvent::CommandFailed { command: command.clone(), reason: e.to_string(), to: issuer, turn_id: started.then_some(turn_id) }
             }
         };
+        // What it was given while it carried the command out, before what
+        // came of it.
+        self.tell_recorded(state, output).await;
         if let Err(e) = answering.send(event, output).await {
             warn!("{:#}", e);
         }

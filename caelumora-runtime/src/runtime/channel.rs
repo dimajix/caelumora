@@ -4,8 +4,6 @@ use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, ControllerManager, SessionController};
 use crate::session::SessionLoop;
-use crate::recorder::Recorder;
-use anyhow::Result;
 use caelumora_model::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::channel::Channel;
@@ -112,8 +110,6 @@ impl ChannelRuntime {
     pub(crate) fn controller_manager(&self) -> &Arc<ControllerManager> { self.runtime_manager.controller_manager() }
 
     pub(crate) fn participation(&self) -> &Arc<Participation> { self.runtime_manager.participation() }
-
-    pub(crate) fn new_recorder(&self) -> Result<Box<dyn Recorder>> { self.runtime_manager.new_recorder() }
 }
 
 #[cfg(any(test, feature = "test-support"))]

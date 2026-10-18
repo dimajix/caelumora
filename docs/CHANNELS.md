@@ -128,14 +128,41 @@ A **channel** is one conversation within a session, such as a chat room. Its `Ch
 
 ### Building a channel
 
-Every channel is built by `Channel::build`, from a template or on request. It adds an approver if
-the channel has none, and lets its members read it: an entry in its access list naming the group of
-its participants, which follows whoever takes part at the time and is kept by the
-`ChannelController` as someone joins or leaves (see [SECURITY.md](SECURITY.md#groups)).
+Every channel is built by `Channel::build`, from a template or on request. It lets the channel's
+members read it: an entry in its access list naming the group of its participants, which follows
+whoever takes part at the time and is kept by the `ChannelController` as someone joins or leaves
+(see [SECURITY.md](SECURITY.md#groups)).
+
+A channel's approver is one of its **internal actors** (`Channel::internal_actors`, issue 420):
+actors that belong to the channel itself, as its moderator does. They are no participants - not in
+`participants`, not in their group, not shown or offered as participants - and are never added,
+removed or announced; they have no range of the history, and what is recorded to one goes to it by
+name. Otherwise an internal actor is an actor like any other: the channel builds it from its own
+configuration, starts its task with the others as `run` begins, delivers to it by the one rule and
+takes in what it sends. They are configured, like everything else of a channel: a template names
+them for each channel (`ChannelTemplate::internal_actors`, an approver with its strategy, `Any`
+unless named), and so does a request to create one (`ChannelSpec::internal_actors`; the web UI's
+dialog names an approver). A channel has the internal actors it is given and no others - there is
+no fallback: without an approver, nobody decides what needs approval, and tools that ask for it do
+not work there.
 
 The participants of a requested channel come from the session's participants, the creator always
 among them. Its moderator and classification default as in a template (see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md) and [Moderators](#moderators)).
+
+A channel is built and stored empty, and its founders join it by the one way in, as anyone added
+later does (`ChannelLoop::found`, issue 420): each taken in, its actor started, and its joining
+recorded in the channel's history - its `ParticipantJoined`, in the creator's name; nothing of the
+history is shared with a founder, which is given what is said from its join on.
+So every member of a channel has its join in the history, and the history alone says who was a
+member when. Founding asks nothing beyond what anyone taken in is asked: naming the founders was
+creating the channel (`CreateChannel`), so changing it is not asked, and it is reachable from
+creating a channel alone - a requested one (`SessionLoop::create_channel`) and those of a template,
+whose users and agents join the channels that name them once the session is made. Each founder's
+clearance is asked before anything is stored, and again as they join; if one cannot join, the
+channel is taken back. A channel's `run` applies the joins that wait as it begins, before it routes
+anything, so that what a founder says comes after the joins of all who hear it. A channel started
+again or restored records no joins: its members' are in its history.
 
 A request that cannot be met is refused before anything is stored: no name, a name the session
 already has, someone who is not a participant of the session, or a classification the policy
@@ -261,6 +288,16 @@ while it answers: the channel takes what a removed actor sends until its task ha
 no end in anyone's name. A turn whose agent was aborted after the grace, saying nothing, stays
 without an end: nobody ended it.
 
+**Everything shown is recorded** (issue 417). Every entry says who sent it and whom it went to:
+every member at the time it concerns by the rule every channel delivers by - resolved as it is
+recorded, so that who was a member then decides who reads it -, or those the moderator named. What a
+participant was shown live is what the history holds for them, in the same order - also what went
+to them alone: the answer to a request to answer again, a command's answer and a command not carried
+out, a chain cut off, a refusal, a request to respond, each notice and request recorded in the
+system's name as the channel sends it. What it delivers carries the position of its entry
+(`EventContext::position`), the `seq` of the item a client reads it as later. Not recorded: what
+streams, a beginning whose end is recorded, where an actor stands, approvals and questions.
+
 **The channel decides what enters it.** Every event an actor sends is admitted or refused by the
 channel's loop, one after another, as it takes it in (`ChannelLoop::admission`) - against the
 channel as it is at that moment, so that nothing changes between a check and the entry. An actor
@@ -282,7 +319,8 @@ flow in:
 
 A message is admitted as it arrives, so one said after the channel was lowered below its turn is
 refused. What is refused is written nowhere and delivered to nobody. The channel tells its sender
-alone why, in the system's name (`MessageRejected`, with a `Rejection`), never in the history. A
+alone why, in the system's name (`MessageRejected`, with a `Rejection`), recorded to the sender
+alone (issue 417). A
 user's actor shows what its user sends before it forwards it, so that the refusal always follows
 what it refuses (see [WEB-UI.md](WEB-UI.md)). What an agent said that the channel refused stays in
 its own transcript only.
@@ -358,9 +396,10 @@ naming a message or a turn.
 *   **An external agent** rejects every request to answer again: its remote agent keeps what it was
     given, and nothing here takes the answer back from it.
 
-Whether a retry was accepted is told to the users and never written to the history. Whether a viewer
-may ask is part of each participant's snapshot - the viewer's `RetryMessage`, of an agent whose kind
-answers again - so a client offers it only where it is permitted and can succeed.
+Whether a retry was accepted is told to the users and recorded for them (`RetryAccepted`,
+`RetryRejected`, issue 417). Whether a viewer may ask is part of each participant's snapshot - the
+viewer's `RetryMessage`, of an agent whose kind answers again - so a client offers it only where it
+is permitted and can succeed.
 
 ## Participants
 
@@ -444,20 +483,35 @@ channel's scope goes with that session or channel (see [Sessions](#sessions)).
 ### How much history a newcomer sees
 
 Whoever adds a participant decides how much of the history so far they may see: all (the default),
-none, the last n messages or the last n days (`HistoryAccess`). It is fixed at once as the message
-the participant's history starts at, so "the last three days" does not move day by day; to fix it,
-the history is read back from its end only as far as the grant reaches. The channel and its views
-apply it wherever the history is read for a participant - from the store, as the position where
-their view begins (issue 379): over REST, in the snapshot, for `read_history` (see
-[MEMORY.md](MEMORY.md)) and for what a joining actor is given.
+none, the last n messages or the last n days (`HistoryAccess`). It is fixed at once as the position
+in the history the participant's view starts at, so "the last three days" does not move day by day;
+to fix it, the history is read back from its end only as far as the grant reaches.
+
+As the newcomer's actor starts, the channel records what it was given - `HistoryShared`, with the
+position and who granted it - right before its `ParticipantJoined`, in the system's name and
+delivered to the newcomer alone: catching up is a delivery too, and the history says what every
+participant received (issue 417). It is recorded only if it shares something, if the position lies
+before the join; a newcomer granted nothing, or a founder, is given what is said from its join on.
+When a participant leaves, its `ParticipantLeft` says from which position on the channel delivered
+nothing to it any more (`until`) - where it stopped, which may lie before the entry, since what the
+leaving actor still sends comes first (issue 262).
+
+So the history alone says who was a member when, and every read of it applies that, without the
+channel's document (issues 379, 417): what went to every member is given to whom it was one then -
+from the position shared with them, or else from their join, up to where delivery stopped (see
+[STORAGE.md](STORAGE.md#histories)) - over REST, in the snapshot, for `read_history` (see
+[MEMORY.md](MEMORY.md)) and for what a joining actor is given. A former participant reads what went
+to it while it took part, and nothing after.
 
 *   A **joining actor** is given the position where its view begins and takes in what was said
-    from there as what it hears, read from the store: an agent keeps all of it in its history and
-    what passes its perceive processors in its transcript. Users and approvers keep nothing.
-*   A **rejoining actor** keeps only what was said after the last message it has. The history is
-    only ever appended to, so older messages that a wider grant makes visible would land after the
-    agent's own later answers; the agent reaches them through `read_history`, and what it keeps
-    stays in the order things were said.
+    from there as what it hears, read from the store before its join is recorded, as what a
+    newcomer is given (`Reader::Newcomer`): an agent keeps what passes its perceive processors in
+    its transcript. Users keep nothing; a founder takes in nothing.
+*   A **rejoining actor** takes in only what was said after the last message it took in, which an
+    agent's state remembers (`AgentChannelState::last_message`). The transcript is only ever
+    appended to, so older messages
+    that a wider grant makes visible would land after the agent's own later answers; the agent
+    reaches them through `read_history`, and what it keeps stays in the order things were said.
 
 Notes stay visible to everyone in the channel: they are written on paper, not part of the
 conversation.
@@ -470,7 +524,7 @@ that becomes ambiguous is logged.
 A removed actor leaves at once - an agent without finishing its turn, which it gives up and says
 so - and its state is kept, for the record and for a later return. The approver answers a leaving
 agent's pending approvals as denied, so that nothing keeps waiting, and decides the others again,
-since who may approve them changed. The approver itself cannot be removed.
+since who may approve them changed. The approver itself is no participant and is never removed.
 
 A participant added again while its old actor still ends waits for it, at most a little past the
 grace, and is refused as still leaving after that. The new actor thus loads the state as the old one
@@ -491,7 +545,8 @@ carries the participant's name as it was, so that it reads the same after a rena
     (`HistoryEntry::ParticipantJoined`, `ParticipantLeft`, with who made it and when), among what
     was said, as it keeps the end of a turn.
 *   **A join** is announced as the newcomer's actor starts, after where its view of the history
-    begins was fixed: the newcomer hears it first, whatever it was granted of the history before.
+    begins was fixed: the newcomer hears it first, whatever it was granted of the history before -
+    right after `HistoryShared`, which records what it was granted, to it alone, if anything.
 *   **A leave** is announced once the actor's task has ended, and at the latest before an actor
     starts under the same id. Until then the channel takes what the actor still sends; after it,
     nothing of the actor enters the channel. That is how a frontend ends what an actor aborted
@@ -580,8 +635,9 @@ message of the user had mentioned them - no policy consulted, no chain between a
     agent.
 *   **Not into a second turn.** An agent in a turn would take the request in after it and answer
     twice, so the nudge is refused while it responds.
-*   **Nothing remains of it** but the answer: the history keeps no entry, nobody but the one asked
-    is shown the request, and the command answers the issuer alone.
+*   **What remains of it** is the request to respond, recorded to the one asked (issue 417), and
+    the answer: nobody but the one asked is shown the request, and the command answers the issuer
+    alone.
 
 ### Refusals
 
@@ -638,9 +694,9 @@ An **actor** is anything that sends and receives events in a channel.
 ### External agents
 
 An external agent has no turn and no tools here. It hears what others say and takes it in as an
-agent does: all of it into its history, what it hears through its perceive processors into its
-transcript. When it is asked to respond - once for all it took in together, in the contexts of the
-last request - it gives its remote agent:
+agent does: what it hears through its perceive processors into its transcript. When it is asked to
+respond - once for all it took in together, in the contexts of the last request - it gives its
+remote agent:
 
 *   **the prompt parts** its `ContextProvider` assembles, as an agent's does for a turn - by default
     each part on its own, in the order of the configuration. The remote agent keeps its
@@ -831,8 +887,8 @@ only through a `ref` to preconfigured components, while a template may write it.
 
 What the channel delivers is what its rule and the moderator's `Routing` say, and nothing else; it
 has no broadcast of its own. Nothing goes back to the actor that sent an event but why it was
-refused: an agent takes its own messages into its history and transcript itself, and a user's actor
-shows what its user says itself.
+refused: an agent takes its own messages into its transcript itself, and a user's actor shows what
+its user says itself.
 
 ### Chains between agents
 
@@ -842,9 +898,9 @@ counted with the envelope (`EventContext::agent_hops`); an agent's answer carrie
 request it answers. Once a request would exceed the moderator's `max_agent_hops` (default 3), it
 asks nobody - nor its policy, so a rotation is left as it is. The message is still delivered, and
 the moderator says that the chain was cut off (`ChainCutOff`, in the system's name), to the users
-and to the agents involved - the sender and those it mentioned - never to the history. Since it is
-sent in another name, the channel delivers it to the sender too. With `max_agent_hops: 0`, agents
-answer only users.
+and to the agents involved - the sender and those it mentioned -, recorded to them (issue 417).
+Since it is sent in another name, the channel delivers it to the sender too. With
+`max_agent_hops: 0`, agents answer only users.
 
 A user's message starts a new chain. What an external agent says unasked when a long task ends
 continues the context of its answer to the request that began the task, so it is as many hops away

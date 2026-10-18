@@ -190,11 +190,12 @@ it is.
 The `StateStore` (in `caelumora-model`) stores the runtime state of channels and agents:
 
 *   **`ChannelState`**: the channel's history (see [Histories](#histories)).
-*   **`AgentChannelState`**: an agent in one channel, of either kind - processing state, history,
+*   **`AgentChannelState`**: an agent in one channel, of either kind - processing state,
     transcript, notes, prompt texts and tool sets, and the turn under way (see
-    [AGENT-TURN.md](AGENT-TURN.md)); its history, its transcript, its prompt texts and its tool sets
-    kept apart (see [Histories](#histories), [Transcripts](#transcripts),
-    [Prompt texts and tool sets](#prompt-texts-and-tool-sets)).
+    [AGENT-TURN.md](AGENT-TURN.md)); its transcript, its prompt texts and its tool sets kept apart
+    (see [Transcripts](#transcripts), [Prompt texts and tool sets](#prompt-texts-and-tool-sets)). It
+    keeps no history of its own: what it was offered and said is its channel's history, as it saw
+    it (issue 417).
     An external agent keeps instead what it keeps of the remote side: the remote conversation and
     the tasks not yet ended.
 *   **`AgentState`**: the agent itself, across its channels and sessions - so far its memory (see
@@ -212,7 +213,11 @@ against an update of the entity.
 *   A growing part records what was added: a chain tells the nodes added since it was last stored
     and its head, the same form the whole chain is stored in (see
     [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)). Each node carries its position, and
-    a node is merged only at the position it has, or at the one after the last if it is new.
+    a node is merged only at the position it has, or at the one after the last if it is new. A
+    position is a type of its own, `chain::Position` - its place in the order entries were added,
+    across every branch, written as its number -, and so is everything that addresses entries by
+    one: a page and its cursor, a delivery, a mark of what was read, a member's range, where a
+    window begins.
 *   A small part - the processing state, the turn under way, the tokens the agent's calls used, an
     external agent's open tasks and the classifications it was given - is recorded whole: it is
     changed in place and bounded by one turn, one exchange, or the labels in use. What would be
@@ -233,48 +238,64 @@ dropped, and a journal that survived its snapshot replays onto it without effect
 
 ### Histories
 
-A channel's history and an agent's history in a channel (`History`, a chain of `HistoryEntry`) grow
-with the channel, without a bound, and are read almost only in pages. They are kept apart from their
-state's document (issue 379):
+A channel's history (`History`, a chain of `HistoryEntry`) grows with the channel, without a bound,
+and is read almost only in pages. It is the one record of what happened in the channel, for every
+participant (issue 417), and is kept apart from the channel state's document (issue 379):
 
 *   **The chain is the truth.** It is only appended to, and a change of a message is an entry after
-    it. A store keeps the chain whole, under the history's `HistoryKey` - a channel's, or an agent's
-    in a channel -, written by the put of the state that holds it: first the entries added since it
-    was last stored, then the document.
+    it. A store keeps the chain whole, under the channel's id, written by the put of the channel's
+    state: first the entries added since it was last stored, then the document. Every entry is
+    recorded with the actor whose envelope it was and whom it went to, resolved as it is recorded
+    into what a store filters by (`Recorded { entry, sender, recipients }`, issue 417): every
+    member at the time of a kind - users, or users and agents -, by the rule every channel delivers
+    by, or some alone (`Recipients`).
 *   **The items are derived.** Beside the chain the store keeps the items as they stand - every
     message with every change since folded into it by the one rule of folding
     (`HistoryEntry::fold_into`), the marks of turns, steps, commands, activities, compactions and
     of who joined or left -
-    each at the position of the entry that added it (`StandingItems`). They are derived entry by
-    entry as the chain grows and rebuilt from it at any time (`HistoryStore::rebuild`); the store
-    suite checks that they equal the chain folded.
+    each at the position of the entry that added it (`StandingItems`). So is who was a member
+    when (`Memberships`): each member's ranges of positions, from the `from` of the `HistoryShared`
+    before its `ParticipantJoined`, or else from its join, up to the `until` of its
+    `ParticipantLeft` - where the channel stopped delivering to it. Both are derived entry by entry
+    as the chain grows and rebuilt from it at any time (`HistoryStore::rebuild`); the store suite
+    checks that the items equal the chain folded, and what each reader is given.
 *   **The read side is the `HistoryStore`**, handed out by the `StoreBackend` beside the
     `StateStore`: a page of items before a position, of those a filter keeps, with the digest it was
     read from; the item that said a message, with what it was produced from; the chain from a
-    position. Whatever reads a history without holding it reads there, whether the channel runs or
-    not: the views - a page over REST, a message, where a participant's view begins, what an agent
-    saw -, the checks before a change, an actor catching up when it joins, the tool that reads
-    another channel. A page is addressed by the position (`seq`) of its oldest item; a client passes
-    it back without computing with it.
-*   **The holder keeps a window.** The channel loop and an agent's actor hold their history from
-    `history_from` on, a small part of the document: the last `WINDOW` (200) entries, and an agent
-    besides everything from the first message of its turn under way on, whatever it compacted - an
-    agent's history is informational, nothing that builds its model's input reads it (issue 387).
-    After every put they let go of what
+    position. Every read is a reader's (`Reader`): a participant, given what went to them and what
+    they sent - the latter in full; an outsider - a session's owner who takes no part, a reader from
+    another channel -, given what went to every member; a newcomer, before its join is recorded,
+    what it is given as it joins; the channel itself, for its own checks. Whether a reader is given
+    an entry is one predicate (`Recorded::seen_by`) over what the store keeps of it - its sender,
+    its recipients, whether anything of it is published, its position - and the reader's ranges:
+    the channel everything; a participant what it sent, and what went to it by name or to every
+    member of its kind while it was one; an outsider what went to every member. A database answers
+    it as a `WHERE` over the items and a table of the ranges; a page counts what its reader sees.
+    In which form is `Recorded::as_seen_by`: as it was recorded for its sender, as everybody was
+    given it (`Message::published`) for anyone else. Whatever reads a history without holding it
+    reads there, whether the channel runs or not: the views - a page over REST, a message, what an
+    agent saw -, the checks before a change, an actor catching up when it joins, the tool that
+    reads another channel. Where a participant's view begins is the start of their first range
+    (`HistoryStore::memberships`). A page is addressed by the position (`seq`) of its oldest item;
+    a client passes it back without computing with it.
+*   **The holder keeps a window.** The channel loop holds the history from `history_from` on, a
+    small part of the document: the last `WINDOW` (200) entries. After every put it lets go of what
     lies before (`keep_window`, `Chain::keep_from`), and a state is loaded from there. What a holder
     reads in memory reads from the end and stays within its window (see
     [AGENT-TURN.md](AGENT-TURN.md#what-is-held-in-memory)); a change of a message before the window
     is recorded, and the store applies it.
 *   **The `JsonFileStore`** keeps a history in `<key>.history/` beside its state's snapshot: the
     chain in segments of 256 positions (`chain-<from>.json`) and `head.json` - the head and where
-    the chain ends -, written after the segments; the items likewise (`items-<from>.json`) and
-    `items-head.json` - up to where they are derived -, written after the items. Entries a crash
+    the chain ends -, written after the segments; the items likewise (`items-<from>.json`), the
+    memberships (`memberships.json`) and `items-head.json` - up to where both are derived -,
+    written after them. Entries a crash
     left past the head's end are not there; items behind the chain are derived anew when the
     history is next loaded or appended to. A message is found by scanning the items backwards, and
     a fitting rewrites every items segment: slow where a database has indexes. In Postgres
     ([04](../issues/04-postgres-state-store.md)) a history is the tables `history_entries(key, seq,
-    parent, digest, entry)` and `history_items(key, seq, message_id, item)` beside the documents,
-    written in one transaction with them.
+    parent, digest, entry)`, `history_items(key, seq, message_id, sender, recipients, published,
+    item)` and `history_memberships(key, member, from, until)` beside the documents, written in one
+    transaction with them.
 
 ### Transcripts
 

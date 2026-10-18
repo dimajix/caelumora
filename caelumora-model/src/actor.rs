@@ -1,7 +1,9 @@
+use crate::chain::Position;
 use crate::agent::{AgentId, RetryRefused};
 use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApproverId};
 use crate::channel::ChannelId;
 use crate::confidentiality::Classification;
+use crate::digest::Digest;
 use crate::history::HistoryEntry;
 use crate::message::{Message, MessageId};
 use crate::question::{QuestionId, QuestionRequest, Response};
@@ -124,6 +126,10 @@ pub enum ActorEvent {
     /// users it asked them of - `shown_to`, or every user - so that their
     /// frontends no longer offer to answer.
     QuestionClosed { id: QuestionId, shown_to: Option<Vec<ActorId>> },
+    /// Asks its receiver to respond to the event whose contexts it carries
+    /// (issue 45): built by the channel for each its moderator asks, and
+    /// recorded in the system's name to them (`HistoryEntry::
+    /// ResponseRequested`, issue 417).
     ResponseRequested,
     /// An answer begins: the turn `turn_id` of the sender (issue 235) - an
     /// agent's turn or an external agent's work - whose messages carry the
@@ -220,10 +226,9 @@ pub enum ActorEvent {
     /// is theirs, `None` if it is everybody's - the issuer is the security
     /// context's initiator either way.
     ///
-    /// Shown to users, never heard by agents. A command of the session is
-    /// never written to the history - it addresses the system -; one an
-    /// agent carried out is recorded by the channel, without the output
-    /// (`HistoryEntry::CommandExecuted`).
+    /// Shown to users, never heard by agents. Recorded by the channel with
+    /// its output, to whom it went (`HistoryEntry::CommandExecuted`, issue
+    /// 417).
     CommandExecuted {
         command: String,
         args: String,
@@ -247,8 +252,9 @@ pub enum ActorEvent {
     /// invalid, or it failed. `reason` is worded for the issuer, `to`, as
     /// `CommandError` words it - never the error itself, which stays in
     /// the log. `turn_id` is the turn it had begun in, if it told the
-    /// issuer so (`CommandStarted`). Shown to the issuer alone and never
-    /// written to a history: nothing happened.
+    /// issuer so (`CommandStarted`). Shown to the issuer alone, and
+    /// recorded to them alone (`HistoryEntry::CommandFailed`, issue 417):
+    /// nothing else happened.
     CommandFailed {
         command: String,
         reason: String,
@@ -295,10 +301,28 @@ pub enum ActorEvent {
     /// follows, so whatever of it was under way - a turn, a call of a tool -
     /// has ended.
     ///
-    /// Recorded and told as `ParticipantJoined` is.
+    /// Recorded and told as `ParticipantJoined` is. The channel delivered
+    /// nothing to it from the position `until` on (issue 417): where it
+    /// stopped, which its history records, so that it says to the position
+    /// whom the channel delivered what.
     ParticipantLeft {
         participant: ActorId,
         name: String,
+        until: Position,
+    },
+    /// `participant` is given the channel's history from the position `from`
+    /// on as it joins (issues 46, 417): how much of it `by`, called
+    /// `by_name`, who added it, granted. Sent by the channel alone, in the
+    /// system's name, right before `ParticipantJoined`, to the newcomer
+    /// alone, and only if it shares something; recorded in its history
+    /// (`HistoryEntry::HistoryShared`), so that what the newcomer was
+    /// delivered as it joined is read from there. Its actor has taken that
+    /// part in already as it was started (`Actor::catch_up`).
+    HistoryShared {
+        participant: ActorId,
+        from: Position,
+        by: ActorId,
+        by_name: String,
     },
     /// A chain between agents reached its limit (issue 200): the response
     /// ending in `message` was delivered, but it made nobody respond, since
@@ -308,7 +332,9 @@ pub enum ActorEvent {
     /// `ActorId::System`, to the users of the channel and to the agents
     /// involved: the sender of the response and those it mentioned.
     ///
-    /// Never written to the history; an agent takes no note of it.
+    /// Recorded by the channel to whom it was told
+    /// (`HistoryEntry::ChainCutOff`, issue 417); an agent takes no note of
+    /// it.
     ChainCutOff {
         message: MessageId,
         max_agent_hops: u32,
@@ -355,24 +381,40 @@ pub enum ActorEvent {
     /// The agent answers again instead of `target` (issues 234, 235): it
     /// takes back what it replaces (`MessageRevoked`) - nothing of a turn
     /// that was under way, which it gave up - and answers in a turn of its
-    /// own. Shown to users and never written to the history.
+    /// own. Shown to users, and recorded (`HistoryEntry::RetryAccepted`,
+    /// issue 417).
     RetryAccepted {
         target: RetryTarget,
     },
     /// The agent does not answer again instead of `target`, for `reason`
     /// (issue 234) - one of a known few, which a user interface words
-    /// itself. Shown to users and never written to the history.
+    /// itself. Shown to users, and recorded (`HistoryEntry::RetryRejected`,
+    /// issue 417).
     RetryRejected {
         target: RetryTarget,
         reason: RetryRefused,
     },
+    /// The agent was given `message` to read (issues 22, 417) - a skill
+    /// loaded for it, what a compaction gave again -, as its transcript
+    /// records it: sent by the agent alone, so that its channel's history
+    /// holds what it read where it read it. The message is the agent's
+    /// record, not one it said - its sender is whoever gave it -, so it is
+    /// no message the event carries (`messages`). Delivered to nobody.
+    MessageGiven { message: Message },
+    /// The agent replaced its context `from` by `to` in its turn `turn_id`
+    /// (issues 16, 417): what its transcript records, told to its channel's
+    /// history; what replaced the older messages follows as what it was
+    /// given (`MessageGiven`). Delivered to nobody - the users are told what
+    /// came of it (`ActivityFinished`).
+    ContextCompacted { turn_id: TurnId, from: Digest, to: Digest },
     /// The channel did not let in an event of the receiver's own (issue
     /// 304): `rejected` names its kind (`ActorEvent::kind`), `message` the
     /// message it was or was about, if any, and `reason` is one of a known
     /// few, which a user interface words itself - the channel's one decision
     /// of what enters it, made in order as it takes the event in. Sent by the
-    /// channel to the event's sender alone, and never written to the
-    /// history: nothing entered it.
+    /// channel to the event's sender alone, and recorded to it alone
+    /// (`HistoryEntry::MessageRejected`, issue 417); what was rejected
+    /// entered nothing.
     MessageRejected {
         rejected: String,
         message: Option<MessageId>,
@@ -417,6 +459,8 @@ impl ActorEvent {
                 turn_id,
                 messages: messages.iter().filter_map(Message::published).collect(),
             }),
+            // The agent's record of what it read and did to its context.
+            ActorEvent::MessageGiven { .. } | ActorEvent::ContextCompacted { .. } => None,
             other => Some(other),
         }
     }
@@ -452,10 +496,11 @@ impl ActorEvent {
     }
 
     /// Whether it is the channel's own word, which no actor sends: who
-    /// joined or left (issue 408). It reaches whose name it is told in,
+    /// joined or left (issue 408), what a newcomer was given of the history
+    /// (issue 417). It reaches whose name it is told in,
     /// too - nothing of theirs is echoed back to them.
     pub fn is_announcement(&self) -> bool {
-        matches!(self, ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. })
+        matches!(self, ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } | ActorEvent::HistoryShared { .. })
     }
 
     /// The variant's name, for logs - never the payload, which may carry
@@ -492,6 +537,7 @@ impl ActorEvent {
             ActorEvent::ActivityFinished { .. } => "ActivityFinished",
             ActorEvent::ParticipantJoined { .. } => "ParticipantJoined",
             ActorEvent::ParticipantLeft { .. } => "ParticipantLeft",
+            ActorEvent::HistoryShared { .. } => "HistoryShared",
             ActorEvent::ChainCutOff { .. } => "ChainCutOff",
             ActorEvent::MessageModified(_) => "MessageModified",
             ActorEvent::MessageRevoked { .. } => "MessageRevoked",
@@ -500,6 +546,8 @@ impl ActorEvent {
             ActorEvent::RetryAccepted { .. } => "RetryAccepted",
             ActorEvent::RetryRejected { .. } => "RetryRejected",
             ActorEvent::MessageRejected { .. } => "MessageRejected",
+            ActorEvent::MessageGiven { .. } => "MessageGiven",
+            ActorEvent::ContextCompacted { .. } => "ContextCompacted",
         }
     }
 }
@@ -514,6 +562,13 @@ pub struct EventContext {
     pub correlation_id: Uuid,
     pub span_id: Uuid,
     pub span_depth: i32,
+    /// The position in its channel's history of the entry it was delivered
+    /// as (issue 417), stamped by the channel as it delivers it: what a
+    /// client tells the live event from the item it reads later by. `None`
+    /// for what the history does not record, and for what was not
+    /// delivered by a channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<Position>,
     /// How many times since the last message of a user an agent's message
     /// made another agent respond (issue 45). A user's message starts at 0;
     /// `next` keeps it, and the moderator counts a hop when it asks an agent
@@ -533,6 +588,7 @@ impl EventContext {
             correlation_id: Uuid::default(),
             span_id: Uuid::new_v4(),
             span_depth: 0,
+            position: None,
             agent_hops: 0,
         }
     }
@@ -547,6 +603,7 @@ impl EventContext {
             correlation_id: self.event_id,
             span_id: self.span_id,
             span_depth: self.span_depth + 1,
+            position: None,
             agent_hops: self.agent_hops,
         }
     }
@@ -614,22 +671,87 @@ impl Envelope {
     /// issue 408): who joined or left, by its sender, when it was sent.
     /// `None` for any other event.
     pub fn announced(&self) -> Option<HistoryEntry> {
-        let by = self.context.sender_id;
-        let by_name = self.context.sender_name.clone();
+        self.entry().filter(|_| self.event.is_announcement())
+    }
+
+    /// What a channel's history records of this envelope (issue 417): a
+    /// message said, a step of it included (issue 258); how a turn ended;
+    /// where a step of its plan began (issue 263); a command carried out,
+    /// with its answer, or not (issue 269) - who asked is the initiator;
+    /// what came of what an agent did of its own accord (issue 284); who
+    /// joined or left, by its sender (issue 408); a change of a message
+    /// (issue 234); what an agent was given and a compaction of its context;
+    /// the answer to a request to answer again, a chain cut off, a rejection
+    /// and a request to respond (issue 417). Every mark in the name of its
+    /// sender, when it was sent. `None` for what the history does not
+    /// record: what streams, a beginning whose end is recorded, where an
+    /// actor stands, what asks for an answer to be redone, a command or a
+    /// nudge asked for - recorded as what comes of them -, approvals and
+    /// questions.
+    pub fn entry(&self) -> Option<HistoryEntry> {
+        let actor = self.context.sender_id;
         let at = self.timestamp;
-        match &self.event {
-            ActorEvent::ParticipantJoined { participant, name } => Some(HistoryEntry::ParticipantJoined { participant: *participant, name: name.clone(), by, by_name, at }),
-            ActorEvent::ParticipantLeft { participant, name } => Some(HistoryEntry::ParticipantLeft { participant: *participant, name: name.clone(), by, by_name, at }),
-            _ => None,
-        }
+        Some(match &self.event {
+            ActorEvent::CompleteMessageGenerated(message) | ActorEvent::IntermediateMessageGenerated(message) => HistoryEntry::Said { message: message.clone() },
+            ActorEvent::MessageGiven { message } => HistoryEntry::Given { message: message.clone() },
+            ActorEvent::ContextCompacted { turn_id, from, to } => HistoryEntry::Compacted { turn_id: *turn_id, actor, from: *from, to: *to, at },
+            ActorEvent::TurnFinished { turn_id, .. } => HistoryEntry::TurnFinished { turn_id: *turn_id, actor, at },
+            ActorEvent::TurnGivenUp { turn_id, reason } => HistoryEntry::TurnGivenUp { turn_id: *turn_id, actor, reason: reason.clone(), at },
+            ActorEvent::PlanStepStarted { turn_id, step_index, total_steps, description } => {
+                HistoryEntry::PlanStepStarted { turn_id: *turn_id, actor, step_index: *step_index, total_steps: *total_steps, description: description.clone(), at }
+            }
+            ActorEvent::CommandExecuted { command, args, output, to, turn_id } => HistoryEntry::CommandExecuted {
+                turn_id: *turn_id, actor, issuer: self.security.initiator_id, command: command.clone(), args: args.clone(), output: output.clone(), to: *to, at,
+            },
+            ActorEvent::CommandFailed { command, reason, to, turn_id } => {
+                HistoryEntry::CommandFailed { turn_id: *turn_id, actor, command: command.clone(), reason: reason.clone(), to: *to, at }
+            }
+            ActorEvent::RetryAccepted { target } => HistoryEntry::RetryAccepted { target: *target, actor, at },
+            ActorEvent::RetryRejected { target, reason } => HistoryEntry::RetryRejected { target: *target, reason: *reason, actor, at },
+            ActorEvent::ChainCutOff { message, max_agent_hops, not_asked } => {
+                HistoryEntry::ChainCutOff { message: *message, max_agent_hops: *max_agent_hops, not_asked: not_asked.clone(), at }
+            }
+            ActorEvent::MessageRejected { rejected, message, reason } => HistoryEntry::MessageRejected { rejected: rejected.clone(), message: *message, reason: *reason, at },
+            ActorEvent::ResponseRequested => HistoryEntry::ResponseRequested { by: actor, at },
+            ActorEvent::ActivityFinished { turn_id, activity, output } => HistoryEntry::ActivityFinished { turn_id: *turn_id, actor, activity: activity.clone(), output: output.clone(), at },
+            ActorEvent::ParticipantJoined { participant, name } => {
+                HistoryEntry::ParticipantJoined { participant: *participant, name: name.clone(), by: actor, by_name: self.context.sender_name.clone(), at }
+            }
+            ActorEvent::ParticipantLeft { participant, name, until } => {
+                HistoryEntry::ParticipantLeft { participant: *participant, name: name.clone(), by: actor, by_name: self.context.sender_name.clone(), until: *until, at }
+            }
+            ActorEvent::HistoryShared { participant, from, by, by_name } => {
+                HistoryEntry::HistoryShared { participant: *participant, from: *from, by: *by, by_name: by_name.clone(), at }
+            }
+            ActorEvent::MessageModified(modified) => HistoryEntry::Modified { message: modified.clone() },
+            ActorEvent::MessageRevoked { message, at } => HistoryEntry::Revoked { message: *message, at: *at },
+            ActorEvent::MessageReclassified { message, classification } => HistoryEntry::Reclassified { message: *message, classification: classification.clone() },
+            ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalGranted(_) | ActorEvent::ApprovalDenied(_) | ActorEvent::ApprovalTimedOut(_)
+            | ActorEvent::ApprovalRequestWithdrawn { .. } | ActorEvent::QuestionRequested(_) | ActorEvent::QuestionAnswered { .. }
+            | ActorEvent::QuestionDeclined { .. } | ActorEvent::QuestionClosed { .. } | ActorEvent::ResponseStarted { .. }
+            | ActorEvent::StateChanged(_) | ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_) | ActorEvent::WakeupRequested
+            | ActorEvent::PlanStepFinished { .. } | ActorEvent::CommandRequested { .. } | ActorEvent::NudgeRequested { .. }
+            | ActorEvent::CommandStarted { .. } | ActorEvent::ActivityStarted { .. } | ActorEvent::RetryRequested { .. } => return None,
+        })
+    }
+
+    /// The envelope as everybody but its sender may see it (issues 54, 133,
+    /// 417): its messages without what only their owner sees
+    /// (`ActorEvent::published`); `None` if it carried a single message of
+    /// which nothing is left to show. What a channel gives its moderator and
+    /// delivers.
+    pub fn published(&self) -> Option<Envelope> {
+        self.event.clone().published().map(|event| Envelope { event, ..self.clone() })
     }
 
     /// Whether the envelope concerns `participant` by the rule every channel
     /// delivers by (issue 418): whom it goes to unless a moderator decides
-    /// otherwise. A message to every user, and to every agent if there is
+    /// otherwise. What an agent read and did to its context concerns
+    /// nobody. A message to every user, and to every agent if there is
     /// something to hear in it (`Message::is_heard`, issues 224, 258); a
     /// change of a message to every user and agent (issue 234); who joined
-    /// or left to every user and agent (issue 408); how an answer comes
+    /// or left to every user and agent (issue 408), the part of the history
+    /// shared with a newcomer to the newcomer alone (issue 417); how an answer comes
     /// about, how a turn ended, where an agent stands, what it does of its
     /// own accord and an answer to a retry to the users (issues 220, 243,
     /// 284); a command, a request to answer again and an answer to questions
@@ -653,6 +775,7 @@ impl Envelope {
             ActorEvent::CompleteMessageGenerated(message) => user || (agent && message.is_heard()),
             ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. }
             | ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } => user || agent,
+            ActorEvent::HistoryShared { participant: shared_with, .. } => participant == *shared_with,
             ActorEvent::TurnFinished { .. } | ActorEvent::TurnGivenUp { .. } | ActorEvent::ResponseStarted { .. } | ActorEvent::StateChanged(_)
             | ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_) | ActorEvent::IntermediateMessageGenerated(_)
             | ActorEvent::PlanStepStarted { .. } | ActorEvent::PlanStepFinished { .. } | ActorEvent::ActivityStarted { .. } | ActorEvent::ActivityFinished { .. }
@@ -673,7 +796,8 @@ impl Envelope {
             ActorEvent::QuestionRequested(request) => sender.as_agent_id().is_some() && user && request.shown_to().is_none_or(|only| only.contains(&participant)),
             ActorEvent::QuestionClosed { shown_to, .. } => sender.as_agent_id().is_some() && user && shown_to.as_ref().is_none_or(|only| only.contains(&participant)),
             ActorEvent::QuestionAnswered { agent_id, .. } | ActorEvent::QuestionDeclined { agent_id, .. } => sender.as_user_id().is_some() && participant == ActorId::Agent(*agent_id),
-            ActorEvent::ResponseRequested | ActorEvent::NudgeRequested { .. } | ActorEvent::WakeupRequested | ActorEvent::ChainCutOff { .. } | ActorEvent::MessageRejected { .. } => false,
+            ActorEvent::ResponseRequested | ActorEvent::NudgeRequested { .. } | ActorEvent::WakeupRequested | ActorEvent::ChainCutOff { .. } | ActorEvent::MessageRejected { .. }
+            | ActorEvent::MessageGiven { .. } | ActorEvent::ContextCompacted { .. } => false,
         }
     }
 
@@ -735,6 +859,9 @@ impl Envelope {
             }
             ActorEvent::ParticipantLeft { participant, .. } => {
                 format!("ParticipantLeft(sender_id={}, sender_name={}, participant={})", ctx.sender_id, ctx.sender_name, participant)
+            }
+            ActorEvent::HistoryShared { participant, from, by, .. } => {
+                format!("HistoryShared(sender_id={}, participant={}, from={}, by={})", ctx.sender_id, participant, from, by)
             }
             ActorEvent::ChainCutOff { message, max_agent_hops, not_asked } => {
                 format!("ChainCutOff(sender_id={}, message={}, max_agent_hops={}, not_asked={})", ctx.sender_id, message, max_agent_hops, not_asked.len())
@@ -1015,7 +1142,7 @@ mod tests {
             ActorEvent::MessageRevoked { message: id, at: Utc::now() },
             ActorEvent::MessageReclassified { message: id, classification: Classification::PUBLIC },
             ActorEvent::ParticipantJoined { participant: present.users[1], name: "bob".to_string() },
-            ActorEvent::ParticipantLeft { participant: present.agents[1], name: "helper".to_string() },
+            ActorEvent::ParticipantLeft { participant: present.agents[1], name: "helper".to_string(), until: Position::new(0) },
         ] {
             let kind = changed.kind();
             assert_eq!(present.concerned(sender, changed), present.users_and_agents(), "{kind}");

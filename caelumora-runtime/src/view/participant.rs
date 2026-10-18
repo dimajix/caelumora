@@ -1,6 +1,5 @@
 //! What a participant of a channel is, as its kind makes it: a user, an agent run
-//! here, an external agent (issue 179), an approver - or one that no longer
-//! exists. A `ParticipantView` asks the `ParticipantState` that fits; whether the
+//! here, an external agent (issue 179) - or one that no longer exists. A `ParticipantView` asks the `ParticipantState` that fits; whether the
 //! viewer may see something, and which of it is released to them, stays the
 //! participant view's, in one place for every kind.
 //!
@@ -103,7 +102,6 @@ pub(super) async fn participant_state(views: &Views, participant: &Participant, 
                 Arc::new(GoneParticipant { name: None })
             }
         },
-        Participant::Approver(_) => Arc::new(ApproverParticipant { name: participant.actor_id().fixed_name() }),
         Participant::Agent(id) => match views.agent_of(*id).await {
             Some(agent) => Arc::new(AgentParticipantState {
                 participant: AgentParticipant(StateRef { agent: agent.id, channel, store: Arc::clone(views.states()), histories: Arc::clone(views.histories()), transcripts: Arc::clone(views.transcripts()) }),
@@ -144,27 +142,6 @@ impl ParticipantState for UserParticipant {
 
     async fn describe(&self, id: ActorId) -> ViewResult<Option<ActorDescription>> {
         Ok(Some(ActorDescription { id, name: self.name.clone(), introduction: self.introduction().await? }))
-    }
-}
-
-/// An approver: a name of its own, and nothing to mention or introduce.
-#[derive(Debug)]
-struct ApproverParticipant {
-    name: Option<&'static str>,
-}
-
-#[async_trait]
-impl ParticipantState for ApproverParticipant {
-    fn name(&self) -> Option<&str> {
-        self.name
-    }
-
-    fn handle(&self) -> Option<String> {
-        None
-    }
-
-    async fn describe(&self, id: ActorId) -> ViewResult<Option<ActorDescription>> {
-        Ok(Some(ActorDescription { id, name: ActorId::approver_name(), introduction: None }))
     }
 }
 
@@ -272,7 +249,8 @@ impl AgentParticipant {
         Ok((state.private_notes.current(), state.private_notes.digest()))
     }
 
-    /// What it saw (issue 41).
+    /// What it saw (issue 41), its view of its channel's history beginning
+    /// at the position `from`.
     pub(super) async fn context(&self) -> ViewResult<AgentContextView> {
         let place = &self.0;
         Ok(AgentContextView::of(place.agent, place.channel, self.stored().await?, Arc::clone(&place.histories), Arc::clone(&place.transcripts)))

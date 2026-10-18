@@ -590,7 +590,7 @@ async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[], &[]).await;
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    let drafts = session.create_channel(&alice, ChannelSpec { name: "drafts".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.expect("hers alone").id();
+    let drafts = session.create_channel(&alice, ChannelSpec { name: "drafts".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.expect("hers alone").id();
     let (session_id, main) = (session.id(), session.channels()[0].id());
     let write_in = |channel, text| {
         let (alice, session) = (&alice, &session);

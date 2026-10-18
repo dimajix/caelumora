@@ -1,6 +1,6 @@
 // Helpers for showing messages, shared by the chat and the context panel.
 
-import type {ActorId, GivenUpReason, HistoryItem, Message, PlanStep, TokenUsage, ToolResult, ToolVisibility} from './types';
+import type {ActorId, GivenUpReason, HistoryItem, Message, PlanStep, Rejection, RetryRefused, TokenUsage, ToolResult, ToolVisibility} from './types';
 import {classificationLabel} from './confidentiality';
 import {actorKey, handleOf} from './mention';
 
@@ -139,11 +139,20 @@ export function planStepMark(turnId: string, step: PlanStep, actor: ActorId, nam
 }
 
 /**
+ * The id of a notice the history records (issue 417), live and from the
+ * history alike: the position of its entry - the envelope's `position`, the
+ * item's `seq` -, so that it is shown once; none if it is not known.
+ */
+export function entryId(position: number | undefined): string | undefined {
+  return position === undefined ? undefined : `entry:${position}`;
+}
+
+/**
  * The notice of a command an agent carried out (issue 269), as the chat
  * shows it - live and from the history alike, named for the turn it was
  * carried out in so that it is shown once: which command, by which agent,
- * when, on whose word where that is known, and - live, to whom it was
- * answered - what it answered, which the history does not keep.
+ * when, on whose word where that is known, and what it answered, to whom
+ * it was answered (issue 417).
  */
 export function commandNotice(turnId: string, command: string, args: string, agent: ActorId, agentName: string | undefined, issuer: string | undefined, at: string, answer?: {output: string; private: boolean}): Message {
   return {
@@ -156,6 +165,58 @@ export function commandNotice(turnId: string, command: string, args: string, age
     commandOutput: {command, args, private: answer?.private ?? false, agent: agentName ?? 'An agent', issuer},
     timestamp: at,
   };
+}
+
+/**
+ * The notice of a command of the channel (issues 28, 417) - `/wakeup` - and
+ * what it answered, as `senderName` ran it, at the position `position`.
+ */
+export function channelCommandNotice(command: string, output: string, senderName: string | undefined, at: string, position?: number): Message {
+  return {
+    id: entryId(position),
+    role: 'System',
+    content: output,
+    sender_name: senderName,
+    commandOutput: {command, private: false},
+    timestamp: at,
+  };
+}
+
+/**
+ * The notice that an agent, called `agentName`, did not carry out
+ * `command` for `reason` (issue 269) - for its issuer alone -, in the place
+ * of its start if it began in the turn `turnId`, at the position `position`
+ * otherwise.
+ */
+export function commandFailedNotice(turnId: string | null, command: string, reason: string, agentName: string | undefined, at: string, position?: number): Message {
+  return {
+    id: turnId ? `command:${turnId}` : entryId(position),
+    role: 'System',
+    content: reason,
+    sender_name: agentName,
+    commandOutput: {command, private: true, agent: agentName, failed: true},
+    timestamp: at,
+  };
+}
+
+/** The notice that `senderName` asks you to respond (issue 278). */
+export function nudgeNotice(senderName: string | undefined, at: string, position?: number): Message {
+  return {id: entryId(position), role: 'System', content: null, sender_name: senderName, nudged: true, timestamp: at};
+}
+
+/** The notice that a chain between agents was cut off at its limit (issue 200). */
+export function chainCutOffNotice(maxAgentHops: number, notAsked: ActorId[], at: string, position?: number): Message {
+  return {id: entryId(position), role: 'System', content: null, chainCutOff: {maxAgentHops, notAsked}, timestamp: at};
+}
+
+/** The notice that `agentName` did not answer again, for `reason` (issue 234). */
+export function retryRejectedNotice(reason: RetryRefused, agentName: string | undefined, at: string, position?: number): Message {
+  return {id: entryId(position), role: 'System', content: null, sender_name: agentName, retryRejected: reason, timestamp: at};
+}
+
+/** The notice that what you sent, of the kind `rejected`, was not let in, for `reason` (issue 304). */
+export function messageRejectedNotice(rejected: string, reason: Rejection, at: string, position?: number): Message {
+  return {id: entryId(position), role: 'System', content: null, messageRejected: {rejected, reason}, timestamp: at};
 }
 
 /**
@@ -217,11 +278,11 @@ export function participantNotice(change: 'joined' | 'left', participant: ActorI
 /**
  * The chat's messages for `items` of a channel's history (issue 258): each
  * message said, the mark of each step of a plan begun (issue 263), the
- * notice of a turn given up, that of a command an agent carried out
- * (issue 269), that of what it did of its own accord (issue 284) -
- * whose, as `nameOf` names them - and that of who joined or left (issue
- * 408), named as they were then. A turn that finished shows nothing of its
- * own.
+ * notice of a turn given up, that of a command carried out or not (issue
+ * 269), that of what an agent did of its own accord (issue 284) - whose, as
+ * `nameOf` names them -, that of who joined or left (issue 408), named as
+ * they were then, and the notices the reader was given (issue 417). A turn
+ * that finished, and an agent answering again, show nothing of their own.
  */
 export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: ActorId) => string | undefined): Message[] {
   return items.flatMap((item): Message[] => {
@@ -235,8 +296,30 @@ export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: Acto
       return [givenUpNotice(turn_id, reason, actor, nameOf(actor), at)];
     }
     if ('command_executed' in item) {
-      const {turn_id, actor, issuer, command, args, at} = item.command_executed;
-      return [commandNotice(turn_id, command, args, actor, nameOf(actor), nameOf(issuer), at)];
+      const {turn_id, actor, issuer, command, args, output, to, at} = item.command_executed;
+      return turn_id
+        ? [commandNotice(turn_id, command, args, actor, nameOf(actor), nameOf(issuer), at, {output, private: to !== null})]
+        : [channelCommandNotice(command, output, nameOf(actor), at, item.seq)];
+    }
+    if ('command_failed' in item) {
+      const {turn_id, actor, command, reason, at} = item.command_failed;
+      return [commandFailedNotice(turn_id, command, reason, nameOf(actor), at, item.seq)];
+    }
+    if ('retry_rejected' in item) {
+      const {reason, actor, at} = item.retry_rejected;
+      return [retryRejectedNotice(reason, nameOf(actor), at, item.seq)];
+    }
+    if ('chain_cut_off' in item) {
+      const {max_agent_hops, not_asked, at} = item.chain_cut_off;
+      return [chainCutOffNotice(max_agent_hops, not_asked, at, item.seq)];
+    }
+    if ('message_rejected' in item) {
+      const {rejected, reason, at} = item.message_rejected;
+      return [messageRejectedNotice(rejected, reason, at, item.seq)];
+    }
+    if ('response_requested' in item) {
+      const {by, at} = item.response_requested;
+      return [nudgeNotice(nameOf(by), at, item.seq)];
     }
     if ('activity_finished' in item) {
       const {turn_id, actor, activity, output, at} = item.activity_finished;

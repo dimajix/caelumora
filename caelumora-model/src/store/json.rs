@@ -6,7 +6,6 @@ use crate::user::{UserChannelState, UserId};
 use crate::removal::{Deletable, Removal};
 use crate::security::{ActionType, AccessPolicy};
 use crate::store::access::{name_free, Access};
-use crate::store::history::HistoryKey;
 use crate::store::transcript::load_named_by_turn;
 use crate::store::query::{Field, Filter, NoField, Page, Query};
 use crate::store::{ComponentStore, EntityStore, EntityStoreFactory, EntityStores, Journaled, Policies, StateStore, StoreError, StoreResult, Stored};
@@ -590,18 +589,16 @@ impl StateStore for JsonFileStore {
         let path = self.agent_channel_state_path(agent_id, channel_id);
         debug!("Reading agent channel state from {}", path.display());
         let mut state: AgentChannelState = load_state(&path).await?.unwrap_or_default();
-        state.history = self.load_history(HistoryKey::Agent(agent_id, channel_id), state.history_from).await?;
         state.transcript = self.load_transcript(agent_id, channel_id, state.transcript_from).await?;
         load_named_by_turn(self, agent_id, channel_id, &mut state).await?;
         Ok(state)
     }
 
     /// The prompt texts and the tool sets first, which what follows names,
-    /// then the history and the transcript, then the document, which says
-    /// from where they are loaded.
+    /// then the transcript, then the document, which says from where it is
+    /// loaded.
     async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
         self.append_given(agent_id, channel_id, state).await?;
-        self.append_history(HistoryKey::Agent(agent_id, channel_id), &mut state.history).await?;
         self.append_transcript(agent_id, channel_id, &mut state.transcript).await?;
         self.store_state(&self.agent_channel_state_path(agent_id, channel_id), state).await
     }
@@ -623,13 +620,14 @@ impl StateStore for JsonFileStore {
             entity: "channel_state",
             id: channel_id.to_string(),
         })?;
-        state.history = self.load_history(HistoryKey::Channel(channel_id), state.history_from).await?;
+        state.history = self.load_history(channel_id, state.history_from).await?;
         Ok(state)
     }
 
-    /// The history first, then the document, as for an agent's.
+    /// The history first, then the document, which says from where it is
+    /// loaded.
     async fn put_channel_state(&self, channel_id: ChannelId, state: &mut ChannelState) -> StoreResult<()> {
-        self.append_history(HistoryKey::Channel(channel_id), &mut state.history).await?;
+        self.append_history(channel_id, &mut state.history).await?;
         self.store_state(&self.channel_state_path(channel_id), state).await
     }
 
@@ -648,7 +646,7 @@ impl StateStore for JsonFileStore {
         let path = self.channel_state_path(channel_id);
         delete_if_exists(&path).await?;
         delete_if_exists(&journal_path(&path)).await?;
-        delete_dir_if_exists(&self.history_dir(HistoryKey::Channel(channel_id))).await?;
+        delete_dir_if_exists(&self.history_dir(channel_id)).await?;
         delete_dir_if_exists(&self.agent_channel_state_dir(channel_id)).await?;
         delete_dir_if_exists(&self.user_channel_state_dir(channel_id)).await?;
         Ok(())
@@ -677,6 +675,7 @@ impl StateStore for JsonFileStore {
 
 #[cfg(test)]
 mod tests {
+    use crate::chain::Position;
     use crate::session::{Session, SessionId};
     use super::*;
     use chrono::Utc;
@@ -855,9 +854,9 @@ mod tests {
             components: moderation_components(None, Some("broadcast_policy")),
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
-            history_limits: Vec::new(),
             former: Vec::new(),
             participants: Vec::new(),
+            internal_actors: Vec::new(),
             security_attributes: SecurityAttributes::default(),
             deleted: None,
         };
@@ -943,6 +942,7 @@ mod tests {
         assert_eq!(sessions[0].id, s1.id);
     }
 
+    use crate::history::Reader;
     use crate::message::tests::{id, make_message};
     use crate::note::{NoteChange, NoteId};
     use crate::actor::ActorState;
@@ -961,12 +961,11 @@ mod tests {
         journal_path(&store.agent_channel_state_path(agent, channel))
     }
 
-    /// A state with messages `from..to` in its transcript and history, and
-    /// a note published for each in its document, which grows with them.
+    /// A state with messages `from..to` in its transcript, and a note
+    /// published for each in its document, which grows with them.
     fn said(state: &mut AgentChannelState, from: u128, to: u128) {
         for n in from..to {
             state.transcript.push(make_message(id(n)));
-            state.history.extend(vec![make_message(id(n))]);
             let note = NoteChange::Add { id: NoteId(n as u32), text: format!("note {n}"), classification: Classification::CHANNEL_DEFAULT };
             state.notes.push(note, Default::default(), id(n));
         }
@@ -1085,7 +1084,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = store(dir.path());
         let channel = ChannelId::new();
-        let key = HistoryKey::Channel(channel);
+        let key = channel;
         let mut state = ChannelState::new(channel);
         state.history.extend(vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
         store.put_channel_state(channel, &mut state).await.unwrap();
@@ -1099,8 +1098,8 @@ mod tests {
         write("items-0.json", &items);
         write("items-head.json", &serde_json::json!({ "end": 1 }));
         let loaded = store.get_channel_state(channel).await.unwrap();
-        assert_eq!(loaded.history.end(), 3);
-        assert_eq!(store.page(key, 0, None, 10, &every).await.unwrap().items.len(), 3, "the items are derived anew from the chain");
+        assert_eq!(loaded.history.end().get(), 3);
+        assert_eq!(store.page(key, &Reader::Channel, Position::START, None, 10, &every).await.unwrap().items.len(), 3, "the items are derived anew from the chain");
         assert_eq!(read("items-head.json")["end"], serde_json::json!(3));
 
         // As if the crash came after the chain, before its head.
@@ -1110,10 +1109,10 @@ mod tests {
         chain.as_array_mut().unwrap().push(past);
         write("chain-0.json", &chain);
         let mut loaded = store.get_channel_state(channel).await.unwrap();
-        assert_eq!(loaded.history.end(), 3, "what lies past the head is not there");
-        loaded.history.push(make_message(id(4)), None);
+        assert_eq!(loaded.history.end().get(), 3, "what lies past the head is not there");
+        loaded.history.push(make_message(id(4)));
         store.put_channel_state(channel, &mut loaded).await.unwrap();
-        assert_eq!(store.said(key, id(4)).await.unwrap().map(|(at, _)| at), Some(3), "and the next entry takes its place");
+        assert_eq!(store.said(key, &Reader::Channel, id(4)).await.unwrap().map(|(at, _)| at.get()), Some(3), "and the next entry takes its place");
         assert_eq!(store.get_channel_state(channel).await.unwrap().history.digest(), loaded.history.digest());
     }
 
@@ -1128,9 +1127,9 @@ mod tests {
         store.put_channel_state(channel, &mut state).await.unwrap();
         let journal = journal_path(&store.channel_state_path(channel));
         assert!(journal.exists());
-        assert!(store.history_dir(HistoryKey::Channel(channel)).exists());
+        assert!(store.history_dir(channel).exists());
         store.delete_channel_state(channel).await.unwrap();
         assert!(!journal.exists() && !store.channel_state_path(channel).exists());
-        assert!(!store.history_dir(HistoryKey::Channel(channel)).exists(), "and its history");
+        assert!(!store.history_dir(channel).exists(), "and its history");
     }
 }

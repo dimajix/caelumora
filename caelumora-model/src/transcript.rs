@@ -245,7 +245,7 @@ impl TranscriptEntry {
             HistoryEntry::ParticipantJoined { participant, name, by, by_name, at } => {
                 Some(TranscriptEntry::ParticipantJoined { participant: *participant, name: name.clone(), by: *by, by_name: by_name.clone(), at: *at })
             }
-            HistoryEntry::ParticipantLeft { participant, name, by, by_name, at } => {
+            HistoryEntry::ParticipantLeft { participant, name, by, by_name, at, .. } => {
                 Some(TranscriptEntry::ParticipantLeft { participant: *participant, name: name.clone(), by: *by, by_name: by_name.clone(), at: *at })
             }
             _ => None,

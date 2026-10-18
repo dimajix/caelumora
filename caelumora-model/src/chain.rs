@@ -30,7 +30,66 @@
 use crate::digest::Digest;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeSet, HashMap};
+use std::fmt;
 use serde::de::Error;
+
+/// Where an entry is in its chain (issues 376, 417): its place in the order
+/// entries were added, across every branch - the first `0`, every one after
+/// it one more. Given when the entry is added and never changed; one names
+/// one entry of a chain for good. What a range of a chain is read by, and
+/// what every reader of a history or a transcript addresses entries by - a
+/// page, a delivery, a mark of what was read, a member's range. Written as
+/// its number.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Position(u64);
+
+impl Position {
+    /// The position of a chain's first entry.
+    pub const START: Position = Position(0);
+    /// After every position: the end of a range that is still open.
+    pub const MAX: Position = Position(u64::MAX);
+
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Its number.
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    /// The position `count` entries after it.
+    pub fn after(self, count: u64) -> Self {
+        Self(self.0.saturating_add(count))
+    }
+
+    /// The position `count` entries before it, the first if there are fewer.
+    pub fn before(self, count: u64) -> Self {
+        Self(self.0.saturating_sub(count))
+    }
+
+    /// The position after it.
+    pub fn next(self) -> Self {
+        self.after(1)
+    }
+
+    /// The position before it, `None` for the first.
+    pub fn previous(self) -> Option<Self> {
+        self.0.checked_sub(1).map(Self)
+    }
+
+    /// How many entries it lies after `earlier`, `None` if it lies before.
+    pub fn since(self, earlier: Position) -> Option<u64> {
+        self.0.checked_sub(earlier.0)
+    }
+}
+
+impl fmt::Display for Position {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// An entry at its place in the chain: with its position, the digest of the
 /// chain up to and including it, and the digest of the entry it follows.
@@ -40,7 +99,7 @@ pub struct Node<E> {
     /// branch (issue 376): the first entry `0`, every one after it one more.
     /// Given when it is added and never changed, since nothing is removed;
     /// covered by no digest, since it says nothing of what was added.
-    pub seq: u64,
+    pub seq: Position,
     pub digest: Digest,
     /// The digest of the entry it follows, `None` for a root.
     pub parent: Option<Digest>,
@@ -57,8 +116,14 @@ pub struct Node<E> {
 impl<E> Node<E> {
     /// `entry` at the position `seq`, after the entry `parent` names, with
     /// `digest`.
-    fn new(seq: u64, digest: Digest, parent: Option<Digest>, entry: E) -> Self {
+    fn new(seq: Position, digest: Digest, parent: Option<Digest>, entry: E) -> Self {
         Self { seq, digest, parent, active_child: None, entry }
+    }
+
+    /// The node with `entry` in place of its own - what a reader is given of
+    /// it (issue 417) -, at its position, with its digests.
+    pub fn with_entry<F>(&self, entry: F) -> Node<F> {
+        Node { seq: self.seq, digest: self.digest, parent: self.parent, active_child: self.active_child, entry }
     }
 }
 
@@ -92,7 +157,7 @@ struct StoredRef<'a, E> {
 #[derive(Debug, Clone)]
 pub struct Chain<E> {
     /// The position of the first entry held.
-    base: u64,
+    base: Position,
     /// Every entry held, in the order it was added: an entry after the one it
     /// follows, each at the position `base` plus its index.
     nodes: Vec<Node<E>>,
@@ -113,7 +178,7 @@ pub struct Chain<E> {
 
 impl<E> Default for Chain<E> {
     fn default() -> Self {
-        Self { base: 0, nodes: Vec::new(), head: None, index: HashMap::new(), path: Vec::new(), newest_child: HashMap::new(), pending: BTreeSet::new(), stored_head: None }
+        Self { base: Position::START, nodes: Vec::new(), head: None, index: HashMap::new(), path: Vec::new(), newest_child: HashMap::new(), pending: BTreeSet::new(), stored_head: None }
     }
 }
 
@@ -135,39 +200,39 @@ impl<E> Chain<E> {
     }
 
     /// The position of the first entry it holds: `0` unless it is a suffix.
-    pub fn base(&self) -> u64 {
+    pub fn base(&self) -> Position {
         self.base
     }
 
     /// The position after the last entry: the one the next entry is given.
-    pub fn end(&self) -> u64 {
-        self.base + self.nodes.len() as u64
+    pub fn end(&self) -> Position {
+        self.base.after(self.nodes.len() as u64)
     }
 
     /// The entry at the position `seq`, on whichever branch; `None` before
     /// `base` as after the last.
-    pub fn at(&self, seq: u64) -> Option<&Node<E>> {
+    pub fn at(&self, seq: Position) -> Option<&Node<E>> {
         self.nodes.get(self.index_of(seq)?)
     }
 
     /// The entries from the position `seq` on, of every branch, in the order
     /// they were added: what was added since an entry before `seq` was. Empty
     /// from `end` on, and before `base`, where it does not hold all of them.
-    pub fn from(&self, seq: u64) -> impl DoubleEndedIterator<Item = &Node<E>> + ExactSizeIterator {
+    pub fn from(&self, seq: Position) -> impl DoubleEndedIterator<Item = &Node<E>> + ExactSizeIterator {
         let start = self.index_of(seq).unwrap_or(self.nodes.len());
         self.nodes[start..].iter()
     }
 
     /// The position of the entry with the digest `digest`, on whichever
     /// branch, or `None` if it holds no such entry.
-    pub fn seq_of(&self, digest: &Digest) -> Option<u64> {
+    pub fn seq_of(&self, digest: &Digest) -> Option<Position> {
         self.index.get(digest).map(|&i| self.nodes[i].seq)
     }
 
     /// Where the position `seq` is in `nodes`: past the last for one after
     /// it; `None` for one before `base`.
-    fn index_of(&self, seq: u64) -> Option<usize> {
-        let offset = seq.checked_sub(self.base)?;
+    fn index_of(&self, seq: Position) -> Option<usize> {
+        let offset = seq.since(self.base)?;
         Some(usize::try_from(offset).map_or(self.nodes.len(), |i| i.min(self.nodes.len())))
     }
 
@@ -278,8 +343,8 @@ impl<E> Chain<E> {
                     if node.seq != next {
                         return Err(format!("entry {} is at position {}, not after the last at {next}", node.digest, node.seq));
                     }
-                    next += 1;
-                    if self.base == 0 && node.parent.is_some_and(|parent| !self.index.contains_key(&parent) && !incoming.contains_key(&parent)) {
+                    next = next.next();
+                    if self.base == Position::START && node.parent.is_some_and(|parent| !self.index.contains_key(&parent) && !incoming.contains_key(&parent)) {
                         return Err(format!("entry {} is not after the entry it follows", node.digest));
                     }
                 }
@@ -397,14 +462,14 @@ impl<E> Chain<E> {
     /// keeps of a chain a store holds whole. Only entries that are stored go,
     /// and only while the head is from `from` on; otherwise, and before
     /// `base`, nothing changes.
-    pub fn keep_from(&mut self, from: u64) {
+    pub fn keep_from(&mut self, from: Position) {
         let Some(cut) = self.index_of(from) else { return };
         let head_kept = self.head.is_none_or(|head| self.index.get(&head).is_some_and(|&at| at >= cut));
         if cut == 0 || !head_kept || self.pending.iter().any(|&at| at < cut) {
             return;
         }
         let kept: Vec<Node<E>> = self.nodes.drain(cut..).collect();
-        let mut suffix = Self { base: self.base + cut as u64, ..Self::default() };
+        let mut suffix = Self { base: self.base.after(cut as u64), ..Self::default() };
         for node in kept {
             suffix.insert(node);
         }
@@ -422,7 +487,7 @@ impl<E> Chain<E> {
     ///
     /// # Errors
     /// If `stored` does not fit, as for `apply`.
-    pub fn suffix(base: u64, stored: Stored<E>) -> Result<Self, String> {
+    pub fn suffix(base: Position, stored: Stored<E>) -> Result<Self, String> {
         let mut chain = Self { base, ..Self::default() };
         chain.apply(stored)?;
         Ok(chain)
@@ -430,7 +495,7 @@ impl<E> Chain<E> {
 
     /// The chain `stored` is, whole, with nothing to store.
     fn from_stored(stored: Stored<E>) -> Result<Self, String> {
-        Self::suffix(0, stored)
+        Self::suffix(Position::START, stored)
     }
 }
 
@@ -438,7 +503,7 @@ impl<E> Chain<E> {
 /// write is not the chain (issue 376).
 impl<E: Serialize> Serialize for Chain<E> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if self.base != 0 {
+        if self.base != Position::START {
             return Err(serde::ser::Error::custom(format!("only the part of a chain from position {} on is held", self.base)));
         }
         StoredRef { entries: &self.nodes, head: &self.head }.serialize(serializer)
@@ -632,20 +697,20 @@ mod tests {
         let elsewhere = crate::digest::prompt("elsewhere");
         let fits = |entries: Vec<Node<String>>, head: Option<Digest>| Stored { entries, head };
 
-        let orphan = Node::new(1, crate::digest::prompt("x"), Some(elsewhere), "x".to_string());
+        let orphan = Node::new(Position::new(1), crate::digest::prompt("x"), Some(elsewhere), "x".to_string());
         assert!(chain.apply(fits(vec![orphan.clone()], None)).is_err(), "follows what is not there");
-        let late = Node::new(2, elsewhere, Some(after_a), "e".to_string());
+        let late = Node::new(Position::new(2), elsewhere, Some(after_a), "e".to_string());
         assert!(chain.apply(fits(vec![orphan, late], None)).is_err(), "follows what comes after it");
         assert!(chain.apply(fits(Vec::new(), Some(elsewhere))).is_err(), "a head that is not there");
-        let moved = Node::new(0, after_a, Some(elsewhere), "a".to_string());
+        let moved = Node::new(Position::new(0), after_a, Some(elsewhere), "a".to_string());
         assert!(chain.apply(fits(vec![moved], Some(after_a))).is_err(), "an entry that followed another");
-        let remembers = Node { active_child: Some(elsewhere), ..Node::new(0, after_a, None, "a".to_string()) };
+        let remembers = Node { active_child: Some(elsewhere), ..Node::new(Position::new(0), after_a, None, "a".to_string()) };
         assert!(chain.apply(fits(vec![remembers], Some(after_a))).is_err(), "remembers what does not follow it");
-        let twice = Node::new(1, crate::digest::prompt("y"), Some(after_a), "y".to_string());
+        let twice = Node::new(Position::new(1), crate::digest::prompt("y"), Some(after_a), "y".to_string());
         assert!(chain.apply(fits(vec![twice.clone(), twice], Some(after_a))).is_err(), "an entry twice");
-        let gap = Node::new(2, crate::digest::prompt("z"), Some(after_a), "z".to_string());
+        let gap = Node::new(Position::new(2), crate::digest::prompt("z"), Some(after_a), "z".to_string());
         assert!(chain.apply(fits(vec![gap], Some(after_a))).is_err(), "a position left out");
-        let shifted = Node::new(1, after_a, None, "a".to_string());
+        let shifted = Node::new(Position::new(1), after_a, None, "a".to_string());
         assert!(chain.apply(fits(vec![shifted], Some(after_a))).is_err(), "an entry at another position than it is");
 
         assert_eq!(labels(chain.all_entries()), ["a"], "and nothing changed");
@@ -666,26 +731,26 @@ mod tests {
         // c after a is there already: the head moves, no position is taken.
         push(&mut chain, "c");
 
-        assert_eq!(chain.all_entries().map(|n| n.seq).collect::<Vec<_>>(), [0, 1, 2, 3], "across branches, one after the other");
-        assert_eq!(chain.end(), 4);
-        assert_eq!(chain.at(1).map(|n| n.entry.as_str()), Some("b"));
-        assert!(chain.at(4).is_none() && chain.at(u64::MAX).is_none(), "nothing past the last");
-        assert_eq!(chain.seq_of(&after_c), Some(2));
+        assert_eq!(chain.all_entries().map(|n| n.seq.get()).collect::<Vec<_>>(), [0, 1, 2, 3], "across branches, one after the other");
+        assert_eq!(chain.end().get(), 4);
+        assert_eq!(chain.at(Position::new(1)).map(|n| n.entry.as_str()), Some("b"));
+        assert!(chain.at(Position::new(4)).is_none() && chain.at(Position::MAX).is_none(), "nothing past the last");
+        assert_eq!(chain.seq_of(&after_c).map(Position::get), Some(2));
         assert_eq!(chain.seq_of(&crate::digest::prompt("elsewhere")), None);
-        assert_eq!(labels(chain.from(1)), ["b", "c", "d"]);
-        assert_eq!(labels(chain.from(4)), Vec::<String>::new(), "nothing from the end on");
-        assert_eq!(labels(chain.from(u64::MAX)), Vec::<String>::new());
+        assert_eq!(labels(chain.from(Position::new(1))), ["b", "c", "d"]);
+        assert_eq!(labels(chain.from(Position::new(4))), Vec::<String>::new(), "nothing from the end on");
+        assert_eq!(labels(chain.from(Position::MAX)), Vec::<String>::new());
 
         let loaded = stored(&chain);
-        assert_eq!(loaded.all_entries().map(|n| n.seq).collect::<Vec<_>>(), [0, 1, 2, 3], "kept as they were");
+        assert_eq!(loaded.all_entries().map(|n| n.seq.get()).collect::<Vec<_>>(), [0, 1, 2, 3], "kept as they were");
         let mut copy = stored(&chain);
         push(&mut chain, "e");
         copy.apply(chain.changes().unwrap()).unwrap();
-        assert_eq!(copy.at(4).map(|n| (n.seq, n.entry.as_str())), Some((4, "e")), "an entry merged is where it was added");
+        assert_eq!(copy.at(Position::new(4)).map(|n| (n.seq.get(), n.entry.as_str())), Some((4, "e")), "an entry merged is where it was added");
     }
 
     /// The part of `chain` from `base` on, as a store would give it.
-    fn suffix_of(chain: &Chain<String>, base: u64) -> Chain<String> {
+    fn suffix_of(chain: &Chain<String>, base: Position) -> Chain<String> {
         Chain::suffix(base, Stored { entries: chain.from(base).cloned().collect(), head: chain.digest() }).unwrap()
     }
 
@@ -696,21 +761,21 @@ mod tests {
             push(&mut chain, label);
         }
         let mut whole = chain.clone();
-        chain.keep_from(2);
-        assert_eq!(chain.base(), 0, "nothing goes while it is not stored");
+        chain.keep_from(Position::new(2));
+        assert_eq!(chain.base().get(), 0, "nothing goes while it is not stored");
         chain.mark_stored();
         push(&mut chain, "e");
-        chain.keep_from(2);
-        assert_eq!((chain.base(), chain.end(), labels(chain.entries())), (2, 5, vec!["c".to_string(), "d".to_string(), "e".to_string()]), "the stored part before it goes, what is pending stays");
+        chain.keep_from(Position::new(2));
+        assert_eq!((chain.base().get(), chain.end().get(), labels(chain.entries())), (2, 5, vec!["c".to_string(), "d".to_string(), "e".to_string()]), "the stored part before it goes, what is pending stays");
         let changes = chain.changes().expect("still pending");
-        assert_eq!(changes.entries.iter().map(|n| n.seq).collect::<Vec<_>>(), [4], "and is still what changed");
+        assert_eq!(changes.entries.iter().map(|n| n.seq.get()).collect::<Vec<_>>(), [4], "and is still what changed");
         whole.mark_stored();
         whole.apply(changes).unwrap();
         assert_eq!(whole.digest(), chain.digest(), "which fits the whole chain");
-        chain.keep_from(1);
-        assert_eq!(chain.base(), 2, "nothing before what it holds");
+        chain.keep_from(Position::new(1));
+        assert_eq!(chain.base().get(), 2, "nothing before what it holds");
         push(&mut chain, "f");
-        assert_eq!(chain.at(5).map(|n| n.entry.as_str()), Some("f"), "and it goes on after it");
+        assert_eq!(chain.at(Position::new(5)).map(|n| n.entry.as_str()), Some("f"), "and it goes on after it");
     }
 
     #[test]
@@ -725,15 +790,15 @@ mod tests {
         chain.move_head(Some(&after_c));
         push(&mut chain, "e");
 
-        let part = suffix_of(&chain, 2);
-        assert_eq!((part.base(), part.end(), part.digest()), (2, chain.end(), chain.digest()));
+        let part = suffix_of(&chain, Position::new(2));
+        assert_eq!((part.base().get(), part.end().get(), part.digest()), (2, chain.end().get(), chain.digest()));
         assert_eq!(labels(part.all_entries()), ["c", "d", "e"]);
         assert_eq!(labels(part.entries()), ["c", "e"], "the active path from the first entry it holds");
         assert_eq!(part.len(), 2);
-        assert_eq!(labels(part.from(3)), labels(chain.from(3)));
-        assert!(part.from(1).next().is_none() && part.at(1).is_none(), "nothing before its base");
-        assert_eq!(part.at(2).map(|n| n.entry.as_str()), Some("c"));
-        assert_eq!(part.seq_of(&after_c), Some(2));
+        assert_eq!(labels(part.from(Position::new(3))), labels(chain.from(Position::new(3))));
+        assert!(part.from(Position::new(1)).next().is_none() && part.at(Position::new(1)).is_none(), "nothing before its base");
+        assert_eq!(part.at(Position::new(2)).map(|n| n.entry.as_str()), Some("c"));
+        assert_eq!(part.seq_of(&after_c).map(Position::get), Some(2));
         assert!(part.prefix(&after_a).is_none() && part.seq_of(&after_a).is_none(), "an older entry is not found");
         assert_eq!(labels(part.prefix(&after_c).unwrap()), ["c"]);
         assert_eq!(part.leaf_from(&after_c), chain.digest());
@@ -743,7 +808,7 @@ mod tests {
         assert!(!moved.move_head(Some(&after_a)), "not to an older entry");
         assert!(moved.move_head(Some(&after_c)));
         assert_eq!(push(&mut moved, "f"), Some(after_c));
-        assert_eq!(moved.at(5).map(|n| (n.seq, n.entry.as_str())), Some((5, "f")), "appended where the whole chain would");
+        assert_eq!(moved.at(Position::new(5)).map(|n| (n.seq.get(), n.entry.as_str())), Some((5, "f")), "appended where the whole chain would");
     }
 
     #[test]
@@ -753,7 +818,7 @@ mod tests {
         push(&mut chain, "b");
         let after_b = chain.digest().unwrap();
         chain.mark_stored();
-        let mut part = suffix_of(&chain, 1);
+        let mut part = suffix_of(&chain, Position::new(1));
 
         push(&mut chain, "c");
         chain.move_head(Some(&after_b));
@@ -765,9 +830,9 @@ mod tests {
         assert_eq!(part.leaf_from(&after_b), chain.digest());
         assert!(part.changes().is_none(), "nothing merged is a change to store again");
 
-        let gap = Stored { entries: vec![Node::new(9, crate::digest::prompt("x"), Some(after_b), "x".to_string())], head: None };
+        let gap = Stored { entries: vec![Node::new(Position::new(9), crate::digest::prompt("x"), Some(after_b), "x".to_string())], head: None };
         assert!(part.apply(gap).is_err(), "positions are checked in a suffix as well");
-        let orphan = Node::new(4, crate::digest::prompt("y"), Some(crate::digest::prompt("older")), "y".to_string());
+        let orphan = Node::new(Position::new(4), crate::digest::prompt("y"), Some(crate::digest::prompt("older")), "y".to_string());
         assert!(part.apply(Stored { entries: vec![orphan.clone()], head: part.digest() }).is_ok(), "an entry after an older one, which the store holds");
         assert!(chain.apply(Stored { entries: vec![orphan], head: chain.digest() }).is_err(), "but not in the whole chain");
     }

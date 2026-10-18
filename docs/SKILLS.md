@@ -68,8 +68,9 @@ participants who may not read the skill.
     and the model is told not to quote it.
 *   **`/skill @agent <name>`** - a participant gives one to an agent, a command the agent carries
     out itself. In its command turn the skill's text is given to the agent (`Turn::give`): into its
-    transcript in the participant's name and role, as a `Given` entry that names the skill, and into
-    its history, unpublished. The channel's history records the command, not the text.
+    transcript in the participant's name and role, as a `Given` entry that names the skill. The
+    channel's history records the command, and the text as what the agent was given, gone to
+    nobody but read by whom may read what the agent saw (issue 417).
 *   **`list_skills`** gives the catalogue as a tool, for a model whose prompt was built before a
     skill appeared; **`/skills @agent`** lists, privately, what the agent may load here - for its
     owner, as it answers for its owner, so the issuer learns the names and descriptions of the

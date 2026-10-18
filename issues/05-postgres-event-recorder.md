@@ -1,6 +1,6 @@
 # 05 — Postgres event recorder
 
-**Status:** open
+**Status:** done
 **Type:** question
 **Priority:** medium
 **Area:** Audit
@@ -51,3 +51,10 @@ tooling.
   issue - a record across channels, retention, who may read it - is [140](140-audit-log.md), the
   audit log of acts without content; the history is one of its sources. To be closed once 417 is
   done.
+- **2026-10-18** — Done with [417](417-user-history-from-its-actor.md): the `Recorder` hook and
+  `BlackholeRecorder` are gone, and what this issue asked of a channel is its history - every
+  envelope that enters, every notice, request and refusal the channel sends, with its sender, whom
+  it went to and its position, kept by the store and, for a database, laid out as tables
+  ([STORAGE.md](../docs/STORAGE.md#histories)). A record across channels, its retention and who may
+  read it are [140](140-audit-log.md)'s.
+

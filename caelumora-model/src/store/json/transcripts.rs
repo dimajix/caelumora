@@ -10,10 +10,10 @@
 //! and `tools-<digest>.json`, read by its digest and written once - one
 //! there already is not written again.
 
-use super::chains::{self, read_chain, read_head, segment_of, SEGMENT};
+use super::chains::{self, read_chain, read_head, segment_before, segment_of, SEGMENT};
 use super::{read_json_opt, size_of, to_backend_error, write_json_atomic, JsonFileStore};
 use crate::agent::{AgentChannelState, AgentId};
-use crate::chain::Node;
+use crate::chain::{Node, Position};
 use crate::channel::ChannelId;
 use crate::digest::Digest;
 use crate::kept::Kept;
@@ -86,7 +86,7 @@ impl JsonFileStore {
 
     /// The transcript of `agent` in `channel` from the position `from` on,
     /// as its state holds it; empty if none is kept.
-    pub(super) async fn load_transcript(&self, agent: AgentId, channel: ChannelId, from: u64) -> StoreResult<Transcript> {
+    pub(super) async fn load_transcript(&self, agent: AgentId, channel: ChannelId, from: Position) -> StoreResult<Transcript> {
         chains::load(&self.transcript_dir(agent, channel), transcript_of(agent, channel), from).await
     }
 }
@@ -100,7 +100,7 @@ impl TranscriptStore for JsonFileStore {
     async fn message(&self, agent: AgentId, channel: ChannelId, id: MessageId) -> StoreResult<Option<Message>> {
         let dir = self.transcript_dir(agent, channel);
         let end = read_head(&dir).await?.end;
-        let nodes: Vec<Node<TranscriptEntry>> = read_chain(&dir, 0, end).await?;
+        let nodes: Vec<Node<TranscriptEntry>> = read_chain(&dir, Position::START, end).await?;
         Ok(known(nodes.iter(), id))
     }
 
@@ -109,18 +109,15 @@ impl TranscriptStore for JsonFileStore {
         let end = read_head(&dir).await?.end;
         let mut wanted: HashSet<MessageId> = ids.iter().copied().collect();
         let mut found = HashSet::new();
-        let mut segment = segment_of(end.saturating_sub(1));
-        while end > 0 && !wanted.is_empty() {
-            let nodes: Vec<Node<TranscriptEntry>> = read_chain(&dir, segment, end.min(segment + SEGMENT)).await?;
+        let mut segment = end.previous().map(segment_of);
+        while let Some(from) = segment.filter(|_| !wanted.is_empty()) {
+            let nodes: Vec<Node<TranscriptEntry>> = read_chain(&dir, from, end.min(from.after(SEGMENT))).await?;
             for id in nodes.iter().rev().filter_map(|node| node.entry.message().map(|m| m.id)) {
                 if wanted.remove(&id) {
                     found.insert(id);
                 }
             }
-            if segment == 0 {
-                break;
-            }
-            segment -= SEGMENT;
+            segment = segment_before(from);
         }
         Ok(found)
     }

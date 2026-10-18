@@ -319,6 +319,7 @@ mod tests {
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::AgentId;
     use caelumora_model::approval::ApprovalRequest;
+    use caelumora_model::history::Audience;
     use caelumora_model::message::{MessageId, MessageRole};
     use caelumora_model::security::SecurityContext;
     use caelumora_model::tool::ToolCall;
@@ -370,7 +371,7 @@ mod tests {
     /// Whether `routing` delivers its event as every channel does, asks
     /// nobody and tells nothing of its own.
     fn as_every_channel(routing: &Routing) -> bool {
-        routing.deliver_to.is_none() && routing.ask.is_empty() && routing.notices.is_empty()
+        routing.audience == Audience::Everybody && routing.ask.is_empty() && routing.notices.is_empty()
     }
 
     /// `policy` as a component.
@@ -515,9 +516,9 @@ mod tests {
             let routing = moderator.route(&event).await;
 
             assert_eq!(routing.ask, vec![agents[1], agents[2]], "{:?} must ask the mentioned agents, the sleeping one included", moderator);
-            assert!(routing.deliver_to.is_none(), "{:?} must deliver the end of the turn as every channel does", moderator);
+            assert!(routing.audience == Audience::Everybody, "{:?} must deliver the end of the turn as every channel does", moderator);
             let said = moderator.route(&said_from(user, "@b and @c, please", vec![agents[1], agents[2]])).await;
-            assert!(said.deliver_to.is_none(), "{:?} must deliver the message as every channel does", moderator);
+            assert!(said.audience == Audience::Everybody, "{:?} must deliver the message as every channel does", moderator);
         }
     }
 
@@ -582,9 +583,9 @@ mod tests {
 
         let routing = moderator.route(&hops_from(agents[0], 2, vec![agents[2]])).await;
         assert!(routing.ask.is_empty(), "beyond the limit nobody is asked, mentioned or not");
-        assert!(routing.deliver_to.is_none(), "but the end of the turn is delivered as ever");
+        assert!(routing.audience == Audience::Everybody, "but the end of the turn is delivered as ever");
         let said = moderator.route(&said_from(agents[0], "and you?", vec![agents[2]])).await;
-        assert!(said.deliver_to.is_none(), "and so is the message");
+        assert!(said.audience == Audience::Everybody, "and so is the message");
 
         let user = ActorId::User(UserId::new());
         let routing = moderator.route(&hops_from(user, 2, Vec::new())).await;
@@ -648,7 +649,7 @@ mod tests {
         let asked = moderator.route(&message_from(user, "hello, everyone", Vec::new())).await.ask;
         assert!(asked.is_empty(), "nobody was mentioned, so nobody answers");
         let said = moderator.route(&said_from(user, "hello, everyone", Vec::new())).await;
-        assert!(said.deliver_to.is_none(), "the message is still delivered as every channel does");
+        assert!(said.audience == Audience::Everybody, "the message is still delivered as every channel does");
 
         let asked = moderator.route(&message_from(agents[0], "my answer", Vec::new())).await.ask;
         assert!(asked.is_empty(), "nor does anybody answer an agent without a mention");
@@ -669,7 +670,7 @@ mod tests {
         let asked = moderator.route(&message_from(agents[0], "my answer", Vec::new())).await.ask;
         assert!(asked.is_empty(), "an agent's message asks nobody");
         let said = moderator.route(&said_from(agents[0], "my answer", Vec::new())).await;
-        assert!(said.deliver_to.is_none(), "but is delivered as every channel does");
+        assert!(said.audience == Audience::Everybody, "but is delivered as every channel does");
     }
 
     #[tokio::test]
@@ -736,7 +737,7 @@ mod tests {
             for nudged in [agents[1], other] {
                 let routing = moderator.route(&envelope(user, ActorEvent::NudgeRequested { participant: nudged })).await;
                 assert_eq!(routing.ask, vec![nudged], "{:?} must ask whom the nudge names, and no policy", moderator);
-                assert!(routing.deliver_to.is_none() && routing.notices.is_empty(), "{:?} must tell nobody else", moderator);
+                assert!(routing.audience == Audience::Everybody && routing.notices.is_empty(), "{:?} must tell nobody else", moderator);
             }
             let stranger = ActorId::Agent(AgentId::new());
             let routing = moderator.route(&envelope(user, ActorEvent::NudgeRequested { participant: stranger })).await;

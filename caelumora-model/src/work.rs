@@ -131,7 +131,7 @@ mod tests {
         let read = KnowledgeRef {
             channel: Default::default(),
             session: Default::default(),
-            source: KnowledgeSource::History { digest: None, start: None },
+            source: KnowledgeSource::History { digest: None, from: None },
             classification: Some(internal.clone()),
         };
 

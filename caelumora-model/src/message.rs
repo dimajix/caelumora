@@ -1,5 +1,6 @@
 use crate::actor::ActorId;
 use crate::confidentiality::{Classification, Visibility};
+use crate::context::ContextRef;
 use crate::tool::{ToolCall, ToolCallResult};
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
@@ -105,6 +106,15 @@ pub struct Message {
     /// content says what was given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice_of: Option<MessageId>,
+    /// What the message was produced from (issues 06, 417): the context its
+    /// sender's model was given - or what an external agent's remote agent
+    /// was given in the call it came of. Set on what an agent sends, not on
+    /// what it keeps in its transcript, and recorded with the message in its
+    /// channel's history; only its owner sees it, so it is never published
+    /// (`published`). `None` for a message no turn produced. Not covered by
+    /// the digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub produced_from: Option<ContextRef>,
 }
 
 // No `Default`: a message has no classification that would be right
@@ -133,6 +143,7 @@ impl Message {
             completion_tokens: None,
             prompt_duration: None,
             completion_duration: None,
+            produced_from: None,
             total_duration: None,
             context_size: None,
             modified: None,
@@ -161,10 +172,10 @@ impl Message {
     /// withheld - a tool call or result whose call is the owner's is left
     /// out, a call whose arguments are has them set to `null`, a result
     /// that is is emptied - with the record of the answers to its
-    /// questions - and such reasoning is dropped. `None` if nothing is
-    /// left to show.
+    /// questions - and such reasoning is dropped, and so is what it was
+    /// produced from. `None` if nothing is left to show.
     pub fn published(&self) -> Option<Message> {
-        let mut message = self.clone();
+        let mut message = Message { produced_from: None, ..self.clone() };
         if !message.reasoning_visibility.is_channel() {
             message.reasoning = None;
         }
@@ -198,7 +209,7 @@ impl Message {
         if self.tool_calls.is_empty() && self.tool_results.is_empty() {
             return None;
         }
-        let mut message = Message { content: None, reasoning: None, classification: classification.clone(), ..self.clone() };
+        let mut message = Message { content: None, reasoning: None, produced_from: None, classification: classification.clone(), ..self.clone() };
         for call in &mut message.tool_calls {
             call.arguments = Value::Null;
         }

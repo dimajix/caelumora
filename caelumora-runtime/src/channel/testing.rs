@@ -4,22 +4,23 @@
 //! and her agent, started, and what is waited for in it. Behind the
 //! feature `test-support`, as `crate::testing` is.
 
+use caelumora_model::chain::Position;
 use caelumora_model::history::testing::{items_of, messages_of};
 use crate::actor::Actor;
 use crate::channel::ChannelLoop;
 use crate::command::CommandError;
 use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
 use crate::view::AgentContextView;
-use crate::session::testing::{bare_session, user};
+use crate::session::testing::{bare_session, founded, user};
 use anyhow::{Result, Error};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::{AgentChannelState, AgentId};
-use caelumora_model::history::HistoryEntry;
+use caelumora_model::history::{HistoryEntry, Reader};
 use caelumora_model::message::MessageId;
-use caelumora_model::store::history::{every, HistoryKey};
+use caelumora_model::store::history::every;
 use caelumora_model::store::StoreResult;
 use caelumora_model::work::TurnId;
-use caelumora_model::channel::{Channel, ChannelId, HistoryStart, Participant, moderation_components};
+use caelumora_model::channel::{Channel, ChannelId, InternalActor, Participant, moderation_components};
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::message::Message;
 use caelumora_model::security::{AccessPolicy, ActionType, SecurityAttributes, SecurityContext};
@@ -27,10 +28,11 @@ use caelumora_model::session::SessionId;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::{Name, ScopedName};
+use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
-use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
+use caelumora_model::approval::{ApprovalStrategy, Approver};
 use caelumora_model::confidentiality::{Classification, Visibility};
 use tokio::sync::broadcast::Receiver;
 use tokio::task::JoinHandle;
@@ -103,20 +105,18 @@ pub async fn channel_of_alice_and(runtime: Arc<RuntimeManager>, alice: UserId, a
         session_id: SessionId::new(),
         name: Name::new("main").unwrap(),
         components: moderation_components(None, Some("broadcast_policy")),
-        participants: vec![
-            Participant::User(alice),
-            Participant::Agent(agent),
-            Participant::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any }),
-        ],
+        participants: vec![Participant::User(alice), Participant::Agent(agent)],
+        internal_actors: vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))],
         security_attributes: SecurityAttributes::default(),
         classification: Classification::CHANNEL_DEFAULT,
         language: None,
-        history_limits: Vec::new(),
         deleted: None,
         former: Vec::new(),
     };
-    // Stored, so that leaving it can be stored too.
+    // Stored, so that leaving it can be stored too, with its participants'
+    // joins (issue 420).
     runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
+    runtime.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
     let session_id = channel.session_id;
     ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, bare_session(session_id), channel)).await.unwrap()
 }
@@ -188,7 +188,7 @@ impl ChannelLoop {
     }
 
     /// The messages `participant` sees of the history, read from the store
-    /// from where its view begins, as a view reads them (issue 379).
+    /// as a view reads them (issues 379, 417).
     pub async fn visible_messages(&self, participant: ActorId) -> Vec<Message> {
         self.visible_entries(participant).await.iter().filter_map(HistoryEntry::said).cloned().collect()
     }
@@ -196,13 +196,13 @@ impl ChannelLoop {
     /// The entries `participant` sees of the history, as `visible_messages`
     /// reads them: who joined or left among them (issue 408).
     pub async fn visible_entries(&self, participant: ActorId) -> Vec<HistoryEntry> {
-        let Some(from) = self.visible_from(participant).await.expect("the history is read") else { return Vec::new() };
-        self.history_store.page(HistoryKey::Channel(self.id), from, None, 10_000, &every).await.expect("the history is read").items
+        self.history_store.page(self.id, &Reader::Participant(participant), Position::START, None, 10_000, &every).await.expect("the history is read").entries().cloned().collect()
     }
 
-    /// Where `participant`'s view of the history begins (`Channel::history_start_of`).
-    pub fn history_start_of(&self, participant: ActorId) -> Option<HistoryStart> {
-        self.channel.load().history_start_of(participant)
+    /// The ranges of positions in which `participant` was given what went to
+    /// every member (`HistoryStore::memberships`, issue 417).
+    pub async fn memberships(&self, participant: ActorId) -> Vec<Range<Position>> {
+        self.history_store.memberships(self.id, participant).await.expect("the history is read")
     }
 
     /// The entries of the whole history, its messages folded as they stand.
@@ -212,7 +212,7 @@ impl ChannelLoop {
 
     /// The last entry of the history as it was recorded, unfolded.
     pub async fn last_history_entry(&self) -> Option<HistoryEntry> {
-        self.state.lock().await.history.last().map(|node| node.entry.clone())
+        self.state.lock().await.history.last().map(|node| node.entry.entry.clone())
     }
 
     /// The message `id` of the history (`ChannelLoop::message`).
@@ -247,8 +247,8 @@ impl ChannelLoop {
     }
 
     /// What `agent` saw in the channel, as a viewer who may read it is shown
-    /// it: its state, its history and its transcript as stored
-    /// (`AgentContextView`).
+    /// it: its state and its transcript as stored, and the channel's history
+    /// as it saw it (`AgentContextView`).
     pub async fn agent_context(&self, agent: AgentId) -> AgentContextView {
         let state = self.stored_agent_channel_state(agent).await.expect("the state is read");
         AgentContextView::of(agent, self.id, state, Arc::clone(&self.history_store), Arc::clone(self.runtime.transcript_store()))

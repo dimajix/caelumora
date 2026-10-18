@@ -5,7 +5,6 @@ use crate::plugin::Plugin;
 use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
-use crate::recorder::{BlackholeRecorder, Recorder};
 use anyhow::Result;
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::channel::ChannelId;
@@ -233,9 +232,5 @@ impl RuntimeManager {
     /// holds it (issues 178, 319).
     pub(crate) fn scoped_entities(&self) -> &Arc<ScopedEntities> {
         &self.scoped
-    }
-
-    pub fn new_recorder(&self) -> Result<Box<dyn Recorder>> {
-        Ok(Box::new(BlackholeRecorder::new()))
     }
 }

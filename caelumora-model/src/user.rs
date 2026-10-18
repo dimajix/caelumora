@@ -1,3 +1,4 @@
+use crate::chain::Position;
 use crate::actor::ActorId;
 use crate::approval::{ApprovalRule, ApprovalRuleId, RuleError, MAX_PERSONAL_RULES};
 use chrono::{DateTime, Utc};
@@ -272,7 +273,7 @@ pub struct UserChannelState {
 /// to show where the new ones begin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadMark {
-    pub position: u64,
+    pub position: Position,
     pub message: MessageId,
 }
 
@@ -290,8 +291,8 @@ impl UserChannelState {
 
     /// The position in the channel's history from which on what is said is
     /// new to the user: after the mark, or from the start.
-    pub fn unread_from(&self) -> u64 {
-        self.read.map_or(0, |read| read.position + 1)
+    pub fn unread_from(&self) -> Position {
+        self.read.map_or(Position::START, |read| read.position.next())
     }
 }
 
@@ -328,13 +329,13 @@ mod tests {
     #[test]
     fn what_was_read_only_moves_forward() {
         let mut state = UserChannelState::default();
-        assert_eq!(state.unread_from(), 0, "nothing read: everything is new");
-        let (first, later) = (ReadMark { position: 4, message: MessageId::new() }, ReadMark { position: 9, message: MessageId::new() });
+        assert_eq!(state.unread_from().get(), 0, "nothing read: everything is new");
+        let (first, later) = (ReadMark { position: Position::new(4), message: MessageId::new() }, ReadMark { position: Position::new(9), message: MessageId::new() });
         assert!(state.read_up_to(first));
         assert!(state.read_up_to(later));
         assert!(!state.read_up_to(first), "not back");
         assert!(!state.read_up_to(later), "nor again");
-        assert_eq!((state.read, state.unread_from()), (Some(later), 10));
+        assert_eq!((state.read, state.unread_from().get()), (Some(later), 10));
         let mut replayed = UserChannelState::default();
         for change in state.changes() {
             replayed.apply(change).unwrap();

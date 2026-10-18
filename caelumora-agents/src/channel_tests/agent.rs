@@ -1,9 +1,9 @@
 //! The agent actor in a running channel: its turns, plans, retries, approvals, tool calls, and how
 //! it is cancelled, removed or lowered.
 
-use caelumora_model::history::testing::messages_of;
 use super::*;
 use anyhow::Result;
+use caelumora_model::chain::Position;
 use caelumora_model::agent::{AgentChannelState, AgentId, RetryRefused};
 use caelumora_model::approval::{ApprovalRequest, ApprovalResponse};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -78,13 +78,12 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
     let heard = |call: &[String], text: &str| call.iter().any(|c| c.contains(text));
     assert!(heard(&seen[0], "hello"), "the turn under way saw what was said then");
     assert!(heard(&seen[1], "good evening") && !heard(&seen[1], "hello"), "the next is given what stands");
-    until("the agent's history holds the modification", Box::new(move |state| state.history.message(hello).is_some_and(|m| m.modified.is_some()))).await;
+    until("the agent's transcript holds the modification", Box::new(move |state| state.transcript.messages().iter().any(|m| m.id == hello && m.modified.is_some()))).await;
 
     let question = channel.whole_history().await.iter().find(|m| m.content.as_deref() == Some("and now?")).expect("said").id;
     alice.revoke_message(question).await.expect("hers to take back");
     until("the agent takes it back", Box::new(move |state| {
-        state.history.message(question).is_some_and(|m| m.revoked.is_some())
-            && !state.transcript.messages().iter().any(|m| m.id == question)
+        !state.transcript.messages().iter().any(|m| m.id == question)
     })).await;
     assert!(channel.message_of(question).await.is_some_and(|m| m.revoked.is_some()), "so does the channel");
 
@@ -93,8 +92,7 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
     let first = channel.whole_history().await.iter().find(|m| m.content.as_deref() == Some("first")).expect("answered").id;
     alice.reclassify_message(first, Classification::PUBLIC).await.expect("hers to release");
     until("the agent takes the release in", Box::new(move |state| {
-        state.history.message(first).is_some_and(|m| m.classification == Classification::PUBLIC)
-            && state.transcript.messages().iter().any(|m| m.id == first && m.classification == Classification::PUBLIC)
+        state.transcript.messages().iter().any(|m| m.id == first && m.classification == Classification::PUBLIC)
     })).await;
     running.abort();
 }
@@ -334,8 +332,9 @@ async fn an_agent_takes_note_of_who_left_without_responding() {
 
     channel.remove_participant(&context, context.initiator_id).await.expect("she may leave her channel");
 
-    // In its history and its transcript, where the next turn's model is
-    // told of it (issue 408); it asks nobody to respond.
+    // In its transcript, where the next turn's model is told of it, and in
+    // the channel's history as the agent saw it (issues 408, 417); it asks
+    // nobody to respond.
     let state = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
@@ -343,7 +342,8 @@ async fn an_agent_takes_note_of_who_left_without_responding() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the agent takes note of it");
-    assert!(matches!(state.history.last().map(|node| &node.entry), Some(HistoryEntry::ParticipantLeft { participant, by, .. }) if *participant == context.initiator_id && *by == context.initiator_id));
+    assert!(state.transcript.entries().any(|node| matches!(node.entry, TranscriptEntry::ParticipantLeft { participant, by, .. } if participant == context.initiator_id && by == context.initiator_id)));
+    assert!(matches!(channel.visible_entries(ActorId::Agent(agent)).await.last(), Some(HistoryEntry::ParticipantLeft { participant, by, .. }) if *participant == context.initiator_id && *by == context.initiator_id));
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(model.seen.lock().unwrap().len(), 1, "no turn begins for it");
     running.abort();
@@ -457,7 +457,7 @@ async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
     settled(&helper, ActorState::Sleeping).await;
     let stored = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(stored.turn.is_none(), "the turn was taken over");
-    assert!(messages_of(&stored.history).iter().any(|m| m.content.as_deref() == Some("Good bye.")), "and its answer recorded");
+    assert!(channel.visible_messages(ActorId::Agent(agent)).await.iter().any(|m| m.content.as_deref() == Some("Good bye.")), "and its answer recorded in the channel's history");
     running.abort();
 }
 
@@ -712,7 +712,7 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
     let stored = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            let has_result = state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(ActorId::Agent(agent), t.work.turn_id).iter().any(|m| !m.tool_results.is_empty()));
+            let has_result = state.turn.as_ref().is_some_and(|t| state.transcript.messages().iter().any(|m| m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty()));
             if has_result && state.processing_state == ActorState::Planning { break state }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -898,7 +898,7 @@ async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_
     assert_eq!(roles, [MessageRole::Assistant, MessageRole::Tool], "the call and its result");
     assert!(seen.context_of(calculate.id).await.is_ok(), "the call's context is resolved");
     assert!(stored.transcript.messages().iter().any(|m| m.id == calculate.id), "in the transcript");
-    assert!(messages_of(&stored.history).iter().any(|m| m.id == calculate.id), "and in the agent's history");
+    assert!(channel.visible_messages(ActorId::Agent(agent)).await.iter().any(|m| m.id == calculate.id), "and in the channel's history, as the agent said it");
 
     // Its model is given the call in full, and told why the turn ended.
     let given = given_next(&stored, agent);
@@ -930,7 +930,7 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            if state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(ActorId::Agent(agent), t.work.turn_id).iter().any(|m| !m.tool_results.is_empty())) { break }
+            if state.turn.as_ref().is_some_and(|t| state.transcript.messages().iter().any(|m| m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty())) { break }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the tool ran");
@@ -991,7 +991,7 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            if state.turn.as_ref().is_some_and(|t| state.history.said_in_turn(ActorId::Agent(agent), t.work.turn_id).iter().any(|m| !m.tool_results.is_empty())) { break }
+            if state.turn.as_ref().is_some_and(|t| state.transcript.messages().iter().any(|m| m.turn_id == Some(t.work.turn_id) && !m.tool_results.is_empty())) { break }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the tool ran");
@@ -1583,15 +1583,15 @@ async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_th
     let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
 
     channel.record_said(vec![answer.clone(), tool.clone()]).await;
-    actor.catch_up(0).await.unwrap();
+    actor.catch_up(Position::START).await.unwrap();
 
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     let heard = state.transcript.messages();
     assert_eq!(heard.len(), 1, "nothing of the tool message: {heard:?}");
     assert_eq!((heard[0].id, heard[0].role, heard[0].content.as_deref()), (answer.id, MessageRole::User, Some("Let me check.")), "the other's words, as another's");
     assert!(heard[0].tool_calls.is_empty(), "not the other's call, as if its own");
-    let kept: Vec<_> = messages_of(&state.history).iter().map(|m| (m.id, m.role)).collect();
-    assert_eq!(kept, [(answer.id, MessageRole::Assistant)], "the history keeps what it heard as it was said; the tool traffic, which it would not have heard live, stays the channel's (issue 258)");
+    let kept: Vec<_> = channel.visible_messages(ActorId::Agent(agent)).await.iter().map(|m| (m.id, m.role)).collect();
+    assert_eq!(kept, [(answer.id, MessageRole::Assistant)], "the channel's history gives it what it heard as it was said; the tool traffic, which it would not have heard live, is not its (issues 258, 417)");
 }
 
 #[tokio::test]
@@ -1606,16 +1606,16 @@ async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
     let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
 
     channel.record_said(vec![said("hello"), said("the secret is 42")]).await;
-    actor.catch_up(0).await.unwrap();
+    actor.catch_up(Position::START).await.unwrap();
 
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert_eq!(contents(messages_of(&state.history)), ["hello", "the secret is 42"], "its history keeps all it missed");
+    assert_eq!(contents(channel.visible_messages(ActorId::Agent(agent)).await), ["hello", "the secret is 42"], "the channel's history holds all it missed, for it");
     assert_eq!(contents(state.transcript.messages()), ["hello"], "its transcript what passed its processors");
 }
 
 #[tokio::test]
-async fn an_agent_keeps_all_it_was_offered_in_its_history_and_what_passes_its_processors_in_its_transcript() {
+async fn all_an_agent_was_offered_is_in_its_channels_history_and_what_passes_its_processors_in_its_transcript() {
     let hi = Message { role: MessageRole::Assistant, content: Some("Hi.".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("filter", "test_no_secrets")] };
     let Stuck { channel, context, agent, helper, mut events, running } = with_an_agent(Arc::new(Scripted(Mutex::new([hi].into()))), components).await;
@@ -1629,7 +1629,7 @@ async fn an_agent_keeps_all_it_was_offered_in_its_history_and_what_passes_its_pr
 
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert!(contents(messages_of(&state.history)).contains(&"the secret is 42".to_string()), "its history keeps all it was offered");
+    assert!(contents(channel.visible_messages(ActorId::Agent(agent)).await).contains(&"the secret is 42".to_string()), "the channel's history holds all it was offered, for it");
     assert!(!contents(state.transcript.messages()).contains(&"the secret is 42".to_string()), "its transcript only what passed");
     assert!(contents(state.transcript.messages()).contains(&"hello".to_string()));
     running.abort();

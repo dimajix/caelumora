@@ -315,11 +315,11 @@ without a copy of the members in every list. There are two kinds, told apart by 
     (an agent is reached through its owner). Its one writer is the `GroupManager`, which leaves
     every permission to the store.
 *   **The participants of a session or a channel** lie in its scope and have its id, so that whoever
-    names them needs nothing but the session's or channel's id. They hold users and agents, not
-    approvers. Their one writer is what changes the participants, writing in the runtime's name
-    after the change it follows, which is the act that was permitted. The group is derived anew from
-    the participants each time, so that a write that failed is corrected by the next. The
-    `GroupManager` refuses to change it.
+    names them needs nothing but the session's or channel's id. They hold users and agents; a
+    channel's approver is no participant (issue 420). Their one writer is what changes the
+    participants, writing in the runtime's name after the change it follows, which is the act that
+    was permitted. The group is derived anew from the participants each time, so that a write that
+    failed is corrected by the next. The `GroupManager` refuses to change it.
 
 The group of the participants of a session or channel goes and comes back with it (issue 348): the
 session's or channel's own list names it, and its members reach it only while the group is there, so
@@ -498,7 +498,8 @@ as it is then, so that nothing changes between the check and the entry. The acto
 nothing of the policy. So a message, a change of one, a reclassification, a request to answer
 again, an answer to questions and an answer to an approval request are each asked once, in the
 sender's name - first whether it may act so, then the flow of what it carries -, and what is refused
-is answered to its sender alone (`MessageRejected`), never written to the history.
+is answered to its sender alone (`MessageRejected`), recorded to it alone; what was refused entered
+nothing and is not recorded (issue 417).
 
 ## The security suite
 

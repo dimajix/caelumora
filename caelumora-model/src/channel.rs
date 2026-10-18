@@ -1,9 +1,10 @@
 use crate::actor::ActorId;
 use crate::agent::AgentId;
-use crate::approval::{ApprovalRule, ApprovalStrategy, Approver, ApproverId};
+use crate::approval::{ApprovalRule, Approver};
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
 use crate::group::GroupId;
+use crate::chain::Position;
 use crate::history::{History, WINDOW};
 use crate::message::{Message, MessageId};
 use crate::removal::{Deletable, Removal};
@@ -19,7 +20,6 @@ use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ChannelUpdateEvent {
@@ -104,6 +104,9 @@ pub struct Channel {
     #[serde(default)]
     pub components: ComponentConfig,
     pub participants: Vec<Participant>,
+    /// The actors that belong to the channel itself (issue 420): its
+    /// approver, if it is given one.
+    pub internal_actors: Vec<InternalActor>,
     pub security_attributes: SecurityAttributes,
     /// The classification of the channel's contents (issue 133): what may
     /// flow into it, and who may read it. Set by its owner when creating it.
@@ -112,10 +115,6 @@ pub struct Channel {
     /// told to write in it. `None` if it is held in none in particular.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
-    /// Where the view of the history begins for participants who joined
-    /// later and may not see all of it (issue 46); everybody else sees all.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub history_limits: Vec<HistoryLimit>,
     /// Who took part and left (issue 164): removed participants, with who
     /// removed them and when. Not among `participants`, which is who takes
     /// part now; one added again is taken out of here.
@@ -138,8 +137,8 @@ pub struct Channel {
 }
 
 /// How much of a channel's history a new participant may see, as asked for
-/// when adding them (issue 46). The `ChannelLoop` fixes it as a
-/// `HistoryStart` when they join (`start_in`) and applies that.
+/// when adding them (issue 46). The `ChannelLoop` fixes it as a position
+/// when they join (`start_in`, `HistoryStart::from`) and applies that.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HistoryAccess {
@@ -191,9 +190,11 @@ impl HistoryAccess {
     }
 }
 
-/// Where a participant's view of a channel's history begins.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+/// Where a participant's view of a channel's history begins, as a grant
+/// reads it off the messages (`HistoryAccess::start_in`); fixed as a
+/// position as they join (`from`), which the `HistoryShared` they are given
+/// records (issue 417).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryStart {
     /// From this message on.
     From(MessageId),
@@ -213,19 +214,12 @@ impl HistoryStart {
     /// The position in a channel's history from which on it is visible from
     /// here, `said_at` being the position of the entry that said `message`
     /// (issue 379).
-    pub fn from(&self, said_at: u64) -> u64 {
+    pub fn from(&self, said_at: Position) -> Position {
         match self {
             HistoryStart::From(_) => said_at,
-            HistoryStart::After(_) => said_at + 1,
+            HistoryStart::After(_) => said_at.next(),
         }
     }
-}
-
-/// The view of the history granted to one participant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HistoryLimit {
-    pub participant: ActorId,
-    pub start: HistoryStart,
 }
 
 impl Stored for Channel {
@@ -304,20 +298,16 @@ impl Secured for Channel {
 }
 
 impl Channel {
-    /// A new channel of `participants`, owned by `owner`, as every channel is
-    /// built - from a template or on request (issue 09): with an approver
-    /// added if there is none, and read by its participants (issue 23): every
-    /// user and agent in it, whoever they are at the time - the group of its
-    /// participants (issue 304), which whoever stores the channel stores
-    /// with it (`Group::of_channel`). Held in
-    /// `language`, if any.
-    pub fn build(session_id: SessionId, owner: ActorId, name: Name, components: ComponentConfig, classification: Classification, language: Option<Language>, mut participants: Vec<Participant>) -> Self {
-        if !participants.iter().any(|p| matches!(p, Participant::Approver(_))) {
-            participants.push(Participant::Approver(Approver {
-                id: ApproverId(Uuid::new_v4()),
-                strategy: ApprovalStrategy::Any,
-            }));
-        }
+    /// A new channel, owned by `owner`, as every channel is built - from a
+    /// template or on request (issue 09) -, read by its participants (issue
+    /// 23): every user and agent in it, whoever they are at the time - the
+    /// group of its participants (issue 304), which whoever stores the
+    /// channel stores with it (`Group::of_channel`). Held in `language`, if
+    /// any. Built empty (issue 420): its founders join by the one way in,
+    /// as anyone does, once it is stored; and it has no internal actors -
+    /// whoever builds it gives it those that are configured, and no others,
+    /// so that without an approver nothing in it is approved.
+    pub fn build(session_id: SessionId, owner: ActorId, name: Name, components: ComponentConfig, classification: Classification, language: Option<Language>) -> Self {
         let id = ChannelId::new();
         let security_attributes = SecurityAttributes::owned_by(owner).granting(Subject::Group(GroupId::of_channel(id)), Grant::Read);
         Self {
@@ -327,16 +317,22 @@ impl Channel {
             summary: None,
             briefing: None,
             components,
-            participants,
+            participants: Vec::new(),
+            internal_actors: Vec::new(),
             security_attributes,
             classification,
             language,
-            history_limits: Vec::new(),
             former: Vec::new(),
             approval_rules: Vec::new(),
             uses_workspace: true,
             deleted: None,
         }
+    }
+
+    /// Whether `actor` is one of the channel's internal actors (issue 420),
+    /// which take no part in it.
+    pub fn is_internal(&self, actor: ActorId) -> bool {
+        self.internal_actors.iter().any(|internal| internal.actor_id() == actor)
     }
 
     /// Says what the channel is for (issue 245): `summary` and `briefing`
@@ -349,17 +345,10 @@ impl Channel {
         (self.summary, self.briefing) = (Summary::optional(summary)?, Briefing::optional(briefing)?);
         Ok(())
     }
-
-    /// Where `participant`'s view of the history begins (issue 46); `None`:
-    /// all of it.
-    pub fn history_start_of(&self, participant: ActorId) -> Option<HistoryStart> {
-        self.history_limits.iter().find(|l| l.participant == participant).map(|l| l.start)
-    }
 }
 
 /// A participant that left a channel (issue 164): removed, by whom and
-/// when. Its history limit is not kept - one added again is given a new
-/// one.
+/// when. What it saw of the history is the history's to say (issue 417).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormerParticipant {
     pub participant: Participant,
@@ -378,7 +367,7 @@ pub struct ChannelState {
     pub history: History,
     /// The position from which on the channel keeps its history in memory;
     /// a store loads the history from there.
-    pub history_from: u64,
+    pub history_from: Position,
 }
 
 impl ChannelState {
@@ -386,7 +375,7 @@ impl ChannelState {
         Self {
             channel_id,
             history: History::default(),
-            history_from: 0,
+            history_from: Position::START,
         }
     }
 
@@ -395,7 +384,7 @@ impl ChannelState {
     /// begins, to be stored with the next put (issue 379). The channel reads
     /// no further back than that in memory; everything else is the store's.
     pub fn keep_window(&mut self) {
-        self.history.keep_from(self.history.end().saturating_sub(WINDOW));
+        self.history.keep_from(self.history.end().before(WINDOW));
         self.history_from = self.history.base();
     }
 }
@@ -407,7 +396,7 @@ impl ChannelState {
 #[serde(rename_all = "snake_case")]
 pub enum ChannelStateChange {
     /// From where the history is held, whole.
-    HistoryFrom(u64),
+    HistoryFrom(Position),
 }
 
 impl Journaled for ChannelState {
@@ -428,16 +417,14 @@ impl Journaled for ChannelState {
     }
 }
 
-/// Who takes part in a session or channel. Users and agents by reference:
-/// their records live in the `EntityStore` and are read from there, so
+/// Who takes part in a session or channel: users and agents, by reference.
+/// Their records live in the `EntityStore` and are read from there, so
 /// that no session keeps a copy that goes stale or shows more of them than
-/// their name (issue 120). An approver has no record of its own; it is
-/// kept here whole.
+/// their name (issue 120).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Participant {
     User(UserId),
     Agent(AgentId),
-    Approver(Approver),
 }
 
 impl Participant {
@@ -445,7 +432,28 @@ impl Participant {
         match self {
             Participant::User(id) => ActorId::User(*id),
             Participant::Agent(id) => ActorId::Agent(*id),
-            Participant::Approver(approver) => ActorId::Approver(approver.id),
+        }
+    }
+}
+
+/// An actor that belongs to a channel itself, as its moderator does (issue
+/// 420): none of its participants, nor in their group. It is never added,
+/// removed or announced, and has no range of the history - what is recorded
+/// to it goes to it by name. Otherwise it is an actor like any other: the
+/// channel starts it with the others, delivers to it by the one rule
+/// (`Envelope::concerns`) and takes in what it sends. It has no record of
+/// its own and is kept here whole.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum InternalActor {
+    /// The approver, which collects the users' decisions on the tool calls
+    /// that need approval and decides by its strategy (see APPROVALS.md).
+    Approver(Approver),
+}
+
+impl InternalActor {
+    pub fn actor_id(&self) -> ActorId {
+        match self {
+            InternalActor::Approver(approver) => ActorId::Approver(approver.id),
         }
     }
 }
@@ -480,7 +488,7 @@ mod tests {
             newest.push(message.clone());
         }
         let from = match access.start_in(&newest, now) {
-            Some(start) => start.from(history.iter().position(|m| m.id == start.message()).unwrap() as u64) as usize,
+            Some(start) => start.from(Position::new(history.iter().position(|m| m.id == start.message()).unwrap() as u64)).get() as usize,
             None => 0,
         };
         ids(&history[from.min(history.len())..])
@@ -489,7 +497,7 @@ mod tests {
     #[test]
     fn a_change_is_made_into_the_channel_s_values_or_leaves_it_as_it_was() {
         let owner = ActorId::User(UserId::new());
-        let mut channel = Channel::build(SessionId::new(), owner, Name::new("main").unwrap(), ComponentConfig::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
+        let mut channel = Channel::build(SessionId::new(), owner, Name::new("main").unwrap(), ComponentConfig::default(), Classification::CHANNEL_DEFAULT, None);
         channel.apply(&ChannelUpdateEvent::NameChanged("planning".to_string())).unwrap();
         channel.apply(&ChannelUpdateEvent::LanguageChanged(Some("de".to_string()))).unwrap();
         channel.apply(&ChannelUpdateEvent::UsesWorkspaceChanged(false)).unwrap();
@@ -527,7 +535,7 @@ mod tests {
     #[test]
     fn a_history_start_is_the_position_of_its_message_or_the_one_after() {
         let at = id(1);
-        assert_eq!((HistoryStart::From(at).from(4), HistoryStart::After(at).from(4)), (4, 5));
+        assert_eq!((HistoryStart::From(at).from(Position::new(4)), HistoryStart::After(at).from(Position::new(4))), (Position::new(4), Position::new(5)));
         assert_eq!(HistoryStart::After(at).message(), at);
     }
 
@@ -536,11 +544,10 @@ mod tests {
         let mut state = ChannelState::new(ChannelId::new());
         state.history.extend((1..=250).map(|n| make_message(id(n))).collect());
         state.keep_window();
-        assert_eq!((state.history.base(), state.history_from), (0, 0), "nothing goes before it is stored");
+        assert_eq!((state.history.base().get(), state.history_from.get()), (0, 0), "nothing goes before it is stored");
         state.history.mark_stored();
         state.keep_window();
-        assert_eq!((state.history.base(), state.history.end(), state.history_from), (50, 250, 50), "the last entries");
-        assert_eq!(state.history.last_message_id(), id(250));
+        assert_eq!((state.history.base().get(), state.history.end().get(), state.history_from.get()), (50, 250, 50), "the last entries");
     }
 
     #[test]
@@ -551,9 +558,9 @@ mod tests {
         assert!(copy.history.is_empty(), "the history is not in the document");
         assert!(state.history.changes().is_some(), "and is marked stored by the store that writes it");
 
-        state.history_from = 1;
+        state.history_from = Position::new(1);
         assert_eq!(state.changes().len(), 1, "the small part, whole");
         replayed(&state, &mut copy);
-        assert_eq!((copy.channel_id, copy.history_from), (state.channel_id, 1));
+        assert_eq!((copy.channel_id, copy.history_from.get()), (state.channel_id, 1));
     }
 }

@@ -26,8 +26,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [381](381-inactive-channels-held-in-memory.md) | open | medium | feature | A channel nobody has spoken in for days keeps its loop, its actors and their states in memory until its session is stopped, and nothing notices that it is idle. Part of epic [378](378-resource-management-epic.md). |
 | [382](382-agents-held-without-a-session.md) | open | medium | feature | An agent stays loaded with its memory while nothing uses it, and what still holds it once its sessions are unloaded has not been checked. Part of epic [378](378-resource-management-epic.md). |
 | [388](388-resume-interrupted-work-after-a-restart.md) | open | medium | feature | Work interrupted by a restart - a turn stopped mid-step at the shutdown - waits until someone acts in its session, since nothing starts the session again. |
-| [417](417-user-history-from-its-actor.md) | open | medium | feature | Live, a user sees what the moderator routed to their actor; on reload they see the channel's history, filtered by what they may read, so the two can differ and whatever went to the user alone is gone. |
-| [420](420-channel-built-empty.md) | open | medium | refactoring | A channel's founders are written into its document as it is built and never join, so no `ParticipantJoined` records them; build it empty and let its builder add them as anyone is added. |
 
 ## Identity and access management
 
@@ -43,7 +41,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [05](05-postgres-event-recorder.md) | open | medium | question | The `Recorder` hook is wired into every channel, but `BlackholeRecorder` is the only implementation, so nothing is recorded. |
 | [140](140-audit-log.md) | open | medium | feature | Acts that change who may see what - releases, participants, approvals, deletions - leave no record of who did them and when. |
 
 ## Tools and approvals

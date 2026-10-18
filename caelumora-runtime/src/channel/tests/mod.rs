@@ -24,12 +24,13 @@ use caelumora_model::security::AllowAllPolicy;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::user::User;
 use crate::moderator::{Moderator, Routing};
+use caelumora_model::history::Audience;
 use std::any::Any;
 
 mod commands;
 
 pub(super) use crate::session::testing::user;
-use crate::session::testing::bare_session;
+use crate::session::testing::{bare_session, founded};
 pub(super) use crate::channel::testing::*;
 
 /// A channel of `users`, who are recorded in the store its actors are
@@ -62,10 +63,10 @@ async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, 
         name: Name::new("main").unwrap(),
         components,
         participants,
+        internal_actors: Vec::new(),
         security_attributes: SecurityAttributes::default(),
         classification: Classification::CHANNEL_DEFAULT,
         language: None,
-        history_limits: Vec::new(),
         deleted: None,
         former: Vec::new(),
     };
@@ -74,6 +75,8 @@ async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, 
         Arc::clone(runtime.access_policy()),
         vec![builtin("help", Arc::new(HelpCommandProvider)), builtin("wakeup", Arc::new(WakeupCommandProvider))],
     ).unwrap();
+    // Its participants' joins recorded, as if they had founded it (issue 420).
+    runtime.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
     let session = runtime.controller_manager().new_session_controller(bare_session(channel.session_id));
     let channel = runtime.controller_manager().new_channel_controller(channel);
     ChannelLoop::new(ChannelRuntime::new(runtime, Arc::new(executor), session, channel, Weak::new())).await.unwrap()
@@ -122,7 +125,7 @@ pub(super) struct AskBack(pub(super) ActorId);
 #[async_trait::async_trait]
 impl Moderator for AskBack {
     async fn route(&self, event: &Envelope) -> Routing {
-        Routing { deliver_to: Some(vec![self.0]), ask: vec![self.0], agent_hops: event.context.agent_hops, ..Routing::default() }
+        Routing { audience: Audience::Only(vec![self.0]), ask: vec![self.0], agent_hops: event.context.agent_hops, ..Routing::default() }
     }
     fn add_actor(&self, _: Arc<dyn Actor>) {}
     fn remove_actor(&self, _: ActorId) {}

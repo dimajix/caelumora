@@ -157,7 +157,7 @@ async fn a_participant_takes_part_but_changes_nothing() {
 
     assert!(denied(&session.update_name(&bob, "his").await.expect_err("not his to rename")));
     assert!(session.update_privacy(&bob, PrivacyConfig::default()).await.is_err(), "nor to change its privacy");
-    assert!(session.create_channel(&bob, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.is_err(), "nor to add channels");
+    assert!(session.create_channel(&bob, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.is_err(), "nor to add channels");
     assert!(session.delete_channel(&bob, main.id()).await.is_err(), "nor to delete them");
     assert!(main.remove_participant(&bob, ActorId::User(world.alice)).await.is_err(), "nor to remove others");
     assert!(main.reclassify(&bob, Classification::general(Confidentiality::Public)).await.is_err(), "nor to reclassify the channel");
@@ -188,7 +188,7 @@ async fn the_owner_changes_and_ends_the_session() {
     assert!(main.update_approval_rules(&alice, vec![shell(RuleDecision::Allow)]).await.is_err(), "but not to allow them: a place only restricts");
     session.update_description(&alice, Some("Release 2.0"), Some("Dates are in UTC.")).await.expect("and to say what it is for");
     main.update_description(&alice, Some("Planning"), None).await.expect("and each of its channels");
-    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.expect("and to add channels");
+    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.expect("and to add channels");
     side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::All).await.expect("and people to them");
     session.delete_channel(&alice, side.id()).await.expect("and to delete them");
     assert!(world.manager.delete(&alice, session.id()).await.unwrap(), "and to delete it");
@@ -198,8 +198,10 @@ async fn the_owner_changes_and_ends_the_session() {
 /// S4: a channel's history is read in pages, and a message of it by its id
 /// (issue 218), as far as the reader's view of it goes: bob, taken into a
 /// channel after something was said in it, reads from there on - in pages
-/// as whole, and not the message before by its id; carol, a stranger, does
-/// not reach the channel. Asked as reaching the channel is.
+/// as whole, and not the message before by its id -, beginning with what
+/// alice gave him of the history, which only the two of them read (issue
+/// 417); carol, a stranger, does not reach the channel. Asked as reaching
+/// the channel is.
 #[tokio::test]
 async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_goes() {
     use caelumora_model::actor::ActorEvent;
@@ -207,7 +209,7 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
-    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.unwrap();
+    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.unwrap();
     let hers = side.user_actor(world.alice).unwrap();
     let mut watch = hers.watch();
     let mut say = async |text: &str| {
@@ -233,10 +235,16 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     let texts = |items: &[HistoryEntry]| items.iter().filter_map(HistoryEntry::said).filter_map(|m| m.content.clone()).collect::<Vec<_>>();
     let theirs = reach(world.alice).await.unwrap();
     let page = theirs.history_page(None, 1).await.unwrap();
-    assert_eq!(texts(&page.items), ["after bob"]);
+    assert_eq!(texts(&page.entries().cloned().collect::<Vec<_>>()), ["after bob"]);
     let page = theirs.history_page(page.earlier, 1).await.unwrap();
-    assert!(matches!(page.items.as_slice(), [HistoryEntry::ParticipantJoined { participant, .. }] if *participant == ActorId::User(world.bob)), "where bob joined (issue 408): {:?}", page.items);
-    assert_eq!(texts(&theirs.history_page(page.earlier, 1).await.unwrap().items), ["before bob"], "alice reads it all, page by page");
+    assert!(matches!(page.entries().collect::<Vec<_>>().as_slice(), [HistoryEntry::ParticipantJoined { participant, .. }] if *participant == ActorId::User(world.bob)), "where bob joined (issue 408): {:?}", page.items);
+    // Given nothing before his join, nothing shared with him is recorded (issue 417).
+    let page = theirs.history_page(page.earlier, 1).await.unwrap();
+    assert_eq!(texts(&page.entries().cloned().collect::<Vec<_>>()), ["before bob"], "alice reads it all, page by page");
+    let page = theirs.history_page(page.earlier, 1).await.unwrap();
+    assert!(matches!(page.entries().collect::<Vec<_>>().as_slice(), [HistoryEntry::ParticipantJoined { participant, .. }] if *participant == ActorId::User(world.alice)),
+        "her own join as the channel's founder (issue 420): {:?}", page.items);
+    assert_eq!(page.earlier, None, "and nothing older");
 
     let (his, asked) = world.asked(async {
         let view = reach(world.bob).await.expect("he takes part");
@@ -244,8 +252,9 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     }).await;
     assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes"]), "reaching the channel, cleared for it; reading in it asks nothing more");
     let (page, refused, read) = his;
-    assert_eq!((texts(&page.items), page.earlier), (vec!["after bob".to_string()], None), "bob from where he was taken in");
-    assert!(matches!(page.items.first(), Some(HistoryEntry::ParticipantJoined { participant, .. }) if *participant == ActorId::User(world.bob)), "his own join first");
+    assert_eq!((texts(&page.entries().cloned().collect::<Vec<_>>()), page.earlier), (vec!["after bob".to_string()], None), "bob from where he was taken in");
+    assert!(matches!(page.entries().collect::<Vec<_>>().as_slice(), [HistoryEntry::ParticipantJoined { participant, .. }, ..] if *participant == ActorId::User(world.bob)),
+        "his own join first, given nothing before it: {:?}", page.items);
     assert!(matches!(refused, Err(ViewError::MessageNotFound { .. })), "not what was said before");
     assert_eq!(read.expect("what he sees").id, after);
     assert!(matches!(reach(world.carol).await, Err(ViewError::SessionNotFound(_))), "carol finds nothing of it");
@@ -263,7 +272,7 @@ async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
-    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.unwrap();
+    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.unwrap();
     let hers = side.user_actor(world.alice).unwrap();
     let mut watch = hers.watch();
     let mut say = async |text: &str| {
@@ -803,11 +812,14 @@ async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it
 /// Creating a channel: the classification it is given, creating it - as
 /// its session's owner -, then everyone's clearance for it (issue 312), and
 /// the store creating it again and changing the session that lists it.
+/// Then its founders join by the one way in (issue 420), each cleared again
+/// as they join - and nothing more: naming them was creating the channel,
+/// so changing it (`UpdateChannel`) is not asked.
 #[tokio::test]
 async fn creating_a_channel_needs_owning_its_session() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    let spec = |participants| ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None };
+    let spec = |participants| ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() };
     let (created, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec(vec![ActorId::User(world.bob)]))).await;
     assert!(created.is_ok());
     assert_eq!(asked, checks(&[
@@ -817,8 +829,32 @@ async fn creating_a_channel_needs_owning_its_session() {
         "alice: CreateChannel(alice's) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
+        "alice: JoinChannel(alice) yes",
+        "alice: JoinChannel(bob) yes",
     ]));
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// A founder who is not cleared for a new channel keeps it from being made
+/// (issue 420): asked before anything is stored, so that there is no channel
+/// left behind, nor one announced.
+#[tokio::test]
+async fn a_founder_who_is_not_cleared_leaves_no_channel() {
+    let world = World::new().await;
+    let dave = User { id: UserId::new(), username: Name::new("dave").unwrap(), email: String::new(), roles: vec![], deleted: None };
+    world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
+    world.access_policy.names.lock().unwrap().insert(ActorId::User(dave.id), "dave".to_string());
+    let session = world.shared_session(&[], &[]).await;
+    let alice = World::as_user(world.alice);
+    session.add_participant(&alice, ActorId::User(dave.id), None).await.expect("dave takes part in the session");
+    let spec = ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![ActorId::User(dave.id)], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() };
+
+    let (refused, asked) = world.asked(session.create_channel(&alice, spec)).await;
+    assert!(matches!(refused.err().and_then(|e| e.downcast::<ChannelError>().ok()), Some(ChannelError::NotCleared { .. })), "dave has no role");
+    assert_eq!(asked, checks(&["alice: CreateChannel(alice's) yes", "alice: JoinChannel(alice) yes", "alice: JoinChannel(dave) no"]), "nothing stored");
+    assert!(session.channel_named("side").is_none(), "no channel runs");
+    assert_eq!(session.session().channels.len(), 1, "nor does the session list one");
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 /// Who may not create a channel is refused before anything is asked of
@@ -827,7 +863,7 @@ async fn creating_a_channel_needs_owning_its_session() {
 async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    let spec = ChannelSpec { name: "his".to_string(), components: quiet(), participants: vec![ActorId::User(world.alice)], classification: None, language: None, uses_workspace: None };
+    let spec = ChannelSpec { name: "his".to_string(), components: quiet(), participants: vec![ActorId::User(world.alice)], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() };
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.bob), spec)).await;
     assert!(refused.is_err());
     assert_eq!(asked, checks(&["bob: CreateChannel(alice's) no"]));
@@ -848,7 +884,7 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
     let spec = |name: &str| ChannelSpec {
         name: name.to_string(),
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "id": "bobs-policy" }), ..ComponentDescriptor::new("policy", PRECONFIGURED_REF_KIND) }] },
-        participants: vec![], classification: None, language: None, uses_workspace: None,
+        participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new(),
     };
 
     let (created, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec("side"))).await;
@@ -861,7 +897,8 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
         "alice: GetComponents(bob's) yes",
-    ]), "read as she names it, and again as the channel is built in its owner's name - hers");
+        "alice: JoinChannel(alice) yes",
+    ]), "read as she names it, and again as the channel is built in its owner's name - hers; then its founder joins");
 
     let withdrawn = StoredComponents { security_attributes: attributes(Some(world.bob), &[]), ..policy };
     world.store.update_components(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");
@@ -885,7 +922,7 @@ async fn a_channel_is_refused_a_tool_before_anything_is_built() {
     let spec = ChannelSpec {
         name: "tooled".to_string(),
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "id": "bobs-tools" }), ..ComponentDescriptor::new("tools", PRECONFIGURED_REF_KIND) }] },
-        participants: vec![], classification: None, language: None, uses_workspace: None,
+        participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new(),
     };
 
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec)).await;
@@ -916,7 +953,7 @@ async fn a_new_channel_names_a_component_only_an_operator_configures_through_a_r
     let spec = |name: &str, policy: ComponentDescriptor| ChannelSpec {
         name: name.to_string(),
         components: ComponentConfig { component_nodes: vec![policy] },
-        participants: vec![], classification: None, language: None, uses_workspace: None,
+        participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new(),
     };
 
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec("written", ComponentDescriptor::new("policy", "operated_policy")))).await;

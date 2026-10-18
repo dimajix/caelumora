@@ -120,9 +120,11 @@ external agent alike.
     answer is private, to every user otherwise; not carried out, `CommandFailed` to the issuer
     alone, with why. A command answers what it did, not what it read: nothing withholds its answer
     as a tool's result is withheld.
-*   **Recorded.** What an agent carried out, with its arguments and on whose word, goes into the
-    channel's history and the agent's - not what it answered, which may have been the issuer's
-    alone. A command refused or failed did nothing and leaves no entry.
+*   **Recorded.** What was carried out - by an agent, with its arguments and on whose word, or by
+    the session (`/wakeup`) - goes into the channel's history with what it answered, to whom it was
+    answered: the issuer alone for a private answer, every user otherwise (issue 417). A command
+    refused or failed did nothing; that it did not is recorded to the issuer alone
+    (`CommandFailed`).
 *   **Listed.** `/help` lists the agents' commands after the channel's, each with the handles of the
     agents that carry it out; the participant snapshots carry them for completion.
 

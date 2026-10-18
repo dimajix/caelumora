@@ -285,6 +285,18 @@ impl AgentBody {
             warn!("{:#}", e);
         }
     }
+
+    /// Tells its channel what the agent recorded since it last did - what
+    /// it was given to read, a compaction of its context (issue 417) -, in
+    /// its own contexts, for the channel's history to hold what it saw
+    /// where it saw it. Not sent is only logged: the transcript holds it.
+    pub(super) async fn tell_recorded(&self, state: &mut AgentChannelState, output: &dyn EventSender) {
+        let told = state.take_told();
+        if told.is_empty() {
+            return;
+        }
+        Answering::own(self.id(), self.name(), &self.security_context()).send_all(told, output).await;
+    }
 }
 
 

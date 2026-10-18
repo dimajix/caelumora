@@ -805,10 +805,10 @@ mod tests {
             name: Name::new("main").unwrap(),
             components: moderation_components(None, Some("broadcast_policy")),
             participants: Vec::new(),
+            internal_actors: Vec::new(),
             security_attributes: SecurityAttributes::default(),
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
-            history_limits: Vec::new(),
             deleted: None,
             former: Vec::new(),
         };

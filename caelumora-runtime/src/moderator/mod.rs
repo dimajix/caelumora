@@ -22,6 +22,7 @@ use std::sync::Arc;
 use crate::actor::Actor;
 use crate::component::ComponentRegistry;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, Envelope};
+use caelumora_model::history::Audience;
 use caelumora_model::message::{Message, MessageId};
 
 /// Decides whom the events of a channel are delivered to, who is asked to
@@ -43,11 +44,10 @@ pub(crate) trait Moderator : Send + Sync + Debug {
 /// it as every channel does and asks nobody.
 #[derive(Debug, Default)]
 pub(crate) struct Routing {
-    /// Whom the event is delivered to, as it entered the channel: everyone
-    /// it concerns by the rule every channel delivers by
-    /// (`Envelope::concerns`) if `None`, else these alone - never back to
-    /// its sender, unless the channel announces it in their name.
-    pub deliver_to: Option<Vec<ActorId>>,
+    /// Whom the event is delivered to, as it entered the channel - never
+    /// back to its sender, unless the channel announces it in their name.
+    /// What its entry in the history records (issue 417).
+    pub audience: Audience,
     /// Whom to ask to respond to what the event said, each by a
     /// `ResponseRequested` in the event's contexts, after it.
     pub ask: Vec<ActorId>,

@@ -9,7 +9,10 @@
 #
 # Templates refer to personalities by id. Within a template, channels refer
 # to the template's participants by name; "user" is whoever creates the
-# session, and a channel without an approver gets one anyway.
+# session. A channel's approver is no participant but one of its internal
+# actors (issue 420): a channel has those it names and no others, and one
+# without an approver approves nothing - tools that ask for approval do not
+# work in it.
 #
 # Skills (issue 22) lie in the global scope: every agent whose personality
 # has the `skills` component finds them, loads them when a task calls for one,
@@ -260,8 +263,6 @@ session_templates:
   participants:
   - User:
       name: user
-  - Approver:
-      name: approval
   - Agent:
       name: assistant
       scope: SessionScope
@@ -273,9 +274,11 @@ session_templates:
       kind: policy_moderator
       params:
         max_agent_hops: 20
+    internal_actors:
+    - Approver:
+        strategy: Any
     participants:
     - user
-    - approval
     - assistant
 - id: e195e4bf-89e7-46d9-a666-0d56a3d10bbb
   name: sassy-session
@@ -283,8 +286,6 @@ session_templates:
   participants:
   - User:
       name: user
-  - Approver:
-      name: approval
   - Agent:
       name: Jonathan
       scope: UserScope
@@ -313,9 +314,11 @@ session_templates:
       kind: policy_moderator
       params:
         max_agent_hops: 20
+    internal_actors:
+    - Approver:
+        strategy: Any
     participants:
     - user
-    - approval
     - Jonathan
     - Sassy
 - id: 772a28e1-bb1d-4671-ab6c-e8e0b62136f5
@@ -324,8 +327,6 @@ session_templates:
   participants:
   - User:
       name: user
-  - Approver:
-      name: approval
   - Agent:
       name: Jonathan
       scope: UserScope
@@ -343,9 +344,11 @@ session_templates:
         max_agent_hops: 20
     - id: responders
       kind: mentions_only_policy
+    internal_actors:
+    - Approver:
+        strategy: Any
     participants:
     - user
-    - approval
     - Jonathan
     - Sassy
 - id: 9ea5159d-3f05-466b-8d4f-6fa3078aad60
@@ -354,8 +357,6 @@ session_templates:
   participants:
   - User:
       name: user
-  - Approver:
-      name: approval
   - Agent:
       name: Jonathan
       scope: UserScope
@@ -373,9 +374,11 @@ session_templates:
         max_agent_hops: 20
     - id: responders
       kind: user_driven_policy
+    internal_actors:
+    - Approver:
+        strategy: Any
     participants:
     - user
-    - approval
     - Jonathan
     - Sassy
 - id: 28e4c2ed-13c2-4161-addf-7a6521d2d986
@@ -384,8 +387,6 @@ session_templates:
   participants:
   - User:
       name: user
-  - Approver:
-      name: approval
   - Agent:
       name: Jonathan
       scope: UserScope
@@ -407,9 +408,11 @@ session_templates:
         max_agent_hops: 20
     - id: responders
       kind: mentions_only_policy
+    internal_actors:
+    - Approver:
+        strategy: Any
     participants:
     - user
-    - approval
     - Jonathan
     - Hermes
 # A team whose members answer by what is said (issue 403): a decision model
@@ -434,8 +437,6 @@ session_templates:
   participants:
   - User:
       name: user
-  - Approver:
-      name: approval
   - Agent:
       name: Coder
       scope: SessionScope
@@ -464,9 +465,11 @@ session_templates:
         keep_alive: 1h
         max_responders: 2
         destination: { level: strictly_confidential }
+    internal_actors:
+    - Approver:
+        strategy: Any
     participants:
     - user
-    - approval
     - Coder
     - Reviewer
     - Planner

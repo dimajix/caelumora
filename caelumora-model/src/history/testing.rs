@@ -5,6 +5,7 @@
 //! produced from (`HistoryStore::said`).
 
 use super::{fold, History, HistoryEntry};
+use crate::chain::Position;
 use crate::context::ContextRef;
 use crate::message::{Message, MessageId};
 use crate::work::TurnId;
@@ -17,10 +18,10 @@ use std::collections::HashMap;
 /// changes. What a store derives as its items (`StandingItems`), read by the
 /// one rule of folding (`fold`).
 pub fn items_of(history: &History) -> Vec<HistoryEntry> {
-    let mut folded: HashMap<u64, Message> = fold(history.all_entries()).into_iter().map(|(node, message)| (node.seq, message)).collect();
+    let mut folded: HashMap<Position, Message> = fold(history.all_entries()).into_iter().map(|(node, message)| (node.seq, message)).collect();
     history.entries()
-        .filter_map(|node| match &node.entry {
-            HistoryEntry::Said { context, .. } => folded.remove(&node.seq).map(|message| HistoryEntry::Said { message, context: context.clone() }),
+        .filter_map(|node| match &node.entry.entry {
+            HistoryEntry::Said { .. } => folded.remove(&node.seq).map(|message| HistoryEntry::Said { message }),
             entry => entry.is_item().then(|| entry.clone()),
         })
         .collect()
@@ -35,6 +36,6 @@ pub fn messages_of(history: &History) -> Vec<Message> {
 /// produced from, and in which turn (`HistoryEntry::context`); `None` if its
 /// holder did not produce it.
 pub fn recorded_context(history: &History, id: MessageId) -> Option<(ContextRef, TurnId)> {
-    let said = history.all_entries().rev().find(|node| node.entry.said().is_some_and(|message| message.id == id))?;
-    said.entry.context().map(|(context, turn)| (context.clone(), turn))
+    let said = history.all_entries().rev().find(|node| node.entry.entry.said().is_some_and(|message| message.id == id))?;
+    said.entry.entry.context().map(|(context, turn)| (context.clone(), turn))
 }

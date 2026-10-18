@@ -113,7 +113,6 @@ impl Turn<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::history::testing::recorded_context;
     use caelumora_runtime::transport::Discard;
     use crate::turn::tests::seen;
     use caelumora_model::actor::EventContext;
@@ -146,24 +145,25 @@ mod tests {
         let profile = |reasoning_history| ModelProfile { reasoning_history, ..ModelProfile::default() };
         let (first, second) = (thought(ActorId::Agent(agent), "first"), thought(ActorId::Agent(agent), "second"));
         let reasoning_of = |messages: &[Message]| messages.iter().map(|m| m.reasoning.is_some()).collect::<Vec<_>>();
-        {
+        let (first, second) = {
             state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), profile(ReasoningHistory::CurrentTurn));
             let mut turn = Turn::under_way(agent, &mut state);
             turn.set_context(Vec::new(), Vec::new());
-            turn.push_message(first.clone());
+            let first = turn.push_message(first.clone());
             assert_eq!(reasoning_of(&turn.full_context().unwrap().0), [false, false, true], "only the turn's own reasoning");
-            turn.push_message(second.clone());
+            let second = turn.push_message(second.clone());
             turn.commit(false, &Discard).await;
-        }
+            (first, second)
+        };
 
         // What was recorded says what the model was given - not what the
         // transcript holds.
-        let reasoning_seen = |state: &AgentChannelState, id| seen(state, agent, id).expect("the agent produced it").iter().map(|item| match item {
+        let reasoning_seen = |state: &AgentChannelState, said: &Message| seen(state, agent, said).expect("the agent produced it").iter().map(|item| match item {
             ContextItem::Conversation { message } => message.reasoning.is_some(),
             ContextItem::Prompt { .. } => false,
         }).collect::<Vec<_>>();
-        assert_eq!(reasoning_seen(&state, first.id), [false, false]);
-        assert_eq!(reasoning_seen(&state, second.id), [false, false, true], "the first answer's reasoning, from the same turn");
+        assert_eq!(reasoning_seen(&state, &first), [false, false]);
+        assert_eq!(reasoning_seen(&state, &second), [false, false, true], "the first answer's reasoning, from the same turn");
         assert!(state.transcript.messages().iter().all(|m| m.reasoning.is_some()), "stored reasoning is untouched");
 
         // Under `Always`, the agent's own reasoning of earlier turns too -
@@ -190,42 +190,44 @@ mod tests {
             ContextItem::Prompt { text, role, .. } => format!("{role:?}:{text}"),
             ContextItem::Conversation { message } => message.content.clone().unwrap_or_default(),
         }).collect::<Vec<_>>();
-        {
+        let (first, second) = {
             let mut turn = Turn::begun(agent, &mut state);
             turn.set_context(vec![system()], Vec::new());
             let (given, _) = turn.full_context().unwrap();
             assert_eq!(given.len(), 2, "the prompt is given to the model as a message");
             assert_eq!(given[0].role, MessageRole::System);
-            turn.push_message(first.clone());
-            turn.push_message(second.clone());
+            let first = turn.push_message(first.clone());
+            let second = turn.push_message(second.clone());
             turn.commit(false, &Discard).await;
-        }
+            (first, second)
+        };
 
-        assert_eq!(order(&seen(&state, agent, first.id).expect("the agent produced it")),
+        assert_eq!(order(&seen(&state, agent, &first).expect("the agent produced it")),
             ["System:You are good at sums.", "What is 2+2?"], "the first answer saw exactly what the turn gave the model");
-        assert_eq!(order(&seen(&state, agent, second.id).expect("the agent produced it")),
+        assert_eq!(order(&seen(&state, agent, &second).expect("the agent produced it")),
             ["System:You are good at sums.", "What is 2+2?", "Let me think."], "everything before it, its own earlier message included");
-        assert!(recorded_context(&state.history, question.id).is_none(), "not produced by the agent");
+        assert!(seen(&state, agent, &question).is_none(), "not produced by the agent");
 
         // Knowledge read in a turn counts for the messages after it.
         let (before, after) = (text(MessageRole::Assistant, "Let me look."), text(MessageRole::Assistant, "Found it."));
         let read = KnowledgeRef {
             channel: Default::default(),
             session: Default::default(),
-            source: KnowledgeSource::History { digest: None, start: None },
+            source: KnowledgeSource::History { digest: None, from: None },
             classification: None,
         };
-        {
+        let (before, after) = {
             let mut turn = Turn::begun(agent, &mut state);
-            turn.push_message(before.clone());
+            let before = turn.push_message(before.clone());
             turn.record_knowledge(read.clone());
             turn.record_knowledge(read.clone());
-            turn.push_message(after.clone());
+            let after = turn.push_message(after.clone());
             turn.commit(false, &Discard).await;
-        }
-        let knowledge_of = |id| recorded_context(&state.history, id).unwrap().0.knowledge;
-        assert!(knowledge_of(before.id).is_empty(), "produced before the read");
-        assert_eq!(knowledge_of(after.id), vec![read], "produced after it, recorded once");
+            (before, after)
+        };
+        let knowledge_of = |said: &Message| said.produced_from.clone().expect("sent with what it was produced from").knowledge;
+        assert!(knowledge_of(&before).is_empty(), "produced before the read");
+        assert_eq!(knowledge_of(&after), vec![read], "produced after it, recorded once");
 
         // The same prompt in another turn is kept once.
         {
@@ -258,23 +260,22 @@ mod tests {
             let mut turn = Turn::under_way(agent, state);
             let (_, offered) = turn.full_context().unwrap();
             assert_eq!(offered, tools, "the model is offered what the turn began with");
-            for message in messages {
-                turn.push_message((*message).clone());
-            }
+            let sent: Vec<Message> = messages.iter().map(|message| turn.push_message((*message).clone())).collect();
             futures::executor::block_on(turn.commit(false, &Discard));
+            sent
         };
-        take_turn(&mut state, vec![tool("echo", false), tool("notes", true)], &[&first, &second]);
-        take_turn(&mut state, Vec::new(), &[&third]);
+        let firsts = take_turn(&mut state, vec![tool("echo", false), tool("notes", true)], &[&first, &second]);
+        let thirds = take_turn(&mut state, Vec::new(), &[&third]);
         // The same tools, treated otherwise: offered so then.
-        take_turn(&mut state, vec![tool("echo", true), tool("notes", false)], &[&fourth]);
+        let fourths = take_turn(&mut state, vec![tool("echo", true), tool("notes", false)], &[&fourth]);
 
-        let offered = |id| { let (reference, turn) = recorded_context(&state.history, id).unwrap(); ContextResolver::of(&state).resolve(&reference, turn, ActorId::Agent(agent)) }
+        let offered = |said: &Message| ContextResolver::of(&state).resolve(said.produced_from.as_ref().expect("sent with it"), said.turn_id.expect("a turn's"), ActorId::Agent(agent))
             .expect("everything it names is here").tool_sets.into_iter().flat_map(|set| set.tools).map(|t| (t.name, t.requires_approval)).collect::<Vec<_>>();
         let named = |offer: Vec<(String, bool)>| offer.into_iter().map(|(name, asks)| format!("{name}{}", if asks { "?" } else { "" })).collect::<Vec<_>>();
-        assert_eq!(named(offered(first.id)), ["echo", "notes?"]);
-        assert_eq!(named(offered(second.id)), ["echo", "notes?"], "the whole turn offers the same tools");
-        assert!(offered(third.id).is_empty(), "none were offered");
-        assert_eq!(named(offered(fourth.id)), ["echo?", "notes"], "as they were treated when they were offered");
+        assert_eq!(named(offered(&firsts[0])), ["echo", "notes?"]);
+        assert_eq!(named(offered(&firsts[1])), ["echo", "notes?"], "the whole turn offers the same tools");
+        assert!(offered(&thirds[0]).is_empty(), "none were offered");
+        assert_eq!(named(offered(&fourths[0])), ["echo?", "notes"], "as they were treated when they were offered");
         assert_eq!(state.offered_tools.len(), 2, "each offer kept once");
     }
 }

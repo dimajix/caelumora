@@ -164,6 +164,68 @@ async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_tak
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// C1 (issue 417): what only an agent's owner sees of its answer - its
+/// reasoning, here - enters the channel and is recorded with it, and
+/// reaches nobody else: not bob live, not bob on a page, not an agent that
+/// joins later and catches up. Read as the agent - what its owner reads of
+/// what it saw -, the record holds it.
+#[tokio::test]
+async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
+    use caelumora_model::history::{HistoryEntry, Reader};
+    use caelumora_model::message::MessageRole;
+    let answer = Message { role: MessageRole::Assistant, content: Some("an answer".to_string()), reasoning: Some("weighing".to_string()), ..Message::new(Classification::PUBLIC) };
+    let world = World::with(&[&TestAgents], |registry| register_once(registry, "answering", answer)).await;
+    let owners = Personality {
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "answering")] },
+        reasoning_visibility: Visibility::Owner,
+        ..world.personality("answering", None, &[]).await
+    };
+    world.runtime.entity_stores().personalities.update(&World::system(), &owners).await.unwrap();
+    let (helper, other) = (world.agent("helper", world.alice, &owners).await, world.agent("other", world.alice, &owners).await);
+    let session = world.shared_session(&[helper], &[other]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let mut his = main.user_actor(world.bob).expect("he takes part").watch();
+
+    main.user_actor(world.alice).expect("she takes part").send_message("@helper hello".to_string(), None).await.expect("sent");
+    let answered = loop {
+        let ActorEvent::CompleteMessageGenerated(answered) = shown(&mut his, "CompleteMessageGenerated").await else { unreachable!() };
+        if answered.sender_id == ActorId::Agent(helper) {
+            break answered;
+        }
+    };
+    assert_eq!((answered.content.as_deref(), answered.reasoning.as_deref()), (Some("an answer"), None), "bob is given the answer live, not its owner's reasoning");
+
+    let histories = world.runtime.history_store();
+    let key = main.id();
+    let recorded = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some((_, entry)) = histories.said(key, &Reader::Participant(ActorId::Agent(helper)), answered.id).await.unwrap() {
+                break entry;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("recorded");
+    assert_eq!(recorded.said().and_then(|m| m.reasoning.as_deref()), Some("weighing"), "the record holds it, for the agent");
+    let for_bob = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap().channel(main.id()).await.unwrap();
+    let page = for_bob.history_page(None, 10).await.unwrap();
+    let on_his_page = page.entries().filter_map(HistoryEntry::said).find(|m| m.id == answered.id).expect("on bob's page");
+    assert_eq!(on_his_page.reasoning, None, "nor on a page");
+    assert_eq!(for_bob.message(answered.id).await.unwrap().reasoning, None, "nor read by its id");
+
+    main.add_participant(&World::as_user(world.alice), ActorId::Agent(other), HistoryAccess::All).await.expect("it may run");
+    let caught_up = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let state = world.runtime.state_store().get_agent_channel_state(other, main.id()).await.unwrap();
+            if let Some(message) = state.transcript.messages().into_iter().find(|m| m.id == answered.id) {
+                break message;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("caught up with");
+    assert_eq!((caught_up.content.as_deref(), caught_up.reasoning), (Some("an answer"), None), "an agent that joins later is given what everybody was");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// P6: what of a personality is public - how its agents introduce
 /// themselves - reaches whoever sees the agent, though they may not read
 /// the personality.
@@ -1216,7 +1278,7 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
     let session = world.shared_session(&[reader], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let participants = if in_side { vec![ActorId::Agent(reader)] } else { vec![] };
-    let side = session.create_channel(&World::as_user(world.alice), ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None }).await.expect("hers");
+    let side = session.create_channel(&World::as_user(world.alice), ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.expect("hers");
     side.user_actor(world.alice).expect("she takes part").send_message("only for side".to_string(), None).await.expect("said");
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let his = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap();
@@ -1573,14 +1635,16 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_be
 
 /// Making a session from a template: reading the template, then creating
 /// the session - before anything is found or made for it (issue 312) -,
-/// reading its owner, everyone's clearance for the channels and the store
-/// creating the session again and its channels; then, once it is made,
-/// finding or making the agents - creating each, the session read where it
-/// may lie, before its personality is read, and the store creating it
-/// again - and taking each in as anyone is taken into a running session
-/// (issue 227): changing the session and the channel, the agent read, its
-/// personality in its own name and its clearance, and the store storing
-/// the session and the channel.
+/// reading its owner and the store creating the session again and its
+/// channels, built empty; then, once it is made, finding or making the
+/// agents - creating each, the session read where it may lie, before its
+/// personality is read, and the store creating it again - and taking each
+/// into the session as anyone is taken into a running session (issue 227):
+/// changing the session, the agent read, its personality in its own name,
+/// and the store storing the session. Then the template's users and agents
+/// join the channels that name them as their founders (issue 420): each
+/// cleared, an agent's personality read in its name as its actor is built,
+/// and nothing more - neither changing the channel nor reading it.
 #[tokio::test]
 async fn making_a_session_needs_the_template_the_personalities_and_creating_what_is_made() {
     let world = agent_testing::world().await;
@@ -1595,7 +1659,6 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: GetSessionTemplate(system's) yes",
         "alice: CreateSession(alice's) yes",
         "alice: GetUser(system's) yes",
-        "alice: JoinChannel(alice) yes",
         "alice: CreateSession(alice's) yes",
         "alice: CreateChannel(alice's) yes",
         // Its agent, found or made once the session is.
@@ -1603,24 +1666,17 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: CreateAgent(alice's) yes",
         "alice: GetPersonality(bob's) yes",
         "alice: CreateAgent(alice's) yes",
-        // And taken in: into the session and its channel at once.
+        // And taken into the session.
         "alice: UpdateSession(alice's) yes",
-        "alice: GetChannel(alice's) yes",
-        "alice: JoinChannel(alice) yes",
-        "alice: UpdateChannel(alice's) yes",
         "alice: GetAgent(alice's) yes",
         "alice as helper: GetPersonality(bob's) yes",
-        "alice: JoinChannel(helper) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
-        // The channel takes it in, its actor built.
-        "alice: UpdateChannel(alice's) yes",
+        // The channel's founders join it, the agent's actor built.
+        "alice: JoinChannel(alice) yes",
         "alice as helper: GetPersonality(bob's) yes",
         "alice: JoinChannel(helper) yes",
-        "alice: GetChannel(alice's) yes",
-        "alice: JoinChannel(alice) yes",
-        "alice: UpdateChannel(alice's) yes",
-    ]), "the agent's personality is asked for in its name twice: whether it is cleared, and as its actor is built");
+    ]), "the agent's personality is asked for in its name twice: as it is taken into the session, and as its actor is built");
     world.manager.stop(&alice, session.id()).await.unwrap();
 
     // Again: the agent is found, not made - its personality is not read
@@ -1645,7 +1701,6 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: GetSessionTemplate(alice's) yes",
         "alice: CreateSession(alice's) yes",
         "alice: GetUser(system's) yes",
-        "alice: JoinChannel(alice) yes",
         "alice: CreateSession(alice's) yes",
         "alice: CreateChannel(alice's) yes",
         "alice: List(agent) yes",
@@ -2062,6 +2117,41 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
     let mut hers = main.user_actor(world.alice).unwrap().watch();
     main.user_actor(world.alice).unwrap().execute_command("seal", "@helper").await.expect("hers, as its owner");
     assert!(matches!(shown(&mut hers, "CommandExecuted").await, ActorEvent::CommandExecuted { ref output, .. } if output == "seal: done"));
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// What an agent answers to a command privately (issue 269) is recorded
+/// with its answer, to the issuer alone (issue 417): bob reads his `/mark`
+/// and what it answered on his page, alice - the agent's owner, taking part
+/// - finds nothing of it on hers.
+#[tokio::test]
+async fn a_private_answer_to_a_command_is_on_its_issuers_page_alone() {
+    use caelumora_model::history::HistoryEntry;
+    let (world, session, main, _, mut his) = with_a_commanded_agent().await;
+    main.user_actor(world.bob).unwrap().execute_command("mark", "@helper").await.expect("his to ask for");
+    shown(&mut his, "CommandExecuted").await;
+
+    let answers = |user| {
+        let (manager, session, channel) = (&world.manager, session.id(), main.id());
+        async move {
+            let view = manager.views(Viewer::new(World::as_user(user))).session(session).await.unwrap().channel(channel).await.unwrap();
+            view.history_page(None, 50).await.unwrap().entries()
+                .filter_map(|entry| match entry {
+                    HistoryEntry::CommandExecuted { output, .. } => Some(output.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        }
+    };
+    let recorded = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let seen = answers(world.bob).await;
+            if !seen.is_empty() { break seen }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("recorded");
+    assert_eq!(recorded, ["mark: done"], "his, with what it answered");
+    assert!(answers(world.alice).await.is_empty(), "nothing of it on hers");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

@@ -19,6 +19,7 @@ use tracing::warn;
 use crate::transport::{EventReceiver, EventSender};
 pub use kinds::AgentKinds;
 pub use manager::{ActorManager, Shown};
+use caelumora_model::chain::Position;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::command::Command;
@@ -69,7 +70,7 @@ pub trait Actor: Any + Debug + Send + Sync {
     ///
     /// # Errors
     /// If what it keeps, or the channel's history, cannot be read or stored.
-    async fn catch_up(&self, _from: u64) -> Result<()> {
+    async fn catch_up(&self, _from: Position) -> Result<()> {
         Ok(())
     }
 
@@ -227,9 +228,9 @@ impl Answering {
         answering
     }
 
-    /// `event` in these contexts, as it is: for a sender whose events carry
-    /// nothing only an owner sees - a user, the channel - or that hands them
-    /// on otherwise than through an `EventSender`. Every envelope is an event
+    /// `event` in these contexts, as it is - what `send` sends, and what a
+    /// sender that hands its events on otherwise than through an
+    /// `EventSender` builds. Every envelope is an event
     /// of its own, with an `event_id` of its own, however many are sent in
     /// the same contexts - the events of a turn, which share its span and
     /// what it answers (issue 352).
@@ -238,11 +239,10 @@ impl Answering {
         Envelope::new(self.security_context.clone(), context, event)
     }
 
-    /// Sends `event` as the actor publishes it: without what only its
-    /// owner sees (issues 54, 133); an event with nothing left to show is
-    /// not sent.
+    /// Sends `event` as it is, what only its owner sees included: the
+    /// channel records it so, and gives everyone else what they may see of
+    /// it (issue 417) - also of an event with nothing left to show them.
     pub async fn send(&self, event: ActorEvent, output: &dyn EventSender) -> Result<()> {
-        let Some(event) = event.published() else { return Ok(()) };
         output.send(self.envelope(event)).await
             .context(format!("actor {} failed to send an event", self.event_context.sender_id))
     }

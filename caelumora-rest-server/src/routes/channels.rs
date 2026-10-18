@@ -88,7 +88,7 @@ pub async fn create_channel(
     let context = user.security_context();
 
     let components = moderation_components(payload.moderator.as_deref(), payload.responder_policy.as_deref());
-    let spec = ChannelSpec { name: payload.name, components, participants: payload.participants, classification: payload.classification, language: payload.language, uses_workspace: payload.uses_workspace };
+    let spec = ChannelSpec { name: payload.name, components, participants: payload.participants, classification: payload.classification, language: payload.language, uses_workspace: payload.uses_workspace, internal_actors: payload.internal_actors };
     let channel = session.create_channel(&context, spec).await?;
     Ok(Json(channel_view(&state, &user, session_id, channel.id()).await?))
 }
@@ -665,7 +665,7 @@ async fn knowledge_response(session: &SessionView, knowledge: &KnowledgeRef, cau
     let (source, agent_id, digest, history_start) = match knowledge.source {
         KnowledgeSource::Notes { agent, digest } => ("notes", Some(ActorId::Agent(agent)), digest, None),
         KnowledgeSource::PrivateNotes { agent, digest } => ("private_notes", Some(ActorId::Agent(agent)), digest, None),
-        KnowledgeSource::History { digest, start } => ("history", None, digest, start),
+        KnowledgeSource::History { digest, from } => ("history", None, digest, from),
         KnowledgeSource::Memory { agent, digest } => ("memory", Some(ActorId::Agent(agent)), digest, None),
         KnowledgeSource::Entity { kind, digest, .. } => (kind.name(), None, digest, None),
     };
@@ -706,7 +706,7 @@ pub async fn agent_history(
     let channel = channel_of(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let view = participant_of(&channel, aid).await?.context().await?;
     let page = view.history_page(query.before, query.limit()).await?;
-    let heard: Vec<MessageId> = page.items.iter().filter_map(|item| item.said().map(|m| m.id)).collect();
+    let heard: Vec<MessageId> = page.entries().filter_map(|item| item.said().map(|m| m.id)).collect();
     let passed_on = view.in_transcript(&heard).await?;
     Ok(Json(HistoryPageResponse::of(page, |message, has_context| HistoryMessageResponse { has_context, in_transcript: passed_on.contains(&message.id), message })))
 }

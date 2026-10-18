@@ -1,5 +1,6 @@
 //! A running channel: `ChannelLoop`, how it is built, and what it tells of itself and its actors.
 
+use caelumora_model::chain::Position;
 use caelumora_model::value::name::Name;
 use crate::actor::Actor;
 use crate::actor::AgentKinds;
@@ -8,7 +9,6 @@ use crate::actor::user::UserActor;
 use crate::component::{ComponentContainer, ComponentContext, ComponentError, ComponentImpl};
 use crate::moderator::Moderator;
 use crate::session::SessionError;
-use crate::recorder::Recorder;
 use crate::runtime::ChannelRuntime;
 use anyhow::{Result, Error};
 use arc_swap::{ArcSwap, Guard};
@@ -54,7 +54,6 @@ pub mod testing;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use history::visible_from;
 pub(crate) use participation::{ResolvedParticipant, ResolvedKind, Participation};
 
 /// A participant of a channel, with the handle it is `@`-mentioned by.
@@ -100,9 +99,6 @@ pub enum ChannelError {
     /// (issue 120).
     #[error("{participant} of the session of channel {channel} no longer exists")]
     ParticipantGone { participant: ActorId, channel: ChannelId },
-    /// Every channel keeps its approver.
-    #[error("the approver of channel {channel} cannot be removed")]
-    ApproverStays { channel: ChannelId },
     /// A message classified so that it may not enter the channel - above
     /// it, for an audience the channel's would not be covered by, or with a
     /// compartment that is not configured or may not be given (issue 133).
@@ -194,10 +190,11 @@ async fn stopped(tasks: &[TaskTracker]) -> bool {
 /// A change to the actors a running channel runs (issue 46), carried out by
 /// `run`, which owns their tasks.
 enum ActorChange {
-    /// The actor that joins, and on whose behalf it was added - in whose
-    /// name `run` announces it as it starts it (`ParticipantJoined`, issue
-    /// 408).
-    Start(ChannelActor, SecurityContext),
+    /// The actor that joins, on whose behalf it was added - in whose name
+    /// `run` announces it as it starts it (`ParticipantJoined`, issue 408) -,
+    /// and from which position on it is given the history (`HistoryShared`,
+    /// issue 417) - `None`: from its join on, a founder (issue 420).
+    Start(ChannelActor, SecurityContext, Option<Position>),
     /// The actor that leaves, what it was called as it left, and on whose
     /// behalf it was removed - in whose name `run` announces it once its
     /// task has ended (`ParticipantLeft`, issues 162, 262, 408).
@@ -218,7 +215,8 @@ pub struct ChannelLoop {
     participation: Arc<Participation>,
     /// What builds the actors of its agents, as their kind says (issue 370).
     agent_kinds: Arc<AgentKinds>,
-    /// The actors of the participants, each with what it was built from -
+    /// The actors of the participants and of the channel's internal actors
+    /// (issue 420), each with what it was built from -
     /// what a reclassification asks its clearances of; replaced as a whole
     /// when someone joins or leaves (issue 46), so that every reader sees
     /// one set.
@@ -236,7 +234,6 @@ pub struct ChannelLoop {
     /// Actors for `run` to start or stop; `run` takes the receiver.
     changes_tx: mpsc::UnboundedSender<ActorChange>,
     changes_rx: Mutex<mpsc::UnboundedReceiver<ActorChange>>,
-    recorder: Mutex<Box<dyn Recorder>>,
     state: Mutex<ChannelState>,
     state_store: Arc<dyn StateStore>,
     /// The read side of the histories (issue 379): the channel's own, as it
@@ -295,7 +292,6 @@ impl ChannelLoop {
         };
         let state = Mutex::new(state);
 
-        let recorder = runtime.new_recorder()?;
 
         let (changes_tx, changes_rx) = mpsc::unbounded_channel();
         let channel_loop = Arc::new(Self {
@@ -314,7 +310,6 @@ impl ChannelLoop {
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             changes_tx,
             changes_rx: Mutex::new(changes_rx),
-            recorder: Mutex::new(recorder),
             state,
             state_store,
             history_store,
@@ -325,6 +320,15 @@ impl ChannelLoop {
             run_lock: Mutex::new(()),
         });
         channel_loop.runtime.attach(&channel_loop);
+        // Its internal actors (issue 420), which are its own: nothing to
+        // resolve, nothing to leave out. `run` starts their tasks with the
+        // participants'.
+        let internal_actors = channel_loop.channel.load().internal_actors.clone();
+        for internal in &internal_actors {
+            let resolved = ResolvedParticipant::internal(internal, session_id, id);
+            let actor = channel_loop.create_actor(&resolved).await?;
+            channel_loop.adopt(Arc::from(actor), resolved).await;
+        }
         // The participants the channel has; `run` starts their tasks.
         let participants = channel_loop.channel.load().participants.clone();
         for participant in &participants {

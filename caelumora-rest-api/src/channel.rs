@@ -1,8 +1,9 @@
 //! Channels and what is done in them: making and changing one, its participants, messages,
 //! approvals, answers to questions and commands.
 
-use crate::history::{HistoryItemResponse, HistoryPageResponse};
+use crate::history::{HistoryPageItem, HistoryPageResponse};
 use crate::session::{ParticipantKind, UNKNOWN};
+use caelumora_model::chain::Position;
 use caelumora_model::snapshot;
 use caelumora_model::actor::{ActorId, ActorState};
 use caelumora_model::agent::PersonalityKind;
@@ -15,6 +16,7 @@ use caelumora_model::note::Note;
 use caelumora_model::question::{QuestionRequest, Response};
 use caelumora_model::removal::Removal;
 use caelumora_model::session::ChannelId;
+use caelumora_model::template::InternalActorTemplate;
 use caelumora_model::value::language::Language;
 use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::work::TurnId;
@@ -29,8 +31,8 @@ use uuid::Uuid;
 #[derive(Debug, Serialize)]
 pub struct ChannelSnapshot {
     pub channel: ChannelResponse,
-    pub items: Vec<HistoryItemResponse<Message>>,
-    pub earlier: Option<u64>,
+    pub items: Vec<HistoryPageItem<Message>>,
+    pub earlier: Option<Position>,
     /// The notes every agent of the channel published (issue 17); a change
     /// is announced as the channel's `agent_state_changed` on the event
     /// stream, and
@@ -116,6 +118,11 @@ pub struct CreateChannelRequest {
     /// 253); yes if absent.
     #[serde(default)]
     pub uses_workspace: Option<bool>,
+    /// The actors that belong to the channel itself (issue 420), such as
+    /// `{"Approver": {"strategy": "Any"}}`; none if absent - a channel
+    /// without an approver approves nothing.
+    #[serde(default)]
+    pub internal_actors: Vec<InternalActorTemplate>,
 }
 
 #[derive(Debug, Serialize)]
@@ -202,7 +209,7 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             name: view.name,
             summary: view.summary,
             briefing: view.briefing,
-            // Every participant is a user, an agent or an approver.
+            // Every participant is a user or an agent.
             participants: view.participants.into_iter().filter_map(ChannelParticipantResponse::of).collect(),
             moderator: view.moderator,
             responder_policy: view.responder_policy,
@@ -423,7 +430,7 @@ mod tests {
 
         assert!(response.can_change);
         let kinds: Vec<_> = response.participants.iter().map(|m| (m.kind, m.name.as_str())).collect();
-        assert_eq!(kinds, [(ParticipantKind::User, UNKNOWN), (ParticipantKind::Approver, "Approver")], "the system is no participant");
+        assert_eq!(kinds, [(ParticipantKind::User, UNKNOWN)], "neither the system nor an approver is a participant");
     }
 
     #[test]

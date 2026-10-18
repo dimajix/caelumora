@@ -253,8 +253,8 @@ pub struct ChannelParticipantSnapshot {
     pub can_delete: bool,
     /// How the participant is introduced (issue 176) - an agent by its
     /// personality, a user by themselves - with `Detail::PROFILE`. Public,
-    /// like the name; `None` also for an approver, a participant that no longer
-    /// exists, and one whose introduction could not be read.
+    /// like the name; `None` also for a participant that no longer exists,
+    /// and one whose introduction could not be read.
     pub introduction: Option<String>,
     /// The name of an agent participant's personality, without its scope (issue
     /// 244) - with `Detail::PROFILE`. Public, like the introduction; not

@@ -265,7 +265,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
                             _ => println!("\r{} added {} to the channel", sender, name),
                         }
                     }
-                    Some(ActorEvent::ParticipantLeft { participant, name }) => {
+                    Some(ActorEvent::ParticipantLeft { participant, name, .. }) => {
                         match sender_id {
                             Some(by) if by == participant => println!("\r{} left the channel", name),
                             Some(ActorId::System) => println!("\r{} was removed from the channel", name),

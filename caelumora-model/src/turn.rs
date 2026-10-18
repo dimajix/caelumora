@@ -99,6 +99,12 @@ pub struct TurnState {
     /// written after the step's tool message (`AgentChannelState::said`),
     /// since nothing may stand between calls and their results.
     pub given_after_step: Vec<(Message, Option<KnowledgeRef>)>,
+    /// What the turn said that is not a step of it, as it said it
+    /// (`AgentChannelState::said`, issue 417): its answer, which its end
+    /// carries - kept with the turn, since a compaction in the middle of it
+    /// may leave nothing of it in the transcript the agent holds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub answer: Vec<Message>,
     /// The plan in progress, if any.
     pub plan: Option<PlanState>,
     /// Set by a tool (the stop tool): the turn ends with this tool step, and

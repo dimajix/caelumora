@@ -92,12 +92,15 @@ session are handled in one place:
     does not start it (issue 386). The snapshot sent at each stop and start replaces what was shown,
     so a participant's state and an answer under way are gone with the channel that ran them.
 
-Messages can arrive twice, in the snapshot and as an event; they are dropped by id.
+Messages can arrive twice, in the snapshot and as an event; they are dropped by id. A notice is
+dropped by the position of its entry in the channel's history: an event carries it as `position`,
+the item it is read as later as `seq` (issue 417).
 
-What the server announces but does not store - a turn given up, the channel-wide answer of a
-command, a chain cut off, a nudge, a refusal to let something into the channel, a retry rejected -
-is shown live and gone on reload. Everything else is applied as the server reads it, so that a
-reload shows the same.
+What the user was shown is what the channel's history recorded for them, so a reload shows the
+same: a turn given up, the answer of a command - the channel's and an agent's, a private one to its
+issuer -, a command not carried out, a chain cut off, a nudge, a refusal to let something into the
+channel, a retry rejected (issue 417). A message of theirs that was not let in is marked live; after
+a reload, the notice of its refusal stands in its place, since the message entered nothing.
 
 ## What it shows
 
@@ -390,7 +393,7 @@ activity says -, waiting for an approval, sleeping, or nothing running. Users an
 none.
 
 The participant list is sorted by name and uses the participants' handles for `@` completion and for
-highlighting mentions; participants that cannot be mentioned, such as approvers, have none. The
+highlighting mentions; participants that cannot be mentioned, such as a deleted user, have none. The
 completion offers `@all` and `@channel` as well, and both are highlighted in a message that
 mentions anyone. Who
 answers - the channel's responder policy - is shown above it as its moderator, and for
@@ -437,10 +440,11 @@ wording holds for both kinds of agent, since the REST API does not tell them apa
 changes, so what was fetched once is kept. See
 [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw).
 
-The history panel shows all that was offered to the agent in the channel and what it said itself,
-which may differ from what the channel shows. What its perceive processors did not pass on is
-greyed out and marked "not passed on"; a message whose context is recorded opens it in the context
-panel. Where a turn was given up, a command carried out or the context compacted, it is marked where
-it happened, with why, on whose word, and when; what replaced the older messages in a compaction
-follows its mark. It is read in pages like the chat; when the history grew, the pages shown are read
-again from the end, back to the oldest shown, so that the messages stand as they do now.
+The history panel shows the channel's history as the agent saw it (issue 417): what was offered to
+it and what it said itself, in full, which may differ from what the channel shows. What its
+perceive processors did not pass on is greyed out and marked "not passed on"; a message whose
+context is recorded opens it in the context panel. Where a turn was given up, a command carried
+out or the context compacted, it is marked where it happened, with why, on whose word, and when;
+what replaced the older messages in a compaction follows its mark. It is read in pages like the
+chat; when the history grew, the pages shown are read again from the end, back to the oldest shown,
+so that the messages stand as they do now.

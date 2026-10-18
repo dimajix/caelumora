@@ -6,16 +6,19 @@
 //! its answers is what the remote agent was given in the call that produced
 //! it (issue 205).
 
+use caelumora_model::chain::Position;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextResolver, ResolvedContext};
 use caelumora_model::digest::Digest;
-use caelumora_model::history::HistoryPage;
+use caelumora_model::history::{HistoryPage, Reader};
+#[cfg(any(test, feature = "test-support"))]
+use caelumora_model::history::History;
 use caelumora_model::message::MessageId;
 use caelumora_model::note::Note;
-use caelumora_model::store::history::{every, HistoryKey, HistoryStore};
+use caelumora_model::store::history::{every, HistoryStore};
 use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::store::StoreError;
 use caelumora_model::transcript::Transcript;
@@ -24,10 +27,11 @@ use std::sync::Arc;
 
 /// The state of an agent in a channel, reached by whom may read what the
 /// agent saw: from the store, where it is written after every step - the
-/// running loop holds the in-memory state for as long as it runs. Its
-/// history is read from the store in pages (issue 379), and what lies on its
-/// transcript beyond the active branch from the store too (issue 380), not
-/// from the part of them the state holds.
+/// running loop holds the in-memory state for as long as it runs. What it
+/// was offered and said is its channel's history as it saw it, read from
+/// the store in pages (issues 379, 417), and what lies on its transcript
+/// beyond the active branch from the store too (issue 380), not from the
+/// part of it the state holds.
 #[derive(Debug, Clone)]
 pub struct AgentContextView {
     agent: AgentId,
@@ -40,19 +44,31 @@ pub struct AgentContextView {
 /// What the tests of the agents' logic build a view with (issue 370).
 #[cfg(any(test, feature = "test-support"))]
 impl AgentContextView {
-    /// The context of `actor`, an agent, as `state` holds it, reached by
-    /// nobody - for a test that compares what an agent was given with what
-    /// the view shows of it. Its history is put into a store of its own.
+    /// The context of `actor`, an agent, as `state` holds it, in a channel
+    /// whose history is `history` after the agent's join - a member from
+    /// its start (issue 417) -, reached by nobody: for a test that compares
+    /// what an agent was given with what the view shows of it. Both are put
+    /// into a store of their own.
     ///
     /// # Panics
     /// If `actor` is no agent.
-    pub async fn of_state(actor: ActorId, mut state: AgentChannelState) -> Self {
+    pub async fn of_state(actor: ActorId, mut state: AgentChannelState, history: History) -> Self {
+        use caelumora_model::channel::ChannelState;
+        use caelumora_model::history::{Audience, HistoryEntry, Recorded};
         use caelumora_model::store::memory::MemoryStore;
         use caelumora_model::store::StateStore;
+        use chrono::Utc;
         let ActorId::Agent(agent) = actor else { panic!("{actor} is no agent") };
         let store = Arc::new(MemoryStore::new());
         let channel = ChannelId::default();
         store.put_agent_channel_state(agent, channel, &mut state).await.expect("a state is kept in memory");
+        let joined = HistoryEntry::ParticipantJoined { participant: actor, name: actor.to_string(), by: actor, by_name: actor.to_string(), at: Utc::now() };
+        let mut member = History::default();
+        member.enter(Recorded::new(joined, actor, Audience::Everybody));
+        for node in history.all_entries() {
+            member.enter(node.entry.clone());
+        }
+        store.put_channel_state(channel, &mut ChannelState { history: member, ..ChannelState::new(channel) }).await.expect("and a history");
         Self::of(agent, channel, state, Arc::<MemoryStore>::clone(&store), store)
     }
 }
@@ -67,9 +83,11 @@ impl AgentContextView {
         ActorId::Agent(self.agent)
     }
 
-    /// The agent's history in the channel.
-    fn history(&self) -> HistoryKey {
-        HistoryKey::Agent(self.agent, self.channel)
+    /// As whom what the agent saw is read (issue 417): as the agent - its
+    /// viewer may read its context, so it is given what the agent was, and
+    /// what it said in full.
+    fn reading_as(&self) -> Reader {
+        Reader::Participant(self.actor())
     }
 
     /// What the agent is given of the conversation as its state holds it:
@@ -101,7 +119,7 @@ impl AgentContextView {
     /// resolved any more; `Failed` if the history or the transcript cannot
     /// be read.
     pub async fn context_of(&self, message: MessageId) -> Result<ResolvedContext, AgentContextError> {
-        let said = self.histories.said(self.history(), message).await.map_err(|source| self.failed(message, source))?;
+        let said = self.histories.said(self.channel, &self.reading_as(), message).await.map_err(|source| self.failed(message, source))?;
         let (reference, turn) = said.as_ref().and_then(|(_, item)| item.context())
             .ok_or(AgentContextError::NotRecorded { actor: self.actor(), message })?;
         let unavailable = || AgentContextError::Unavailable { actor: self.actor(), message };
@@ -121,7 +139,7 @@ impl AgentContextView {
     /// # Errors
     /// `Failed` if the history cannot be read.
     pub async fn classification_of(&self, message: MessageId) -> Result<Option<Classification>, AgentContextError> {
-        let said = self.histories.said(self.history(), message).await.map_err(|source| self.failed(message, source))?;
+        let said = self.histories.said(self.channel, &self.reading_as(), message).await.map_err(|source| self.failed(message, source))?;
         Ok(said.and_then(|(_, item)| item.said().map(|m| m.classification.clone())))
     }
 
@@ -134,8 +152,8 @@ impl AgentContextView {
     ///
     /// # Errors
     /// `Failed` if the history cannot be read.
-    pub async fn history_page(&self, before: Option<u64>, limit: usize) -> Result<HistoryPage, AgentContextError> {
-        self.histories.page(self.history(), 0, before, limit, &every).await
+    pub async fn history_page(&self, before: Option<Position>, limit: usize) -> Result<HistoryPage, AgentContextError> {
+        self.histories.page(self.channel, &self.reading_as(), Position::START, before, limit, &every).await
             .map_err(|source| AgentContextError::Failed { actor: self.actor(), message: None, source })
     }
 
@@ -187,8 +205,8 @@ mod tests {
     use caelumora_model::work::TurnId;
 
     /// The items of the agent's history as the view reads them.
-    async fn history(view: &AgentContextView) -> Vec<HistoryEntry> {
-        view.history_page(None, 1000).await.expect("read").items
+    async fn items_of(view: &AgentContextView) -> Vec<HistoryEntry> {
+        view.history_page(None, 1000).await.expect("read").entries().cloned().collect()
     }
 
     #[tokio::test]
@@ -196,14 +214,17 @@ mod tests {
         let actor = ActorId::Agent(AgentId::new());
         let mut state = AgentChannelState::default();
         let question = Message { id: MessageId::new(), role: MessageRole::User, content: Some("question".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        state.perceive(vec![question.clone()], vec![question.clone()]);
+        state.perceive(vec![question.clone()]);
         state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, Default::default());
         let step = Message { id: MessageId::new(), sender_id: actor, role: MessageRole::Assistant, content: Some("thinking".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        state.said(step.clone());
+        let sent = state.said(step.clone());
+        // Its channel's history, as it records what was said (issue 417).
+        let mut history = History::default();
+        history.extend(vec![question.clone(), sent]);
 
         // Before the turn ended (issue 260).
-        let view = AgentContextView::of_state(actor, state).await;
-        let items = history(&view).await;
+        let view = AgentContextView::of_state(actor, state, history).await;
+        let items = items_of(&view).await;
         assert!(items.iter().any(|item| matches!(item, HistoryEntry::Said { message, .. } if message.id == step.id)), "in its history as it was said");
         assert!(items.iter().any(|item| item.said().is_some_and(|m| m.id == step.id) && item.context().is_some()) && view.in_transcript(&[step.id]).await.expect("read").contains(&step.id));
         let seen = view.context_of(step.id).await.expect("what it was produced from is recorded");
@@ -215,15 +236,16 @@ mod tests {
         let actor = ActorId::Agent(AgentId::new());
         let text = |t: &str| Message { id: MessageId::new(), role: MessageRole::User, content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         // What the agent produced, in a turn of its own.
-        let produced = |t: &str| Message { turn_id: Some(TurnId::new()), ..text(t) };
+        let produced = |t: &str| Message { turn_id: Some(TurnId::new()), sender_id: actor, ..text(t) };
         let mut state = AgentChannelState::default();
+        let mut history = History::default();
         let question = text("question");
         state.transcript.push(question.clone());
-        state.history.extend(vec![question.clone()]);
+        history.push(question.clone());
         let answer = produced("answer");
         let before = state.transcript.push(answer.clone());
-        state.history.push(answer.clone(), Some(ContextRef { transcript: before, prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default() }));
-        let view = AgentContextView::of_state(actor, state.clone()).await;
+        history.push(Message { produced_from: Some(ContextRef { transcript: before, prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default() }), ..answer.clone() });
+        let view = AgentContextView::of_state(actor, state.clone(), history.clone()).await;
 
         let seen = view.context_of(answer.id).await.expect("the agent produced it");
         let ids: Vec<MessageId> = seen.items.iter().filter_map(|item| match item {
@@ -238,18 +260,19 @@ mod tests {
             HistoryEntry::Said { message, .. } => Some(message.id),
             _ => None,
         }).collect::<Vec<MessageId>>();
-        let items = history(&view).await;
+        let items = items_of(&view).await;
         assert_eq!(said(items.clone()), vec![question.id, answer.id], "all it heard and said (issue 207)");
         let has_context = |id| items.iter().any(|item| item.said().is_some_and(|m| m.id == id) && item.context().is_some());
         assert!(has_context(answer.id) && !has_context(question.id));
         assert!(view.in_transcript(&[question.id]).await.expect("read").contains(&question.id));
 
-        // What the perceive processors dropped stays in the history only.
-        let mut heard_only = state.clone();
+        // What the perceive processors dropped is in the channel's history
+        // only.
+        let mut heard_only = history.clone();
         let dropped = text("dropped");
-        heard_only.perceive(vec![dropped.clone()], Vec::new());
-        let view = AgentContextView::of_state(actor, heard_only).await;
-        assert!(said(history(&view).await).contains(&dropped.id));
+        heard_only.push(dropped.clone());
+        let view = AgentContextView::of_state(actor, state.clone(), heard_only).await;
+        assert!(said(items_of(&view).await).contains(&dropped.id));
         assert_eq!(view.in_transcript(&[dropped.id, answer.id]).await.expect("read"), HashSet::from([answer.id]), "once for all asked");
 
         // A prompt part is told with how it was classified (issue 170).
@@ -257,38 +280,41 @@ mod tests {
         let system = PromptRef { text: prompt("system"), role: MessageRole::System, after: None, classification: Some(confidential.clone()) };
         state.prompts.keep(system.text, || "system".to_string());
         let told = produced("told");
-        state.history.push(told.clone(), Some(ContextRef { transcript: before, prompts: vec![system], tools: None, knowledge: Vec::new(), profile: Default::default() }));
-        let seen = AgentContextView::of_state(actor, state.clone()).await.context_of(told.id).await.expect("resolved");
+        history.push(Message { produced_from: Some(ContextRef { transcript: before, prompts: vec![system], tools: None, knowledge: Vec::new(), profile: Default::default() }), ..told.clone() });
+        let seen = AgentContextView::of_state(actor, state.clone(), history.clone()).await.context_of(told.id).await.expect("resolved");
         assert!(matches!(&seen.items[0], ContextItem::Prompt { classification: Some(c), .. } if *c == confidential));
 
         // A reference to a prompt that was never kept cannot be resolved.
         let lost = produced("lost");
         let gone = PromptRef { text: prompt("gone"), role: MessageRole::System, after: None, classification: None };
-        state.history.push(lost.clone(), Some(ContextRef { transcript: before, prompts: vec![gone], tools: None, knowledge: Vec::new(), profile: Default::default() }));
-        let view = AgentContextView::of_state(actor, state).await;
+        history.push(Message { produced_from: Some(ContextRef { transcript: before, prompts: vec![gone], tools: None, knowledge: Vec::new(), profile: Default::default() }), ..lost.clone() });
+        let view = AgentContextView::of_state(actor, state, history).await;
         assert!(matches!(view.context_of(lost.id).await, Err(AgentContextError::Unavailable { .. })));
     }
 
     #[tokio::test]
     async fn the_context_of_a_message_on_a_branch_the_state_does_not_hold_is_read_from_the_store() {
+        use caelumora_model::channel::ChannelState;
         use caelumora_model::store::memory::MemoryStore;
         use caelumora_model::store::StateStore;
         let agent = AgentId::new();
         let channel = ChannelId::new();
         let text = |t: &str| Message { id: MessageId::new(), role: MessageRole::User, content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let mut state = AgentChannelState::default();
+        let mut history = ChannelState::new(channel);
         let question = text("question");
         state.transcript.push(question.clone());
-        state.history.extend(vec![question.clone()]);
-        let answer = Message { turn_id: Some(TurnId::new()), ..text("answer") };
+        history.history.push(question.clone());
+        let answer = Message { turn_id: Some(TurnId::new()), sender_id: ActorId::Agent(agent), ..text("answer") };
         let before = state.transcript.push(answer.clone());
-        state.history.push(answer.clone(), Some(ContextRef { transcript: before, ..ContextRef::default() }));
+        history.history.push(Message { produced_from: Some(ContextRef { transcript: before, ..ContextRef::default() }), ..answer.clone() });
         // A branch begun anew, which the state holds alone.
         state.transcript_from = state.transcript.end();
         state.transcript.start_anew();
         state.transcript.push(text("later"));
         let store = Arc::new(MemoryStore::new());
         store.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
+        store.put_channel_state(channel, &mut history).await.expect("put");
         let held = store.get_agent_channel_state(agent, channel).await.expect("get");
         assert!(held.transcript.prefix(&before.expect("a digest")).is_none(), "not held");
 

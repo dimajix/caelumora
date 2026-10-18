@@ -9,6 +9,7 @@ use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
+use caelumora_model::chain::Position;
 use caelumora_model::question::Answers;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::confidentiality::Classification;
@@ -89,11 +90,11 @@ impl ToolProvider for ChannelHistoryComponent {
         // (issue 379).
         let query = query.map(str::to_lowercase);
         let page = channel.history_page_of(None, last, &|item| wanted(item, query.as_deref())).await?;
-        let messages: Vec<&Message> = page.items.iter().filter_map(HistoryEntry::said).collect();
+        let messages: Vec<&Message> = page.entries().filter_map(HistoryEntry::said).collect();
         let more = page.earlier.is_some();
         // What was read is classified as the messages given (issue 168).
         let classification = Classification::join_all(messages.iter().map(|m| &m.classification));
-        let source = KnowledgeSource::History { digest: page.digest, start: channel.history_start() };
+        let source = KnowledgeSource::History { digest: page.digest, from: Some(channel.visible_from().await?).filter(|from| *from > Position::START) };
         turn.record_knowledge(KnowledgeRef { channel: channel.id(), session: channel.session().id(), source, classification: classification.clone() });
 
         let value = serde_json::json!({
@@ -138,7 +139,7 @@ mod tests {
 
     #[test]
     fn a_message_with_text_containing_the_query_is_wanted_ignoring_case() {
-        let said = |content: &str| HistoryEntry::Said { message: text(content), context: None };
+        let said = |content: &str| HistoryEntry::Said { message: text(content) };
         assert!(wanted(&said("Tea time"), Some("tea")) && wanted(&said("More TEA"), Some("tea")));
         assert!(!wanted(&said("coffee"), Some("tea")));
         assert!(wanted(&said("coffee"), None), "any text without a query");

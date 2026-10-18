@@ -137,13 +137,14 @@ built. One agent can take part in many sessions and channels at the same time; i
 each channel and one state across them.
 
 Sessions are made from **session templates**. A template names every participant of the session -
-users, agents with their personality and scope, approvers with their strategy - and the channels,
-which refer to the participants by name. The model builds the session and its channels from the
-users and approvers it is given, without touching a store (`SessionTemplate::build`); the runtime
-finds the owner, stores and starts the session, and then finds or makes the agents - an agent is
-the one of its name in exactly the scope the template asks for, made if there is none - and takes
-them in as anyone is taken into a running session; if that fails, the session is taken back
-(`SessionManager::create_from_template`). REST and the TUI both create sessions this way.
+users, and agents with their personality and scope - and the channels, which refer to the
+participants by name and name their internal actors, such as an approver. The model builds the
+session and its channels from the users it is given, without touching a store
+(`SessionTemplate::build`); the runtime finds the owner, stores and starts the session, and then
+finds or makes the agents - an agent is the one of its name in exactly the scope the template asks
+for, made if there is none - and takes them in as anyone is taken into a running session; if that
+fails, the session is taken back (`SessionManager::create_from_template`). REST and the TUI both
+create sessions this way.
 
 A session may have a **workspace** attached: a tree of files that belongs to a user, with one
 classification, used by the participants of those channels of the session where it and the channel
@@ -162,8 +163,8 @@ channel is stopped too - is the `ActorManager`'s (issue 386). Making, deleting, 
 purging an agent are the `AgentManager`'s - a template's agents too, which the template only
 finds -, renaming it its `AgentController`'s. What lies in a session's or a channel's scope goes
 with it, deleted, restored and purged by the manager of its kind; so an agent is made there only by
-whoever may read the session or the channel. An approver has no record of its own and is held
-whole.
+whoever may read the session or the channel. An approver has no record of its own: it is held
+whole by its channel, as an internal actor of it, no participant (issue 420).
 
 Details: [CHANNELS.md](CHANNELS.md).
 
@@ -174,17 +175,18 @@ The path of one message shows how the parts fit together:
 1.  **A user writes.** The frontend (REST or TUI) hands the text to *that user's* actor in the
     channel. There is no way to write into a channel other than through one's own actor, so sender
     and authority always follow from who is writing.
-2.  **The channel routes it.** The `ChannelLoop` resolves `@`-mentions, appends the message to the
-    channel's history, asks the moderator whom to ask to respond, and delivers the message to every
-    other participant and the requests to those asked.
+2.  **The channel routes it.** The `ChannelLoop` resolves `@`-mentions, asks the moderator whom it
+    goes to and whom to ask to respond, records it in the channel's history with its sender and whom
+    it went to, and delivers it - and the requests to those asked - in the order of the history: the
+    one record of what every participant received (issue 417).
 3.  **An agent takes a turn.** The `AgentActor` begins a **turn**: its context provider assembles
     what the model is given (prompt parts, the agent's transcript), the model answers, and tool
     calls in the answer are run - after approval, where a tool requires it - and their results fed
     back, until the model answers without calling a tool.
 4.  **The answer is published.** What the agent sends is stripped of what only its owner may see,
     delivered to the others through the channel, and the turn is committed: the messages go into the
-    agent's transcript and the history, staged changes to the agent's state are applied, and
-    everything is stored.
+    agent's transcript, the channel records them in full for the agent and as published for the
+    others, staged changes to the agent's state are applied, and everything is stored.
 5.  **Observers are told.** The channel's events reach the participants' live streams; changes to
     entities are announced on the event bus, which the web UI follows.
 
@@ -241,11 +243,11 @@ Details: [CHANNELS.md](CHANNELS.md#actors-and-envelopes),
 ## What an agent remembers
 
 An agent's memory has several tiers, each with one meaning: the channel's **history** (the record,
-never rewritten), the agent's **transcript** (what its context is built from), **notes** (published
-in the channel), **private notes** and **agent memory** (seen only by the agent). An agent may also
-read the notes and history of other channels of its session, as far as confidentiality allows. For
-every message an agent wrote, it can be reconstructed exactly what its model saw, because the
-transcript is a chain of digests.
+never rewritten, one for every participant), the agent's **transcript** (what its context is built
+from), **notes** (published in the channel), **private notes** and **agent memory** (seen only by
+the agent). An agent may also read the notes and history of other channels of its session, as far as
+confidentiality allows. For every message an agent wrote, it can be reconstructed exactly what its
+model saw, because the transcript is a chain of digests.
 
 Details: [MEMORY.md](MEMORY.md), [AGENT-TURN.md](AGENT-TURN.md).
 
@@ -339,7 +341,7 @@ Two questions are kept apart:
     a classification - a level from `public` to `strictly_confidential` and an audience of
     compartments, which the administrator configures - and one flow rule decides whether a channel
     may read another. Apart from that, the parts of a message are flagged if only the agent's owner
-    may see them, and are never published then.
+    may see them: the channel records them, and gives them to nobody else.
 
 Details: [SECURITY.md](SECURITY.md), [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 
@@ -358,8 +360,9 @@ The design repeats a few decisions; new code follows them.
     not its actor's runtime; an actor gets its own channel, not the session.
 *   **Refusals do not reveal.** Something the caller may not see is reported exactly like something
     that does not exist, so ids and names cannot be probed.
-*   **Records are not recomputed.** Digests, resolved mentions and history limits are fixed when
-    they arise and stored, so a later change of scheme or name cannot rewrite the past.
+*   **Records are not recomputed.** Digests, resolved mentions, whom an entry of a history went to
+    and what a newcomer was given of it are fixed when they arise and stored, so a later change of
+    scheme, name or membership cannot rewrite the past.
 
 ## Documents
 

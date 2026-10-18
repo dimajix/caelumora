@@ -154,7 +154,6 @@ impl CommandReaper {
                     }
                     None => continue,
                 },
-                Participant::Approver(_) => continue,
             };
             let ctx = SecurityContext { initiator_id: ActorId::System, ..member };
             match workspace.usable_in_channel(&ctx, &session, &channel, Grant::Write).await {
