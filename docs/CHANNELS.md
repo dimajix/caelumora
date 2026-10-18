@@ -128,10 +128,23 @@ A **channel** is one conversation within a session, such as a chat room. Its `Ch
 
 ### Building a channel
 
-Every channel is built by `Channel::build`, from a template or on request. It adds an approver if
-the channel has none, and lets its members read it: an entry in its access list naming the group of
-its participants, which follows whoever takes part at the time and is kept by the
-`ChannelController` as someone joins or leaves (see [SECURITY.md](SECURITY.md#groups)).
+Every channel is built by `Channel::build`, from a template or on request. It lets the channel's
+members read it: an entry in its access list naming the group of its participants, which follows
+whoever takes part at the time and is kept by the `ChannelController` as someone joins or leaves
+(see [SECURITY.md](SECURITY.md#groups)).
+
+A channel's approver is one of its **internal actors** (`Channel::internal_actors`, issue 420):
+actors that belong to the channel itself, as its moderator does. They are no participants - not in
+`participants`, not in their group, not shown or offered as participants - and are never added,
+removed or announced; they have no range of the history, and what is recorded to one goes to it by
+name. Otherwise an internal actor is an actor like any other: the channel builds it from its own
+configuration, starts its task with the others as `run` begins, delivers to it by the one rule and
+takes in what it sends. They are configured, like everything else of a channel: a template names
+them for each channel (`ChannelTemplate::internal_actors`, an approver with its strategy, `Any`
+unless named), and so does a request to create one (`ChannelSpec::internal_actors`; the web UI's
+dialog names an approver). A channel has the internal actors it is given and no others - there is
+no fallback: without an approver, nobody decides what needs approval, and tools that ask for it do
+not work there.
 
 The participants of a requested channel come from the session's participants, the creator always
 among them. Its moderator and classification default as in a template (see
@@ -488,7 +501,7 @@ that becomes ambiguous is logged.
 A removed actor leaves at once - an agent without finishing its turn, which it gives up and says
 so - and its state is kept, for the record and for a later return. The approver answers a leaving
 agent's pending approvals as denied, so that nothing keeps waiting, and decides the others again,
-since who may approve them changed. The approver itself cannot be removed.
+since who may approve them changed. The approver itself is no participant and is never removed.
 
 A participant added again while its old actor still ends waits for it, at most a little past the
 grace, and is refused as still leaving after that. The new actor thus loads the state as the old one

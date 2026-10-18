@@ -157,7 +157,7 @@ async fn a_participant_takes_part_but_changes_nothing() {
 
     assert!(denied(&session.update_name(&bob, "his").await.expect_err("not his to rename")));
     assert!(session.update_privacy(&bob, PrivacyConfig::default()).await.is_err(), "nor to change its privacy");
-    assert!(session.create_channel(&bob, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.is_err(), "nor to add channels");
+    assert!(session.create_channel(&bob, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.is_err(), "nor to add channels");
     assert!(session.delete_channel(&bob, main.id()).await.is_err(), "nor to delete them");
     assert!(main.remove_participant(&bob, ActorId::User(world.alice)).await.is_err(), "nor to remove others");
     assert!(main.reclassify(&bob, Classification::general(Confidentiality::Public)).await.is_err(), "nor to reclassify the channel");
@@ -188,7 +188,7 @@ async fn the_owner_changes_and_ends_the_session() {
     assert!(main.update_approval_rules(&alice, vec![shell(RuleDecision::Allow)]).await.is_err(), "but not to allow them: a place only restricts");
     session.update_description(&alice, Some("Release 2.0"), Some("Dates are in UTC.")).await.expect("and to say what it is for");
     main.update_description(&alice, Some("Planning"), None).await.expect("and each of its channels");
-    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.expect("and to add channels");
+    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.expect("and to add channels");
     side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::All).await.expect("and people to them");
     session.delete_channel(&alice, side.id()).await.expect("and to delete them");
     assert!(world.manager.delete(&alice, session.id()).await.unwrap(), "and to delete it");
@@ -209,7 +209,7 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
-    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.unwrap();
+    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.unwrap();
     let hers = side.user_actor(world.alice).unwrap();
     let mut watch = hers.watch();
     let mut say = async |text: &str| {
@@ -269,7 +269,7 @@ async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
-    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None }).await.unwrap();
+    let side = session.create_channel(&alice, ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.unwrap();
     let hers = side.user_actor(world.alice).unwrap();
     let mut watch = hers.watch();
     let mut say = async |text: &str| {
@@ -813,7 +813,7 @@ async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it
 async fn creating_a_channel_needs_owning_its_session() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    let spec = |participants| ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None };
+    let spec = |participants| ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() };
     let (created, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec(vec![ActorId::User(world.bob)]))).await;
     assert!(created.is_ok());
     assert_eq!(asked, checks(&[
@@ -833,7 +833,7 @@ async fn creating_a_channel_needs_owning_its_session() {
 async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
-    let spec = ChannelSpec { name: "his".to_string(), components: quiet(), participants: vec![ActorId::User(world.alice)], classification: None, language: None, uses_workspace: None };
+    let spec = ChannelSpec { name: "his".to_string(), components: quiet(), participants: vec![ActorId::User(world.alice)], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() };
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.bob), spec)).await;
     assert!(refused.is_err());
     assert_eq!(asked, checks(&["bob: CreateChannel(alice's) no"]));
@@ -854,7 +854,7 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
     let spec = |name: &str| ChannelSpec {
         name: name.to_string(),
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "id": "bobs-policy" }), ..ComponentDescriptor::new("policy", PRECONFIGURED_REF_KIND) }] },
-        participants: vec![], classification: None, language: None, uses_workspace: None,
+        participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new(),
     };
 
     let (created, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec("side"))).await;
@@ -891,7 +891,7 @@ async fn a_channel_is_refused_a_tool_before_anything_is_built() {
     let spec = ChannelSpec {
         name: "tooled".to_string(),
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor { params: json!({ "id": "bobs-tools" }), ..ComponentDescriptor::new("tools", PRECONFIGURED_REF_KIND) }] },
-        participants: vec![], classification: None, language: None, uses_workspace: None,
+        participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new(),
     };
 
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec)).await;
@@ -922,7 +922,7 @@ async fn a_new_channel_names_a_component_only_an_operator_configures_through_a_r
     let spec = |name: &str, policy: ComponentDescriptor| ChannelSpec {
         name: name.to_string(),
         components: ComponentConfig { component_nodes: vec![policy] },
-        participants: vec![], classification: None, language: None, uses_workspace: None,
+        participants: vec![], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new(),
     };
 
     let (refused, asked) = world.asked(session.create_channel(&World::as_user(world.alice), spec("written", ComponentDescriptor::new("policy", "operated_policy")))).await;

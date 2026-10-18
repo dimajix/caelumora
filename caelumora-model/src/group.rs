@@ -149,12 +149,9 @@ impl Group {
         Name::fixed(Self::PARTICIPANTS)
     }
 
-    /// The members among `participants`: users and agents, not approvers.
-    pub fn members_among(participants: &[Participant]) -> Vec<ActorId> {
-        participants.iter()
-            .filter(|p| matches!(p, Participant::User(_) | Participant::Agent(_)))
-            .map(Participant::actor_id)
-            .collect()
+    /// The members that `participants` make: each of them.
+    fn members_among(participants: &[Participant]) -> Vec<ActorId> {
+        participants.iter().map(Participant::actor_id).collect()
     }
 
     /// Whether it is the participants of a session or a channel, kept by
@@ -240,6 +237,8 @@ impl Scoped for Group {
 mod tests {
     use super::*;
     use crate::agent::AgentId;
+    use crate::approval::{ApprovalStrategy, Approver};
+    use crate::channel::InternalActor;
 
     fn team(scope: Scope, owner: UserId) -> Group {
         Group::team(ScopedName::new("project", scope).unwrap(), owner)
@@ -289,11 +288,12 @@ mod tests {
     #[test]
     fn the_participants_of_a_channel_have_its_id_and_hold_its_users_and_agents() {
         let (alice, agent) = (UserId::new(), AgentId::new());
-        let channel = Channel::build(SessionId::new(), ActorId::User(alice), Name::new("main").unwrap(), Default::default(), Default::default(), None,
+        let mut channel = Channel::build(SessionId::new(), ActorId::User(alice), Name::new("main").unwrap(), Default::default(), Default::default(), None,
             vec![Participant::User(alice), Participant::Agent(agent)]);
+        channel.internal_actors = vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
         let group = Group::of_channel(&channel);
         assert_eq!(group.id, GroupId::of_channel(channel.id));
-        assert_eq!(group.members, [ActorId::User(alice), ActorId::Agent(agent)], "not the approver");
+        assert_eq!(group.members, [ActorId::User(alice), ActorId::Agent(agent)], "its users and agents, no approver (issue 420)");
         assert!(group.is_participants());
         assert!(group.validate().is_ok());
         let stray = Group { id: GroupId::new(), ..group };

@@ -137,13 +137,14 @@ built. One agent can take part in many sessions and channels at the same time; i
 each channel and one state across them.
 
 Sessions are made from **session templates**. A template names every participant of the session -
-users, agents with their personality and scope, approvers with their strategy - and the channels,
-which refer to the participants by name. The model builds the session and its channels from the
-users and approvers it is given, without touching a store (`SessionTemplate::build`); the runtime
-finds the owner, stores and starts the session, and then finds or makes the agents - an agent is
-the one of its name in exactly the scope the template asks for, made if there is none - and takes
-them in as anyone is taken into a running session; if that fails, the session is taken back
-(`SessionManager::create_from_template`). REST and the TUI both create sessions this way.
+users, and agents with their personality and scope - and the channels, which refer to the
+participants by name and name their internal actors, such as an approver. The model builds the
+session and its channels from the users it is given, without touching a store
+(`SessionTemplate::build`); the runtime finds the owner, stores and starts the session, and then
+finds or makes the agents - an agent is the one of its name in exactly the scope the template asks
+for, made if there is none - and takes them in as anyone is taken into a running session; if that
+fails, the session is taken back (`SessionManager::create_from_template`). REST and the TUI both
+create sessions this way.
 
 A session may have a **workspace** attached: a tree of files that belongs to a user, with one
 classification, used by the participants of those channels of the session where it and the channel
@@ -162,8 +163,8 @@ channel is stopped too - is the `ActorManager`'s (issue 386). Making, deleting, 
 purging an agent are the `AgentManager`'s - a template's agents too, which the template only
 finds -, renaming it its `AgentController`'s. What lies in a session's or a channel's scope goes
 with it, deleted, restored and purged by the manager of its kind; so an agent is made there only by
-whoever may read the session or the channel. An approver has no record of its own and is held
-whole.
+whoever may read the session or the channel. An approver has no record of its own: it is held
+whole by its channel, as an internal actor of it, no participant (issue 420).
 
 Details: [CHANNELS.md](CHANNELS.md).
 

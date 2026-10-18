@@ -1,6 +1,6 @@
 use crate::actor::ActorId;
 use crate::agent::AgentId;
-use crate::approval::{ApprovalRule, ApprovalStrategy, Approver, ApproverId};
+use crate::approval::{ApprovalRule, Approver};
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
 use crate::group::GroupId;
@@ -19,7 +19,6 @@ use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ChannelUpdateEvent {
@@ -104,6 +103,9 @@ pub struct Channel {
     #[serde(default)]
     pub components: ComponentConfig,
     pub participants: Vec<Participant>,
+    /// The actors that belong to the channel itself (issue 420): its
+    /// approver, if it is given one.
+    pub internal_actors: Vec<InternalActor>,
     pub security_attributes: SecurityAttributes,
     /// The classification of the channel's contents (issue 133): what may
     /// flow into it, and who may read it. Set by its owner when creating it.
@@ -308,19 +310,14 @@ impl Secured for Channel {
 
 impl Channel {
     /// A new channel of `participants`, owned by `owner`, as every channel is
-    /// built - from a template or on request (issue 09): with an approver
-    /// added if there is none, and read by its participants (issue 23): every
-    /// user and agent in it, whoever they are at the time - the group of its
-    /// participants (issue 304), which whoever stores the channel stores
-    /// with it (`Group::of_channel`). Held in
-    /// `language`, if any.
-    pub fn build(session_id: SessionId, owner: ActorId, name: Name, components: ComponentConfig, classification: Classification, language: Option<Language>, mut participants: Vec<Participant>) -> Self {
-        if !participants.iter().any(|p| matches!(p, Participant::Approver(_))) {
-            participants.push(Participant::Approver(Approver {
-                id: ApproverId(Uuid::new_v4()),
-                strategy: ApprovalStrategy::Any,
-            }));
-        }
+    /// built - from a template or on request (issue 09) -, read by its
+    /// participants (issue 23): every user and agent in it, whoever they are
+    /// at the time - the group of its participants (issue 304), which whoever
+    /// stores the channel stores with it (`Group::of_channel`). Held in
+    /// `language`, if any. Without internal actors (issue 420): whoever
+    /// builds it gives it those that are configured, and no others - without
+    /// an approver, nothing in it is approved.
+    pub fn build(session_id: SessionId, owner: ActorId, name: Name, components: ComponentConfig, classification: Classification, language: Option<Language>, participants: Vec<Participant>) -> Self {
         let id = ChannelId::new();
         let security_attributes = SecurityAttributes::owned_by(owner).granting(Subject::Group(GroupId::of_channel(id)), Grant::Read);
         Self {
@@ -331,6 +328,7 @@ impl Channel {
             briefing: None,
             components,
             participants,
+            internal_actors: Vec::new(),
             security_attributes,
             classification,
             language,
@@ -340,6 +338,12 @@ impl Channel {
             uses_workspace: true,
             deleted: None,
         }
+    }
+
+    /// Whether `actor` is one of the channel's internal actors (issue 420),
+    /// which take no part in it.
+    pub fn is_internal(&self, actor: ActorId) -> bool {
+        self.internal_actors.iter().any(|internal| internal.actor_id() == actor)
     }
 
     /// Says what the channel is for (issue 245): `summary` and `briefing`
@@ -431,16 +435,14 @@ impl Journaled for ChannelState {
     }
 }
 
-/// Who takes part in a session or channel. Users and agents by reference:
-/// their records live in the `EntityStore` and are read from there, so
+/// Who takes part in a session or channel: users and agents, by reference.
+/// Their records live in the `EntityStore` and are read from there, so
 /// that no session keeps a copy that goes stale or shows more of them than
-/// their name (issue 120). An approver has no record of its own; it is
-/// kept here whole.
+/// their name (issue 120).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Participant {
     User(UserId),
     Agent(AgentId),
-    Approver(Approver),
 }
 
 impl Participant {
@@ -448,7 +450,28 @@ impl Participant {
         match self {
             Participant::User(id) => ActorId::User(*id),
             Participant::Agent(id) => ActorId::Agent(*id),
-            Participant::Approver(approver) => ActorId::Approver(approver.id),
+        }
+    }
+}
+
+/// An actor that belongs to a channel itself, as its moderator does (issue
+/// 420): none of its participants, nor in their group. It is never added,
+/// removed or announced, and has no range of the history - what is recorded
+/// to it goes to it by name. Otherwise it is an actor like any other: the
+/// channel starts it with the others, delivers to it by the one rule
+/// (`Envelope::concerns`) and takes in what it sends. It has no record of
+/// its own and is kept here whole.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum InternalActor {
+    /// The approver, which collects the users' decisions on the tool calls
+    /// that need approval and decides by its strategy (see APPROVALS.md).
+    Approver(Approver),
+}
+
+impl InternalActor {
+    pub fn actor_id(&self) -> ActorId {
+        match self {
+            InternalActor::Approver(approver) => ActorId::Approver(approver.id),
         }
     }
 }

@@ -76,11 +76,7 @@ impl PromptProvider for ChannelParticipantsPromptProvider {
         let mut me = None;
         let mut others = Vec::new();
         for participant in channel.participants().await {
-            // Approvers are no participants in this sense, and who no
-            // longer exists cannot be addressed.
-            if !matches!(participant.id(), ActorId::User(_) | ActorId::Agent(_)) {
-                continue;
-            }
+            // Who no longer exists cannot be addressed.
             let Some(entry) = participant.describe().await? else { continue };
             if participant.id() == own {
                 me = Some(entry);
@@ -180,8 +176,8 @@ mod tests {
     use caelumora_runtime::session::testing::actor_runtime_in;
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
-    use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
-    use caelumora_model::channel::{Channel, Participant};
+    use caelumora_model::approval::{ApprovalStrategy, Approver};
+    use caelumora_model::channel::{Channel, InternalActor, Participant};
     use caelumora_model::confidentiality::Visibility;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::SecurityContext;
@@ -190,7 +186,6 @@ mod tests {
     use caelumora_model::user::{User, UserId, UserProfile};
     use caelumora_model::value::text::Introduction;
     use chrono::Utc;
-    use uuid::Uuid;
 
     fn participant(name: &str, person: bool, introduction: Option<&str>) -> ActorDescription {
         let id = if person { ActorId::User(UserId::new()) } else { ActorId::Agent(AgentId::new()) };
@@ -271,9 +266,9 @@ mod tests {
         let jonathan = agent(&store, "Jonathan", &quiz_master).await;
         let sassy = agent(&store, "Sassy", &plain).await;
         let gone = Agent::new(ScopedName::new("Gone", Scope::GlobalScope).unwrap(), plain.id, ActorId::None);
-        let approver = Approver { id: ApproverId(Uuid::new_v4()), strategy: ApprovalStrategy::Any };
+        let approver = InternalActor::Approver(Approver::new(ApprovalStrategy::Any));
 
-        let participants = vec![Participant::User(kaya.id), Participant::Agent(jonathan.id), Participant::Approver(approver), Participant::Agent(sassy.id), Participant::Agent(gone.id), Participant::User(bob.id)];
+        let participants = vec![Participant::User(kaya.id), Participant::Agent(jonathan.id), Participant::Agent(sassy.id), Participant::Agent(gone.id), Participant::User(bob.id)];
         let now = Utc::now();
         let session = Session {
             summary: None, briefing: None,
@@ -288,7 +283,7 @@ mod tests {
             approval_rules: Vec::new(),
             uses_workspace: true,
             id: session.channels[0], session_id: session.id, name: Name::new("main").unwrap(), components: Default::default(),
-            classification: Classification::CHANNEL_DEFAULT, language: None, history_limits: Vec::new(), participants, security_attributes: Default::default(),
+            classification: Classification::CHANNEL_DEFAULT, language: None, history_limits: Vec::new(), participants, internal_actors: vec![approver], security_attributes: Default::default(),
             deleted: None,
             former: Vec::new(),
         };

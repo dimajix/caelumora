@@ -1278,7 +1278,7 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
     let session = world.shared_session(&[reader], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let participants = if in_side { vec![ActorId::Agent(reader)] } else { vec![] };
-    let side = session.create_channel(&World::as_user(world.alice), ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None }).await.expect("hers");
+    let side = session.create_channel(&World::as_user(world.alice), ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.expect("hers");
     side.user_actor(world.alice).expect("she takes part").send_message("only for side".to_string(), None).await.expect("said");
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let his = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap();

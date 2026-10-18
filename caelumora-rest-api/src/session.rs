@@ -89,23 +89,22 @@ impl From<snapshot::SessionSnapshot> for SessionResponse {
 /// What a participant is called whose user or agent no longer exists.
 pub(crate) const UNKNOWN: &str = "(unknown)";
 
-/// What kind of participant an actor is.
+/// What kind of participant an actor is: a user or an agent - a channel's
+/// approver is none (issue 420).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ParticipantKind {
     User,
     Agent,
-    Approver,
 }
 
 impl ParticipantKind {
-    /// The kind of participant `id` is; `None` for an id that is none - the
-    /// system, nobody.
+    /// The kind of participant `id` is; `None` for an id that is none - an
+    /// approver, the system, nobody.
     pub fn of(id: ActorId) -> Option<Self> {
         match id {
             ActorId::User(_) => Some(Self::User),
             ActorId::Agent(_) => Some(Self::Agent),
-            ActorId::Approver(_) => Some(Self::Approver),
             _ => None,
         }
     }
@@ -216,7 +215,7 @@ impl From<snapshot::SessionSnapshot> for SessionSnapshot {
             approval_rules: view.approval_rules,
             can_change: view.can_change,
             channels: view.channels.into_iter().map(Into::into).collect(),
-            // Every participant is a user, an agent or an approver.
+            // Every participant is a user or an agent.
             participants: view.participants.into_iter().filter_map(ParticipantResponse::of).collect(),
             workspace: view.workspace.map(Into::into),
         }

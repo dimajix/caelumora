@@ -88,7 +88,7 @@ export const AddParticipantDialog: React.FC<AddParticipantDialogProps> = ({sessi
     api.getSession(sessionId)
       .then(session => {
         const outside = (session.participants ?? [])
-          .filter(p => p.kind !== 'approver' && !participants.has(actorKey(p.id)))
+          .filter(p => !participants.has(actorKey(p.id)))
           .sort((l, r) => l.name.localeCompare(r.name));
         setCandidates(outside);
         setCanSearch(session.can_change);

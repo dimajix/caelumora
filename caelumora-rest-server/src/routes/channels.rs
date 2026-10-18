@@ -88,7 +88,7 @@ pub async fn create_channel(
     let context = user.security_context();
 
     let components = moderation_components(payload.moderator.as_deref(), payload.responder_policy.as_deref());
-    let spec = ChannelSpec { name: payload.name, components, participants: payload.participants, classification: payload.classification, language: payload.language, uses_workspace: payload.uses_workspace };
+    let spec = ChannelSpec { name: payload.name, components, participants: payload.participants, classification: payload.classification, language: payload.language, uses_workspace: payload.uses_workspace, internal_actors: payload.internal_actors };
     let channel = session.create_channel(&context, spec).await?;
     Ok(Json(channel_view(&state, &user, session_id, channel.id()).await?))
 }

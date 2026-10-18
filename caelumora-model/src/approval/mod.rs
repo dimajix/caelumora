@@ -19,10 +19,18 @@ pub struct Approver {
     pub strategy: ApprovalStrategy,
 }
 
+impl Approver {
+    /// A new approver, deciding by `strategy`.
+    pub fn new(strategy: ApprovalStrategy) -> Self {
+        Self { id: ApproverId::new(), strategy }
+    }
+}
+
 define_id!(ApprovalId);
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ApprovalStrategy {
+    #[default]
     Any,
     Majority,
     All,

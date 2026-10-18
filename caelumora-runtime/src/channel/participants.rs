@@ -113,19 +113,17 @@ impl ChannelLoop {
     ///
     /// A participant without an actor - a deleted agent resting in the
     /// channel, one that cannot run - is removed from the document alone
-    /// (issue 314): restored, it does not come back here.
+    /// (issue 314): restored, it does not come back here. An internal actor
+    /// of the channel - its approver - is none (issue 420).
     ///
     /// # Errors
-    /// `ChannelError::ApproverStays` or `NotAParticipant`; a `StoreError` if
-    /// `context` may not change the channel.
+    /// `ChannelError::NotAParticipant`; a `StoreError` if `context` may not
+    /// change the channel.
     pub async fn remove_participant(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
-        if matches!(participant, ActorId::Approver(_)) {
-            return Err(ChannelError::ApproverStays { channel: self.id }.into());
-        }
-        let running = self.actors.load().get(&participant).cloned();
-        if running.is_none() && !self.channel().participants.iter().any(|p| p.actor_id() == participant) {
+        if !self.channel().participants.iter().any(|p| p.actor_id() == participant) {
             return Err(ChannelError::NotAParticipant { participant, channel: self.id }.into());
         }
+        let running = self.actors.load().get(&participant).cloned();
         self.channel.remove_participant(context, participant).await?;
         if let Some(running) = running {
             self.leave_actor(participant, running, context);
@@ -246,7 +244,7 @@ impl ChannelLoop {
     }
 
     pub(super) fn rebuild_mentions(&self) {
-        let mentions = Self::mention_directory(&self.actors.load());
+        let mentions = Self::mention_directory(&self.actors.load(), &self.channel());
         for handle in mentions.ambiguous() {
             warn!("Channel {}: handle @{} is not a single participant's; mentioning it addresses more than one", self.id, handle);
         }
@@ -255,16 +253,18 @@ impl ChannelLoop {
 
     /// The ids of all participants of the channel, as `participants` lists them.
     pub fn participant_ids(&self) -> Vec<ActorId> {
-        self.actors.load().keys().copied().collect()
+        self.participants().into_iter().map(|participant| participant.id).collect()
     }
 
-    /// All participants of the channel, in no particular order.
+    /// All participants of the channel that run, in no particular order:
+    /// not its internal actors (issue 420), which take no part.
     pub fn participants(&self) -> Vec<ChannelParticipant> {
+        let channel = self.channel();
         self.actors.load().values()
+            .filter(|running| !channel.is_internal(running.actor.id()))
             .map(|ChannelActor { actor: a, .. }| {
                 let name = a.name();
-                let handle = Some(name.handle())
-                    .filter(|h| Self::is_mentionable(a.id()) && !h.is_empty());
+                let handle = Some(name.handle()).filter(|h| !h.is_empty());
                 ChannelParticipant { id: a.id(), name, handle }
             })
             .collect()
@@ -279,8 +279,8 @@ impl ChannelLoop {
         Self::named(self.participants().into_iter().filter(|m| m.id.as_agent_id().is_some()).collect(), text)
     }
 
-    /// The participants of the channel `text` names - agents, users and
-    /// every other actor -, found as `agents_named` finds agents: for a
+    /// The participants of the channel `text` names - agents and users -,
+    /// found as `agents_named` finds agents: for a
     /// command that takes anyone taking part, such as `/nudge` (issue 278).
     pub fn participants_named(&self, text: &str) -> Vec<ChannelParticipant> {
         Self::named(self.participants(), text)
@@ -325,15 +325,12 @@ impl ChannelLoop {
         questions.resolve(&self.mentions.load(), &users, context)
     }
 
-    fn is_mentionable(id: ActorId) -> bool {
-        matches!(id, ActorId::User(_) | ActorId::Agent(_))
-    }
-
-    fn mention_directory(actors: &Actors) -> MentionDirectory {
+    /// Whom of `actors`, those of `channel`, a mention can name: its
+    /// participants, not its internal actors (issue 420).
+    fn mention_directory(actors: &Actors, channel: &Channel) -> MentionDirectory {
         let names: Vec<(ActorId, Name)> = actors.values()
-            .map(|a| &a.actor)
-            .filter(|a| Self::is_mentionable(a.id()))
-            .map(|a| (a.id(), a.name()))
+            .filter(|running| !channel.is_internal(running.actor.id()))
+            .map(|running| (running.actor.id(), running.actor.name()))
             .collect();
         MentionDirectory::new(names.iter().map(|(id, name)| (*id, name.as_str())))
     }
@@ -616,10 +613,14 @@ mod tests {
     #[tokio::test]
     async fn a_removed_participant_is_kept_as_a_former_one_and_announced_but_the_approver_stays() {
         use crate::channel::ChannelError;
+        use caelumora_model::approval::ApprovalStrategy;
+        use caelumora_model::channel::InternalActor;
+        use caelumora_model::template::InternalActorTemplate;
         let runtime = test_runtime();
         let manager = SessionManager::new(Arc::clone(&runtime));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
-        let channel = session.create_channel(&ctx, spec("side", vec![other])).await.unwrap();
+        let with_approver = ChannelSpec { internal_actors: vec![InternalActorTemplate::Approver { strategy: ApprovalStrategy::Any }], ..spec("side", vec![other]) };
+        let channel = session.create_channel(&ctx, with_approver).await.unwrap();
         let mut rx = runtime.event_bus().subscribe_all();
 
         channel.remove_participant(&ctx, other).await.expect("removed");
@@ -636,9 +637,11 @@ mod tests {
         let refusal = |error: Error| error.downcast::<ChannelError>().expect("a ChannelError");
         let gone = channel.remove_participant(&ctx, other).await.expect_err("not in it any more");
         assert!(matches!(refusal(gone), ChannelError::NotAParticipant { .. }));
-        let approver = channel.participant_ids().into_iter().find(|id| matches!(id, ActorId::Approver(_))).expect("an approver");
-        let stays = channel.remove_participant(&ctx, approver).await.expect_err("the approver stays");
-        assert!(matches!(refusal(stays), ChannelError::ApproverStays { .. }));
+        let approver = channel.channel().internal_actors.iter().map(InternalActor::actor_id).next().expect("an approver");
+        assert!(!channel.participant_ids().contains(&approver), "no participant (issue 420)");
+        let stays = channel.remove_participant(&ctx, approver).await.expect_err("nor removed as one");
+        assert!(matches!(refusal(stays), ChannelError::NotAParticipant { .. }));
+        assert!(channel.actor(approver).is_some(), "and runs on");
 
         // Added again at once, once its old actor has ended (issue 171).
         channel.add_participant(&ctx, other, HistoryAccess::All).await.expect("added again");
@@ -665,7 +668,7 @@ mod tests {
         assert!(is_forbidden(&refused), "{refused}");
         let refused = channel.remove_participant(&as_user(bob_id), bob_id).await.expect_err("nor remove anyone");
         assert!(is_forbidden(&refused), "{refused}");
-        assert_eq!(channel.participants().len(), 3, "alice, bob and the approver, unchanged");
+        assert_eq!(channel.participants().len(), 2, "alice and bob, unchanged");
 
         channel.add_participant(&as_user(alice_id), carol_id, HistoryAccess::None).await.expect("the owner may");
         channel.remove_participant(&as_user(alice_id), bob_id).await.expect("the owner may");

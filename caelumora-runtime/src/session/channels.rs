@@ -6,6 +6,7 @@ use anyhow::{Result, Error};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::{self, Channel, Participant};
+use caelumora_model::template::InternalActorTemplate;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::{Classification, Place};
 use caelumora_model::value::language::Language;
@@ -44,6 +45,9 @@ pub struct ChannelSpec {
     /// Whether its participants work on the session's workspace in it (issue
     /// 253); `None` for the default, as in a template.
     pub uses_workspace: Option<bool>,
+    /// The actors that belong to the channel itself (issue 420): its
+    /// approver, if one is named - none that is not.
+    pub internal_actors: Vec<InternalActorTemplate>,
 }
 
 impl SessionLoop {
@@ -157,6 +161,7 @@ impl SessionLoop {
             .map_err(SessionError::InvalidComponents)?;
 
         let mut channel = Channel::build(self.id, session.security_attributes.owner_id, name, spec.components, classification, language, participants);
+        channel.internal_actors = spec.internal_actors.iter().map(InternalActorTemplate::instantiate).collect();
         if let Some(uses) = spec.uses_workspace {
             channel.uses_workspace = uses;
         }
@@ -371,7 +376,9 @@ mod tests {
 
     use anyhow::Result;
     use caelumora_model::value::language::Language;
-    use caelumora_model::channel::{Channel, STARTED, STOPPED};
+    use caelumora_model::approval::ApprovalStrategy;
+    use caelumora_model::channel::{Channel, InternalActor, STARTED, STOPPED};
+    use caelumora_model::template::InternalActorTemplate;
     use caelumora_model::event::EntityChange;
     use caelumora_model::security::{SecurityContext, Grant, Subject};
     use caelumora_model::store::StoreError;
@@ -391,15 +398,20 @@ mod tests {
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let mut rx = runtime.event_bus().subscribe_all();
 
-        let channel = session.create_channel(&ctx, spec("side", vec![other])).await.expect("the channel is created");
+        let with_approver = ChannelSpec { internal_actors: vec![InternalActorTemplate::Approver { strategy: ApprovalStrategy::Majority }], ..spec("side", vec![other]) };
+        let channel = session.create_channel(&ctx, with_approver).await.expect("the channel is created");
 
         assert_eq!(channel.name(), "side");
         let participants = channel.participant_ids();
         assert_eq!(participants.iter().filter(|id| matches!(id, ActorId::User(_))).count(), 2, "the creator and the other user: {participants:?}");
-        assert!(participants.iter().any(|id| matches!(id, ActorId::Approver(_))), "an approver is added: {participants:?}");
+        let Some(InternalActor::Approver(approver)) = channel.channel().internal_actors.first().cloned() else { panic!("the approver it names") };
+        assert_eq!(approver.strategy, ApprovalStrategy::Majority, "deciding as named");
+        assert!(channel.actor(ActorId::Approver(approver.id)).is_some() && !participants.contains(&ActorId::Approver(approver.id)), "its actor runs, no participant (issue 420)");
+        let bare = session.create_channel(&ctx, spec("bare", vec![])).await.expect("created");
+        assert!(bare.channel().internal_actors.is_empty(), "one that names no approver has none: no fallback");
         assert!(session.channel(channel.id()).is_some());
         let names: Vec<String> = session.channels().iter().map(|c| c.name().to_string()).collect();
-        assert_eq!(names, ["main", "side"], "in the order of the session");
+        assert_eq!(names, ["main", "side", "bare"], "in the order of the session");
 
         let stored = runtime.entity_stores().sessions.get(&ctx, session.id()).await.unwrap();
         assert!(stored.channels.contains(&channel.id()), "the session lists the channel");

@@ -118,6 +118,7 @@ pub fn bare_channel(session_id: SessionId) -> Channel {
         language: None,
         history_limits: Vec::new(),
         participants: Vec::new(),
+        internal_actors: Vec::new(),
         security_attributes: Default::default(),
         deleted: None,
         former: Vec::new(),
@@ -164,6 +165,7 @@ pub fn main_channel(session: &Session) -> Channel {
         language: None,
         history_limits: Vec::new(),
         participants: session.participants.clone(),
+        internal_actors: Vec::new(),
         security_attributes: SecurityAttributes::owned_by(session.security_attributes.owner_id).granting(Subject::Group(GroupId::of_channel(id)), Grant::Read),
         deleted: None,
         former: Vec::new(),
@@ -218,7 +220,7 @@ pub async fn running_session_of_a_user(manager: &SessionManager) -> (Arc<Session
 pub use crate::testing::actor_runtime_in;
 
 pub fn spec(name: &str, participants: Vec<ActorId>) -> ChannelSpec {
-    ChannelSpec { name: name.to_string(), components: Default::default(), participants, classification: None, language: None, uses_workspace: None }
+    ChannelSpec { name: name.to_string(), components: Default::default(), participants, classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }
 }
 
 /// The message and the reason of the next `MessageRejected` `events`

@@ -22,7 +22,7 @@ use crate::session::SessionLoop;
 use crate::workspace::{WorkspaceError, WorkspaceManager};
 use anyhow::Result;
 
-/// The users and approvers of `template` for the session `session_id` of
+/// The users of `template` for the session `session_id` of
 /// `owner`, each with its name in the template, the users found in
 /// `stores` as `context`; and the agents it names, with their names in the
 /// template, which are found or made once the session is (`take_in_agents`).
@@ -45,7 +45,6 @@ pub(crate) async fn resolve_participants(stores: &EntityStores, context: &Securi
                 participants.push((name, Participant::User(id)));
             }
             ParticipantRequest::Agent { name: agent_name, personality_id } => agents.push((name, agent_name, personality_id)),
-            ParticipantRequest::Approver(approver) => participants.push((name, Participant::Approver(approver))),
         }
     }
     Ok((participants, agents))
@@ -177,7 +176,6 @@ mod tests {
     use caelumora_model::user::User;
     use std::sync::{Arc, OnceLock, Weak};
     use caelumora_model::confidentiality::ConfidentialityRules;
-    use caelumora_model::approval::ApprovalStrategy;
     use std::sync::atomic::AtomicBool;
 
     /// Allows everything but listing agents.
@@ -386,13 +384,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_owner_must_exist_and_the_approver_needs_no_store() {
+    async fn the_owner_must_exist() {
         let owner = UserId::new();
         let store = Arc::new(MemoryStore::new());
-        let template = template(vec![
-            ParticipantTemplate::User { name: "user".to_string() },
-            ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::Any },
-        ]);
+        let template = template(vec![ParticipantTemplate::User { name: "user".to_string() }]);
 
         let missing = resolve(&store, &as_user(owner), &template, SessionId::new(), owner).await.expect_err("no such user");
         assert!(matches!(missing.downcast_ref::<StoreError>(), Some(StoreError::NotFound { entity: "user", .. })), "{missing}");
@@ -400,7 +395,6 @@ mod tests {
         store.entity_stores().users.create(&SecurityContext::system(), &User { id: owner, username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }).await.unwrap();
         let participants = resolve(&store, &as_user(owner), &template, SessionId::new(), owner).await.unwrap();
         assert!(matches!(participants[0], (ref name, Participant::User(id)) if name == "user" && id == owner));
-        assert!(matches!(participants[1], (ref name, Participant::Approver(_)) if name == "approval"));
 
         let unbound = self::template(vec![ParticipantTemplate::User { name: "guest".to_string() }]);
         let error = resolve(&store, &as_user(owner), &unbound, SessionId::new(), owner).await.expect_err("nobody fills it");

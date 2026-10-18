@@ -5,8 +5,8 @@
 //! create_from_template`, issue 88), so nothing here touches a store.
 
 use crate::agent::PersonalityId;
-use crate::approval::{ApprovalRule, ApprovalStrategy, Approver, ApproverId};
-use crate::channel::{Channel, ChannelId, Participant};
+use crate::approval::{ApprovalRule, ApprovalStrategy, Approver};
+use crate::channel::{Channel, ChannelId, InternalActor, Participant};
 use crate::component::ComponentConfig;
 use crate::confidentiality::Classification;
 use crate::value::language::Language;
@@ -19,7 +19,6 @@ use crate::privacy::PrivacyConfig;
 use crate::session::{Session, SessionId};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use crate::actor::ActorId;
 use crate::security::{AclEntry, Secured, SecurityAttributes};
 use crate::user::UserId;
@@ -104,9 +103,12 @@ pub struct ChannelTemplate {
     #[serde(default)]
     pub classification: Classification,
     /// The session template's participants that take part, by their name in
-    /// the template. A channel that names no approver gets one anyway
-    /// (`Channel::build`).
+    /// the template.
     pub participants: Vec<String>,
+    /// The actors that belong to the channel itself (issue 420): its
+    /// approver, if it names one - none that it does not name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub internal_actors: Vec<InternalActorTemplate>,
     /// What the channel restricts of tool calls (issue 13): rules that ask
     /// or deny. None unless named.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -142,7 +144,29 @@ impl ChannelTemplate {
         let channel = Channel::build(session_id, ActorId::User(owner), self.name.clone(), self.components.clone(), self.classification.clone(), self.language.clone(), participants);
         let mut security_attributes = channel.security_attributes.clone();
         security_attributes.acl.extend(self.access.iter().copied());
-        Ok(Channel { approval_rules: self.approval_rules.clone(), summary: self.summary.clone(), briefing: self.briefing.clone(), uses_workspace: self.uses_workspace, security_attributes, ..channel })
+        let internal_actors = self.internal_actors.iter().map(InternalActorTemplate::instantiate).collect();
+        Ok(Channel { approval_rules: self.approval_rules.clone(), summary: self.summary.clone(), briefing: self.briefing.clone(), uses_workspace: self.uses_workspace, security_attributes, internal_actors, ..channel })
+    }
+}
+
+/// An internal actor of a channel as a template or a request names it
+/// (issue 420): what it is made from, without the id it is given as the
+/// channel is built.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum InternalActorTemplate {
+    /// An approver, deciding by `strategy` - `Any` unless named.
+    Approver {
+        #[serde(default)]
+        strategy: ApprovalStrategy,
+    },
+}
+
+impl InternalActorTemplate {
+    /// The internal actor made from it, with an id of its own.
+    pub fn instantiate(&self) -> InternalActor {
+        match self {
+            InternalActorTemplate::Approver { strategy } => InternalActor::Approver(Approver::new(*strategy)),
+        }
     }
 }
 
@@ -167,8 +191,9 @@ pub struct SessionTemplate {
     pub summary: Option<Summary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub briefing: Option<Briefing>,
-    /// Every actor of the session - users, agents and approvers - each with
-    /// the name its channels refer to it by.
+    /// Every participant of the session - users and agents - each with the
+    /// name its channels refer to it by. A channel's approver is no
+    /// participant: the channel names it (`ChannelTemplate::internal_actors`).
     pub participants: Vec<ParticipantTemplate>,
     pub channels: Vec<ChannelTemplate>,
     #[serde(default)]
@@ -283,8 +308,7 @@ impl SessionTemplate {
 
     /// Builds the session `id` of `owner`, named `name`, and its channels -
     /// documents of their own, which the session lists by id (issue 70).
-    /// `participants` are the template's users and approvers as found or
-    /// made for it (`ParticipantTemplate::request`), each with its name in
+    /// `participants` are the template's users as found for it (`ParticipantTemplate::request`), each with its name in
     /// the template. Its agents are not among them: they are found or made
     /// once the session is, and taken into it and into the channels that
     /// name them (`channels_of`). Nothing is stored: that is the caller's,
@@ -344,17 +368,6 @@ pub enum ParticipantTemplate {
         scope: ScopeTemplate,
         personality_id: PersonalityId,
     },
-    /// An approver, which decides tool calls that need approval by
-    /// `strategy`; it has no record of its own and is made with the session.
-    Approver {
-        name: String,
-        #[serde(default = "default_strategy")]
-        strategy: ApprovalStrategy,
-    },
-}
-
-fn default_strategy() -> ApprovalStrategy {
-    ApprovalStrategy::Any
 }
 
 /// What a participant of a template is for one session: the runtime finds
@@ -366,15 +379,13 @@ pub enum ParticipantRequest {
     /// The agent of that name in exactly that scope, if it is of
     /// `personality_id`, or a new one of it there.
     Agent { name: ScopedName, personality_id: PersonalityId },
-    /// This approver, which needs nothing from the store.
-    Approver(Approver),
 }
 
 impl ParticipantTemplate {
     /// The name channels use to refer to this participant.
     pub fn name(&self) -> &str {
         match self {
-            ParticipantTemplate::User { name } | ParticipantTemplate::Approver { name, .. } => name,
+            ParticipantTemplate::User { name } => name,
             ParticipantTemplate::Agent { name, .. } => name.as_str(),
         }
     }
@@ -392,10 +403,6 @@ impl ParticipantTemplate {
                 name: ScopedName { name: name.clone(), scope: scope.instantiate(session_id, owner)? },
                 personality_id: *personality_id,
             }),
-            ParticipantTemplate::Approver { strategy, .. } => Ok(ParticipantRequest::Approver(Approver {
-                id: ApproverId(Uuid::new_v4()),
-                strategy: *strategy,
-            })),
         }
     }
 }
@@ -404,6 +411,7 @@ impl ParticipantTemplate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
     use crate::command::default_commands;
     use crate::confidentiality::Confidentiality;
 
@@ -420,7 +428,6 @@ mod tests {
             participants: vec![
                 ParticipantTemplate::User { name: "user".to_string() },
                 ParticipantTemplate::Agent { name: Name::new("helper").unwrap(), scope: ScopeTemplate::UserScope, personality_id: PersonalityId::new() },
-                ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::All },
             ],
             channels: vec![
                 ChannelTemplate {
@@ -431,7 +438,8 @@ mod tests {
                     name: Name::new("main").unwrap(),
                     components: ComponentConfig::default(),
                     classification: Classification::CHANNEL_DEFAULT,
-                    participants: vec!["user".to_string(), "helper".to_string(), "approval".to_string()],
+                    participants: vec!["user".to_string(), "helper".to_string()],
+                    internal_actors: vec![InternalActorTemplate::Approver { strategy: ApprovalStrategy::All }],
                 },
                 ChannelTemplate {
                     access: Vec::new(),
@@ -442,6 +450,7 @@ mod tests {
                     components: ComponentConfig::default(),
                     classification: Classification::CHANNEL_DEFAULT,
                     participants: vec!["user".to_string()],
+                    internal_actors: Vec::new(),
                 },
             ],
             commands: default_commands(),
@@ -450,14 +459,13 @@ mod tests {
         }
     }
 
-    /// The users and approvers as the runtime would resolve the requests;
-    /// the agents join later.
+    /// The users as the runtime would resolve the requests; the agents join
+    /// later.
     fn resolved(template: &SessionTemplate, session: SessionId, owner: UserId) -> Vec<(String, Participant)> {
         template.participants.iter().filter_map(|p| {
             let participant = match p.request(session, owner).unwrap() {
                 ParticipantRequest::User(id) => Participant::User(id),
                 ParticipantRequest::Agent { .. } => return None,
-                ParticipantRequest::Approver(approver) => Participant::Approver(approver),
             };
             Some((p.name().to_string(), participant))
         }).collect()
@@ -503,7 +511,6 @@ mod tests {
 
         assert!(matches!(requests[0], ParticipantRequest::User(id) if id == owner), "\"user\" is the owner");
         assert!(matches!(&requests[1], ParticipantRequest::Agent { name: ScopedName { name, scope: Scope::UserScope { user_id } }, .. } if *name == "helper" && *user_id == owner));
-        assert!(matches!(&requests[2], ParticipantRequest::Approver(a) if a.strategy == ApprovalStrategy::All), "the template's strategy");
 
         let other = ParticipantTemplate::User { name: "guest".to_string() };
         assert!(matches!(other.request(session, owner), Err(TemplateError::UnboundUser(_))), "only the owner fills a user");
@@ -518,14 +525,17 @@ mod tests {
 
         let (session, channels) = template.build(id, owner, Name::new("s").unwrap(), resolved(&template, id, owner)).unwrap();
         assert_eq!(session.channels, channels.iter().map(|c| c.id).collect::<Vec<_>>(), "the session lists its channels by id");
-        assert_eq!(session.participants.len(), 2, "every user and approver of the template");
+        assert_eq!(session.participants.len(), 1, "every user of the template");
 
-        let approvers = |c: &Channel| c.participants.iter().filter(|p| matches!(p, Participant::Approver(_))).count();
-        assert_eq!(channels[0].participants.len(), 2, "its agent joins once it is made");
+        let approver = |c: &Channel| match c.internal_actors.as_slice() {
+            [InternalActor::Approver(approver)] => Some(approver.strategy),
+            _ => None,
+        };
+        assert_eq!(channels[0].participants.len(), 1, "its agent joins once it is made, and the approver is none");
         assert_eq!(template.channels_of("helper", &session.channels), [channels[0].id], "where it joins");
         assert_eq!(template.channels_of("user", &session.channels), [channels[0].id, channels[1].id]);
-        assert_eq!(approvers(&channels[0]), 1, "the template's approver, not a second one");
-        assert_eq!(approvers(&channels[1]), 1, "a channel that names none gets one");
+        assert_eq!(approver(&channels[0]), Some(ApprovalStrategy::All), "an approver of its own, deciding as its template says");
+        assert!(channels[1].internal_actors.is_empty(), "a channel that names none has none: no fallback (issue 420)");
         assert!(matches!(channels[1].participants[0], Participant::User(u) if u == owner), "the template's \"user\" is the owner");
         assert_eq!(session.commands.component_nodes.len(), default_commands().component_nodes.len(), "the session keeps its template's commands");
         assert_eq!(channels[0].classification, Classification::CHANNEL_DEFAULT);
@@ -541,8 +551,9 @@ mod tests {
 
         let unnamed: ChannelTemplate = serde_json::from_value(serde_json::json!({"name": "main", "participants": []})).unwrap();
         assert_eq!(unnamed.classification, Classification::general(Confidentiality::Internal), "the default");
-        let approver: ParticipantTemplate = serde_json::from_value(serde_json::json!({"Approver": {"name": "approval"}})).unwrap();
-        assert!(matches!(approver, ParticipantTemplate::Approver { strategy: ApprovalStrategy::Any, .. }), "the default strategy");
+        assert!(unnamed.internal_actors.is_empty(), "none unless named");
+        let approver: InternalActorTemplate = serde_json::from_value(serde_json::json!({"Approver": {}})).unwrap();
+        assert!(matches!(approver, InternalActorTemplate::Approver { strategy: ApprovalStrategy::Any }), "the default strategy");
 
     }
 }

@@ -856,6 +856,7 @@ mod tests {
             history_limits: Vec::new(),
             former: Vec::new(),
             participants: Vec::new(),
+            internal_actors: Vec::new(),
             security_attributes: SecurityAttributes::default(),
             deleted: None,
         };

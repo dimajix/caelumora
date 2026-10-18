@@ -41,13 +41,15 @@ Two steps, each reviewable on its own.
    it is an actor like any other: an `ApproverActor` with its inbox and task, sending through
    `run`'s transport, registered with the moderator, `ActorId::Approver` as the sender of what it
    decides; what reaches it is decided by the one rule (`Envelope::concerns`). The channel starts
-   it with the others as `run` begins. That every channel has an approver stays a rule of the
-   channel, as that it has a moderator: `Channel::build` makes one among its internal actors.
-   `Participant` is a user or an agent. What falls away: `ApproverStays`, the approver's branch
-   of `Participation::resolve`, the filters in `Group::members_among`, the reaper and the web UI.
-   A channel template names its approval strategy instead of an approver among the participants.
-   Over REST, the approver leaves the participants' list. A refactoring without other changes of
-   behaviour.
+   it with the others as `run` begins. Internal actors are configured, and what is not configured
+   is not there: a channel template names them for each channel (`internal_actors`), and so does
+   a request to create a channel; `Channel::build` takes them as given, with no fallback and no
+   check of how many approvers there are. A channel without an approver approves nothing - tools
+   that ask for approval do not work in it. `Participant` is a user or an agent. What falls away:
+   `ApproverStays`, the approver's branch of `Participation::resolve`, the filters in
+   `Group::members_among`, the reaper and the web UI. Over REST, the approver leaves the
+   participants' list. An internal actor as a component of the `ComponentRegistry`, which a
+   plugin could contribute, is left until a second kind asks for it.
 2. **A channel is built empty, and its founders join by the one way in.** `Channel::build` takes
    no participants. `create_channel` keeps the order of issue 304 - its verb, then every founder's
    admission, before anything is stored -, stores the empty channel, builds its loop and takes
@@ -81,3 +83,22 @@ Decided as well:
 - 2026-10-18: The approver taken out of the participants as step 1; the design of step 2 laid out.
 - 2026-10-18: Step 1 as internal actors, the approver the first; what founding asks, where
   `HistoryShared` is recorded and the branch decided.
+- 2026-10-18: Step 1 done on `issue-420-channel-built-empty`. `Participant` is a user or an agent;
+  `Channel::internal_actors` holds the channel's approver (`InternalActor::Approver`), which
+  `Channel::build` makes deciding by `Any` and a template by its channel's `approval`. The
+  `ChannelLoop` builds the internal actors' actors from the channel itself
+  (`ResolvedParticipant::internal`) and adopts them as before, so the approver's actor, its
+  delivery and the moderator's filing of it are unchanged. Gone: `ApproverStays` - removing the
+  approver is `NotAParticipant`, and its actor runs on -, the approver's branch of
+  `Participation::resolve`, `ApproverParticipant` in the views, the filters in
+  `Group::members_among`, the workspace reaper, the agents' participants prompt and the web UI,
+  `ParticipantTemplate::Approver` and the REST `ParticipantKind::Approver`. Over REST, an approver
+  is in no participants' list any more. The seed's templates name no approver.
+- 2026-10-18: Internal actors configured, no fallback: `ChannelTemplate::internal_actors` and
+  `ChannelSpec::internal_actors` (`InternalActorTemplate`, an approver with its strategy) name them,
+  `Channel::build` makes none; `ChannelTemplate::approval` is gone. The `ChannelLoop` keeps all its
+  actors in one map, as before; who takes part (`participants`, `participant_ids`) and whom a
+  mention names leave out what the channel configures as internal (`Channel::is_internal`), so
+  that `is_mentionable`, which told the approver by its kind, is gone. Over REST, creating a
+  channel takes `internal_actors`, none if absent; the web UI's dialog names an approver. The
+  seed's channels name theirs. The test worlds give their channels an approver, as `build` did.

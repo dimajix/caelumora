@@ -115,7 +115,7 @@ in the same context (issue 322), named in the rows where it is the reason of a r
 | Rename, language, description, workspace switch, approval rules (`ChannelLoop::update_*`) | store `GetChannel` + `UpdateChannel` (U,1) | R1 | - | `PermissionDenied` |
 | Reclassify (`ChannelLoop::reclassify`) | `Reclassify` of the channel (U,1); `require_classifiable`; per participant `require_cleared` (U,2); store `UpdateChannel`; `may_publish` of the old into the new to learn whether it was lowered | R2 + R1; the last a question | - | `Forbidden`, `ClassificationRefused`, `NotCleared` |
 | Add a participant (`add_participant`) | `UpdateChannel` (U,1); structural; `GetPersonality` (A,1); scope; `require_cleared` with the participant's roles (U,2); store `UpdateChannel`; the actor's components (A) | R2 + R1 | `UpdateChannel` (pair) | `Forbidden`, `PermissionDenied`, `OutOfScope`, `NotCleared` |
-| Remove a participant (`remove_participant`) | structural (`ApproverStays`, `NotAParticipant`); store `GetChannel` + `UpdateChannel` (U,1) | R1 | - | `PermissionDenied` |
+| Remove a participant (`remove_participant`) | structural (`NotAParticipant`); store `GetChannel` + `UpdateChannel` (U,1) | R1 | - | `PermissionDenied` |
 | Cancel the channel, one actor, one tool call (`cancel`, `cancel_actor`, `interrupt_tool_call`) | `CancelChannel` (U,1) | R4 | - | `Forbidden` |
 | Wake the channel, one actor (`wakeup`, `wakeup_actor`, from `/wakeup`) | `WakeChannel` (U,1) | R4 | `/wakeup` asked its own command questions first | `Forbidden` |
 
@@ -295,8 +295,8 @@ An agent's views are built per piece of work, with the agent's place; all in **T
   own request - its form, the structure of the reached object, the flow of what they ask for,
   whether they may read a group they name - may come before their permission, which the store
   then asks alone: the workspace, skill and artifact managers, `require_nameable`, `keep`. The
-  group manager's `Participants` and `remove_participant`'s `ApproverStays` and `NotAParticipant`
-  are structure, seen by whoever reached the object.
+  group manager's `Participants` and `remove_participant`'s `NotAParticipant` are structure, seen
+  by whoever reached the object.
 - **Three `ApproveToolCall` for an answer by a rule.** Whether the person's rule answers at all
   (offering, so that no refusal is sent in their name), whether the channel admits the answer,
   and whom the approver waits for: three reasons, one each.

@@ -467,7 +467,7 @@ impl ChannelView {
     }
 }
 
-/// A participant of a channel - a user, an agent, an approver - as the
+/// A participant of a channel - a user or an agent - as the
 /// viewer reached it. What differs between the kinds is its `ParticipantState`;
 /// what the viewer may see of it is decided here, for every kind alike.
 #[derive(Debug, Clone)]
@@ -528,16 +528,16 @@ impl ParticipantView {
     }
 
     /// The handle the participant is `@`-mentioned by (see `crate::mention`), or
-    /// `None` if it cannot be mentioned - approvers, participants that no
-    /// longer exist, names that yield no handle.
+    /// `None` if it cannot be mentioned - participants that no longer exist,
+    /// names that yield no handle.
     pub fn handle(&self) -> Option<String> {
         self.state.handle()
     }
 
     /// How the participant is introduced (issue 176): an agent as its
     /// personality introduces it, a user as they introduce themselves in
-    /// their profile. `None` for an approver, for a participant that has no
-    /// introduction, and for one that no longer exists. Public, like the
+    /// their profile. `None` for a participant that has no introduction, and
+    /// for one that no longer exists. Public, like the
     /// name.
     ///
     /// # Errors

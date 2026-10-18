@@ -393,7 +393,7 @@ activity says -, waiting for an approval, sleeping, or nothing running. Users an
 none.
 
 The participant list is sorted by name and uses the participants' handles for `@` completion and for
-highlighting mentions; participants that cannot be mentioned, such as approvers, have none. The
+highlighting mentions; participants that cannot be mentioned, such as a deleted user, have none. The
 completion offers `@all` and `@channel` as well, and both are highlighted in a message that
 mentions anyone. Who
 answers - the channel's responder policy - is shown above it as its moderator, and for

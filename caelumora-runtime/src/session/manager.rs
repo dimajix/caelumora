@@ -1006,8 +1006,8 @@ mod tests {
     #[tokio::test]
     async fn a_session_is_created_from_a_template_for_its_owner() {
         use caelumora_model::approval::ApprovalStrategy;
-        use caelumora_model::channel::Participant;
-        use caelumora_model::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
+        use caelumora_model::channel::InternalActor;
+        use caelumora_model::template::{ChannelTemplate, InternalActorTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
         use caelumora_model::user::{User, UserId};
 
         let runtime = test_runtime();
@@ -1024,7 +1024,6 @@ mod tests {
             description: None,
             participants: vec![
                 ParticipantTemplate::User { name: "user".to_string() },
-                ParticipantTemplate::Approver { name: "approval".to_string(), strategy: ApprovalStrategy::All },
             ],
             channels: vec![ChannelTemplate {
                 access: Vec::new(),
@@ -1034,7 +1033,8 @@ mod tests {
                 name: Name::new("main").unwrap(),
                 components: moderation_components(None, Some("broadcast_policy")),
                 classification: Classification::CHANNEL_DEFAULT,
-                participants: vec!["user".to_string(), "approval".to_string()],
+                participants: vec!["user".to_string()],
+                internal_actors: vec![InternalActorTemplate::Approver { strategy: ApprovalStrategy::All }],
             }],
             security_attributes: Default::default(),
             commands: Default::default(),
@@ -1054,7 +1054,8 @@ mod tests {
         assert!(main.user_actor(owner).is_some(), "the owner is the template's \"user\"");
         assert_eq!(main.channel().language, None, "not in the one the owner prefers: that is the frontend's to set (issue 331)");
         let stored = runtime.entity_stores().channels.get(&hers, main.id()).await.unwrap();
-        assert!(stored.participants.iter().any(|p| matches!(p, Participant::Approver(a) if a.strategy == ApprovalStrategy::All)), "the template's approver");
+        assert!(matches!(stored.internal_actors.as_slice(), [InternalActor::Approver(a)] if a.strategy == ApprovalStrategy::All), "an approver deciding as the template says");
+        assert!(stored.internal_actors.iter().all(|internal| main.actor(internal.actor_id()).is_some()), "and its actor runs");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
 
         let missing = manager.create_from_template(&hers, SessionTemplateId::new(), None, None).await.expect_err("no such template");

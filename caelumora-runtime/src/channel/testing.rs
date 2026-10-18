@@ -19,7 +19,7 @@ use caelumora_model::message::MessageId;
 use caelumora_model::store::history::every;
 use caelumora_model::store::StoreResult;
 use caelumora_model::work::TurnId;
-use caelumora_model::channel::{Channel, ChannelId, Participant, moderation_components};
+use caelumora_model::channel::{Channel, ChannelId, InternalActor, Participant, moderation_components};
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::message::Message;
 use caelumora_model::security::{AccessPolicy, ActionType, SecurityAttributes, SecurityContext};
@@ -30,7 +30,7 @@ use caelumora_model::value::name::{Name, ScopedName};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
-use caelumora_model::approval::{ApprovalStrategy, Approver, ApproverId};
+use caelumora_model::approval::{ApprovalStrategy, Approver};
 use caelumora_model::confidentiality::{Classification, Visibility};
 use tokio::sync::broadcast::Receiver;
 use tokio::task::JoinHandle;
@@ -103,11 +103,8 @@ pub async fn channel_of_alice_and(runtime: Arc<RuntimeManager>, alice: UserId, a
         session_id: SessionId::new(),
         name: Name::new("main").unwrap(),
         components: moderation_components(None, Some("broadcast_policy")),
-        participants: vec![
-            Participant::User(alice),
-            Participant::Agent(agent),
-            Participant::Approver(Approver { id: ApproverId::new(), strategy: ApprovalStrategy::Any }),
-        ],
+        participants: vec![Participant::User(alice), Participant::Agent(agent)],
+        internal_actors: vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))],
         security_attributes: SecurityAttributes::default(),
         classification: Classification::CHANNEL_DEFAULT,
         language: None,
