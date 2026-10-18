@@ -327,7 +327,12 @@ mod tests {
     use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
-    use caelumora_model::context::{KnowledgeRef, KnowledgeSource, ModelProfile};
+    use caelumora_model::actor::EventContext;
+    use caelumora_model::context::{KnowledgeRef, KnowledgeSource, ModelProfile, SenderFormat};
+    use caelumora_model::user::UserId;
+    use caelumora_model::value::time_zone::TimeZone;
+    use caelumora_runtime::agent::state::AgentStateHandle;
+    use caelumora_runtime::testing::actor_runtime_in;
     use caelumora_model::store::{EntityKind, Stored};
     use caelumora_model::tool::Tool;
     use caelumora_model::workspace::{Workspace, WorkspaceId};
@@ -575,6 +580,33 @@ mod tests {
         let summary = &state.transcript.messages()[0];
         assert_eq!(summary.turn_id, Some(under_way), "it holds what the turn read: the turn's (issue 284)");
         assert_eq!(summary.classification, label, "as the turn writes");
+    }
+
+    /// Issue 430: the model that summarises is given the times of messages
+    /// in the time zone of the turn, as the turn's own model is - not in UTC.
+    #[tokio::test]
+    async fn the_times_of_messages_are_summarised_in_the_time_zone_of_the_turn() {
+        let world = session_with_workspace().await;
+        let mut state = AgentChannelState::default();
+        let u1 = Message { sender_id: ActorId::User(UserId::new()), sender_name: "alice".to_string(), role: MessageRole::User, content: Some("u1".to_string()), ..Message::new(Classification::PUBLIC) };
+        let written = u1.timestamp;
+        state.perceive(vec![u1]);
+        let marking = ModelProfile { sender_format: SenderFormat::Prefix, message_times: true, ..ModelProfile::default() };
+        let berlin = TimeZone::new("Europe/Berlin").unwrap();
+        let channel = &world.session.channels()[0];
+        state.begin_turn(EventContext::new(world.session.id(), channel.id(), ActorId::None, String::new()), world.context.clone(), channel.classification(), marking, berlin);
+        let model = Arc::new(Summariser::default());
+        let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: 0.1, restorers: Vec::new() };
+        let mut turn = Turn::of(world.agent, "Jonathan".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(channel, ActorId::Agent(world.agent))).expect("a turn was begun");
+        let said = |content: &str, role| Message { sender_id: ActorId::Agent(world.agent), role, content: Some(content.repeat(40)), ..Message::new(Classification::PUBLIC) };
+        for (content, role) in [("a", MessageRole::Assistant), ("r", MessageRole::Tool), ("b", MessageRole::Assistant), ("s", MessageRole::Tool)] {
+            turn.push_message(said(content, role));
+        }
+        strategy.compact(&mut turn).await.expect("compacted");
+        drop(turn);
+
+        let asked = model.0.lock().unwrap().pop().expect("its model was asked");
+        assert_eq!(asked[0].content, Some(format!("@alice ({}): u1", berlin.format(written))), "in Berlin's time, as the turn's model is given it");
     }
 
     /// Issue 389: a skill the turn under way loaded in the part summarised
