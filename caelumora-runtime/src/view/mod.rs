@@ -48,7 +48,7 @@ use crate::session::{Found, SessionLoop, SessionManager};
 use crate::workspace::WorkspaceManager;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
-use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Place};
+use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Reading, Place};
 use caelumora_model::group::{Group, GroupField, GroupId};
 use caelumora_model::message::MessageId;
 use caelumora_model::store::history::HistoryStore;
@@ -386,7 +386,7 @@ impl Views {
         let deleted = self.stores.channels.get_deleted(&SecurityContext::system(), id).await.optional()
             .map_err(|e| ViewError::failed(e, format!("looking up channel {id}")))?;
         Ok(match deleted {
-            Some(channel) if channel.session_id == session.id() && session.readable(&channel).await.is_some() =>
+            Some(channel) if channel.session_id == session.id() && session.reading(&channel).await.is_some() =>
                 channel.deleted.map_or(Reached::Never, Reached::Gone),
             _ => Reached::Never,
         })
@@ -714,15 +714,6 @@ impl Views {
     }
 }
 
-/// How a channel may be read, where it may be read at all (issue 133): as
-/// a whole, or only what was released to where the reader reads from,
-/// entry by entry, each by its own classification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChannelReading {
-    Whole,
-    Released,
-}
-
 /// How someone reads a channel (issue 133): an agent from its own place -
 /// its channel, the classification it reads at, its session's privacy -,
 /// a user by what the roles of their context clear them for.
@@ -736,20 +727,21 @@ pub enum ChannelReader<'a> {
 /// `at` its place (issues 133, 264, 296, 304): not at all if it may not read
 /// it (`GetChannel`, the `AccessPolicy`'s). Beyond that, as the
 /// `ConfidentialityPolicy` decides: an agent reading from its place reads it
-/// as a whole if what is there may be copied into that place, and entry by
-/// entry otherwise; a user reads it as a whole if they are cleared for its
-/// classification, and not at all otherwise. What the views reach a channel
-/// by, and what an operation in a channel asks before it acts there.
-pub async fn channel_reading(access_policy: &dyn AccessPolicy, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, channel: &SecurityAttributes, at: &Place, reader: ChannelReader<'_>) -> Option<ChannelReading> {
+/// as a whole if what is there may be copied into that place, and otherwise
+/// what of it may (`Reading`, issue 421), entry by entry; a user reads it as
+/// a whole if they are cleared for its classification, and not at all
+/// otherwise. What the views reach a channel by, and what an operation in a
+/// channel asks before it acts there.
+pub async fn channel_reading(access_policy: &dyn AccessPolicy, confidentiality: &dyn ConfidentialityPolicy, context: &SecurityContext, channel: &SecurityAttributes, at: &Place, reader: ChannelReader<'_>) -> Option<Reading> {
     if !access_policy.may_read_channel(context, channel).await {
         return None;
     }
     match reader {
-        ChannelReader::From(from) => Some(match confidentiality.may_copy_information(context, at, from) {
-            true => ChannelReading::Whole,
-            false => ChannelReading::Released,
+        ChannelReader::From(from) => Some(match confidentiality.copyable_information(context, at.channel, &at.session, from) {
+            reading if reading.admits(&at.classification, confidentiality.compartments()) => Reading::Whole,
+            reading => reading,
         }),
-        ChannelReader::Cleared => confidentiality.cleared_for(context, &at.classification).then_some(ChannelReading::Whole),
+        ChannelReader::Cleared => confidentiality.cleared_for(context, &at.classification).then_some(Reading::Whole),
     }
 }
 

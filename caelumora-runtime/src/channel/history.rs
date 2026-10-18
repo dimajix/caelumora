@@ -9,6 +9,7 @@ use caelumora_model::channel::{ChannelId, HistoryAccess, HistoryStart};
 use caelumora_model::history::{HistoryEntry, Reader};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::store::history::HistoryStore;
+use caelumora_model::store::query::Filter;
 use caelumora_model::store::StoreResult;
 use chrono::{DateTime, Utc};
 use tracing::warn;
@@ -25,11 +26,10 @@ const READ_PAGE: usize = 200;
 /// # Errors
 /// If the store cannot be read.
 async fn start_of(histories: &dyn HistoryStore, channel: ChannelId, access: HistoryAccess, now: DateTime<Utc>) -> StoreResult<Option<HistoryStart>> {
-    let said = |item: &HistoryEntry| item.said().is_some();
     let mut newest: Vec<Message> = Vec::new();
     let mut before = None;
     while !access.read_enough(&newest, now) {
-        let page = histories.page(channel, &Reader::Outsider, Position::START, before, READ_PAGE, &said).await?;
+        let page = histories.page(channel, &Reader::Outsider, Position::START, before, READ_PAGE, Some(&Filter::said())).await?;
         newest.extend(page.entries().rev().filter_map(HistoryEntry::said).cloned());
         match page.earlier {
             Some(earlier) => before = Some(earlier),

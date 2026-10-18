@@ -14,10 +14,11 @@ use crate::manager::{ArtifactError, ArtifactManager, ArtifactResult};
 use async_trait::async_trait;
 use caelumora_model::security::AccessQuestions;
 use caelumora_model::snapshot::DeletedSnapshot;
+use caelumora_model::confidentiality::Reading;
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{StoreResultExt, Stored};
 use caelumora_runtime::terminal::ByteStream;
-use caelumora_runtime::view::{ChannelReading, ChannelView, Views};
+use caelumora_runtime::view::{ChannelView, Views};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::warn;
@@ -127,7 +128,7 @@ pub trait ArtifactChannelViews {
 #[async_trait]
 impl ArtifactChannelViews for ChannelView {
     async fn artifacts(&self) -> ArtifactResult<Vec<ArtifactView>> {
-        if self.reading() != ChannelReading::Whole {
+        if *self.reading() != Reading::Whole {
             return Ok(Vec::new());
         }
         let views = self.views();

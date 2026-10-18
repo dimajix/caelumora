@@ -15,6 +15,8 @@ use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::Message;
+use caelumora_model::store::history::HistoryField;
+use caelumora_model::store::query::Filter;
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
 use serde::Deserialize;
 use serde_json::Value;
@@ -88,8 +90,7 @@ impl ToolProvider for ChannelHistoryComponent {
         let channel = session.channel_named(channel).await?;
         // Read from the end, only as far back as `last` such messages lie
         // (issue 379).
-        let query = query.map(str::to_lowercase);
-        let page = channel.history_page_of(None, last, &|item| wanted(item, query.as_deref())).await?;
+        let page = channel.history_page_of(None, last, Some(wanted(query))).await?;
         let messages: Vec<&Message> = page.entries().filter_map(HistoryEntry::said).collect();
         let more = page.earlier.is_some();
         // What was read is classified as the messages given (issue 168).
@@ -110,11 +111,10 @@ impl ToolProvider for ChannelHistoryComponent {
     }
 }
 
-/// Whether `item` is a message the tool returns: one with text, containing
-/// `query`, lowercase, if given - ignoring case.
-fn wanted(item: &HistoryEntry, query: Option<&str>) -> bool {
-    let Some(content) = item.said().and_then(|m| m.content.as_deref()).filter(|c| !c.is_empty()) else { return false };
-    query.is_none_or(|q| content.to_lowercase().contains(q))
+/// Which messages the tool returns: those with words, containing `query`
+/// if given - as names are compared (`Filter::Contains`).
+fn wanted(query: Option<&str>) -> Filter<HistoryField> {
+    Filter::all_of([Filter::written()].into_iter().chain(query.map(Filter::containing)))
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
@@ -131,18 +131,21 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::history::{Audience, Recorded};
     use caelumora_model::message::MessageId;
 
-    fn text(content: &str) -> Message {
-        Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
+    /// A message saying `content`, recorded as the store keeps it.
+    fn said(content: &str) -> Value {
+        let message = Message { id: MessageId::new(), content: Some(content.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
+        serde_json::to_value(Recorded::new(HistoryEntry::Said { message }, ActorId::System, Audience::Everybody)).unwrap()
     }
 
     #[test]
     fn a_message_with_text_containing_the_query_is_wanted_ignoring_case() {
-        let said = |content: &str| HistoryEntry::Said { message: text(content) };
-        assert!(wanted(&said("Tea time"), Some("tea")) && wanted(&said("More TEA"), Some("tea")));
-        assert!(!wanted(&said("coffee"), Some("tea")));
-        assert!(wanted(&said("coffee"), None), "any text without a query");
-        assert!(!wanted(&said(""), None), "a message without text does not count");
+        assert!(wanted(Some("tea")).matches(&said("Tea time")) && wanted(Some("tea")).matches(&said("More TEA")));
+        assert!(!wanted(Some("tea")).matches(&said("coffee")));
+        assert!(wanted(None).matches(&said("coffee")), "any text without a query");
+        assert!(!wanted(None).matches(&said("")), "a message without text does not count");
     }
 }

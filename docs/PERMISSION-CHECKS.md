@@ -167,7 +167,7 @@ An agent's views are built per piece of work, with the agent's place; all in **T
 | Operation | Questions in order | Rule | Refusal |
 |---|---|---|---|
 | Its own session (`ActorRuntime::session_view`) | `may_read_session` (T,1) - by the group of the session's participants | reach | `SessionNotFound` |
-| A channel by name or id (`SessionView::channel`, `channel_named`; `read_history`, `read_notes`) | `channel_reading`: `GetChannel` (T,1), `may_copy_information` of the channel into the place (T,2) - as a whole or entry by entry; entry by entry `may_copy_from` per message or note | reach | `ChannelNotFound`, `NoChannelNamed` alike |
+| A channel by name or id (`SessionView::channel`, `channel_named`; `read_history`, `read_notes`) | `channel_reading`: `GetChannel` (T,1), `copyable_information` of the channel into the place (T,2) - as a whole or entry by entry; entry by entry what it answers (`Reading`) judges each message or note by its classification, a page of the history as a filter in the store (issue 421) | reach | `ChannelNotFound`, `NoChannelNamed` alike |
 | All channels (`channels`, `all_channels`) | as above per channel | reach | left out |
 | Its own private notes of other channels (`own_private_notes`) | no `GetChannel` - its own knowledge -; per note `may_copy_from` (T,2) | reach | left out |
 | Its memory (`AgentMemory::recalled`, `find`, `update`, `forget`) | per entry `may_copy_information` of its origin, by the origin's privacy then and now | R4: the agent's own knowledge, as its private notes | left out |

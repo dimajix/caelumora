@@ -1281,17 +1281,16 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
 /// The agent `reader` of `owner`, which reads the channel "side" with
 /// `read_history` once it is asked, in a session alice shares with bob and
 /// he opened: "side" is alice's, and `reader` takes part in it if
-/// `in_side`; alice said something there, classified as the main channel
-/// is. With the main channel.
+/// `in_side`; alice said something there classified as the main channel
+/// is, and something public. With the main channel.
 async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>) {
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::tool::{ToolCall, ToolVisibility};
 
-    let internal = Classification::general(Confidentiality::Internal);
     let call = Message {
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall { id: Some("1".to_string()), function_name: "read_history".to_string(), arguments: serde_json::json!({ "channel": "side" }), visibility: ToolVisibility::SHOWN, presentation: Default::default() }],
-        ..Message::new(internal)
+        ..Message::new(Classification::PUBLIC)
     };
     let world = World::with(&[&TestAgents], |registry| register_once(registry, "reading", call)).await;
     let reading = Personality {
@@ -1307,7 +1306,9 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
     let main = Arc::clone(&session.channels()[0]);
     let participants = if in_side { vec![ActorId::Agent(reader)] } else { vec![] };
     let side = session.create_channel(&World::as_user(world.alice), ChannelSpec { name: "side".to_string(), components: quiet(), participants, classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() }).await.expect("hers");
-    side.user_actor(world.alice).expect("she takes part").send_message("only for side".to_string(), None).await.expect("said");
+    let hers = side.user_actor(world.alice).expect("she takes part");
+    hers.send_message("only for side".to_string(), None).await.expect("said");
+    hers.send_message("for main too".to_string(), Some(Classification::PUBLIC)).await.expect("said");
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let his = world.manager.views(Viewer::new(World::as_user(world.bob))).session(session.id()).await.unwrap();
     assert!(his.channel(side.id()).await.is_err(), "not his to read");
@@ -1315,8 +1316,8 @@ async fn with_a_reader_of(owner: fn(&World) -> UserId, in_side: bool) -> (World,
 }
 
 /// What the policy is asked when bob asks `reader` in `main` to read
-/// "side", once it was asked `line` and a little after: what side holds is
-/// asked of entry by entry after the channel as a whole.
+/// "side", once it was asked `line` and a little after: what of side may be
+/// copied is asked once, as the channel is reached (issue 421).
 async fn asked_to_read_side(world: &World, main: &ChannelLoop, line: &str) -> Vec<String> {
     let (_, asked) = world.asked(async {
         main.user_actor(world.bob).expect("he takes part").send_message("@reader what is on side?".to_string(), None).await.expect("sent");
@@ -1365,6 +1366,39 @@ async fn an_agent_reads_a_channel_it_takes_part_in_whose_owner_may_not() {
     let asked = asked_to_read_side(&world, &main, "bob as reader: CopyInformation yes").await;
     assert!(asked.contains(&"bob as reader: GetChannel(alice's) yes".to_string()), "reached as taking part: {asked:?}");
     assert!(asked.iter().filter(|line| line.contains("CopyInformation")).all(|line| line.ends_with(" yes")), "{asked:?}");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// What the tool call recorded in `main` returned, once it is there.
+async fn tool_result(main: &ChannelLoop) -> String {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let returned = main.history_entries().await.into_iter()
+                .filter_map(|entry| entry.said().and_then(|message| message.tool_results.first().map(|result| result.content.clone())))
+                .next();
+            if let Some(content) = returned {
+                break content;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("the call's result is recorded")
+}
+
+/// An agent reads of a channel it may not copy as a whole what may be
+/// copied of it (issues 133, 421): alice's `reader` reads her internal
+/// "side" from the main channel, made public, asked by bob. The policy is
+/// asked once what of side may be copied - in her name, asked by him -, and
+/// what it answers is the condition the history is read by: the public
+/// message, not the internal one.
+#[tokio::test]
+async fn an_agent_reads_of_another_channel_what_the_policy_lets_it_copy() {
+    let (world, session, main) = with_a_reader_of(|world| world.alice, false).await;
+    main.reclassify(&World::as_user(world.alice), Classification::PUBLIC).await.expect("hers to lower");
+    let asked = asked_to_read_side(&world, &main, "alice as reader, asked by bob: CopyInformation yes").await;
+    assert!(asked.contains(&"alice as reader, asked by bob: GetChannel(alice's) yes".to_string()), "reached with her rights: {asked:?}");
+    let result = tool_result(&main).await;
+    assert!(result.contains("for main too"), "what was released: {result}");
+    assert!(!result.contains("only for side"), "not what was not: {result}");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

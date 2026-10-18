@@ -17,7 +17,6 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::history::{HistoryEntry, Reader};
 use caelumora_model::message::MessageId;
-use caelumora_model::store::history::every;
 use caelumora_model::store::StoreResult;
 use caelumora_model::work::TurnId;
 use caelumora_model::channel::{Channel, ChannelId, InternalActor, Participant, moderation_components};
@@ -196,7 +195,7 @@ impl ChannelLoop {
     /// The entries `participant` sees of the history, as `visible_messages`
     /// reads them: who joined or left among them (issue 408).
     pub async fn visible_entries(&self, participant: ActorId) -> Vec<HistoryEntry> {
-        self.history_store.page(self.id, &Reader::Participant(participant), Position::START, None, 10_000, &every).await.expect("the history is read").entries().cloned().collect()
+        self.history_store.page(self.id, &Reader::Participant(participant), Position::START, None, 10_000, None).await.expect("the history is read").entries().cloned().collect()
     }
 
     /// The ranges of positions in which `participant` was given what went to

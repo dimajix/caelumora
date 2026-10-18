@@ -254,11 +254,16 @@ it follows at their next use. Nothing in it is fitted - there is nothing inside 
 ## Reading another channel
 
 Reading from another channel is decided per entry: per message of its history, per note, per memory
-entry. It is asked as copying the entry into the reading channel, `ConfidentialityPolicy::may_copy`,
-each side a `Place`: the channel, how the entry - or the reading channel - is classified, and the
-channel's session as privacy sees it (`SessionPrivacy`). It is asked in the name of the agent that
-reads - its owner's - because the agent passes on what it reads. A channel may always be copied into
-itself. Otherwise the rules allow it if
+entry. The policy is asked once what of the other channel may be copied into the reading one,
+`ConfidentialityPolicy::copyable`: the source channel and its session as privacy sees it
+(`SessionPrivacy`), and the reading `Place` - its channel, its classification, its session. It
+answers data, not a decision per entry: how far the reader reads the channel, the whole, what was
+released to it, flowing into its classification, or nothing (`Reading`, issue 421). Each entry is
+then judged by its classification against that answer (`Reading::admits`, behind
+`may_copy_information`) - in memory, or by the store as a condition over the level and compartments
+of the messages of a history (`Filter::readable`), so that a page counts only what may be read. It
+is asked in the name of the agent that reads - its owner's - because the agent passes on what it
+reads. A channel may always be copied into itself. Otherwise the rules allow it if
 
 *   the entry's classification flows into the reader's, and
 *   both channels belong to the same session, or the source's session lets the reader's read it
@@ -463,8 +468,8 @@ compartments may be given, the clearances of the configured roles - are decided 
 the one Caelumora applies. It decides from the context, the classifications and the places alone:
 
 *   `may_publish` - what is so classified may be put into a destination so classified;
-*   `may_copy` - what is at one place may be copied to another, by the flow rule and the source
-    session's privacy;
+*   `copyable` - what of a channel may be copied to a place, by the source session's privacy, as
+    data: nothing, the whole, or what flows into the place's classification by the flow rule;
 *   `cleared` - someone, by their roles, is cleared for what is so classified;
 *   and it names the configured compartments, by which a classification is valid at all
     (`require_classifiable`) - validation, not a permission.

@@ -12,9 +12,9 @@ use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
 use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::confidentiality::Place;
+use caelumora_model::confidentiality::{Reading, Place};
 use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext};
-use super::{channel_reading, ChannelReader, ChannelReading};
+use super::{channel_reading, ChannelReader};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::{CandidateRefusal, CandidateSnapshot, DeletedSnapshot, Detail, ParticipantSnapshot, SessionSnapshot};
 use caelumora_model::scope::ScopeField;
@@ -184,8 +184,8 @@ impl SessionView {
     pub async fn channels(&self) -> Vec<ChannelView> {
         let mut readable = Vec::new();
         for (channel, running) in self.channel_documents().await {
-            if self.readable(&channel).await == Some(ChannelReading::Whole) {
-                readable.push(ChannelView::of(self.clone(), channel, running, ChannelReading::Whole));
+            if self.reading(&channel).await == Some(Reading::Whole) {
+                readable.push(ChannelView::of(self.clone(), channel, running, Reading::Whole));
             }
         }
         readable
@@ -198,8 +198,8 @@ impl SessionView {
     pub async fn all_channels(&self) -> Vec<ChannelView> {
         let mut reachable = Vec::new();
         for (channel, running) in self.channel_documents().await {
-            if let Some(readable) = self.readable(&channel).await {
-                reachable.push(ChannelView::of(self.clone(), channel, running, readable));
+            if let Some(reading) = self.reading(&channel).await {
+                reachable.push(ChannelView::of(self.clone(), channel, running, reading));
             }
         }
         reachable
@@ -214,8 +214,8 @@ impl SessionView {
     pub async fn channel(&self, id: ChannelId) -> ViewResult<ChannelView> {
         let not_found = || ViewError::ChannelNotFound { session: self.id(), channel: id };
         let (channel, running) = self.document(id).await?.ok_or_else(not_found)?;
-        let readable = self.readable(&channel).await.ok_or_else(not_found)?;
-        Ok(ChannelView::of(self.clone(), channel, running, readable))
+        let reading = self.reading(&channel).await.ok_or_else(not_found)?;
+        Ok(ChannelView::of(self.clone(), channel, running, reading))
     }
 
     /// The channel named `name`, as an agent's tools ask for one: if the
@@ -227,8 +227,8 @@ impl SessionView {
     pub async fn channel_named(&self, name: &str) -> ViewResult<ChannelView> {
         let not_found = || ViewError::NoChannelNamed(name.to_string());
         let (channel, running) = self.channel_documents().await.into_iter().find(|(c, _)| c.name == name).ok_or_else(not_found)?;
-        let readable = self.readable(&channel).await.ok_or_else(not_found)?;
-        Ok(ChannelView::of(self.clone(), channel, running, readable))
+        let reading = self.reading(&channel).await.ok_or_else(not_found)?;
+        Ok(ChannelView::of(self.clone(), channel, running, reading))
     }
 
     /// How the viewer may read `channel`: as a whole, entry by entry, or
@@ -237,7 +237,7 @@ impl SessionView {
     /// Whoever may not read the channel - its owner, its participants, an
     /// agent's owner or the agent itself (issue 264) - reads none of it
     /// (`GetChannel`).
-    pub(super) async fn readable(&self, channel: &Channel) -> Option<ChannelReading> {
+    pub(super) async fn reading(&self, channel: &Channel) -> Option<Reading> {
         let at = Place { channel: channel.id, classification: channel.classification.clone(), session: self.privacy() };
         let reader = match self.views.viewer().place() {
             Some(from) => ChannelReader::From(from),
