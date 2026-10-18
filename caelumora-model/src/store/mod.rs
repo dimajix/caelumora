@@ -566,7 +566,7 @@ mod tests {
     #[tokio::test]
     async fn list_sessions_works() {
         let session1 = Session {
-            summary: None, briefing: None,
+            summary: None, briefing: None, language: None,
             approval_rules: Vec::new(),
             workspace: None,
             commands: Default::default(),
@@ -581,7 +581,7 @@ mod tests {
             deleted: None,
         };
         let session2 = Session {
-            summary: None, briefing: None,
+            summary: None, briefing: None, language: None,
             approval_rules: Vec::new(),
             workspace: None,
             commands: Default::default(),

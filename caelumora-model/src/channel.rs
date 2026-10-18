@@ -28,8 +28,8 @@ pub enum ChannelUpdateEvent {
     NameChanged(String),
     /// Reclassified (issue 133).
     ClassificationChanged(Classification),
-    /// Its conversation is to be held in another language, or in none in
-    /// particular (issue 56).
+    /// Its conversation is to be held in another language, or with `None`
+    /// in its session's (issues 56, 425).
     LanguageChanged(Option<String>),
     /// Its rules on tool calls changed (issue 13), as they now stand.
     ApprovalRulesChanged(Vec<ApprovalRule>),
@@ -112,7 +112,9 @@ pub struct Channel {
     /// flow into it, and who may read it. Set by its owner when creating it.
     pub classification: Classification,
     /// The language its conversation is held in (issue 56): its agents are
-    /// told to write in it. `None` if it is held in none in particular.
+    /// told to write in it. `None` if it holds none of its own: then it is
+    /// held in its session's, if that has one (issue 425,
+    /// `effective_language`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
     /// Who took part and left (issue 164): removed participants, with who
@@ -329,6 +331,13 @@ impl Channel {
         }
     }
 
+    /// The language the channel's conversation is held in (issue 425): its
+    /// own, else that of `session`, the session it belongs to - which
+    /// follows the session's as it changes. `None` if neither has one.
+    pub fn effective_language<'a>(&'a self, session: &'a Session) -> Option<&'a Language> {
+        self.language.as_ref().or(session.language.as_ref())
+    }
+
     /// Whether `actor` is one of the channel's internal actors (issue 420),
     /// which take no part in it.
     pub fn is_internal(&self, actor: ActorId) -> bool {
@@ -505,6 +514,23 @@ mod tests {
 
         assert!(channel.apply(&ChannelUpdateEvent::LanguageChanged(Some("no language".to_string()))).is_err(), "no language tag");
         assert_eq!(channel.language.as_ref().map(|l| l.as_str()), Some("de"), "unchanged");
+    }
+
+    #[test]
+    fn a_channel_without_a_language_of_its_own_is_held_in_its_sessions() {
+        let (owner, id, now) = (UserId::new(), SessionId::new(), Utc::now());
+        let mut session = Session {
+            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, participants: Vec::new(), channels: Vec::new(),
+            commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
+            security_attributes: Session::attributes_of(id, owner, &[]), deleted: None,
+        };
+        let tag = |tag: &str| Some(Language::new(tag).unwrap());
+        let mut channel = Channel::build(id, ActorId::User(owner), Name::new("main").unwrap(), ComponentConfig::default(), Classification::CHANNEL_DEFAULT, None);
+        assert_eq!(channel.effective_language(&session), None, "neither has one");
+        session.language = tag("de");
+        assert_eq!(channel.effective_language(&session), tag("de").as_ref(), "the session's");
+        channel.language = tag("fr");
+        assert_eq!(channel.effective_language(&session), tag("fr").as_ref(), "its own before the session's");
     }
 
     #[test]

@@ -23,7 +23,7 @@ export interface UserResponse {
 export interface ProfileResponse {
   introduction: string | null;
   max_introduction_chars: number;
-  /** The language you prefer, a BCP 47 tag such as `de` (issue 56); the web UI holds your new channels in it (issue 331). */
+  /** The language you prefer, a BCP 47 tag such as `de` (issue 56); the web UI holds your new sessions in it (issues 331, 425). */
   preferred_language: string | null;
   /** Your answers to tool calls given in advance (issue 13): rules that allow or deny, each within a reach. */
   approval_rules: ApprovalRule[];
@@ -40,6 +40,8 @@ export interface SessionResponse {
   name: string;
   /** What it is for, in a line (issue 245); absent if nobody said. */
   summary?: string;
+  /** The language its channels are held in where they hold none of their own, a BCP 47 tag (issue 425); `null` for none in particular. */
+  language: string | null;
   /** Whom the session lets read what was said in it (issue 134). */
   privacy: PrivacyPolicy;
 }
@@ -184,8 +186,10 @@ export interface ChannelResponse {
   responder_policy: string | null;
   /** The classification of the channel's contents (issue 133). */
   classification: Classification;
-  /** The language its conversation is held in, a BCP 47 tag (issue 56); `null` for none in particular. */
+  /** The language of its own its conversation is held in, a BCP 47 tag (issue 56); `null` if it holds none of its own. */
   language: string | null;
+  /** The language its conversation is held in (issue 425): its own, else its session's; `null` for none in particular. */
+  effective_language: string | null;
   /** What it restricts of the tool calls made in it (issue 13): rules that ask or deny. */
   approval_rules: ApprovalRule[];
   /** Whether its participants work on the session's workspace here (issue 251), where the classifications let them. */
@@ -325,6 +329,8 @@ export interface SessionSnapshot {
    * absent if nobody wrote one.
    */
   briefing?: string;
+  /** The language its channels are held in where they hold none of their own, a BCP 47 tag (issue 425); `null` for none in particular. */
+  language: string | null;
   /** Whom the session lets read what was said in it (issue 134). */
   privacy: PrivacyPolicy;
   /** What it restricts of the tool calls made in any of its channels (issue 13): rules that ask or deny. */
@@ -877,6 +883,8 @@ export interface SessionTemplate {
   id: string;
   name: string;
   description: string;
+  /** The language its sessions are held in unless another is asked for (issue 425); `null` for none in particular. */
+  language: string | null;
   /** The workspace its sessions have unless another is chosen (issue 266); absent if it names none. */
   workspace?: TemplateWorkspace;
 }
@@ -892,6 +900,8 @@ export interface TemplateWorkspace {
 export interface CreateSessionRequest {
   template_id: string;
   name: string;
+  /** The language its channels are held in where they hold none of their own (issue 425); the template's if absent. */
+  language?: string;
   /** Its workspace in place of the template's (issue 266); the template's if absent. */
   workspace?: SessionWorkspaceRequest;
 }
@@ -915,7 +925,7 @@ export interface CreateChannelRequest {
   participants: ActorId[];
   /** The classification of the channel's contents; the server's default if absent. */
   classification?: Classification;
-  /** The language its conversation is held in (issue 56); none in particular if absent (issue 331). */
+  /** The language its conversation is held in (issue 56); its session's if absent (issue 425). */
   language?: string;
   /** Whether its participants work on the session's workspace in it (issue 253); yes if absent. */
   uses_workspace?: boolean;

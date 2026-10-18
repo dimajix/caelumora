@@ -76,6 +76,9 @@ pub struct SessionSnapshot {
     /// What an agent should know before it works here (issue 245) - with
     /// `Detail::BRIEFING`.
     pub briefing: Option<Briefing>,
+    /// The language its channels are held in where they hold none of their
+    /// own (issue 425), if any.
+    pub language: Option<Language>,
     /// Whom the session lets read what was said in it (issue 134) - shown
     /// to everyone who takes part.
     pub privacy: PrivacyConfig,
@@ -125,8 +128,12 @@ pub struct ChannelSnapshot {
     pub responder_policy: Option<String>,
     /// The classification of the channel's contents (issue 133).
     pub classification: Classification,
-    /// The language its conversation is held in (issue 56), if any.
+    /// The language of its own its conversation is held in (issue 56), if
+    /// any.
     pub language: Option<Language>,
+    /// The language its conversation is held in (issue 425): its own, else
+    /// its session's (`Channel::effective_language`), if any.
+    pub effective_language: Option<Language>,
     /// What the channel restricts of tool calls (issue 13) - shown to
     /// everyone who reads it, whose agents it binds.
     pub approval_rules: Vec<ApprovalRule>,

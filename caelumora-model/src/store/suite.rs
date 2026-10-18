@@ -103,7 +103,7 @@ fn personality() -> Personality {
 fn session_template() -> SessionTemplate {
     SessionTemplate {
         access: Vec::new(),
-        summary: None, briefing: None,
+        summary: None, briefing: None, language: None,
         approval_rules: Vec::new(),
         workspace: None,
         security_attributes: Default::default(),
@@ -130,7 +130,7 @@ fn session_template() -> SessionTemplate {
 
 fn session() -> Session {
     Session {
-        summary: None, briefing: None,
+        summary: None, briefing: None, language: None,
         approval_rules: Vec::new(),
         workspace: None,
         commands: Default::default(),

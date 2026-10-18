@@ -165,7 +165,7 @@ mod tests {
     fn the_people_of_a_session_are_its_users_and_its_owner() {
         let (alice, bob) = (UserId::new(), UserId::new());
         let session = Session {
-            summary: None, briefing: None,
+            summary: None, briefing: None, language: None,
             approval_rules: Vec::new(),
             workspace: None,
             id: Default::default(),

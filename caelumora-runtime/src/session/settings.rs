@@ -1,4 +1,5 @@
-//! Changing a running session: its name, privacy, approval rules, description and workspace.
+//! Changing a running session: its name, language, privacy, approval rules, description and
+//! workspace.
 
 use caelumora_model::approval::ApprovalRule;
 use anyhow::Result;
@@ -22,6 +23,20 @@ impl SessionLoop {
     /// session, or whatever else storing it reports.
     pub async fn update_name(&self, context: &SecurityContext, new_name: &str) -> Result<()> {
         Ok(self.session_controller.update_name(context, new_name).await?)
+    }
+
+    /// Has the channels of the session that hold no language of their own
+    /// held in `language`, or in none in particular, on behalf of `context`
+    /// (issue 425): stored first, which is where the permission is checked
+    /// (`UpdateSession`), like a new name. The agents of those channels are
+    /// told from their next turn on; nothing said before is translated.
+    ///
+    /// # Errors
+    /// `StoreError::Invalid` if `language` is no language tag,
+    /// `StoreError::PermissionDenied` if `context` may not change the
+    /// session, or whatever else storing it reports.
+    pub async fn update_language(&self, context: &SecurityContext, language: Option<&str>) -> Result<()> {
+        Ok(self.session_controller.update_language(context, language).await?)
     }
 
     /// Changes whom the session lets read what was said in it (issue 134)

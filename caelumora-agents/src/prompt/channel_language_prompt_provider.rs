@@ -5,9 +5,10 @@
 //! Nothing is translated: the conversation is one, in one language. The
 //! language is named in English and in itself, and by its tag.
 //!
-//! The language is a property of the channel, read afresh at the start of
-//! every turn through the agent's views, so that a change reaches it with
-//! its next turn. It goes into the system prompt by default (parameter
+//! The language is the channel's own, else its session's (issue 425,
+//! `Channel::effective_language`), read afresh at the start of every turn
+//! through the agent's views, so that a change of either reaches it with its
+//! next turn. It goes into the system prompt by default (parameter
 //! `position`): it changes rarely. A channel held in no language in
 //! particular adds nothing. A personality without the component leaves its
 //! agents to choose themselves.
@@ -83,7 +84,7 @@ impl PromptProvider for ChannelLanguagePromptProvider {
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         // Work that reaches no session (`Situation::channel`) has no language to follow.
         let Some(channel) = situation.channel().await? else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
-        let text = self.text(channel.language().cloned());
+        let text = self.text(channel.effective_language().cloned());
         // Which language a channel is held in is no secret of its contents.
         Ok(Prompt::classified(text, Classification::PUBLIC))
     }
@@ -170,7 +171,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_language_is_read_from_the_channel_at_every_turn() {
+    async fn the_language_is_read_from_the_channel_and_its_session_at_every_turn() {
         let store = Arc::new(MemoryStore::new());
         let runtime = TestRuntime { store: Arc::clone(&store), plugins: vec![&TestAgents], ..Default::default() }.build();
         let system = SecurityContext::system();
@@ -188,7 +189,7 @@ mod tests {
         channel.participants = vec![Participant::Agent(agent.id)];
         let now = Utc::now();
         let session = Session {
-            summary: None, briefing: None,
+            summary: None, briefing: None, language: None,
             approval_rules: Vec::new(),
             workspace: None,
             id: session_id, name: Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
@@ -211,6 +212,13 @@ mod tests {
         running.update_language(&system, Some("fr")).await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(prompt.text.contains("\"fr\""), "the language as it is now: {}", prompt.text);
+
+        session_loop.update_language(&system, Some("it")).await.unwrap();
+        let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
+        assert!(prompt.text.contains("\"fr\""), "its own before the session's: {}", prompt.text);
+        running.update_language(&system, None).await.unwrap();
+        let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
+        assert!(prompt.text.contains("\"it\""), "without one of its own, the session's as it is now (issue 425): {}", prompt.text);
     }
 
     /// What `provider` tells agent `agent` in the turn begun in `state`.

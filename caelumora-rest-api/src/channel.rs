@@ -111,7 +111,7 @@ pub struct CreateChannelRequest {
     /// configured; `internal` without compartments if absent.
     pub classification: Option<Classification>,
     /// The language its conversation is held in (issue 56), a BCP 47 tag;
-    /// none in particular if absent (issue 331).
+    /// its session's if absent (issue 425).
     #[serde(default)]
     pub language: Option<String>,
     /// Whether its participants work on the session's workspace in it (issue
@@ -150,9 +150,12 @@ pub struct ChannelResponse {
     pub responder_policy: Option<String>,
     /// The classification of the channel's contents (issue 133).
     pub classification: Classification,
-    /// The language its conversation is held in (issue 56); `null` for none
-    /// in particular.
+    /// The language of its own its conversation is held in (issue 56);
+    /// `null` if it holds none of its own.
     pub language: Option<Language>,
+    /// The language its conversation is held in (issue 425): its own, else
+    /// its session's; `null` for none in particular.
+    pub effective_language: Option<Language>,
     /// What it restricts of the tool calls made in it (issue 13): rules that
     /// ask or deny.
     pub approval_rules: Vec<ApprovalRule>,
@@ -215,6 +218,7 @@ impl From<snapshot::ChannelSnapshot> for ChannelResponse {
             responder_policy: view.responder_policy,
             classification: view.classification,
             language: view.language,
+            effective_language: view.effective_language,
             approval_rules: view.approval_rules,
             uses_workspace: view.uses_workspace,
             workspace_id: view.workspace_id,
@@ -419,7 +423,7 @@ mod tests {
             moderator: Some("policy_moderator".to_string()),
             responder_policy: Some("broadcast_policy".to_string()),
             classification: Classification::CHANNEL_DEFAULT,
-            language: None,
+            language: None, effective_language: None,
             can_change: true,
             participants: vec![participant(alice, None), participant(approver, Some("Approver")), participant(ActorId::System, Some("system"))],
             former_participants: Vec::new(),
@@ -437,7 +441,7 @@ mod tests {
     fn what_a_place_is_for_is_left_out_where_nothing_was_said_or_read() {
         let view = snapshot::ChannelSnapshot { summary: None, briefing: None, approval_rules: Vec::new(), workspace_id: None, id: ChannelId::new(), name: "main".to_string(),
             uses_workspace: true,
-            moderator: None, responder_policy: None, classification: Classification::CHANNEL_DEFAULT, language: None, can_change: false, participants: Vec::new(), former_participants: Vec::new(), unread: None };
+            moderator: None, responder_policy: None, classification: Classification::CHANNEL_DEFAULT, language: None, effective_language: None, can_change: false, participants: Vec::new(), former_participants: Vec::new(), unread: None };
         let json = serde_json::to_value(ChannelResponse::from(view.clone())).unwrap();
         assert!(json.get("summary").is_none() && json.get("briefing").is_none(), "{json}");
         let described = snapshot::ChannelSnapshot { summary: Some(Summary::new("Planning").unwrap()), briefing: Some(Briefing::new("Dates in UTC.").unwrap()), ..view.clone() };
@@ -475,7 +479,7 @@ mod tests {
             moderator: None,
             responder_policy: None,
             classification: Classification::CHANNEL_DEFAULT,
-            language: None,
+            language: None, effective_language: None,
             can_change: false,
             participants: vec![participant(alice, "alice", Vec::new()), participant(helper, "Helper", vec![note])],
             former_participants: Vec::new(),
@@ -503,7 +507,7 @@ mod tests {
             moderator: None,
             responder_policy: None,
             classification: Classification::CHANNEL_DEFAULT,
-            language: None,
+            language: None, effective_language: None,
             can_change: true,
             participants: vec![participant(alice, None)],
             former_participants: vec![participant(helper, Some(left.clone()))],

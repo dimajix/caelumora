@@ -8,6 +8,7 @@ import {
   Edit2,
   FileText,
   HardDrive,
+  Languages,
   LogOut,
   MessageSquare,
   Package,
@@ -33,6 +34,7 @@ import {NewChannelDialog} from './NewChannelDialog';
 import {PrivacyDialog} from './PrivacyDialog';
 import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {DescriptionDialog} from './DescriptionDialog';
+import {LanguageDialog} from './LanguageDialog';
 import {ProfileDialog} from './ProfileDialog';
 import {NewWorkspaceDialog} from './NewWorkspaceDialog';
 import {NewSkillDialog} from './NewSkillDialog';
@@ -185,6 +187,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // fetched before, since the list's sessions come without their briefing.
   const [descriptionOf, setDescriptionOf] = useState<string | null>(null);
   const descriptionSession = sessions.find(s => s.id === descriptionOf) ?? null;
+  // The session whose language is changed (issue 425), likewise by id.
+  const [languageOf, setLanguageOf] = useState<string | null>(null);
+  const languageSession = sessions.find(s => s.id === languageOf) ?? null;
   // Changes whenever something may have been deleted or restored, so that
   // the trash is loaded again (issue 164).
   const [trashVersion, setTrashVersion] = useState(0);
@@ -441,6 +446,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     {label: 'Rename', icon: Edit2, onSelect: () => handleRenameSession(session.id, session.name)},
                     // Fetched first: the list holds no briefing, and saving without it would remove it.
                     {label: 'Description', icon: FileText, onSelect: () => void refreshSession(session.id).then(() => setDescriptionOf(session.id))},
+                    ...(session.can_change ? [{label: 'Language', icon: Languages, onSelect: () => setLanguageOf(session.id)}] : []),
                     {label: 'Privacy', icon: Shield, onSelect: () => handleShowPrivacy(session.id)},
                     {label: 'Approval rules', icon: ShieldAlert, onSelect: () => setRulesOf(session.id)},
                     {label: 'Workspace', icon: HardDrive, onSelect: () => setWorkspaceOf(session.id)},
@@ -607,6 +613,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
             setSessions(prev => upsert(prev, updated));
           }}
           onClose={() => setDescriptionOf(null)}
+        />
+      )}
+
+      {languageSession && (
+        <LanguageDialog
+          title={`Language of ${languageSession.name}`}
+          current={languageSession.language}
+          empty="None"
+          emptyHint="it holds in every channel without a language of its own; empty leaves it to their agents"
+          onSubmit={async (language) => {
+            const updated = await api.setSessionLanguage(languageSession.id, language);
+            setSessions(prev => upsert(prev, updated));
+          }}
+          onClose={() => setLanguageOf(null)}
         />
       )}
 

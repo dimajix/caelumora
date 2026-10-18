@@ -159,6 +159,7 @@ pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
             get(sessions::get_session).delete(sessions::delete_session).patch(sessions::rename_session),
         )
         .route("/sessions/{id}/privacy", axum::routing::put(sessions::update_session_privacy))
+        .route("/sessions/{id}/language", axum::routing::put(sessions::set_session_language))
         .route("/sessions/{id}/participants", post(sessions::add_participant))
         .route("/sessions/{id}/join", post(sessions::join_session))
         .route("/sessions/{id}/candidates", get(sessions::candidates))

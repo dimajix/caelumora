@@ -66,3 +66,7 @@ it that does not name its own (both through `preferred_language` in
   …/channels/{cid}/language`); a failure is reported and the session stays. The new-channel dialog
   presets it as before. The TUI does the same for the session it creates and logs a failure. With
   this, a channel held in no language can be created by someone who prefers one.
+- **2026-10-18** — A session has a language its channels follow where they hold none of their own
+  ([425](425-session-language.md)): the frontends preset the session's from the preferred language
+  instead of setting it on each channel, and a channel without a language of its own is no longer
+  held in none while its session has one.

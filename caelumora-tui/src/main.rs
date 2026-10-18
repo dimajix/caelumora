@@ -11,6 +11,7 @@ use caelumora_model::question::{Question, QuestionId, QuestionRequest, Response}
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::user::UserId;
 use caelumora_model::user_provider::Credential;
+use caelumora_model::value::language::Language;
 use caelumora_model::work::TurnId;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::component::{ComponentError, ComponentRegistry};
@@ -541,21 +542,14 @@ async fn main() -> Result<()> {
         .find(|t| t.name.name == args.template.as_str())
         .ok_or_else(|| anyhow::anyhow!("Session template '{}' not found: templates come from the `seed` of the configuration - `--config examples/config.yaml` seeds the demo ones", args.template))?;
 
-    let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
-    let session_loop = session_manager.create_from_template(&security, template.id, Some("default-session"), None).await?;
-    let session_id = session_loop.id();
-
-    // Its channels held in the language the user prefers where the template
-    // names none: the frontend's to set, not the server's (issue 331).
+    // Held in the language the user prefers where the template names none:
+    // the frontend's to offer, not the server's (issues 331, 425).
     let preferred = entity_stores.user_profiles.get(&security, owner).await.optional()?.and_then(|profile| profile.preferred_language);
-    if let Some(language) = preferred {
-        for channel in session_loop.channels().into_iter().filter(|channel| channel.channel().language.is_none()) {
-            // The session exists either way; reported, not undone.
-            if let Err(e) = channel.update_language(&security, Some(language.as_str())).await {
-                tracing::warn!(channel = %channel.id(), "The language of the channel could not be set: {e:#}");
-            }
-        }
-    }
+    let language = preferred.filter(|_| template.language.is_none());
+
+    let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
+    let session_loop = session_manager.create_from_template(&security, template.id, Some("default-session"), language.as_ref().map(Language::as_str), None).await?;
+    let session_id = session_loop.id();
 
     // The template's first channel, whatever it is called.
     let channel = session_loop.channels().into_iter().next()

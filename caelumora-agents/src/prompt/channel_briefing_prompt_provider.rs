@@ -185,7 +185,7 @@ mod tests {
         channel.participants = vec![Participant::Agent(agent.id)];
         let now = Utc::now();
         let session = Session {
-            summary: Some(Summary::new("Release 2.0").unwrap()), briefing: None,
+            summary: Some(Summary::new("Release 2.0").unwrap()), briefing: None, language: None,
             approval_rules: Vec::new(),
             workspace: None,
             id: session_id, name: Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],

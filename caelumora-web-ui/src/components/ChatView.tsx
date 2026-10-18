@@ -69,7 +69,7 @@ import {MessageEditor} from './MessageEditor';
 import {LanguageDialog} from './LanguageDialog';
 import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {languageLabel} from '../language';
-import {approvalRulesChangedChannel, changedChannel, descriptionChangedChannel, languageChangedChannel, joinedOrLeftChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel, saidInChannel} from '../globalEvents';
+import {approvalRulesChangedChannel, changedChannel, descriptionChangedChannel, languageChangedChannel, languageChangedSession, joinedOrLeftChannel, onGlobalEvent, profileApprovalRules, reclassifiedChannel, saidInChannel} from '../globalEvents';
 import {isOthers, markRead} from '../unread';
 import {api} from '../api';
 import type {Page} from '../page';
@@ -541,9 +541,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         if (description.channelId === channelId) setChannel(prev => prev && {...prev, summary: description.summary, briefing: description.briefing});
         return;
       }
+      // Which language holds is the server's to say (issue 425): the channel
+      // is fetched again when its own language or its session's changed.
       const language = languageChangedChannel(event);
-      if (language) {
-        if (language.channelId === channelId) setChannel(prev => prev && {...prev, language: language.language});
+      const sessionLanguage = languageChangedSession(event);
+      if (language || sessionLanguage) {
+        if (language?.channelId === channelId || sessionLanguage === sessionId) {
+          api.getChannel(sessionId, channelId)
+            .then(setChannel)
+            .catch(error => reportError('Failed to load the channel', error));
+        }
         return;
       }
       const reclassified = reclassifiedChannel(event);
@@ -1968,6 +1975,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         <LanguageDialog
           title={`Language of ${channel.name}`}
           current={channel.language}
+          empty="The session's"
+          emptyHint="empty: the session's, if it has one"
           onSubmit={async (language) => setChannel(await api.setChannelLanguage(sessionId, channelId, language))}
           onClose={() => setIsChangingLanguage(false)}
         />
@@ -2133,7 +2142,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             >
               <Languages size={14} />
               <span>Language:</span>
-              <span className="text-gray-700 dark:text-gray-300">{languageLabel(channel.language)}</span>
+              <span className="text-gray-700 dark:text-gray-300">{languageLabel(channel.effective_language)}</span>
+              {channel.language === null && channel.effective_language !== null && <span>(the session's)</span>}
               {channel.can_change && (
                 <button
                   onClick={() => setIsChangingLanguage(true)}

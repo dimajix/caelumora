@@ -8,6 +8,7 @@ use crate::session::{Found, SessionLoop};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::{Channel, ChannelField, Participant};
+use caelumora_model::value::language::Language;
 use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::digest::Digest;
 use caelumora_model::note::Note;
@@ -106,6 +107,12 @@ impl SessionView {
     /// `None` if nobody wrote it.
     pub fn briefing(&self) -> Option<&Briefing> {
         self.session.briefing.as_ref()
+    }
+
+    /// The language its channels are held in where they hold none of their
+    /// own (issue 425), if any.
+    pub fn language(&self) -> Option<&Language> {
+        self.session.language.as_ref()
     }
 
     /// The session as privacy sees it now (issue 134).
@@ -409,6 +416,7 @@ impl SessionView {
             name: self.session.name.to_string(),
             summary: self.session.summary.clone(),
             briefing: self.session.briefing.clone().filter(|_| detail.contains(Detail::BRIEFING)),
+            language: self.session.language.clone(),
             privacy: self.session.privacy,
             approval_rules: self.session.approval_rules.clone(),
             can_change: self.may_change().await,

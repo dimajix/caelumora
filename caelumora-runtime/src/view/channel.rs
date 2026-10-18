@@ -112,10 +112,17 @@ impl ChannelView {
         &self.channel.classification
     }
 
-    /// The language the channel's conversation is held in (issue 56), if
-    /// any.
+    /// The language of its own the channel's conversation is held in (issue
+    /// 56), if any.
     pub fn language(&self) -> Option<&Language> {
         self.channel.language.as_ref()
+    }
+
+    /// The language the channel's conversation is held in (issue 425): its
+    /// own, else its session's as it was when the channel was reached, if
+    /// any.
+    pub fn effective_language(&self) -> Option<&Language> {
+        self.channel.effective_language(self.session.as_session())
     }
 
     /// What the channel is for, in a line (issue 245); `None` if nobody said.
@@ -429,6 +436,7 @@ impl ChannelView {
             responder_policy: self.responder_policy(),
             classification: self.channel.classification.clone(),
             language: self.channel.language.clone(),
+            effective_language: self.effective_language().cloned(),
             approval_rules: self.channel.approval_rules.clone(),
             uses_workspace: self.channel.uses_workspace,
             workspace_id: self.readable_workspace().await,

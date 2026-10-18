@@ -205,11 +205,15 @@ export const api = {
     return res.json();
   },
 
-  /** A session from the template `templateId`, with `workspace` in place of the template's if given (issue 266). */
-  async createSession(templateId: string, name: string, workspace?: SessionWorkspaceRequest): Promise<SessionResponse> {
+  /**
+   * A session from the template `templateId`, held in `language` and with `workspace` in place of
+   * the template's if given (issues 266, 425).
+   */
+  async createSession(templateId: string, name: string, language?: string, workspace?: SessionWorkspaceRequest): Promise<SessionResponse> {
     const payload: CreateSessionRequest = {
       template_id: templateId,
       name: name,
+      language,
       workspace,
     };
     const res = await request(`/sessions`, {
@@ -331,7 +335,7 @@ export const api = {
     return res.json();
   },
 
-  /** Has the channel held in `language` - none in particular if `null` (issue 56); answers with the channel as it is now. */
+  /** Has the channel held in `language` - in its session's if `null` (issues 56, 425); answers with the channel as it is now. */
   /** Sets what the channel restricts of the tool calls made in it (issue 13): rules that ask or deny, replacing those it had. */
   async setChannelApprovalRules(sessionId: string, channelId: string, rules: ApprovalRule[]): Promise<ChannelResponse> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/approval-rules`, {
@@ -633,6 +637,20 @@ export const api = {
 
   /** Changes whom the session lets read what was said in it (issue 134); only its owner may. */
   /** Sets what the session restricts of tool calls in any of its channels (issue 13): rules that ask or deny, replacing those it had. */
+  /**
+   * Has the channels of the session that hold no language of their own held in `language` - none in
+   * particular if `null` (issue 425); answers with the session as it is now.
+   */
+  async setSessionLanguage(sessionId: string, language: string | null): Promise<SessionSnapshot> {
+    const res = await request(`/sessions/${sessionId}/language`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(language),
+    });
+    await ensureOk(res, 'Failed to change the language');
+    return res.json();
+  },
+
   /** Says what the session is for (issue 245): `null` or blank removes one. */
   async setSessionDescription(sessionId: string, description: Description): Promise<SessionSnapshot> {
     const res = await request(`/sessions/${sessionId}/description`, {

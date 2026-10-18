@@ -128,7 +128,7 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({username, sessions,
             value={language}
             disabled={!loaded}
             onChange={setLanguage}
-            hint="the channels you create are held in it unless you choose another; their agents are told to write in it."
+            hint="the sessions you create are held in it unless their template or you choose another; the agents of their channels are told to write in it."
           />
           {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
           <div className="pt-2">

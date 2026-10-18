@@ -1,6 +1,6 @@
 # 425 — A session has no language its channels could follow
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -76,3 +76,17 @@ own is held in its session's.
   [424](424-time-in-the-prompt.md): a session is to have a language as well, used where a channel
   has chosen none. Decided with it: a channel follows its session's language rather than copying it,
   and there is no third state for a channel explicitly held in none.
+- **2026-10-18** — Done as decided. `Session::language` (`SessionUpdateEvent::LanguageChanged`,
+  `SessionLoop::update_language`, checked as `UpdateSession`); the rule which language holds is
+  `Channel::effective_language(&Session)` in the model, asked by `ChannelView::effective_language`,
+  the snapshot and the `channel_language_prompt_provider`. A session is held in the language the
+  request names, else in its template's (`SessionTemplate::language`, the precedence in
+  `SessionTemplate::build`); `SessionManager::create_from_template` takes the request's. REST:
+  `language` on sessions and in `POST /sessions`, `PUT /sessions/{id}/language`,
+  `effective_language` on channels, `language` on templates. The web UI presets a new session's
+  language from its template or the profile and no longer sets it on each channel; a new channel
+  is held in none of its own unless one is chosen; a session's language is changed from its menu;
+  the chat shows the language that holds, marked where it is the session's. The TUI presets the
+  session's language as the web UI does. Stored data: a new optional field, nothing to delete -
+  but channels the web UI or the TUI gave the preferred language before keep it as their own and
+  do not follow their session's until it is taken back.
