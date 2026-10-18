@@ -36,6 +36,7 @@ use caelumora_model::context::{ModelProfile, SenderFormat, SenderStyle};
 use caelumora_model::message::{estimated_tokens, Message, MessageId};
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
+use caelumora_model::value::time_zone::TimeZone;
 use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
 use caelumora_runtime::moderator::ResponderPolicy;
 use serde::Deserialize;
@@ -100,7 +101,8 @@ struct DecisionPolicyConfig {
 }
 
 impl DecisionPolicyConfig {
-    /// How the model is given what was said.
+    /// How the model is given what was said - without the times of the
+    /// messages (issue 424), which who is to respond does not depend on.
     fn profile(&self) -> ModelProfile {
         ModelProfile { sender_format: self.sender_format, sender_style: self.sender_style, ..ModelProfile::default() }
     }
@@ -226,7 +228,9 @@ impl DecisionPolicy {
                 }
                 continue;
             }
-            if let Some(text) = self.profile.given(message, ActorId::None, false).content {
+            // Who is to respond is decided by what was said, not when: the
+            // profile gives no times, and the time zone is none's.
+            if let Some(text) = self.profile.given(message, ActorId::None, false, TimeZone::UTC).content {
                 texts.push_back((text, to_answer));
             }
         }

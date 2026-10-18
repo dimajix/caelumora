@@ -5,6 +5,7 @@ import {
   Bot,
   ChevronDown,
   ChevronRight,
+  Clock,
   Edit2,
   FileText,
   HardDrive,
@@ -35,6 +36,7 @@ import {PrivacyDialog} from './PrivacyDialog';
 import {ApprovalRulesDialog} from './ApprovalRulesDialog';
 import {DescriptionDialog} from './DescriptionDialog';
 import {LanguageDialog} from './LanguageDialog';
+import {TimeZoneDialog} from './TimeZoneDialog';
 import {ProfileDialog} from './ProfileDialog';
 import {NewWorkspaceDialog} from './NewWorkspaceDialog';
 import {NewSkillDialog} from './NewSkillDialog';
@@ -190,6 +192,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // The session whose language is changed (issue 425), likewise by id.
   const [languageOf, setLanguageOf] = useState<string | null>(null);
   const languageSession = sessions.find(s => s.id === languageOf) ?? null;
+  // The session whose time zone is changed (issue 424), likewise by id.
+  const [timeZoneOf, setTimeZoneOf] = useState<string | null>(null);
+  const timeZoneSession = sessions.find(s => s.id === timeZoneOf) ?? null;
   // Changes whenever something may have been deleted or restored, so that
   // the trash is loaded again (issue 164).
   const [trashVersion, setTrashVersion] = useState(0);
@@ -446,7 +451,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     {label: 'Rename', icon: Edit2, onSelect: () => handleRenameSession(session.id, session.name)},
                     // Fetched first: the list holds no briefing, and saving without it would remove it.
                     {label: 'Description', icon: FileText, onSelect: () => void refreshSession(session.id).then(() => setDescriptionOf(session.id))},
-                    ...(session.can_change ? [{label: 'Language', icon: Languages, onSelect: () => setLanguageOf(session.id)}] : []),
+                    ...(session.can_change ? [
+                      {label: 'Language', icon: Languages, onSelect: () => setLanguageOf(session.id)},
+                      {label: 'Time zone', icon: Clock, onSelect: () => setTimeZoneOf(session.id)},
+                    ] : []),
                     {label: 'Privacy', icon: Shield, onSelect: () => handleShowPrivacy(session.id)},
                     {label: 'Approval rules', icon: ShieldAlert, onSelect: () => setRulesOf(session.id)},
                     {label: 'Workspace', icon: HardDrive, onSelect: () => setWorkspaceOf(session.id)},
@@ -627,6 +635,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
             setSessions(prev => upsert(prev, updated));
           }}
           onClose={() => setLanguageOf(null)}
+        />
+      )}
+
+      {timeZoneSession && (
+        <TimeZoneDialog
+          title={`Time zone of ${timeZoneSession.name}`}
+          current={timeZoneSession.time_zone}
+          onSubmit={async (timeZone) => {
+            const updated = await api.setSessionTimeZone(timeZoneSession.id, timeZone);
+            setSessions(prev => upsert(prev, updated));
+          }}
+          onClose={() => setTimeZoneOf(null)}
         />
       )}
 

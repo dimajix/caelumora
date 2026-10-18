@@ -146,7 +146,7 @@ mod tests {
         let (first, second) = (thought(ActorId::Agent(agent), "first"), thought(ActorId::Agent(agent), "second"));
         let reasoning_of = |messages: &[Message]| messages.iter().map(|m| m.reasoning.is_some()).collect::<Vec<_>>();
         let (first, second) = {
-            state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), profile(ReasoningHistory::CurrentTurn));
+            state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), profile(ReasoningHistory::CurrentTurn), Default::default());
             let mut turn = Turn::under_way(agent, &mut state);
             turn.set_context(Vec::new(), Vec::new());
             let first = turn.push_message(first.clone());
@@ -169,7 +169,7 @@ mod tests {
         // Under `Always`, the agent's own reasoning of earlier turns too -
         // still not another agent's.
         let third = thought(ActorId::Agent(agent), "third");
-        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), profile(ReasoningHistory::Always));
+        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), profile(ReasoningHistory::Always), Default::default());
         let mut turn = Turn::under_way(agent, &mut state);
         turn.set_context(Vec::new(), Vec::new());
         turn.push_message(third);
@@ -255,7 +255,7 @@ mod tests {
         let (first, second, third, fourth) = (answer("first"), answer("second"), answer("third"), answer("fourth"));
         let take_turn = |state: &mut AgentChannelState, tools: Vec<Tool>, messages: &[&Message]| {
             let sets = if tools.is_empty() { Vec::new() } else { vec![ToolSet::new("tools", "some tools", tools.clone())] };
-            state.begin_turn(Default::default(), Default::default(), Default::default(), Default::default());
+            state.begin_turn(Default::default(), Default::default(), Default::default(), Default::default(), Default::default());
             state.offer_tools(sets);
             let mut turn = Turn::under_way(agent, state);
             let (_, offered) = turn.full_context().unwrap();

@@ -10,6 +10,7 @@ use crate::store::query::Field;
 use chrono::{DateTime, Utc};
 use crate::value::language::Language;
 use crate::value::name::Name;
+use crate::value::time_zone::TimeZone;
 use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
 use crate::workspace::WorkspaceId;
@@ -26,6 +27,9 @@ pub enum SessionUpdateEvent {
     /// particular, where they hold none of their own (issue 425); made into
     /// a language as the change is applied, as a name is.
     LanguageChanged(Option<String>),
+    /// It is to be held in another time zone, or with `None` in UTC (issue
+    /// 424); made into a time zone as the change is applied.
+    TimeZoneChanged(Option<String>),
     /// The session's privacy policy changed (issue 134).
     PrivacyChanged(PrivacyConfig),
     /// Its rules on tool calls changed (issue 13), as they now stand.
@@ -69,6 +73,10 @@ pub struct Session {
     /// in none in particular.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
+    /// The time zone the times its agents are given are written in (issue
+    /// 424, `effective_time_zone`); `None` for UTC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_zone: Option<TimeZone>,
     pub participants: Vec<Participant>,
     /// The session's channels by id, in order; each is a document of its own
     /// (issue 70).
@@ -122,6 +130,7 @@ impl Updatable for Session {
         match event {
             SessionUpdateEvent::NameChanged(name) => self.name = Name::new(name)?,
             SessionUpdateEvent::LanguageChanged(language) => self.language = Language::optional(language.as_deref())?,
+            SessionUpdateEvent::TimeZoneChanged(zone) => self.time_zone = TimeZone::optional(zone.as_deref())?,
             SessionUpdateEvent::PrivacyChanged(privacy) => self.privacy = *privacy,
             SessionUpdateEvent::ApprovalRulesChanged(rules) => self.approval_rules = rules.clone(),
             SessionUpdateEvent::DescriptionChanged { summary, briefing } => self.describe(summary.as_deref(), briefing.as_deref())?,
@@ -143,6 +152,13 @@ impl Deletable for Session {
 }
 
 impl Session {
+    /// The time zone the session is held in (issue 424): its own, else UTC -
+    /// never the server's, which is the deployment's and would make what a
+    /// model is given depend on the machine.
+    pub fn effective_time_zone(&self) -> TimeZone {
+        self.time_zone.unwrap_or(TimeZone::UTC)
+    }
+
     /// The attributes of a new session `id` of `owner`: read by its
     /// members, whoever they are at the time (issue 23) - the group of its
     /// participants, stored with it (`Group::of_session`) -, and granting
@@ -220,7 +236,7 @@ mod tests {
         ];
         let now = Utc::now();
         let mut session = Session {
-            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
+            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
             commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
             security_attributes: Session::attributes_of(id, alice, &access), deleted: None,
         };
@@ -237,7 +253,7 @@ mod tests {
     fn a_change_is_made_into_the_session_s_values_or_leaves_it_as_it_was() {
         let (alice, id, now) = (UserId::new(), SessionId::new(), Utc::now());
         let mut session = Session {
-            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
+            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
             commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
             security_attributes: Session::attributes_of(id, alice, &[]), deleted: None,
         };
@@ -252,6 +268,12 @@ mod tests {
         assert_eq!(session.language.as_ref().map(Language::as_str), Some("de"), "unchanged");
         session.apply(&SessionUpdateEvent::LanguageChanged(None)).unwrap();
         assert_eq!(session.language, None, "taken back");
+
+        assert_eq!(session.effective_time_zone(), TimeZone::UTC, "UTC where it names none");
+        session.apply(&SessionUpdateEvent::TimeZoneChanged(Some("Europe/Berlin".to_string()))).unwrap();
+        assert_eq!(session.effective_time_zone().as_str(), "Europe/Berlin");
+        assert!(session.apply(&SessionUpdateEvent::TimeZoneChanged(Some("Europe/Atlantis".to_string()))).is_err(), "no time zone");
+        assert_eq!(session.effective_time_zone().as_str(), "Europe/Berlin", "unchanged");
 
         assert!(session.apply(&SessionUpdateEvent::NameChanged(String::new())).is_err(), "no name");
         assert_eq!(session.name.as_str(), "planning", "unchanged");

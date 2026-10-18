@@ -3,7 +3,9 @@
 //! contain a text. Only channels the agent's channel may read by their
 //! classifications can be read - as the turn's views answer
 //! (`Situation::session`, issues 133, 163); every read is recorded as a
-//! `KnowledgeRef` with the turn's messages.
+//! `KnowledgeRef` with the turn's messages. When a message was said is
+//! written as the model is given the times of its own channel's (issue
+//! 424): in the turn's time zone, in the same form.
 
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
@@ -98,11 +100,12 @@ impl ToolProvider for ChannelHistoryComponent {
         let source = KnowledgeSource::History { digest: page.digest, from: Some(channel.visible_from().await?).filter(|from| *from > Position::START) };
         turn.record_knowledge(KnowledgeRef { channel: channel.id(), session: channel.session().id(), source, classification: classification.clone() });
 
+        let time_zone = turn.situation().time_zone();
         let value = serde_json::json!({
             "channel": channel.name(),
             "messages": messages.iter().map(|m| serde_json::json!({
                 "from": m.sender_name,
-                "at": m.timestamp.to_rfc3339(),
+                "at": time_zone.format(m.timestamp),
                 "text": m.content.clone().unwrap_or_default(),
             })).collect::<Vec<_>>(),
             "more": more,

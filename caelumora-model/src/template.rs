@@ -10,6 +10,7 @@ use crate::channel::{Channel, ChannelId, InternalActor, Participant};
 use crate::component::ComponentConfig;
 use crate::confidentiality::Classification;
 use crate::value::language::Language;
+use crate::value::time_zone::TimeZone;
 use crate::scope::Scope::{GlobalScope, SessionScope, UserScope};
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Briefing, Description, Summary};
@@ -195,6 +196,11 @@ pub struct SessionTemplate {
     /// (issue 331).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
+    /// The time zone sessions made from it are held in (issue 424), unless
+    /// the request names another; UTC unless named - a frontend may then
+    /// offer its user's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_zone: Option<TimeZone>,
     /// Every participant of the session - users and agents - each with the
     /// name its channels refer to it by. A channel's approver is no
     /// participant: the channel names it (`ChannelTemplate::internal_actors`).
@@ -311,8 +317,8 @@ impl Scoped for SessionTemplate {
 impl SessionTemplate {
 
     /// Builds the session `id` of `owner`, named `name` and held in
-    /// `language` where the request names one, else in the template's (issue
-    /// 425), and its channels -
+    /// `language` and `time_zone` where the request names them, else in the
+    /// template's (issues 424, 425), and its channels -
     /// documents of their own, which the session lists by id (issue 70),
     /// built empty (issue 420). `participants` are the template's users as
     /// found for it (`ParticipantTemplate::request`), each with its name in
@@ -325,7 +331,7 @@ impl SessionTemplate {
     /// # Errors
     /// `TemplateError::ParticipantNotFound` if a channel names a participant
     /// the template does not have.
-    pub fn build(&self, id: SessionId, owner: UserId, name: Name, language: Option<Language>, participants: Vec<(String, Participant)>) -> TemplateResult<(Session, Vec<Channel>)> {
+    pub fn build(&self, id: SessionId, owner: UserId, name: Name, language: Option<Language>, time_zone: Option<TimeZone>, participants: Vec<(String, Participant)>) -> TemplateResult<(Session, Vec<Channel>)> {
         let known: Vec<&str> = self.participants.iter().map(ParticipantTemplate::name).collect();
         let channels = self.channels.iter()
             .map(|channel| channel.instantiate(id, owner, &known))
@@ -339,6 +345,7 @@ impl SessionTemplate {
             summary: self.summary.clone(),
             briefing: self.briefing.clone(),
             language: language.or_else(|| self.language.clone()),
+            time_zone: time_zone.or(self.time_zone),
             participants,
             channels: channels.iter().map(|c: &Channel| c.id).collect(),
             commands: self.commands.clone(),
@@ -424,7 +431,7 @@ mod tests {
     fn template() -> SessionTemplate {
         SessionTemplate {
             access: Vec::new(),
-            summary: None, briefing: None, language: None,
+            summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
             security_attributes: Default::default(),
@@ -484,7 +491,7 @@ mod tests {
         template.briefing = Some(Briefing::new("Review before you merge.").unwrap());
         template.channels[0].summary = Some(Summary::new("Where the pairing happens").unwrap());
         let (id, owner) = (SessionId::new(), UserId::new());
-        let (session, channels) = template.build(id, owner, Name::new("s").unwrap(), None, resolved(&template, id, owner)).unwrap();
+        let (session, channels) = template.build(id, owner, Name::new("s").unwrap(), None, None, resolved(&template, id, owner)).unwrap();
         assert_eq!((session.summary.as_ref().map(Summary::as_str), session.briefing.as_ref().map(Briefing::as_str)), (Some("Pair programming"), Some("Review before you merge.")), "copied");
         assert_eq!((channels[0].summary.as_ref().map(Summary::as_str), channels[0].briefing.as_ref()), (Some("Where the pairing happens"), None));
         assert_eq!(channels[1].summary, None, "a channel that says nothing");
@@ -500,7 +507,7 @@ mod tests {
         let mut template = template();
         template.channels[0].language = Some(Language::new("de").unwrap());
         let (id, owner) = (SessionId::new(), UserId::new());
-        let (_, channels) = template.build(id, owner, Name::new("s").unwrap(), None, resolved(&template, id, owner)).unwrap();
+        let (_, channels) = template.build(id, owner, Name::new("s").unwrap(), None, None, resolved(&template, id, owner)).unwrap();
         assert_eq!(channels[0].language.as_ref().map(Language::as_str), Some("de"), "the template's");
         assert_eq!(channels[1].language, None, "a template that names none: none of its own, the session's (issue 425)");
 
@@ -514,16 +521,33 @@ mod tests {
         let mut template = template();
         let (id, owner) = (SessionId::new(), UserId::new());
         let language = |tag: &str| Some(Language::new(tag).unwrap());
-        let (session, _) = template.build(id, owner, Name::new("s").unwrap(), None, resolved(&template, id, owner)).unwrap();
+        let (session, _) = template.build(id, owner, Name::new("s").unwrap(), None, None, resolved(&template, id, owner)).unwrap();
         assert_eq!(session.language, None, "neither names one: none in particular");
         template.language = language("de");
-        let (session, _) = template.build(id, owner, Name::new("s").unwrap(), None, resolved(&template, id, owner)).unwrap();
+        let (session, _) = template.build(id, owner, Name::new("s").unwrap(), None, None, resolved(&template, id, owner)).unwrap();
         assert_eq!(session.language, language("de"), "the template's");
-        let (session, _) = template.build(id, owner, Name::new("s").unwrap(), language("fr"), resolved(&template, id, owner)).unwrap();
+        let (session, _) = template.build(id, owner, Name::new("s").unwrap(), language("fr"), None, resolved(&template, id, owner)).unwrap();
         assert_eq!(session.language, language("fr"), "the one asked for before the template's");
 
         let named: SessionTemplate = serde_json::from_value(serde_json::json!({"id": Uuid::new_v4(), "name": "s", "language": "de", "participants": [], "channels": []})).unwrap();
         assert_eq!(named.language, language("de"), "a seed names it by its tag");
+    }
+
+    #[test]
+    fn a_session_is_held_in_the_time_zone_asked_for_else_in_its_templates() {
+        let mut template = template();
+        let (id, owner) = (SessionId::new(), UserId::new());
+        let zone = |name: &str| Some(TimeZone::new(name).unwrap());
+        let (session, _) = template.build(id, owner, Name::new("s").unwrap(), None, None, resolved(&template, id, owner)).unwrap();
+        assert_eq!(session.time_zone, None, "neither names one: UTC");
+        template.time_zone = zone("Europe/Berlin");
+        let (session, _) = template.build(id, owner, Name::new("s").unwrap(), None, None, resolved(&template, id, owner)).unwrap();
+        assert_eq!(session.time_zone, zone("Europe/Berlin"), "the template's");
+        let (session, _) = template.build(id, owner, Name::new("s").unwrap(), None, zone("Asia/Tokyo"), resolved(&template, id, owner)).unwrap();
+        assert_eq!(session.time_zone, zone("Asia/Tokyo"), "the one asked for before the template's");
+
+        let named: SessionTemplate = serde_json::from_value(serde_json::json!({"id": Uuid::new_v4(), "name": "s", "time_zone": "Europe/Berlin", "participants": [], "channels": []})).unwrap();
+        assert_eq!(named.time_zone, zone("Europe/Berlin"), "a seed names it by its IANA name");
     }
 
     #[test]
@@ -546,7 +570,7 @@ mod tests {
         let template = template();
         let (id, owner) = (SessionId::new(), UserId::new());
 
-        let (session, channels) = template.build(id, owner, Name::new("s").unwrap(), None, resolved(&template, id, owner)).unwrap();
+        let (session, channels) = template.build(id, owner, Name::new("s").unwrap(), None, None, resolved(&template, id, owner)).unwrap();
         assert_eq!(session.channels, channels.iter().map(|c| c.id).collect::<Vec<_>>(), "the session lists its channels by id");
         assert_eq!(session.participants.len(), 1, "every user of the template");
 
@@ -564,13 +588,13 @@ mod tests {
         assert_eq!(channels[0].classification, Classification::CHANNEL_DEFAULT);
         assert_eq!(session.privacy, PrivacyConfig::Private, "private unless the template says otherwise");
         let shared = SessionTemplate { privacy: PrivacyConfig::SharedAudience, ..template.clone() };
-        let (session, _) = shared.build(id, owner, Name::new("s").unwrap(), None, resolved(&shared, id, owner)).unwrap();
+        let (session, _) = shared.build(id, owner, Name::new("s").unwrap(), None, None, resolved(&shared, id, owner)).unwrap();
         assert_eq!(session.privacy, PrivacyConfig::SharedAudience, "the template's policy");
 
         // A channel naming someone the template does not have.
         let mut stray = template.clone();
         stray.channels[1].participants.push("ghost".to_string());
-        assert!(matches!(stray.build(id, owner, Name::new("x").unwrap(), None, resolved(&stray, id, owner)), Err(TemplateError::ParticipantNotFound(_))));
+        assert!(matches!(stray.build(id, owner, Name::new("x").unwrap(), None, None, resolved(&stray, id, owner)), Err(TemplateError::ParticipantNotFound(_))));
 
         let unnamed: ChannelTemplate = serde_json::from_value(serde_json::json!({"name": "main", "participants": []})).unwrap();
         assert_eq!(unnamed.classification, Classification::general(Confidentiality::Internal), "the default");

@@ -405,6 +405,7 @@ mod tests {
 
     use anyhow::Result;
     use caelumora_model::value::language::Language;
+    use caelumora_model::value::time_zone::TimeZone;
     use caelumora_model::snapshot::Detail;
     use crate::view::Viewer;
     use caelumora_model::approval::ApprovalStrategy;
@@ -508,6 +509,25 @@ mod tests {
 
         session.update_language(&ctx, None).await.expect("taken back");
         assert_eq!(held_in(&following).await, (None, None));
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_session_is_held_in_the_time_zone_its_owner_chooses_and_in_utc_otherwise() {
+        let runtime = test_runtime();
+        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
+        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let berlin = TimeZone::new("Europe/Berlin").unwrap();
+        let shown = async || manager.views(Viewer::new(ctx.clone())).session(session.id()).await.unwrap().snapshot(Detail::empty()).await.time_zone;
+        assert_eq!((session.session().effective_time_zone(), shown().await), (TimeZone::UTC, None), "UTC where it names none (issue 424)");
+
+        session.update_time_zone(&ctx, Some("Europe/Berlin")).await.expect("the owner changes it");
+        assert_eq!((session.session().effective_time_zone(), shown().await), (berlin, Some(berlin)));
+        let stored = runtime.entity_stores().sessions.get(&ctx, session.id()).await.unwrap();
+        assert_eq!(stored.time_zone, Some(berlin), "stored, not only in memory");
+        assert!(session.update_time_zone(&ctx, Some("Europe/Atlantis")).await.is_err(), "no time zone");
+        session.update_time_zone(&ctx, None).await.expect("taken back");
+        assert_eq!(session.session().effective_time_zone(), TimeZone::UTC);
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 

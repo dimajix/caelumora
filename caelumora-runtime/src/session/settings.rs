@@ -1,5 +1,5 @@
-//! Changing a running session: its name, language, privacy, approval rules, description and
-//! workspace.
+//! Changing a running session: its name, language, time zone, privacy, approval rules,
+//! description and workspace.
 
 use caelumora_model::approval::ApprovalRule;
 use anyhow::Result;
@@ -37,6 +37,19 @@ impl SessionLoop {
     /// session, or whatever else storing it reports.
     pub async fn update_language(&self, context: &SecurityContext, language: Option<&str>) -> Result<()> {
         Ok(self.session_controller.update_language(context, language).await?)
+    }
+
+    /// Has the session held in the time zone `time_zone`, or in UTC, on
+    /// behalf of `context` (issue 424): stored first, which is where the
+    /// permission is checked (`UpdateSession`), like a new name. Its agents'
+    /// models are given the times of messages in it from their next turn on.
+    ///
+    /// # Errors
+    /// `StoreError::Invalid` if `time_zone` is no time zone,
+    /// `StoreError::PermissionDenied` if `context` may not change the
+    /// session, or whatever else storing it reports.
+    pub async fn update_time_zone(&self, context: &SecurityContext, time_zone: Option<&str>) -> Result<()> {
+        Ok(self.session_controller.update_time_zone(context, time_zone).await?)
     }
 
     /// Changes whom the session lets read what was said in it (issue 134)

@@ -25,6 +25,7 @@ use crate::group::GroupId;
 use crate::scope::Scope;
 use crate::value::language::Language;
 use crate::value::text::{Briefing, Description, Summary};
+use crate::value::time_zone::TimeZone;
 use crate::digest::Digest;
 use crate::message::{MessageId, TokenUsage};
 use crate::note::Note;
@@ -79,6 +80,8 @@ pub struct SessionSnapshot {
     /// The language its channels are held in where they hold none of their
     /// own (issue 425), if any.
     pub language: Option<Language>,
+    /// The time zone it is held in (issue 424); `None` for UTC.
+    pub time_zone: Option<TimeZone>,
     /// Whom the session lets read what was said in it (issue 134) - shown
     /// to everyone who takes part.
     pub privacy: PrivacyConfig,

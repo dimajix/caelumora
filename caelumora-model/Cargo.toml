@@ -34,6 +34,9 @@ url = "2.5"
 # The password hashes of the user file (issue 25), verified only: hashes
 # are made by hand, so no random salts are needed here.
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }
+# The time zone a session is held in (issue 424): the IANA names and their
+# rules, compiled in, so that a time is given the same on every machine.
+chrono-tz = "0.10"
 
 [features]
 # What the tests of other crates read of a model value held in memory

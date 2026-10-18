@@ -185,7 +185,7 @@ mod tests {
         channel.participants = vec![Participant::Agent(agent.id)];
         let now = Utc::now();
         let session = Session {
-            summary: Some(Summary::new("Release 2.0").unwrap()), briefing: None, language: None,
+            summary: Some(Summary::new("Release 2.0").unwrap()), briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
             id: session_id, name: Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],
@@ -198,7 +198,7 @@ mod tests {
 
         let context = SecurityContext::default().next(ActorId::Agent(agent.id), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
-        state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Default::default());
+        state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Default::default(), Default::default());
         let provider = ChannelBriefingPromptProvider::new(PromptPosition::Start);
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(prompt.text.contains("In short: Release 2.0") && !prompt.text.contains("[About this channel]"), "{}", prompt.text);

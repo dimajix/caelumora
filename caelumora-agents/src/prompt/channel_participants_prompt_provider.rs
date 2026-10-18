@@ -84,7 +84,7 @@ impl PromptProvider for ChannelParticipantsPromptProvider {
                 others.push(entry);
             }
         }
-        let explanation = situation.profile().sender_explanation();
+        let explanation = situation.profile().framing_explanation();
         let text = self.text(render(me.as_ref(), &others, explanation.as_deref()));
         // Names and introductions are public (issue 176).
         Ok(Prompt::classified(text, Classification::PUBLIC))
@@ -271,7 +271,7 @@ mod tests {
         let participants = vec![Participant::User(kaya.id), Participant::Agent(jonathan.id), Participant::Agent(sassy.id), Participant::Agent(gone.id), Participant::User(bob.id)];
         let now = Utc::now();
         let session = Session {
-            summary: None, briefing: None, language: None,
+            summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
             id: SessionId::new(), name: Name::new("s").unwrap(), participants: participants.clone(), channels: vec![ChannelId::new()],
@@ -293,7 +293,7 @@ mod tests {
 
         let context = SecurityContext::default().next(ActorId::Agent(jonathan.id), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
-        state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Default::default());
+        state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Default::default(), Default::default());
         let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(jonathan.id))).expect("a turn was begun");
 
         let prompt = ChannelParticipantsPromptProvider::new(PromptPosition::Start).get_prompt(&turn.situation()).await.unwrap();
@@ -317,7 +317,7 @@ mod tests {
         // In its own name alone: nobody it acts for may read the session.
         let context = SecurityContext::default().next(ActorId::Agent(outsider), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
-        state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), context, channel.classification(), Default::default());
+        state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), context, channel.classification(), Default::default(), Default::default());
         let turn = Turn::of(outsider, "outsider".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(channel, ActorId::Agent(outsider))).expect("a turn was begun");
         assert!(matches!(turn.situation().session().await, Err(ViewError::SessionNotFound(_))), "reached, but not to be read (issue 399)");
         let failed = ChannelParticipantsPromptProvider::new(PromptPosition::Start).get_prompt(&turn.situation()).await;

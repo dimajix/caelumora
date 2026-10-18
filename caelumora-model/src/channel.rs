@@ -520,7 +520,7 @@ mod tests {
     fn a_channel_without_a_language_of_its_own_is_held_in_its_sessions() {
         let (owner, id, now) = (UserId::new(), SessionId::new(), Utc::now());
         let mut session = Session {
-            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, participants: Vec::new(), channels: Vec::new(),
+            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, time_zone: None, participants: Vec::new(), channels: Vec::new(),
             commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
             security_attributes: Session::attributes_of(id, owner, &[]), deleted: None,
         };

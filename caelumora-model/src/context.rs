@@ -28,6 +28,7 @@ use crate::store::{EntityKind, Stored};
 use crate::tool::ToolSet;
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use crate::turn::GivenUpReason;
+use crate::value::time_zone::TimeZone;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -208,14 +209,63 @@ pub struct ModelProfile {
     /// How a sender is named in the marker.
     #[serde(default)]
     pub sender_style: SenderStyle,
+    /// Whether the marker says when the message was written too (issue 424),
+    /// in the time zone of the context (`ContextRef::time_zone`). Never on
+    /// the agent's own messages, which carry no marker: a model whose own
+    /// messages carry a time begins its answers with one of its own
+    /// (`work/message_times/RESULTS.md`, finding 2). Nothing where senders
+    /// are not marked.
+    pub message_times: bool,
 }
+
+/// Whether a model or remote agent is given the times of messages unless its
+/// component is configured otherwise (issue 424): it is - a model uses them,
+/// and takes the time of the last message for now without them.
+pub fn message_times_by_default() -> bool {
+    true
+}
+
+/// The time the explanation of the markers shows as an example (issue 424),
+/// in the form `TimeZone::format` writes it.
+const TIME_EXAMPLE: &str = "Sun 18 Oct 2026, 14:32";
 
 impl ModelProfile {
     /// `message` as the model of `agent` is given it; `in_turn` says whether
-    /// the turn under way produced the message.
-    pub fn given(&self, message: Message, agent: ActorId, in_turn: bool) -> Message {
+    /// the turn under way produced the message, `time_zone` is the one its
+    /// time is written in.
+    pub fn given(&self, message: Message, agent: ActorId, in_turn: bool, time_zone: TimeZone) -> Message {
         let message = self.reasoning_history.given(message, agent, in_turn);
-        self.sender_format.given(message, agent, self.sender_style)
+        self.frame(message, agent, time_zone)
+    }
+
+    /// `message` framed as the model of `agent` is given it: marked with its
+    /// sender as `sender_format` and `sender_style` say, and with when it was
+    /// written in `time_zone` where `message_times` says so - if another
+    /// participant, a user or agent, said it; unchanged otherwise.
+    fn frame(&self, mut message: Message, agent: ActorId, time_zone: TimeZone) -> Message {
+        let said_by_another = message.sender_id != agent
+            && matches!(message.sender_id, ActorId::User(_) | ActorId::Agent(_))
+            && message.role == MessageRole::User;
+        if self.sender_format == SenderFormat::None || !said_by_another {
+            return message;
+        }
+        let Some(content) = message.content.as_deref() else { return message };
+        let sender = self.sender_style.of(&message.sender_name);
+        let at = self.message_times.then(|| time_zone.format(message.timestamp));
+        message.content = Some(match (self.sender_format, at) {
+            (SenderFormat::None, _) => return message,
+            (SenderFormat::Prefix, None) => format!("{sender}: {content}"),
+            (SenderFormat::Prefix, Some(at)) => format!("{sender} ({at}): {content}"),
+            // Only what would end or open an element is escaped: escaping
+            // more hides typos in code from the model (RESULTS.md, 7).
+            (SenderFormat::Xml, at) => format!(
+                "<message from=\"{}\"{}>{}</message>",
+                sender.replace('&', "&amp;").replace('"', "&quot;"),
+                at.map(|at| format!(" at=\"{at}\"")).unwrap_or_default(),
+                content.replace("</message", "&lt;/message").replace("<message", "&lt;message"),
+            ),
+        });
+        message
     }
 
     /// What a receiver that keeps its own conversation - the remote agent
@@ -223,26 +273,29 @@ impl ModelProfile {
     /// for `agent`: its messages as they stand (`Transcript::messages`) and,
     /// where someone joined or left the channel, what it is told of that
     /// (issue 408), each as `given` makes it.
-    pub fn given_messages(&self, transcript: &Transcript, agent: ActorId) -> Vec<Message> {
+    pub fn given_messages(&self, transcript: &Transcript, agent: ActorId, time_zone: TimeZone) -> Vec<Message> {
         as_they_stand(transcript.entries())
             .filter_map(|(node, message)| message.or_else(|| participant_notice(&node.entry, &node.digest, agent, self.sender_style)))
-            .map(|message| self.given(message, agent, false))
+            .map(|message| self.given(message, agent, false, time_zone))
             .collect()
     }
 
-    /// What the model is to be told of how the senders of messages are
-    /// marked, `None` if they are not (issue 135): without it, models
-    /// imitate the marker in their answers (`work/sender_names/RESULTS.md`,
-    /// findings 2 and 3).
-    pub fn sender_explanation(&self) -> Option<String> {
+    /// What the model is to be told of how the messages of others are framed
+    /// (`frame`) - their senders, and when they were written -, `None` if
+    /// they are not (issues 135, 424): without it, models imitate the marker
+    /// in their answers (`work/sender_names/RESULTS.md`, findings 2 and 3).
+    pub fn framing_explanation(&self) -> Option<String> {
         let (sender, example) = match self.sender_style {
             SenderStyle::Handle => ("@handle", "@handle"),
             SenderStyle::Name => ("name", "Name"),
         };
-        let marked = match self.sender_format {
-            SenderFormat::None => return None,
-            SenderFormat::Prefix => format!("begin with their sender's {sender} and a colon: \"{example}: ...\""),
-            SenderFormat::Xml => format!("are wrapped in an element naming their sender's {sender}: <message from=\"{example}\">...</message>"),
+        // With a time, as the experiments of issue 424 told it.
+        let marked = match (self.sender_format, self.message_times) {
+            (SenderFormat::None, _) => return None,
+            (SenderFormat::Prefix, false) => format!("begin with their sender's {sender} and a colon: \"{example}: ...\""),
+            (SenderFormat::Prefix, true) => format!("begin with their sender's {sender}, when it was written and a colon: \"{example} ({TIME_EXAMPLE}): ...\""),
+            (SenderFormat::Xml, false) => format!("are wrapped in an element naming their sender's {sender}: <message from=\"{example}\">...</message>"),
+            (SenderFormat::Xml, true) => format!("are wrapped in an element naming their sender's {sender} and when it was written: <message from=\"{example}\" at=\"{TIME_EXAMPLE}\">...</message>"),
         };
         Some(format!("Messages of the others {marked}. Your own messages carry no such marker: answer without one, and never write a message for someone else."))
     }
@@ -309,32 +362,6 @@ impl SenderFormat {
     pub fn configured_default() -> Self {
         Self::Prefix
     }
-
-    /// `message` as the model of `agent` is given it: marked with its
-    /// sender, named in `style`, if another participant - a user or agent -
-    /// said it, unchanged otherwise.
-    pub fn given(self, mut message: Message, agent: ActorId, style: SenderStyle) -> Message {
-        let said_by_another = message.sender_id != agent
-            && matches!(message.sender_id, ActorId::User(_) | ActorId::Agent(_))
-            && message.role == MessageRole::User;
-        if self == Self::None || !said_by_another {
-            return message;
-        }
-        let Some(content) = message.content.as_deref() else { return message };
-        let sender = style.of(&message.sender_name);
-        message.content = Some(match self {
-            Self::None => return message,
-            Self::Prefix => format!("{sender}: {content}"),
-            // Only what would end or open an element is escaped: escaping
-            // more hides typos in code from the model (RESULTS.md, 7).
-            Self::Xml => format!(
-                "<message from=\"{}\">{}</message>",
-                sender.replace('&', "&amp;").replace('"', "&quot;"),
-                content.replace("</message", "&lt;/message").replace("<message", "&lt;message"),
-            ),
-        });
-        message
-    }
 }
 
 /// How a sender is named in the marker (issue 135).
@@ -398,6 +425,10 @@ pub struct ContextRef {
     pub knowledge: Vec<KnowledgeRef>,
     /// The rules the model was given its context by.
     pub profile: ModelProfile,
+    /// The time zone the times of messages were written in (issue 424): the
+    /// session's as the turn began - recorded, so that what the model was
+    /// given is told the same after the session's changed.
+    pub time_zone: TimeZone,
 }
 
 /// A context resolved (issues 06, 47): what the model of an agent was given
@@ -575,13 +606,13 @@ impl<'a> ContextResolver<'a> {
             // stands, and so is who joined or left. A part may have been
             // placed after any of them.
             if let Some(message) = message {
-                given.push(ContextItem::Conversation { message: profile.given(message, agent, in_turn) });
+                given.push(ContextItem::Conversation { message: profile.given(message, agent, in_turn, reference.time_zone) });
             }
             if let TranscriptEntry::TurnGivenUp { turn_id, reason, at } = &node.entry {
-                given.push(ContextItem::Conversation { message: profile.given(given_up_notice(*turn_id, reason, *at), agent, false) });
+                given.push(ContextItem::Conversation { message: profile.given(given_up_notice(*turn_id, reason, *at), agent, false, reference.time_zone) });
             }
             if let Some(notice) = participant_notice(&node.entry, &node.digest, agent, profile.sender_style) {
-                given.push(ContextItem::Conversation { message: profile.given(notice, agent, false) });
+                given.push(ContextItem::Conversation { message: profile.given(notice, agent, false, reference.time_zone) });
             }
             let parts = after_entry(Some(node.digest))?;
             placed += parts.len();
@@ -674,6 +705,7 @@ fn participant_notice(entry: &TranscriptEntry, digest: &Digest, agent: ActorId, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{TimeZone as _, Utc};
     use crate::agent::AgentId;
     use crate::digest::prompt;
     use crate::message::{MessageId, TokenUsage};
@@ -717,7 +749,7 @@ mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let said = |sender: ActorId, name: &str, role: MessageRole, content: &str| Message { sender_id: sender, sender_name: name.to_string(), role, ..text(content) };
         let alice = ActorId::User(UserId::new());
-        let given = |format: SenderFormat, style: SenderStyle, message: Message| format.given(message, agent, style).content.unwrap_or_default();
+        let given = |sender_format, sender_style, message| ModelProfile { sender_format, sender_style, ..ModelProfile::default() }.given(message, agent, false, Default::default()).content.unwrap_or_default();
 
         assert_eq!(given(SenderFormat::Prefix, SenderStyle::Handle, said(alice, "Alice Smith", MessageRole::User, "hi")), "@alice-smith: hi");
         assert_eq!(given(SenderFormat::Prefix, SenderStyle::Name, said(alice, "Alice Smith", MessageRole::User, "hi")), "Alice Smith: hi");
@@ -738,13 +770,38 @@ mod tests {
         assert_eq!(given(SenderFormat::Prefix, SenderStyle::Handle, system), "notice", "only users and agents are participants");
 
         let profile = ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() };
-        assert_eq!(profile.given(said(alice, "Alice", MessageRole::User, "hi"), agent, false).content.as_deref(), Some("@alice: hi"), "the profile applies it");
-        assert_eq!(ModelProfile::default().sender_explanation(), None, "nothing to explain where nothing is marked");
-        assert!(profile.sender_explanation().is_some_and(|text| text.contains("\"@handle: ...\"") && text.contains("Your own messages carry no such marker")));
+        assert_eq!(profile.given(said(alice, "Alice", MessageRole::User, "hi"), agent, false, Default::default()).content.as_deref(), Some("@alice: hi"), "the profile applies it");
+        assert_eq!(ModelProfile::default().framing_explanation(), None, "nothing to explain where nothing is marked");
+        assert!(profile.framing_explanation().is_some_and(|text| text.contains("\"@handle: ...\"") && text.contains("Your own messages carry no such marker")));
         let xml = ModelProfile { sender_format: SenderFormat::Xml, sender_style: SenderStyle::Name, ..ModelProfile::default() };
-        assert!(xml.sender_explanation().is_some_and(|text| text.contains("<message from=\"Name\">...</message>")));
-        let recorded: ModelProfile = serde_json::from_value(serde_json::json!({ "reasoning_history": "never", "system_messages": "anywhere" })).unwrap();
+        assert!(xml.framing_explanation().is_some_and(|text| text.contains("<message from=\"Name\">...</message>")));
+        let recorded: ModelProfile = serde_json::from_value(serde_json::json!({ "reasoning_history": "never", "system_messages": "anywhere", "message_times": false })).unwrap();
         assert_eq!(recorded.sender_format, SenderFormat::None, "a context recorded before was given without markers");
+    }
+
+    #[test]
+    fn the_messages_of_others_say_when_they_were_written_where_the_profile_says_so() {
+        let agent = ActorId::Agent(AgentId::new());
+        let alice = ActorId::User(UserId::new());
+        let at = Utc.with_ymd_and_hms(2026, 10, 18, 12, 32, 0).unwrap();
+        let said = |sender: ActorId, content: &str| Message { sender_id: sender, sender_name: "Alice".to_string(), role: MessageRole::User, timestamp: at, ..text(content) };
+        let berlin = TimeZone::new("Europe/Berlin").unwrap();
+        let given = |sender_format, message| ModelProfile { sender_format, message_times: true, ..ModelProfile::default() }.given(message, agent, false, berlin).content.unwrap_or_default();
+
+        assert_eq!(given(SenderFormat::Prefix, said(alice, "hi")), "@alice (Sun 18 Oct 2026, 14:32): hi", "in the time zone given");
+        assert_eq!(given(SenderFormat::Xml, said(alice, "hi")), "<message from=\"@alice\" at=\"Sun 18 Oct 2026, 14:32\">hi</message>");
+        assert_eq!(given(SenderFormat::None, said(alice, "hi")), "hi", "nothing where senders are not marked");
+        assert_eq!(given(SenderFormat::Xml, said(agent, "mine")), "mine", "never on the agent's own: it would write times of its own");
+        let without = ModelProfile { sender_format: SenderFormat::Xml, ..ModelProfile::default() };
+        assert_eq!(without.given(said(alice, "hi"), agent, false, berlin).content.as_deref(), Some("<message from=\"@alice\">hi</message>"), "without the switch");
+
+        let explained = |sender_format| ModelProfile { sender_format, message_times: true, ..ModelProfile::default() }.framing_explanation().unwrap_or_default();
+        assert!(explained(SenderFormat::Xml).contains("<message from=\"@handle\" at=\"Sun 18 Oct 2026, 14:32\">...</message>"), "{}", explained(SenderFormat::Xml));
+        assert!(explained(SenderFormat::Prefix).contains("\"@handle (Sun 18 Oct 2026, 14:32): ...\""), "{}", explained(SenderFormat::Prefix));
+        assert_eq!(TIME_EXAMPLE, berlin.format(at), "the example is written as the times are");
+
+        assert!(serde_json::from_value::<ModelProfile>(serde_json::json!({ "reasoning_history": "never", "system_messages": "anywhere" })).is_err(),
+            "a context recorded without saying whether it gave times is not read: it is to be deleted (issue 424)");
     }
 
     #[test]
@@ -797,7 +854,7 @@ mod tests {
         assert!(seen.items[1..].iter().all(|item| item.role() == MessageRole::User), "not as a system message, which the model would move (issue 49)");
         let again = resolver.resolve(&reference, TurnId::new(), agent).expect("resolved");
         assert_eq!(ids(&seen.items), ids(&again.items), "the same each time it is resolved");
-        let told: Vec<_> = reference.profile.given_messages(&state.transcript, agent).into_iter().filter_map(|m| m.content).collect();
+        let told: Vec<_> = reference.profile.given_messages(&state.transcript, agent, Default::default()).into_iter().filter_map(|m| m.content).collect();
         assert_eq!(told, contents(&seen.items), "what a remote agent is given, too");
     }
 
@@ -828,7 +885,7 @@ mod tests {
             ],
             tools: None,
             knowledge: Vec::new(),
-            profile: ModelProfile::default(),
+            profile: ModelProfile::default(), time_zone: Default::default(),
         };
 
         let resolver = ContextResolver::of(&state);

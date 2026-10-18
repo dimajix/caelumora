@@ -1,6 +1,6 @@
 # 424 — An agent knows neither when something was said nor what time it is
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -114,3 +114,52 @@ So an agent
   time in the text, the current date and time is to be given as the last message, presumably by a
   prompt provider, and a session is to have a time zone in which times are formatted, in the
   language of its channel.
+- **2026-10-18** — Measured on gemma4:26b (`work/message_times/RESULTS.md`). The time on the
+  others' messages is used: without it the model takes a review announced three days before for
+  tomorrow, with it it names the date. The agent's own messages must carry none - with a time on
+  them it begins its answers with one of its own, made up, in about half of them; with times on
+  the others' only, never. The model takes the time of the last message for now, which is wrong
+  for a turn that comes later - a question about opening hours asked on Friday evening and
+  answered on Sunday: only the current time makes it right. Where the current time is put - the
+  system prompt, before the turn's input, at the very end - made no difference to gemma4, nor did
+  it distract. In a German channel the English, German and numeric forms worked alike, and none
+  pulled the answers into English.
+  Decided with the maintainer: the work goes in two steps, the times on the others' messages
+  first, then the current time. The times are written in one fixed form for every language,
+  `Sun 18 Oct 2026, 14:32` - a weekday by name, which the model uses, and no localisation, so that
+  what the model is given does not depend on the channel's language and only the session's time
+  zone has to be recorded with a context. The agent's own messages carry no time. A session's
+  language, where a channel has none, is [425](425-session-language.md)'s.
+- **2026-10-18** — Decided for the first step: whether a model is given the times is a switch of
+  its `ModelProfile` (`message_times`), as how it is given senders is; there is no preferred time
+  zone in the user's profile - the web UI presets a new session's from the browser. A session
+  without a time zone is held in UTC, never in the server's, which is the deployment's and would
+  make what a model is given depend on the machine. A context records the time zone it was given
+  by, as it records its profile. Neither new field has a default where it is read: stored data
+  without them is not read - every channel's history, whose agents' answers carry their context,
+  and every agent's state is to be deleted.
+- **2026-10-18** — First step done: the times on the others' messages. `TimeZone` (a value of the
+  model, an IANA name checked against the database `chrono-tz` compiles in, written as
+  `TimeZone::format` writes a time); `Session::time_zone` (`None`: UTC,
+  `Session::effective_time_zone`), changed by whoever may change the session
+  (`SessionLoop::update_time_zone`, `PUT /sessions/{id}/time-zone`), named by a template or the
+  request that creates the session. `ModelProfile::message_times` - `true` unless the component
+  (`ollama_client`, `a2a_agent`) is configured otherwise; `decision_policy` gives no times -
+  makes the marker say when a message was written, never on the agent's own; the roster's
+  explanation says so. The time zone is read through `ActorRuntime::session_time_zone` as a turn
+  begins and recorded in `ContextRef::time_zone`; `read_history` writes times alike. The web UI
+  presets a new session's time zone from the browser and changes it from the session's menu; the
+  TUI leaves it at UTC. A channel has no time zone of its own (decided with the maintainer: the zone
+  belongs to the people, not the conversation; an issue of its own if a case comes up). Stored data
+  to delete: every channel's history and every agent's state - neither `message_times` nor the
+  context's time zone has a default where they are read.
+- **2026-10-18** — Second step done: the component `current_time_prompt_provider` tells the agent
+  the date and time, written out (`TimeZone::format_long`), in the time zone the turn records, and
+  is wired into the seed's `channel-context` - not into the external personality, whose remote
+  agent keeps its own clock. It goes before the turn's input (`BeforeTurnInput`, its default
+  `position`), not as the very last message the issue asked for: where it stands made no
+  difference to the model measured, and before the input it needs no new position. Unlike the
+  issue's "every model call", it is read as the turn's context is built, once per turn - parts are
+  built once for a turn - so that a long plan keeps the time it began at; worth an issue of its own
+  if a plan's later steps need the time.
+

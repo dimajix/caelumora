@@ -114,8 +114,10 @@ async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: Compon
     if let Some(mut stored) = stored(agent_id) {
         runtime.state_store().put_agent_channel_state(agent_id, channel.id, &mut stored).await.unwrap();
     }
-    let session_id = channel.session_id;
-    let channel = ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, bare_session(session_id), channel)).await?;
+    // Stored too, so that a test can change it (issue 424).
+    let session = bare_session(channel.session_id);
+    runtime.entity_stores().sessions.create(&SecurityContext::system(), &session).await.unwrap();
+    let channel = ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, session, channel)).await?;
     Ok((channel, context, agent_id, alice.id))
 }
 
@@ -287,6 +289,44 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
     // The context of each answer is what was given in its call (issue 205).
     assert_eq!(given_for(&channel, agent, &first[0]).await, ["@alice: hello"], "as it was given, marked");
     assert_eq!(given_for(&channel, agent, &second[0]).await, ["@alice: How are you?"], "not what it was given before");
+    running.abort();
+}
+
+/// Where its profile says so, an agent is given when the messages of others
+/// were written, in its session's time zone as its turn begins, and the
+/// context of its answer tells them so after the time zone changed (issue
+/// 424).
+#[tokio::test]
+async fn an_agent_is_given_the_times_of_messages_in_its_sessions_time_zone_as_its_turn_began() {
+    use crate::external::{ExternalEvent, Said};
+    use caelumora_model::context::{ModelProfile, SenderFormat};
+    use caelumora_model::value::time_zone::TimeZone;
+
+    let marking = ModelProfile { sender_format: SenderFormat::Prefix, message_times: true, ..ModelProfile::default() };
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![
+        vec![Ok(ExternalEvent::Started(task("t-1"))), Ok(ExternalEvent::Message("Hello.".to_string())), Ok(ExternalEvent::Completed)],
+        vec![Ok(ExternalEvent::Started(task("t-2"))), Ok(ExternalEvent::Message("Fine.".to_string())), Ok(ExternalEvent::Completed)],
+    ]).marking(marking));
+    let Stuck { channel, context, agent, mut events, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
+    let first = answered(&mut events, agent).await;
+
+    let berlin = TimeZone::new("Europe/Berlin").unwrap();
+    let session = channel.session_controller_of();
+    session.update_time_zone(&SecurityContext::system(), Some(berlin.as_str())).await.unwrap();
+    channel.user_actor(alice_of(&context)).unwrap().send_message("How are you?".to_string(), None).await.unwrap();
+    let second = answered(&mut events, agent).await;
+
+    let seen = channel.visible_messages(ActorId::User(alice_of(&context))).await;
+    let at = |text: &str| seen.iter().find(|m| m.content.as_deref() == Some(text)).expect("said").timestamp;
+    let (hello, how) = (TimeZone::UTC.format(at("hello")), berlin.format(at("How are you?")));
+    let sent = remote.sent.lock().unwrap().clone();
+    let said = |text: String| Said { sender: "alice".to_string(), text };
+    assert_eq!(sent[0].1.said, vec![said(format!("@alice ({hello}): hello"))], "in UTC while the session names no time zone");
+    assert_eq!(sent[1].1.said, vec![said(format!("@alice ({how}): How are you?"))], "in the session's, once it names one");
+
+    session.update_time_zone(&SecurityContext::system(), Some("Asia/Tokyo")).await.unwrap();
+    assert_eq!(given_for(&channel, agent, &first[0]).await, [format!("@alice ({hello}): hello")], "told as it was given, whatever the session's is now");
+    assert_eq!(given_for(&channel, agent, &second[0]).await, [format!("@alice ({how}): How are you?")]);
     running.abort();
 }
 

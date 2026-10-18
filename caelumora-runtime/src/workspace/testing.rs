@@ -75,7 +75,7 @@ pub async fn session_with_workspace() -> WithWorkspace {
     channel.internal_actors = vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
     let now = Utc::now();
     let session = Session {
-        summary: None, briefing: None, language: None,
+        summary: None, briefing: None, language: None, time_zone: None,
         approval_rules: Vec::new(),
         workspace: Some(workspace.id),
         id: session_id, name: Name::new("s").unwrap(), participants: channel.participants.clone(), channels: vec![channel.id],

@@ -14,6 +14,7 @@ use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::history::{HistoryEntry, Reader};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityAttributes;
+use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::session::SessionId;
 use crate::agent::state::AgentStateHandle;
 use crate::event::{EventSubscription, SubscriptionTopic};
@@ -219,6 +220,13 @@ impl ActorRuntime {
     /// controller, as it stood last once the channel is gone (issue 374).
     pub fn channel_classification(&self) -> Classification {
         self.channel_controller().load().classification.clone()
+    }
+
+    /// The time zone of the actor's session as it is now (issue 424) - UTC
+    /// where it names none -, which an agent's model is given the times of
+    /// messages in: read from its controller, as `channel_classification`.
+    pub fn session_time_zone(&self) -> TimeZone {
+        self.session_controller().load().effective_time_zone()
     }
 
     /// The attributes of the actor's channel as it stands, by which an act

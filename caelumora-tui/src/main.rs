@@ -549,7 +549,7 @@ async fn main() -> Result<()> {
     let language = preferred.filter(|_| template.language.is_none());
 
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
-    let session_loop = session_manager.create_from_template(&security, template.id, Some("default-session"), language.as_ref().map(Language::as_str), None).await?;
+    let session_loop = session_manager.create_from_template(&security, template.id, Some("default-session"), language.as_ref().map(Language::as_str), None, None).await?;
     let session_id = session_loop.id();
 
     // The template's first channel, whatever it is called.

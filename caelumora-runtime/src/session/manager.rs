@@ -3,6 +3,7 @@
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::value::name::Name;
 use caelumora_model::value::language::Language;
+use caelumora_model::value::time_zone::TimeZone;
 use crate::runtime::RuntimeManager;
 use crate::event::EventBus;
 use anyhow::{Result, Error};
@@ -170,8 +171,9 @@ impl SessionManager {
 
     /// Creates a session from the template `template_id` on behalf of
     /// `context`, whose user owns it and is the template's "user", names it
-    /// `name` - the template's name if `None` -, holds it in `language` -
-    /// the template's if `None` (issue 425) - and starts it (issue 88).
+    /// `name` - the template's name if `None` -, holds it in `language` and
+    /// `time_zone` - the template's if `None` (issues 424, 425) - and starts
+    /// it (issue 88).
     /// Its workspace is `workspace` where one is chosen (issue 266) - none,
     /// one of the user's own, or one made for it alone -, else the
     /// template's. One of the user's own is attached as the session is
@@ -185,17 +187,18 @@ impl SessionManager {
     /// # Errors
     /// `SessionError::OwnerNotAUser` if `context` acts for no user; a
     /// `StoreError` if the template, a user or a personality it names does
-    /// not exist or may not be read; a `ValueError` if `name` is no name or
-    /// `language` no language tag; a
+    /// not exist or may not be read; a `ValueError` if `name` is no name,
+    /// `language` no language tag or `time_zone` no time zone; a
     /// `TemplateError` if the template cannot be made into a session;
     /// what attaching an existing workspace or making one reports;
     /// whatever creating the session reports.
-    pub async fn create_from_template(&self, context: &SecurityContext, template_id: SessionTemplateId, name: Option<&str>, language: Option<&str>, workspace: Option<WorkspaceChoice>) -> Result<Arc<SessionLoop>> {
+    pub async fn create_from_template(&self, context: &SecurityContext, template_id: SessionTemplateId, name: Option<&str>, language: Option<&str>, time_zone: Option<&str>, workspace: Option<WorkspaceChoice>) -> Result<Arc<SessionLoop>> {
         self.refuse_while_shutting_down()?;
         let owner = context.principal_id.as_user_id().ok_or(SessionError::OwnerNotAUser(context.principal_id))?;
         // Before anything is found or made for it.
         let name = Name::optional(name)?;
         let language = Language::optional(language)?;
+        let time_zone = TimeZone::optional(time_zone)?;
         let template = self.stores.session_templates.get(context, template_id).await.map_err(|e| match e {
             StoreError::NotFound { .. } => SessionError::TemplateNotFound(template_id).into(),
             e => Error::new(e),
@@ -222,7 +225,7 @@ impl SessionManager {
                 Some(WorkspaceTemplate { name: name.clone(), scope: ScopeTemplate::SessionScope, storage, classification, description: None }),
             Some(WorkspaceChoice::None | WorkspaceChoice::Existing { .. }) => None,
         };
-        let (mut session, channels) = template.build(id, owner, name, language, users.clone())?;
+        let (mut session, channels) = template.build(id, owner, name, language, time_zone, users.clone())?;
         // One chosen is attached as the session is made; one to be found or
         // made once the session is, so that one of its scope is made where
         // `context` may put it (issue 344).
@@ -702,6 +705,7 @@ mod tests {
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::value::language::Language;
     use caelumora_model::value::ValueError;
+    use caelumora_model::value::time_zone::TimeZone;
     use caelumora_model::security::{SecurityAttributes, SecurityContext, Grant, Subject};
     use crate::view::Viewer;
     use caelumora_model::store::StoreError;
@@ -1031,7 +1035,7 @@ mod tests {
         runtime.entity_stores().users.create(&SecurityContext::system(), &User { id: owner, username: Name::new("alice").unwrap(), email: String::new(), roles: Vec::new(), deleted: None }).await.unwrap();
         let template = SessionTemplate {
             access: Vec::new(),
-            summary: None, briefing: None, language: None,
+            summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
             id: SessionTemplateId::new(),
@@ -1062,7 +1066,7 @@ mod tests {
         profile.preferred_language = Some(Language::new("de").unwrap());
         runtime.entity_stores().user_profiles.create(&hers, &profile).await.unwrap();
 
-        let session = manager.create_from_template(&hers, template.id, None, None, None).await.expect("created and started");
+        let session = manager.create_from_template(&hers, template.id, None, None, None, None).await.expect("created and started");
         assert_eq!(session.name(), "pairing", "named after the template unless named");
         assert_eq!(session.session().security_attributes.owner_id, ActorId::User(owner));
         let main = session.channel_named("main").expect("the template's channel runs");
@@ -1073,17 +1077,21 @@ mod tests {
         assert!(stored.internal_actors.iter().all(|internal| main.actor(internal.actor_id()).is_some()), "and its actor runs");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
 
-        let missing = manager.create_from_template(&hers, SessionTemplateId::new(), None, None, None).await.expect_err("no such template");
+        let missing = manager.create_from_template(&hers, SessionTemplateId::new(), None, None, None, None).await.expect_err("no such template");
         assert!(matches!(missing.downcast_ref::<SessionError>(), Some(SessionError::TemplateNotFound(_))), "{missing}");
-        let not_a_user = manager.create_from_template(&SecurityContext::system(), template.id, None, None, None).await.expect_err("the system owns no session");
+        let not_a_user = manager.create_from_template(&SecurityContext::system(), template.id, None, None, None, None).await.expect_err("the system owns no session");
         assert!(matches!(not_a_user.downcast_ref::<SessionError>(), Some(SessionError::OwnerNotAUser(_))), "{not_a_user}");
 
-        let asked = manager.create_from_template(&hers, template.id, Some("in French"), Some("fr"), None).await.expect("held in the language asked for");
+        let asked = manager.create_from_template(&hers, template.id, Some("in French"), Some("fr"), None, None).await.expect("held in the language asked for");
         assert_eq!(asked.session().language, Some(Language::new("fr").unwrap()), "the session, issue 425");
         let stored = runtime.entity_stores().sessions.get(&hers, asked.id()).await.unwrap();
         assert_eq!(stored.language, Some(Language::new("fr").unwrap()), "stored, not only in memory");
-        let no_tag = manager.create_from_template(&hers, template.id, Some("in no language"), Some("no language"), None).await.expect_err("no language tag");
+        let no_tag = manager.create_from_template(&hers, template.id, Some("in no language"), Some("no language"), None, None).await.expect_err("no language tag");
         assert!(no_tag.downcast_ref::<ValueError>().is_some(), "{no_tag}");
+        let zoned = manager.create_from_template(&hers, template.id, Some("in Berlin"), None, Some("Europe/Berlin"), None).await.expect("held in the time zone asked for");
+        assert_eq!(zoned.session().time_zone, Some(TimeZone::new("Europe/Berlin").unwrap()), "issue 424");
+        let no_zone = manager.create_from_template(&hers, template.id, Some("nowhere"), None, Some("Europe/Atlantis"), None).await.expect_err("no time zone");
+        assert!(no_zone.downcast_ref::<ValueError>().is_some(), "{no_zone}");
     }
 
     #[tokio::test]

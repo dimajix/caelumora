@@ -56,6 +56,14 @@ taken over from its template (private unless the template says otherwise), chang
 session's owner, and shown to everyone who takes part. What it decides is described in
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reading-another-channel).
 
+A session may be held in a time zone, an IANA name (`TimeZone`): the times of messages its agents'
+models are given are written in it (see [AGENT-TURN.md](AGENT-TURN.md#who-said-what)). A session
+holds it as the request names it, else as its template does, else in UTC - never in the server's,
+which is the deployment's and would make what a model is given depend on the machine
+(`Session::effective_time_zone`). The web UI presets a new session's from the browser. Whoever may
+change the session changes it. It belongs to the session, not to its channels: its people are in one
+place, and one zone in a session keeps the times read from another of its channels comparable.
+
 ### Creating and deleting channels
 
 Channels can be created in, deleted from and restored to a running session
@@ -860,7 +868,8 @@ served by Ollama since 0.35 at `/v1/systemone` (see [LLM-MODELS.md](LLM-MODELS.m
 It is given the conversation and the candidates as they are introduced. Each message goes to the
 model as a model is given one of another participant (see
 [AGENT-TURN.md](AGENT-TURN.md#who-said-what)), its sender marked as `sender_format` and
-`sender_style` say - by default `@handle: ...`, the name its options have; what was said before is
+`sender_style` say - by default `@handle: ...`, the name its options have, without when it was
+written, which whom to ask does not depend on; what was said before is
 left out beyond about 4,096 tokens, the oldest first. Up to 25 candidates it asks one
 `choice` over their handles and "nobody": the most probable is asked to respond - nobody, if that is
 most probable - and every other at or above `threshold` besides, at most `max_responders`. Beyond 25

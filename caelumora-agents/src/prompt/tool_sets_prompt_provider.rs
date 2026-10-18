@@ -90,7 +90,7 @@ mod tests {
     /// What the provider says in a turn begun with `sets`.
     async fn told(sets: Vec<ToolSet>) -> Prompt {
         let mut state = AgentChannelState::default();
-        state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, Default::default());
+        state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, Default::default(), Default::default());
         state.offer_tools(sets);
         let turn = Turn::under_way(AgentId::new(), &mut state);
         let provider = ToolSetsPromptProvider { position: PromptPosition::Start };

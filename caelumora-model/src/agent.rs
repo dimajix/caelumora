@@ -23,6 +23,7 @@ use crate::turn::GivenUpReason;
 use crate::turn::{CommandRequest, TurnState};
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Description, Introduction};
+use crate::value::time_zone::TimeZone;
 use crate::value::ValueError;
 use crate::work::{TurnId, Work};
 use serde::{Deserialize, Serialize};
@@ -715,7 +716,8 @@ impl AgentChannelState {
     /// Begins a turn (issue 85): fixes what it is - the envelope it answers,
     /// whose authority it acts with, the channel's classification now and
     /// how the agent's model is given its context (the `profile`, issues
-    /// 49, 63). What its model is offered is added once it is begun
+    /// 49, 63) - with the times of messages in `time_zone`, the session's
+    /// (issue 424). What its model is offered is added once it is begun
     /// (`offer_tools`), since what may be called depends on the work.
     /// All but the first two hold for the whole turn - also one resumed after
     /// the model's configuration changed - so that what it reads, publishes
@@ -729,12 +731,13 @@ impl AgentChannelState {
         security_context: SecurityContext,
         classification: Classification,
         profile: ModelProfile,
+        time_zone: TimeZone,
     ) -> TurnId {
         if self.turn.is_some() {
             tracing::warn!("A turn was begun while another was under way; the other ends without an end recorded");
         }
         let mut work = Work::new(event_context, security_context, classification);
-        work.context = ContextRef { transcript: self.transcript.digest(), profile, ..ContextRef::default() };
+        work.context = ContextRef { transcript: self.transcript.digest(), profile, time_zone, ..ContextRef::default() };
         self.transcript.messages().iter().for_each(|m| work.see_message(m));
         let turn_id = work.turn_id;
         let turn = TurnState { work, ..TurnState::default() };
@@ -769,9 +772,10 @@ impl AgentChannelState {
         security_context: SecurityContext,
         classification: Classification,
         profile: ModelProfile,
+        time_zone: TimeZone,
         request: CommandRequest,
     ) -> TurnId {
-        let turn_id = self.begin_turn(event_context, security_context, classification, profile);
+        let turn_id = self.begin_turn(event_context, security_context, classification, profile, time_zone);
         if let Some(turn) = &mut self.turn {
             turn.command = Some(request);
         }
@@ -1130,7 +1134,7 @@ pub(crate) mod tests {
     /// Begins a turn offering `tools` as one set, or none.
     fn begin(state: &mut AgentChannelState, tools: Vec<Tool>) {
         let sets = if tools.is_empty() { Vec::new() } else { vec![ToolSet::new("tools", "some tools", tools)] };
-        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default());
+        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default());
         state.offer_tools(sets);
     }
 
@@ -1357,7 +1361,7 @@ pub(crate) mod tests {
         let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
         let issuer = ActorId::User(UserId::new());
         let request = CommandRequest { command: "compact".to_string(), args: "hard".to_string(), issuer };
-        let turn_id = state.begin_command_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), request.clone());
+        let turn_id = state.begin_command_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default(), request.clone());
         let turn = state.turn.as_ref().expect("a turn was begun");
         assert_eq!(turn.command.as_ref(), Some(&request), "kept with the turn, for one resumed");
         assert!(turn.work.context.tools.is_none(), "a command turn offers its model nothing");
@@ -1487,7 +1491,7 @@ pub(crate) mod tests {
         let mut state = AgentChannelState::default();
         let earlier = state.keep_prompt(MessageRole::System, "earlier".to_string(), None, None);
         let sets = vec![ToolSet::new("calc", "calculates", Vec::new())];
-        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default());
+        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default());
         state.offer_tools(sets);
         let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
         state.turn.as_mut().unwrap().work.context.prompts.push(system.clone());

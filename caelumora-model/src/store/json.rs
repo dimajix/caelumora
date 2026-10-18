@@ -752,7 +752,7 @@ mod tests {
         let sessions = of_kind::<Session>(&store(dir.path()));
         let system = SecurityContext::system();
         let session = Session {
-            summary: None, briefing: None, language: None,
+            summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
             id: SessionId(Uuid::new_v4()), name: Name::new("old").unwrap(), participants: Vec::new(), channels: Vec::new(),
@@ -862,7 +862,7 @@ mod tests {
         };
         let channel_id = channel.id;
         let session = Session {
-            summary: None, briefing: None, language: None,
+            summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
             commands: Default::default(),
@@ -916,7 +916,7 @@ mod tests {
         let ctx = SecurityContext::default();
 
         let s1 = Session {
-            summary: None, briefing: None, language: None,
+            summary: None, briefing: None, language: None, time_zone: None,
             approval_rules: Vec::new(),
             workspace: None,
             commands: Default::default(),

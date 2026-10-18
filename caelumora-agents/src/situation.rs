@@ -26,6 +26,7 @@ use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::ToolSet;
 use caelumora_model::work::Work;
 use caelumora_model::workspace::Workspace;
+use caelumora_model::value::time_zone::TimeZone;
 use std::sync::Arc;
 
 /// The situation of the work under way of an agent in its channel, to
@@ -160,6 +161,12 @@ impl<'a> Situation<'a> {
     /// prompt part tells of how what it is given is marked.
     pub fn profile(&self) -> ModelProfile {
         self.work.context.profile
+    }
+
+    /// The time zone the work gives times in (issue 424): its session's as
+    /// it began, recorded with its context.
+    pub fn time_zone(&self) -> TimeZone {
+        self.work.context.time_zone
     }
 
     /// The tool sets the work began with, as its model is offered them

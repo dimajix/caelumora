@@ -11,6 +11,7 @@ use crate::channel::ChannelLoop;
 use crate::command::CommandError;
 use crate::runtime::{ActorRuntime, ChannelRuntime, RuntimeManager};
 use crate::view::AgentContextView;
+use crate::controller::SessionController;
 use crate::session::testing::{bare_session, founded, user};
 use anyhow::{Result, Error};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
@@ -217,6 +218,13 @@ impl ChannelLoop {
     /// The message `id` of the history (`ChannelLoop::message`).
     pub async fn message_of(&self, id: MessageId) -> Option<Message> {
         self.message(id).await
+    }
+
+    /// The controller of the channel's session, as its actors read it
+    /// (`ChannelRuntime::session_controller`): what a test changes of the
+    /// session where the channel runs without its session's loop.
+    pub fn session_controller_of(&self) -> Arc<SessionController> {
+        Arc::clone(self.runtime.session_controller())
     }
 
     /// The turn under way of the participant `actor`

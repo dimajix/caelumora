@@ -149,11 +149,12 @@ agents - with the note that every agent in every channel they take part in is gi
 language they prefer, and their own rules on tool calls, each with where it reaches and until when,
 to take back. Whether a language tag is valid is the server's to decide. The preferred language is
 the web UI's to apply, not the server's (issue 331): the dialog for a new session presets it where
-the template names no language. A session's language is changed from its menu.
+the template names no language. A session's language and time zone are changed from its menu.
 
 "New Session" presets everything - the template used last in this browser, its name, the workspace
-the template names, the language the template names or else the one the user prefers - so that
-Enter makes a session as its template has it. A workspace chosen there takes the place of the
+the template names, the language the template names or else the one the user prefers, the time
+zone the template names or else the browser's - so that Enter makes a session as its template has
+it. A workspace chosen there takes the place of the
 template's: none, one of the user's own, or a new one for the session alone. A new channel is
 created with its name, responder policy, classification, language (empty: the session's), whether
 it uses the session's workspace (preset to yes), and participants.

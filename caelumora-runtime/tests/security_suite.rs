@@ -56,7 +56,7 @@ async fn a_session_cannot_be_made_with_a_personality_the_user_may_not_read() {
     let bobs = world.personality("bobs-own", Some(world.bob), &[]).await;
     let template = world.template(Some(world.alice), &[], "helper", bobs.id).await;
 
-    let refused = world.manager.create_from_template(&World::as_user(world.alice), template, None, None, None).await.expect_err("not hers to use");
+    let refused = world.manager.create_from_template(&World::as_user(world.alice), template, None, None, None, None).await.expect_err("not hers to use");
     assert!(not_found(&refused), "answered as not there, so that it cannot be probed: {refused:#}");
     assert!(world.manager.views(Viewer::new(World::as_user(world.alice))).sessions().await.unwrap().is_empty(), "no session was stored");
     assert!(world.runtime.entity_stores().agents.list(&World::system(), &Query::all()).await.map(|page| page.items).unwrap().is_empty(), "nor an agent");
@@ -163,6 +163,7 @@ async fn a_participant_takes_part_but_changes_nothing() {
     assert!(main.reclassify(&bob, Classification::general(Confidentiality::Public)).await.is_err(), "nor to reclassify the channel");
     assert!(denied(&main.update_language(&bob, Some("fr")).await.expect_err("nor to change its language")));
     assert!(denied(&session.update_language(&bob, Some("fr")).await.expect_err("nor the session's (issue 425)")));
+    assert!(denied(&session.update_time_zone(&bob, Some("Asia/Tokyo")).await.expect_err("nor its time zone (issue 424)")));
     assert!(denied(&session.update_approval_rules(&bob, vec![]).await.expect_err("nor what it restricts of tool calls")));
     assert!(denied(&main.update_approval_rules(&bob, vec![]).await.expect_err("in any of its channels")));
     assert!(denied(&session.update_description(&bob, Some("his"), None).await.expect_err("nor to say what it is for (issue 245)")));
@@ -184,6 +185,7 @@ async fn the_owner_changes_and_ends_the_session() {
     let main = Arc::clone(&session.channels()[0]);
     session.update_language(&alice, Some("de")).await.expect("and to choose the language of its channels (issue 425)");
     main.update_language(&alice, Some("fr")).await.expect("or of one of them");
+    session.update_time_zone(&alice, Some("Europe/Berlin")).await.expect("and its time zone (issue 424)");
     let shell = |decision| ApprovalRule::new(ToolMatcher { tool: "shell".to_string(), arguments: Default::default() }, decision, Reach::Everywhere, None).unwrap();
     session.update_approval_rules(&alice, vec![shell(RuleDecision::Deny)]).await.expect("and what it restricts of tool calls");
     main.update_approval_rules(&alice, vec![shell(RuleDecision::Ask)]).await.expect("in it or in one of its channels");

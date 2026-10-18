@@ -42,6 +42,8 @@ export interface SessionResponse {
   summary?: string;
   /** The language its channels are held in where they hold none of their own, a BCP 47 tag (issue 425); `null` for none in particular. */
   language: string | null;
+  /** The time zone it is held in, an IANA name such as `Europe/Berlin` (issue 424); `null` for UTC. */
+  time_zone: string | null;
   /** Whom the session lets read what was said in it (issue 134). */
   privacy: PrivacyPolicy;
 }
@@ -331,6 +333,8 @@ export interface SessionSnapshot {
   briefing?: string;
   /** The language its channels are held in where they hold none of their own, a BCP 47 tag (issue 425); `null` for none in particular. */
   language: string | null;
+  /** The time zone it is held in, an IANA name such as `Europe/Berlin` (issue 424); `null` for UTC. */
+  time_zone: string | null;
   /** Whom the session lets read what was said in it (issue 134). */
   privacy: PrivacyPolicy;
   /** What it restricts of the tool calls made in any of its channels (issue 13): rules that ask or deny. */
@@ -885,6 +889,8 @@ export interface SessionTemplate {
   description: string;
   /** The language its sessions are held in unless another is asked for (issue 425); `null` for none in particular. */
   language: string | null;
+  /** The time zone its sessions are held in unless another is asked for (issue 424); `null` for none. */
+  time_zone: string | null;
   /** The workspace its sessions have unless another is chosen (issue 266); absent if it names none. */
   workspace?: TemplateWorkspace;
 }
@@ -902,6 +908,8 @@ export interface CreateSessionRequest {
   name: string;
   /** The language its channels are held in where they hold none of their own (issue 425); the template's if absent. */
   language?: string;
+  /** The time zone it is held in, an IANA name (issue 424); the template's if absent, else UTC. */
+  time_zone?: string;
   /** Its workspace in place of the template's (issue 266); the template's if absent. */
   workspace?: SessionWorkspaceRequest;
 }
