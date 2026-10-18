@@ -248,7 +248,6 @@ pub struct ChannelLoop {
     /// otherwise - a user follows their actor (issue 220).
     #[cfg(any(test, feature = "test-support"))]
     observed: broadcast::Sender<Envelope>,
-    max_route_decisions: i32,
     run_lock: Mutex<()>,
 }
 
@@ -316,7 +315,6 @@ impl ChannelLoop {
             quiet: AtomicBool::new(false),
             #[cfg(any(test, feature = "test-support"))]
             observed: broadcast::channel(128).0,
-            max_route_decisions: 100,
             run_lock: Mutex::new(()),
         });
         channel_loop.runtime.attach(&channel_loop);

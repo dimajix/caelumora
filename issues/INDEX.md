@@ -106,7 +106,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [417](417-user-history-from-its-actor.md) | done | Live, a user sees what the moderator routed to their actor; on reload they see the channel's history, filtered by what they may read, so the two can differ and whatever went to the user alone is gone. |
 | [418](418-moderator-decides-delivery-only.md) | done | `Moderator::route` returns the envelopes to deliver, so a moderator could alter a message for one recipient or speak in any name, and the channel cannot record what was decided apart from what was sent. |
 | [420](420-channel-built-empty.md) | done | A channel's founders are written into its document as it is built and never join, so no `ParticipantJoined` records them; build it empty and let its builder add them as anyone is added. |
-| [422](422-route-depth-in-moderator.md) | open | `ChannelLoop::decide` refuses to ask the moderator about an event once its `span_depth` reaches a hard-coded `max_route_decisions`, so the channel keeps a routing rule of its own beside the moderator, which decides everything else about routing. |
+| [422](422-route-depth-in-moderator.md) | done | `ChannelLoop::decide` refuses to ask the moderator about an event once its `span_depth` reaches a hard-coded `max_route_decisions`, so the channel keeps a routing rule of its own beside the moderator, which decides everything else about routing. |
 | [423](423-newcomer-misses-what-is-said-as-it-joins.md) | open | An actor added to a running channel catches up from the store before `run` takes it in, so what the channel records in between is in the newcomer's range but neither caught up nor delivered to it. |
 
 ## Identity and access management

@@ -248,7 +248,7 @@ impl ChannelLoop {
         let event = self.resolve_mentions(event);
         let shown = event.published();
         let routing = match &shown {
-            Some(shown) => self.decide(shown).await,
+            Some(shown) => Some(self.moderator.route(shown).await),
             None => None,
         };
         let audience = routing.as_ref().map_or_else(|| Audience::Only(Vec::new()), |routing| routing.audience.clone());
@@ -256,18 +256,6 @@ impl ChannelLoop {
         if let Some(shown) = shown {
             self.route_event(running, shown, routing, position).await;
         }
-    }
-
-    /// What the moderator decides of `event` (issue 418) - whom it goes to,
-    /// whom to ask, what to tell -, decided before it is recorded, so that
-    /// its entry says whom it went to (issue 417). `None` if it is routed no
-    /// further: too many routings deep.
-    async fn decide(&self, event: &Envelope) -> Option<Routing> {
-        if event.context.span_depth >= self.max_route_decisions {
-            warn!("Too many routings, stopping further propagation");
-            return None;
-        }
-        Some(self.moderator.route(event).await)
     }
 
     /// Starts the tasks of the channel's actors as `run` begins.
@@ -696,8 +684,8 @@ mod tests {
     /// Routes `event` in `channel` to `running` as the channel does once it
     /// recorded it: decided by its moderator, then delivered.
     async fn routed(channel: &ChannelLoop, running: &HashMap<ActorId, RunningActor>, event: Envelope) {
-        let routing = channel.decide(&event).await;
-        channel.route_event(running, event, routing, None).await;
+        let routing = channel.moderator.route(&event).await;
+        channel.route_event(running, event, Some(routing), None).await;
     }
 
     #[tokio::test]

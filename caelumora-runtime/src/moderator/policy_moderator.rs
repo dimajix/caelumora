@@ -9,6 +9,11 @@
 //! moderator counts the hops since the last user's message
 //! (`EventContext::agent_hops`) and asks nobody once they would exceed
 //! `max_agent_hops` (parameter, default `DEFAULT_MAX_AGENT_HOPS`; issue 45).
+//! Beneath that, it asks nobody to respond to an event as deep in its span
+//! as `max_span_depth` (parameter, default `DEFAULT_MAX_SPAN_DEPTH`; issue
+//! 422): the net against routing that goes on without end, as only an ask
+//! makes anyone respond. Past either bound, what was said is delivered as
+//! ever.
 //!
 //! It keeps the last `context_messages` messages heard (parameter, default
 //! `DEFAULT_CONTEXT_MESSAGES`; issue 414) as they stand after every change,
@@ -31,19 +36,25 @@ pub const POLICY_MODERATOR_KIND: &str = "policy_moderator";
 /// message, unless the moderator is configured otherwise.
 pub const DEFAULT_MAX_AGENT_HOPS: u32 = 3;
 
+/// How deep in its span (`EventContext::span_depth`) an event may be for the
+/// moderator to ask anyone to respond to it, unless it is configured
+/// otherwise.
+pub const DEFAULT_MAX_SPAN_DEPTH: i32 = 100;
+
 /// How many messages heard the moderator keeps to tell its policy, unless
 /// it is configured otherwise.
 pub const DEFAULT_CONTEXT_MESSAGES: usize = 10;
 
 /// A moderator that delivers like every other and asks whom `policy` chooses
 /// to respond when a message mentions nobody - in a chain between agents
-/// only up to `max_agent_hops` hops -, told the last `context_messages`
-/// messages heard before the message.
+/// only up to `max_agent_hops` hops, and for no event `max_span_depth` deep
+/// -, told the last `context_messages` messages heard before the message.
 #[derive(Debug)]
 pub struct PolicyModerator {
     actors: Mutex<ModeratorActors>,
     policy: ComponentImpl<dyn ResponderPolicy>,
     max_agent_hops: u32,
+    max_span_depth: i32,
     /// The messages heard, the oldest first, at most `context_messages`.
     heard: Mutex<VecDeque<Message>>,
     context_messages: usize,
@@ -51,7 +62,13 @@ pub struct PolicyModerator {
 
 impl PolicyModerator {
     pub fn new(policy: ComponentImpl<dyn ResponderPolicy>, max_agent_hops: u32, context_messages: usize) -> Self {
-        Self { actors: Mutex::new(ModeratorActors::new()), policy, max_agent_hops, heard: Mutex::default(), context_messages }
+        Self { actors: Mutex::new(ModeratorActors::new()), policy, max_agent_hops, max_span_depth: DEFAULT_MAX_SPAN_DEPTH, heard: Mutex::default(), context_messages }
+    }
+
+    /// This moderator, asking nobody to respond to an event `max_span_depth`
+    /// deep in its span.
+    pub fn with_max_span_depth(self, max_span_depth: i32) -> Self {
+        Self { max_span_depth, ..self }
     }
 
     /// The actors, locked only while they are read or changed, never while
@@ -122,6 +139,12 @@ impl PolicyModerator {
         let conversation: Vec<Message> = self.heard().iter().chain(messages).cloned().collect();
         if !heard {
             // Nothing anyone could answer: nobody is asked.
+            return Routing::default();
+        }
+        // Routed that deep, something goes on without end: nobody is asked,
+        // whatever the chain between agents.
+        if event.context.span_depth >= self.max_span_depth {
+            warn!(span_depth = event.context.span_depth, "Asking nobody to respond: the event is as deep in its span as the moderator allows");
             return Routing::default();
         }
 
@@ -295,6 +318,11 @@ pub fn register(registry: &mut ComponentRegistry) {
                 Some(value) => value.as_u64().and_then(|hops| u32::try_from(hops).ok())
                     .ok_or_else(|| ComponentError::InvalidConfig("parameter 'max_agent_hops' must be a number of at least 0".to_string()))?,
             };
+            let max_span_depth = match descriptor.params.get("max_span_depth") {
+                None => DEFAULT_MAX_SPAN_DEPTH,
+                Some(value) => value.as_u64().and_then(|depth| i32::try_from(depth).ok())
+                    .ok_or_else(|| ComponentError::InvalidConfig("parameter 'max_span_depth' must be a number of at least 0".to_string()))?,
+            };
             let context_messages = match descriptor.params.get("context_messages") {
                 None => DEFAULT_CONTEXT_MESSAGES,
                 Some(value) => value.as_u64().and_then(|count| usize::try_from(count).ok())
@@ -303,7 +331,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             // The channel's policy, or the default one.
             let policy = context.one::<dyn ResponderPolicy>().await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn Moderator>(Arc::new(PolicyModerator::new(policy, max_agent_hops, context_messages)));
+            facets.insert::<dyn Moderator>(Arc::new(PolicyModerator::new(policy, max_agent_hops, context_messages).with_max_span_depth(max_span_depth)));
             Ok(facets)
         },
     );
@@ -638,6 +666,50 @@ mod tests {
 
         let invalid = ComponentContainer::from_config(&configured(serde_json::json!(-1)), ChannelLoop::COMPONENT_FACETS, &registry, &context).await;
         assert!(invalid.is_err(), "a negative limit is refused");
+    }
+
+    /// Issue 422: routing goes on without end only by asks, so the net
+    /// against it is the moderator's - past it nobody is asked, mentioned
+    /// or chosen, and what was said is delivered as ever.
+    #[tokio::test]
+    async fn an_event_as_deep_as_the_moderator_allows_is_delivered_and_nobody_asked() {
+        let moderator = PolicyModerator::new(policy(broadcast_policy::BroadcastPolicy), DEFAULT_MAX_AGENT_HOPS, DEFAULT_CONTEXT_MESSAGES).with_max_span_depth(5);
+        let agents = add_agents(&moderator);
+        let user = ActorId::User(UserId::new());
+        let at_depth = |depth: i32, mentions: Vec<ActorId>| {
+            let mut event = message_from(user, "@b, please", mentions);
+            event.context.span_depth = depth;
+            event
+        };
+
+        assert_eq!(moderator.route(&at_depth(4, vec![agents[1]])).await.ask, vec![agents[1]], "beneath the bound, as ever");
+        let deep = moderator.route(&at_depth(5, vec![agents[1]])).await;
+        assert!(deep.ask.is_empty(), "at the bound nobody is asked, mentioned or not");
+        assert!(deep.audience == Audience::Everybody, "but what was said is delivered");
+        assert!(moderator.route(&at_depth(5, Vec::new())).await.ask.is_empty(), "nor whom the policy would choose");
+    }
+
+    #[tokio::test]
+    async fn the_bound_on_span_depth_is_a_parameter_of_the_moderator() {
+        use crate::component::{ComponentContainer, ComponentContext};
+        use crate::runtime::Services;
+        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        let store = Arc::new(MemoryStore::new());
+        let registry = Arc::new(test_registry(store));
+        let context = ComponentContext::new(SecurityContext::default(), Services::empty());
+        let configured = |max_span_depth: Value| ComponentConfig { component_nodes: vec![ComponentDescriptor {
+            params: serde_json::json!({ "max_span_depth": max_span_depth }),
+            ..ComponentDescriptor::new("moderator", POLICY_MODERATOR_KIND)
+        }] };
+
+        let container = ComponentContainer::from_config(&configured(serde_json::json!(0)), ChannelLoop::COMPONENT_FACETS, &registry, &context).await.unwrap();
+        let moderator = container.one::<dyn Moderator>().await.unwrap().facet;
+        let agents = add_agents(moderator.as_ref());
+        let asked = moderator.route(&message_from(ActorId::User(UserId::new()), "@b", vec![agents[1]])).await.ask;
+        assert!(asked.is_empty(), "with no depth allowed, nobody is asked");
+
+        let invalid = ComponentContainer::from_config(&configured(serde_json::json!(-1)), ChannelLoop::COMPONENT_FACETS, &registry, &context).await;
+        assert!(invalid.is_err(), "a negative bound is refused");
     }
 
     #[tokio::test]
