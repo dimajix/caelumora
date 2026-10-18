@@ -1,6 +1,6 @@
 # 430 — A summary is given the times of messages in UTC, not in the session's time zone
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Context and knowledge
@@ -52,3 +52,7 @@ the other's shape.
 
 2026-10-18: Opened from the work on 426, where `context_until` was rewritten for the `FrameRef`
 and was seen to take the profile alone.
+
+2026-10-18: Done as option A. `Turn::context_until` takes the turn's time zone beside its profile
+from its `FrameRef`; the test `the_times_of_messages_are_summarised_in_the_time_zone_of_the_turn`
+(`summary_compaction.rs`) shows the summarising model a message's time in Europe/Berlin.

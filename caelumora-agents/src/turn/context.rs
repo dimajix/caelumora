@@ -32,7 +32,8 @@ impl Turn<'_> {
 
     /// The transcript up to and including the entry `last`, on whichever
     /// branch, as the model of the turn would be given it - each message as
-    /// its profile gives it, a turn given up told where it ended, one that
+    /// its profile gives it, with its time in the turn's time zone (issue
+    /// 430), a turn given up told where it ended, one that
     /// no longer flows into the channel reduced to the tools it called -,
     /// without prompt parts or tools (issue 16): what a component hands a
     /// model to work on the conversation itself, a summary say. Resolved as
@@ -41,7 +42,8 @@ impl Turn<'_> {
     /// # Errors
     /// If the transcript holds no entry `last`.
     pub fn context_until(&self, last: Digest) -> Result<Vec<Message>> {
-        let reference = ContextRef { transcript: Some(last), frame: FrameRef { profile: self.current().work.context.frame.profile, ..FrameRef::default() } };
+        let FrameRef { profile, time_zone, .. } = self.current().work.context.frame;
+        let reference = ContextRef { transcript: Some(last), frame: FrameRef { profile, time_zone, ..FrameRef::default() } };
         let resolved = ContextResolver::of(self.agent_channel_state)
             .resolve(&reference, self.turn_id(), ActorId::Agent(self.agent_id))
             .context("the transcript holds no such entry")?;
