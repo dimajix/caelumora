@@ -46,6 +46,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [383](383-prompt-texts-and-tool-sets-kept-per-turn.md) | done | Every prompt text and tool set an agent was ever given in a channel is held in memory for the record, though only the current turn's and an old context's are read. |
 | [387](387-agent-history-window-without-compaction.md) | done | An agent that never compacts its context - every external agent - holds its whole history in a channel in memory, since the window of its history begins at its last compaction. |
 | [416](416-messages-stored-once-per-holder.md) | rejected | Every history and transcript stores each message it holds in full, so one message said in a channel lies in the store once for the channel and twice for every agent in it, and every change of it as often again. |
+| [421](421-history-filter-as-data.md) | open | `HistoryStore::page` takes `Keep`, a Rust closure, for what a viewer may read and what a search looks for; a database cannot turn it into a `WHERE`, so it has to become data. |
 
 ## Sessions and channels
 
@@ -104,6 +105,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [414](414-decision-policy-conversation.md) | done | The `decision_policy` is given only the message just said - or the messages of the turn just ended - without anything said before it and without who said what, so a reply like "Yes, do that" cannot be told apart from any other. |
 | [417](417-user-history-from-its-actor.md) | in progress | Live, a user sees what the moderator routed to their actor; on reload they see the channel's history, filtered by what they may read, so the two can differ and whatever went to the user alone is gone. |
 | [418](418-moderator-decides-delivery-only.md) | done | `Moderator::route` returns the envelopes to deliver, so a moderator could alter a message for one recipient or speak in any name, and the channel cannot record what was decided apart from what was sent. |
+| [420](420-channel-built-empty.md) | open | A channel's founders are written into its document as it is built and never join, so no `ParticipantJoined` records them; build it empty and let its builder add them as anyone is added. |
 
 ## Identity and access management
 
