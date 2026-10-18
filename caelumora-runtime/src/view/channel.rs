@@ -254,16 +254,22 @@ impl ChannelView {
     }
 
     /// The position from which on the viewer sees the history (issues 46,
-    /// 417): all of it, `0`, unless they joined later with a limit - what a
-    /// reader records as read (issue 72). An agent reads as itself, not as
-    /// the owner it acts for: its own limit applies, not the owner's.
-    pub fn visible_from(&self) -> u64 {
-        self.channel.history_from(self.reader())
+    /// 417): where the first range of their membership begins - all of it,
+    /// `0`, unless they joined later and were given less, or never were a
+    /// member. An agent reads as itself, not as the owner it acts for: its
+    /// own membership counts, not the owner's. What a page holds is the
+    /// store's to decide by every range; this says where it begins.
+    ///
+    /// # Errors
+    /// `Failed` if the history cannot be read.
+    pub async fn visible_from(&self) -> ViewResult<u64> {
+        let ranges = self.views().histories().memberships(self.channel.id, self.reader()).await.map_err(|e| self.failed_reading(e))?;
+        Ok(ranges.first().map_or(0, |range| range.start))
     }
 
-    /// A page of the history as the viewer sees it (issues 46, 218, 379):
-    /// the last `limit` items before the position `before` - the last ones
-    /// without it -, from where the viewer's view begins; of a channel read
+    /// A page of the history as the viewer sees it (issues 46, 218, 379,
+    /// 417): the last `limit` items before the position `before` - the last
+    /// ones without it - of those they see; of a channel read
     /// entry by entry, the messages released to where the viewer reads
     /// from, and nothing of how turns ended. Read from the store, whether the
     /// channel runs or not.
@@ -283,7 +289,7 @@ impl ChannelView {
     /// As `history_page`.
     pub async fn history_page_of(&self, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> ViewResult<HistoryPage> {
         let readable = |item: &HistoryEntry| self.may_read_item(item) && keep(item);
-        let page = self.views().histories().page(self.channel.id, &self.reading_as(), self.visible_from(), before, limit, &readable).await
+        let page = self.views().histories().page(self.channel.id, &self.reading_as(), 0, before, limit, &readable).await
             .map_err(|e| self.failed_reading(e))?;
         if self.readable == ChannelReading::Released && page.items.is_empty() {
             return Err(self.nothing_released());
@@ -299,9 +305,8 @@ impl ChannelView {
     /// read; `NoChannelNamed` instead of `MessageNotFound` in a channel read
     /// entry by entry.
     pub async fn message(&self, id: MessageId) -> ViewResult<Message> {
-        let from = self.visible_from();
         let said = self.views().histories().said(self.channel.id, &self.reading_as(), id).await.map_err(|e| self.failed_reading(e))?;
-        let seen = said.filter(|(at, _)| *at >= from).and_then(|(_, item)| item.said().cloned());
+        let seen = said.and_then(|(_, item)| item.said().cloned());
         match seen {
             Some(message) if self.may_read_entry(&message.classification) => Ok(message),
             _ if self.readable == ChannelReading::Released => Err(self.nothing_released()),
@@ -454,7 +459,7 @@ impl ChannelView {
             ViewError::failed(e, format!("reading what was read of channel {}", self.channel.id))
         })?;
         let read_up_to = state.read.map(|read| read.message);
-        let from = self.visible_from().max(state.unread_from());
+        let from = state.unread_from();
         let new = |item: &HistoryEntry| self.may_read_item(item) && item.said().is_some_and(|message| message.sender_id != viewer && message.is_heard());
         let mentioning = |item: &HistoryEntry| new(item) && item.said().is_some_and(|message| message.mentions.contains(&viewer));
         let key = self.channel.id;
@@ -778,7 +783,7 @@ impl ParticipantView {
             let attributes = self.state.attributes().ok_or(ViewError::NoContext { actor: self.id() })?;
             return Err(ViewError::Forbidden { actor: self.id(), refused: ActionType::ReadAgentContext(attributes).refused() });
         }
-        agent.context(self.channel.channel.history_from(self.id())).await
+        agent.context().await
     }
 
     /// The participant as an agent whose context the viewer may read.

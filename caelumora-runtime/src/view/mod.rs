@@ -802,7 +802,7 @@ mod tests {
     use caelumora_model::actor::Rejection;
     use crate::actor::user::ChannelWatch;
     use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind, AgentChannelState};
-    use caelumora_model::channel::{Channel, Participant};
+    use caelumora_model::channel::{Channel, ChannelState, Participant};
     use caelumora_model::confidentiality::{Classification, ConfidentialityRules, Visibility};
     use caelumora_model::scope::Scope;
     use caelumora_model::security::{Grant, SecurityAttributes, Subject};
@@ -815,7 +815,7 @@ mod tests {
     use caelumora_model::value::text::{Briefing, Summary};
     use caelumora_model::approval::ToolMatcher;
     use caelumora_model::context::{ContextItem, ContextRef};
-    use caelumora_model::history::{HistoryEntry, HistoryPage};
+    use caelumora_model::history::{Audience, HistoryEntry, HistoryPage, Recorded};
     use caelumora_model::turn::GivenUpReason;
     use caelumora_model::work::TurnId;
     use chrono::Utc;
@@ -835,8 +835,10 @@ mod tests {
     /// Stores `channel` as the runtime does, with the group of its
     /// participants.
     async fn stored_channel(store: &Arc<MemoryStore>, channel: &Channel) {
+        use caelumora_model::store::StateStore;
         store.entity_stores().channels.create(&SecurityContext::system(), channel).await.unwrap();
         keep_participants(store.entity_stores().groups.as_ref(), Group::of_channel(channel)).await.unwrap();
+        store.put_channel_state(channel.id, &mut founded(channel)).await.unwrap();
     }
 
     /// Another channel like `template`, named `name`: an id of its own,
@@ -872,7 +874,6 @@ mod tests {
 
     #[tokio::test]
     async fn the_context_of_an_external_agent_is_what_the_remote_agent_was_given() {
-        use caelumora_model::channel::ChannelState;
         use caelumora_model::message::{Message, MessageId};
         use caelumora_model::store::StateStore;
 
@@ -897,7 +898,7 @@ mod tests {
         state.transcript.extend(vec![later.clone()]);
         store.put_agent_channel_state(remote.id, channel.id, &mut state).await.unwrap();
         // Its channel's history, as it records what was said (issue 417).
-        let mut channel_state = ChannelState::new(channel.id);
+        let mut channel_state = store.get_channel_state(channel.id).await.unwrap();
         channel_state.history.extend(vec![question.clone(), Message { produced_from: Some(given), ..answer.clone() }, later]);
         store.put_channel_state(channel.id, &mut channel_state).await.unwrap();
 
@@ -1066,31 +1067,35 @@ mod tests {
     /// the mark moves forward only, and only to a message they see.
     #[tokio::test]
     async fn what_is_new_to_a_user_is_counted_from_what_they_read() {
-        use caelumora_model::channel::{ChannelState, HistoryLimit};
         use caelumora_model::message::{Message, MessageId, MessageRole};
         use caelumora_model::snapshot::Unread;
         use caelumora_model::store::{StateStore, StoreError};
         use caelumora_model::user::User;
 
         let (store, manager) = owned_runtime(Default::default());
-        let (alice, bob, carol) = (user("alice"), user("bob"), user("carol"));
+        let (alice, bob, carol, dave) = (user("alice"), user("bob"), user("carol"), user("dave"));
         let mut session = make_session("hers", ActorId::User(alice.id));
-        session.participants = record_users(&manager, &[&alice, &bob, &carol]).await;
+        session.participants = record_users(&manager, &[&alice, &bob, &carol, &dave]).await;
         let mut channel = main_channel(&session);
         channel.participants.retain(|participant| participant.actor_id() != ActorId::User(carol.id));
         stored_session(&store, &session).await;
 
         let said = |by: &User, text: &str| Message { id: MessageId::new(), role: MessageRole::User, sender_id: ActorId::User(by.id), content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        let hello = said(&bob, "hello");
+        let hello = said(&dave, "hello");
         let hers = said(&alice, "hi");
         let step = Message { internal: true, ..said(&bob, "a step") };
         let notice = Message { role: MessageRole::System, ..said(&bob, "a notice") };
         let asking = Message { mentions: vec![ActorId::User(alice.id)], ..said(&bob, "@alice, a question") };
-        // Bob joined after his first message.
-        channel.history_limits.push(HistoryLimit { participant: ActorId::User(bob.id), from: 1 });
-        stored_channel(&store, &channel).await;
+        // Alice and dave from the start, bob joined after dave's hello (issue 417).
+        store.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
+        keep_participants(store.entity_stores().groups.as_ref(), Group::of_channel(&channel)).await.unwrap();
+        let joined = |who: &User| Recorded::new(HistoryEntry::ParticipantJoined { participant: ActorId::User(who.id), name: who.username.to_string(), by: ActorId::User(alice.id), by_name: "alice".to_string(), at: Utc::now() }, ActorId::User(alice.id), Audience::Everybody);
         let mut state = ChannelState::new(channel.id);
-        state.history.extend(vec![hello.clone(), hers.clone(), step.clone(), notice, asking.clone()]);
+        state.history.enter(joined(&alice));
+        state.history.enter(joined(&dave));
+        state.history.push(hello.clone());
+        state.history.enter(joined(&bob));
+        state.history.extend(vec![hers.clone(), step.clone(), notice, asking.clone()]);
         store.put_channel_state(channel.id, &mut state).await.unwrap();
 
         let unread_of = |viewer: &User| {
@@ -1101,7 +1106,7 @@ mod tests {
             }
         };
         let unread = |messages, mentioned, read_up_to| Some(Unread { messages, mentioned, read_up_to });
-        assert_eq!(unread_of(&alice).await, unread(2, true, None), "bob's words, not her own, his steps or the runtime's notices");
+        assert_eq!(unread_of(&alice).await, unread(2, true, None), "the others' words, not her own, bob's steps or the runtime's notices");
         assert_eq!(unread_of(&bob).await, unread(1, false, None), "hers, from where his view begins");
         let without = manager.views(as_user(alice.id)).session(session.id).await.unwrap().channel(channel.id).await.unwrap().snapshot(Detail::empty()).await;
         assert_eq!(without.unread, None, "only where it is asked for");
@@ -1135,7 +1140,6 @@ mod tests {
 
     #[tokio::test]
     async fn what_a_channel_holds_is_read_through_its_nodes_and_a_participants_context_by_who_may() {
-        use caelumora_model::channel::{ChannelState, HistoryLimit};
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId, MessageRole};
         use caelumora_model::note::{NoteId, NoteOrigin};
@@ -1147,18 +1151,24 @@ mod tests {
         let mut session = make_session("hers", ActorId::User(alice.id));
         session.participants = record_users(&manager, &[&alice, &bob]).await;
         session.participants.push(Participant::Agent(helper.id));
-        let mut channel = main_channel(&session);
+        let channel = main_channel(&session);
         stored_session(&store, &session).await;
 
         // What was said, of which bob - who joined later - sees the end only.
         let said = |t: &str| Message { id: MessageId::new(), role: MessageRole::User, content: Some(t.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let (first, second) = (said("first"), said("second"));
-        channel.history_limits.push(HistoryLimit { participant: ActorId::User(bob.id), from: 1 });
-        // And so does the agent, though alice, for whom it acts, sees it all.
-        channel.history_limits.push(HistoryLimit { participant: ActorId::Agent(helper.id), from: 1 });
-        stored_channel(&store, &channel).await;
+        // And so does the agent, though alice, for whom it acts, sees it all
+        // (issue 417).
+        store.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
+        keep_participants(store.entity_stores().groups.as_ref(), Group::of_channel(&channel)).await.unwrap();
+        let alice_id = ActorId::User(alice.id);
+        let joined = |who: ActorId| Recorded::new(HistoryEntry::ParticipantJoined { participant: who, name: who.to_string(), by: alice_id, by_name: "alice".to_string(), at: Utc::now() }, alice_id, Audience::Everybody);
         let mut state = ChannelState::new(channel.id);
-        state.history.extend(vec![first.clone(), second.clone()]);
+        state.history.enter(joined(alice_id));
+        state.history.push(first.clone());
+        state.history.enter(joined(ActorId::User(bob.id)));
+        state.history.enter(joined(ActorId::Agent(helper.id)));
+        state.history.push(second.clone());
         store.put_channel_state(channel.id, &mut state).await.unwrap();
         // What the agent noted and saw.
         let mut agent_state = AgentChannelState::default();
@@ -1181,7 +1191,8 @@ mod tests {
         let page_texts = |page: &HistoryPage| page.entries().filter_map(HistoryEntry::said).filter_map(|m| m.content.clone()).collect::<Vec<_>>();
         let last = for_alice.history_page(None, 1).await.unwrap();
         assert_eq!(page_texts(&last), ["second"]);
-        let before = for_alice.history_page(last.earlier, 1).await.unwrap();
+        // Before it the joins of bob and the agent, the first, and her own join.
+        let before = for_alice.history_page(last.earlier, 4).await.unwrap();
         assert_eq!((page_texts(&before), before.earlier), (vec!["first".to_string()], None), "the page before it, and nothing older");
         let for_bob = reach(as_user(bob.id)).await;
         let his = for_bob.history_page(None, 10).await.unwrap();
@@ -1212,7 +1223,7 @@ mod tests {
     /// what it wrote there itself, its private notes, through itself.
     #[tokio::test]
     async fn an_agent_does_not_reach_a_channel_its_owner_may_not_read_but_knows_what_it_wrote_there() {
-        use caelumora_model::channel::{ChannelState, FormerParticipant};
+        use caelumora_model::channel::FormerParticipant;
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId};
         use caelumora_model::note::{NoteId, NoteOrigin};
@@ -1242,7 +1253,7 @@ mod tests {
             stored_channel(&store, channel).await;
         }
         // Classified as team is: the flow rule alone would let team read it all.
-        let mut state = ChannelState::new(hers.id);
+        let mut state = store.get_channel_state(hers.id).await.unwrap();
         state.history.extend(vec![Message { id: MessageId::new(), content: Some("hers alone".to_string()), ..Message::new(hers.classification.clone()) }]);
         store.put_channel_state(hers.id, &mut state).await.unwrap();
         let mut agent_state = AgentChannelState::default();
@@ -1434,7 +1445,6 @@ mod tests {
 
     #[tokio::test]
     async fn an_agent_reads_another_channel_as_a_whole_by_their_classifications_or_what_was_released_to_it() {
-        use caelumora_model::channel::ChannelState;
         use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
         use caelumora_model::ledger::Change;
         use caelumora_model::message::{Message, MessageId, MessageRole};
@@ -1468,7 +1478,7 @@ mod tests {
 
         // Said and noted in secret: one of each released to everyone.
         let said = |t: &str, classification: &Classification| Message { id: MessageId::new(), role: MessageRole::User, content: Some(t.to_string()), ..Message::new(classification.clone()) };
-        let mut state = ChannelState::new(secret.id);
+        let mut state = store.get_channel_state(secret.id).await.unwrap();
         let plan = said("the plan", &secret.classification);
         state.history.extend(vec![plan.clone(), said("the date", &public.classification)]);
         let ended = HistoryEntry::TurnGivenUp { turn_id: TurnId::new(), actor: ActorId::Agent(helper.id), reason: GivenUpReason::Left, at: Utc::now() };
@@ -1479,7 +1489,7 @@ mod tests {
         agent_state.notes.push(note(1, "noted secretly", &secret.classification), NoteOrigin::default(), MessageId::default());
         agent_state.notes.push(note(2, "noted openly", &public.classification), NoteOrigin::default(), MessageId::default());
         store.put_agent_channel_state(helper.id, secret.id, &mut agent_state).await.unwrap();
-        let mut state = ChannelState::new(team.id);
+        let mut state = store.get_channel_state(team.id).await.unwrap();
         state.history.extend(vec![said("internal", &team.classification)]);
         store.put_channel_state(team.id, &mut state).await.unwrap();
 
@@ -1517,14 +1527,13 @@ mod tests {
         assert_eq!(texts(whole(&from_secret.channel_named("team").await.unwrap()).await.unwrap()), ["internal"]);
         let itself = from_secret.channel(secret.id).await.unwrap();
         let history = whole(&itself).await.unwrap();
-        assert_eq!(history.items.len(), 3, "its messages, and how its turns ended (issue 258)");
+        assert_eq!(history.items.len(), 4, "its member's join, its messages, and how its turns ended (issue 258)");
         assert_eq!(texts(history), ["the plan", "the date"], "a channel reads itself as a whole");
         assert!(itself.participant(ActorId::Agent(helper.id)).await.unwrap().context().await.is_ok());
     }
 
     #[tokio::test]
     async fn a_participant_that_left_is_still_reached_by_what_it_said_and_a_gone_channel_is_told_from_one_never_there() {
-        use caelumora_model::channel::ChannelState;
         use caelumora_model::message::{Message, MessageId};
         use caelumora_model::store::StateStore;
 
@@ -1537,7 +1546,7 @@ mod tests {
         let channel = main_channel(&session);
         stored_session(&store, &session).await;
         stored_channel(&store, &channel).await;
-        let mut state = ChannelState::new(channel.id);
+        let mut state = store.get_channel_state(channel.id).await.unwrap();
         state.history.extend(vec![Message { id: MessageId::new(), sender_id: ActorId::Agent(helper.id), content: Some("I was here".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }]);
         store.put_channel_state(channel.id, &mut state).await.unwrap();
 

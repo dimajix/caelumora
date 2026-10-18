@@ -62,8 +62,9 @@ impl ChannelLoop {
 
     /// Takes `participant` - a participant of the session - into the
     /// channel as one of its founders (issue 420), on behalf of `context`,
-    /// who just created it: seeing the whole history, as everybody does who
-    /// is there from the start. Asked nothing beyond what anyone taken in
+    /// who just created it: given what is said from its join on, as
+    /// everybody who is there from the start - nothing is shared with it
+    /// (issue 417). Asked nothing beyond what anyone taken in
     /// is asked - creating the channel was permitted, with whom it names -
     /// and stored in the runtime's name; then as [`Self::take_in`] says. For
     /// the creation of a channel alone (`SessionLoop::create_channel`,
@@ -72,7 +73,7 @@ impl ChannelLoop {
     /// # Errors
     /// As [`Self::take_in`].
     pub(crate) async fn found(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
-        self.take_in(context, participant, HistoryAccess::All, Entry::Founding).await
+        self.take_in(context, participant, HistoryAccess::None, Entry::Founding).await
     }
 
     /// Takes `participant` into the channel, on behalf of `context`, seeing
@@ -113,10 +114,13 @@ impl ChannelLoop {
         };
         self.participation.require_admissible(&resolved, context, &self.classification())?;
 
-        let from = self.history_start(history).await?;
-        self.channel.add_participant(&storing, found.clone(), from).await?;
+        let from = match entry {
+            Entry::Founding => None,
+            Entry::Added | Entry::Joining => Some(self.history_start(history).await?),
+        };
+        self.channel.add_participant(&storing, found.clone()).await?;
 
-        if let Err(error) = self.start_participant(resolved, context).await {
+        if let Err(error) = self.start_participant(resolved, context, from).await {
             // Stored, but it cannot run: taken back out, in the runtime's
             // name - adding it was permitted.
             if let Err(undo) = self.channel.remove_participant(&SecurityContext::system(), participant).await {
@@ -192,7 +196,10 @@ impl ChannelLoop {
                 },
                 None => {
                     let rejoined = match self.resolve(&participant).await {
-                        Ok(Some(resolved)) => self.start_participant(resolved, &SecurityContext::system()).await.map(|()| true),
+                        Ok(Some(resolved)) => match self.rejoining_from(actor).await {
+                            Ok(from) => self.start_participant(resolved, &SecurityContext::system(), Some(from)).await.map(|()| true),
+                            Err(e) => Err(e.into()),
+                        },
                         Ok(None) => Ok(false),
                         Err(e) => Err(e),
                     };
@@ -212,21 +219,25 @@ impl ChannelLoop {
     /// Starts the actor of `resolved` in a channel that is built already - a
     /// participant added or joining (`take_in`), an agent restored
     /// (`follow_agents`): once the actor it had before has ended (`left`),
-    /// built, given the part of the history it may see (`Actor::catch_up`,
-    /// issue 190), taken in (`adopt`) and handed to `run` to start, which
-    /// announces it in the name of `adder`'s caller (issue 408). `take_in`
-    /// waits for `left` before it stores anything already; here it then
-    /// finds nothing left to wait for.
+    /// built, given the part of the history it may see - from the position
+    /// `from` on (`Actor::catch_up`, issue 190), nothing if `None`: what is
+    /// said from its join on -, taken in (`adopt`) and
+    /// handed to `run` to start, which records what it was given and
+    /// announces it in the name of `adder`'s caller (issues 408, 417).
+    /// `take_in` waits for `left` before it stores anything already; here it
+    /// then finds nothing left to wait for.
     ///
     /// # Errors
     /// `ChannelError::StillLeaving`, or what building the actor or catching
     /// it up reports; it is not taken in then.
-    async fn start_participant(&self, resolved: ResolvedParticipant, adder: &SecurityContext) -> Result<()> {
+    async fn start_participant(&self, resolved: ResolvedParticipant, adder: &SecurityContext, from: Option<u64>) -> Result<()> {
         self.left(resolved.actor_id()).await?;
         let actor = self.create_actor(&resolved).await?;
-        actor.catch_up(self.visible_from(resolved.actor_id())).await?;
+        if let Some(from) = from {
+            actor.catch_up(from).await?;
+        }
         let adopted = self.adopt(Arc::from(actor), resolved).await;
-        let _ = self.changes_tx.send(ActorChange::Start(adopted, adder.clone()));
+        let _ = self.changes_tx.send(ActorChange::Start(adopted, adder.clone(), from));
         Ok(())
     }
 
@@ -519,32 +530,31 @@ mod tests {
         assert!(channel.participants().iter().any(|m| m.id == other), "a participant now");
         let other_user = match other { ActorId::User(id) => id, _ => unreachable!() };
         assert!(channel.user_actor(other_user).is_some(), "with an actor of their own");
-        let visible: Vec<_> = channel.visible_messages(other).await.into_iter().map(|m| m.content).collect();
-        assert_eq!(visible, vec![Some("three".to_string())], "the last message and no more");
-        assert_eq!(channel.visible_messages(ctx.initiator_id).await.len(), before.len(), "the others still see everything");
-        // What a reader records as read says from where (issue 72), and the
-        // history records what was shared with the newcomer, for it alone,
-        // right before it joined (issue 417).
-        let from = channel.history_from(other);
-        assert!(from > 0, "from the last message");
-        assert_eq!(channel.history_from(ctx.initiator_id), 0, "all of it");
+        // The history records what was shared with the newcomer, for it
+        // alone and in the system's name, right before it joined - once its
+        // actor runs (issue 417); the founder shared nothing (issue 420).
         let shared = |e: &HistoryEntry| matches!(e, HistoryEntry::HistoryShared { .. } | HistoryEntry::ParticipantJoined { .. });
         let recorded: Vec<_> = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let recorded: Vec<_> = channel.history_entries().await.into_iter().filter(shared).collect();
-                if recorded.len() == 4 { break recorded }
+                if recorded.len() == 3 { break recorded }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }).await.expect("recorded");
-        assert!(matches!(recorded.as_slice(), [HistoryEntry::HistoryShared { participant: founder, .. }, HistoryEntry::ParticipantJoined { .. }, HistoryEntry::HistoryShared { participant, from: f, by, .. }, HistoryEntry::ParticipantJoined { participant: joined, .. }]
-            if *founder == ctx.caller_id && *participant == other && *f == from && *by == ctx.caller_id && *joined == other), "after the founder's own (issue 420): {recorded:?}");
-        for (reader, seen) in [(other, 1), (ctx.caller_id, 2), (ActorId::User(UserId::new()), 0)] {
+        let from = channel.memberships(other).await.first().map(|range| range.start).expect("a member");
+        assert!(from > 0, "from the last message");
+        assert_eq!(channel.memberships(ctx.initiator_id).await.first().map(|range| range.start), Some(0), "all of it: a founder");
+        assert!(matches!(recorded.as_slice(), [HistoryEntry::ParticipantJoined { participant: founder, .. }, HistoryEntry::HistoryShared { participant, from: f, by, .. }, HistoryEntry::ParticipantJoined { participant: joined, .. }]
+            if *founder == ctx.caller_id && *participant == other && *f == from && *by == ctx.caller_id && *joined == other), "after the founder's own join (issue 420): {recorded:?}");
+        for (reader, seen) in [(other, 1), (ctx.caller_id, 0), (ActorId::User(UserId::new()), 0)] {
             let shared = channel.visible_entries(reader).await.into_iter().filter(|e| matches!(e, HistoryEntry::HistoryShared { .. })).count();
-            assert_eq!(shared, seen, "to the newcomer and to who shared it, who sent it - its own as a founder too -, to nobody else: {reader}");
+            assert_eq!(shared, seen, "to the newcomer alone: {reader}");
         }
+        let visible: Vec<_> = channel.visible_messages(other).await.into_iter().map(|m| m.content).collect();
+        assert_eq!(visible, vec![Some("three".to_string())], "the last message and no more");
+        assert_eq!(channel.visible_messages(ctx.initiator_id).await.len(), before.len(), "the others still see everything");
         let stored = runtime.entity_stores().channels.get(&ctx, channel.id()).await.unwrap();
         assert!(stored.participants.iter().any(|p| p.actor_id() == other), "stored, not only in memory");
-        assert_eq!(stored.history_limits.len(), 1, "with the limit");
         let events = drain(&mut rx);
         assert!(events.iter().any(|e| matches!(e.about::<Channel>(), Some(((_, cid), change)) if cid == channel.id() && change.data::<ActorId>(JOINED) == Some(other))),
                 "the join is announced: {events:?}");
@@ -596,16 +606,15 @@ mod tests {
         channel.add_participant(&ctx, other, HistoryAccess::None).await.expect("added");
 
         let entries = recorded(&channel, |e| matches!(e, HistoryEntry::ParticipantJoined { .. })).await;
-        assert!(matches!(&entries[..2], [HistoryEntry::HistoryShared { participant: f, from: 0, .. }, HistoryEntry::ParticipantJoined { participant: j, .. }] if *f == ctx.caller_id && *j == ctx.caller_id),
-            "first the founder, who joined as anyone does (issue 420): {entries:?}");
-        assert!(entries[2].said().is_some_and(|m| m.content.as_deref() == Some("before")), "after what was said before: {entries:?}");
-        assert!(matches!(&entries[3], HistoryEntry::HistoryShared { participant, from: 3, by, .. } if *participant == other && *by == ctx.caller_id),
-            "right before it, what the newcomer was given of the history: {entries:?}");
-        assert!(matches!(&entries[4], HistoryEntry::ParticipantJoined { participant, name, by, by_name, .. }
+        assert!(matches!(&entries[0], HistoryEntry::ParticipantJoined { participant, .. } if *participant == ctx.caller_id),
+            "first the founder, who joined as anyone does, given nothing before (issue 420): {entries:?}");
+        assert!(entries[1].said().is_some_and(|m| m.content.as_deref() == Some("before")), "after what was said before: {entries:?}");
+        assert!(matches!(&entries[2], HistoryEntry::ParticipantJoined { participant, name, by, by_name, .. }
             if *participant == other && name == "other" && *by == ctx.caller_id && by_name == "owner"), "who, and by whose act, named as they are: {entries:?}");
+        assert_eq!(entries.len(), 3, "granted nothing before its join, nothing shared is recorded (issue 417): {entries:?}");
         let visible = channel.visible_entries(other).await;
-        assert!(matches!(visible.as_slice(), [HistoryEntry::HistoryShared { .. }, HistoryEntry::ParticipantJoined { participant, .. }] if *participant == other),
-            "the newcomer sees what it was given and its own join, though granted nothing before it: {visible:?}");
+        assert!(matches!(visible.as_slice(), [HistoryEntry::ParticipantJoined { participant, .. }] if *participant == other),
+            "the newcomer sees its own join, and nothing before it: {visible:?}");
         let told = shown(&mut mine, |e| matches!(e, ActorEvent::ParticipantJoined { .. })).await;
         assert_eq!(told.context.sender_id, ctx.caller_id, "shown to who added them, in whose name it is told");
 
@@ -614,7 +623,7 @@ mod tests {
         let entries = recorded(&channel, |e| matches!(e, HistoryEntry::ParticipantLeft { .. })).await;
         assert!(matches!(entries.last(), Some(HistoryEntry::ParticipantLeft { participant, by, .. }) if *participant == other && *by == ctx.caller_id), "{entries:?}");
         let told = shown(&mut mine, |e| matches!(e, ActorEvent::ParticipantLeft { .. })).await;
-        assert!(matches!(told.event, ActorEvent::ParticipantLeft { participant, ref name } if participant == other && name == "other"));
+        assert!(matches!(told.event, ActorEvent::ParticipantLeft { participant, ref name, .. } if participant == other && name == "other"));
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 

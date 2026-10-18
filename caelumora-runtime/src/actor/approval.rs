@@ -454,7 +454,6 @@ mod tests {
             components: moderation_components(None, Some("broadcast_policy")),
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
-            history_limits: Vec::new(),
             participants,
             internal_actors: vec![InternalActor::Approver(approver.clone())],
             security_attributes: SecurityAttributes::owned_by(ActorId::User(ids[0])),

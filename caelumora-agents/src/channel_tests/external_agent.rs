@@ -104,11 +104,12 @@ async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: Compon
         security_attributes: SecurityAttributes::default(),
         classification: Classification::CHANNEL_DEFAULT,
         language: None,
-        history_limits: Vec::new(),
         deleted: None,
         former: Vec::new(),
     };
     runtime.entity_stores().channels.create(&SecurityContext::system(), &channel).await.unwrap();
+    // Its participants' joins recorded, as if they had founded it (issue 420).
+    runtime.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
     if let Some(mut stored) = stored(agent_id) {
         runtime.state_store().put_agent_channel_state(agent_id, channel.id, &mut stored).await.unwrap();
     }
@@ -146,8 +147,9 @@ async fn an_external_agent_that_joins_keeps_what_it_may_see_and_on_joining_again
         channel.stored_agent_channel_state(agent).await.unwrap().transcript.messages().into_iter().map(|m| m.content.unwrap()).collect::<Vec<_>>()
     };
 
+    // After the joins of alice and the agent, one at 2 and two at 3.
     channel.record_said(vec![one, two]).await;
-    actor.catch_up(1).await.unwrap();
+    actor.catch_up(3).await.unwrap();
     assert_eq!(kept().await, ["two"], "what it may see");
     channel.record_said(vec![own, three]).await;
     actor.catch_up(0).await.unwrap();

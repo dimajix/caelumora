@@ -30,7 +30,7 @@ use std::any::Any;
 mod commands;
 
 pub(super) use crate::session::testing::user;
-use crate::session::testing::bare_session;
+use crate::session::testing::{bare_session, founded};
 pub(super) use crate::channel::testing::*;
 
 /// A channel of `users`, who are recorded in the store its actors are
@@ -67,7 +67,6 @@ async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, 
         security_attributes: SecurityAttributes::default(),
         classification: Classification::CHANNEL_DEFAULT,
         language: None,
-        history_limits: Vec::new(),
         deleted: None,
         former: Vec::new(),
     };
@@ -76,6 +75,8 @@ async fn channel_built(store: Arc<MemoryStore>, participants: Vec<Participant>, 
         Arc::clone(runtime.access_policy()),
         vec![builtin("help", Arc::new(HelpCommandProvider)), builtin("wakeup", Arc::new(WakeupCommandProvider))],
     ).unwrap();
+    // Its participants' joins recorded, as if they had founded it (issue 420).
+    runtime.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
     let session = runtime.controller_manager().new_session_controller(bare_session(channel.session_id));
     let channel = runtime.controller_manager().new_channel_controller(channel);
     ChannelLoop::new(ChannelRuntime::new(runtime, Arc::new(executor), session, channel, Weak::new())).await.unwrap()

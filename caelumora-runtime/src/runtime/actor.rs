@@ -141,13 +141,14 @@ impl ActorRuntime {
     }
 
     /// The entries of its channel's history from the position `from` on, as
-    /// they were added, as this actor may see them (issues 379, 417): what
-    /// the actor missed of it.
+    /// they were added, as this actor is given them as it joins (issues 379,
+    /// 417, `Reader::Newcomer`): what it is given of what was said before
+    /// its join is recorded - read before its actor runs.
     ///
     /// # Errors
     /// Whatever the `HistoryStore` reports.
     pub async fn channel_entries(&self, from: u64) -> Result<Vec<Node<HistoryEntry>>> {
-        Ok(self.runtime.runtime_manager.history_store().entries(self.channel_id, &Reader::Participant(self.actor), from).await?)
+        Ok(self.runtime.runtime_manager.history_store().entries(self.channel_id, &Reader::Newcomer(self.actor), from).await?)
     }
 
     /// The message `id` as this agent's transcript in its channel holds it,

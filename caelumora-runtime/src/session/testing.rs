@@ -18,7 +18,8 @@ use caelumora_model::session::Participant;
 use caelumora_model::user::{User, UserId};
 use caelumora_model::security::{Grant, Subject};
 use anyhow::Result;
-use caelumora_model::channel::{Channel, moderation_components};
+use caelumora_model::channel::{Channel, ChannelState, moderation_components};
+use caelumora_model::history::{Audience, HistoryEntry, Recorded};
 use caelumora_model::event::GlobalEvent;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
@@ -116,7 +117,6 @@ pub fn bare_channel(session_id: SessionId) -> Channel {
         components: Default::default(),
         classification: Default::default(),
         language: None,
-        history_limits: Vec::new(),
         participants: Vec::new(),
         internal_actors: Vec::new(),
         security_attributes: Default::default(),
@@ -151,6 +151,22 @@ pub fn make_session(name: &str, owner: ActorId) -> Session {
 /// The channel `session` lists, as a document of its own (issue 70) and as
 /// `Channel::build` makes one: "main", belonging to whom the session belongs
 /// to, read by its participants - the session's participants.
+/// The state of `channel` - a channel a test stores as it is, its
+/// participants written into its document - with their joins recorded in its
+/// history, in its owner's name, as if they had founded it (issue 420): so
+/// that its history says who is a member, as it does of a channel created
+/// by the one way in. What a test records in the history goes after them.
+pub fn founded(channel: &Channel) -> ChannelState {
+    let mut state = ChannelState::new(channel.id);
+    let owner = channel.security_attributes.owner_id;
+    for participant in &channel.participants {
+        let actor = participant.actor_id();
+        let joined = HistoryEntry::ParticipantJoined { participant: actor, name: actor.to_string(), by: owner, by_name: owner.to_string(), at: Utc::now() };
+        state.history.enter(Recorded::new(joined, owner, Audience::Everybody));
+    }
+    state
+}
+
 pub fn main_channel(session: &Session) -> Channel {
     let id = session.channels[0];
     Channel {
@@ -163,7 +179,6 @@ pub fn main_channel(session: &Session) -> Channel {
         components: moderation_components(None, Some("broadcast_policy")),
         classification: Classification::CHANNEL_DEFAULT,
         language: None,
-        history_limits: Vec::new(),
         participants: session.participants.clone(),
         internal_actors: Vec::new(),
         security_attributes: SecurityAttributes::owned_by(session.security_attributes.owner_id).granting(Subject::Group(GroupId::of_channel(id)), Grant::Read),

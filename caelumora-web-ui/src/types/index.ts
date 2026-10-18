@@ -758,15 +758,17 @@ export interface ActorEvent {
   /**
    * `participant`, called `name`, left the channel (issues 162, 408), by the
    * act of the envelope's sender, as `ParticipantJoined`; nothing of it
-   * follows, so whatever of it was under way has ended. Part of the history.
+   * follows, so whatever of it was under way has ended. Nothing was delivered
+   * to it from the position `until` on (issue 417). Part of the history.
    */
-  ParticipantLeft?: { participant: ActorId; name: string };
+  ParticipantLeft?: { participant: ActorId; name: string; until: number };
   /**
    * `participant` was given the history from the position `from` on as it
-   * joined (issue 417), by the act of the envelope's sender; sent to the
-   * newcomer alone, right before `ParticipantJoined`. Not shown.
+   * joined (issue 417), by the act of `by`, called `by_name`; sent in the
+   * system's name to the newcomer alone, right before `ParticipantJoined`,
+   * and only if it shares something. Not shown.
    */
-  HistoryShared?: { participant: ActorId; from: number };
+  HistoryShared?: { participant: ActorId; from: number; by: ActorId; by_name: string };
   /**
    * A chain between agents reached its limit (issue 200): the response ending
    * in `message` was delivered, but nobody was asked to respond to it -

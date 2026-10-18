@@ -4,7 +4,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::ApprovalRule;
-use caelumora_model::channel::{self, Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, HistoryLimit, Participant};
+use caelumora_model::channel::{self, Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, Participant};
 use caelumora_model::removal::Removal;
 use caelumora_model::message::Message;
 use caelumora_model::group::Group;
@@ -104,8 +104,9 @@ impl ChannelController {
         self.update(ctx, &ChannelUpdateEvent::ApprovalRulesChanged(rules)).await
     }
 
-    /// Adds `participant` to the channel on behalf of `ctx` (issue 46), seeing
-    /// its history from the position `from` on (`0`: all of it). Stored first
+    /// Adds `participant` to the channel on behalf of `ctx` (issue 46). How
+    /// much of the history it is given is the history's to record
+    /// (`HistoryShared`, issue 417). Stored first
     /// (`UpdateChannel`), then the group of its participants follows, so
     /// that the newcomer may read it (issue 286), then taken over and
     /// announced (`channel::JOINED`).
@@ -113,17 +114,13 @@ impl ChannelController {
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub async fn add_participant(&self, ctx: &SecurityContext, participant: Participant, from: u64) -> StoreResult<()> {
+    pub async fn add_participant(&self, ctx: &SecurityContext, participant: Participant) -> StoreResult<()> {
         let writing = self.channel.write().await;
         let mut channel = writing.current();
         let id = participant.actor_id();
         channel.participants.push(participant);
         // Back again: no longer a former participant (issue 164).
         channel.former.retain(|f| f.participant.actor_id() != id);
-        channel.history_limits.retain(|l| l.participant != id);
-        if from > 0 {
-            channel.history_limits.push(HistoryLimit { participant: id, from });
-        }
         let channel = writing.store(ctx, channel).await?;
         self.keep_participants(&channel).await;
         if let Some(event) = self.joined_or_left_event(id, true) {
@@ -148,7 +145,6 @@ impl ChannelController {
         let index = channel.participants.iter().position(|p| p.actor_id() == participant)
             .ok_or_else(|| StoreError::NotFound { entity: "participant", id: participant.to_string() })?;
         let removed = channel.participants.remove(index);
-        channel.history_limits.retain(|l| l.participant != participant);
         channel.former.retain(|f| f.participant.actor_id() != participant);
         channel.former.push(FormerParticipant { participant: removed.clone(), left: Removal::now(ctx.caller_id) });
         let channel = writing.store(ctx, channel).await?;

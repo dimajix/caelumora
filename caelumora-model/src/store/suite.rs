@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use crate::chain::Node;
 use crate::digest;
 use crate::transcript::TranscriptEntry;
-use crate::history::{Audience, HistoryEntry, HistoryPage, Reader, Recorded};
+use crate::history::{Audience, HistoryEntry, HistoryPage, Reader, Recorded, EVERY_POSITION};
 use crate::template::{ChannelTemplate, ParticipantTemplate, SessionTemplate, SessionTemplateId};
 use crate::removal::{Deletable, Removal};
 use crate::user::{ReadMark, User, UserChannelState, UserId, UserProfile};
@@ -157,7 +157,6 @@ fn channel() -> Channel {
         components: moderation_components(None, Some("broadcast_policy")),
         classification: Classification::CHANNEL_DEFAULT,
         language: None,
-        history_limits: Vec::new(),
         former: Vec::new(),
         participants: Vec::new(),
         internal_actors: Vec::new(),
@@ -772,12 +771,17 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     assert_eq!(histories.said(key, &Reader::Channel, id(601)).await.unwrap().map(|(at, _)| at), Some(state.history.end()));
 
     // Read for a reader (issue 417): what went to them and what they sent,
-    // the latter in full; what went to everybody for an outsider.
-    let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+    // the latter in full; what went to every member for whoever was one
+    // then, and for an outsider. Both users are given all of it as they join.
+    let (user, other, stranger) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()), ActorId::User(UserId::new()));
     let speaker = ActorId::Agent(agent);
     let hidden = ToolCall { id: Some("1".to_string()), function_name: "look".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
     let answer = Message { sender_id: speaker, role: MessageRole::Assistant, content: Some("found it".to_string()), tool_calls: vec![hidden], ..make_message(id(602)) };
     let mut more = states.get_channel_state(channel).await.expect("get");
+    for member in [user, other] {
+        more.history.enter(Recorded::new(HistoryEntry::HistoryShared { participant: member, from: 0, by: speaker, by_name: String::new(), at: Utc::now() }, ActorId::System, Audience::Everybody));
+        more.history.enter(Recorded::new(HistoryEntry::ParticipantJoined { participant: member, name: String::new(), by: speaker, by_name: String::new(), at: Utc::now() }, speaker, Audience::Everybody));
+    }
     more.history.enter(Recorded::new(HistoryEntry::Said { message: answer }, speaker, Audience::Everybody));
     more.history.enter(Recorded::new(HistoryEntry::Said { message: Message { sender_id: ActorId::System, ..make_message(id(603)) } }, ActorId::System, Audience::Only(vec![user])));
     states.put_channel_state(channel, &mut more).await.expect("put");
@@ -788,9 +792,13 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     assert!(histories.said(key, &Reader::Participant(user), id(603)).await.unwrap().is_some(), "what went to them alone");
     assert!(histories.said(key, &Reader::Participant(other), id(603)).await.unwrap().is_none(), "not to another");
     assert!(histories.said(key, &Reader::Outsider, id(603)).await.unwrap().is_none(), "nor to an outsider");
+    assert!(histories.said(key, &Reader::Participant(stranger), id(602)).await.unwrap().is_none(), "nothing that went to every member to who never was one");
+    assert_eq!(histories.memberships(key, other).await.unwrap(), vec![EVERY_POSITION], "a member from what was shared, and still");
+    assert!(histories.memberships(key, stranger).await.unwrap().is_empty());
     let last = |page: HistoryPage| page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect::<Vec<_>>();
     assert_eq!(last(histories.page(key, &Reader::Participant(user), 0, None, 2, &every).await.unwrap()), [id(602), id(603)]);
-    assert_eq!(last(histories.page(key, &Reader::Participant(other), 0, None, 2, &every).await.unwrap()), [id(601), id(602)], "a page is filled with what they may see");
+    // Newest first, what they see: the answer, their join and share, the other's join, 601.
+    assert_eq!(last(histories.page(key, &Reader::Participant(other), 0, None, 5, &every).await.unwrap()), [id(601), id(602)], "a page is filled with what they may see");
     let seen = histories.entries(key, &Reader::Participant(other), 600).await.unwrap();
     assert_eq!(seen.iter().filter_map(|node| node.entry.said()).map(|m| m.id).collect::<Vec<_>>(), [id(601), id(602)], "and so is the chain");
 

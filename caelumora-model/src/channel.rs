@@ -114,10 +114,6 @@ pub struct Channel {
     /// told to write in it. `None` if it is held in none in particular.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
-    /// Where the view of the history begins for participants who joined
-    /// later and may not see all of it (issue 46); everybody else sees all.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub history_limits: Vec<HistoryLimit>,
     /// Who took part and left (issue 164): removed participants, with who
     /// removed them and when. Not among `participants`, which is who takes
     /// part now; one added again is taken out of here.
@@ -195,7 +191,8 @@ impl HistoryAccess {
 
 /// Where a participant's view of a channel's history begins, as a grant
 /// reads it off the messages (`HistoryAccess::start_in`); fixed as a
-/// position as they join (`from`, `HistoryLimit`).
+/// position as they join (`from`), which the `HistoryShared` they are given
+/// records (issue 417).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryStart {
     /// From this message on.
@@ -222,15 +219,6 @@ impl HistoryStart {
             HistoryStart::After(_) => said_at + 1,
         }
     }
-}
-
-/// The view of the history granted to one participant: from the position
-/// `from` on (issues 46, 417) - where the `HistoryShared` it was given as it
-/// joined says, kept here as the index every read of its view takes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HistoryLimit {
-    pub participant: ActorId,
-    pub from: u64,
 }
 
 impl Stored for Channel {
@@ -333,7 +321,6 @@ impl Channel {
             security_attributes,
             classification,
             language,
-            history_limits: Vec::new(),
             former: Vec::new(),
             approval_rules: Vec::new(),
             uses_workspace: true,
@@ -357,17 +344,10 @@ impl Channel {
         (self.summary, self.briefing) = (Summary::optional(summary)?, Briefing::optional(briefing)?);
         Ok(())
     }
-
-    /// The position from which on `participant` sees the history (issues
-    /// 46, 417); `0`: all of it.
-    pub fn history_from(&self, participant: ActorId) -> u64 {
-        self.history_limits.iter().find(|l| l.participant == participant).map_or(0, |l| l.from)
-    }
 }
 
 /// A participant that left a channel (issue 164): removed, by whom and
-/// when. Its history limit is not kept - one added again is given a new
-/// one.
+/// when. What it saw of the history is the history's to say (issue 417).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormerParticipant {
     pub participant: Participant,

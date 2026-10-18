@@ -587,3 +587,33 @@ Each step is reviewable on its own; 1-2 change no behaviour.
   ranges beside the items, and a page counts what its reader sees. That founders join by the same
   way as everybody else - a channel built empty, its participants added - and that `Keep` becomes
   data a store can filter by are issues of their own (420, 421).
+- 2026-10-18: Step 7 done. Whom an entry went to is resolved as it is recorded (`Recorded {
+  entry, sender, recipients }`, `Recipients::Members { agents }` or `Only`), by the rule every
+  channel delivers by (`HistoryEntry::recipients`, which replaces `concerns`; the tests hold it to
+  `Envelope::concerns` for every kind); `Audience` stays the moderator's word. Membership is read
+  from the chain alone: `ParticipantLeft` carries `until`, the position from which `run` delivered
+  nothing to the leaver, taken as it stops delivering; the stores derive `Memberships` beside the
+  items (`memberships.json` in the `JsonFileStore`), rebuilt with them, and answer
+  `HistoryStore::memberships`. Which entries a reader is given is one predicate,
+  `Recorded::seen_by`, over the sender, the recipients, whether anything is published, the
+  position and the reader's ranges; `as_seen_by` says in which form. `HistoryLimit`,
+  `Channel::history_from` and the `from` of `ChannelController::add_participant` are gone; where a
+  view begins is the start of the reader's first range (`ChannelView::visible_from`, now async).
+  `HistoryShared` is recorded only if its `from` lies before the join, in the system's name, with
+  `by` and `by_name` in the event. A former participant reads nothing said after it left. Test
+  fixtures that store a channel as it is record its participants' joins
+  (`session::testing::founded`); `AgentContextView::of_state` makes its agent a member from the
+  start. Where it differs from the plan:
+  - **`HistoryStore::page` keeps `from`**, as a bound of the query only: what is new since a
+    reader last read is counted from there. Where a reader's view begins no caller passes any more.
+  - **A newcomer reads as a newcomer** (`Reader::Newcomer`): it catches up before its join is
+    recorded, so it reads as a member from where it reads on. What is said between that read and
+    its join is in its range but neither caught up nor delivered - as before this step, now
+    visible in the record.
+  - **A founder is given nothing before its join** (`ActorChange::Start` with no `from`): it
+    takes in nothing as it joins and has no `HistoryShared`, so a founder does not see the joins
+    of those who founded before it.
+  - **An agent restored** (issue 314) is shared the history from where its last membership began,
+    as before; its range then covers the time it rested.
+  - **The newcomer's own page** is still one item short where REST leaves out its
+    `HistoryShared`; the adder's no longer is.

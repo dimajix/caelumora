@@ -57,6 +57,7 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use crate::session::{SessionError, SessionLoop, SessionManager};
+use crate::session::testing::founded;
 use crate::error::refusal;
 use crate::view::Viewer;
 use crate::workspace::WorkspaceError;
@@ -440,6 +441,7 @@ impl World {
         self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_session(&session)).await.unwrap();
         self.runtime.entity_stores().channels.create(&Self::system(), &channel).await.unwrap();
         self.runtime.entity_stores().groups.create(&Self::system(), &Group::of_channel(&channel)).await.unwrap();
+        self.runtime.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
         self.manager.open(&Self::as_user(self.alice), session.id).await.expect("alice opens her session")
     }
 

@@ -300,21 +300,28 @@ pub enum ActorEvent {
     /// follows, so whatever of it was under way - a turn, a call of a tool -
     /// has ended.
     ///
-    /// Recorded and told as `ParticipantJoined` is.
+    /// Recorded and told as `ParticipantJoined` is. The channel delivered
+    /// nothing to it from the position `until` on (issue 417): where it
+    /// stopped, which its history records, so that it says to the position
+    /// whom the channel delivered what.
     ParticipantLeft {
         participant: ActorId,
         name: String,
+        until: u64,
     },
     /// `participant` is given the channel's history from the position `from`
-    /// on as it joins (issues 46, 417): how much of it the envelope's
-    /// sender, who added it, granted. Sent by the channel alone, right before
-    /// `ParticipantJoined`, to the newcomer alone; recorded in its history
+    /// on as it joins (issues 46, 417): how much of it `by`, called
+    /// `by_name`, who added it, granted. Sent by the channel alone, in the
+    /// system's name, right before `ParticipantJoined`, to the newcomer
+    /// alone, and only if it shares something; recorded in its history
     /// (`HistoryEntry::HistoryShared`), so that what the newcomer was
     /// delivered as it joined is read from there. Its actor has taken that
     /// part in already as it was started (`Actor::catch_up`).
     HistoryShared {
         participant: ActorId,
         from: u64,
+        by: ActorId,
+        by_name: String,
     },
     /// A chain between agents reached its limit (issue 200): the response
     /// ending in `message` was delivered, but it made nobody respond, since
@@ -709,11 +716,11 @@ impl Envelope {
             ActorEvent::ParticipantJoined { participant, name } => {
                 HistoryEntry::ParticipantJoined { participant: *participant, name: name.clone(), by: actor, by_name: self.context.sender_name.clone(), at }
             }
-            ActorEvent::ParticipantLeft { participant, name } => {
-                HistoryEntry::ParticipantLeft { participant: *participant, name: name.clone(), by: actor, by_name: self.context.sender_name.clone(), at }
+            ActorEvent::ParticipantLeft { participant, name, until } => {
+                HistoryEntry::ParticipantLeft { participant: *participant, name: name.clone(), by: actor, by_name: self.context.sender_name.clone(), until: *until, at }
             }
-            ActorEvent::HistoryShared { participant, from } => {
-                HistoryEntry::HistoryShared { participant: *participant, from: *from, by: actor, by_name: self.context.sender_name.clone(), at }
+            ActorEvent::HistoryShared { participant, from, by, by_name } => {
+                HistoryEntry::HistoryShared { participant: *participant, from: *from, by: *by, by_name: by_name.clone(), at }
             }
             ActorEvent::MessageModified(modified) => HistoryEntry::Modified { message: modified.clone() },
             ActorEvent::MessageRevoked { message, at } => HistoryEntry::Revoked { message: *message, at: *at },
@@ -852,8 +859,8 @@ impl Envelope {
             ActorEvent::ParticipantLeft { participant, .. } => {
                 format!("ParticipantLeft(sender_id={}, sender_name={}, participant={})", ctx.sender_id, ctx.sender_name, participant)
             }
-            ActorEvent::HistoryShared { participant, from } => {
-                format!("HistoryShared(sender_id={}, participant={}, from={})", ctx.sender_id, participant, from)
+            ActorEvent::HistoryShared { participant, from, by, .. } => {
+                format!("HistoryShared(sender_id={}, participant={}, from={}, by={})", ctx.sender_id, participant, from, by)
             }
             ActorEvent::ChainCutOff { message, max_agent_hops, not_asked } => {
                 format!("ChainCutOff(sender_id={}, message={}, max_agent_hops={}, not_asked={})", ctx.sender_id, message, max_agent_hops, not_asked.len())
@@ -1134,7 +1141,7 @@ mod tests {
             ActorEvent::MessageRevoked { message: id, at: Utc::now() },
             ActorEvent::MessageReclassified { message: id, classification: Classification::PUBLIC },
             ActorEvent::ParticipantJoined { participant: present.users[1], name: "bob".to_string() },
-            ActorEvent::ParticipantLeft { participant: present.agents[1], name: "helper".to_string() },
+            ActorEvent::ParticipantLeft { participant: present.agents[1], name: "helper".to_string(), until: 0 },
         ] {
             let kind = changed.kind();
             assert_eq!(present.concerned(sender, changed), present.users_and_agents(), "{kind}");

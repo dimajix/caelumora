@@ -39,10 +39,11 @@ struct RunningActor {
     /// an actor that is leaving, though what it sends is still taken.
     sender: Option<Box<dyn EventSender>>,
     /// On whose behalf it was removed, once it was told to stop (issue
-    /// 262), and what it was called as it left: its task still runs - the
+    /// 262), what it was called as it left, and the position from which on
+    /// nothing was delivered to it (issue 417): its task still runs - the
     /// step it was in, its farewell - and `run` announces the removal in
     /// this name once the task has ended.
-    leaving: Option<(SecurityContext, Name)>,
+    leaving: Option<(SecurityContext, Name, u64)>,
 }
 
 impl ChannelLoop {
@@ -88,8 +89,8 @@ impl ChannelLoop {
                         Err(e) => e.id(),
                     };
                     let ended = running.iter().find(|(_, actor)| actor.abort_handle.id() == task).map(|(id, _)| *id);
-                    if let Some(RunningActor { id, leaving: Some((remover, name)), .. }) = ended.and_then(|id| running.remove(&id)) {
-                        self.announce_removal(id, name, remover, &running).await;
+                    if let Some(RunningActor { id, leaving: Some((remover, name, until)), .. }) = ended.and_then(|id| running.remove(&id)) {
+                        self.announce_removal(id, name, remover, until, &running).await;
                     }
                     if join_set.is_empty() {
                         break;
@@ -105,7 +106,7 @@ impl ChannelLoop {
     /// Starts or stops an actor as a participant joined or left (issue 46).
     async fn apply_change(&self, change: ActorChange, running: &mut HashMap<ActorId, RunningActor>, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
         match change {
-            ActorChange::Start(joined, adder) => {
+            ActorChange::Start(joined, adder, from) => {
                 // Joined before `run` started: already running. Removed
                 // again before `run` got to start it: never started, so that
                 // it cannot run next to whoever joins under its id after it
@@ -117,8 +118,8 @@ impl ChannelLoop {
                 // yet: the removal is announced before anything of the new
                 // actor (issue 262).
                 if running.get(&id).is_some_and(|old| old.leaving.is_some()) {
-                    if let Some(RunningActor { leaving: Some((remover, name)), .. }) = running.remove(&id) {
-                        self.announce_removal(id, name, remover, running).await;
+                    if let Some(RunningActor { leaving: Some((remover, name, until)), .. }) = running.remove(&id) {
+                        self.announce_removal(id, name, remover, until, running).await;
                     }
                 }
                 if !running.contains_key(&id) && still_joined {
@@ -128,10 +129,14 @@ impl ChannelLoop {
                 // Once it runs, so that the newcomer hears it first (issue
                 // 408); also if it was removed again before it got to run:
                 // it was added, and its removal follows. Right before it,
-                // the part of the history it was given, to it alone (issue
-                // 417).
-                let shared = ActorEvent::HistoryShared { participant: id, from: self.visible_from(id) };
-                self.announce(shared, adder.clone(), running).await;
+                // the part of the history it was given, to it alone and in
+                // the system's name, if it was given anything before its
+                // join (issue 417).
+                let end = self.state.lock().await.history.end();
+                if let Some(from) = from.filter(|from| *from < end) {
+                    let shared = ActorEvent::HistoryShared { participant: id, from, by: adder.caller_id, by_name: self.name_of(adder.caller_id).await };
+                    self.announce(shared, SecurityContext::system(), running).await;
+                }
                 let name = joined.actor.name().to_string();
                 self.announce(ActorEvent::ParticipantJoined { participant: id, name }, adder, running).await;
             }
@@ -143,10 +148,12 @@ impl ChannelLoop {
                 // taken (`handle_actor_event`), and the removal is announced
                 // once its task has ended (issue 262). An actor never started
                 // has nothing to say: announced at once.
+                // Nothing is delivered to it from here on (issue 417).
+                let until = self.state.lock().await.history.end();
                 match running.get_mut(&id) {
                     Some(handle) => {
                         handle.sender = None;
-                        handle.leaving = Some((remover, name));
+                        handle.leaving = Some((remover, name, until));
                         let (abort_handle, task) = (handle.abort_handle.clone(), handle.task.clone());
                         let (channel, actor) = (self.id, id);
                         tokio::spawn(async move {
@@ -157,7 +164,7 @@ impl ChannelLoop {
                         });
                         info!("Actor {} is stopping: it left channel {}", id, self.id);
                     }
-                    None => self.announce_removal(id, name, remover, running).await,
+                    None => self.announce_removal(id, name, remover, until, running).await,
                 }
             }
         }
@@ -167,9 +174,19 @@ impl ChannelLoop {
     /// `remover`'s caller (`ParticipantLeft`, issue 162) - between the
     /// events `run` routes, once the participant's task has ended: what it
     /// sent before is in the channel, nothing of it follows (issue 262).
-    async fn announce_removal(&self, participant: ActorId, name: Name, remover: SecurityContext, running: &HashMap<ActorId, RunningActor>) {
-        let removed = ActorEvent::ParticipantLeft { participant, name: name.to_string() };
+    /// Nothing was delivered to it from the position `until` on (issue 417).
+    async fn announce_removal(&self, participant: ActorId, name: Name, remover: SecurityContext, until: u64, running: &HashMap<ActorId, RunningActor>) {
+        let removed = ActorEvent::ParticipantLeft { participant, name: name.to_string(), until };
         self.announce(removed, remover, running).await;
+    }
+
+    /// What `actor` is called, as the channel names whoever it announces
+    /// something in the name of; its id if it cannot be named.
+    async fn name_of(&self, actor: ActorId) -> String {
+        self.controllers.actor_name(actor).await.unwrap_or_else(|e| {
+            warn!("Cannot name {} for channel {}: {}", actor, self.id, e);
+            actor.to_string()
+        })
     }
 
     /// Announces `event`, a change of who takes part (issue 408), in the
@@ -177,10 +194,7 @@ impl ChannelLoop {
     /// enters it without `admission` - that lets no actor say it -, is
     /// recorded in its history and told to everybody.
     async fn announce(&self, event: ActorEvent, by: SecurityContext, running: &HashMap<ActorId, RunningActor>) {
-        let name = self.controllers.actor_name(by.caller_id).await.unwrap_or_else(|e| {
-            warn!("Cannot name {} for channel {}: {}", by.caller_id, self.id, e);
-            by.caller_id.to_string()
-        });
+        let name = self.name_of(by.caller_id).await;
         let envelope = Answering::in_channel(self.session_id, self.id, name, by).envelope(event);
         debug!("Announcing {}", envelope.describe());
         self.enter(envelope, running).await;
@@ -640,6 +654,7 @@ impl ChannelLoop {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::history::Recipients;
     use crate::actor::Actor;
     use crate::component::ComponentImpl;
     use crate::transport::{EventSender, EventReceiver};
@@ -840,13 +855,13 @@ mod tests {
 
         // In her own name, but no actor's to say (issue 408).
         channel.process_envelope(from_her(ActorEvent::ParticipantJoined { participant: stranger, name: "mallory".to_string() }), &actors).await;
-        channel.process_envelope(from_her(ActorEvent::ParticipantLeft { participant: her, name: "alice".to_string() }), &actors).await;
+        channel.process_envelope(from_her(ActorEvent::ParticipantLeft { participant: her, name: "alice".to_string(), until: 0 }), &actors).await;
 
         let recorded = channel.history_entries().await;
-        assert!(matches!(recorded.as_slice(), [HistoryEntry::MessageRejected { .. }, HistoryEntry::MessageRejected { .. }]),
-            "nothing of it is recorded, only that it was not let in (issue 417): {recorded:?}");
+        assert!(matches!(recorded.as_slice(), [HistoryEntry::ParticipantJoined { .. }, HistoryEntry::MessageRejected { .. }, HistoryEntry::MessageRejected { .. }]),
+            "after her own join, nothing of it is recorded, only that it was not let in (issue 417): {recorded:?}");
         let state = channel.state.lock().await;
-        assert!(state.history.entries().all(|node| node.entry.sender == ActorId::System && node.entry.audience == Audience::Only(vec![her])), "told to her alone, in the system's name");
+        assert!(state.history.entries().skip(1).all(|node| node.entry.sender == ActorId::System && node.entry.recipients == Recipients::Only(vec![her])), "told to her alone, in the system's name");
         drop(state);
         let mut rejected = Vec::new();
         while let Ok(envelope) = hers.try_recv() {
@@ -965,7 +980,7 @@ mod tests {
         channel.process_envelope(from(bob_id, ActorEvent::MessageModified(modified(bob_id, "bob's"))), &actors).await;
         channel.process_envelope(from(bob_id, revoked()), &actors).await;
         channel.process_envelope(from(alice_id, ActorEvent::MessageModified(Message { id: MessageId::new(), ..modified(alice_id, "nothing said") })), &actors).await;
-        assert_eq!(entries().await, 1, "neither by another nor of what was never said");
+        assert_eq!(entries().await, 2, "her join and what she said: neither a change by another nor of what was never said");
 
         channel.process_envelope(from(alice_id, ActorEvent::MessageModified(modified(alice_id, "hello"))), &actors).await;
         let standing = channel.message(said.id).await.expect("said");
@@ -977,7 +992,7 @@ mod tests {
         let above = Classification::general(Confidentiality::Confidential);
         channel.process_envelope(from(bob_id, reclassified(Classification::PUBLIC)), &actors).await;
         channel.process_envelope(from(alice_id, reclassified(above)), &actors).await;
-        assert_eq!(entries().await, 2, "neither by another nor above the channel");
+        assert_eq!(entries().await, 3, "neither by another nor above the channel");
         channel.process_envelope(from(alice_id, reclassified(Classification::PUBLIC)), &actors).await;
         assert_eq!(channel.message(said.id).await.map(|m| m.classification), Some(Classification::PUBLIC), "its author releases it");
 
@@ -986,7 +1001,7 @@ mod tests {
         channel.process_envelope(from(alice_id, revoked()), &actors).await;
         channel.process_envelope(from(alice_id, ActorEvent::MessageModified(modified(alice_id, "again"))), &actors).await;
         channel.process_envelope(from(alice_id, reclassified(Classification::CHANNEL_DEFAULT)), &actors).await;
-        assert_eq!(entries().await, 4, "nothing changes it once taken back");
+        assert_eq!(entries().await, 5, "nothing changes it once taken back");
         assert_eq!(channel.history().await.len(), 1, "it stays in its place");
 
         // Only an agent is asked to answer again, and only for its own message.
@@ -1021,7 +1036,7 @@ mod tests {
             let state = channel.state.lock().await;
             (state.history.base(), state.history.end(), state.history.digest())
         };
-        assert_eq!((base, end), (end - WINDOW, 250), "the channel holds the end of its history (issue 379)");
+        assert_eq!((base, end), (end - WINDOW, 251), "the channel holds the end of its history (issue 379), after her join");
         assert_eq!(channel.visible_messages(alice_id).await.len(), 250, "the store all of it");
 
         // A message before the window is changed as any: the check reads the store.
@@ -1031,7 +1046,7 @@ mod tests {
         let loaded = channel.state_store.get_channel_state(channel.id).await.unwrap();
         assert!(loaded.history.base() > 0, "loaded from where its window began");
         assert_ne!(loaded.history.digest(), digest, "with the change after it");
-        assert_eq!(loaded.history.end(), 251);
+        assert_eq!(loaded.history.end(), 252);
     }
 
     #[tokio::test]
@@ -1161,7 +1176,7 @@ mod tests {
     /// removed it.
     fn leaving_actor(id: ActorId, remover: SecurityContext) -> RunningActor {
         let name = Name::new("helper").expect("a name");
-        RunningActor { id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: None, leaving: Some((remover, name)) }
+        RunningActor { id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: None, leaving: Some((remover, name, 0)) }
     }
 
     #[tokio::test]
@@ -1194,13 +1209,14 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let mut running = HashMap::from([(participant, leaving_actor(participant, context.clone()))]);
-        channel.apply_change(ActorChange::Start(joined, context.clone()), &mut running, &event_tx, &mut join_set).await;
+        channel.apply_change(ActorChange::Start(joined, context.clone(), Some(0)), &mut running, &event_tx, &mut join_set).await;
 
         let announced = events.try_recv().expect("the removal is announced");
         assert!(matches!(announced.event, ActorEvent::ParticipantLeft { participant: p, .. } if p == participant), "{}", announced.describe());
         assert_eq!(announced.context.sender_id, context.caller_id, "in the remover's name");
         let shared = events.try_recv().expect("what it is given of the history is told after it");
-        assert!(matches!(shared.event, ActorEvent::HistoryShared { participant: p, from: 0 } if p == participant), "{}", shared.describe());
+        assert!(matches!(shared.event, ActorEvent::HistoryShared { participant: p, from: 0, by, .. } if p == participant && by == context.caller_id), "{}", shared.describe());
+        assert_eq!(shared.context.sender_id, ActorId::System, "in the system's name, for whom it names (issue 417)");
         let added = events.try_recv().expect("the join is announced after it");
         assert!(matches!(added.event, ActorEvent::ParticipantJoined { participant: p, .. } if p == participant), "{}", added.describe());
         assert!(running.get(&participant).is_some_and(|actor| actor.leaving.is_none()), "and then the new actor runs");
@@ -1282,20 +1298,20 @@ mod tests {
         );
         let recorded = |channel: Arc<ChannelLoop>| async move {
             let state = channel.state.lock().await;
-            let said = state.history.entries().find(|node| node.entry.entry.said().is_some()).map(|node| (node.entry.sender, node.entry.audience.clone()));
+            let said = state.history.entries().find(|node| node.entry.entry.said().is_some()).map(|node| (node.entry.sender, node.entry.recipients.clone()));
             said
         };
 
         let everybody = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
         everybody.enter(said("hello"), &HashMap::new()).await;
-        assert_eq!(recorded(Arc::clone(&everybody)).await, Some((ActorId::User(alice.id), Audience::Everybody)), "as every channel delivers");
+        assert_eq!(recorded(Arc::clone(&everybody)).await, Some((ActorId::User(alice.id), Recipients::Members { agents: true })), "as every channel delivers: to every member");
 
         let to_bob = channel_moderated_by(&[&alice, &bob], Arc::new(AskBack(ActorId::User(bob.id)))).await;
         to_bob.enter(said("psst"), &HashMap::new()).await;
-        assert_eq!(recorded(Arc::clone(&to_bob)).await, Some((ActorId::User(alice.id), Audience::Only(vec![ActorId::User(bob.id)]))), "to whom the moderator named");
+        assert_eq!(recorded(Arc::clone(&to_bob)).await, Some((ActorId::User(alice.id), Recipients::Only(vec![ActorId::User(bob.id)]))), "to whom the moderator named");
         let state = to_bob.state.lock().await;
-        let asked = state.history.last().map(|node| (node.entry.entry.clone(), node.entry.sender, node.entry.audience.clone()));
-        assert!(matches!(asked, Some((HistoryEntry::ResponseRequested { by, .. }, ActorId::System, Audience::Only(ref only))) if by == ActorId::User(alice.id) && *only == [ActorId::User(bob.id)]),
+        let asked = state.history.last().map(|node| (node.entry.entry.clone(), node.entry.sender, node.entry.recipients.clone()));
+        assert!(matches!(asked, Some((HistoryEntry::ResponseRequested { by, .. }, ActorId::System, Recipients::Only(ref only))) if by == ActorId::User(alice.id) && *only == [ActorId::User(bob.id)]),
             "and whom it asked to respond, after it, in the system's name: {asked:?}");
     }
 
@@ -1362,18 +1378,18 @@ mod tests {
         let recorded = || async {
             let state = channel.state.lock().await;
             let last = state.history.last().expect("recorded").entry.clone();
-            (last.entry.said().map(|m| (m.content.clone(), m.reasoning.clone(), m.tool_calls.len())), last.audience)
+            (last.entry.said().map(|m| (m.content.clone(), m.reasoning.clone(), m.tool_calls.len())), last.recipients)
         };
 
         channel.enter(said(Message { content: Some("found it".to_string()), ..thinking.clone() }), &running).await;
         assert_eq!(parts(&rx.try_recv().expect("delivered").event), (Some("found it".to_string()), None, 0), "alice is given what everybody may see");
         assert_eq!(told.0.lock().unwrap().iter().map(|e| parts(&e.event)).collect::<Vec<_>>(), [(Some("found it".to_string()), None, 0)], "and so is the moderator");
-        assert_eq!(recorded().await, (Some((Some("found it".to_string()), Some("weighing".to_string()), 1)), Audience::Everybody), "the channel records it whole");
+        assert_eq!(recorded().await, (Some((Some("found it".to_string()), Some("weighing".to_string()), 1)), Recipients::Members { agents: true }), "the channel records it whole");
 
         channel.enter(said(thinking), &running).await;
         assert!(rx.try_recv().is_err(), "nothing of it is left to show");
         assert_eq!(told.0.lock().unwrap().len(), 1, "nor to decide on");
-        assert_eq!(recorded().await, (Some((None, Some("weighing".to_string()), 1)), Audience::Only(Vec::new())), "recorded whole, as gone to nobody");
+        assert_eq!(recorded().await, (Some((None, Some("weighing".to_string()), 1)), Recipients::Only(Vec::new())), "recorded whole, as gone to nobody");
     }
 
     /// Issue 404: what others hear of a message is announced with the

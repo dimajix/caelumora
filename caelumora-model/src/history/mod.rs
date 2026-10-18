@@ -19,6 +19,7 @@ use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ops::Range;
 use crate::digest;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -93,14 +94,18 @@ pub enum HistoryEntry {
     /// the names as they were, so that it reads the same after a renaming.
     ParticipantJoined { participant: ActorId, name: String, by: ActorId, by_name: String, at: DateTime<Utc> },
     /// `participant` left the channel, as `ParticipantJoined` says - `by`
-    /// who removed it, the participant itself if it left by itself.
-    ParticipantLeft { participant: ActorId, name: String, by: ActorId, by_name: String, at: DateTime<Utc> },
+    /// who removed it, the participant itself if it left by itself. It was
+    /// given nothing from the position `until` on (issue 417): where the
+    /// channel stopped delivering to it, which may lie before this entry -
+    /// what it still sent until its task ended comes first (issue 262).
+    ParticipantLeft { participant: ActorId, name: String, by: ActorId, by_name: String, until: u64, at: DateTime<Utc> },
     /// `participant` was given the history from the position `from` on as
     /// it joined at `at`, by the act of `by`, called `by_name` then (issues
-    /// 46, 417): what the channel delivered to it then, recorded right
-    /// before its `ParticipantJoined`, for it alone. How much `by` granted
-    /// (`HistoryAccess`), fixed as a position; the channel's document keeps
-    /// the same as the index its views read (`HistoryLimit`).
+    /// 46, 417): how much `by` granted (`HistoryAccess`), fixed as a
+    /// position. Recorded in the system's name right before its
+    /// `ParticipantJoined`, for it alone, and only if it shares something -
+    /// if `from` lies before the join; otherwise what it is given begins
+    /// with its join.
     HistoryShared { participant: ActorId, from: u64, by: ActorId, by_name: String, at: DateTime<Utc> },
     /// `actor`, an agent, did not carry out the command `command` asked by
     /// `to`, for `reason` (issues 269, 417), told to `to` alone at `at`;
@@ -131,12 +136,13 @@ pub enum HistoryEntry {
 
 /// What happened in a channel, recorded (issue 417): the entry, the actor
 /// whose envelope it was - the system for what the channel says itself -,
-/// and whom it went to. The chain's entry of a `History`.
+/// and whom it went to, resolved as it was recorded into what a store
+/// filters by (`Recipients`). The chain's entry of a `History`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Recorded {
     pub entry: HistoryEntry,
     pub sender: ActorId,
-    pub audience: Audience,
+    pub recipients: Recipients,
 }
 
 /// What a range of a history - as recorded, or as a reader is given it -
@@ -153,16 +159,46 @@ impl AsRef<HistoryEntry> for HistoryEntry {
     }
 }
 
-/// Whom something in a channel went to (issues 417, 418).
+/// Whom something in a channel goes to, as a moderator decides it (issues
+/// 417, 418).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Audience {
     /// Everyone it concerns, by the rule every channel delivers by
-    /// (`Envelope::concerns`, read off an entry as `HistoryEntry::concerns`).
+    /// (`Envelope::concerns`, read off an entry as `HistoryEntry::recipients`).
     #[default]
     Everybody,
     /// These alone; nobody if empty.
     Only(Vec<ActorId>),
+}
+
+/// Every position of a history: the range of a member from its start on,
+/// and what a newcomer reads by (`Memberships::of_reader`).
+pub const EVERY_POSITION: Range<u64> = 0..u64::MAX;
+
+/// Whom an entry of a history went to, resolved as it was recorded (issue
+/// 417): what a store filters by - for a database, columns of the row and a
+/// `WHERE` over them and the reader's ranges (`Recorded::seen_by`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Recipients {
+    /// Every member of the channel at the time - every user, and every
+    /// agent too if `agents`: whoever's range holds the entry's position.
+    Members { agents: bool },
+    /// These alone, member or not; nobody if empty.
+    Only(Vec<ActorId>),
+}
+
+impl Recipients {
+    /// Whether it goes to `member` for what `member` is, a user or an
+    /// agent, or names it - whether `member` was one at the time is the
+    /// ranges' to say.
+    fn names(&self, member: ActorId) -> bool {
+        match self {
+            Recipients::Members { agents } => matches!(member, ActorId::User(_)) || (*agents && matches!(member, ActorId::Agent(_))),
+            Recipients::Only(only) => only.contains(&member),
+        }
+    }
 }
 
 /// Who reads a history, and so what of an entry they are given
@@ -174,19 +210,29 @@ pub enum Reader {
     /// reading as that agent: what went to them and what they sent, the
     /// latter in full.
     Participant(ActorId),
+    /// A participant as it joins, before its join is recorded (issue 417):
+    /// reading what it is given - as a participant, and as a member from
+    /// where it reads on, which is where what it is given begins.
+    Newcomer(ActorId),
     /// Someone who may read the channel but takes no part in it - its
     /// session's owner, a reader from another channel: what went to
     /// everybody, as everybody was given it.
     Outsider,
     /// The channel itself, for its own checks - whether a message can be
-    /// changed, where a view begins: everything, as it was recorded.
+    /// changed: everything, as it was recorded.
     Channel,
 }
 
 impl Recorded {
-    /// `entry`, sent by `sender` to `audience`.
+    /// `entry`, sent by `sender` to `audience`: to everybody resolved into
+    /// whom it concerns by the rule every channel delivers by
+    /// (`HistoryEntry::recipients`).
     pub fn new(entry: HistoryEntry, sender: ActorId, audience: Audience) -> Self {
-        Self { entry, sender, audience }
+        let recipients = match audience {
+            Audience::Everybody => entry.recipients(),
+            Audience::Only(only) => Recipients::Only(only),
+        };
+        Self { entry, sender, recipients }
     }
 
     /// `entry` as every channel delivers it, sent by whom it names
@@ -197,28 +243,38 @@ impl Recorded {
         Self::new(entry, sender, Audience::Everybody)
     }
 
-    /// What `reader` may see of the entry (issue 417): nothing, unless it
-    /// went to them, they sent it, or - for an outsider - it went to
-    /// everybody; then the entry as it was recorded for its sender and the
-    /// channel, and as everybody was given it for anyone else
-    /// (`HistoryEntry::published`), nothing if nothing of it is for them.
-    /// The one rule by which a history is read.
-    pub fn as_seen_by(&self, reader: &Reader) -> Option<HistoryEntry> {
-        let own = match reader {
-            Reader::Channel => return Some(self.entry.clone()),
-            Reader::Participant(actor) => *actor == self.sender,
-            Reader::Outsider => false,
-        };
-        let reaches = own || match (&self.audience, reader) {
-            (Audience::Everybody, Reader::Participant(actor)) => self.entry.concerns(*actor),
-            (Audience::Everybody, _) => self.entry.reaches(None),
-            (Audience::Only(only), Reader::Participant(actor)) => only.contains(actor),
-            (Audience::Only(_), _) => false,
-        };
-        match (reaches, own) {
-            (false, _) => None,
-            (true, true) => Some(self.entry.clone()),
-            (true, false) => self.entry.published(),
+    /// Whether `reader` is given anything of the entry at the position
+    /// `seq` (issue 417), `ranges` being the reader's as a participant -
+    /// where it was given what went to every member (`Memberships`): the
+    /// channel everything; a participant what it sent, and, if anything of
+    /// it is published, what went to it by name or what went to every
+    /// member of its kind while it was one; an outsider what was published
+    /// to every member. The one rule by which a history is read, a predicate
+    /// over what a store keeps of the entry - its sender, its recipients,
+    /// whether it is published, its position - and the reader's ranges, so
+    /// that a database answers it as a `WHERE`.
+    pub fn seen_by(&self, seq: u64, reader: &Reader, ranges: &[Range<u64>]) -> bool {
+        match reader {
+            Reader::Channel => true,
+            Reader::Participant(actor) | Reader::Newcomer(actor) if *actor == self.sender => true,
+            Reader::Participant(actor) | Reader::Newcomer(actor) => self.entry.is_published() && self.recipients.names(*actor)
+                && (matches!(self.recipients, Recipients::Only(_)) || ranges.iter().any(|range| range.contains(&seq))),
+            Reader::Outsider => self.entry.is_published() && matches!(self.recipients, Recipients::Members { .. }),
+        }
+    }
+
+    /// What `reader` may see of the entry at the position `seq`, with
+    /// `ranges` as `seen_by` takes them: nothing unless it sees it; then the
+    /// entry as it was recorded for its sender and the channel, and as
+    /// everybody was given it for anyone else (`HistoryEntry::published`).
+    pub fn as_seen_by(&self, seq: u64, reader: &Reader, ranges: &[Range<u64>]) -> Option<HistoryEntry> {
+        if !self.seen_by(seq, reader, ranges) {
+            return None;
+        }
+        match reader {
+            Reader::Channel => Some(self.entry.clone()),
+            Reader::Participant(actor) | Reader::Newcomer(actor) if *actor == self.sender => Some(self.entry.clone()),
+            Reader::Participant(_) | Reader::Newcomer(_) | Reader::Outsider => self.entry.published(),
         }
     }
 }
@@ -499,37 +555,37 @@ impl HistoryEntry {
         }
     }
 
-    /// Whether the entry concerns `participant` by the rule every channel
-    /// delivers by (issue 417): `Envelope::concerns` for what the entry
-    /// records - a message to every user, and to every agent if there is
-    /// something to hear in it; a change of a message and who joined or left
-    /// to every user and agent; how a turn went, what it carried out and
-    /// what came of what it did of its own accord to the users; the part of
-    /// the history shared with a newcomer to the newcomer alone; what an
-    /// agent was given and a compaction to nobody. Whether it went back to its sender is not this
+    /// Whom the entry goes to when it goes to everybody, by the rule every
+    /// channel delivers by (issue 417): `Envelope::concerns` for what the
+    /// entry records, resolved as it is recorded - a message to every
+    /// member who is a user, and to every agent too if there is something
+    /// to hear in it; a change of a message and who joined or left to every
+    /// user and agent; how a turn went, what it carried out and what came of
+    /// what it did of its own accord to the users; what answers a command
+    /// to the user it answers; the part of the history shared with a
+    /// newcomer to the newcomer alone; what an agent was given and a
+    /// compaction to nobody. Whether it went back to its sender is not this
     /// rule's: a reader is given what it sent itself.
-    pub fn concerns(&self, participant: ActorId) -> bool {
-        self.reaches(Some(participant))
+    pub fn recipients(&self) -> Recipients {
+        match self {
+            HistoryEntry::HistoryShared { participant, .. } => Recipients::Only(vec![*participant]),
+            HistoryEntry::CommandExecuted { to: Some(to), .. } | HistoryEntry::CommandFailed { to, .. } => {
+                Recipients::Only(vec![*to].into_iter().filter(|to| matches!(to, ActorId::User(_))).collect())
+            }
+            HistoryEntry::Said { message } => Recipients::Members { agents: message.is_heard() },
+            HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. }
+            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => Recipients::Members { agents: true },
+            HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { to: None, .. }
+            | HistoryEntry::ActivityFinished { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } => Recipients::Members { agents: false },
+            HistoryEntry::Compacted { .. } | HistoryEntry::Given { .. } | HistoryEntry::ChainCutOff { .. } | HistoryEntry::MessageRejected { .. }
+            | HistoryEntry::ResponseRequested { .. } => Recipients::Only(Vec::new()),
+        }
     }
 
-    /// Whether the entry concerns `reader` (`concerns`), or - `None` - an
-    /// outsider, who is given what goes to every user and is named by
-    /// nothing.
-    fn reaches(&self, reader: Option<ActorId>) -> bool {
-        let user = reader.is_none_or(|reader| matches!(reader, ActorId::User(_)));
-        let agent = reader.is_some_and(|reader| matches!(reader, ActorId::Agent(_)));
-        let named = |actor: &ActorId| reader == Some(*actor);
-        match self {
-            HistoryEntry::HistoryShared { participant, .. } => named(participant),
-            HistoryEntry::CommandExecuted { to: Some(to), .. } | HistoryEntry::CommandFailed { to, .. } => user && named(to),
-            HistoryEntry::Said { message } => user || (agent && message.is_heard()),
-            HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. }
-            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => user || agent,
-            HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { to: None, .. }
-            | HistoryEntry::ActivityFinished { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } => user,
-            HistoryEntry::Compacted { .. } | HistoryEntry::Given { .. } | HistoryEntry::ChainCutOff { .. } | HistoryEntry::MessageRejected { .. }
-            | HistoryEntry::ResponseRequested { .. } => false,
-        }
+    /// Whether anything of the entry is for others than its sender
+    /// (`published`): what a store keeps of it as it stands, and filters by.
+    pub fn is_published(&self) -> bool {
+        self.published().is_some()
     }
 
     /// The entry as everybody but its sender may see it (issue 417): a
@@ -598,37 +654,40 @@ mod tests {
     #[test]
     fn a_reader_is_given_what_went_to_them_and_what_they_sent_in_full() {
         use crate::tool::{ToolCall, ToolVisibility};
+        // Every participant a member all along.
+        const ALL: &[Range<u64>] = &[EVERY_POSITION];
         let (agent, other, user, approver) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()), ActorId::Approver(Default::default()));
         let hidden = ToolCall { id: Some("1".to_string()), function_name: "look".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
         let answer = Message { sender_id: agent, role: MessageRole::Assistant, content: Some("found it".to_string()), tool_calls: vec![hidden], turn_id: Some(TurnId::new()), produced_from: Some(ContextRef::default()), ..make_message(id(1)) };
         let said = Recorded::new(HistoryEntry::Said { message: answer }, agent, Audience::Everybody);
         let calls = |entry: Option<HistoryEntry>| entry.as_ref().and_then(HistoryEntry::said).map(|m| (m.tool_calls.len(), m.content.clone()));
 
-        assert_eq!(calls(said.as_seen_by(&Reader::Participant(agent))), Some((1, Some("found it".to_string()))), "its sender, in full");
-        assert!(said.as_seen_by(&Reader::Participant(agent)).and_then(|e| e.context().map(|_| ())).is_some(), "with what it was produced from");
+        assert_eq!(calls(said.as_seen_by(0, &Reader::Participant(agent), ALL)), Some((1, Some("found it".to_string()))), "its sender, in full");
+        assert!(said.as_seen_by(0, &Reader::Participant(agent), ALL).and_then(|e| e.context().map(|_| ())).is_some(), "with what it was produced from");
         for reader in [Reader::Participant(user), Reader::Participant(other), Reader::Outsider] {
-            let seen = said.as_seen_by(&reader);
+            let seen = said.as_seen_by(0, &reader, ALL);
             assert_eq!(calls(seen.clone()), Some((0, Some("found it".to_string()))), "{reader:?}: as it was published");
             assert!(seen.and_then(|e| e.context().map(|_| ())).is_none(), "{reader:?}: without what it was produced from");
         }
-        assert!(said.as_seen_by(&Reader::Participant(approver)).is_none(), "it concerns no approver");
-        assert_eq!(calls(said.as_seen_by(&Reader::Channel)), Some((1, Some("found it".to_string()))), "the channel, as it was recorded");
+        assert!(said.as_seen_by(0, &Reader::Participant(approver), ALL).is_none(), "it concerns no approver");
+        assert_eq!(calls(said.as_seen_by(0, &Reader::Channel, ALL)), Some((1, Some("found it".to_string()))), "the channel, as it was recorded");
 
         let step = Recorded::new(HistoryEntry::Said { message: Message { sender_id: agent, internal: true, ..make_message(id(2)) } }, agent, Audience::Everybody);
-        assert!(step.as_seen_by(&Reader::Participant(user)).is_some() && step.as_seen_by(&Reader::Participant(other)).is_none(), "a step of a plan: the users', no other agent's");
+        assert!(step.as_seen_by(0, &Reader::Participant(user), ALL).is_some() && step.as_seen_by(0, &Reader::Participant(other), ALL).is_none(), "a step of a plan: the users', no other agent's");
         let ended = Recorded::new(HistoryEntry::TurnFinished { turn_id: TurnId::new(), actor: agent, at: Utc::now() }, agent, Audience::Everybody);
-        assert!(ended.as_seen_by(&Reader::Participant(agent)).is_some() && ended.as_seen_by(&Reader::Participant(other)).is_none(), "a turn's end: its own and the users'");
+        assert!(ended.as_seen_by(0, &Reader::Participant(agent), ALL).is_some() && ended.as_seen_by(0, &Reader::Participant(other), ALL).is_none(), "a turn's end: its own and the users'");
 
         let to_one = Recorded::new(HistoryEntry::Said { message: make_message(id(3)) }, ActorId::System, Audience::Only(vec![user]));
-        assert!(to_one.as_seen_by(&Reader::Participant(user)).is_some(), "whom it went to");
-        assert!(to_one.as_seen_by(&Reader::Participant(ActorId::User(UserId::new()))).is_none(), "no other user");
-        assert!(to_one.as_seen_by(&Reader::Outsider).is_none(), "nor an outsider: it did not go to everybody");
+        assert!(to_one.as_seen_by(0, &Reader::Participant(user), ALL).is_some(), "whom it went to");
+        assert!(to_one.as_seen_by(0, &Reader::Participant(ActorId::User(UserId::new())), ALL).is_none(), "no other user");
+        assert!(to_one.as_seen_by(0, &Reader::Outsider, ALL).is_none(), "nor an outsider: it did not go to everybody");
         let to_nobody = Recorded::new(HistoryEntry::Said { message: Message { sender_id: agent, ..make_message(id(4)) } }, agent, Audience::Only(Vec::new()));
-        assert!(to_nobody.as_seen_by(&Reader::Participant(agent)).is_some() && to_nobody.as_seen_by(&Reader::Participant(user)).is_none(), "to nobody: its sender alone");
+        assert!(to_nobody.as_seen_by(0, &Reader::Participant(agent), ALL).is_some() && to_nobody.as_seen_by(0, &Reader::Participant(user), ALL).is_none(), "to nobody: its sender alone");
     }
 
-    /// Issue 417: what the history records of an envelope concerns whom the
-    /// envelope concerned - one rule, read off the event and off the entry.
+    /// Issue 417: what the history records of an envelope goes to whom the
+    /// envelope concerned - one rule, read off the event and, resolved as it
+    /// is recorded, off the entry.
     #[test]
     fn an_entry_concerns_whom_its_envelope_concerned() {
         use crate::actor::{ActorEvent, Envelope, EventContext};
@@ -646,7 +705,7 @@ mod tests {
             ActorEvent::CommandExecuted { command: "compact".to_string(), args: String::new(), output: "done".to_string(), to: None, turn_id: Some(turn_id) },
             ActorEvent::ActivityFinished { turn_id, activity: "compacting".to_string(), output: "done".to_string() },
             ActorEvent::ParticipantJoined { participant: user, name: "user".to_string() },
-            ActorEvent::ParticipantLeft { participant: user, name: "user".to_string() },
+            ActorEvent::ParticipantLeft { participant: user, name: "user".to_string(), until: 3 },
             ActorEvent::MessageModified(heard.clone()),
             ActorEvent::MessageRevoked { message: heard.id, at: Utc::now() },
             ActorEvent::MessageReclassified { message: heard.id, classification: Classification::PUBLIC },
@@ -658,14 +717,16 @@ mod tests {
             ActorEvent::ChainCutOff { message: heard.id, max_agent_hops: 3, not_asked: vec![agent] },
             ActorEvent::MessageRejected { rejected: "MessageModified".to_string(), message: Some(heard.id), reason: Rejection::Invalid },
             ActorEvent::ResponseRequested,
-            ActorEvent::HistoryShared { participant: user, from: 3 },
+            ActorEvent::HistoryShared { participant: user, from: 3, by: agent, by_name: "agent".to_string() },
         ];
         for event in events {
             let kind = event.kind();
             let envelope = Envelope::new(SecurityContext::default(), EventContext { sender_id: agent, ..EventContext::default() }, event);
             let entry = envelope.entry().unwrap_or_else(|| panic!("{kind} is recorded"));
+            let recorded = Recorded::new(entry, ActorId::System, Audience::Everybody);
             for participant in [user, ActorId::Agent(AgentId::new()), ActorId::Approver(Default::default())] {
-                assert_eq!(entry.concerns(participant), envelope.concerns(participant), "{kind} for {participant}");
+                let member_all_along = [EVERY_POSITION];
+                assert_eq!(recorded.seen_by(0, &Reader::Participant(participant), &member_all_along), envelope.concerns(participant), "{kind} for {participant}");
             }
         }
     }

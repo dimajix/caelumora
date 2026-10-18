@@ -2,24 +2,27 @@
 //! 379): per history a directory beside its state's snapshot, `<key>.history`,
 //! with the chain as every chain is kept (`chains`), and laid over it the
 //! items as they stand in segments of the same positions
-//! (`items-<from>.json`) and `items-head.json`, which says up to where they
-//! were derived. A put writes the chain, then the items' segments, then how
-//! far they go: items behind the chain are derived anew from it when the
-//! history is next loaded or appended to. Slow where it has to be - finding
+//! (`items-<from>.json`), who was a member when (`memberships.json`, issue
+//! 417), and `items-head.json`, which says up to where both were derived. A
+//! put writes the chain, then the items' segments and the memberships, then
+//! how far they go: what is behind the chain is derived anew from it when
+//! the history is next loaded or appended to. Slow where it has to be - finding
 //! a message scans the items backwards, a fitting rewrites every segment -,
 //! which a database's indexes are for.
 
 use super::chains::{self, read_chain, read_head, segment_of, SEGMENT};
 use super::{delete_if_exists, read_json_opt, write_json_atomic, JsonFileStore};
+use crate::actor::ActorId;
 use crate::chain::Node;
 use crate::channel::ChannelId;
 use crate::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use crate::message::MessageId;
-use crate::store::history::{every, page_of, seen, seen_nodes, HistoryStore, Keep, StandingItems};
+use crate::store::history::{every, page_of, seen, seen_nodes, HistoryStore, Keep, Memberships, StandingItems};
 use crate::store::{StoreError, StoreResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
@@ -36,6 +39,14 @@ fn items_path(dir: &Path, from: u64) -> PathBuf {
 
 fn items_head_path(dir: &Path) -> PathBuf {
     dir.join("items-head.json")
+}
+
+fn memberships_path(dir: &Path) -> PathBuf {
+    dir.join("memberships.json")
+}
+
+async fn read_memberships(dir: &Path) -> StoreResult<Memberships> {
+    Ok(read_json_opt(&memberships_path(dir)).await?.unwrap_or_default())
 }
 
 async fn read_items_end(dir: &Path) -> StoreResult<u64> {
@@ -104,15 +115,18 @@ impl<'a> ItemSegments<'a> {
 }
 
 /// Takes `added`, the entries of the chain from `items_end` up to `end`,
-/// into the items, and records that it did: after a put, what it added;
-/// after a crash, what was not derived yet. Taking an entry in twice changes
-/// nothing.
+/// into the items and the memberships, and records that it did: after a
+/// put, what it added; after a crash, what was not derived yet. Taking an
+/// entry in twice changes nothing.
 async fn derive_items(dir: &Path, items_end: u64, end: u64, added: &[Node<Recorded>]) -> StoreResult<()> {
     let mut segments = ItemSegments::new(dir);
+    let mut memberships = read_memberships(dir).await?;
     for node in added.iter().filter(|node| node.seq >= items_end && node.seq < end) {
         segments.take(node, end).await?;
+        memberships.take(node);
     }
     segments.write().await?;
+    write_json_atomic(&memberships_path(dir), &memberships).await?;
     write_json_atomic(&items_head_path(dir), &ItemsHead { end }).await
 }
 
@@ -175,9 +189,10 @@ impl HistoryStore for JsonFileStore {
         if before == 0 {
             return Ok(HistoryPage::default());
         }
+        let ranges = read_memberships(&dir).await?.of_reader(reader);
         let mut segment = segment_of(before - 1);
         loop {
-            newest.extend(read_items(&dir, segment).await?.newest_before(before).filter(|(seq, _)| *seq >= from).filter_map(|item| seen(reader, keep, item)));
+            newest.extend(read_items(&dir, segment).await?.newest_before(before).filter(|(seq, _)| *seq >= from).filter_map(|item| seen(reader, &ranges, keep, item)));
             if newest.len() > limit || segment == 0 || segment <= from {
                 break;
             }
@@ -195,7 +210,8 @@ impl HistoryStore for JsonFileStore {
         let mut segment = segment_of(items_end - 1);
         loop {
             if let Some(found) = read_items(&dir, segment).await?.said(id) {
-                return Ok(seen(reader, &every, found));
+                let ranges = read_memberships(&dir).await?.of_reader(reader);
+                return Ok(seen(reader, &ranges, &every, found));
             }
             if segment == 0 {
                 return Ok(None);
@@ -208,7 +224,14 @@ impl HistoryStore for JsonFileStore {
         let dir = self.history_dir(channel);
         let head = read_head(&dir).await?;
         let chain: Vec<Node<Recorded>> = read_chain(&dir, from, head.end).await?;
-        Ok(seen_nodes(reader, &chain))
+        let ranges = read_memberships(&dir).await?.of_reader(reader);
+        Ok(seen_nodes(reader, &ranges, &chain))
+    }
+
+    async fn memberships(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Range<u64>>> {
+        let dir = self.history_dir(channel);
+        derive_missing(&dir, channel).await?;
+        Ok(read_memberships(&dir).await?.of_member(actor))
     }
 
     async fn rebuild(&self, channel: ChannelId) -> StoreResult<()> {
@@ -219,6 +242,7 @@ impl HistoryStore for JsonFileStore {
             delete_if_exists(&items_path(&dir, segment)).await?;
             segment += SEGMENT;
         }
+        delete_if_exists(&memberships_path(&dir)).await?;
         let chain = read_chain(&dir, 0, end).await?;
         derive_items(&dir, 0, end, &chain).await
     }

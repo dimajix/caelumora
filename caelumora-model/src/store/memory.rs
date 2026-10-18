@@ -1,3 +1,4 @@
+use crate::actor::ActorId;
 use crate::agent::{AgentChannelState, AgentId, AgentState};
 use crate::chain::Node;
 use crate::channel::{ChannelId, ChannelState};
@@ -10,7 +11,7 @@ use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use crate::removal::{Deletable, Removal};
 use crate::security::{ActionType, AllowAllPolicy, SecurityContext, AccessPolicy};
 use crate::store::access::{name_free, Access};
-use crate::store::history::{every, page_of, seen, seen_nodes, HistoryStore, Keep, StandingItems};
+use crate::store::history::{every, page_of, seen, seen_nodes, HistoryStore, Keep, Memberships, StandingItems};
 use crate::store::kept_chain::KeptChain;
 use crate::store::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
 use crate::transcript::{known, Transcript, TranscriptEntry};
@@ -24,6 +25,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::Infallible;
 use std::fmt::{self, Debug};
 use std::future::ready;
+use std::ops::Range;
 use std::sync::{Arc, RwLock};
 use tracing::info;
 
@@ -57,11 +59,12 @@ struct KeptGiven {
 }
 
 /// A history as the memory store keeps it: its chain whole, and the items
-/// derived from it.
+/// and the memberships derived from it.
 #[derive(Debug, Default)]
 struct KeptHistory {
     chain: KeptChain<Recorded>,
     items: StandingItems,
+    memberships: Memberships,
 }
 
 impl Default for MemoryStore {
@@ -107,6 +110,7 @@ impl MemoryStore {
             kept.chain.append(changes).map_err(|e| StoreError::Backend(format!("what the history of channel {channel} added does not fit: {e}")))?;
             for node in kept.chain.from(end) {
                 kept.items.take(node);
+                kept.memberships.take(node);
             }
             Ok::<_, StoreError>(())
         })?;
@@ -479,23 +483,33 @@ impl StateStore for MemoryStore {
 impl HistoryStore for MemoryStore {
     async fn page(&self, channel: ChannelId, reader: &Reader, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
         Ok(read_lock(&self.histories, |all| match all.get(&channel) {
-            Some(kept) => page_of(kept.items.newest_before(before.unwrap_or(u64::MAX)).filter_map(|item| seen(reader, keep, item)), from, limit, kept.chain.head()),
+            Some(kept) => {
+                let ranges = kept.memberships.of_reader(reader);
+                page_of(kept.items.newest_before(before.unwrap_or(u64::MAX)).filter_map(|item| seen(reader, &ranges, keep, item)), from, limit, kept.chain.head())
+            }
             None => HistoryPage::default(),
         }))
     }
 
     async fn said(&self, channel: ChannelId, reader: &Reader, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>> {
-        Ok(read_lock(&self.histories, |all| all.get(&channel).and_then(|kept| kept.items.said(id)).and_then(|item| seen(reader, &every, item))))
+        Ok(read_lock(&self.histories, |all| all.get(&channel).and_then(|kept| {
+            kept.items.said(id).and_then(|item| seen(reader, &kept.memberships.of_reader(reader), &every, item))
+        })))
     }
 
     async fn entries(&self, channel: ChannelId, reader: &Reader, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>> {
-        Ok(read_lock(&self.histories, |all| all.get(&channel).map(|kept| seen_nodes(reader, kept.chain.from(from))).unwrap_or_default()))
+        Ok(read_lock(&self.histories, |all| all.get(&channel).map(|kept| seen_nodes(reader, &kept.memberships.of_reader(reader), kept.chain.from(from))).unwrap_or_default()))
+    }
+
+    async fn memberships(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Range<u64>>> {
+        Ok(read_lock(&self.histories, |all| all.get(&channel).map(|kept| kept.memberships.of_member(actor)).unwrap_or_default()))
     }
 
     async fn rebuild(&self, channel: ChannelId) -> StoreResult<()> {
         write_lock(&self.histories, |all| {
             if let Some(kept) = all.get_mut(&channel) {
                 kept.items = StandingItems::of(kept.chain.from(0));
+                kept.memberships = Memberships::of(kept.chain.from(0));
             }
         });
         Ok(())

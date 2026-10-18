@@ -198,9 +198,7 @@ impl UserController {
             return Err(StoreError::NotFound { entity: "channel", id: channel_id.to_string() });
         }
         let not_seen = || StoreError::NotFound { entity: "message", id: message_id.to_string() };
-        let (position, _) = self.histories.said(channel_id, &Reader::Participant(reader), message_id).await?
-            .filter(|(at, _)| *at >= channel.history_from(reader))
-            .ok_or_else(not_seen)?;
+        let (position, _) = self.histories.said(channel_id, &Reader::Participant(reader), message_id).await?.ok_or_else(not_seen)?;
         let _guard = self.read_lock.lock().await;
         let mut state = self.states.get_user_channel_state(self.id, channel_id).await?;
         if state.read_up_to(ReadMark { position, message: message_id }) {

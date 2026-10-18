@@ -853,7 +853,6 @@ mod tests {
             components: moderation_components(None, Some("broadcast_policy")),
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
-            history_limits: Vec::new(),
             former: Vec::new(),
             participants: Vec::new(),
             internal_actors: Vec::new(),

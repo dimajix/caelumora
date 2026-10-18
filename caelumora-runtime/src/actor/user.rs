@@ -809,7 +809,6 @@ mod tests {
             security_attributes: SecurityAttributes::default(),
             classification: Classification::CHANNEL_DEFAULT,
             language: None,
-            history_limits: Vec::new(),
             deleted: None,
             former: Vec::new(),
         };

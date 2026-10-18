@@ -283,7 +283,7 @@ mod tests {
             approval_rules: Vec::new(),
             uses_workspace: true,
             id: session.channels[0], session_id: session.id, name: Name::new("main").unwrap(), components: Default::default(),
-            classification: Classification::CHANNEL_DEFAULT, language: None, history_limits: Vec::new(), participants, internal_actors: vec![approver], security_attributes: Default::default(),
+            classification: Classification::CHANNEL_DEFAULT, language: None, participants, internal_actors: vec![approver], security_attributes: Default::default(),
             deleted: None,
             former: Vec::new(),
         };

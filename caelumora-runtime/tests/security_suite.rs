@@ -238,10 +238,13 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     assert_eq!(texts(&page.entries().cloned().collect::<Vec<_>>()), ["after bob"]);
     let page = theirs.history_page(page.earlier, 1).await.unwrap();
     assert!(matches!(page.entries().collect::<Vec<_>>().as_slice(), [HistoryEntry::ParticipantJoined { participant, .. }] if *participant == ActorId::User(world.bob)), "where bob joined (issue 408): {:?}", page.items);
+    // Given nothing before his join, nothing shared with him is recorded (issue 417).
     let page = theirs.history_page(page.earlier, 1).await.unwrap();
-    assert!(matches!(page.entries().collect::<Vec<_>>().as_slice(), [HistoryEntry::HistoryShared { participant, .. }] if *participant == ActorId::User(world.bob)),
-        "what she gave him of the history, which she sent (issue 417): {:?}", page.items);
-    assert_eq!(texts(&theirs.history_page(page.earlier, 1).await.unwrap().entries().cloned().collect::<Vec<_>>()), ["before bob"], "alice reads it all, page by page");
+    assert_eq!(texts(&page.entries().cloned().collect::<Vec<_>>()), ["before bob"], "alice reads it all, page by page");
+    let page = theirs.history_page(page.earlier, 1).await.unwrap();
+    assert!(matches!(page.entries().collect::<Vec<_>>().as_slice(), [HistoryEntry::ParticipantJoined { participant, .. }] if *participant == ActorId::User(world.alice)),
+        "her own join as the channel's founder (issue 420): {:?}", page.items);
+    assert_eq!(page.earlier, None, "and nothing older");
 
     let (his, asked) = world.asked(async {
         let view = reach(world.bob).await.expect("he takes part");
@@ -250,8 +253,8 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     assert_eq!(asked, checks(&["bob: GetSession(alice's) yes", "bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes"]), "reaching the channel, cleared for it; reading in it asks nothing more");
     let (page, refused, read) = his;
     assert_eq!((texts(&page.entries().cloned().collect::<Vec<_>>()), page.earlier), (vec!["after bob".to_string()], None), "bob from where he was taken in");
-    assert!(matches!(page.entries().collect::<Vec<_>>().as_slice(), [HistoryEntry::HistoryShared { participant, .. }, HistoryEntry::ParticipantJoined { participant: joined, .. }, ..]
-        if *participant == ActorId::User(world.bob) && *joined == *participant), "what he was given of it first, then his own join: {:?}", page.items);
+    assert!(matches!(page.entries().collect::<Vec<_>>().as_slice(), [HistoryEntry::ParticipantJoined { participant, .. }, ..] if *participant == ActorId::User(world.bob)),
+        "his own join first, given nothing before it: {:?}", page.items);
     assert!(matches!(refused, Err(ViewError::MessageNotFound { .. })), "not what was said before");
     assert_eq!(read.expect("what he sees").id, after);
     assert!(matches!(reach(world.carol).await, Err(ViewError::SessionNotFound(_))), "carol finds nothing of it");

@@ -86,7 +86,7 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::Compacted { turn_id, actor, from, to, at } => Some(Self::Compacted { turn_id, actor, from, to, at }),
             HistoryEntry::ActivityFinished { turn_id, actor, activity, output, at } => Some(Self::ActivityFinished { turn_id, actor, activity, output, at }),
             HistoryEntry::ParticipantJoined { participant, name, by, by_name, at } => Some(Self::ParticipantJoined { participant, name, by, by_name, at }),
-            HistoryEntry::ParticipantLeft { participant, name, by, by_name, at } => Some(Self::ParticipantLeft { participant, name, by, by_name, at }),
+            HistoryEntry::ParticipantLeft { participant, name, by, by_name, at, .. } => Some(Self::ParticipantLeft { participant, name, by, by_name, at }),
             HistoryEntry::CommandFailed { turn_id, actor, command, reason, to, at } => Some(Self::CommandFailed { turn_id, actor, command, reason, to, at }),
             HistoryEntry::RetryAccepted { target, actor, at } => Some(Self::RetryAccepted { target, actor, at }),
             HistoryEntry::RetryRejected { target, reason, actor, at } => Some(Self::RetryRejected { target, reason, actor, at }),
@@ -198,7 +198,7 @@ mod tests {
         let joined = HistoryItemResponse::<Message>::of(HistoryEntry::ParticipantJoined { participant: issuer, name: "bob".to_string(), by: actor, by_name: "alice".to_string(), at: Utc::now() }, |m| m).unwrap();
         let json = serde_json::to_value(joined).unwrap();
         assert_eq!((json["participant_joined"]["name"].clone(), json["participant_joined"]["by_name"].clone()), (serde_json::json!("bob"), serde_json::json!("alice")));
-        let left = HistoryItemResponse::<Message>::of(HistoryEntry::ParticipantLeft { participant: issuer, name: "bob".to_string(), by: issuer, by_name: "bob".to_string(), at: Utc::now() }, |m| m).unwrap();
+        let left = HistoryItemResponse::<Message>::of(HistoryEntry::ParticipantLeft { participant: issuer, name: "bob".to_string(), by: issuer, by_name: "bob".to_string(), until: 3, at: Utc::now() }, |m| m).unwrap();
         assert_eq!(serde_json::to_value(left).unwrap()["participant_left"]["by"], serde_json::to_value(issuer).unwrap());
         assert!(HistoryItemResponse::<Message>::of(HistoryEntry::Fitted { channel: Classification::PUBLIC }, |m| m).is_none(), "a change is in the message it changed");
     }

@@ -70,10 +70,14 @@ impl ChannelLoop {
         })
     }
 
-    /// The position from which on `participant` sees the history (issues
-    /// 46, 417) - where what it missed is caught up from when it joins
-    /// (issue 190) -, as the channel's document keeps it.
-    pub(crate) fn visible_from(&self, participant: ActorId) -> u64 {
-        self.channel.load().history_from(participant)
+    /// The position from which on `participant`, a member before - an
+    /// agent restored, which rested in the channel (issue 314) -, is given
+    /// the history as it takes part again: where its last membership began,
+    /// as when it joined (issue 417); all of it if it never was one.
+    ///
+    /// # Errors
+    /// If the store cannot be read.
+    pub(crate) async fn rejoining_from(&self, participant: ActorId) -> StoreResult<u64> {
+        Ok(self.history_store.memberships(self.id, participant).await?.last().map_or(0, |range| range.start))
     }
 }

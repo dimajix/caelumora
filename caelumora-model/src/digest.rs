@@ -305,7 +305,7 @@ fn taking_part(scheme: &str, previous: Option<&Digest>, participant: &ActorId, n
 
 /// The digest of a history (issue 06) ending in `recorded`, whose
 /// predecessor chain has the digest `previous`: of what the entry says, who
-/// sent it and whom it went to (issue 417). What an entry says is digested
+/// sent it and whom it went to, as recorded (issue 417). What an entry says is digested
 /// by its kind: a message said as `message_chain`; the channel's
 /// classification fitted into (issue 133), a turn's end (issue 258) and the
 /// start of a step of its plan (issue 263) in schemes of their own - the
@@ -315,11 +315,11 @@ fn taking_part(scheme: &str, previous: Option<&Digest>, participant: &ActorId, n
 /// reclassified as `message_modified`, `message_revoked` and
 /// `message_reclassified`.
 pub fn history_chain(previous: Option<&Digest>, recorded: &Recorded) -> Digest {
-    let mut e = Encoder::new("caelumora.history-recorded.v1");
+    let mut e = Encoder::new("caelumora.history-recorded.v2");
     e.opt_digest(previous);
     e.opt_digest(Some(&history_entry(None, &recorded.entry)));
     e.json(&to_json(&recorded.sender));
-    e.json(&to_json(&recorded.audience));
+    e.json(&to_json(&recorded.recipients));
     e.finish()
 }
 
@@ -421,7 +421,16 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             e.finish()
         }
         HistoryEntry::ParticipantJoined { participant, name, by, by_name, .. } => taking_part("caelumora.history-participant-joined.v1", previous, participant, name, by, by_name),
-        HistoryEntry::ParticipantLeft { participant, name, by, by_name, .. } => taking_part("caelumora.history-participant-left.v1", previous, participant, name, by, by_name),
+        HistoryEntry::ParticipantLeft { participant, name, by, by_name, until, .. } => {
+            let mut e = Encoder::new("caelumora.history-participant-left.v2");
+            e.opt_digest(previous);
+            e.json(&to_json(participant));
+            e.str(name);
+            e.json(&to_json(by));
+            e.str(by_name);
+            e.json(&serde_json::json!(until));
+            e.finish()
+        }
         HistoryEntry::HistoryShared { participant, from, by, by_name, .. } => {
             let mut e = Encoder::new("caelumora.history-shared.v1");
             e.opt_digest(previous);

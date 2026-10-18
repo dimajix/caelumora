@@ -36,8 +36,6 @@ pub struct AgentContextView {
     agent: AgentId,
     channel: ChannelId,
     state: AgentChannelState,
-    /// The position from which on it sees its channel's history.
-    from: u64,
     histories: Arc<dyn HistoryStore>,
     transcripts: Arc<dyn TranscriptStore>,
 }
@@ -46,28 +44,37 @@ pub struct AgentContextView {
 #[cfg(any(test, feature = "test-support"))]
 impl AgentContextView {
     /// The context of `actor`, an agent, as `state` holds it, in a channel
-    /// whose history is `history`, reached by nobody - for a test that
-    /// compares what an agent was given with what the view shows of it.
-    /// Both are put into a store of their own.
+    /// whose history is `history` after the agent's join - a member from
+    /// its start (issue 417) -, reached by nobody: for a test that compares
+    /// what an agent was given with what the view shows of it. Both are put
+    /// into a store of their own.
     ///
     /// # Panics
     /// If `actor` is no agent.
     pub async fn of_state(actor: ActorId, mut state: AgentChannelState, history: History) -> Self {
         use caelumora_model::channel::ChannelState;
+        use caelumora_model::history::{Audience, HistoryEntry, Recorded};
         use caelumora_model::store::memory::MemoryStore;
         use caelumora_model::store::StateStore;
+        use chrono::Utc;
         let ActorId::Agent(agent) = actor else { panic!("{actor} is no agent") };
         let store = Arc::new(MemoryStore::new());
         let channel = ChannelId::default();
         store.put_agent_channel_state(agent, channel, &mut state).await.expect("a state is kept in memory");
-        store.put_channel_state(channel, &mut ChannelState { history, ..ChannelState::new(channel) }).await.expect("and a history");
-        Self::of(agent, channel, state, 0, Arc::<MemoryStore>::clone(&store), store)
+        let joined = HistoryEntry::ParticipantJoined { participant: actor, name: actor.to_string(), by: actor, by_name: actor.to_string(), at: Utc::now() };
+        let mut member = History::default();
+        member.enter(Recorded::new(joined, actor, Audience::Everybody));
+        for node in history.all_entries() {
+            member.enter(node.entry.clone());
+        }
+        store.put_channel_state(channel, &mut ChannelState { history: member, ..ChannelState::new(channel) }).await.expect("and a history");
+        Self::of(agent, channel, state, Arc::<MemoryStore>::clone(&store), store)
     }
 }
 
 impl AgentContextView {
-    pub(crate) fn of(agent: AgentId, channel: ChannelId, state: AgentChannelState, from: u64, histories: Arc<dyn HistoryStore>, transcripts: Arc<dyn TranscriptStore>) -> Self {
-        Self { agent, channel, state, from, histories, transcripts }
+    pub(crate) fn of(agent: AgentId, channel: ChannelId, state: AgentChannelState, histories: Arc<dyn HistoryStore>, transcripts: Arc<dyn TranscriptStore>) -> Self {
+        Self { agent, channel, state, histories, transcripts }
     }
 
     /// The agent whose state this is.
@@ -145,7 +152,7 @@ impl AgentContextView {
     /// # Errors
     /// `Failed` if the history cannot be read.
     pub async fn history_page(&self, before: Option<u64>, limit: usize) -> Result<HistoryPage, AgentContextError> {
-        self.histories.page(self.channel, &self.reading_as(), self.from, before, limit, &every).await
+        self.histories.page(self.channel, &self.reading_as(), 0, before, limit, &every).await
             .map_err(|source| AgentContextError::Failed { actor: self.actor(), message: None, source })
     }
 
@@ -310,7 +317,7 @@ mod tests {
         let held = store.get_agent_channel_state(agent, channel).await.expect("get");
         assert!(held.transcript.prefix(&before.expect("a digest")).is_none(), "not held");
 
-        let view = AgentContextView::of(agent, channel, held, 0, Arc::<MemoryStore>::clone(&store), store);
+        let view = AgentContextView::of(agent, channel, held, Arc::<MemoryStore>::clone(&store), store);
         let seen = view.context_of(answer.id).await.expect("read from the store");
         let ids: Vec<MessageId> = seen.items.iter().filter_map(|item| match item {
             ContextItem::Conversation { message } => Some(message.id),

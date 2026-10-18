@@ -152,7 +152,8 @@ among them. Its moderator and classification default as in a template (see
 
 A channel is built and stored empty, and its founders join it by the one way in, as anyone added
 later does (`ChannelLoop::found`, issue 420): each taken in, its actor started, and its joining
-recorded in the channel's history - `HistoryShared` and `ParticipantJoined`, in the creator's name.
+recorded in the channel's history - its `ParticipantJoined`, in the creator's name; nothing of the
+history is shared with a founder, which is given what is said from its join on.
 So every member of a channel has its join in the history, and the history alone says who was a
 member when. Founding asks nothing beyond what anyone taken in is asked: naming the founders was
 creating the channel (`CreateChannel`), so changing it is not asked, and it is reachable from
@@ -483,20 +484,28 @@ channel's scope goes with that session or channel (see [Sessions](#sessions)).
 Whoever adds a participant decides how much of the history so far they may see: all (the default),
 none, the last n messages or the last n days (`HistoryAccess`). It is fixed at once as the position
 in the history the participant's view starts at, so "the last three days" does not move day by day;
-to fix it, the history is read back from its end only as far as the grant reaches. The channel's
-document keeps that position (`HistoryLimit`), and the channel and its views apply it wherever the
-history is read for a participant, without reading the history for it (issues 379, 417): over
-REST, in the snapshot, for `read_history` (see [MEMORY.md](MEMORY.md)) and for what a joining actor
-is given.
+to fix it, the history is read back from its end only as far as the grant reaches.
 
 As the newcomer's actor starts, the channel records what it was given - `HistoryShared`, with the
-position and who granted it - right before its `ParticipantJoined`, delivered to the newcomer
-alone: catching up is a delivery too, and the history says what every participant received (issue
-417). Who granted it reads it as its sender; nobody else does.
+position and who granted it - right before its `ParticipantJoined`, in the system's name and
+delivered to the newcomer alone: catching up is a delivery too, and the history says what every
+participant received (issue 417). It is recorded only if it shares something, if the position lies
+before the join; a newcomer granted nothing, or a founder, is given what is said from its join on.
+When a participant leaves, its `ParticipantLeft` says from which position on the channel delivered
+nothing to it any more (`until`) - where it stopped, which may lie before the entry, since what the
+leaving actor still sends comes first (issue 262).
+
+So the history alone says who was a member when, and every read of it applies that, without the
+channel's document (issues 379, 417): what went to every member is given to whom it was one then -
+from the position shared with them, or else from their join, up to where delivery stopped (see
+[STORAGE.md](STORAGE.md#histories)) - over REST, in the snapshot, for `read_history` (see
+[MEMORY.md](MEMORY.md)) and for what a joining actor is given. A former participant reads what went
+to it while it took part, and nothing after.
 
 *   A **joining actor** is given the position where its view begins and takes in what was said
-    from there as what it hears, read from the store as the participant it is: an agent keeps what
-    passes its perceive processors in its transcript. Users and approvers keep nothing.
+    from there as what it hears, read from the store before its join is recorded, as what a
+    newcomer is given (`Reader::Newcomer`): an agent keeps what passes its perceive processors in
+    its transcript. Users keep nothing; a founder takes in nothing.
 *   A **rejoining actor** takes in only what was said after the last message it took in, which an
     agent's state remembers (`AgentChannelState::last_message`). The transcript is only ever
     appended to, so older messages
@@ -536,7 +545,7 @@ carries the participant's name as it was, so that it reads the same after a rena
     was said, as it keeps the end of a turn.
 *   **A join** is announced as the newcomer's actor starts, after where its view of the history
     begins was fixed: the newcomer hears it first, whatever it was granted of the history before -
-    right after `HistoryShared`, which records what it was granted, to it alone.
+    right after `HistoryShared`, which records what it was granted, to it alone, if anything.
 *   **A leave** is announced once the actor's task has ended, and at the latest before an actor
     starts under the same id. Until then the channel takes what the actor still sends; after it,
     nothing of the actor enters the channel. That is how a frontend ends what an actor aborted
