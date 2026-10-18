@@ -1,6 +1,6 @@
 use crate::actor::ActorId;
 use crate::agent::{AgentChannelState, AgentId, AgentState};
-use crate::chain::Node;
+use crate::chain::{Node, Position};
 use crate::channel::{ChannelId, ChannelState};
 use crate::user::{UserChannelState, UserId};
 use crate::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
@@ -120,7 +120,7 @@ impl MemoryStore {
 
     /// The history of `channel` from the position `from` on, as a holder
     /// keeps it; empty if none is kept.
-    fn load_history(&self, channel: ChannelId, from: u64) -> StoreResult<History> {
+    fn load_history(&self, channel: ChannelId, from: Position) -> StoreResult<History> {
         read_lock(&self.histories, |all| {
             let Some(kept) = all.get(&channel) else { return Ok(History::default()) };
             kept.chain.suffix(from)
@@ -158,7 +158,7 @@ impl MemoryStore {
 
     /// The transcript of `agent` in `channel` from the position `from` on,
     /// as its state holds it; empty if none is kept.
-    fn load_transcript(&self, agent: AgentId, channel: ChannelId, from: u64) -> StoreResult<Transcript> {
+    fn load_transcript(&self, agent: AgentId, channel: ChannelId, from: Position) -> StoreResult<Transcript> {
         read_lock(&self.transcripts, |all| {
             let Some(kept) = all.get(&(agent, channel)) else { return Ok(Transcript::default()) };
             kept.suffix(from).map_err(|e| StoreError::Backend(format!("{} cannot be read from position {from}: {e}", transcript_of(agent, channel))))
@@ -481,35 +481,35 @@ impl StateStore for MemoryStore {
 
 #[async_trait]
 impl HistoryStore for MemoryStore {
-    async fn page(&self, channel: ChannelId, reader: &Reader, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
+    async fn page(&self, channel: ChannelId, reader: &Reader, from: Position, before: Option<Position>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage> {
         Ok(read_lock(&self.histories, |all| match all.get(&channel) {
             Some(kept) => {
                 let ranges = kept.memberships.of_reader(reader);
-                page_of(kept.items.newest_before(before.unwrap_or(u64::MAX)).filter_map(|item| seen(reader, &ranges, keep, item)), from, limit, kept.chain.head())
+                page_of(kept.items.newest_before(before.unwrap_or(Position::MAX)).filter_map(|item| seen(reader, &ranges, keep, item)), from, limit, kept.chain.head())
             }
             None => HistoryPage::default(),
         }))
     }
 
-    async fn said(&self, channel: ChannelId, reader: &Reader, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>> {
+    async fn said(&self, channel: ChannelId, reader: &Reader, id: MessageId) -> StoreResult<Option<(Position, HistoryEntry)>> {
         Ok(read_lock(&self.histories, |all| all.get(&channel).and_then(|kept| {
             kept.items.said(id).and_then(|item| seen(reader, &kept.memberships.of_reader(reader), &every, item))
         })))
     }
 
-    async fn entries(&self, channel: ChannelId, reader: &Reader, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>> {
+    async fn entries(&self, channel: ChannelId, reader: &Reader, from: Position) -> StoreResult<Vec<Node<HistoryEntry>>> {
         Ok(read_lock(&self.histories, |all| all.get(&channel).map(|kept| seen_nodes(reader, &kept.memberships.of_reader(reader), kept.chain.from(from))).unwrap_or_default()))
     }
 
-    async fn memberships(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Range<u64>>> {
+    async fn memberships(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Range<Position>>> {
         Ok(read_lock(&self.histories, |all| all.get(&channel).map(|kept| kept.memberships.of_member(actor)).unwrap_or_default()))
     }
 
     async fn rebuild(&self, channel: ChannelId) -> StoreResult<()> {
         write_lock(&self.histories, |all| {
             if let Some(kept) = all.get_mut(&channel) {
-                kept.items = StandingItems::of(kept.chain.from(0));
-                kept.memberships = Memberships::of(kept.chain.from(0));
+                kept.items = StandingItems::of(kept.chain.from(Position::START));
+                kept.memberships = Memberships::of(kept.chain.from(Position::START));
             }
         });
         Ok(())
@@ -526,13 +526,13 @@ impl TranscriptStore for MemoryStore {
     }
 
     async fn message(&self, agent: AgentId, channel: ChannelId, id: MessageId) -> StoreResult<Option<Message>> {
-        Ok(read_lock(&self.transcripts, |all| all.get(&(agent, channel)).and_then(|kept| known(kept.from(0).iter(), id))))
+        Ok(read_lock(&self.transcripts, |all| all.get(&(agent, channel)).and_then(|kept| known(kept.from(Position::START).iter(), id))))
     }
 
     async fn in_transcript(&self, agent: AgentId, channel: ChannelId, ids: &[MessageId]) -> StoreResult<HashSet<MessageId>> {
         Ok(read_lock(&self.transcripts, |all| {
             all.get(&(agent, channel)).into_iter()
-                .flat_map(|kept| kept.from(0))
+                .flat_map(|kept| kept.from(Position::START))
                 .filter_map(|node| node.entry.message().map(|m| m.id))
                 .filter(|id| ids.contains(id))
                 .collect()

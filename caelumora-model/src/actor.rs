@@ -1,3 +1,4 @@
+use crate::chain::Position;
 use crate::agent::{AgentId, RetryRefused};
 use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApproverId};
 use crate::channel::ChannelId;
@@ -307,7 +308,7 @@ pub enum ActorEvent {
     ParticipantLeft {
         participant: ActorId,
         name: String,
-        until: u64,
+        until: Position,
     },
     /// `participant` is given the channel's history from the position `from`
     /// on as it joins (issues 46, 417): how much of it `by`, called
@@ -319,7 +320,7 @@ pub enum ActorEvent {
     /// part in already as it was started (`Actor::catch_up`).
     HistoryShared {
         participant: ActorId,
-        from: u64,
+        from: Position,
         by: ActorId,
         by_name: String,
     },
@@ -567,7 +568,7 @@ pub struct EventContext {
     /// for what the history does not record, and for what was not
     /// delivered by a channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<u64>,
+    pub position: Option<Position>,
     /// How many times since the last message of a user an agent's message
     /// made another agent respond (issue 45). A user's message starts at 0;
     /// `next` keeps it, and the moderator counts a hop when it asks an agent
@@ -1141,7 +1142,7 @@ mod tests {
             ActorEvent::MessageRevoked { message: id, at: Utc::now() },
             ActorEvent::MessageReclassified { message: id, classification: Classification::PUBLIC },
             ActorEvent::ParticipantJoined { participant: present.users[1], name: "bob".to_string() },
-            ActorEvent::ParticipantLeft { participant: present.agents[1], name: "helper".to_string(), until: 0 },
+            ActorEvent::ParticipantLeft { participant: present.agents[1], name: "helper".to_string(), until: Position::new(0) },
         ] {
             let kind = changed.kind();
             assert_eq!(present.concerned(sender, changed), present.users_and_agents(), "{kind}");

@@ -7,6 +7,7 @@ use crate::actor::user::ChannelWatch;
 use crate::channel::ChannelLoop;
 use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
+use caelumora_model::chain::Position;
 use caelumora_model::actor::{ActorDescription, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, PersonalityKind};
 use caelumora_model::approval::ApprovalRequest;
@@ -262,9 +263,9 @@ impl ChannelView {
     ///
     /// # Errors
     /// `Failed` if the history cannot be read.
-    pub async fn visible_from(&self) -> ViewResult<u64> {
+    pub async fn visible_from(&self) -> ViewResult<Position> {
         let ranges = self.views().histories().memberships(self.channel.id, self.reader()).await.map_err(|e| self.failed_reading(e))?;
-        Ok(ranges.first().map_or(0, |range| range.start))
+        Ok(ranges.first().map_or(Position::START, |range| range.start))
     }
 
     /// A page of the history as the viewer sees it (issues 46, 218, 379,
@@ -277,7 +278,7 @@ impl ChannelView {
     /// # Errors
     /// `Failed` if the history cannot be read; `NoChannelNamed` if nothing
     /// of a channel read entry by entry can be on this page.
-    pub async fn history_page(&self, before: Option<u64>, limit: usize) -> ViewResult<HistoryPage> {
+    pub async fn history_page(&self, before: Option<Position>, limit: usize) -> ViewResult<HistoryPage> {
         self.history_page_of(before, limit, &every).await
     }
 
@@ -287,9 +288,9 @@ impl ChannelView {
     ///
     /// # Errors
     /// As `history_page`.
-    pub async fn history_page_of(&self, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> ViewResult<HistoryPage> {
+    pub async fn history_page_of(&self, before: Option<Position>, limit: usize, keep: &Keep<'_>) -> ViewResult<HistoryPage> {
         let readable = |item: &HistoryEntry| self.may_read_item(item) && keep(item);
-        let page = self.views().histories().page(self.channel.id, &self.reading_as(), 0, before, limit, &readable).await
+        let page = self.views().histories().page(self.channel.id, &self.reading_as(), Position::START, before, limit, &readable).await
             .map_err(|e| self.failed_reading(e))?;
         if self.readable == ChannelReading::Released && page.items.is_empty() {
             return Err(self.nothing_released());

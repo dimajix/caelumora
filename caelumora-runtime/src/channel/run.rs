@@ -5,6 +5,7 @@ use super::{stopped, ActorChange, ChannelActor, ChannelLoop};
 use crate::actor::Answering;
 use crate::logging::envelope_span;
 use crate::moderator::Routing;
+use caelumora_model::chain::Position;
 use caelumora_model::history::{Audience, HistoryEntry, Recorded};
 use crate::transport::{EventSender, TransportError};
 use crate::transport::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
@@ -43,7 +44,7 @@ struct RunningActor {
     /// nothing was delivered to it (issue 417): its task still runs - the
     /// step it was in, its farewell - and `run` announces the removal in
     /// this name once the task has ended.
-    leaving: Option<(SecurityContext, Name, u64)>,
+    leaving: Option<(SecurityContext, Name, Position)>,
 }
 
 impl ChannelLoop {
@@ -175,7 +176,7 @@ impl ChannelLoop {
     /// events `run` routes, once the participant's task has ended: what it
     /// sent before is in the channel, nothing of it follows (issue 262).
     /// Nothing was delivered to it from the position `until` on (issue 417).
-    async fn announce_removal(&self, participant: ActorId, name: Name, remover: SecurityContext, until: u64, running: &HashMap<ActorId, RunningActor>) {
+    async fn announce_removal(&self, participant: ActorId, name: Name, remover: SecurityContext, until: Position, running: &HashMap<ActorId, RunningActor>) {
         let removed = ActorEvent::ParticipantLeft { participant, name: name.to_string(), until };
         self.announce(removed, remover, running).await;
     }
@@ -466,7 +467,7 @@ impl ChannelLoop {
         event
     }
 
-    async fn route_event(&self, running: &HashMap<ActorId, RunningActor>, event: Envelope, routing: Option<Routing>, position: Option<u64>) {
+    async fn route_event(&self, running: &HashMap<ActorId, RunningActor>, event: Envelope, routing: Option<Routing>, position: Option<Position>) {
         // Asked for by an actor - a user's actor asks with every message it
         // sends (issue 90); the channel does not decide by itself.
         if matches!(event.event, ActorEvent::WakeupRequested) {
@@ -486,7 +487,7 @@ impl ChannelLoop {
         let _ = self.observed.send(event);
     }
 
-    async fn route_event_impl(&self, running: &HashMap<ActorId, RunningActor>, event: &Envelope, routing: Routing, position: Option<u64>) {
+    async fn route_event_impl(&self, running: &HashMap<ActorId, RunningActor>, event: &Envelope, routing: Routing, position: Option<Position>) {
         let span_id = event.context.span_id;
         let span_depth = event.context.span_depth + 1;
         let quiet = self.quiet.load(Ordering::SeqCst);
@@ -568,7 +569,7 @@ impl ChannelLoop {
     /// answer it. Each notice and request is recorded, in the system's name,
     /// to whom it goes, before it is delivered. Whom none of it goes back to
     /// is `route_event_impl`'s to see to.
-    async fn deliveries(&self, event: &Envelope, routing: Routing, position: Option<u64>, quiet: bool) -> Vec<(ActorId, Envelope)> {
+    async fn deliveries(&self, event: &Envelope, routing: Routing, position: Option<Position>, quiet: bool) -> Vec<(ActorId, Envelope)> {
         let Routing { audience, ask, agent_hops, notices } = routing;
         let deliver_to = match audience {
             Audience::Everybody => self.actors.load().keys().copied().filter(|id| event.concerns(*id)).collect(),
@@ -613,7 +614,7 @@ impl ChannelLoop {
     /// it, is announced as news once it is stored (issue 404). Returns the
     /// position of its entry, which what is delivered of it carries; `None`
     /// if nothing was recorded.
-    async fn append_history(&self, envelope: &Envelope, audience: Audience) -> Option<u64> {
+    async fn append_history(&self, envelope: &Envelope, audience: Audience) -> Option<Position> {
         let entry = envelope.entry()?;
         self.record(entry, envelope.context.sender_id, audience).await
     }
@@ -622,13 +623,13 @@ impl ChannelLoop {
     /// history and stores it (`append_history`); returns its position, or
     /// `None` if it was not recorded - a change of a message that changes
     /// nothing.
-    async fn record(&self, entry: HistoryEntry, sender: ActorId, audience: Audience) -> Option<u64> {
+    async fn record(&self, entry: HistoryEntry, sender: ActorId, audience: Audience) -> Option<Position> {
         let said = entry.published().and_then(|entry| entry.said().cloned()).filter(Message::is_heard);
         let mut state = self.state.lock().await;
         if !state.history.enter(Recorded::new(entry, sender, audience)) {
             return None;
         }
-        let position = state.history.end().checked_sub(1);
+        let position = state.history.end().previous();
         match self.store_state(&mut state).await {
             Ok(()) => if let Some(message) = said {
                 self.channel.announce_said(&message);
@@ -855,7 +856,7 @@ mod tests {
 
         // In her own name, but no actor's to say (issue 408).
         channel.process_envelope(from_her(ActorEvent::ParticipantJoined { participant: stranger, name: "mallory".to_string() }), &actors).await;
-        channel.process_envelope(from_her(ActorEvent::ParticipantLeft { participant: her, name: "alice".to_string(), until: 0 }), &actors).await;
+        channel.process_envelope(from_her(ActorEvent::ParticipantLeft { participant: her, name: "alice".to_string(), until: Position::new(0) }), &actors).await;
 
         let recorded = channel.history_entries().await;
         assert!(matches!(recorded.as_slice(), [HistoryEntry::ParticipantJoined { .. }, HistoryEntry::MessageRejected { .. }, HistoryEntry::MessageRejected { .. }]),
@@ -1036,7 +1037,7 @@ mod tests {
             let state = channel.state.lock().await;
             (state.history.base(), state.history.end(), state.history.digest())
         };
-        assert_eq!((base, end), (end - WINDOW, 251), "the channel holds the end of its history (issue 379), after her join");
+        assert_eq!((base, end), (end.before(WINDOW), Position::new(251)), "the channel holds the end of its history (issue 379), after her join");
         assert_eq!(channel.visible_messages(alice_id).await.len(), 250, "the store all of it");
 
         // A message before the window is changed as any: the check reads the store.
@@ -1044,9 +1045,9 @@ mod tests {
         assert_eq!(channel.message(first.id).await.and_then(|m| m.content).as_deref(), Some("changed"));
 
         let loaded = channel.state_store.get_channel_state(channel.id).await.unwrap();
-        assert!(loaded.history.base() > 0, "loaded from where its window began");
+        assert!(loaded.history.base() > Position::START, "loaded from where its window began");
         assert_ne!(loaded.history.digest(), digest, "with the change after it");
-        assert_eq!(loaded.history.end(), 252);
+        assert_eq!(loaded.history.end(), Position::new(252));
     }
 
     #[tokio::test]
@@ -1176,7 +1177,7 @@ mod tests {
     /// removed it.
     fn leaving_actor(id: ActorId, remover: SecurityContext) -> RunningActor {
         let name = Name::new("helper").expect("a name");
-        RunningActor { id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: None, leaving: Some((remover, name, 0)) }
+        RunningActor { id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: None, leaving: Some((remover, name, Position::START)) }
     }
 
     #[tokio::test]
@@ -1209,13 +1210,13 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let mut running = HashMap::from([(participant, leaving_actor(participant, context.clone()))]);
-        channel.apply_change(ActorChange::Start(joined, context.clone(), Some(0)), &mut running, &event_tx, &mut join_set).await;
+        channel.apply_change(ActorChange::Start(joined, context.clone(), Some(Position::START)), &mut running, &event_tx, &mut join_set).await;
 
         let announced = events.try_recv().expect("the removal is announced");
         assert!(matches!(announced.event, ActorEvent::ParticipantLeft { participant: p, .. } if p == participant), "{}", announced.describe());
         assert_eq!(announced.context.sender_id, context.caller_id, "in the remover's name");
         let shared = events.try_recv().expect("what it is given of the history is told after it");
-        assert!(matches!(shared.event, ActorEvent::HistoryShared { participant: p, from: 0, by, .. } if p == participant && by == context.caller_id), "{}", shared.describe());
+        assert!(matches!(shared.event, ActorEvent::HistoryShared { participant: p, from: Position::START, by, .. } if p == participant && by == context.caller_id), "{}", shared.describe());
         assert_eq!(shared.context.sender_id, ActorId::System, "in the system's name, for whom it names (issue 417)");
         let added = events.try_recv().expect("the join is announced after it");
         assert!(matches!(added.event, ActorEvent::ParticipantJoined { participant: p, .. } if p == participant), "{}", added.describe());
@@ -1332,7 +1333,7 @@ mod tests {
         channel.enter(Envelope::new(SecurityContext::default(), EventContext { sender_id: hers, ..EventContext::default() }, ActorEvent::CompleteMessageGenerated(said)), &running).await;
 
         let state = channel.state.lock().await;
-        let at = |position: Option<u64>| position.and_then(|seq| state.history.at(seq)).map(|node| node.entry.entry.clone());
+        let at = |position: Option<Position>| position.and_then(|seq| state.history.at(seq)).map(|node| node.entry.entry.clone());
         let delivered = rx.try_recv().expect("delivered");
         assert!(matches!(at(delivered.context.position), Some(HistoryEntry::Said { .. })), "the message, at its entry: {:?}", delivered.context.position);
         let asked = rx.try_recv().expect("and he is asked");

@@ -4,6 +4,7 @@ use crate::approval::{ApprovalRule, Approver};
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::confidentiality::Classification;
 use crate::group::GroupId;
+use crate::chain::Position;
 use crate::history::{History, WINDOW};
 use crate::message::{Message, MessageId};
 use crate::removal::{Deletable, Removal};
@@ -213,10 +214,10 @@ impl HistoryStart {
     /// The position in a channel's history from which on it is visible from
     /// here, `said_at` being the position of the entry that said `message`
     /// (issue 379).
-    pub fn from(&self, said_at: u64) -> u64 {
+    pub fn from(&self, said_at: Position) -> Position {
         match self {
             HistoryStart::From(_) => said_at,
-            HistoryStart::After(_) => said_at + 1,
+            HistoryStart::After(_) => said_at.next(),
         }
     }
 }
@@ -366,7 +367,7 @@ pub struct ChannelState {
     pub history: History,
     /// The position from which on the channel keeps its history in memory;
     /// a store loads the history from there.
-    pub history_from: u64,
+    pub history_from: Position,
 }
 
 impl ChannelState {
@@ -374,7 +375,7 @@ impl ChannelState {
         Self {
             channel_id,
             history: History::default(),
-            history_from: 0,
+            history_from: Position::START,
         }
     }
 
@@ -383,7 +384,7 @@ impl ChannelState {
     /// begins, to be stored with the next put (issue 379). The channel reads
     /// no further back than that in memory; everything else is the store's.
     pub fn keep_window(&mut self) {
-        self.history.keep_from(self.history.end().saturating_sub(WINDOW));
+        self.history.keep_from(self.history.end().before(WINDOW));
         self.history_from = self.history.base();
     }
 }
@@ -395,7 +396,7 @@ impl ChannelState {
 #[serde(rename_all = "snake_case")]
 pub enum ChannelStateChange {
     /// From where the history is held, whole.
-    HistoryFrom(u64),
+    HistoryFrom(Position),
 }
 
 impl Journaled for ChannelState {
@@ -487,7 +488,7 @@ mod tests {
             newest.push(message.clone());
         }
         let from = match access.start_in(&newest, now) {
-            Some(start) => start.from(history.iter().position(|m| m.id == start.message()).unwrap() as u64) as usize,
+            Some(start) => start.from(Position::new(history.iter().position(|m| m.id == start.message()).unwrap() as u64)).get() as usize,
             None => 0,
         };
         ids(&history[from.min(history.len())..])
@@ -534,7 +535,7 @@ mod tests {
     #[test]
     fn a_history_start_is_the_position_of_its_message_or_the_one_after() {
         let at = id(1);
-        assert_eq!((HistoryStart::From(at).from(4), HistoryStart::After(at).from(4)), (4, 5));
+        assert_eq!((HistoryStart::From(at).from(Position::new(4)), HistoryStart::After(at).from(Position::new(4))), (Position::new(4), Position::new(5)));
         assert_eq!(HistoryStart::After(at).message(), at);
     }
 
@@ -543,10 +544,10 @@ mod tests {
         let mut state = ChannelState::new(ChannelId::new());
         state.history.extend((1..=250).map(|n| make_message(id(n))).collect());
         state.keep_window();
-        assert_eq!((state.history.base(), state.history_from), (0, 0), "nothing goes before it is stored");
+        assert_eq!((state.history.base().get(), state.history_from.get()), (0, 0), "nothing goes before it is stored");
         state.history.mark_stored();
         state.keep_window();
-        assert_eq!((state.history.base(), state.history.end(), state.history_from), (50, 250, 50), "the last entries");
+        assert_eq!((state.history.base().get(), state.history.end().get(), state.history_from.get()), (50, 250, 50), "the last entries");
     }
 
     #[test]
@@ -557,9 +558,9 @@ mod tests {
         assert!(copy.history.is_empty(), "the history is not in the document");
         assert!(state.history.changes().is_some(), "and is marked stored by the store that writes it");
 
-        state.history_from = 1;
+        state.history_from = Position::new(1);
         assert_eq!(state.changes().len(), 1, "the small part, whole");
         replayed(&state, &mut copy);
-        assert_eq!((copy.channel_id, copy.history_from), (state.channel_id, 1));
+        assert_eq!((copy.channel_id, copy.history_from.get()), (state.channel_id, 1));
     }
 }

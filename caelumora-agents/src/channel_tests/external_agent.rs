@@ -3,6 +3,7 @@
 
 use crate::plugin::AgentsPlugin;
 use super::*;
+use caelumora_model::chain::Position;
 use caelumora_model::value::name::Name;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::runtime::ChannelRuntime;
@@ -149,10 +150,10 @@ async fn an_external_agent_that_joins_keeps_what_it_may_see_and_on_joining_again
 
     // After the joins of alice and the agent, one at 2 and two at 3.
     channel.record_said(vec![one, two]).await;
-    actor.catch_up(3).await.unwrap();
+    actor.catch_up(Position::new(3)).await.unwrap();
     assert_eq!(kept().await, ["two"], "what it may see");
     channel.record_said(vec![own, three]).await;
-    actor.catch_up(0).await.unwrap();
+    actor.catch_up(Position::START).await.unwrap();
     assert_eq!(kept().await, ["two", "three"], "what it missed, and nothing older nor its own");
 }
 

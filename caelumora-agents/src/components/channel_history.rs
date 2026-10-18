@@ -9,6 +9,7 @@ use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
+use caelumora_model::chain::Position;
 use caelumora_model::question::Answers;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::confidentiality::Classification;
@@ -93,7 +94,7 @@ impl ToolProvider for ChannelHistoryComponent {
         let more = page.earlier.is_some();
         // What was read is classified as the messages given (issue 168).
         let classification = Classification::join_all(messages.iter().map(|m| &m.classification));
-        let source = KnowledgeSource::History { digest: page.digest, from: Some(channel.visible_from().await?).filter(|from| *from > 0) };
+        let source = KnowledgeSource::History { digest: page.digest, from: Some(channel.visible_from().await?).filter(|from| *from > Position::START) };
         turn.record_knowledge(KnowledgeRef { channel: channel.id(), session: channel.session().id(), source, classification: classification.clone() });
 
         let value = serde_json::json!({

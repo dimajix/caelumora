@@ -9,7 +9,7 @@
 
 use crate::actor::{ActorId, Rejection, RetryTarget};
 use crate::agent::RetryRefused;
-use crate::chain::{Chain, Node};
+use crate::chain::{Chain, Node, Position};
 use crate::confidentiality::Classification;
 use crate::context::ContextRef;
 use crate::digest::Digest;
@@ -98,7 +98,7 @@ pub enum HistoryEntry {
     /// given nothing from the position `until` on (issue 417): where the
     /// channel stopped delivering to it, which may lie before this entry -
     /// what it still sent until its task ended comes first (issue 262).
-    ParticipantLeft { participant: ActorId, name: String, by: ActorId, by_name: String, until: u64, at: DateTime<Utc> },
+    ParticipantLeft { participant: ActorId, name: String, by: ActorId, by_name: String, until: Position, at: DateTime<Utc> },
     /// `participant` was given the history from the position `from` on as
     /// it joined at `at`, by the act of `by`, called `by_name` then (issues
     /// 46, 417): how much `by` granted (`HistoryAccess`), fixed as a
@@ -106,7 +106,7 @@ pub enum HistoryEntry {
     /// `ParticipantJoined`, for it alone, and only if it shares something -
     /// if `from` lies before the join; otherwise what it is given begins
     /// with its join.
-    HistoryShared { participant: ActorId, from: u64, by: ActorId, by_name: String, at: DateTime<Utc> },
+    HistoryShared { participant: ActorId, from: Position, by: ActorId, by_name: String, at: DateTime<Utc> },
     /// `actor`, an agent, did not carry out the command `command` asked by
     /// `to`, for `reason` (issues 269, 417), told to `to` alone at `at`;
     /// `turn_id` if it had begun it. Nothing it did stays.
@@ -174,7 +174,7 @@ pub enum Audience {
 
 /// Every position of a history: the range of a member from its start on,
 /// and what a newcomer reads by (`Memberships::of_reader`).
-pub const EVERY_POSITION: Range<u64> = 0..u64::MAX;
+pub const EVERY_POSITION: Range<Position> = Position::START..Position::MAX;
 
 /// Whom an entry of a history went to, resolved as it was recorded (issue
 /// 417): what a store filters by - for a database, columns of the row and a
@@ -253,7 +253,7 @@ impl Recorded {
     /// over what a store keeps of the entry - its sender, its recipients,
     /// whether it is published, its position - and the reader's ranges, so
     /// that a database answers it as a `WHERE`.
-    pub fn seen_by(&self, seq: u64, reader: &Reader, ranges: &[Range<u64>]) -> bool {
+    pub fn seen_by(&self, seq: Position, reader: &Reader, ranges: &[Range<Position>]) -> bool {
         match reader {
             Reader::Channel => true,
             Reader::Participant(actor) | Reader::Newcomer(actor) if *actor == self.sender => true,
@@ -267,7 +267,7 @@ impl Recorded {
     /// `ranges` as `seen_by` takes them: nothing unless it sees it; then the
     /// entry as it was recorded for its sender and the channel, and as
     /// everybody was given it for anyone else (`HistoryEntry::published`).
-    pub fn as_seen_by(&self, seq: u64, reader: &Reader, ranges: &[Range<u64>]) -> Option<HistoryEntry> {
+    pub fn as_seen_by(&self, seq: Position, reader: &Reader, ranges: &[Range<Position>]) -> Option<HistoryEntry> {
         if !self.seen_by(seq, reader, ranges) {
             return None;
         }
@@ -330,11 +330,11 @@ pub struct HistoryPage {
     /// The items, oldest first, each at the position of the entry that
     /// added it (issue 417): what a client tells an item by, and the live
     /// event that announced it (`EventContext::position`).
-    pub items: Vec<(u64, HistoryEntry)>,
+    pub items: Vec<(Position, HistoryEntry)>,
     /// The position of the oldest of `items`: what the page before this one
     /// is read before (`HistoryStore::page`); `None` if there is no older
     /// item to be had.
-    pub earlier: Option<u64>,
+    pub earlier: Option<Position>,
     /// The digest of the history when the page was read: up to where it was
     /// read.
     pub digest: Option<Digest>,
@@ -367,7 +367,7 @@ impl Chain<Recorded> {
     pub fn message(&self, id: MessageId) -> Option<Message> {
         let said = self.all_entries().rev().find(|node| node.entry.entry.said().is_some_and(|m| m.id == id))?;
         let mut message = said.entry.entry.said()?.clone();
-        for node in self.from(said.seq + 1) {
+        for node in self.from(said.seq.next()) {
             node.entry.entry.fold_into(&mut message);
         }
         Some(message)
@@ -420,7 +420,7 @@ impl Chain<Recorded> {
     fn is_changed(&self, id: MessageId, change: impl FnOnce(&mut Message) -> bool) -> bool {
         match self.message(id) {
             Some(mut standing) => change(&mut standing),
-            None => self.base() > 0,
+            None => self.base() > Position::START,
         }
     }
 
@@ -655,34 +655,34 @@ mod tests {
     fn a_reader_is_given_what_went_to_them_and_what_they_sent_in_full() {
         use crate::tool::{ToolCall, ToolVisibility};
         // Every participant a member all along.
-        const ALL: &[Range<u64>] = &[EVERY_POSITION];
+        const ALL: &[Range<Position>] = &[EVERY_POSITION];
         let (agent, other, user, approver) = (ActorId::Agent(AgentId::new()), ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()), ActorId::Approver(Default::default()));
         let hidden = ToolCall { id: Some("1".to_string()), function_name: "look".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
         let answer = Message { sender_id: agent, role: MessageRole::Assistant, content: Some("found it".to_string()), tool_calls: vec![hidden], turn_id: Some(TurnId::new()), produced_from: Some(ContextRef::default()), ..make_message(id(1)) };
         let said = Recorded::new(HistoryEntry::Said { message: answer }, agent, Audience::Everybody);
         let calls = |entry: Option<HistoryEntry>| entry.as_ref().and_then(HistoryEntry::said).map(|m| (m.tool_calls.len(), m.content.clone()));
 
-        assert_eq!(calls(said.as_seen_by(0, &Reader::Participant(agent), ALL)), Some((1, Some("found it".to_string()))), "its sender, in full");
-        assert!(said.as_seen_by(0, &Reader::Participant(agent), ALL).and_then(|e| e.context().map(|_| ())).is_some(), "with what it was produced from");
+        assert_eq!(calls(said.as_seen_by(Position::START, &Reader::Participant(agent), ALL)), Some((1, Some("found it".to_string()))), "its sender, in full");
+        assert!(said.as_seen_by(Position::START, &Reader::Participant(agent), ALL).and_then(|e| e.context().map(|_| ())).is_some(), "with what it was produced from");
         for reader in [Reader::Participant(user), Reader::Participant(other), Reader::Outsider] {
-            let seen = said.as_seen_by(0, &reader, ALL);
+            let seen = said.as_seen_by(Position::START, &reader, ALL);
             assert_eq!(calls(seen.clone()), Some((0, Some("found it".to_string()))), "{reader:?}: as it was published");
             assert!(seen.and_then(|e| e.context().map(|_| ())).is_none(), "{reader:?}: without what it was produced from");
         }
-        assert!(said.as_seen_by(0, &Reader::Participant(approver), ALL).is_none(), "it concerns no approver");
-        assert_eq!(calls(said.as_seen_by(0, &Reader::Channel, ALL)), Some((1, Some("found it".to_string()))), "the channel, as it was recorded");
+        assert!(said.as_seen_by(Position::START, &Reader::Participant(approver), ALL).is_none(), "it concerns no approver");
+        assert_eq!(calls(said.as_seen_by(Position::START, &Reader::Channel, ALL)), Some((1, Some("found it".to_string()))), "the channel, as it was recorded");
 
         let step = Recorded::new(HistoryEntry::Said { message: Message { sender_id: agent, internal: true, ..make_message(id(2)) } }, agent, Audience::Everybody);
-        assert!(step.as_seen_by(0, &Reader::Participant(user), ALL).is_some() && step.as_seen_by(0, &Reader::Participant(other), ALL).is_none(), "a step of a plan: the users', no other agent's");
+        assert!(step.as_seen_by(Position::START, &Reader::Participant(user), ALL).is_some() && step.as_seen_by(Position::START, &Reader::Participant(other), ALL).is_none(), "a step of a plan: the users', no other agent's");
         let ended = Recorded::new(HistoryEntry::TurnFinished { turn_id: TurnId::new(), actor: agent, at: Utc::now() }, agent, Audience::Everybody);
-        assert!(ended.as_seen_by(0, &Reader::Participant(agent), ALL).is_some() && ended.as_seen_by(0, &Reader::Participant(other), ALL).is_none(), "a turn's end: its own and the users'");
+        assert!(ended.as_seen_by(Position::START, &Reader::Participant(agent), ALL).is_some() && ended.as_seen_by(Position::START, &Reader::Participant(other), ALL).is_none(), "a turn's end: its own and the users'");
 
         let to_one = Recorded::new(HistoryEntry::Said { message: make_message(id(3)) }, ActorId::System, Audience::Only(vec![user]));
-        assert!(to_one.as_seen_by(0, &Reader::Participant(user), ALL).is_some(), "whom it went to");
-        assert!(to_one.as_seen_by(0, &Reader::Participant(ActorId::User(UserId::new())), ALL).is_none(), "no other user");
-        assert!(to_one.as_seen_by(0, &Reader::Outsider, ALL).is_none(), "nor an outsider: it did not go to everybody");
+        assert!(to_one.as_seen_by(Position::START, &Reader::Participant(user), ALL).is_some(), "whom it went to");
+        assert!(to_one.as_seen_by(Position::START, &Reader::Participant(ActorId::User(UserId::new())), ALL).is_none(), "no other user");
+        assert!(to_one.as_seen_by(Position::START, &Reader::Outsider, ALL).is_none(), "nor an outsider: it did not go to everybody");
         let to_nobody = Recorded::new(HistoryEntry::Said { message: Message { sender_id: agent, ..make_message(id(4)) } }, agent, Audience::Only(Vec::new()));
-        assert!(to_nobody.as_seen_by(0, &Reader::Participant(agent), ALL).is_some() && to_nobody.as_seen_by(0, &Reader::Participant(user), ALL).is_none(), "to nobody: its sender alone");
+        assert!(to_nobody.as_seen_by(Position::START, &Reader::Participant(agent), ALL).is_some() && to_nobody.as_seen_by(Position::START, &Reader::Participant(user), ALL).is_none(), "to nobody: its sender alone");
     }
 
     /// Issue 417: what the history records of an envelope goes to whom the
@@ -705,7 +705,7 @@ mod tests {
             ActorEvent::CommandExecuted { command: "compact".to_string(), args: String::new(), output: "done".to_string(), to: None, turn_id: Some(turn_id) },
             ActorEvent::ActivityFinished { turn_id, activity: "compacting".to_string(), output: "done".to_string() },
             ActorEvent::ParticipantJoined { participant: user, name: "user".to_string() },
-            ActorEvent::ParticipantLeft { participant: user, name: "user".to_string(), until: 3 },
+            ActorEvent::ParticipantLeft { participant: user, name: "user".to_string(), until: Position::new(3) },
             ActorEvent::MessageModified(heard.clone()),
             ActorEvent::MessageRevoked { message: heard.id, at: Utc::now() },
             ActorEvent::MessageReclassified { message: heard.id, classification: Classification::PUBLIC },
@@ -717,7 +717,7 @@ mod tests {
             ActorEvent::ChainCutOff { message: heard.id, max_agent_hops: 3, not_asked: vec![agent] },
             ActorEvent::MessageRejected { rejected: "MessageModified".to_string(), message: Some(heard.id), reason: Rejection::Invalid },
             ActorEvent::ResponseRequested,
-            ActorEvent::HistoryShared { participant: user, from: 3, by: agent, by_name: "agent".to_string() },
+            ActorEvent::HistoryShared { participant: user, from: Position::new(3), by: agent, by_name: "agent".to_string() },
         ];
         for event in events {
             let kind = event.kind();
@@ -726,7 +726,7 @@ mod tests {
             let recorded = Recorded::new(entry, ActorId::System, Audience::Everybody);
             for participant in [user, ActorId::Agent(AgentId::new()), ActorId::Approver(Default::default())] {
                 let member_all_along = [EVERY_POSITION];
-                assert_eq!(recorded.seen_by(0, &Reader::Participant(participant), &member_all_along), envelope.concerns(participant), "{kind} for {participant}");
+                assert_eq!(recorded.seen_by(Position::START, &Reader::Participant(participant), &member_all_along), envelope.concerns(participant), "{kind} for {participant}");
             }
         }
     }
@@ -784,11 +784,11 @@ mod tests {
         history.extend(vec![make_message(id(1)), make_message(id(2)), make_message(id(3))]);
         assert!(!history.revoke(id(9), Utc::now()), "a message it never held, whole");
         history.mark_stored();
-        history.keep_from(2);
+        history.keep_from(Position::new(2));
         assert!(history.revoke(id(1), Utc::now()), "before what it holds: recorded, the store applies it");
         assert!(history.modify(Message { content: Some("changed".to_string()), ..make_message(id(3)) }), "one it holds as before");
         assert!(history.revoke(id(3), Utc::now()) && !history.revoke(id(3), Utc::now()), "and taken back once");
-        assert_eq!(history.end(), 6);
+        assert_eq!(history.end().get(), 6);
     }
 
     #[test]
@@ -804,8 +804,8 @@ mod tests {
         history.reclassify(id(4), Classification::general(Confidentiality::Internal));
 
         let whole: Vec<Message> = fold(history.all_entries()).into_iter().map(|(_, m)| m).collect();
-        let range: Vec<(u64, Message)> = fold(history.from(from)).into_iter().map(|(node, m)| (node.seq, m)).collect();
-        assert_eq!(range.iter().map(|(seq, _)| *seq).collect::<Vec<_>>(), [2, 3], "the messages of the range, where they were said");
+        let range: Vec<(Position, Message)> = fold(history.from(from)).into_iter().map(|(node, m)| (node.seq, m)).collect();
+        assert_eq!(range.iter().map(|(seq, _)| seq.get()).collect::<Vec<_>>(), [2, 3], "the messages of the range, where they were said");
         assert_eq!(serde_json::to_value(range.into_iter().map(|(_, m)| m).collect::<Vec<_>>()).unwrap(), serde_json::to_value(&whole[2..]).unwrap(), "as they stand");
         assert_eq!(history.message(id(3)).and_then(|m| m.content).as_deref(), Some("changed"));
         assert_eq!(history.message(id(3)).map(|m| m.classification), Some(public), "fitted after it");

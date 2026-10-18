@@ -3,6 +3,7 @@
 //! pages from its end only as far back as is needed.
 
 use super::ChannelLoop;
+use caelumora_model::chain::Position;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{ChannelId, HistoryAccess, HistoryStart};
 use caelumora_model::history::{HistoryEntry, Reader};
@@ -28,7 +29,7 @@ async fn start_of(histories: &dyn HistoryStore, channel: ChannelId, access: Hist
     let mut newest: Vec<Message> = Vec::new();
     let mut before = None;
     while !access.read_enough(&newest, now) {
-        let page = histories.page(channel, &Reader::Outsider, 0, before, READ_PAGE, &said).await?;
+        let page = histories.page(channel, &Reader::Outsider, Position::START, before, READ_PAGE, &said).await?;
         newest.extend(page.entries().rev().filter_map(HistoryEntry::said).cloned());
         match page.earlier {
             Some(earlier) => before = Some(earlier),
@@ -62,8 +63,8 @@ impl ChannelLoop {
     ///
     /// # Errors
     /// If the store cannot be read.
-    pub(crate) async fn history_start(&self, access: HistoryAccess) -> StoreResult<u64> {
-        let Some(start) = start_of(self.history_store.as_ref(), self.id, access, Utc::now()).await? else { return Ok(0) };
+    pub(crate) async fn history_start(&self, access: HistoryAccess) -> StoreResult<Position> {
+        let Some(start) = start_of(self.history_store.as_ref(), self.id, access, Utc::now()).await? else { return Ok(Position::START) };
         Ok(match self.history_store.said(self.id, &Reader::Channel, start.message()).await? {
             Some((at, _)) => start.from(at),
             None => self.state.lock().await.history.end(),
@@ -77,7 +78,7 @@ impl ChannelLoop {
     ///
     /// # Errors
     /// If the store cannot be read.
-    pub(crate) async fn rejoining_from(&self, participant: ActorId) -> StoreResult<u64> {
-        Ok(self.history_store.memberships(self.id, participant).await?.last().map_or(0, |range| range.start))
+    pub(crate) async fn rejoining_from(&self, participant: ActorId) -> StoreResult<Position> {
+        Ok(self.history_store.memberships(self.id, participant).await?.last().map_or(Position::START, |range| range.start))
     }
 }

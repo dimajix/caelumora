@@ -17,6 +17,7 @@ use crate::tool::{not_executed_result, ToolExecutor, ToolProvider};
 use caelumora_runtime::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result, Error};
 use async_trait::async_trait;
+use caelumora_model::chain::Position;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
 use caelumora_model::agent::{AgentChannelState, RetryRefused};
 use caelumora_model::command::Command;
@@ -826,7 +827,7 @@ impl Actor for AgentActor {
     /// Takes in what it missed as what it hears (issues 190, 196): all of
     /// it into its history, what passes its perceive processors into its
     /// transcript.
-    async fn catch_up(&self, from: u64) -> Result<()> {
+    async fn catch_up(&self, from: Position) -> Result<()> {
         self.body.catch_up(from).await
     }
 

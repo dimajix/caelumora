@@ -6,6 +6,7 @@
 //! its answers is what the remote agent was given in the call that produced
 //! it (issue 205).
 
+use caelumora_model::chain::Position;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::channel::ChannelId;
@@ -151,8 +152,8 @@ impl AgentContextView {
     ///
     /// # Errors
     /// `Failed` if the history cannot be read.
-    pub async fn history_page(&self, before: Option<u64>, limit: usize) -> Result<HistoryPage, AgentContextError> {
-        self.histories.page(self.channel, &self.reading_as(), 0, before, limit, &every).await
+    pub async fn history_page(&self, before: Option<Position>, limit: usize) -> Result<HistoryPage, AgentContextError> {
+        self.histories.page(self.channel, &self.reading_as(), Position::START, before, limit, &every).await
             .map_err(|source| AgentContextError::Failed { actor: self.actor(), message: None, source })
     }
 

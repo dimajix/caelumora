@@ -10,6 +10,7 @@ use crate::message::apply_stage_processors;
 use caelumora_runtime::logging::envelope_span;
 use caelumora_runtime::transport::EventReceiver;
 use anyhow::Result;
+use caelumora_model::chain::Position;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::history::{fold, HistoryEntry};
@@ -173,13 +174,13 @@ impl AgentBody {
     ///
     /// # Errors
     /// If the channel's history cannot be read, or its state not be stored.
-    pub(super) async fn catch_up(&self, from: u64) -> Result<()> {
+    pub(super) async fn catch_up(&self, from: Position) -> Result<()> {
         let mut state = self.state.lock().await;
         let own = self.id();
         let mut after = from;
         if let Some(last) = state.last_message {
             if let Some(at) = self.runtime.channel_position_of(last).await? {
-                after = after.max(at + 1);
+                after = after.max(at.next());
             }
         }
         let entries = self.runtime.channel_entries(after).await?;

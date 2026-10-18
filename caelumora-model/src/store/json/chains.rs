@@ -7,7 +7,7 @@
 //! files of its own beside these.
 
 use super::{read_json_opt, to_backend_error, write_json_atomic};
-use crate::chain::{Chain, Node, Stored};
+use crate::chain::{Position, Chain, Node, Stored};
 use crate::digest::Digest;
 use crate::store::kept_chain::{fits, follow_back, followed, place};
 use crate::store::{StoreError, StoreResult};
@@ -25,15 +25,20 @@ pub(super) const SEGMENT: u64 = 256;
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct ChainHead {
     pub(super) head: Option<Digest>,
-    pub(super) end: u64,
+    pub(super) end: Position,
 }
 
 /// The position of the first entry of the segment that holds `seq`.
-pub(super) fn segment_of(seq: u64) -> u64 {
-    seq - seq % SEGMENT
+pub(super) fn segment_of(seq: Position) -> Position {
+    Position::new(seq.get() - seq.get() % SEGMENT)
 }
 
-fn segment_path(dir: &Path, from: u64) -> PathBuf {
+/// The segment before the one from `segment`, `None` before the first.
+pub(super) fn segment_before(segment: Position) -> Option<Position> {
+    segment.get().checked_sub(SEGMENT).map(Position::new)
+}
+
+fn segment_path(dir: &Path, from: Position) -> PathBuf {
     dir.join(format!("chain-{from}.json"))
 }
 
@@ -48,17 +53,17 @@ pub(super) async fn read_head(dir: &Path) -> StoreResult<ChainHead> {
 
 /// The entries of the segment from `from`, as written - past the head's end
 /// too, if a crash left some.
-async fn read_segment<E: DeserializeOwned>(dir: &Path, from: u64) -> StoreResult<Vec<Node<E>>> {
+async fn read_segment<E: DeserializeOwned>(dir: &Path, from: Position) -> StoreResult<Vec<Node<E>>> {
     Ok(read_json_opt(&segment_path(dir, from)).await?.unwrap_or_default())
 }
 
 /// The entries from the position `from` up to `end`, in order.
-pub(super) async fn read_chain<E: DeserializeOwned>(dir: &Path, from: u64, end: u64) -> StoreResult<Vec<Node<E>>> {
+pub(super) async fn read_chain<E: DeserializeOwned>(dir: &Path, from: Position, end: Position) -> StoreResult<Vec<Node<E>>> {
     let mut nodes = Vec::new();
     let mut segment = segment_of(from);
     while segment < end {
         nodes.extend(read_segment(dir, segment).await?.into_iter().filter(|node| node.seq >= from && node.seq < end));
-        segment += SEGMENT;
+        segment = segment.after(SEGMENT);
     }
     Ok(nodes)
 }
@@ -78,7 +83,7 @@ where
     let head = read_head(dir).await?;
     let end = fits(head.end, &changes.entries).map_err(|e| StoreError::Backend(format!("what {key} added does not fit: {e}")))?;
     let mut added = Vec::new();
-    let mut by_segment: BTreeMap<u64, Vec<Node<E>>> = BTreeMap::new();
+    let mut by_segment: BTreeMap<Position, Vec<Node<E>>> = BTreeMap::new();
     for node in changes.entries {
         if node.seq >= head.end {
             added.push(node.clone());
@@ -104,7 +109,7 @@ where
 ///
 /// # Errors
 /// If it cannot be read, or what is read is no chain.
-pub(super) async fn load<E: DeserializeOwned>(dir: &Path, key: impl Display, from: u64) -> StoreResult<Chain<E>> {
+pub(super) async fn load<E: DeserializeOwned>(dir: &Path, key: impl Display, from: Position) -> StoreResult<Chain<E>> {
     let head = read_head(dir).await?;
     let entries = read_chain(dir, from, head.end).await?;
     Chain::suffix(from, Stored { entries, head: head.head })
@@ -122,14 +127,11 @@ pub(super) async fn path<E: DeserializeOwned + Clone>(dir: &Path, key: impl Disp
     let end = read_head(dir).await?.end;
     let mut want = Some(digest);
     let mut path = Vec::new();
-    let mut segment = segment_of(end.saturating_sub(1));
-    while end > 0 && want.is_some() {
-        let nodes: Vec<Node<E>> = read_segment(dir, segment).await?;
+    let mut segment = end.previous().map(segment_of);
+    while let Some(from) = segment.filter(|_| want.is_some()) {
+        let nodes: Vec<Node<E>> = read_segment(dir, from).await?;
         follow_back(&mut want, &mut path, nodes.iter().rev().filter(|node| node.seq < end));
-        if segment == 0 {
-            break;
-        }
-        segment -= SEGMENT;
+        segment = segment_before(from);
     }
     followed(want, path).map_err(|e| StoreError::Backend(format!("{key} does not lead back to its root: {e}")))
 }

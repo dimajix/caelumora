@@ -5,6 +5,7 @@
 //! produced from (`HistoryStore::said`).
 
 use super::{fold, History, HistoryEntry};
+use crate::chain::Position;
 use crate::context::ContextRef;
 use crate::message::{Message, MessageId};
 use crate::work::TurnId;
@@ -17,7 +18,7 @@ use std::collections::HashMap;
 /// changes. What a store derives as its items (`StandingItems`), read by the
 /// one rule of folding (`fold`).
 pub fn items_of(history: &History) -> Vec<HistoryEntry> {
-    let mut folded: HashMap<u64, Message> = fold(history.all_entries()).into_iter().map(|(node, message)| (node.seq, message)).collect();
+    let mut folded: HashMap<Position, Message> = fold(history.all_entries()).into_iter().map(|(node, message)| (node.seq, message)).collect();
     history.entries()
         .filter_map(|node| match &node.entry.entry {
             HistoryEntry::Said { .. } => folded.remove(&node.seq).map(|message| HistoryEntry::Said { message }),

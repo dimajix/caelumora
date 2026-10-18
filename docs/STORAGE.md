@@ -213,7 +213,11 @@ against an update of the entity.
 *   A growing part records what was added: a chain tells the nodes added since it was last stored
     and its head, the same form the whole chain is stored in (see
     [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)). Each node carries its position, and
-    a node is merged only at the position it has, or at the one after the last if it is new.
+    a node is merged only at the position it has, or at the one after the last if it is new. A
+    position is a type of its own, `chain::Position` - its place in the order entries were added,
+    across every branch, written as its number -, and so is everything that addresses entries by
+    one: a page and its cursor, a delivery, a mark of what was read, a member's range, where a
+    window begins.
 *   A small part - the processing state, the turn under way, the tokens the agent's calls used, an
     external agent's open tasks and the classifications it was given - is recorded whole: it is
     changed in place and bounded by one turn, one exchange, or the labels in use. What would be

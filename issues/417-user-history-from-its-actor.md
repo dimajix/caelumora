@@ -617,3 +617,12 @@ Each step is reviewable on its own; 1-2 change no behaviour.
     as before; its range then covers the time it rested.
   - **The newcomer's own page** is still one item short where REST leaves out its
     `HistoryShared`; the adder's no longer is.
+- 2026-10-18: Step 7b done: positions are a type of their own, `chain::Position` - an entry's place
+  in the order a chain's entries were added, across every branch -, serialized as the number it
+  was (`#[serde(transparent)]`), so that nothing stored or sent over REST changes. `Node::seq`,
+  `Chain::base`, `end`, `at`, `from` and `keep_from`, the `HistoryStore` reads and their pages,
+  `Memberships` and `Recorded::seen_by`, `HistoryShared::from`, `ParticipantLeft::until`,
+  `EventContext::position`, `ReadMark`, the windows of the states, `KnowledgeSource::History`,
+  `Actor::catch_up` and the REST items and cursors carry it; `EVERY_POSITION` is
+  `Position::START..Position::MAX`. Only the chains themselves and the `JsonFileStore`'s segments
+  compute with the number. A refactoring without changes of behaviour.

@@ -1,6 +1,7 @@
 //! What an agent saw and has (issues 06, 47, 194, 270): the context of a message, the
 //! knowledge it was produced with, its tools and components.
 
+use caelumora_model::chain::Position;
 use caelumora_model::actor::ActorId;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::{Classification, LabelCauses};
@@ -77,7 +78,7 @@ pub struct KnowledgeRefResponse {
     /// For `"history"`: the position the reader's view began at, if they
     /// joined later with a limit (issues 72, 417).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub history_start: Option<u64>,
+    pub history_start: Option<Position>,
     /// How what was read was classified when it was read, `null` if that
     /// is not known (issue 168).
     pub classification: Option<Classification>,

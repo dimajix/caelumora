@@ -1,6 +1,7 @@
 //! The participants of a channel: adding, removing and leaving, their mentions, and finding them by
 //! name.
 
+use caelumora_model::chain::Position;
 use caelumora_model::value::name::Name;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
@@ -230,7 +231,7 @@ impl ChannelLoop {
     /// # Errors
     /// `ChannelError::StillLeaving`, or what building the actor or catching
     /// it up reports; it is not taken in then.
-    async fn start_participant(&self, resolved: ResolvedParticipant, adder: &SecurityContext, from: Option<u64>) -> Result<()> {
+    async fn start_participant(&self, resolved: ResolvedParticipant, adder: &SecurityContext, from: Option<Position>) -> Result<()> {
         self.left(resolved.actor_id()).await?;
         let actor = self.create_actor(&resolved).await?;
         if let Some(from) = from {
@@ -388,6 +389,7 @@ impl ChannelLoop {
 #[cfg(test)]
 mod tests {
     use caelumora_model::actor::ActorId;
+    use caelumora_model::chain::Position;
     use caelumora_model::channel::{Channel, JOINED, LEFT, HistoryAccess};
     use caelumora_model::history::HistoryEntry;
     use std::collections::HashSet;
@@ -542,8 +544,8 @@ mod tests {
             }
         }).await.expect("recorded");
         let from = channel.memberships(other).await.first().map(|range| range.start).expect("a member");
-        assert!(from > 0, "from the last message");
-        assert_eq!(channel.memberships(ctx.initiator_id).await.first().map(|range| range.start), Some(0), "all of it: a founder");
+        assert!(from > Position::START, "from the last message");
+        assert_eq!(channel.memberships(ctx.initiator_id).await.first().map(|range| range.start), Some(Position::START), "all of it: a founder");
         assert!(matches!(recorded.as_slice(), [HistoryEntry::ParticipantJoined { participant: founder, .. }, HistoryEntry::HistoryShared { participant, from: f, by, .. }, HistoryEntry::ParticipantJoined { participant: joined, .. }]
             if *founder == ctx.caller_id && *participant == other && *f == from && *by == ctx.caller_id && *joined == other), "after the founder's own join (issue 420): {recorded:?}");
         for (reader, seen) in [(other, 1), (ctx.caller_id, 0), (ActorId::User(UserId::new()), 0)] {

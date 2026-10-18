@@ -675,6 +675,7 @@ impl StateStore for JsonFileStore {
 
 #[cfg(test)]
 mod tests {
+    use crate::chain::Position;
     use crate::session::{Session, SessionId};
     use super::*;
     use chrono::Utc;
@@ -1097,8 +1098,8 @@ mod tests {
         write("items-0.json", &items);
         write("items-head.json", &serde_json::json!({ "end": 1 }));
         let loaded = store.get_channel_state(channel).await.unwrap();
-        assert_eq!(loaded.history.end(), 3);
-        assert_eq!(store.page(key, &Reader::Channel, 0, None, 10, &every).await.unwrap().items.len(), 3, "the items are derived anew from the chain");
+        assert_eq!(loaded.history.end().get(), 3);
+        assert_eq!(store.page(key, &Reader::Channel, Position::START, None, 10, &every).await.unwrap().items.len(), 3, "the items are derived anew from the chain");
         assert_eq!(read("items-head.json")["end"], serde_json::json!(3));
 
         // As if the crash came after the chain, before its head.
@@ -1108,10 +1109,10 @@ mod tests {
         chain.as_array_mut().unwrap().push(past);
         write("chain-0.json", &chain);
         let mut loaded = store.get_channel_state(channel).await.unwrap();
-        assert_eq!(loaded.history.end(), 3, "what lies past the head is not there");
+        assert_eq!(loaded.history.end().get(), 3, "what lies past the head is not there");
         loaded.history.push(make_message(id(4)));
         store.put_channel_state(channel, &mut loaded).await.unwrap();
-        assert_eq!(store.said(key, &Reader::Channel, id(4)).await.unwrap().map(|(at, _)| at), Some(3), "and the next entry takes its place");
+        assert_eq!(store.said(key, &Reader::Channel, id(4)).await.unwrap().map(|(at, _)| at.get()), Some(3), "and the next entry takes its place");
         assert_eq!(store.get_channel_state(channel).await.unwrap().history.digest(), loaded.history.digest());
     }
 

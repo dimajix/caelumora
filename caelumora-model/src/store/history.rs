@@ -10,7 +10,7 @@
 //! database answers as a `WHERE`.
 
 use crate::actor::ActorId;
-use crate::chain::Node;
+use crate::chain::{Node, Position};
 use crate::channel::ChannelId;
 use crate::digest::Digest;
 use crate::history::{HistoryEntry, HistoryPage, Reader, Recorded, EVERY_POSITION};
@@ -48,24 +48,24 @@ pub trait HistoryStore: Debug + Send + Sync {
     /// view begins is the store's to know (`memberships`), `from` only
     /// bounds a query - what is new since a reader last read. Read backwards
     /// in the cost of the page and of what it passes over.
-    async fn page(&self, channel: ChannelId, reader: &Reader, from: u64, before: Option<u64>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage>;
+    async fn page(&self, channel: ChannelId, reader: &Reader, from: Position, before: Option<Position>, limit: usize, keep: &Keep<'_>) -> StoreResult<HistoryPage>;
 
     /// The item that said the message `id` - `HistoryEntry::Said`, its
     /// message as it stands, with what it was produced from - and its
     /// position, as `reader` may see it; `None` if it was never said in the
     /// history, or not to them.
-    async fn said(&self, channel: ChannelId, reader: &Reader, id: MessageId) -> StoreResult<Option<(u64, HistoryEntry)>>;
+    async fn said(&self, channel: ChannelId, reader: &Reader, id: MessageId) -> StoreResult<Option<(Position, HistoryEntry)>>;
 
     /// The entries of the chain from the position `from` on that `reader`
     /// may see, as they may see them, in the order they were added: what was
     /// added since an entry before `from` was. Each keeps its node's
     /// position and digest, the chain's.
-    async fn entries(&self, channel: ChannelId, reader: &Reader, from: u64) -> StoreResult<Vec<Node<HistoryEntry>>>;
+    async fn entries(&self, channel: ChannelId, reader: &Reader, from: Position) -> StoreResult<Vec<Node<HistoryEntry>>>;
 
     /// The ranges of positions in which `actor` was given what went to
     /// every member of the channel (`Memberships`), oldest first: none if it
-    /// never was one, the last open - to `u64::MAX` - while it is.
-    async fn memberships(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Range<u64>>>;
+    /// never was one, the last open - to `Position::MAX` - while it is.
+    async fn memberships(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Range<Position>>>;
 
     /// Derives the items and the memberships anew from the chain: what
     /// repairs them, and what shows that they are derived.
@@ -81,11 +81,11 @@ pub trait HistoryStore: Debug + Send + Sync {
 /// a database keeps it as a table of `(member, from, until)`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Memberships {
-    ranges: Vec<(ActorId, Range<u64>)>,
+    ranges: Vec<(ActorId, Range<Position>)>,
     /// What the `HistoryShared` before a join shared, from where.
-    shared: Vec<(ActorId, u64)>,
+    shared: Vec<(ActorId, Position)>,
     /// The position after the last entry taken in.
-    end: u64,
+    end: Position,
 }
 
 impl Memberships {
@@ -107,7 +107,7 @@ impl Memberships {
         if node.seq < self.end {
             return;
         }
-        self.end = node.seq + 1;
+        self.end = node.seq.next();
         match &node.entry.entry {
             HistoryEntry::HistoryShared { participant, from, .. } => {
                 self.shared.retain(|(member, _)| member != participant);
@@ -116,10 +116,10 @@ impl Memberships {
             HistoryEntry::ParticipantJoined { participant, .. } => {
                 let from = self.shared.iter().position(|(member, _)| member == participant)
                     .map_or(node.seq, |at| self.shared.remove(at).1);
-                self.ranges.push((*participant, from..u64::MAX));
+                self.ranges.push((*participant, from..Position::MAX));
             }
             HistoryEntry::ParticipantLeft { participant, until, .. } => {
-                if let Some((_, range)) = self.ranges.iter_mut().rev().find(|(member, range)| member == participant && range.end == u64::MAX) {
+                if let Some((_, range)) = self.ranges.iter_mut().rev().find(|(member, range)| member == participant && range.end == Position::MAX) {
                     range.end = (*until).max(range.start);
                 }
             }
@@ -128,14 +128,14 @@ impl Memberships {
     }
 
     /// The ranges of `member`, oldest first.
-    pub fn of_member(&self, member: ActorId) -> Vec<Range<u64>> {
+    pub fn of_member(&self, member: ActorId) -> Vec<Range<Position>> {
         self.ranges.iter().filter(|(of, _)| *of == member).map(|(_, range)| range.clone()).collect()
     }
 
     /// The ranges `reader` reads by (`Recorded::seen_by`): a participant's
     /// own; a newcomer's all of the history, of which it reads what it is
     /// given; none for anyone else.
-    pub fn of_reader(&self, reader: &Reader) -> Vec<Range<u64>> {
+    pub fn of_reader(&self, reader: &Reader) -> Vec<Range<Position>> {
         match reader {
             Reader::Participant(member) => self.of_member(*member),
             Reader::Newcomer(_) => vec![EVERY_POSITION],
@@ -149,9 +149,9 @@ impl Memberships {
 /// a run of them, as a store keeps them (issue 379). Derived from the chain
 /// by `take`, by the one rule of folding (`HistoryEntry::fold_into`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(from = "Vec<(u64, Recorded)>", into = "Vec<(u64, Recorded)>")]
+#[serde(from = "Vec<(Position, Recorded)>", into = "Vec<(Position, Recorded)>")]
 pub struct StandingItems {
-    items: Vec<(u64, Recorded)>,
+    items: Vec<(Position, Recorded)>,
     /// Where the item of each message is in `items`.
     by_message: HashMap<MessageId, usize>,
 }
@@ -209,19 +209,19 @@ impl StandingItems {
 
     /// The item that said the message `id`, as it stands, with its
     /// position, if it holds it.
-    pub fn said(&self, id: MessageId) -> Option<&(u64, Recorded)> {
+    pub fn said(&self, id: MessageId) -> Option<&(Position, Recorded)> {
         self.by_message.get(&id).map(|&at| &self.items[at])
     }
 
     /// The items before the position `before`, newest first.
-    pub fn newest_before(&self, before: u64) -> impl Iterator<Item = &(u64, Recorded)> {
+    pub fn newest_before(&self, before: Position) -> impl Iterator<Item = &(Position, Recorded)> {
         let end = self.items.partition_point(|(seq, _)| *seq < before);
         self.items[..end].iter().rev()
     }
 
     /// The position after the last item, `0` if it holds none.
-    pub fn end(&self) -> u64 {
-        self.items.last().map_or(0, |(seq, _)| seq + 1)
+    pub fn end(&self) -> Position {
+        self.items.last().map_or(Position::START, |(seq, _)| seq.next())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -229,8 +229,8 @@ impl StandingItems {
     }
 }
 
-impl From<Vec<(u64, Recorded)>> for StandingItems {
-    fn from(items: Vec<(u64, Recorded)>) -> Self {
+impl From<Vec<(Position, Recorded)>> for StandingItems {
+    fn from(items: Vec<(Position, Recorded)>) -> Self {
         let by_message = items.iter().enumerate()
             .filter_map(|(at, (_, item))| item.entry.said().map(|message| (message.id, at)))
             .collect();
@@ -238,7 +238,7 @@ impl From<Vec<(u64, Recorded)>> for StandingItems {
     }
 }
 
-impl From<StandingItems> for Vec<(u64, Recorded)> {
+impl From<StandingItems> for Vec<(Position, Recorded)> {
     fn from(items: StandingItems) -> Self {
         items.items
     }
@@ -247,14 +247,14 @@ impl From<StandingItems> for Vec<(u64, Recorded)> {
 /// The item at the position `seq` as `reader`, with `ranges` as theirs
 /// (`Memberships::of_reader`), may see it, if `keep` keeps that: what a
 /// store returns of an item it read.
-pub(crate) fn seen(reader: &Reader, ranges: &[Range<u64>], keep: &Keep<'_>, (seq, item): &(u64, Recorded)) -> Option<(u64, HistoryEntry)> {
+pub(crate) fn seen(reader: &Reader, ranges: &[Range<Position>], keep: &Keep<'_>, (seq, item): &(Position, Recorded)) -> Option<(Position, HistoryEntry)> {
     item.as_seen_by(*seq, reader, ranges).filter(|entry| keep(entry)).map(|entry| (*seq, entry))
 }
 
 /// The entries of `nodes` that `reader`, with `ranges` as theirs, may see,
 /// as they may see them, each in its node: what a store returns of the
 /// chain it read.
-pub(crate) fn seen_nodes<'a>(reader: &Reader, ranges: &[Range<u64>], nodes: impl IntoIterator<Item = &'a Node<Recorded>>) -> Vec<Node<HistoryEntry>> {
+pub(crate) fn seen_nodes<'a>(reader: &Reader, ranges: &[Range<Position>], nodes: impl IntoIterator<Item = &'a Node<Recorded>>) -> Vec<Node<HistoryEntry>> {
     nodes.into_iter().filter_map(|node| node.entry.as_seen_by(node.seq, reader, ranges).map(|entry| node.with_entry(entry))).collect()
 }
 
@@ -263,9 +263,9 @@ pub(crate) fn seen_nodes<'a>(reader: &Reader, ranges: &[Range<u64>], nodes: impl
 /// gives: the first `limit` of them - at least one - from the position
 /// `from` on, oldest first, and `earlier` if one more is there; read from
 /// the history `digest` names.
-pub(crate) fn page_of(newest: impl IntoIterator<Item = (u64, HistoryEntry)>, from: u64, limit: usize, digest: Option<Digest>) -> HistoryPage {
+pub(crate) fn page_of(newest: impl IntoIterator<Item = (Position, HistoryEntry)>, from: Position, limit: usize, digest: Option<Digest>) -> HistoryPage {
     let limit = limit.max(1);
-    let mut read: Vec<(u64, HistoryEntry)> = newest.into_iter().take_while(|(seq, _)| *seq >= from).take(limit + 1).collect();
+    let mut read: Vec<(Position, HistoryEntry)> = newest.into_iter().take_while(|(seq, _)| *seq >= from).take(limit + 1).collect();
     let earlier = (read.len() > limit).then(|| {
         read.truncate(limit);
         read.last().map(|(seq, _)| *seq)
@@ -308,33 +308,33 @@ mod tests {
         for node in history.all_entries() {
             items.take(node);
         }
-        let derived: Vec<String> = items.newest_before(u64::MAX).map(|(_, item)| label(&item.entry)).collect::<Vec<_>>().into_iter().rev().collect();
+        let derived: Vec<String> = items.newest_before(Position::MAX).map(|(_, item)| label(&item.entry)).collect::<Vec<_>>().into_iter().rev().collect();
         assert_eq!(derived, items_of(&history).iter().map(label).collect::<Vec<_>>());
-        assert_eq!(items.said(id(1)).map(|(seq, item)| (*seq, item.entry.said().and_then(|m| m.content.clone()))), Some((0, Some("changed".to_string()))));
+        assert_eq!(items.said(id(1)).map(|(seq, item)| (seq.get(), item.entry.said().and_then(|m| m.content.clone()))), Some((0, Some("changed".to_string()))));
         assert!(items.said(id(9)).is_none());
 
         let again = StandingItems::of(history.all_entries());
         assert_eq!(serde_json::to_value(&again).unwrap(), serde_json::to_value(&items).unwrap(), "the same, derived at once");
         let read: StandingItems = serde_json::from_value(serde_json::to_value(&items).unwrap()).unwrap();
-        assert_eq!(read.said(id(3)).map(|(seq, _)| *seq), Some(3), "the index is made anew when it is read");
-        let node = history.at(0).unwrap().clone();
+        assert_eq!(read.said(id(3)).map(|(seq, _)| seq.get()), Some(3), "the index is made anew when it is read");
+        let node = history.at(Position::new(0)).unwrap().clone();
         items.push(&node);
-        assert_eq!(items.newest_before(u64::MAX).count(), 3, "an item is added once");
+        assert_eq!(items.newest_before(Position::MAX).count(), 3, "an item is added once");
     }
 
     #[test]
     fn a_page_is_cut_from_the_newest_items() {
-        let newest = |n: u64| (0..n).rev().map(|seq| (seq, HistoryEntry::Said { message: make_message(id(seq as u128 + 1)) }));
-        let page = page_of(newest(5), 0, 2, None);
-        assert_eq!((page.entries().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(1).unwrap().1), label(&newest(5).next().unwrap().1)], Some(3)));
-        let page = page_of(newest(5), 3, 5, None);
+        let newest = |n: u64| (0..n).rev().map(|seq| (Position::new(seq), HistoryEntry::Said { message: make_message(id(seq as u128 + 1)) }));
+        let page = page_of(newest(5), Position::START, 2, None);
+        assert_eq!((page.entries().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(1).unwrap().1), label(&newest(5).next().unwrap().1)], Some(Position::new(3))));
+        let page = page_of(newest(5), Position::new(3), 5, None);
         assert_eq!((page.items.len(), page.earlier), (2, None), "none before where the view begins");
-        assert_eq!(page_of(newest(0), 0, 5, None).items.len(), 0);
-        assert_eq!(page_of(newest(3), 0, 0, None).items.len(), 1, "at least one");
+        assert_eq!(page_of(newest(0), Position::START, 5, None).items.len(), 0);
+        assert_eq!(page_of(newest(3), Position::START, 0, None).items.len(), 1, "at least one");
         let odd = |item: &HistoryEntry| item.said().is_some_and(|m| m.id.0.as_u128() % 2 == 1);
         let kept = newest(5).map(|(seq, entry)| (seq, Recorded::new(entry, ActorId::None, Audience::Everybody)));
-        let page = page_of(kept.filter_map(|item| seen(&Reader::Channel, &[], &odd, &item)), 0, 2, None);
-        assert_eq!((page.entries().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(2).unwrap().1), label(&newest(5).next().unwrap().1)], Some(2)), "a page of those kept, full, and an older one kept");
+        let page = page_of(kept.filter_map(|item| seen(&Reader::Channel, &[], &odd, &item)), Position::START, 2, None);
+        assert_eq!((page.entries().map(label).collect::<Vec<_>>(), page.earlier), (vec![label(&newest(5).nth(2).unwrap().1), label(&newest(5).next().unwrap().1)], Some(Position::new(2))), "a page of those kept, full, and an older one kept");
     }
 
     /// Issue 417: who was a member when is read off the chain - from a
@@ -352,24 +352,24 @@ mod tests {
         for (entry, sender, audience) in [
             (joined(alice), alice, Audience::Everybody),                                             // 0
             (said(1, alice), alice, Audience::Everybody),                                            // 1
-            (HistoryEntry::HistoryShared { participant: bob, from: 1, by: alice, by_name: String::new(), at: Utc::now() }, ActorId::System, Audience::Everybody), // 2
+            (HistoryEntry::HistoryShared { participant: bob, from: Position::new(1), by: alice, by_name: String::new(), at: Utc::now() }, ActorId::System, Audience::Everybody), // 2
             (joined(bob), alice, Audience::Everybody),                                               // 3
             (said(2, bob), bob, Audience::Everybody),                                                // 4
             (said(3, alice), alice, Audience::Everybody),                                            // 5: hers, after delivery to her stopped
-            (HistoryEntry::ParticipantLeft { participant: alice, name: String::new(), by: alice, by_name: String::new(), until: 5, at: Utc::now() }, alice, Audience::Everybody), // 6
+            (HistoryEntry::ParticipantLeft { participant: alice, name: String::new(), by: alice, by_name: String::new(), until: Position::new(5), at: Utc::now() }, alice, Audience::Everybody), // 6
             (said(4, bob), bob, Audience::Everybody),                                                // 7
             (said(5, bob), bob, Audience::Only(vec![alice])),                                        // 8
         ] {
             assert!(history.enter(Recorded::new(entry, sender, audience)));
         }
         let memberships = Memberships::of(history.all_entries());
-        let starts_and_ends = |member| memberships.of_member(member).into_iter().map(|range| (range.start, range.end)).collect::<Vec<_>>();
+        let starts_and_ends = |member| memberships.of_member(member).into_iter().map(|range| (range.start.get(), range.end.get())).collect::<Vec<_>>();
         assert_eq!(starts_and_ends(alice), [(0, 5)], "from her join to where delivery stopped");
         assert_eq!(starts_and_ends(bob), [(1, u64::MAX)], "from what was shared with him, a member still");
         let seen = |reader: ActorId| -> Vec<u64> {
             let reading = Reader::Participant(reader);
             let ranges = memberships.of_reader(&reading);
-            history.all_entries().filter(|node| node.entry.seen_by(node.seq, &reading, &ranges)).map(|node| node.seq).collect()
+            history.all_entries().filter(|node| node.entry.seen_by(node.seq, &reading, &ranges)).map(|node| node.seq.get()).collect()
         };
         assert_eq!(seen(alice), [0, 1, 3, 4, 5, 6, 8], "hers, what went to every member while she was one, and what went to her by name");
         assert_eq!(seen(bob), [1, 2, 3, 4, 5, 6, 7, 8], "what was shared with him, and since - the last his own");

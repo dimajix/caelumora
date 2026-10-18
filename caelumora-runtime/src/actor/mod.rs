@@ -19,6 +19,7 @@ use tracing::warn;
 use crate::transport::{EventReceiver, EventSender};
 pub use kinds::AgentKinds;
 pub use manager::{ActorManager, Shown};
+use caelumora_model::chain::Position;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::command::Command;
@@ -69,7 +70,7 @@ pub trait Actor: Any + Debug + Send + Sync {
     ///
     /// # Errors
     /// If what it keeps, or the channel's history, cannot be read or stored.
-    async fn catch_up(&self, _from: u64) -> Result<()> {
+    async fn catch_up(&self, _from: Position) -> Result<()> {
         Ok(())
     }
 

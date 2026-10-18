@@ -3,6 +3,7 @@
 
 use crate::history::{HistoryPageItem, HistoryPageResponse};
 use crate::session::{ParticipantKind, UNKNOWN};
+use caelumora_model::chain::Position;
 use caelumora_model::snapshot;
 use caelumora_model::actor::{ActorId, ActorState};
 use caelumora_model::agent::PersonalityKind;
@@ -31,7 +32,7 @@ use uuid::Uuid;
 pub struct ChannelSnapshot {
     pub channel: ChannelResponse,
     pub items: Vec<HistoryPageItem<Message>>,
-    pub earlier: Option<u64>,
+    pub earlier: Option<Position>,
     /// The notes every agent of the channel published (issue 17); a change
     /// is announced as the channel's `agent_state_changed` on the event
     /// stream, and

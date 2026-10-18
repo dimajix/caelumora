@@ -1,5 +1,6 @@
 //! Histories (issue 258): what was said and how turns went, item by item.
 
+use caelumora_model::chain::Position;
 use caelumora_model::actor::{ActorId, Rejection, RetryTarget};
 use caelumora_model::agent::RetryRefused;
 use caelumora_model::digest::Digest;
@@ -65,7 +66,7 @@ pub enum HistoryItemResponse<M> {
 /// the item's object with `"seq"` beside its kind: `{"seq": 7, "said": …}`.
 #[derive(Debug, Serialize)]
 pub struct HistoryPageItem<M> {
-    pub seq: u64,
+    pub seq: Position,
     #[serde(flatten)]
     pub item: HistoryItemResponse<M>,
 }
@@ -113,7 +114,7 @@ const MAX_PAGE_ITEMS: usize = 200;
 #[derive(Debug, Default, Deserialize)]
 pub struct HistoryQuery {
     #[serde(default)]
-    pub before: Option<u64>,
+    pub before: Option<Position>,
     #[serde(default)]
     pub limit: Option<usize>,
 }
@@ -132,7 +133,7 @@ impl HistoryQuery {
 #[derive(Debug, Serialize)]
 pub struct HistoryPageResponse<M> {
     pub items: Vec<HistoryPageItem<M>>,
-    pub earlier: Option<u64>,
+    pub earlier: Option<Position>,
 }
 
 impl<M> HistoryPageResponse<M> {
@@ -185,7 +186,7 @@ mod tests {
         assert_eq!(json["plan_step_started"]["description"], "second");
         let issuer = ActorId::User(UserId::new());
         let command = HistoryItemResponse::<Message>::of(HistoryEntry::CommandExecuted { turn_id: Some(turn), actor, issuer, command: "compact".to_string(), args: String::new(), output: "done".to_string(), to: None, at: Utc::now() }, |m| m).unwrap();
-        let json = serde_json::to_value(HistoryPageItem { seq: 7, item: command }).unwrap();
+        let json = serde_json::to_value(HistoryPageItem { seq: Position::new(7), item: command }).unwrap();
         assert_eq!((json["seq"].clone(), json["command_executed"]["command"].clone(), json["command_executed"]["output"].clone()), (serde_json::json!(7), serde_json::json!("compact"), serde_json::json!("done")), "beside its kind, its position");
         assert_eq!(json["command_executed"]["issuer"], serde_json::to_value(issuer).unwrap());
         let (from, to) = (digest::content(b"before"), digest::content(b"after"));
@@ -198,7 +199,7 @@ mod tests {
         let joined = HistoryItemResponse::<Message>::of(HistoryEntry::ParticipantJoined { participant: issuer, name: "bob".to_string(), by: actor, by_name: "alice".to_string(), at: Utc::now() }, |m| m).unwrap();
         let json = serde_json::to_value(joined).unwrap();
         assert_eq!((json["participant_joined"]["name"].clone(), json["participant_joined"]["by_name"].clone()), (serde_json::json!("bob"), serde_json::json!("alice")));
-        let left = HistoryItemResponse::<Message>::of(HistoryEntry::ParticipantLeft { participant: issuer, name: "bob".to_string(), by: issuer, by_name: "bob".to_string(), until: 3, at: Utc::now() }, |m| m).unwrap();
+        let left = HistoryItemResponse::<Message>::of(HistoryEntry::ParticipantLeft { participant: issuer, name: "bob".to_string(), by: issuer, by_name: "bob".to_string(), until: Position::new(3), at: Utc::now() }, |m| m).unwrap();
         assert_eq!(serde_json::to_value(left).unwrap()["participant_left"]["by"], serde_json::to_value(issuer).unwrap());
         assert!(HistoryItemResponse::<Message>::of(HistoryEntry::Fitted { channel: Classification::PUBLIC }, |m| m).is_none(), "a change is in the message it changed");
     }

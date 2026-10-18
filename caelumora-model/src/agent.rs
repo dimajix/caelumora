@@ -1,6 +1,6 @@
 use crate::actor::{ActorEvent, ActorId, ActorState, EventContext};
 use crate::approval::ApprovalRequest;
-use crate::chain::Stored;
+use crate::chain::{Position, Stored};
 use crate::component::ComponentConfig;
 use crate::confidentiality::{Classification, Visibility};
 use crate::context::{ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptRef};
@@ -320,7 +320,7 @@ pub struct AgentChannelState {
     pub transcript: Transcript,
     /// The position from which on the agent keeps its transcript in memory;
     /// a store loads the transcript from there.
-    pub transcript_from: u64,
+    pub transcript_from: Position,
     /// The notes the agent published in this channel (issue 17).
     pub notes: NoteChain,
     /// The agent's private notes in this channel, which only it reads - and
@@ -897,7 +897,7 @@ pub enum AgentChannelStateChange {
     /// bounded by its open tasks.
     Remote(RemoteState),
     /// From where the transcript is held, whole.
-    TranscriptFrom(u64),
+    TranscriptFrom(Position),
 }
 
 impl Journaled for AgentChannelState {
@@ -1466,20 +1466,20 @@ pub(crate) mod tests {
         state.transcript.extend((1..=3).map(|n| make_message(id(n))).collect());
         state.transcript.mark_stored();
         state.keep_window();
-        assert_eq!((state.transcript.base(), state.transcript_from), (0, 0), "one branch: all of it");
+        assert_eq!((state.transcript.base().get(), state.transcript_from.get()), (0, 0), "one branch: all of it");
         state.transcript.extend(vec![make_message(id(4))]);
         let given = state.transcript.start_anew().expect("a branch");
         state.transcript.extend(vec![make_message(id(5))]);
         state.keep_window();
-        assert_eq!(state.transcript.base(), 0, "nothing goes before it is stored");
+        assert_eq!(state.transcript.base().get(), 0, "nothing goes before it is stored");
         state.transcript.mark_stored();
         state.keep_window();
-        assert_eq!((state.transcript.base(), state.transcript_from, state.transcript.messages().len()), (4, 4, 1), "from the root of the active branch");
+        assert_eq!((state.transcript.base().get(), state.transcript_from.get(), state.transcript.messages().len()), (4, 4, 1), "from the root of the active branch");
         assert!(state.transcript.prefix(&given).is_none(), "the branch before is the store's");
         state.transcript.start_anew();
         state.transcript.mark_stored();
         state.keep_window();
-        assert_eq!((state.transcript.base(), state.transcript.len()), (5, 0), "right after it began anew, nothing");
+        assert_eq!((state.transcript.base().get(), state.transcript.len()), (5, 0), "right after it began anew, nothing");
     }
 
     #[test]

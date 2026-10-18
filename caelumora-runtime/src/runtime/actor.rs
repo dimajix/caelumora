@@ -8,6 +8,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::chain::Node;
+use caelumora_model::chain::Position;
 use caelumora_model::channel::{self, Channel, ChannelId};
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::history::{HistoryEntry, Reader};
@@ -136,7 +137,7 @@ impl ActorRuntime {
     ///
     /// # Errors
     /// Whatever the `HistoryStore` reports.
-    pub async fn channel_position_of(&self, id: MessageId) -> Result<Option<u64>> {
+    pub async fn channel_position_of(&self, id: MessageId) -> Result<Option<Position>> {
         Ok(self.runtime.runtime_manager.history_store().said(self.channel_id, &Reader::Participant(self.actor), id).await?.map(|(at, _)| at))
     }
 
@@ -147,7 +148,7 @@ impl ActorRuntime {
     ///
     /// # Errors
     /// Whatever the `HistoryStore` reports.
-    pub async fn channel_entries(&self, from: u64) -> Result<Vec<Node<HistoryEntry>>> {
+    pub async fn channel_entries(&self, from: Position) -> Result<Vec<Node<HistoryEntry>>> {
         Ok(self.runtime.runtime_manager.history_store().entries(self.channel_id, &Reader::Newcomer(self.actor), from).await?)
     }
 

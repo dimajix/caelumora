@@ -40,6 +40,7 @@ use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use caelumora_model::chain::Position;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::RetryRefused;
 use caelumora_model::type_map::TypeKey;
@@ -844,7 +845,7 @@ impl Actor for ExternalAgentActor {
 
     /// Takes in what it missed as what it hears (issues 190, 196, 206); the
     /// remote agent is given it when it is next asked.
-    async fn catch_up(&self, from: u64) -> Result<()> {
+    async fn catch_up(&self, from: Position) -> Result<()> {
         self.body.catch_up(from).await
     }
 

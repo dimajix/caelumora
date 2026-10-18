@@ -19,7 +19,7 @@
 
 use crate::actor::ActorId;
 use crate::agent::{AgentChannelState, AgentId};
-use crate::chain::Node;
+use crate::chain::{Node, Position};
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::kept::Kept;
@@ -114,7 +114,7 @@ pub enum KnowledgeSource {
     History {
         digest: Option<Digest>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        from: Option<u64>,
+        from: Option<Position>,
     },
     /// An agent's memory (issue 62), read by that agent; the digest of its
     /// memory chain. Recorded once for every channel the entries recalled

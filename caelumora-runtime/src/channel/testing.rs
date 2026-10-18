@@ -4,6 +4,7 @@
 //! and her agent, started, and what is waited for in it. Behind the
 //! feature `test-support`, as `crate::testing` is.
 
+use caelumora_model::chain::Position;
 use caelumora_model::history::testing::{items_of, messages_of};
 use crate::actor::Actor;
 use crate::channel::ChannelLoop;
@@ -195,12 +196,12 @@ impl ChannelLoop {
     /// The entries `participant` sees of the history, as `visible_messages`
     /// reads them: who joined or left among them (issue 408).
     pub async fn visible_entries(&self, participant: ActorId) -> Vec<HistoryEntry> {
-        self.history_store.page(self.id, &Reader::Participant(participant), 0, None, 10_000, &every).await.expect("the history is read").entries().cloned().collect()
+        self.history_store.page(self.id, &Reader::Participant(participant), Position::START, None, 10_000, &every).await.expect("the history is read").entries().cloned().collect()
     }
 
     /// The ranges of positions in which `participant` was given what went to
     /// every member (`HistoryStore::memberships`, issue 417).
-    pub async fn memberships(&self, participant: ActorId) -> Vec<Range<u64>> {
+    pub async fn memberships(&self, participant: ActorId) -> Vec<Range<Position>> {
         self.history_store.memberships(self.id, participant).await.expect("the history is read")
     }
 

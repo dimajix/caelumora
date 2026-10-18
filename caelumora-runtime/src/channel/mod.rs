@@ -1,5 +1,6 @@
 //! A running channel: `ChannelLoop`, how it is built, and what it tells of itself and its actors.
 
+use caelumora_model::chain::Position;
 use caelumora_model::value::name::Name;
 use crate::actor::Actor;
 use crate::actor::AgentKinds;
@@ -193,7 +194,7 @@ enum ActorChange {
     /// `run` announces it as it starts it (`ParticipantJoined`, issue 408) -,
     /// and from which position on it is given the history (`HistoryShared`,
     /// issue 417) - `None`: from its join on, a founder (issue 420).
-    Start(ChannelActor, SecurityContext, Option<u64>),
+    Start(ChannelActor, SecurityContext, Option<Position>),
     /// The actor that leaves, what it was called as it left, and on whose
     /// behalf it was removed - in whose name `run` announces it once its
     /// task has ended (`ParticipantLeft`, issues 162, 262, 408).
