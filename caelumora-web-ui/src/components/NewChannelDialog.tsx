@@ -1,7 +1,8 @@
 // Creating a channel in a running session (issue 09): its name, its
 // moderator, its classification - a level and compartments (issue 133) -,
-// its language (issue 56), whether it uses the session's workspace (issue
-// 253) and who of the session takes part besides the user.
+// its language (issue 56) - the session's unless one is chosen (issue 425) -,
+// whether it uses the session's workspace (issue 253) and who of the session
+// takes part besides the user.
 
 import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
@@ -11,6 +12,7 @@ import {ApiRequestError, reportError} from '../errors';
 import {DEFAULT_RESPONDER_POLICY, RESPONDER_POLICY_KINDS, responderPolicyInfo} from '../moderator';
 import {CONFIDENTIALITY_LEVELS, DEFAULT_CLASSIFICATION, confidentialityInfo, type ConfidentialityLevel} from '../confidentiality';
 import {LanguageField} from './LanguageField';
+import {languageLabel} from '../language';
 
 /** The key an `ActorId` is told apart by. */
 function actorKey(id: ActorId): string {
@@ -50,14 +52,6 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
     api.getCompartments()
       .then(setCompartments)
       .catch(error => reportError('Failed to fetch the compartments', error));
-  }, []);
-
-  // The language the user prefers, offered as the channel's (issue 331): the
-  // server holds a channel in none if none is sent.
-  useEffect(() => {
-    api.getProfile()
-      .then(profile => setLanguage(current => current || (profile.preferred_language ?? '')))
-      .catch(error => reportError('Failed to fetch the profile', error));
   }, []);
 
   const toggleCompartment = (name: string) => {
@@ -193,7 +187,8 @@ export const NewChannelDialog: React.FC<NewChannelDialogProps> = ({session, user
             label="Language"
             value={language}
             onChange={setLanguage}
-            hint="its agents are told to write in it. Empty: the language you prefer, if you set one in your profile."
+            empty={`The session's: ${languageLabel(session.language)}`}
+            hint="its agents are told to write in it. Empty: the session's, and it follows the session's as that changes."
           />
 
           <label className="flex items-start gap-2">

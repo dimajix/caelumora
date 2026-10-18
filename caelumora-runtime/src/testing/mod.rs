@@ -366,7 +366,7 @@ impl World {
     pub async fn template(&self, owner: Option<UserId>, contributors: &[UserId], agent: &str, personality: PersonalityId) -> SessionTemplateId {
         let template = SessionTemplate {
             access: Vec::new(),
-            summary: None, briefing: None,
+            summary: None, briefing: None, language: None,
             approval_rules: Vec::new(),
             workspace: None,
             id: SessionTemplateId::new(),
@@ -423,7 +423,7 @@ impl World {
         channel.participants = in_channel;
         channel.internal_actors = vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
         let session = Session {
-            summary: None, briefing: None,
+            summary: None, briefing: None, language: None,
             approval_rules: Vec::new(),
             workspace: None,
             id: channel.session_id,

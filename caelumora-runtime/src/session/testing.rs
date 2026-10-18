@@ -87,7 +87,7 @@ pub fn detached_actor_runtime_in(runtime_manager: Arc<RuntimeManager>, session: 
 pub fn bare_session(session_id: SessionId) -> Session {
     let now = Utc::now();
     Session {
-        summary: None, briefing: None,
+        summary: None, briefing: None, language: None,
         id: session_id,
         name: Name::new("s").unwrap(),
         participants: Vec::new(),
@@ -132,7 +132,7 @@ pub fn make_session(name: &str, owner: ActorId) -> Session {
     let id = SessionId::new();
     let now = Utc::now();
     Session {
-        summary: None, briefing: None,
+        summary: None, briefing: None, language: None,
         approval_rules: Vec::new(),
         workspace: None,
         commands: Default::default(),

@@ -1,9 +1,9 @@
 // Making a session (issues 40, 266): its template - the one used last in this browser preselected -,
 // its name, and its workspace: as its template says, none, one of the user's own, or a new one for
 // the session alone, in a storage the user chooses and classified as they say. Everything is preset,
-// so that opening the dialog and pressing Enter makes a session as the template has it. Its channels
-// are held in the language the user prefers where the template names none (issue 331): the server
-// holds them in none, and the dialog sets it on each after making the session.
+// so that opening the dialog and pressing Enter makes a session as the template has it. It is held
+// in the language its template names, else in the one the user prefers (issues 331, 425): the server
+// holds it in none unless asked, and its channels without a language of their own follow it.
 
 import React, {useEffect, useState} from 'react';
 import {X} from 'lucide-react';
@@ -16,6 +16,8 @@ import {storageLabel} from '../workspace';
 import {scopeLabel} from '../scope';
 import {ClassificationFields} from './ClassificationFields';
 import {ShareSelect, type Share} from './ShareSelect';
+import {LanguageField} from './LanguageField';
+import {languageLabel} from '../language';
 
 /** What the workspace select offers besides the user's workspaces, which it names by their id. */
 const AS_TEMPLATE = 'template';
@@ -27,14 +29,6 @@ interface NewSessionDialogProps {
   workspaces: WorkspaceResponse[];
   onCreated: (session: SessionResponse) => void;
   onClose: () => void;
-}
-
-/** Sets `language` on each channel of the session `sessionId` that is held in none. */
-async function holdChannelsIn(sessionId: string, language: string): Promise<void> {
-  const channels = await api.getChannels(sessionId);
-  await Promise.all(channels
-    .filter(channel => channel.language === null)
-    .map(channel => api.setChannelLanguage(sessionId, channel.id, language)));
 }
 
 export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, onCreated, onClose}) => {
@@ -50,8 +44,10 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
   const [storages, setStorages] = useState<StorageResponse[] | null>(null);
   const [storage, setStorage] = useState<string | null>(null);
   const [classification, setClassification] = useState<Classification>(DEFAULT_CLASSIFICATION);
-  // The language the user prefers, set on the channels the template holds in none.
+  // The language the user prefers, offered where the template names none.
   const [preferredLanguage, setPreferredLanguage] = useState<string | null>(null);
+  // `null` while the user has not changed the language, which then follows the template.
+  const [language, setLanguage] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -76,6 +72,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
   // The chosen template if it still exists, else the first (the server sorts them by name).
   const template = templates?.find(t => t.id === templateId) ?? templates?.[0];
   const sessionName = name ?? (template ? `New ${template.name}` : '');
+  const sessionLanguage = language ?? template?.language ?? preferredLanguage ?? '';
   // Only one's own is attached; one made for another session is used there alone.
   const offered = workspaces.filter(w => w.can_change && w.scope !== 'session');
   const fallback = template?.workspace ? AS_TEMPLATE : NONE;
@@ -102,13 +99,8 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
     setIsCreating(true);
     setProblem(null);
     try {
-      const session = await api.createSession(template.id, sessionName.trim(), workspaceRequest());
+      const session = await api.createSession(template.id, sessionName.trim(), sessionLanguage.trim() || undefined, workspaceRequest());
       saveLastTemplate(template.id);
-      if (preferredLanguage) {
-        // The session exists either way; one whose language could not be set is reported, not undone.
-        await holdChannelsIn(session.id, preferredLanguage)
-          .catch(error => reportError('The session was created, but the language of its channels could not be set', error));
-      }
       onCreated(session);
     } catch (error) {
       // What the server says about the request - a workspace not the user's, a classification
@@ -181,6 +173,14 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({workspaces, o
               className="w-full rounded-md border border-gray-700 bg-gray-800 px-2 py-1 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
             />
           </label>
+
+          <LanguageField
+            label="Language"
+            value={sessionLanguage}
+            onChange={setLanguage}
+            empty={template?.language ? `As the template says: ${languageLabel(template.language)}` : 'None'}
+            hint="the agents of its channels are told to write in it, unless a channel has a language of its own."
+          />
 
           <label className="block space-y-1">
             <span className="text-xs text-gray-400">Workspace</span>

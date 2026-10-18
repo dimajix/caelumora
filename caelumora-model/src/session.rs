@@ -8,6 +8,7 @@ use crate::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
 use crate::user::UserId;
 use crate::store::query::Field;
 use chrono::{DateTime, Utc};
+use crate::value::language::Language;
 use crate::value::name::Name;
 use crate::value::text::{Briefing, Summary};
 use crate::value::ValueError;
@@ -21,6 +22,10 @@ pub enum SessionUpdateEvent {
     /// Renamed, as it was asked: the name is made from it as the change is
     /// applied (issue 248), as a description is.
     NameChanged(String),
+    /// Its channels are to be held in another language, or in none in
+    /// particular, where they hold none of their own (issue 425); made into
+    /// a language as the change is applied, as a name is.
+    LanguageChanged(Option<String>),
     /// The session's privacy policy changed (issue 134).
     PrivacyChanged(PrivacyConfig),
     /// Its rules on tool calls changed (issue 13), as they now stand.
@@ -59,6 +64,11 @@ pub struct Session {
     /// `channel_briefing_prompt_provider`; `None` if nobody wrote one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub briefing: Option<Briefing>,
+    /// The language its channels are held in where they hold none of their
+    /// own (issue 425, `Channel::effective_language`); `None` if it is held
+    /// in none in particular.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<Language>,
     pub participants: Vec<Participant>,
     /// The session's channels by id, in order; each is a document of its own
     /// (issue 70).
@@ -111,6 +121,7 @@ impl Updatable for Session {
     fn apply(&mut self, event: &SessionUpdateEvent) -> Result<(), ValueError> {
         match event {
             SessionUpdateEvent::NameChanged(name) => self.name = Name::new(name)?,
+            SessionUpdateEvent::LanguageChanged(language) => self.language = Language::optional(language.as_deref())?,
             SessionUpdateEvent::PrivacyChanged(privacy) => self.privacy = *privacy,
             SessionUpdateEvent::ApprovalRulesChanged(rules) => self.approval_rules = rules.clone(),
             SessionUpdateEvent::DescriptionChanged { summary, briefing } => self.describe(summary.as_deref(), briefing.as_deref())?,
@@ -209,7 +220,7 @@ mod tests {
         ];
         let now = Utc::now();
         let mut session = Session {
-            id, name: Name::new("s").unwrap(), summary: None, briefing: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
+            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
             commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
             security_attributes: Session::attributes_of(id, alice, &access), deleted: None,
         };
@@ -226,7 +237,7 @@ mod tests {
     fn a_change_is_made_into_the_session_s_values_or_leaves_it_as_it_was() {
         let (alice, id, now) = (UserId::new(), SessionId::new(), Utc::now());
         let mut session = Session {
-            id, name: Name::new("s").unwrap(), summary: None, briefing: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
+            id, name: Name::new("s").unwrap(), summary: None, briefing: None, language: None, participants: vec![Participant::User(alice)], channels: Vec::new(),
             commands: Default::default(), privacy: Default::default(), approval_rules: Vec::new(), workspace: None, created_at: now, updated_at: now,
             security_attributes: Session::attributes_of(id, alice, &[]), deleted: None,
         };
@@ -235,6 +246,12 @@ mod tests {
         session.apply(&SessionUpdateEvent::ParticipantJoined(Participant::User(alice))).unwrap();
         assert_eq!((session.name.as_str(), session.summary.as_ref().map(|s| s.as_str())), ("planning", Some("What we plan")));
         assert_eq!(session.participants.len(), 1, "taken in as `take_in` does: once");
+        session.apply(&SessionUpdateEvent::LanguageChanged(Some("de".to_string()))).unwrap();
+        assert_eq!(session.language.as_ref().map(Language::as_str), Some("de"), "made into a language");
+        assert!(session.apply(&SessionUpdateEvent::LanguageChanged(Some("no language".to_string()))).is_err(), "no language tag");
+        assert_eq!(session.language.as_ref().map(Language::as_str), Some("de"), "unchanged");
+        session.apply(&SessionUpdateEvent::LanguageChanged(None)).unwrap();
+        assert_eq!(session.language, None, "taken back");
 
         assert!(session.apply(&SessionUpdateEvent::NameChanged(String::new())).is_err(), "no name");
         assert_eq!(session.name.as_str(), "planning", "unchanged");

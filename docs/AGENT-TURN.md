@@ -558,9 +558,9 @@ changed, without an account of its own of what changed: that is the notices' (is
 
 ### The channel's language
 
-`channel_language_prompt_provider` tells the agent the language its channel is held in (see
-[CHANNELS.md](CHANNELS.md#its-language)), by name rather than by tag alone, since a model follows a
-name more surely. Nothing is translated.
+`channel_language_prompt_provider` tells the agent the language its channel is held in - its own,
+else its session's (see [CHANNELS.md](CHANNELS.md#its-language)) -, by name rather than by tag
+alone, since a model follows a name more surely. Nothing is translated.
 
 ### What the session and channel are for
 

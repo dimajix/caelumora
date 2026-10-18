@@ -370,7 +370,7 @@ mod tests {
     fn session_with(id: SessionId, privacy: &SessionPrivacy) -> Session {
         let now = Utc::now();
         Session {
-            summary: None, briefing: None,
+            summary: None, briefing: None, language: None,
             approval_rules: Vec::new(),
             workspace: None,
             id,

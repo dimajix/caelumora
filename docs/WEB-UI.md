@@ -148,15 +148,15 @@ The user's name at the foot of the sidebar opens their profile: how they introdu
 agents - with the note that every agent in every channel they take part in is given it - the
 language they prefer, and their own rules on tool calls, each with where it reaches and until when,
 to take back. Whether a language tag is valid is the server's to decide. The preferred language is
-the web UI's to apply, not the server's (issue 331): the dialog for a new channel presets it, and
-after a new session is made it is set on each of its channels that the template holds in none - a
-failure to set it is reported, the session stays.
+the web UI's to apply, not the server's (issue 331): the dialog for a new session presets it where
+the template names no language. A session's language is changed from its menu.
 
 "New Session" presets everything - the template used last in this browser, its name, the workspace
-the template names - so that Enter makes a session as its template has it. A workspace chosen there
-takes the place of the template's: none, one of the user's own, or a new one for the session alone.
-A new channel is created with its name, responder policy, classification, language (preset to the
-one the user prefers), whether it uses the session's workspace (preset to yes), and participants.
+the template names, the language the template names or else the one the user prefers - so that
+Enter makes a session as its template has it. A workspace chosen there takes the place of the
+template's: none, one of the user's own, or a new one for the session alone. A new channel is
+created with its name, responder policy, classification, language (empty: the session's), whether
+it uses the session's workspace (preset to yes), and participants.
 
 ### Workspaces
 
@@ -357,8 +357,10 @@ briefing, and saving without it would remove it.
 
 ### Language
 
-The channel's language is shown below its classification. Who may change the channel changes it or
-takes it back; the dialog says that nothing said before is translated.
+The language the channel is held in is shown below its classification - marked as the session's
+where it has none of its own; which one holds, the server says (`effective_language`), and the
+channel is fetched again when its own or its session's changes. Who may change the channel changes
+its own or takes it back; the dialog says that nothing said before is translated.
 
 ### Approval rules
 

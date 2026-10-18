@@ -1,6 +1,7 @@
-// Changing the language a channel's conversation is held in (issue 56). Who
-// may is the server's to decide, as whether the tag is one. Nothing said
-// before is translated.
+// Changing the language a channel's conversation is held in (issue 56), or
+// the one of a session, which its channels without one of their own follow
+// (issue 425). Who may is the server's to decide, as whether the tag is one.
+// Nothing said before is translated.
 
 import React, {useState} from 'react';
 import {X} from 'lucide-react';
@@ -10,12 +11,17 @@ import {LanguageField} from './LanguageField';
 
 interface LanguageDialogProps {
   title: string;
+  /** The language set now; `null` for none. */
   current: string | null;
+  /** What no language means here, as it is shown: `None`, or the session's language. */
+  empty: string;
+  /** What an empty field does, below it. */
+  emptyHint: string;
   onSubmit: (language: string | null) => Promise<void>;
   onClose: () => void;
 }
 
-export const LanguageDialog: React.FC<LanguageDialogProps> = ({title, current, onSubmit, onClose}) => {
+export const LanguageDialog: React.FC<LanguageDialogProps> = ({title, current, empty, emptyHint, onSubmit, onClose}) => {
   const [language, setLanguage] = useState(current ?? '');
   const [problem, setProblem] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -65,12 +71,13 @@ export const LanguageDialog: React.FC<LanguageDialogProps> = ({title, current, o
         </div>
 
         <div className="space-y-4 p-4 text-sm">
-          <div className="text-xs text-gray-400">Now: {languageLabel(current)}</div>
+          <div className="text-xs text-gray-400">Now: {current ? languageLabel(current) : empty}</div>
           <LanguageField
             label="Language"
             value={language}
             onChange={setLanguage}
-            hint="the agents write in it from their next answer on; empty leaves it to them. Nothing said before is translated."
+            empty={empty}
+            hint={`the agents write in it from their next answer on; ${emptyHint}. Nothing said before is translated.`}
           />
           {problem && <div role="alert" className="text-xs text-red-400">{problem}</div>}
         </div>

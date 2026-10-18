@@ -13,6 +13,7 @@ use caelumora_model::note::Note;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::security::Grant;
 use caelumora_model::session::{ChannelId, Session, SessionId};
+use caelumora_model::value::language::Language;
 use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::workspace::{WorkspaceChoice, WorkspaceId};
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,10 @@ use uuid::Uuid;
 pub struct CreateSessionRequest {
     pub template_id: Uuid,
     pub name: Option<String>,
+    /// The language its channels are held in where they hold none of their
+    /// own (issue 425), a BCP 47 tag; the template's if absent.
+    #[serde(default)]
+    pub language: Option<String>,
     /// Its workspace in place of the template's (issue 266); the
     /// template's if absent.
     #[serde(default)]
@@ -70,19 +75,22 @@ pub struct SessionResponse {
     /// What it is for, in a line (issue 245); absent if nobody said.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<Summary>,
+    /// The language its channels are held in where they hold none of their
+    /// own (issue 425); `null` for none in particular.
+    pub language: Option<Language>,
     /// Whom the session lets read what was said in it (issue 134).
     pub privacy: PrivacyConfig,
 }
 
 impl From<&Session> for SessionResponse {
     fn from(session: &Session) -> Self {
-        Self { id: session.id, name: session.name.to_string(), summary: session.summary.clone(), privacy: session.privacy }
+        Self { id: session.id, name: session.name.to_string(), summary: session.summary.clone(), language: session.language.clone(), privacy: session.privacy }
     }
 }
 
 impl From<snapshot::SessionSnapshot> for SessionResponse {
     fn from(view: snapshot::SessionSnapshot) -> Self {
-        Self { id: view.id, name: view.name, summary: view.summary, privacy: view.privacy }
+        Self { id: view.id, name: view.name, summary: view.summary, language: view.language, privacy: view.privacy }
     }
 }
 
@@ -186,6 +194,9 @@ pub struct SessionSnapshot {
     /// listed; absent if nobody wrote one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub briefing: Option<Briefing>,
+    /// The language its channels are held in where they hold none of their
+    /// own (issue 425); `null` for none in particular.
+    pub language: Option<Language>,
     /// Whom the session lets read what was said in it (issue 134).
     pub privacy: PrivacyConfig,
     /// What it restricts of the tool calls made in any of its channels
@@ -211,6 +222,7 @@ impl From<snapshot::SessionSnapshot> for SessionSnapshot {
             name: view.name,
             summary: view.summary,
             briefing: view.briefing,
+            language: view.language,
             privacy: view.privacy,
             approval_rules: view.approval_rules,
             can_change: view.can_change,

@@ -405,6 +405,8 @@ mod tests {
 
     use anyhow::Result;
     use caelumora_model::value::language::Language;
+    use caelumora_model::snapshot::Detail;
+    use crate::view::Viewer;
     use caelumora_model::approval::ApprovalStrategy;
     use caelumora_model::channel::{Channel, InternalActor, STARTED, STOPPED};
     use caelumora_model::template::InternalActorTemplate;
@@ -478,6 +480,34 @@ mod tests {
         assert_eq!(asked.channel().language, None);
         let stored = runtime.entity_stores().channels.get(&ctx, asked.id()).await.unwrap();
         assert_eq!(stored.language, None, "stored, not only in memory");
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_channel_without_a_language_of_its_own_follows_its_sessions() {
+        let runtime = test_runtime();
+        let manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
+        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let language = |tag: &str| Some(Language::new(tag).unwrap());
+        let following = session.create_channel(&ctx, spec("following", vec![])).await.unwrap();
+        let own = session.create_channel(&ctx, ChannelSpec { language: Some("fr".to_string()), ..spec("own", vec![]) }).await.unwrap();
+        let held_in = async |channel: &ChannelLoop| {
+            let view = manager.views(Viewer::new(ctx.clone())).session(session.id()).await.unwrap().channel(channel.id()).await.unwrap();
+            let snapshot = view.snapshot(Detail::empty()).await;
+            assert_eq!(snapshot.effective_language.as_ref(), view.effective_language(), "the snapshot shows it as the view answers it");
+            (snapshot.language, snapshot.effective_language)
+        };
+        assert_eq!(held_in(&following).await, (None, None), "neither holds one");
+
+        session.update_language(&ctx, Some("de")).await.expect("the owner changes it");
+        assert_eq!(held_in(&following).await, (None, language("de")), "the session's, as it is now");
+        assert_eq!(held_in(&own).await, (language("fr"), language("fr")), "its own before the session's");
+        let stored = runtime.entity_stores().sessions.get(&ctx, session.id()).await.unwrap();
+        assert_eq!(stored.language, language("de"), "stored, not only in memory");
+        assert!(session.update_language(&ctx, Some("no language")).await.is_err(), "no language tag");
+
+        session.update_language(&ctx, None).await.expect("taken back");
+        assert_eq!(held_in(&following).await, (None, None));
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 

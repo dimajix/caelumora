@@ -22,7 +22,7 @@ pub async fn create_session(
 ) -> Result<Json<SessionResponse>, ApiError> {
     // The logged-in user owns the session and is its template's "user".
     let template_id = SessionTemplateId(payload.template_id);
-    let session_loop = state.session_manager.create_from_template(&user.security_context(), template_id, payload.name.as_deref(), payload.workspace.map(Into::into)).await?;
+    let session_loop = state.session_manager.create_from_template(&user.security_context(), template_id, payload.name.as_deref(), payload.language.as_deref(), payload.workspace.map(Into::into)).await?;
 
     Ok(Json(SessionResponse::from(&**session_loop.session())))
 }
@@ -113,6 +113,25 @@ pub async fn rename_session(
     session_loop.update_name(&user.security_context(), &payload.name).await?;
 
     Ok(Json(SessionResponse::from(&**session_loop.session())))
+}
+
+/// Has the channels of session `id` that hold no language of their own held
+/// in the language the body names - a BCP 47 tag such as `"de"` - or in none
+/// in particular (`null`, issue 425): whoever may change the session. Their
+/// agents are told from their next turn on. Answers with the session as the
+/// user sees it now.
+pub async fn set_session_language(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    user: AuthenticatedUser,
+    Json(language): Json<Option<String>>,
+) -> Result<Json<SessionSnapshot>, ApiError> {
+    let session_id = SessionId(id);
+    let session_loop = ensure_session(&state, &user, session_id).await?;
+
+    session_loop.update_language(&user.security_context(), language.as_deref()).await?;
+
+    Ok(Json(session_view(&state, &user, session_id).await?))
 }
 
 /// Changes whom session `id` lets read what was said in it (issue 134);

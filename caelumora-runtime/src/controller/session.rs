@@ -50,6 +50,17 @@ impl SessionController {
         self.update(ctx, SessionUpdateEvent::NameChanged(new_name.to_string())).await
     }
 
+    /// Has the channels of the session that hold no language of their own
+    /// held in `language` - or in none in particular - on behalf of `ctx`
+    /// (`UpdateSession`, issue 425), as [`Self::update`] does.
+    ///
+    /// # Errors
+    /// `StoreError::Invalid` if `language` is no language tag, otherwise see
+    /// [`Self::update`].
+    pub async fn update_language(&self, ctx: &SecurityContext, language: Option<&str>) -> StoreResult<()> {
+        self.update(ctx, SessionUpdateEvent::LanguageChanged(language.map(String::from))).await
+    }
+
     /// Changes the session's privacy policy on behalf of `ctx` (issue 134),
     /// as [`Self::update`] does.
     ///
@@ -185,7 +196,7 @@ mod tests {
 
     fn session() -> Session {
         Session {
-            summary: None, briefing: None,
+            summary: None, briefing: None, language: None,
             approval_rules: Vec::new(),
             workspace: None,
             commands: Default::default(),

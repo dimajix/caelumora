@@ -155,8 +155,8 @@ export function reclassifiedChannel(event: GlobalEvent): {channelId: string; cla
 }
 
 /**
- * The channel whose language changed and its language now - `null` for none
- * in particular - for a channel's update with `LanguageChanged` (issue 56);
+ * The channel whose language changed and its own language now - `null` for
+ * none of its own - for a channel's update with `LanguageChanged` (issue 56);
  * `null` for any other event.
  */
 export function languageChangedChannel(event: GlobalEvent): {channelId: string; language: string | null} | null {
@@ -165,6 +165,16 @@ export function languageChangedChannel(event: GlobalEvent): {channelId: string; 
   return {channelId: changed.channelId, language: (changed.update as {LanguageChanged: string | null}).LanguageChanged ?? null};
 }
 
+/**
+ * The session whose language changed, for a session's update with
+ * `LanguageChanged` (issue 425): the language of its channels that hold none
+ * of their own changed with it. `null` for any other event.
+ */
+export function languageChangedSession(event: GlobalEvent): string | null {
+  if (event.kind !== 'session') return null;
+  const update = updateOf(event.change);
+  return update && typeof update === 'object' && 'LanguageChanged' in update ? event.id : null;
+}
 
 /**
  * The channel whose description changed and what it says now, for a

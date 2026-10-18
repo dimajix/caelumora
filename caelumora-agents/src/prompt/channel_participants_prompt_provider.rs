@@ -271,7 +271,7 @@ mod tests {
         let participants = vec![Participant::User(kaya.id), Participant::Agent(jonathan.id), Participant::Agent(sassy.id), Participant::Agent(gone.id), Participant::User(bob.id)];
         let now = Utc::now();
         let session = Session {
-            summary: None, briefing: None,
+            summary: None, briefing: None, language: None,
             approval_rules: Vec::new(),
             workspace: None,
             id: SessionId::new(), name: Name::new("s").unwrap(), participants: participants.clone(), channels: vec![ChannelId::new()],

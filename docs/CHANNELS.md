@@ -172,14 +172,21 @@ deleted again.
 
 ### Its language
 
-A channel may be held in a language, a BCP 47 tag (`Language`). A channel is held in the language
-the request or its template names - a template for a channel whose purpose comes with its language,
-such as a German quiz - and in none otherwise. The server does not fall back to the language its
-creator prefers: offering that is the frontend's, where the user sees what is chosen (issue 331).
-The web UI presets it when a channel is created, and sets it after creating a session on each of its
-channels that the template holds in none. Whoever may change the channel changes it or takes it
-back. Its agents are told by a prompt part (see
-[AGENT-TURN.md](AGENT-TURN.md#the-channels-language)); nothing said before is translated.
+A session and a channel may each be held in a language, a BCP 47 tag (`Language`). A channel is held
+in its own, else in its session's - whatever that is at the moment, so that changing the session's
+reaches every channel without one of its own (`Channel::effective_language`, issue 425). The rule is
+the model's and answered there alone; the views, the prompt part and the REST API ask it. A channel
+without a language of its own therefore cannot be held in none while its session has one: who wants
+none leaves the session's empty too.
+
+A session is held in the language the request names, else in the one its template names; a channel
+in the one the request or its template names - one whose purpose comes with its language, such as a
+German quiz -, else in none of its own. The server does not fall back to the language the creator
+prefers: offering that is the frontend's, where the user sees what is chosen (issue 331). The web UI
+and the TUI preset a new session's language from it where the template names none. Whoever may
+change the session or the channel changes its language or takes it back. Its agents are told by a
+prompt part (see [AGENT-TURN.md](AGENT-TURN.md#the-channels-language)); nothing said before is
+translated.
 
 ### What it is for
 
