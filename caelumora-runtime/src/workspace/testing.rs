@@ -70,7 +70,8 @@ pub async fn session_with_workspace() -> WithWorkspace {
     let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), personality.id, ActorId::User(owner));
     store.entity_stores().agents.create(&system, &agent).await.unwrap();
     let session_id = SessionId::new();
-    let mut channel = Channel::build(session_id, ActorId::User(owner), Name::new("main").unwrap(), Default::default(), internal, None, vec![Participant::User(owner), Participant::Agent(agent.id)]);
+    let mut channel = Channel::build(session_id, ActorId::User(owner), Name::new("main").unwrap(), Default::default(), internal, None);
+    channel.participants = vec![Participant::User(owner), Participant::Agent(agent.id)];
     channel.internal_actors = vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
     let now = Utc::now();
     let session = Session {

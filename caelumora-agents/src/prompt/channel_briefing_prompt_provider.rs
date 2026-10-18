@@ -181,7 +181,8 @@ mod tests {
         store.entity_stores().agents.create(&system, &agent).await.unwrap();
         let session_id = SessionId::new();
         let confidential = Classification::general(Confidentiality::Confidential);
-        let channel = Channel::build(session_id, ActorId::None, Name::new("main").unwrap(), Default::default(), confidential.clone(), None, vec![Participant::Agent(agent.id)]);
+        let mut channel = Channel::build(session_id, ActorId::None, Name::new("main").unwrap(), Default::default(), confidential.clone(), None);
+        channel.participants = vec![Participant::Agent(agent.id)];
         let now = Utc::now();
         let session = Session {
             summary: Some(Summary::new("Release 2.0").unwrap()), briefing: None,

@@ -126,22 +126,21 @@ pub struct ChannelTemplate {
 
 impl ChannelTemplate {
     /// Builds the channel of session `session_id`, owned by `owner`, with
-    /// the entries of `access` besides those every channel has.
-    /// `session_participants` pairs each participant of the session with
-    /// its name in the session template, which is what `self.participants`
-    /// refers to - not the user's or agent's own name: the template's "user"
-    /// is whoever the session was created for. The names in `joining` take
-    /// part once the channel is made, and are left out. Held in the
-    /// template's language, if it names one (issue 56).
-    pub fn instantiate(&self, session_id: SessionId, owner: UserId, session_participants: &[(String, Participant)], joining: &[&str]) -> TemplateResult<Channel> {
-        let participants = self.participants.iter()
-            .filter(|name| !joining.contains(&name.as_str()))
-            .map(|name| session_participants.iter()
-                .find(|(template_name, _)| template_name == name)
-                .map(|(_, participant)| participant.clone())
-                .ok_or_else(|| TemplateError::ParticipantNotFound(name.clone())))
-            .collect::<TemplateResult<Vec<_>>>()?;
-        let channel = Channel::build(session_id, ActorId::User(owner), self.name.clone(), self.components.clone(), self.classification.clone(), self.language.clone(), participants);
+    /// the entries of `access` besides those every channel has and the
+    /// internal actors it names. Built empty (issue 420): the participants
+    /// it names - by their names in the session template, `known`, not the
+    /// user's or agent's own: the template's "user" is whoever the session
+    /// was created for - join once it is made (`SessionTemplate::channels_of`).
+    /// Held in the template's language, if it names one (issue 56).
+    ///
+    /// # Errors
+    /// `TemplateError::ParticipantNotFound` if it names a participant that
+    /// is not `known`.
+    pub fn instantiate(&self, session_id: SessionId, owner: UserId, known: &[&str]) -> TemplateResult<Channel> {
+        if let Some(stray) = self.participants.iter().find(|name| !known.contains(&name.as_str())) {
+            return Err(TemplateError::ParticipantNotFound(stray.clone()));
+        }
+        let channel = Channel::build(session_id, ActorId::User(owner), self.name.clone(), self.components.clone(), self.classification.clone(), self.language.clone());
         let mut security_attributes = channel.security_attributes.clone();
         security_attributes.acl.extend(self.access.iter().copied());
         let internal_actors = self.internal_actors.iter().map(InternalActorTemplate::instantiate).collect();
@@ -307,23 +306,22 @@ impl Scoped for SessionTemplate {
 impl SessionTemplate {
 
     /// Builds the session `id` of `owner`, named `name`, and its channels -
-    /// documents of their own, which the session lists by id (issue 70).
-    /// `participants` are the template's users as found for it (`ParticipantTemplate::request`), each with its name in
-    /// the template. Its agents are not among them: they are found or made
-    /// once the session is, and taken into it and into the channels that
-    /// name them (`channels_of`). Nothing is stored: that is the caller's,
-    /// so that it can announce the session where it is created.
+    /// documents of their own, which the session lists by id (issue 70),
+    /// built empty (issue 420). `participants` are the template's users as
+    /// found for it (`ParticipantTemplate::request`), each with its name in
+    /// the template: the session's. Its agents are not among them: they are
+    /// found or made once the session is, and taken into it. Users and
+    /// agents alike then join the channels that name them (`channels_of`).
+    /// Nothing is stored: that is the caller's, so that it can announce the
+    /// session where it is created.
     ///
     /// # Errors
     /// `TemplateError::ParticipantNotFound` if a channel names a participant
     /// the template does not have.
     pub fn build(&self, id: SessionId, owner: UserId, name: Name, participants: Vec<(String, Participant)>) -> TemplateResult<(Session, Vec<Channel>)> {
-        let agents: Vec<&str> = self.participants.iter()
-            .filter(|participant| matches!(participant, ParticipantTemplate::Agent { .. }))
-            .map(ParticipantTemplate::name)
-            .collect();
+        let known: Vec<&str> = self.participants.iter().map(ParticipantTemplate::name).collect();
         let channels = self.channels.iter()
-            .map(|channel| channel.instantiate(id, owner, &participants, &agents))
+            .map(|channel| channel.instantiate(id, owner, &known))
             .collect::<TemplateResult<Vec<_>>>()?;
         let participants: Vec<Participant> = participants.into_iter().map(|(_, participant)| participant).collect();
         let security_attributes = Session::attributes_of(id, owner, &self.access);
@@ -531,12 +529,12 @@ mod tests {
             [InternalActor::Approver(approver)] => Some(approver.strategy),
             _ => None,
         };
-        assert_eq!(channels[0].participants.len(), 1, "its agent joins once it is made, and the approver is none");
+        assert!(channels.iter().all(|c| c.participants.is_empty()), "built empty: whom they name joins once they are made (issue 420)");
         assert_eq!(template.channels_of("helper", &session.channels), [channels[0].id], "where it joins");
         assert_eq!(template.channels_of("user", &session.channels), [channels[0].id, channels[1].id]);
         assert_eq!(approver(&channels[0]), Some(ApprovalStrategy::All), "an approver of its own, deciding as its template says");
         assert!(channels[1].internal_actors.is_empty(), "a channel that names none has none: no fallback (issue 420)");
-        assert!(matches!(channels[1].participants[0], Participant::User(u) if u == owner), "the template's \"user\" is the owner");
+        assert!(matches!(session.participants[0], Participant::User(u) if u == owner), "the template's \"user\" is the owner");
         assert_eq!(session.commands.component_nodes.len(), default_commands().component_nodes.len(), "the session keeps its template's commands");
         assert_eq!(channels[0].classification, Classification::CHANNEL_DEFAULT);
         assert_eq!(session.privacy, PrivacyConfig::Private, "private unless the template says otherwise");

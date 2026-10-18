@@ -150,6 +150,19 @@ The participants of a requested channel come from the session's participants, th
 among them. Its moderator and classification default as in a template (see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md) and [Moderators](#moderators)).
 
+A channel is built and stored empty, and its founders join it by the one way in, as anyone added
+later does (`ChannelLoop::found`, issue 420): each taken in, its actor started, and its joining
+recorded in the channel's history - `HistoryShared` and `ParticipantJoined`, in the creator's name.
+So every member of a channel has its join in the history, and the history alone says who was a
+member when. Founding asks nothing beyond what anyone taken in is asked: naming the founders was
+creating the channel (`CreateChannel`), so changing it is not asked, and it is reachable from
+creating a channel alone - a requested one (`SessionLoop::create_channel`) and those of a template,
+whose users and agents join the channels that name them once the session is made. Each founder's
+clearance is asked before anything is stored, and again as they join; if one cannot join, the
+channel is taken back. A channel's `run` applies the joins that wait as it begins, before it routes
+anything, so that what a founder says comes after the joins of all who hear it. A channel started
+again or restored records no joins: its members' are in its history.
+
 A request that cannot be met is refused before anything is stored: no name, a name the session
 already has, someone who is not a participant of the session, or a classification the policy
 refuses - the last asked for channels from a template too. Components that make no moderator are

@@ -1,15 +1,17 @@
 //! `SessionManager`: starting, stopping, deleting, restoring and purging sessions.
 
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::value::name::{Name, ScopedName};
+use caelumora_model::value::name::Name;
 use crate::runtime::RuntimeManager;
-use crate::channel::Participation;
 use crate::event::EventBus;
 use anyhow::{Result, Error};
 use caelumora_model::channel::{Channel, ChannelField};
+#[cfg(any(test, feature = "test-support"))]
+use caelumora_model::channel::Participant;
+#[cfg(any(test, feature = "test-support"))]
+use std::mem;
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::PersonalityId;
 use caelumora_model::user::UserId;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, AccessPolicy, Subject, JOIN};
 use crate::view::{Viewer, Views};
@@ -34,7 +36,7 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use super::{SessionError, SessionLoop, purge_channel_document, require_attachable, require_classification};
 use caelumora_model::session;
-use crate::template::{resolve_participants, resolve_workspace, take_in_agents};
+use crate::template::{resolve_participants, resolve_workspace, take_in_participants, TemplateParticipants};
 use tokio::sync::Mutex;
 
 /// How long `SessionManager::shutdown` takes at most (issue 297): within
@@ -60,9 +62,6 @@ pub struct SessionManager {
     access_policy: Arc<dyn AccessPolicy>,
     stores: EntityStores,
     events: Arc<EventBus>,
-    /// Who may take part in the channels of a session it creates or
-    /// restores (issue 356).
-    participation: Arc<Participation>,
     /// What ends the commands of a stopped session's channels (issue 254).
     command_reaper: Arc<CommandReaper>,
     /// What makes the agents a template names.
@@ -112,7 +111,6 @@ impl SessionManager {
             access_policy: Arc::clone(runtime_manager.access_policy()),
             stores: runtime_manager.entity_stores().clone(),
             events: Arc::clone(runtime_manager.event_bus()),
-            participation: Arc::clone(runtime_manager.participation()),
             command_reaper: Arc::clone(runtime_manager.command_reaper()),
             agents: Arc::clone(runtime_manager.agent_manager()),
             scoped: Arc::clone(runtime_manager.scoped_entities()),
@@ -211,7 +209,7 @@ impl SessionManager {
             }
             _ => None,
         };
-        let (participants, agents) = resolve_participants(&self.stores, context, &template, id, owner).await?;
+        let (users, agents) = resolve_participants(&self.stores, context, &template, id, owner).await?;
         let name = name.unwrap_or_else(|| template.name.name.clone());
         // What is to be found or made: the template's, unless one was chosen.
         let wanted = match workspace {
@@ -220,13 +218,13 @@ impl SessionManager {
                 Some(WorkspaceTemplate { name: name.clone(), scope: ScopeTemplate::SessionScope, storage, classification, description: None }),
             Some(WorkspaceChoice::None | WorkspaceChoice::Existing { .. }) => None,
         };
-        let (mut session, channels) = template.build(id, owner, name, participants)?;
+        let (mut session, channels) = template.build(id, owner, name, users.clone())?;
         // One chosen is attached as the session is made; one to be found or
         // made once the session is, so that one of its scope is made where
         // `context` may put it (issue 344).
         session.workspace = existing.map(|(chosen, _)| chosen);
         let session_loop = self.establish(context, session, channels).await?;
-        if let Err(e) = self.complete(context, owner, &template, &session_loop, wanted.as_ref(), agents).await {
+        if let Err(e) = self.complete(context, owner, &template, &session_loop, wanted.as_ref(), (users, agents)).await {
             self.roll_back_creation(id).await;
             return Err(e);
         }
@@ -240,7 +238,10 @@ impl SessionManager {
 
     /// Completes `session` of `owner`, just made from `template` on behalf
     /// of `context`: the workspace `wanted` found or made and attached, then
-    /// the template's `agents` found or made and taken in (issues 227, 344).
+    /// the template's agents found or made and taken in (issues 227, 344),
+    /// and its users and agents - `participants`, as `resolve_participants`
+    /// gives them - taken into the channels that name them as their
+    /// founders (issue 420).
     /// A workspace made for it that is not in its scope - which goes with
     /// the session as its creation is rolled back - is deleted here if that
     /// fails.
@@ -248,7 +249,7 @@ impl SessionManager {
     /// # Errors
     /// What finding or making the workspace or the agents reports, or
     /// taking them in.
-    async fn complete(&self, context: &SecurityContext, owner: UserId, template: &SessionTemplate, session: &SessionLoop, wanted: Option<&WorkspaceTemplate>, agents: Vec<(String, ScopedName, PersonalityId)>) -> Result<()> {
+    async fn complete(&self, context: &SecurityContext, owner: UserId, template: &SessionTemplate, session: &SessionLoop, wanted: Option<&WorkspaceTemplate>, participants: TemplateParticipants) -> Result<()> {
         let workspaces = self.runtime_manager.workspace_manager();
         let resolved = match wanted {
             Some(wanted) => Some(resolve_workspace(workspaces, context, wanted, session.id(), owner).await?),
@@ -259,7 +260,8 @@ impl SessionManager {
             if let Some((workspace, _)) = resolved {
                 session.attach_workspace(context, Some(workspace)).await?;
             }
-            take_in_agents(self.stores.agents.as_ref(), &self.agents, context, template, session, agents).await
+            let (users, agents) = participants;
+            take_in_participants(self.stores.agents.as_ref(), &self.agents, context, template, session, users, agents).await
         }.await;
         if let (Err(_), Some(made)) = (&completed, made) {
             let system = SecurityContext::system();
@@ -282,21 +284,32 @@ impl SessionManager {
     }
 
     /// Creates a brand-new session with its `channels`, as a template
-    /// would: asks to create it (`CreateSession`) before anything else.
+    /// would: asks to create it (`CreateSession`) before anything else. The
+    /// participants the channels name join them as their founders once the
+    /// session runs, as a template's do (issue 420).
     #[cfg(any(test, feature = "test-support"))]
-    pub async fn create(&self, context: &SecurityContext, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
+    pub async fn create(&self, context: &SecurityContext, session: Session, mut channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
         self.refuse_while_shutting_down()?;
         self.access_policy.require(context, ActionType::create(Session::KIND, &session.security_attributes), StoreError::PermissionDenied).await?;
-        self.establish(context, session, channels).await
+        let founders: Vec<(ChannelId, Vec<Participant>)> = channels.iter_mut().map(|channel| (channel.id, mem::take(&mut channel.participants))).collect();
+        let session_loop = self.establish(context, session, channels).await?;
+        for (channel, participants) in founders {
+            let channel = session_loop.channel(channel).ok_or(SessionError::ChannelNotFound { session: session_loop.id(), channel })?;
+            for participant in participants {
+                channel.found(context, participant.actor_id()).await?;
+            }
+        }
+        Ok(session_loop)
     }
 
     /// Establishes the brand-new `session` with its `channels`, whose
     /// creation `context` was asked for (`CreateSession`) before anything
     /// was found or made for it: persists them - the channels as documents
     /// of their own (issue 70) -, announces their existence, then starts
-    /// the session. The classifications are validated and every
-    /// participant's admission asked first; the store asks to create the
-    /// session again and each channel as it stores them.
+    /// the session. The classifications are validated first; the store asks
+    /// to create the session again and each channel as it stores them. The
+    /// channels are empty (issue 420): their founders join once the session
+    /// runs, each admitted as they join (`ChannelLoop::found`).
     async fn establish(&self, context: &SecurityContext, session: Session, channels: Vec<Channel>) -> Result<Arc<SessionLoop>> {
         let id = session.id;
         let start = self.start_lock(id);
@@ -304,9 +317,6 @@ impl SessionManager {
 
         for channel in &channels {
             require_classification(&self.runtime_manager, &channel.classification)?;
-        }
-        for channel in &channels {
-            self.participation.require_admitted(context, channel).await?;
         }
         self.stores.sessions.create(context, &session).await?;
         // Each with the group of its participants (issue 286), which it is

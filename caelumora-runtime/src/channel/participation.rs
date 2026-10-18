@@ -168,15 +168,16 @@ impl Participation {
         self.require_cleared(resolved, context, classification)
     }
 
-    /// Nothing if every participant of `channel` that still exists may take
-    /// part in it (`require_admissible`) - asked before anything of a new or
-    /// restored channel or session is stored.
+    /// Nothing if every one of `participants` that still exists may take
+    /// part in `channel` (`require_admissible`) - asked before anything of a
+    /// new or restored channel is stored: of the founders of a new one
+    /// (issue 420), of the participants of a restored one.
     ///
     /// # Errors
     /// `ChannelError::OutOfScope` or `NotCleared` for the first who may not;
     /// whatever reading a participant reports.
-    pub(crate) async fn require_admitted(&self, context: &SecurityContext, channel: &Channel) -> Result<()> {
-        for participant in &channel.participants {
+    pub(crate) async fn require_admitted(&self, context: &SecurityContext, channel: &Channel, participants: &[Participant]) -> Result<()> {
+        for participant in participants {
             if let Some(resolved) = self.resolve(participant, channel.session_id, Some(channel.id)).await? {
                 self.require_admissible(&resolved, context, &channel.classification)?;
             }
@@ -335,9 +336,8 @@ mod tests {
                 // A channel of only `participant` - and its approver, who is
                 // cleared for anything.
                 let ActorId::Agent(id) = participant else { unreachable!("agents only") };
-                let channel = Channel::build(SessionId::new(), alice_id, Name::new("probe").unwrap(),
-                    Default::default(), classification, None, vec![Participant::Agent(id)]);
-                runtime.participation().require_admitted(&alice_ctx, &channel).await.is_ok()
+                let channel = Channel::build(SessionId::new(), alice_id, Name::new("probe").unwrap(), Default::default(), classification, None);
+                runtime.participation().require_admitted(&alice_ctx, &channel, &[Participant::Agent(id)]).await.is_ok()
             }
         };
         assert!(cleared(hers, &hr).await, "an agent that names no roles is cleared as its owner");

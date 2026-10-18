@@ -309,15 +309,16 @@ impl Secured for Channel {
 }
 
 impl Channel {
-    /// A new channel of `participants`, owned by `owner`, as every channel is
-    /// built - from a template or on request (issue 09) -, read by its
-    /// participants (issue 23): every user and agent in it, whoever they are
-    /// at the time - the group of its participants (issue 304), which whoever
-    /// stores the channel stores with it (`Group::of_channel`). Held in
-    /// `language`, if any. Without internal actors (issue 420): whoever
-    /// builds it gives it those that are configured, and no others - without
-    /// an approver, nothing in it is approved.
-    pub fn build(session_id: SessionId, owner: ActorId, name: Name, components: ComponentConfig, classification: Classification, language: Option<Language>, participants: Vec<Participant>) -> Self {
+    /// A new channel, owned by `owner`, as every channel is built - from a
+    /// template or on request (issue 09) -, read by its participants (issue
+    /// 23): every user and agent in it, whoever they are at the time - the
+    /// group of its participants (issue 304), which whoever stores the
+    /// channel stores with it (`Group::of_channel`). Held in `language`, if
+    /// any. Built empty (issue 420): its founders join by the one way in,
+    /// as anyone does, once it is stored; and it has no internal actors -
+    /// whoever builds it gives it those that are configured, and no others,
+    /// so that without an approver nothing in it is approved.
+    pub fn build(session_id: SessionId, owner: ActorId, name: Name, components: ComponentConfig, classification: Classification, language: Option<Language>) -> Self {
         let id = ChannelId::new();
         let security_attributes = SecurityAttributes::owned_by(owner).granting(Subject::Group(GroupId::of_channel(id)), Grant::Read);
         Self {
@@ -327,7 +328,7 @@ impl Channel {
             summary: None,
             briefing: None,
             components,
-            participants,
+            participants: Vec::new(),
             internal_actors: Vec::new(),
             security_attributes,
             classification,
@@ -515,7 +516,7 @@ mod tests {
     #[test]
     fn a_change_is_made_into_the_channel_s_values_or_leaves_it_as_it_was() {
         let owner = ActorId::User(UserId::new());
-        let mut channel = Channel::build(SessionId::new(), owner, Name::new("main").unwrap(), ComponentConfig::default(), Classification::CHANNEL_DEFAULT, None, Vec::new());
+        let mut channel = Channel::build(SessionId::new(), owner, Name::new("main").unwrap(), ComponentConfig::default(), Classification::CHANNEL_DEFAULT, None);
         channel.apply(&ChannelUpdateEvent::NameChanged("planning".to_string())).unwrap();
         channel.apply(&ChannelUpdateEvent::LanguageChanged(Some("de".to_string()))).unwrap();
         channel.apply(&ChannelUpdateEvent::UsesWorkspaceChanged(false)).unwrap();

@@ -118,7 +118,11 @@ impl SessionLoop {
     /// validated - the preconfigured components it names read in the name
     /// of `context`, who names them -, then creating the channel is asked,
     /// then its participants' admission, and the store asks again as it stores
-    /// (issue 312).
+    /// (issue 312). It is built and stored empty and started; then its
+    /// participants join it as its founders, by the one way in
+    /// (`ChannelLoop::found`, issue 420) - so that its history records them
+    /// as anyone who joins later. If one cannot, the channel is taken back.
+    /// It is announced as created once they joined.
     ///
     /// # Errors
     /// - `ValueError` if its name is no name or its language no tag.
@@ -130,6 +134,8 @@ impl SessionLoop {
     ///   session's.
     /// - `StoreError::PermissionDenied` if `context` may not create the
     ///   channel or change the session; nothing is changed then.
+    /// - What taking a founder in reports (`ChannelLoop::found`); the channel
+    ///   is taken back then.
     pub async fn create_channel(self: &Arc<Self>, context: &SecurityContext, spec: ChannelSpec) -> Result<Arc<ChannelLoop>> {
         let session = Arc::clone(&self.session());
         let name = Name::new(&spec.name)?;
@@ -160,7 +166,7 @@ impl SessionLoop {
             .require_acceptable(&spec.components, ChannelLoop::COMPONENT_FACETS, context).await
             .map_err(SessionError::InvalidComponents)?;
 
-        let mut channel = Channel::build(self.id, session.security_attributes.owner_id, name, spec.components, classification, language, participants);
+        let mut channel = Channel::build(self.id, session.security_attributes.owner_id, name, spec.components, classification, language);
         channel.internal_actors = spec.internal_actors.iter().map(InternalActorTemplate::instantiate).collect();
         if let Some(uses) = spec.uses_workspace {
             channel.uses_workspace = uses;
@@ -170,7 +176,7 @@ impl SessionLoop {
         // clearance. The store asks again as it stores.
         self.access_policy
             .require(context, ActionType::create(Channel::KIND, &channel.security_attributes), StoreError::PermissionDenied).await?;
-        self.participation.require_admitted(context, &channel).await?;
+        self.participation.require_admitted(context, &channel, &participants).await?;
         self.stores.channels.create(context, &channel).await?;
         let added = match keep_participants(self.stores.groups.as_ref(), Group::of_channel(&channel)).await {
             Ok(()) => self.session_controller.add_channel(context, channel.id).await,
@@ -193,9 +199,32 @@ impl SessionLoop {
                 return Err(error);
             }
         };
-        self.events.announce(GlobalEvent::created::<Channel>(&(self.id, channel.id)), &channel);
+        for participant in &participants {
+            if let Err(error) = channel_loop.found(context, participant.actor_id()).await {
+                self.abandon_channel(context, &channel_loop).await;
+                return Err(error);
+            }
+        }
+        self.events.announce(GlobalEvent::created::<Channel>(&(self.id, channel.id)), &**channel_loop.channel());
         info!("Channel {}/{} created in session {}", channel.name, channel.id, self.id);
         Ok(channel_loop)
+    }
+
+    /// Takes back `channel_loop`, created on behalf of `context` and started,
+    /// whose founders could not all join (issue 420): its actors leave, its
+    /// task ends, and it is taken out of the session and its document
+    /// purged - as if it had never been made.
+    async fn abandon_channel(&self, context: &SecurityContext, channel_loop: &Arc<ChannelLoop>) {
+        let id = channel_loop.id();
+        let task = self.channels.remove(&id).and_then(|(_, entry)| entry.task);
+        channel_loop.leave_actors().await;
+        if let Some(task) = task {
+            task.abort();
+        }
+        if let Err(undo) = self.session_controller.remove_channel(context, id).await {
+            warn!("Channel {} of session {} could not take in its founders and not be removed again: {}", id, self.id, undo);
+        }
+        self.roll_back_channel_creation(id).await;
     }
 
     /// Builds the loop of `channel`, which the session lists, and has the
@@ -300,7 +329,7 @@ impl SessionLoop {
             .require(context, ActionType::restore(Channel::KIND, &channel.security_attributes), StoreError::PermissionDenied).await?;
         // As when it was created: its participants' clearance may have
         // changed while it was deleted.
-        self.participation.require_admitted(context, &channel).await?;
+        self.participation.require_admitted(context, &channel, &channel.participants).await?;
         let deleted_at = channel.deleted.as_ref().map(|removal| removal.at);
         let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         let channel = self.stores.channels.restore(context, channel_id).await?;

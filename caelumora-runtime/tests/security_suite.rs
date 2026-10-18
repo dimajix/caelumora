@@ -809,6 +809,9 @@ async fn a_session_comes_back_with_what_lies_in_it_as_far_as_whoever_restores_it
 /// Creating a channel: the classification it is given, creating it - as
 /// its session's owner -, then everyone's clearance for it (issue 312), and
 /// the store creating it again and changing the session that lists it.
+/// Then its founders join by the one way in (issue 420), each cleared again
+/// as they join - and nothing more: naming them was creating the channel,
+/// so changing it (`UpdateChannel`) is not asked.
 #[tokio::test]
 async fn creating_a_channel_needs_owning_its_session() {
     let world = World::new().await;
@@ -823,8 +826,32 @@ async fn creating_a_channel_needs_owning_its_session() {
         "alice: CreateChannel(alice's) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
+        "alice: JoinChannel(alice) yes",
+        "alice: JoinChannel(bob) yes",
     ]));
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// A founder who is not cleared for a new channel keeps it from being made
+/// (issue 420): asked before anything is stored, so that there is no channel
+/// left behind, nor one announced.
+#[tokio::test]
+async fn a_founder_who_is_not_cleared_leaves_no_channel() {
+    let world = World::new().await;
+    let dave = User { id: UserId::new(), username: Name::new("dave").unwrap(), email: String::new(), roles: vec![], deleted: None };
+    world.runtime.entity_stores().users.create(&World::system(), &dave).await.unwrap();
+    world.access_policy.names.lock().unwrap().insert(ActorId::User(dave.id), "dave".to_string());
+    let session = world.shared_session(&[], &[]).await;
+    let alice = World::as_user(world.alice);
+    session.add_participant(&alice, ActorId::User(dave.id), None).await.expect("dave takes part in the session");
+    let spec = ChannelSpec { name: "side".to_string(), components: quiet(), participants: vec![ActorId::User(dave.id)], classification: None, language: None, uses_workspace: None, internal_actors: Vec::new() };
+
+    let (refused, asked) = world.asked(session.create_channel(&alice, spec)).await;
+    assert!(matches!(refused.err().and_then(|e| e.downcast::<ChannelError>().ok()), Some(ChannelError::NotCleared { .. })), "dave has no role");
+    assert_eq!(asked, checks(&["alice: CreateChannel(alice's) yes", "alice: JoinChannel(alice) yes", "alice: JoinChannel(dave) no"]), "nothing stored");
+    assert!(session.channel_named("side").is_none(), "no channel runs");
+    assert_eq!(session.session().channels.len(), 1, "nor does the session list one");
+    world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
 /// Who may not create a channel is refused before anything is asked of
@@ -867,7 +894,8 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
         "alice: GetComponents(bob's) yes",
-    ]), "read as she names it, and again as the channel is built in its owner's name - hers");
+        "alice: JoinChannel(alice) yes",
+    ]), "read as she names it, and again as the channel is built in its owner's name - hers; then its founder joins");
 
     let withdrawn = StoredComponents { security_attributes: attributes(Some(world.bob), &[]), ..policy };
     world.store.update_components(&World::as_user(world.bob), &withdrawn).await.expect("bob owns it");

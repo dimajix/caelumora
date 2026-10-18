@@ -9,7 +9,7 @@
 
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, PersonalityId};
-use caelumora_model::channel::{HistoryAccess, Participant};
+use caelumora_model::channel::Participant;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
@@ -18,20 +18,25 @@ use caelumora_model::template::{ParticipantRequest, SessionTemplate, TemplateErr
 use caelumora_model::user::UserId;
 use caelumora_model::workspace::WorkspaceId;
 use crate::agent::{AgentError, AgentManager};
-use crate::session::SessionLoop;
+use crate::session::{SessionError, SessionLoop};
 use crate::workspace::{WorkspaceError, WorkspaceManager};
 use anyhow::Result;
+
+/// The participants of a session template as they are found for a session
+/// (`resolve_participants`): its users, each with its name in the template,
+/// and the agents it names, to be found or made once the session is.
+pub(crate) type TemplateParticipants = (Vec<(String, Participant)>, Vec<(String, ScopedName, PersonalityId)>);
 
 /// The users of `template` for the session `session_id` of
 /// `owner`, each with its name in the template, the users found in
 /// `stores` as `context`; and the agents it names, with their names in the
-/// template, which are found or made once the session is (`take_in_agents`).
+/// template, which are found or made once the session is (`take_in_participants`).
 ///
 /// # Errors
 /// A `TemplateError` if the template cannot be made into a session; a
 /// `StoreError` if a user it names does not exist, or the store refuses or
 /// fails.
-pub(crate) async fn resolve_participants(stores: &EntityStores, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> Result<(Vec<(String, Participant)>, Vec<(String, ScopedName, PersonalityId)>)> {
+pub(crate) async fn resolve_participants(stores: &EntityStores, context: &SecurityContext, template: &SessionTemplate, session_id: SessionId, owner: UserId) -> Result<TemplateParticipants> {
     let requests = template.participants.iter()
         .map(|p| p.request(session_id, owner).map(|request| (p.name().to_string(), request)))
         .collect::<TemplateResult<Vec<_>>>()?;
@@ -50,25 +55,29 @@ pub(crate) async fn resolve_participants(stores: &EntityStores, context: &Securi
     Ok((participants, agents))
 }
 
-/// Takes the agents `template` names - as `resolve_participants` gives
-/// them - into `session`, made from it, and into the channels that name
-/// them, seeing their whole history, on behalf of `context`, who made it.
-/// Each is found in `store` or made by `agents` (`agent`) once the session
-/// is, so that one of its scope is made where `context` may put it.
+/// Takes the participants `template` names - its `users`, in `session`
+/// already, and its `agents`, as `resolve_participants` gives them - into
+/// the channels of `session`, made from it, that name them, as their
+/// founders (`ChannelLoop::found`, issue 420), on behalf of `context`, who
+/// made it. An agent is found in `store` or made by `agent_manager`
+/// (`agent`) once the session is, so that one of its scope is made where
+/// `context` may put it, and taken into the session first.
 ///
 /// # Errors
-/// As `agent`, and as `SessionLoop::add_participant`; who took part before
-/// stays.
-pub(crate) async fn take_in_agents(store: &dyn EntityStore<Agent>, agents: &AgentManager, context: &SecurityContext, template: &SessionTemplate, session: &SessionLoop, named: Vec<(String, ScopedName, PersonalityId)>) -> Result<()> {
+/// As `agent`, `SessionLoop::add_participant` and `ChannelLoop::found`;
+/// who took part before stays.
+pub(crate) async fn take_in_participants(store: &dyn EntityStore<Agent>, agent_manager: &AgentManager, context: &SecurityContext, template: &SessionTemplate, session: &SessionLoop, users: Vec<(String, Participant)>, agents: Vec<(String, ScopedName, PersonalityId)>) -> Result<()> {
     let channels = session.session().channels.clone();
-    for (name, agent_name, personality_id) in named {
-        let participant = ActorId::Agent(agent(store, agents, context, agent_name, personality_id).await?);
-        let into = template.channels_of(&name, &channels);
-        if into.is_empty() {
-            session.add_participant(context, participant, None).await?;
-        }
-        for channel in into {
-            session.add_participant(context, participant, Some((channel, HistoryAccess::All))).await?;
+    let mut founders: Vec<(String, ActorId)> = users.into_iter().map(|(name, user)| (name, user.actor_id())).collect();
+    for (name, agent_name, personality_id) in agents {
+        let participant = ActorId::Agent(agent(store, agent_manager, context, agent_name, personality_id).await?);
+        session.add_participant(context, participant, None).await?;
+        founders.push((name, participant));
+    }
+    for (name, participant) in founders {
+        for channel in template.channels_of(&name, &channels) {
+            let channel = session.channel(channel).ok_or(SessionError::ChannelNotFound { session: session.id(), channel })?;
+            channel.found(context, participant).await?;
         }
     }
     Ok(())

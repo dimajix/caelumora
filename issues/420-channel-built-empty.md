@@ -1,6 +1,6 @@
 # 420 — A channel is built empty, and its participants join by the one way in
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Sessions and channels
@@ -102,3 +102,19 @@ Decided as well:
   that `is_mentionable`, which told the approver by its kind, is gone. Over REST, creating a
   channel takes `internal_actors`, none if absent; the web UI's dialog names an approver. The
   seed's channels name theirs. The test worlds give their channels an approver, as `build` did.
+- 2026-10-18: Step 2 done; the issue is done. `Channel::build` takes no participants: a channel is
+  built and stored empty, and its founders join it by `ChannelLoop::found` - `take_in` with a third
+  way in besides added and joining (`Entry::Founding`), which asks no verb of its own and stores in
+  the runtime's name. `SessionLoop::create_channel` asks the founders' admission before anything
+  is stored (`Participation::require_admitted` now takes them), founds them once the channel runs,
+  takes the channel back if one cannot join (`abandon_channel`), and announces it as created once
+  they joined. A template's channels are built empty too (`ChannelTemplate::instantiate` checks
+  the names alone); its users and agents join the channels that name them as founders once the
+  session is made (`take_in_participants`, formerly `take_in_agents`), each agent taken into the
+  session first; `establish` asks no admission of empty channels, and the `SessionManager` keeps
+  no `Participation`. In tests, `SessionManager::create` founds the participants its channels
+  name. `run` applies the changes that wait before it routes anything. Security suites: creating
+  a channel asks each founder's clearance again as they join and no `UpdateChannel`; a template's
+  founders ask neither `GetChannel` nor `UpdateChannel`; new, a founder who is not cleared leaves
+  no channel. Founders' `HistoryShared` grants from the start; recording it only where something
+  is shared is issue 417's step 7.

@@ -105,7 +105,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [414](414-decision-policy-conversation.md) | done | The `decision_policy` is given only the message just said - or the messages of the turn just ended - without anything said before it and without who said what, so a reply like "Yes, do that" cannot be told apart from any other. |
 | [417](417-user-history-from-its-actor.md) | in progress | Live, a user sees what the moderator routed to their actor; on reload they see the channel's history, filtered by what they may read, so the two can differ and whatever went to the user alone is gone. |
 | [418](418-moderator-decides-delivery-only.md) | done | `Moderator::route` returns the envelopes to deliver, so a moderator could alter a message for one recipient or speak in any name, and the channel cannot record what was decided apart from what was sent. |
-| [420](420-channel-built-empty.md) | in progress | A channel's founders are written into its document as it is built and never join, so no `ParticipantJoined` records them; build it empty and let its builder add them as anyone is added. |
+| [420](420-channel-built-empty.md) | done | A channel's founders are written into its document as it is built and never join, so no `ParticipantJoined` records them; build it empty and let its builder add them as anyone is added. |
 
 ## Identity and access management
 

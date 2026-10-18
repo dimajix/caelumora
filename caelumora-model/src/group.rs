@@ -266,7 +266,8 @@ mod tests {
     fn the_query_for_teams_finds_what_is_no_group_of_participants() {
         let alice = UserId::new();
         let session = SessionId::new();
-        let channel = Channel::build(session, ActorId::User(alice), Name::new("main").unwrap(), Default::default(), Default::default(), None, vec![Participant::User(alice)]);
+        let mut channel = Channel::build(session, ActorId::User(alice), Name::new("main").unwrap(), Default::default(), Default::default(), None);
+        channel.participants = vec![Participant::User(alice)];
         let session_group = Group { id: GroupId::of_session(session), name: ScopedName { name: Group::participants_name(), scope: Scope::SessionScope { session_id: session } }, ..team(Scope::GlobalScope, alice) };
         for group in [team(Scope::GlobalScope, alice), team(Scope::UserScope { user_id: alice }, alice), Group::of_channel(&channel), session_group] {
             let document = serde_json::to_value(&group).unwrap();
@@ -288,8 +289,8 @@ mod tests {
     #[test]
     fn the_participants_of_a_channel_have_its_id_and_hold_its_users_and_agents() {
         let (alice, agent) = (UserId::new(), AgentId::new());
-        let mut channel = Channel::build(SessionId::new(), ActorId::User(alice), Name::new("main").unwrap(), Default::default(), Default::default(), None,
-            vec![Participant::User(alice), Participant::Agent(agent)]);
+        let mut channel = Channel::build(SessionId::new(), ActorId::User(alice), Name::new("main").unwrap(), Default::default(), Default::default(), None);
+        channel.participants = vec![Participant::User(alice), Participant::Agent(agent)];
         channel.internal_actors = vec![InternalActor::Approver(Approver::new(ApprovalStrategy::Any))];
         let group = Group::of_channel(&channel);
         assert_eq!(group.id, GroupId::of_channel(channel.id));
