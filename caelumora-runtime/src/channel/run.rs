@@ -389,6 +389,11 @@ impl ChannelLoop {
                 self.access_policy.require(context, ActionType::AnswerQuestion(&channel), forbidden).await
             }
             ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) if event.context.sender_id.as_user_id().is_some() => {
+                // A person's answer says their part alone (issue 419): who
+                // decided is the approver's to say, from their answers.
+                if !matches!(response.decisions.as_slice(), [decision] if decision.by == event.context.sender_id) {
+                    return Err(Rejection::Invalid);
+                }
                 let agent = self.controllers.agent_attributes(response.agent_id).await.map_err(|_| Rejection::Invalid)?;
                 self.access_policy.require(context, ActionType::ApproveToolCall { agent: &agent, channel: &channel }, forbidden).await
             }
@@ -871,6 +876,35 @@ mod tests {
             }
         }
         assert_eq!(rejected, [("ParticipantJoined".to_string(), Rejection::Invalid), ("ParticipantLeft".to_string(), Rejection::Invalid)], "and she is told so");
+    }
+
+    /// Issue 419: a person's answer to an approval says their own part
+    /// alone - who decided is the approver's to say -, so one that says
+    /// nobody's, or someone else's too, is not let in, before anything is
+    /// asked of it.
+    #[tokio::test]
+    async fn an_answer_to_an_approval_says_its_senders_part_alone() {
+        use caelumora_model::approval::{ApprovalDecision, ApprovalResponse};
+        let alice = user("alice");
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
+        let (her, bob) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
+        let from_her = |event| Envelope::new(SecurityContext::new(her, channel.session_id, channel.id), EventContext { sender_id: her, ..EventContext::default() }, event);
+        let (to_her, mut hers) = mpsc::channel(16);
+        let actors = HashMap::from([(her, RunningActor { id: her, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(to_her))), leaving: None })]);
+        let part = |by: ActorId| ApprovalDecision { by, name: String::new(), by_rule: None, at: Utc::now() };
+        let answer = |decisions| ApprovalResponse { decisions, ..ApprovalResponse::new(Default::default(), AgentId::new()) };
+
+        for decisions in [Vec::new(), vec![part(bob)], vec![part(her), part(bob)]] {
+            channel.process_envelope(from_her(ActorEvent::ApprovalGranted(answer(decisions))), &actors).await;
+        }
+
+        let mut rejected = Vec::new();
+        while let Ok(envelope) = hers.try_recv() {
+            if let ActorEvent::MessageRejected { rejected: kind, reason, .. } = envelope.event {
+                rejected.push((kind, reason));
+            }
+        }
+        assert_eq!(rejected, vec![("ApprovalGranted".to_string(), Rejection::Invalid); 3], "nobody's, someone else's, or more than hers: none let in");
     }
 
     #[tokio::test]

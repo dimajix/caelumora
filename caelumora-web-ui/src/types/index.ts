@@ -261,6 +261,12 @@ export interface ToolResult {
    * not shown.
    */
   answers?: Answers;
+  /**
+   * Who approved or denied the call, if it needed approval (issue 419): whose answers decided it,
+   * each with the rule that answered for them and when; whether it was approved says `status`.
+   * Shown with the call even where its result is not.
+   */
+  approval?: ApprovalDecision[];
 }
 
 /** The state of a channel when an event stream connects (issue 34). */
@@ -1067,8 +1073,21 @@ export interface ApprovalRule {
 export interface ApprovalResponse {
   id: string;
   agent_id: string;
-  /** The rule of yours that gave the answer (issue 13); only on your own answers, as your actor shows them to you. */
+  /**
+   * Who decided (issue 419): on a person's answer theirs alone - on your own answers, as your actor
+   * shows them to you, with the rule of yours that gave it (issue 13) -; on the approver's decision
+   * those whose answers made it, none where it timed out or nobody may approve.
+   */
+  decisions?: ApprovalDecision[];
+}
+
+/** One person's part in an approval (issue 419): who, named as then, by which rule of theirs if one answered, and when. */
+export interface ApprovalDecision {
+  by: ActorId;
+  name: string;
   by_rule?: string;
+  /** An RFC 3339 time. */
+  at: string;
 }
 
 /** A prompt part the model was given besides the conversation (issue 47). */

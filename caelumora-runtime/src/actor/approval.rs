@@ -5,7 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::AgentId;
-use caelumora_model::approval::{ApprovalId, ApprovalResponse, ApprovalStatus, ApprovalStrategy, Approver};
+use caelumora_model::approval::{ApprovalDecision, ApprovalId, ApprovalResponse, ApprovalStatus, ApprovalStrategy, Approver};
 use caelumora_model::channel::{self, Channel, Participant};
 use crate::controller::ChannelController;
 use caelumora_model::event::GlobalEvent;
@@ -28,11 +28,30 @@ struct PendingApproval {
     id: ApprovalId,
     agent_id: AgentId,
     strategy: ApprovalStrategy,
-    responses: HashMap<ActorId, ApprovalStatus>,
+    /// Each user's answer, with their part in it as their actor said it
+    /// (issue 419).
+    responses: HashMap<ActorId, (ApprovalStatus, ApprovalDecision)>,
     timeout: DateTime<Utc>,
     /// The agent's request, whose contexts every answer to it continues
     /// (`ApproverActor::answering`).
     request: Envelope,
+}
+
+impl PendingApproval {
+    /// The decision its strategy reaches from the answers of `approvers` -
+    /// those who may approve -, with whose answers made it (issue 419):
+    /// every counted answer that agrees with it, in the order they were
+    /// given. `None` while it waits for more answers.
+    fn decision(&self, approvers: &[ActorId]) -> Option<(ApprovalStatus, Vec<ApprovalDecision>)> {
+        let statuses: HashMap<ActorId, ApprovalStatus> = self.responses.iter().map(|(by, (status, _))| (*by, *status)).collect();
+        let status = self.strategy.decide(approvers, &statuses)?;
+        let mut decided_by: Vec<ApprovalDecision> = self.responses.iter()
+            .filter(|(by, (answered, _))| approvers.contains(by) && *answered == status)
+            .map(|(_, (_, decision))| decision.clone())
+            .collect();
+        decided_by.sort_by_key(|decision| decision.at);
+        Some((status, decided_by))
+    }
 }
 
 #[derive(Debug)]
@@ -141,7 +160,7 @@ impl ApproverActor {
         let ids: Vec<ApprovalId> = pending.iter().filter(|(_, p)| p.agent_id == agent).map(|(id, _)| *id).collect();
         for id in ids {
             if let Some(p) = pending.remove(&id) {
-                self.send_decision(p, ApprovalStatus::Denied, output).await?;
+                self.send_decision(p, ApprovalStatus::Denied, Vec::new(), output).await?;
             }
         }
         Ok(())
@@ -184,7 +203,7 @@ impl ApproverActor {
             if approvers.is_empty() {
                 info!("ApproverActor: nobody in channel {} may approve the calls of agent {}; denied", self.channel.id(), approval.agent_id);
                 if let Some(p) = pending.remove(&request.id) {
-                    self.send_decision(p, ApprovalStatus::Denied, output).await?;
+                    self.send_decision(p, ApprovalStatus::Denied, Vec::new(), output).await?;
                 }
                 return Ok(());
             }
@@ -193,11 +212,12 @@ impl ApproverActor {
         self.answering(&envelope).send(ActorEvent::ApprovalRequested(request.clone()), output).await
     }
 
-    /// Counts the answer of `user_id` to the request it names. Whether they
-    /// may approve the calls of the agent it names was asked as the channel
-    /// admitted it (`ApproveToolCall`, issue 312), and a refusal told them
-    /// (`MessageRejected`); an answer naming another agent than the one that
-    /// asked is left out.
+    /// Counts the answer of `user_id` to the request it names, with their
+    /// part in it (issue 419). Whether they may approve the calls of the
+    /// agent it names was asked as the channel admitted it
+    /// (`ApproveToolCall`, issue 312), and a refusal told them
+    /// (`MessageRejected`); so was that it holds their part alone. An answer
+    /// naming another agent than the one that asked is left out.
     async fn handle_response(&self, user_id: ActorId, response: ApprovalResponse, status: ApprovalStatus, output: &dyn EventSender) -> Result<()> {
         let mut pending = self.pending.lock().await;
         let Some(p) = pending.get_mut(&response.id) else { return Ok(()) };
@@ -205,12 +225,16 @@ impl ApproverActor {
             warn!("ApproverActor: {} answered approval {} for agent {}, not for agent {} that asked; its answer is left out", user_id, response.id, response.agent_id, p.agent_id);
             return Ok(());
         }
-        p.responses.insert(user_id, status);
+        let Some(decision) = response.decisions.into_iter().find(|decision| decision.by == user_id) else {
+            warn!("ApproverActor: the answer of {} to approval {} does not say it is theirs; it is left out", user_id, response.id);
+            return Ok(());
+        };
+        p.responses.insert(user_id, (status, decision));
 
         let approvers = self.approvers_of(p.agent_id).await;
-        if let Some(decision) = p.strategy.decide(&approvers, &p.responses) {
+        if let Some((status, decided_by)) = p.decision(&approvers) {
             if let Some(p) = pending.remove(&response.id) {
-                self.send_decision(p, decision, output).await?;
+                self.send_decision(p, status, decided_by, output).await?;
             }
         }
         Ok(())
@@ -236,22 +260,24 @@ impl ApproverActor {
 
         for (id, p) in pending.iter() {
             let approvers = self.approvers_of(p.agent_id).await;
-            if let Some(decision) = p.strategy.decide(&approvers, &p.responses) {
+            if let Some(decision) = p.decision(&approvers) {
                 to_remove.push((*id, decision));
             }
         }
 
-        for (id, decision) in to_remove {
+        for (id, (status, decided_by)) in to_remove {
             if let Some(p) = pending.remove(&id) {
-                self.send_decision(p, decision, output).await?;
+                self.send_decision(p, status, decided_by, output).await?;
             }
         }
 
         Ok(())
     }
 
-    async fn send_decision(&self, p: PendingApproval, status: ApprovalStatus, output: &dyn EventSender) -> Result<()> {
-        let response = ApprovalResponse::new(p.id, p.agent_id);
+    /// Tells the agent and the users the decision `status` on `p`, with
+    /// `decided_by`, whose answers made it (issue 419).
+    async fn send_decision(&self, p: PendingApproval, status: ApprovalStatus, decided_by: Vec<ApprovalDecision>, output: &dyn EventSender) -> Result<()> {
+        let response = ApprovalResponse { decisions: decided_by, ..ApprovalResponse::new(p.id, p.agent_id) };
 
         let event = match status {
             ApprovalStatus::Approved => ActorEvent::ApprovalGranted(response),
@@ -270,7 +296,7 @@ impl ApproverActor {
             ids.iter().filter_map(|id| pending.remove(id)).collect()
         };
         for p in timed_out {
-            self.send_decision(p, ApprovalStatus::Timeout, output).await?;
+            self.send_decision(p, ApprovalStatus::Timeout, Vec::new(), output).await?;
         }
         Ok(())
     }
@@ -511,9 +537,11 @@ mod tests {
             (said.security.caller_id, said.security.owner_id)
         }
 
-        /// The `n`th user answers `request`.
+        /// The `n`th user answers `request`, saying it is theirs (issue 419).
         async fn answer(&self, n: usize, request: &ApprovalRequest, approved: bool) {
-            let response = ApprovalResponse::new(request.id, self.agent);
+            let user = ActorId::User(self.users[n]);
+            let part = ApprovalDecision { by: user, name: format!("user {n}"), by_rule: None, at: Utc::now() };
+            let response = ApprovalResponse { decisions: vec![part], ..ApprovalResponse::new(request.id, self.agent) };
             let event = if approved { ActorEvent::ApprovalGranted(response) } else { ActorEvent::ApprovalDenied(response) };
             self.input.send(self.from(ActorId::User(self.users[n]), event)).await.unwrap();
         }
@@ -524,6 +552,14 @@ mod tests {
 
         async fn nothing(&mut self) {
             assert!(tokio::time::timeout(Duration::from_millis(100), self.output.recv()).await.is_err(), "nothing is decided");
+        }
+    }
+
+    /// Whose answers made the decision `decided` tells (issue 419).
+    fn decided_by(decided: &Envelope) -> Vec<ActorId> {
+        match &decided.event {
+            ActorEvent::ApprovalGranted(r) | ActorEvent::ApprovalDenied(r) | ActorEvent::ApprovalTimedOut(r) => r.decisions.iter().map(|decision| decision.by).collect(),
+            other => panic!("no decision: {other:?}"),
         }
     }
 
@@ -541,6 +577,7 @@ mod tests {
         let decided = approving.next().await;
         assert!(matches!(decided.event, ActorEvent::ApprovalGranted(ref r) if r.id == request.id && r.agent_id == approving.agent), "one id from the agent's request to the decision: {:?}", decided.event);
         assert_eq!(approving.speaker(&decided).1, ActorId::User(approving.users[0]), "decided, answered for by whose channel it is");
+        assert_eq!(decided_by(&decided), [ActorId::User(approving.users[0])], "naming who approved (issue 419)");
 
         // A request withdrawn (issue 148) - only by the agent that asked -
         // is forgotten, and the users are told.
@@ -565,9 +602,14 @@ mod tests {
 
         approving.answer(1, &request, false).await;
         approving.nothing().await;
+        // An answer that does not say it is theirs is left out (issue 419).
+        let unsaid = ActorEvent::ApprovalGranted(ApprovalResponse::new(request.id, approving.agent));
+        approving.input.send(approving.from(ActorId::User(approving.users[0]), unsaid)).await.unwrap();
+        approving.nothing().await;
         approving.answer(0, &request, true).await;
         let decided = approving.next().await;
         assert!(matches!(decided.event, ActorEvent::ApprovalGranted(_)), "all who may approve did: {:?}", decided.event);
+        assert_eq!(decided_by(&decided), [ActorId::User(approving.users[0])], "naming who approved, not who may not and denied");
     }
 
     #[tokio::test]
@@ -578,6 +620,7 @@ mod tests {
         approving.input.send(approving.from(ActorId::Agent(approving.agent), ActorEvent::ApprovalRequested(request.clone()))).await.unwrap();
         let decided = approving.next().await;
         assert!(matches!(decided.event, ActorEvent::ApprovalDenied(ref r) if r.id == request.id), "denied, not put to anyone: {:?}", decided.event);
+        assert!(decided_by(&decided).is_empty(), "by nobody's answer");
         assert!(approving.approver.pending.lock().await.is_empty(), "nothing pending");
     }
 

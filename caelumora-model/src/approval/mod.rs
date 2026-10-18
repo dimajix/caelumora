@@ -112,23 +112,41 @@ pub struct ApprovalRequest {
     pub suggested: Option<ToolMatcher>,
 }
 
+/// An answer to the approval `id` of the call of agent `agent_id`, or the
+/// approver's decision on it - which `agent_id` routes to the agent and
+/// whose permission it is checked by.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalResponse {
     pub id: ApprovalId,
     pub agent_id: AgentId,
-    /// The rule of the person answering that gave the answer (issue 13),
-    /// for the record and their own view; `None` for an answer they gave
-    /// themselves, and for a decision. Set only by their actor.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub by_rule: Option<ApprovalRuleId>,
+    /// Who decided (issue 419): a person's answer holds theirs alone, set by
+    /// their actor - the channel lets in no other -; the approver's decision
+    /// those whose answers made it, as it counted them, empty where nobody's
+    /// did: it timed out, or nobody may approve.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decisions: Vec<ApprovalDecision>,
 }
 
 impl ApprovalResponse {
-    /// An answer to the request `id` of agent `agent_id`, given by the
-    /// person themselves.
+    /// An answer to the request `id` of agent `agent_id`, before the actor
+    /// that sends it says whose it is.
     pub fn new(id: ApprovalId, agent_id: AgentId) -> Self {
-        Self { id, agent_id, by_rule: None }
+        Self { id, agent_id, decisions: Vec::new() }
     }
+}
+
+/// One person's part in an approval (issue 419): `by`, called `name` then,
+/// answered at `at`, by their rule `by_rule` if one answered for them
+/// (issue 13). What a person's answer says of them, and what the record of
+/// a call keeps of whoever's answers decided it - the reader of the message
+/// sees by whom it was approved or denied.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApprovalDecision {
+    pub by: ActorId,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by_rule: Option<ApprovalRuleId>,
+    pub at: DateTime<Utc>,
 }
 
 /// A decision on an approval: a person's answer, or the approver's verdict.

@@ -134,7 +134,10 @@ Every call ends with a result the model can act on.
     them as `not_executed`, saying why the turn ended.
 
 A call that ran records when it started and ended, around the tool's own run, so that a client can
-show the duration.
+show the duration. A call that needed approval records who approved or denied it, with the rule
+that answered for them where one did, and when (`ToolCallResult::approval`, see
+[APPROVALS.md](APPROVALS.md#what-is-recorded-of-an-approval)); a call that asked questions, how they
+were answered (`answers`). Both are for the record and never given to the model.
 
 A tool may give the agent something to read besides its result (`Turn::give`) - a skill it loaded,
 say, with the knowledge it is. It is written after the results of the step, since nothing may stand

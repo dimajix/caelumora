@@ -49,7 +49,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [126](126-mcp-tools-discovered-once.md) | open | high | feature | An MCP server's tools are discovered once, when the agent is built, so a replaced or temporarily unreachable server is not followed. |
 | [226](226-concurrent-tool-calls.md) | open | medium | feature | The tool calls of one step run one after the other, because every tool holds the turn while it runs, so a step of several slow calls takes the sum of their durations. |
-| [419](419-approval-recorded-with-the-call.md) | open | medium | feature | Once a tool call was approved, nothing stored says who approved it or by which rule, so neither the chat nor the record of the turn can show it. |
 
 ## User interaction
 

@@ -1,4 +1,4 @@
-use crate::approval::{ApprovalId, ToolMatcher};
+use crate::approval::{ApprovalDecision, ApprovalId, ToolMatcher};
 use crate::question::{Answers, QuestionId, Questions};
 use crate::confidentiality::{Classification, Visibility};
 use crate::intern::intern;
@@ -347,6 +347,14 @@ pub struct ToolCallResult {
     /// for a call that asked nothing, or sensitive questions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answers: Option<Answers>,
+    /// Who approved or denied the call, if it needed approval (issue 419):
+    /// whose answers decided it, each with the rule that answered for them,
+    /// if one did, and when; empty where it timed out or nobody may approve.
+    /// Whether it was approved says `status`. For the record, as `answers`,
+    /// and never given to the model; published with the call even where
+    /// its result is withheld, since every user was told the decision.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approval: Vec<ApprovalDecision>,
 }
 
 impl ToolCallResult {
@@ -364,13 +372,15 @@ impl ToolCallResult {
             started_at: None,
             finished_at: None,
             answers: None,
+            approval: Vec::new(),
         }
     }
 
     /// The result as a model is given it: without the record of the
-    /// answers to the call's questions, which is not the model's.
+    /// answers to the call's questions and of who approved it, which are
+    /// not the model's.
     pub fn for_the_model(&self) -> ToolCallResult {
-        ToolCallResult { answers: None, ..self.clone() }
+        ToolCallResult { answers: None, approval: Vec::new(), ..self.clone() }
     }
 }
 
@@ -380,6 +390,11 @@ impl ToolCallResult {
 pub struct ToolCallState {
     pub tool_call: ToolCall,
     pub status: ToolCallStatus,
+    /// Who decided its approval, once it was decided (issue 419): kept from
+    /// the decision on, whatever the call waits for next, and taken into its
+    /// result as it ends.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approval: Vec<ApprovalDecision>,
 }
 
 /// Where a tool call stands in its life - not how it ended, which its
@@ -421,22 +436,22 @@ impl ToolCallState {
     /// `tool_call`, waiting for a person's decision (`ToolCallStatus::WaitingApproval`),
     /// and then to ask `questions`.
     pub fn pending(tool_call: ToolCall, description: String, explicit: bool, suggested: Option<ToolMatcher>, questions: Option<Questions>) -> Self {
-        Self { tool_call, status: ToolCallStatus::WaitingApproval { id: ApprovalId::new(), description, explicit, suggested, questions } }
+        Self { tool_call, status: ToolCallStatus::WaitingApproval { id: ApprovalId::new(), description, explicit, suggested, questions }, approval: Vec::new() }
     }
 
     /// `tool_call`, waiting for the answers to `questions` (`ToolCallStatus::WaitingUser`).
     pub fn asking(tool_call: ToolCall, questions: Questions) -> Self {
-        Self { tool_call, status: ToolCallStatus::WaitingUser { id: QuestionId::new(), questions } }
+        Self { tool_call, status: ToolCallStatus::WaitingUser { id: QuestionId::new(), questions }, approval: Vec::new() }
     }
 
     /// `tool_call`, to be run as it is.
     pub fn approved(tool_call: ToolCall) -> Self {
-        Self { tool_call, status: ToolCallStatus::Ready { answers: None } }
+        Self { tool_call, status: ToolCallStatus::Ready { answers: None }, approval: Vec::new() }
     }
 
     /// `tool_call`, answered with `result` before it ran: it is not run.
     pub fn answered(tool_call: ToolCall, result: ToolCallResult) -> Self {
-        Self { tool_call, status: ToolCallStatus::Finished(result) }
+        Self { tool_call, status: ToolCallStatus::Finished(result), approval: Vec::new() }
     }
 
     /// Its result, once it ended.

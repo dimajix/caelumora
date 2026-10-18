@@ -12,7 +12,7 @@
 
 use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::turn::TurnState;
-use caelumora_model::approval::{ApprovalId, ApprovalStatus};
+use caelumora_model::approval::{ApprovalDecision, ApprovalId, ApprovalStatus};
 use caelumora_model::message::{Message, MessageId, MessageRole};
 use caelumora_model::question::{Answers, QuestionError, QuestionId, Response};
 use caelumora_model::tool::{ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus};
@@ -56,18 +56,21 @@ impl<'t> ToolCalls<'t> {
             .collect()
     }
 
-    /// Records the decision on the approval `id`: an approved call asks its
-    /// questions, if it has any, or may run; one denied or timed out is
-    /// answered so at once, without running it. What the model is given for
-    /// each outcome is decided in `crate::tool` (issue 15). Returns the
-    /// requests the decision leads to - the questions an approved call now
-    /// asks - or `None` if no call waits for that approval.
-    pub(crate) fn decide(&mut self, id: ApprovalId, decision: ApprovalStatus) -> Option<Vec<ActorEvent>> {
+    /// Records the decision on the approval `id`, with `decided_by`, whose
+    /// answers made it (issue 419), kept with the call into its result: an
+    /// approved call asks its questions, if it has any, or may run; one
+    /// denied or timed out is answered so at once, without running it. What
+    /// the model is given for each outcome is decided in `crate::tool`
+    /// (issue 15). Returns the requests the decision leads to - the
+    /// questions an approved call now asks - or `None` if no call waits for
+    /// that approval.
+    pub(crate) fn decide(&mut self, id: ApprovalId, decision: ApprovalStatus, decided_by: Vec<ApprovalDecision>) -> Option<Vec<ActorEvent>> {
         // A fixed text of the runtime's: as the turn (issue 168).
         let label = self.turn.work.label();
         let call = self.turn.tool_calls.iter_mut().find(|c| c.approval_id() == Some(id))?;
         let ToolCallStatus::WaitingApproval { questions, .. } = &mut call.status else { return None };
         let questions = questions.take();
+        call.approval = decided_by;
         let mut asks = None;
         call.status = match (decision, questions) {
             (ApprovalStatus::Approved, Some(questions)) => {
@@ -76,8 +79,8 @@ impl<'t> ToolCalls<'t> {
                 ToolCallStatus::WaitingUser { id: question, questions }
             }
             (ApprovalStatus::Approved, None) => ToolCallStatus::Ready { answers: None },
-            (ApprovalStatus::Denied, _) => ToolCallStatus::Finished(ToolCallResult::of(&call.tool_call, ToolResultStatus::Denied, denied_result(), label)),
-            (ApprovalStatus::Timeout, _) => ToolCallStatus::Finished(ToolCallResult::of(&call.tool_call, ToolResultStatus::TimedOut, timed_out_result(), label)),
+            (ApprovalStatus::Denied, _) => ToolCallStatus::Finished(ToolCallResult { approval: call.approval.clone(), ..ToolCallResult::of(&call.tool_call, ToolResultStatus::Denied, denied_result(), label) }),
+            (ApprovalStatus::Timeout, _) => ToolCallStatus::Finished(ToolCallResult { approval: call.approval.clone(), ..ToolCallResult::of(&call.tool_call, ToolResultStatus::TimedOut, timed_out_result(), label) }),
         };
         Some(self.turn.pending_questions().into_iter()
             .filter(|request| Some(request.id) == asks)
@@ -105,7 +108,8 @@ impl<'t> ToolCalls<'t> {
 
     /// Records that `by`, called `by_name`, declined to answer the
     /// questions `id` (issue 165): the call is answered so at once, without
-    /// running it, with the record of who declined. Returns the event that
+    /// running it, with the record of who declined - and of who approved
+    /// it before, if it needed approval (issue 419). Returns the event that
     /// closes the questions.
     ///
     /// # Errors
@@ -118,6 +122,7 @@ impl<'t> ToolCalls<'t> {
         let closed = ActorEvent::QuestionClosed { id, shown_to: questions.shown_to() };
         let mut result = ToolCallResult::of(&call.tool_call, ToolResultStatus::Declined, declined_result(), label);
         result.answers = Answers::declined(questions.clone(), by, by_name).record();
+        result.approval = call.approval.clone();
         call.status = ToolCallStatus::Finished(result);
         Ok(closed)
     }
@@ -219,11 +224,12 @@ impl<'t> ToolCalls<'t> {
 
 /// Finishes `call` with `result`, and keeps with it the record of the
 /// answers it was to run with (issue 165), if it had any - unless they are
-/// sensitive (`Answers::record`).
+/// sensitive (`Answers::record`) -, and of who approved it (issue 419).
 fn finish(call: &mut ToolCallState, mut result: ToolCallResult) {
     if let ToolCallStatus::Ready { answers: Some(answers) } = &call.status {
         result.answers = answers.record();
     }
+    result.approval = call.approval.clone();
     call.status = ToolCallStatus::Finished(result);
 }
 
@@ -277,13 +283,15 @@ mod tests {
         view(&mut turn).record(to_run[0].0, ToolCallResult::of(&to_run[0].1, ToolResultStatus::Ok, "ran".to_string(), Classification::CHANNEL_DEFAULT));
         assert!(view(&mut turn).collect(false).is_none(), "one call still waits");
 
-        // A denial answers the other without running it.
-        assert_eq!(view(&mut turn).decide(request.id, ApprovalStatus::Denied).map(|e| e.len()), Some(0));
-        assert!(view(&mut turn).decide(ApprovalId::new(), ApprovalStatus::Denied).is_none(), "no such call");
+        // A denial answers the other without running it, with who denied it (issue 419).
+        let bob = ApprovalDecision { by: ActorId::User(UserId::new()), name: "bob".to_string(), by_rule: None, at: Utc::now() };
+        assert_eq!(view(&mut turn).decide(request.id, ApprovalStatus::Denied, vec![bob.clone()]).map(|e| e.len()), Some(0));
+        assert!(view(&mut turn).decide(ApprovalId::new(), ApprovalStatus::Denied, Vec::new()).is_none(), "no such call");
         assert!(view(&mut turn).to_run().is_empty(), "nothing left to run");
         let message = view(&mut turn).collect(false).expect("every call has its result");
         let results: Vec<_> = message.tool_results.iter().map(|r| (r.tool_name.as_str(), r.status)).collect();
         assert_eq!(results, [("run", ToolResultStatus::Ok), ("ask", ToolResultStatus::Denied)]);
+        assert_eq!((message.tool_results[0].approval.as_slice(), message.tool_results[1].approval.as_slice()), (&[][..], &[bob][..]), "who denied it, and nothing of a call that needed no approval");
         assert_eq!(message.role, MessageRole::Tool);
         assert!(view(&mut turn).is_empty(), "the step's calls are done");
         assert!(view(&mut turn).collect(false).is_none(), "nothing is left to give");
@@ -301,7 +309,8 @@ mod tests {
         assert_eq!(asked.tool_call.function_name, "asking");
 
         // Approved, the first asks its questions, under an id of their own.
-        let after = view(&mut turn).decide(approval.id, ApprovalStatus::Approved).expect("the call waited for it");
+        let approved_by = ApprovalDecision { by: alice, name: "alice".to_string(), by_rule: None, at: Utc::now() };
+        let after = view(&mut turn).decide(approval.id, ApprovalStatus::Approved, vec![approved_by]).expect("the call waited for it");
         let [ActorEvent::QuestionRequested(asked_after)] = after.as_slice() else { panic!("its questions: {after:?}") };
         assert_eq!(asked_after.tool_call.function_name, "approved");
         assert_eq!(view(&mut turn).requests().len(), 2, "both ask now, as a resumed turn would ask again");
@@ -332,6 +341,8 @@ mod tests {
         let declined = result("approved");
         assert_eq!(declined.status, ToolResultStatus::Declined);
         assert_eq!(declined.answers.map(|a| (a.answered_by, a.responses)), Some((alice, vec![Response::Declined])), "who declined");
+        assert_eq!(declined.approval.iter().map(|d| d.by).collect::<Vec<_>>(), [alice], "and who approved it before (issue 419)");
+        assert!(result("asking").approval.is_empty(), "nothing of approval where none was needed");
     }
 
     #[test]

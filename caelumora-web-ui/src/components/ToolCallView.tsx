@@ -5,8 +5,8 @@
 // their record (`AnswersRecord`, issue 268).
 
 import React, {useEffect, useState} from 'react';
-import {BookOpen, CheckCircle2, Download, EyeOff, Package, PackageCheck, File, Square, StickyNote, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
-import type {ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
+import {BookOpen, CheckCircle2, Download, EyeOff, Package, PackageCheck, File, ShieldCheck, ShieldX, Square, StickyNote, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
+import type {ApprovalDecision, ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {api, type ChannelArtifacts, type WorkspaceFiles} from '../api';
 import type {Page} from '../page';
 import {ApiRequestError, reportError} from '../errors';
@@ -1017,6 +1017,12 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandon
       </div>
       <div className="p-2">
         <Content call={call} result={result} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectPage={onSelectPage} onKillCommand={onKillCommand} endedCommands={endedCommands} />
+        {result?.approval && result.approval.length > 0 && (
+          // Set apart from what the presentation shows, where it shows anything.
+          <div className="not-first:mt-2 not-first:pt-2 not-first:border-t border-gray-200 dark:border-gray-700">
+            <ApprovalRecord approval={result.approval} denied={result.status === 'denied'} />
+          </div>
+        )}
         {result?.answers && (
           // Set apart from what the presentation shows, where it shows anything.
           <div className="not-first:mt-2 not-first:pt-2 not-first:border-t border-gray-200 dark:border-gray-700">
@@ -1027,3 +1033,25 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, abandon
     </div>
   );
 };
+
+/**
+ * Who approved or denied a call (issue 419): each person whose answer decided it, with the rule of
+ * theirs that answered where one did, and when.
+ */
+const ApprovalRecord: React.FC<{approval: ApprovalDecision[]; denied: boolean}> = ({approval, denied}) => (
+  <div className="text-[11px] uppercase opacity-50 flex items-center gap-1 flex-wrap">
+    {denied ? <ShieldX size={11} /> : <ShieldCheck size={11} />}
+    <span>{denied ? 'Denied by' : 'Approved by'}</span>
+    {approval.map((decision, index) => {
+      const at = formatTimestamp(decision.at);
+      return (
+        <span key={index} title={at?.full}>
+          {index > 0 && ', '}
+          {decision.name}
+          {decision.by_rule && ' (by their rule)'}
+        </span>
+      );
+    })}
+  </div>
+);
+

@@ -29,6 +29,23 @@ waits.
 
 A denial or a timeout finishes the call at once, with `denied` or `timed_out`.
 
+### What is recorded of an approval
+
+Who decided is recorded at the call, for the readers of its message (issue 419). Every answer says
+whose it is (`ApprovalResponse::decisions`): a person's answer their own part alone - who, named
+as then, the rule of theirs that answered if one did, and when (`ApprovalDecision`) -, set by their
+actor; the channel lets in no answer of a person that says anything else. The approver keeps each
+part with the answer, and its decision says whose answers made it: every counted answer that agrees
+with it - the first who approved under `Any`, all of them under `All`, the majority under
+`Majority`, who denied under `DenyOnFirst` -, in the order they were given; none where it timed out
+or nobody may approve. The agent keeps that with the call from the decision on, whatever the call
+waits for next, and takes it into the call's result as it ends (`ToolCallResult::approval`): so the
+tool message in the transcript and the channel's history says by whom the call was approved or
+denied - whether it was, its status says. It is published with the call even where its result is
+withheld, since every user was told the decision, and never given to the model. The chat shows it
+at the call ("Approved by …", "Denied by …"). The act itself, for an audit across channels, is
+[140](../issues/140-audit-log.md)'s; approvals are no entries of the history (issue 417).
+
 A turn that ends while it waits - cancelled, given up - withdraws its requests. The approver takes a
 withdrawal only from the agent that asked, forgets the request without deciding it, and tells the
 users, so that nobody is asked any longer. A stopped agent withdraws nothing; the approver answers

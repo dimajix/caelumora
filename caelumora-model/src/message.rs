@@ -396,7 +396,7 @@ pub(crate) mod tests {
         let started_at = Utc::now();
         ToolCallResult {
             id: Some(id.to_string()), tool_name: "f".to_string(), content: "secret".to_string(), status: Default::default(), visibility, classification: Classification::CHANNEL_DEFAULT,
-            started_at: Some(started_at), finished_at: Some(started_at + Duration::milliseconds(250)), answers: None,
+            started_at: Some(started_at), finished_at: Some(started_at + Duration::milliseconds(250)), answers: None, approval: Vec::new(),
         }
     }
 
@@ -433,10 +433,12 @@ pub(crate) mod tests {
         assert_eq!(published.tool_calls[2].arguments, message.tool_calls[3].arguments, "with its arguments where only its result is the owner's");
         assert_eq!(published.id, message.id, "the same message, for the context panel to find");
 
+        use crate::approval::ApprovalDecision;
         use crate::question::{Addressee, Answers, Question, Questions};
         let answered = |result: ToolCallResult| {
             let questions = Questions { questions: vec![Question { header: "Name".to_string(), question: "Who?".to_string(), choices: Vec::new(), multi_select: false }], ask: vec![Addressee::Owner], sensitive: false };
-            ToolCallResult { answers: Some(Answers::declined(questions, ActorId::None, "alice".to_string())), ..result }
+            let approval = vec![ApprovalDecision { by: ActorId::None, name: "alice".to_string(), by_rule: None, at: Utc::now() }];
+            ToolCallResult { answers: Some(Answers::declined(questions, ActorId::None, "alice".to_string())), approval, ..result }
         };
         let results = Message {
             role: MessageRole::Tool,
@@ -447,7 +449,9 @@ pub(crate) mod tests {
         let published = results.published().expect("public and call-only results are left");
         let contents: Vec<_> = published.tool_results.iter().map(|r| (r.content.as_str(), r.answers.is_some())).collect();
         assert_eq!(contents, [("secret", true), ("", false), ("", false)], "the hidden result is gone, the call-only one and the one without its result empty, the record of its answers with it");
-        assert!(results.tool_results[0].for_the_model().answers.is_none(), "a model is never given the record");
+        assert!(published.tool_results.iter().all(|r| r.approval.len() == 1), "who approved the call stays with it, its result withheld or not: every user was told (issue 419)");
+        let for_the_model = results.tool_results[0].for_the_model();
+        assert!(for_the_model.answers.is_none() && for_the_model.approval.is_empty(), "a model is never given the record");
         let ran = |r: &ToolCallResult| (r.started_at, r.finished_at);
         assert_eq!(ran(&published.tool_results[1]), ran(&results.tool_results[1]), "when it ran is the call's, not the result's");
     }

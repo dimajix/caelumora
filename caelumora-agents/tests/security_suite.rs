@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use caelumora_model::actor::{ActorId, Rejection, ActorEvent, Envelope};
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityKind};
-use caelumora_model::approval::{ApprovalRule, ArgumentMatcher, Reach, RuleDecision, ToolMatcher, ApprovalRequest, ApprovalRuleId};
+use caelumora_model::approval::{ApprovalDecision, ApprovalRule, ArgumentMatcher, Reach, RuleDecision, ToolMatcher, ApprovalRequest, ApprovalRuleId};
 use caelumora_model::channel::HistoryAccess;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
 use caelumora_model::external_agent::{ConversationId, TaskId};
@@ -834,27 +834,30 @@ async fn questions_for_the_initiator_are_put_to_whoever_asked_the_agent() {
 /// request the approver put up - `None` if none within a while, as for a
 /// call refused before anyone is asked - the rule `user`'s actor answered it
 /// by, if one did, and the approver's decision, if it decided within a
-/// while.
+/// while, with whose answers decided it (issue 419).
 struct Asked {
     request: Option<ApprovalRequest>,
     by_rule: Option<ApprovalRuleId>,
     approved: Option<bool>,
+    decided_by: Vec<ApprovalDecision>,
 }
 
 async fn ask_helper(world: &World, main: &ChannelLoop, user: UserId) -> Asked {
     use caelumora_model::actor::ActorEvent;
     let mut watch = main.user_actor(user).expect("they take part").watch();
     main.user_actor(world.alice).unwrap().send_message("@helper wait".to_string(), None).await.expect("sent");
-    let mut asked = Asked { request: None, by_rule: None, approved: None };
+    let mut asked = Asked { request: None, by_rule: None, approved: None, decided_by: Vec::new() };
     let _ = tokio::time::timeout(Duration::from_millis(1500), async {
         loop {
             let envelope = watch.recv().await.expect("the channel runs");
             let from_approver = matches!(envelope.context.sender_id, ActorId::Approver(_));
             match envelope.event {
                 ActorEvent::ApprovalRequested(request) if from_approver => asked.request = Some(request),
-                ActorEvent::ApprovalGranted(answer) | ActorEvent::ApprovalDenied(answer) if envelope.context.sender_id == ActorId::User(user) => asked.by_rule = answer.by_rule,
-                ActorEvent::ApprovalGranted(_) if from_approver => { asked.approved = Some(true); break }
-                ActorEvent::ApprovalDenied(_) if from_approver => { asked.approved = Some(false); break }
+                ActorEvent::ApprovalGranted(answer) | ActorEvent::ApprovalDenied(answer) if envelope.context.sender_id == ActorId::User(user) => {
+                    asked.by_rule = answer.decisions.first().and_then(|decision| decision.by_rule);
+                }
+                ActorEvent::ApprovalGranted(decided) if from_approver => { (asked.approved, asked.decided_by) = (Some(true), decided.decisions); break }
+                ActorEvent::ApprovalDenied(decided) if from_approver => { (asked.approved, asked.decided_by) = (Some(false), decided.decisions); break }
                 _ => {}
             }
         }
@@ -889,6 +892,23 @@ impl ToolProvider for Commands {
     }
 }
 
+/// Who approved or denied the call of `helper` in `main`, as the result
+/// of the call keeps it in the channel's history, once it is there (issue
+/// 419).
+async fn recorded_approval(main: &ChannelLoop) -> Vec<ApprovalDecision> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let recorded = main.history_entries().await.into_iter()
+                .filter_map(|entry| entry.said().and_then(|message| message.tool_results.first().map(|result| result.approval.clone())))
+                .next();
+            if let Some(approval) = recorded {
+                break approval;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("the call's result is recorded")
+}
+
 fn sleeping(decision: RuleDecision, reach: Reach) -> ApprovalRule {
     ApprovalRule::new(ToolMatcher { tool: "sleep".to_string(), arguments: Default::default() }, decision, reach, None).unwrap()
 }
@@ -908,6 +928,10 @@ async fn a_persons_rule_answers_for_them_as_they_would() {
     assert!(asked.request.is_some_and(|r| !r.explicit), "the call is put up for approval");
     assert_eq!(asked.by_rule, Some(rule.id), "her actor answers by her rule, and shows her so");
     assert_eq!(asked.approved, Some(true), "and the approver decides on it");
+    let decided_by: Vec<_> = asked.decided_by.iter().map(|decision| (decision.by, decision.by_rule)).collect();
+    assert_eq!(decided_by, [(ActorId::User(world.alice), Some(rule.id))], "naming her and her rule as who decided (issue 419)");
+    let approval = recorded_approval(&main).await;
+    assert_eq!(approval.iter().map(|decision| (decision.by, decision.by_rule)).collect::<Vec<_>>(), decided_by, "kept with the call's result");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
@@ -1071,7 +1095,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
 
     let response = ApprovalResponse::new(request.id, helper);
     let mut his = main.user_actor(world.bob).unwrap().watch();
-    let (_, asked) = world.asked(async {
+    let (decided_by, asked) = world.asked(async {
         main.user_actor(world.bob).unwrap().send_approval(response.clone(), false).await.expect("sent");
         let ActorEvent::MessageRejected { rejected, reason, .. } = shown(&mut his, "MessageRejected").await else { unreachable!() };
         assert_eq!((rejected.as_str(), reason), ("ApprovalDenied", Rejection::Forbidden), "his answer is refused, and he is told");
@@ -1084,13 +1108,17 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
                     continue;
                 }
                 match envelope.event {
-                    ActorEvent::ApprovalGranted(decided) if decided.id == request.id => break,
+                    ActorEvent::ApprovalGranted(decided) if decided.id == request.id => break decided.decisions,
                     ActorEvent::ApprovalDenied(decided) if decided.id == request.id => panic!("bob's answer counted"),
                     _ => {}
                 }
             }
-        }).await.expect("decided");
+        }).await.expect("decided")
     }).await;
+    assert_eq!(decided_by.iter().map(|decision| (decision.by, decision.name.as_str(), decision.by_rule)).collect::<Vec<_>>(), [(ActorId::User(world.alice), "alice", None)],
+        "approved by alice, of the two who answered, herself (issue 419)");
+    let approval = recorded_approval(&main).await;
+    assert_eq!(approval, decided_by, "kept with the call's result in the channel's history");
     let approving: Vec<&String> = asked.iter().filter(|line| line.contains("ApproveToolCall")).collect();
     assert_eq!(approving, [
         // bob answers; the channel refuses it.
