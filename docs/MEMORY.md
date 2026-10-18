@@ -172,7 +172,7 @@ branch of the conversation it came from.
 
 | Term | Meaning | Scope | Lifetime | Branches |
 |---|---|---|---|---|
-| **History** | The record of what happened, never rewritten or compressed: per channel, and per agent in a channel with what each own message was produced from - every message said, a plan's steps and a turn given up too, how each turn ended, the commands an agent carried out. | channel / agent in channel | session | yes |
+| **History** | The record of what happened, never rewritten or compressed: one per channel, for every participant (issue 417) - every message said, with what an agent's own was produced from, a plan's steps and a turn given up too, how each turn ended, the commands an agent carried out, who joined or left, what an agent was given -, each entry with whom it went to, so that each reader is given what reached them. | channel | session | yes |
 | **Transcript** | The sequence of messages an agent's context is built from: its own messages in full, with tool calls and internal steps, and what others said as it received them; may be compacted. Not the history, which is the channel's public record. | agent in channel | session | yes |
 | **Prompt part** | Text given besides the conversation - the system prompt, notes - transient, recorded by digest (see [AGENT-TURN.md](AGENT-TURN.md#prompt-parts)). | turn | transient | - |
 | **Context** | What one call of the model is given: prompt parts, the transcript and the tools offered - "context" in the usual LLM sense; reconstructable through `ContextRef` ("what the agent saw"). | one call | transient | - |

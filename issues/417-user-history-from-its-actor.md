@@ -1,6 +1,6 @@
 # 417 — On reload a user is shown the channel's history, not what their actor showed them
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -626,3 +626,14 @@ Each step is reviewable on its own; 1-2 change no behaviour.
   `Actor::catch_up` and the REST items and cursors carry it; `EVERY_POSITION` is
   `Position::START..Position::MAX`. Only the chains themselves and the `JsonFileStore`'s segments
   compute with the number. A refactoring without changes of behaviour.
+- 2026-10-18: Step 8 done; the issue is done. The documents say the one history as it stands:
+  ARCHITECTURE.md (a message recorded with whom it went to and delivered in the history's order;
+  records that are fixed include whom an entry went to), CHANNELS.md (every member at the time),
+  REST-SERVER.md (a page holds and counts what its reader sees) and MEMORY.md (one history per
+  channel, for every participant), besides what the steps before changed.
+  [05](05-postgres-event-recorder.md) is done with it, [140](140-audit-log.md) says which of its
+  acts the history now records and which not, [404](404-unread-and-mentions-in-overview.md) how
+  the read mark and the count stand. Left
+  open beside it: who approved a call ([419](419-approval-recorded-with-the-call.md)), and what a
+  page keeps by a closure no store can filter by ([421](421-history-filter-as-data.md)).
+

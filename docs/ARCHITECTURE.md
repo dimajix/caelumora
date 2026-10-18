@@ -175,17 +175,18 @@ The path of one message shows how the parts fit together:
 1.  **A user writes.** The frontend (REST or TUI) hands the text to *that user's* actor in the
     channel. There is no way to write into a channel other than through one's own actor, so sender
     and authority always follow from who is writing.
-2.  **The channel routes it.** The `ChannelLoop` resolves `@`-mentions, appends the message to the
-    channel's history, asks the moderator whom to ask to respond, and delivers the message to every
-    other participant and the requests to those asked.
+2.  **The channel routes it.** The `ChannelLoop` resolves `@`-mentions, asks the moderator whom it
+    goes to and whom to ask to respond, records it in the channel's history with its sender and whom
+    it went to, and delivers it - and the requests to those asked - in the order of the history: the
+    one record of what every participant received (issue 417).
 3.  **An agent takes a turn.** The `AgentActor` begins a **turn**: its context provider assembles
     what the model is given (prompt parts, the agent's transcript), the model answers, and tool
     calls in the answer are run - after approval, where a tool requires it - and their results fed
     back, until the model answers without calling a tool.
 4.  **The answer is published.** What the agent sends is stripped of what only its owner may see,
     delivered to the others through the channel, and the turn is committed: the messages go into the
-    agent's transcript and the history, staged changes to the agent's state are applied, and
-    everything is stored.
+    agent's transcript, the channel records them in full for the agent and as published for the
+    others, staged changes to the agent's state are applied, and everything is stored.
 5.  **Observers are told.** The channel's events reach the participants' live streams; changes to
     entities are announced on the event bus, which the web UI follows.
 
@@ -242,11 +243,11 @@ Details: [CHANNELS.md](CHANNELS.md#actors-and-envelopes),
 ## What an agent remembers
 
 An agent's memory has several tiers, each with one meaning: the channel's **history** (the record,
-never rewritten), the agent's **transcript** (what its context is built from), **notes** (published
-in the channel), **private notes** and **agent memory** (seen only by the agent). An agent may also
-read the notes and history of other channels of its session, as far as confidentiality allows. For
-every message an agent wrote, it can be reconstructed exactly what its model saw, because the
-transcript is a chain of digests.
+never rewritten, one for every participant), the agent's **transcript** (what its context is built
+from), **notes** (published in the channel), **private notes** and **agent memory** (seen only by
+the agent). An agent may also read the notes and history of other channels of its session, as far as
+confidentiality allows. For every message an agent wrote, it can be reconstructed exactly what its
+model saw, because the transcript is a chain of digests.
 
 Details: [MEMORY.md](MEMORY.md), [AGENT-TURN.md](AGENT-TURN.md).
 
@@ -359,8 +360,9 @@ The design repeats a few decisions; new code follows them.
     not its actor's runtime; an actor gets its own channel, not the session.
 *   **Refusals do not reveal.** Something the caller may not see is reported exactly like something
     that does not exist, so ids and names cannot be probed.
-*   **Records are not recomputed.** Digests, resolved mentions and history limits are fixed when
-    they arise and stored, so a later change of scheme or name cannot rewrite the past.
+*   **Records are not recomputed.** Digests, resolved mentions, whom an entry of a history went to
+    and what a newcomer was given of it are fixed when they arise and stored, so a later change of
+    scheme, name or membership cannot rewrite the past.
 
 ## Documents
 

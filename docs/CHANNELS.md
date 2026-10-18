@@ -289,7 +289,8 @@ no end in anyone's name. A turn whose agent was aborted after the grace, saying 
 without an end: nobody ended it.
 
 **Everything shown is recorded** (issue 417). Every entry says who sent it and whom it went to:
-everybody it concerns by the rule every channel delivers by, or those the moderator named. What a
+every member at the time it concerns by the rule every channel delivers by - resolved as it is
+recorded, so that who was a member then decides who reads it -, or those the moderator named. What a
 participant was shown live is what the history holds for them, in the same order - also what went
 to them alone: the answer to a request to answer again, a command's answer and a command not carried
 out, a chain cut off, a refusal, a request to respond, each notice and request recorded in the

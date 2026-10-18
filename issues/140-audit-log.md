@@ -68,3 +68,13 @@ a participant of a channel, approving a tool call, deleting a session
   the history: the act is recorded here, and who approved a call is kept at the call for the
   readers of the message ([419](419-approval-recorded-with-the-call.md)). What
   [05](05-postgres-event-recorder.md) wanted of a channel is the history now.
+- **2026-10-18** — As it stands after [417](417-user-history-from-its-actor.md): of the acts
+  listed here, the channel's history now records, for a channel and with its time, who joined and
+  left by whose act (`ParticipantJoined`, `ParticipantLeft`, the latter with where delivery to the
+  leaver stopped), what was shared of the history with a newcomer and by whom (`HistoryShared`),
+  and a message reclassified - released or raised - with who sent the change
+  (`Recorded::sender`). It does not record who reclassified a channel (`Fitted` has no actor),
+  approvals ([419](419-approval-recorded-with-the-call.md)), deletions, restores and purges, nor
+  anything outside a channel; and it is read by a channel's readers, with content. So this log
+  stays what it was decided to be: one store of acts without content, across channels, for its own
+  readers - the history one of its sources.

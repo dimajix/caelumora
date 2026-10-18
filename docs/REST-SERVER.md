@@ -286,11 +286,13 @@ Both histories are read in pages, alike (issue 218): `?limit=` items (50 unless 
 before `?before=`, the last ones without it, as `{"items": […], "earlier": …}`. `earlier` is the
 position in the history of the oldest item of the page, what the page before it is read with
 (`?before=`), and `null` once there is none; a client passes it on and computes nothing with it. A
-page holds no item from before where the reader's view of the history begins, and its messages stand
-as they do now, with every change made since. A page is read from the store in the cost of the page
-(issue 379, see [STORAGE.md](STORAGE.md#histories)). On a page of an agent's history, whether each
-message reached the agent's transcript (`in_transcript`) is asked of the store once for the page,
-on whichever branch (issue 380).
+page holds what its reader sees and counts only that (issue 417): what went to every member while
+they were one - from what was shared with them as they joined up to where they left -, what went to
+them by name, and what they sent. Its messages stand as they do now, with every change made since. A
+page is read from the store in the cost of the page (issue 379, see
+[STORAGE.md](STORAGE.md#histories)). On a page of an agent's history, whether each message reached
+the agent's transcript (`in_transcript`) is asked of the store once for the page, on whichever
+branch (issue 380).
 
 ### Who follows a channel
 
