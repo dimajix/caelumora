@@ -906,8 +906,13 @@ A user's message starts a new chain. What an external agent says unasked when a 
 continues the context of its answer to the request that began the task, so it is as many hops away
 as that answer was.
 
-The channel's own limit on routing steps is a different thing: a safety net against faulty routing,
-not a rule for users.
+Routing is bounded by the moderator alone; the channel asks it about every event (issue 422). Only
+an ask makes anyone respond to what was delivered - a turn speaks on in the context of the request
+it answers, an approval or a question is answered once -, so a moderator that bounds its asks
+bounds every chain. Beneath the hops, the `policy_moderator` asks nobody to respond to an event as
+deep in its span as `max_span_depth` (`EventContext::span_depth`, default 100): a net against
+routing that goes on without end, not a rule for users. What was said is delivered all the same,
+and nothing is told. A moderator of a plugin bounds its asks itself.
 
 The REST API returns each channel's `moderator` and `responder_policy`, and the web UI explains the
 policy to the user (see [WEB-UI.md](WEB-UI.md)).

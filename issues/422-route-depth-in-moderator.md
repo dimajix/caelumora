@@ -1,6 +1,6 @@
 # 422 — The channel loop bounds routing depth, a decision that belongs to the moderator
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Sessions and channels
@@ -54,3 +54,12 @@ Proposed: move it into the moderator, past the limit asking nobody instead of sw
 ## History
 
 - **2026-10-18** — Opened.
+- **2026-10-18** — Done as proposed: moved into the moderator. Checked before: nothing but an ask
+  makes an actor send in reaction to what it was delivered. A turn speaks on in the contexts of
+  the request it answers (`Answering::continuing`), so its span depth does not grow with its
+  steps or the approvals it waits for; an approval and a question are answered once. The
+  `policy_moderator` takes `max_span_depth` (default `DEFAULT_MAX_SPAN_DEPTH`, 100; set by
+  `PolicyModerator::with_max_span_depth`) and, for an event as deep, asks nobody - mentioned or
+  chosen - and tells nothing; what was said is delivered. Named after what it bounds rather than
+  `max_route_decisions`. `ChannelLoop` lost `max_route_decisions` and `decide`: `enter` asks the
+  moderator about every event it shows. CHANNELS.md and COMPONENTS.md say where routing is bounded.
