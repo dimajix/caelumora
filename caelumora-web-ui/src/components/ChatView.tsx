@@ -862,7 +862,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           const ended = (actorEvent.ApprovalGranted ?? actorEvent.ApprovalDenied ?? actorEvent.ApprovalTimedOut ?? actorEvent.ApprovalRequestWithdrawn)!.id;
           // This user's own answer, as their actor shows it: given by a rule
           // of theirs (issue 13).
-          const byRule = (actorEvent.ApprovalGranted ?? actorEvent.ApprovalDenied)?.by_rule;
+          const byRule = (actorEvent.ApprovalGranted ?? actorEvent.ApprovalDenied)?.decisions?.[0]?.by_rule;
           if (byRule && typeof sender === 'object' && 'User' in sender && sender.User === user.id) {
             setAnsweredApprovals(prev => prev.includes(ended) ? prev : [...prev, ended]);
             setAnsweredByRule(prev => ({...prev, [ended]: byRule}));

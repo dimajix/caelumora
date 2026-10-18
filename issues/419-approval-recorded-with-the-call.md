@@ -1,6 +1,6 @@
 # 419 — Who approved a tool call is recorded nowhere
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Tools and approvals
@@ -93,3 +93,27 @@ the reader is here, at the result; the act for the audit is in 140.
   ([417](417-user-history-from-its-actor.md), [140](140-audit-log.md)): it is not, and approvals
   are not recorded there; what the reader of a message needs of an approval is kept at the call's
   result, as the answers to its questions are.
+- 2026-10-18: Done on `issue-419-approval-recorded-with-the-call`. Every answer says whose it is:
+  `ApprovalResponse::decisions`, a list of `ApprovalDecision { by, name, by_rule, at }`, replaces
+  `by_rule`; `agent_id` stays, since the channel routes the decision and checks the answer by it.
+  A person's answer holds their own part alone, set by their actor (`UserActor::send_approval`,
+  `answer_by_rule`); the channel lets in no answer of a person that says anything else
+  (`Rejection::Invalid`, before anything is asked). The approver keeps each part with the answer
+  and sends with its decision whose answers made it - every counted answer that agrees with it, in
+  the order given; none on a timeout or where nobody may approve. The agent keeps it on the call
+  (`ToolCallState::approval`) from the decision on and takes it into the result as the call ends
+  (`ToolCallResult::approval`), also where it was denied, timed out, or approved and its questions
+  declined. The web UI shows "Approved by …" or "Denied by …" at the call, with "(by their rule)".
+  Tested: in the approver's own tests who decided under `Any` and `All`, an answer that does not
+  say whose it is left out, nobody's on a denial at once; in the channel, answers saying nobody's
+  or someone else's part refused; in the agents' tool calls the record on a denied call and on a
+  declined one; in the agents' security suite the call approved by alice, of her and bob, names
+  her, in the decision and in the result in the channel's history, and one answered by her rule
+  names the rule. Where it differs from the design above:
+  - **One type per person, with its own time**, instead of `Approval { decided_by, at }`: the
+    result keeps `Vec<ApprovalDecision>`, and whether it was approved says its `status`.
+  - **Kept on the call, not in `Ready`**: `Ready` is not stored, and on the way through
+    `WaitingUser` it would have had to be carried along.
+  - **Published with the call**, also where its result is withheld: every user was told the
+    decision as it was made.
+

@@ -136,7 +136,7 @@ permission first, then the flow of what it carries.
 | `RetryRequested` | `RetryMessage` (E,1); a message, not taken back, or a turn, of an agent taking part | `MessageNotFound`, `Forbidden`, `MessageUnchangeable`, `Invalid` |
 | `QuestionAnswered`, `QuestionDeclined` | `AnswerQuestion` (E,1); whether its sender was asked is the agent's | `Forbidden` |
 | `CommandRequested`, `NudgeRequested` | form only: from a user, naming someone taking part; a command is the agent's to admit | `Invalid` |
-| `ApprovalGranted`, `ApprovalDenied` from a user | the agent it names read in S; `ApproveToolCall` (E,3); whether that agent asked is the approver's (issue 312) | `Invalid`, `Forbidden` |
+| `ApprovalGranted`, `ApprovalDenied` from a user | structural: it says the sender's own part alone (`decisions`, issue 419); the agent it names read in S; `ApproveToolCall` (E,3); whether that agent asked is the approver's (issue 312) | `Invalid`, `Forbidden` |
 | `ApprovalGranted`, `ApprovalDenied`, `ApprovalTimedOut` from anyone else | from an approver alone (structural) | `Invalid` |
 | everything else | nothing | - |
 

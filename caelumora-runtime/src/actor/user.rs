@@ -8,7 +8,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
 use caelumora_model::work::TurnId;
-use caelumora_model::approval::{ApprovalRequest, ApprovalResponse, ApprovalRule, RuleDecision};
+use caelumora_model::approval::{ApprovalDecision, ApprovalRequest, ApprovalResponse, ApprovalRule, ApprovalRuleId, RuleDecision};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::message::{Message, MessageId, MessageRole};
@@ -477,9 +477,10 @@ impl UserActor {
 
     /// Sends this user's decision on an approval. Returns the `span_id`, as
     /// `send_message` does. A decision sent so is the user's own, never one
-    /// of their rules (`ApprovalResponse::by_rule`).
+    /// of their rules (`ApprovalDecision::by_rule`): whatever `response` says
+    /// of who decided is replaced by this user, now (issue 419).
     pub async fn send_approval(&self, response: ApprovalResponse, approved: bool) -> Result<Uuid> {
-        let response = ApprovalResponse { by_rule: None, ..response };
+        let response = ApprovalResponse { decisions: vec![self.decision(None)], ..response };
         let span_id = Uuid::new_v4();
         self.send(self.envelope(Self::answer(response, approved), span_id)).await?;
         Ok(span_id)
@@ -487,6 +488,12 @@ impl UserActor {
 
     fn answer(response: ApprovalResponse, approved: bool) -> ActorEvent {
         if approved { ActorEvent::ApprovalGranted(response) } else { ActorEvent::ApprovalDenied(response) }
+    }
+
+    /// This user's part in an approval, now - by their rule `by_rule` if
+    /// one answers for them (issue 419).
+    fn decision(&self, by_rule: Option<ApprovalRuleId>) -> ApprovalDecision {
+        ApprovalDecision { by: self.id(), name: self.name().to_string(), by_rule, at: Utc::now() }
     }
 
     /// The answer the user's rules give to `request`, which `envelope`
@@ -524,7 +531,7 @@ impl UserActor {
         }
         let approved = decision == RuleDecision::Allow;
         info!(rule = %rule_id, approved, "UserActor {} answers approval {} by a rule", self.id(), request.id);
-        let response = ApprovalResponse { by_rule: Some(rule_id), ..ApprovalResponse::new(request.id, request.agent_id) };
+        let response = ApprovalResponse { decisions: vec![self.decision(Some(rule_id))], ..ApprovalResponse::new(request.id, request.agent_id) };
         Some(self.envelope(Self::answer(response, approved), envelope.context.span_id))
     }
 

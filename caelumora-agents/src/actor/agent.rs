@@ -25,7 +25,7 @@ use caelumora_model::component::ComponentConfig;
 use caelumora_model::turn::TurnState;
 use caelumora_model::work::{TurnId, Work};
 use caelumora_runtime::controller::{AgentController, PersonalityController};
-use caelumora_model::approval::{ApprovalId, ApprovalStatus};
+use caelumora_model::approval::{ApprovalResponse, ApprovalStatus};
 use caelumora_model::confidentiality::{Classification, Visibility};
 use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::turn::GivenUpReason;
@@ -425,9 +425,9 @@ impl AgentActor {
         let Some(envelope) = received else { return Ok(None) };
         let sender = envelope.context.sender_id;
         let settled = match envelope.event {
-            ActorEvent::ApprovalGranted(r) => self.decided(turn, r.id, ApprovalStatus::Approved),
-            ActorEvent::ApprovalDenied(r) => self.decided(turn, r.id, ApprovalStatus::Denied),
-            ActorEvent::ApprovalTimedOut(r) => self.decided(turn, r.id, ApprovalStatus::Timeout),
+            ActorEvent::ApprovalGranted(r) => self.decided(turn, r, ApprovalStatus::Approved),
+            ActorEvent::ApprovalDenied(r) => self.decided(turn, r, ApprovalStatus::Denied),
+            ActorEvent::ApprovalTimedOut(r) => self.decided(turn, r, ApprovalStatus::Timeout),
             ActorEvent::QuestionAnswered { id, responses, .. } => turn.tool_calls().answer(id, sender, envelope.context.sender_name.clone(), responses)
                 .map(|closed| vec![closed])
                 .inspect_err(|e| info!("Agent {} leaves out an answer of {} to questions {}: {}", self.id(), sender, id, e))
@@ -446,10 +446,12 @@ impl AgentActor {
         Ok(Some(ActorState::ExecutingTools))
     }
 
-    /// Records the approver's `decision` on the approval `id`, and returns
-    /// the requests it leads to; `None` if no call waits for it.
-    fn decided(&self, turn: &mut Turn<'_>, id: ApprovalId, decision: ApprovalStatus) -> Option<Vec<ActorEvent>> {
-        let events = turn.tool_calls().decide(id, decision);
+    /// Records the approver's `decision` on the approval `response` names,
+    /// with whose answers made it (issue 419), and returns the requests it
+    /// leads to; `None` if no call waits for it.
+    fn decided(&self, turn: &mut Turn<'_>, response: ApprovalResponse, decision: ApprovalStatus) -> Option<Vec<ActorEvent>> {
+        let id = response.id;
+        let events = turn.tool_calls().decide(id, decision, response.decisions);
         if events.is_none() {
             warn!("Received approval for unknown approval id {}", id);
         }

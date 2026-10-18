@@ -283,7 +283,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
                     }
                     // The user's own answer, given by a rule of theirs (issue 13).
                     Some(ActorEvent::ApprovalGranted(response)) | Some(ActorEvent::ApprovalDenied(response)) if !matches!(sender_id, Some(ActorId::Approver(_))) => {
-                        if response.by_rule.is_some() {
+                        if response.decisions.iter().any(|decision| decision.by_rule.is_some()) {
                             println!("\r--- Approval {} answered by your rule ---", response.id.0);
                         }
                     }
