@@ -3,7 +3,7 @@ use crate::approval::ApprovalRequest;
 use crate::chain::{Position, Stored};
 use crate::component::ComponentConfig;
 use crate::confidentiality::{Classification, Visibility};
-use crate::context::{ContextRef, ContextResolver, KnowledgeRef, ModelProfile, PromptRef};
+use crate::context::{ContextRef, ContextResolver, FrameRef, KnowledgeRef, ModelProfile, PromptRef};
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
 use crate::history::HistoryEntry;
@@ -388,8 +388,8 @@ impl AgentChannelState {
         self.transcript.keep_from(root);
         self.transcript_from = self.transcript.base();
         let context = self.turn.as_ref().map(|turn| &turn.work.context);
-        let named: HashSet<Digest> = context.into_iter().flat_map(|context| context.prompts.iter().map(|prompt| prompt.text)).collect();
-        let offered = context.and_then(|context| context.tools);
+        let named: HashSet<Digest> = context.into_iter().flat_map(|context| context.frame.prompts.iter().map(|prompt| prompt.text)).collect();
+        let offered = context.and_then(|context| context.frame.tools);
         self.prompts.keep_only(|digest| named.contains(digest));
         self.offered_tools.keep_only(|digest| offered == Some(*digest));
     }
@@ -617,7 +617,7 @@ impl AgentChannelState {
         self.last_message = given.last().map(|message| message.id).or(self.last_message);
         self.to_tell.extend(given.into_iter().map(|message| ActorEvent::MessageGiven { message }));
         turn.work.context.transcript = Some(to);
-        turn.work.context.prompts.retain_mut(|prompt| match prompt.after {
+        turn.work.context.frame.prompts.retain_mut(|prompt| match prompt.after {
             None => true,
             Some(after) => moved.get(&after).map(|now| prompt.after = *now).is_some(),
         });
@@ -737,7 +737,7 @@ impl AgentChannelState {
             tracing::warn!("A turn was begun while another was under way; the other ends without an end recorded");
         }
         let mut work = Work::new(event_context, security_context, classification);
-        work.context = ContextRef { transcript: self.transcript.digest(), profile, time_zone, ..ContextRef::default() };
+        work.context = ContextRef { transcript: self.transcript.digest(), frame: FrameRef { profile, time_zone, ..FrameRef::default() } };
         self.transcript.messages().iter().for_each(|m| work.see_message(m));
         let turn_id = work.turn_id;
         let turn = TurnState { work, ..TurnState::default() };
@@ -752,13 +752,13 @@ impl AgentChannelState {
     /// after the agent's tools changed. A turn offered tools already keeps
     /// them; without a turn, nothing is offered.
     pub fn offer_tools(&mut self, tool_sets: Vec<ToolSet>) {
-        if self.turn.as_ref().is_none_or(|turn| turn.work.context.tools.is_some()) {
+        if self.turn.as_ref().is_none_or(|turn| turn.work.context.frame.tools.is_some()) {
             tracing::warn!("Tools were offered with no turn under way, or to a turn offered tools already; nothing is offered");
             return;
         }
         let offered = self.keep_offer(tool_sets);
         if let Some(turn) = &mut self.turn {
-            turn.work.context.tools = offered;
+            turn.work.context.frame.tools = offered;
         }
     }
 
@@ -1156,13 +1156,13 @@ pub(crate) mod tests {
         let turn = state.turn.as_ref().expect("a turn was begun");
         assert_eq!(turn.work.label(), internal, "it has seen the transcript");
         assert_eq!(turn.work.context.transcript, state.transcript.digest(), "it continues the transcript");
-        assert!(turn.work.context.tools.is_some() && state.offered_tools.len() == 1, "the set offered is kept once");
-        let offered = turn.work.context.tools;
+        assert!(turn.work.context.frame.tools.is_some() && state.offered_tools.len() == 1, "the set offered is kept once");
+        let offered = turn.work.context.frame.tools;
         state.offer_tools(vec![ToolSet::new("more", "more tools", Vec::new())]);
-        assert_eq!(state.turn.as_ref().and_then(|t| t.work.context.tools), offered, "a turn offered tools keeps them");
+        assert_eq!(state.turn.as_ref().and_then(|t| t.work.context.frame.tools), offered, "a turn offered tools keeps them");
 
         begin(&mut state, Vec::new());
-        assert!(state.turn.as_ref().is_some_and(|t| t.work.context.tools.is_none()), "no tools, no set");
+        assert!(state.turn.as_ref().is_some_and(|t| t.work.context.frame.tools.is_none()), "no tools, no set");
     }
 
     #[test]
@@ -1206,7 +1206,7 @@ pub(crate) mod tests {
         assert_eq!(state.transcript.messages().last().map(|m| (m.id, m.turn_id)), Some((skill.id, Some(turn_id))), "into the transcript, the turn's");
         assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::Given { source: Some(s), .. }) if *s == source), "as what it was given (issue 16)");
         let work = &state.turn.as_ref().unwrap().work;
-        assert_eq!(work.context.knowledge, [knowledge], "the knowledge recorded with the turn");
+        assert_eq!(work.context.frame.knowledge, [knowledge], "the knowledge recorded with the turn");
         assert_eq!(work.label(), Classification::CHANNEL_DEFAULT, "which has seen it");
         assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "what the turn says next is produced from it");
         assert!(matches!(state.take_told().as_slice(), [ActorEvent::MessageGiven { message }] if message.id == skill.id && message.produced_from.is_none()), "its channel is to be told, as what it was given (issue 417)");
@@ -1287,7 +1287,7 @@ pub(crate) mod tests {
             "the replacement, given (issue 389), then what was kept as it stands - the change in it, the message taken back left out -, then where the compaction's part ends (issue 387)");
         let turn_under_way = &state.turn.as_ref().unwrap().work;
         assert_eq!(turn_under_way.context.transcript, Some(to), "what the turn says next is produced from the new branch");
-        assert_eq!(turn_under_way.context.knowledge, [knowledge], "the skill given again is knowledge of the turn");
+        assert_eq!(turn_under_way.context.frame.knowledge, [knowledge], "the skill given again is knowledge of the turn");
         let sources: Vec<_> = state.transcript.entries().take(2).map(|n| match &n.entry { TranscriptEntry::Given { source, .. } => *source, _ => None }).collect();
         assert_eq!(sources, [None, Some(source)], "the summary is no knowledge, the skill is");
         assert!(state.transcript.messages().iter().take(2).all(|m| m.turn_id.is_none()), "the replacement is whose its caller says (issue 284)");
@@ -1339,13 +1339,13 @@ pub(crate) mod tests {
         begin(&mut state, Vec::new());
         let parts = [("first", None), ("on the replaced", older), ("on the kept", kept_at), ("on a change", change_at)]
             .map(|(text, after)| state.keep_prompt(MessageRole::System, text.to_string(), after, None));
-        state.turn.as_mut().unwrap().work.context.prompts = parts.to_vec();
+        state.turn.as_mut().unwrap().work.context.frame.prompts = parts.to_vec();
 
         state.compact(agent, vec![(said("summary", Classification::PUBLIC), None)], kept_at).expect("compacted");
 
         let on_new: Vec<Option<String>> = state.transcript.entries().map(|n| n.entry.message().and_then(|m| m.content.clone())).collect();
         let anchor = |prompt: &PromptRef| prompt.after.map(|after| state.transcript.entries().position(|n| n.digest == after).map(|at| on_new[at].clone()));
-        let anchors: Vec<_> = state.turn.as_ref().unwrap().work.context.prompts.iter().map(anchor).collect();
+        let anchors: Vec<_> = state.turn.as_ref().unwrap().work.context.frame.prompts.iter().map(anchor).collect();
         assert_eq!(anchors, [
             None,
             Some(Some(Some("summary".to_string()))),
@@ -1364,7 +1364,7 @@ pub(crate) mod tests {
         let turn_id = state.begin_command_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default(), request.clone());
         let turn = state.turn.as_ref().expect("a turn was begun");
         assert_eq!(turn.command.as_ref(), Some(&request), "kept with the turn, for one resumed");
-        assert!(turn.work.context.tools.is_none(), "a command turn offers its model nothing");
+        assert!(turn.work.context.frame.tools.is_none(), "a command turn offers its model nothing");
 
         state.turn = None;
         assert!(!state.finish_turn(turn_id, Vec::new(), Vec::new()));
@@ -1494,8 +1494,8 @@ pub(crate) mod tests {
         state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default());
         state.offer_tools(sets);
         let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
-        state.turn.as_mut().unwrap().work.context.prompts.push(system.clone());
-        let offer = state.turn.as_ref().unwrap().work.context.tools.expect("an offer");
+        state.turn.as_mut().unwrap().work.context.frame.prompts.push(system.clone());
+        let offer = state.turn.as_ref().unwrap().work.context.frame.tools.expect("an offer");
         state.keep_window();
         assert_eq!((state.prompts.len(), state.offered_tools.len()), (2, 1), "nothing goes before it is stored");
 

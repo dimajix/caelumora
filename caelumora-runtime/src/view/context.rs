@@ -196,7 +196,7 @@ pub enum AgentContextError {
 mod tests {
     use super::*;
     use caelumora_model::agent::AgentId;
-    use caelumora_model::context::{ContextItem, ContextRef, PromptRef};
+    use caelumora_model::context::{ContextItem, ContextRef, FrameRef, PromptRef};
     use caelumora_model::digest::prompt;
     use caelumora_model::history::HistoryEntry;
     use caelumora_model::message::Message;
@@ -244,7 +244,7 @@ mod tests {
         history.push(question.clone());
         let answer = produced("answer");
         let before = state.transcript.push(answer.clone());
-        history.push(Message { produced_from: Some(ContextRef { transcript: before, prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default(), time_zone: Default::default() }), ..answer.clone() });
+        history.push(Message { produced_from: Some(ContextRef { transcript: before, ..ContextRef::default() }), ..answer.clone() });
         let view = AgentContextView::of_state(actor, state.clone(), history.clone()).await;
 
         let seen = view.context_of(answer.id).await.expect("the agent produced it");
@@ -280,14 +280,14 @@ mod tests {
         let system = PromptRef { text: prompt("system"), role: MessageRole::System, after: None, classification: Some(confidential.clone()) };
         state.prompts.keep(system.text, || "system".to_string());
         let told = produced("told");
-        history.push(Message { produced_from: Some(ContextRef { transcript: before, prompts: vec![system], tools: None, knowledge: Vec::new(), profile: Default::default(), time_zone: Default::default() }), ..told.clone() });
+        history.push(Message { produced_from: Some(ContextRef { transcript: before, frame: FrameRef { prompts: vec![system], ..FrameRef::default() } }), ..told.clone() });
         let seen = AgentContextView::of_state(actor, state.clone(), history.clone()).await.context_of(told.id).await.expect("resolved");
         assert!(matches!(&seen.items[0], ContextItem::Prompt { classification: Some(c), .. } if *c == confidential));
 
         // A reference to a prompt that was never kept cannot be resolved.
         let lost = produced("lost");
         let gone = PromptRef { text: prompt("gone"), role: MessageRole::System, after: None, classification: None };
-        history.push(Message { produced_from: Some(ContextRef { transcript: before, prompts: vec![gone], tools: None, knowledge: Vec::new(), profile: Default::default(), time_zone: Default::default() }), ..lost.clone() });
+        history.push(Message { produced_from: Some(ContextRef { transcript: before, frame: FrameRef { prompts: vec![gone], ..FrameRef::default() } }), ..lost.clone() });
         let view = AgentContextView::of_state(actor, state, history).await;
         assert!(matches!(view.context_of(lost.id).await, Err(AgentContextError::Unavailable { .. })));
     }

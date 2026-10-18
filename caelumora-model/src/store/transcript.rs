@@ -59,9 +59,9 @@ pub trait TranscriptStore: Debug + Send + Sync {
     /// resolved with besides its transcript (`ContextResolver`). What it
     /// names and is not kept is not there.
     async fn named_by(&self, agent: AgentId, channel: ChannelId, reference: &ContextRef) -> StoreResult<(Kept<String>, Kept<Vec<ToolSet>>)> {
-        let digests: Vec<Digest> = reference.prompts.iter().map(|prompt| prompt.text).collect();
+        let digests: Vec<Digest> = reference.frame.prompts.iter().map(|prompt| prompt.text).collect();
         let prompts = self.prompts(agent, channel, &digests).await?;
-        let offered = match reference.tools {
+        let offered = match reference.frame.tools {
             Some(digest) => self.offered_tools(agent, channel, digest).await?.map(|sets| (digest, sets)),
             None => None,
         };

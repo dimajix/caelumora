@@ -568,7 +568,7 @@ mod tests {
     use caelumora_model::digest;
 
     fn knowledge(state: &AgentChannelState) -> Vec<KnowledgeRef> {
-        state.turn.as_ref().map(|turn| turn.work.context.knowledge.clone()).unwrap_or_default()
+        state.turn.as_ref().map(|turn| turn.work.context.frame.knowledge.clone()).unwrap_or_default()
     }
 
     #[tokio::test]

@@ -19,7 +19,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [03](03-postgres-entity-store.md) | open | medium | feature | `EntityStore` has only in-memory and JSON-file implementations; a Postgres one is the prerequisite for everything multi-process. |
 | [04](04-postgres-state-store.md) | open | medium | feature | `StateStore` likewise — and it holds the state whose loss is most expensive, including agents suspended on an approval. |
-| [426](426-context-ref-kept-once.md) | open | medium | refactoring | Every message a turn says is stored in its channel's history with the whole `ContextRef` it was produced from - a digest per prompt part, the knowledge read, the model profile - repeated nearly unchanged from message to message, often larger than the message itself. |
+| [426](426-context-ref-kept-once.md) | in progress | medium | refactoring | Every message a turn says is stored in its channel's history with the whole `ContextRef` it was produced from - a digest per prompt part, the knowledge read, the model profile - repeated nearly unchanged from message to message, often larger than the message itself. |
 
 ## Sessions and channels
 

@@ -410,7 +410,7 @@ from="@alice" at="Sun 18 Oct 2026, 14:32">` - in the session's time zone, in one
 language, and never on the agent's own messages: a model whose own messages carry a time begins its
 answers with one of its own. Without the times, a model takes a message of days ago for one of now
 (`work/message_times/RESULTS.md`). The time zone is fixed when the turn begins and recorded with the
-context beside the profile (`ContextRef::time_zone`), so that what the model was given is told the
+context beside the profile (`FrameRef::time_zone`), so that what the model was given is told the
 same after the session's changed. `read_history` writes the times of what it reads alike.
 
 A marker is a claim like any text: a participant can write another's into their own message, and

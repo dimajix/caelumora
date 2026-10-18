@@ -286,8 +286,8 @@ impl ExternalAgentActor {
         // How it is given what was said, and in which time zone, recorded
         // with the context of what comes of it, so that the context is
         // resolved as it was given (issues 135, 424).
-        work.context.profile = self.remote.profile();
-        work.context.time_zone = self.body.runtime.session_time_zone();
+        work.context.frame.profile = self.remote.profile();
+        work.context.frame.time_zone = self.body.runtime.session_time_zone();
         let brought = self.remote.classification().unwrap_or_else(|| work.classification.clone());
         if !self.body.runtime.confidentiality().may_publish(&work.security_context, &brought, &work.classification) {
             return Ok(Ending::Failed(format!("its answers are classified {brought}, which may not be published in this channel ({})", work.classification)));
@@ -297,7 +297,7 @@ impl ExternalAgentActor {
         // now - every message, and every change of one, as it may have used
         // either version (issue 236).
         state.classifications_given().iter().for_each(|c| work.see(c));
-        let given = work.context.profile.given_messages(&state.transcript, self.id(), work.context.time_zone);
+        let given = work.context.frame.profile.given_messages(&state.transcript, self.id(), work.context.frame.time_zone);
         // A task that asked back before the channel was lowered is not
         // taken up: it is cancelled, and the request begins a new one.
         if let Some(asking) = state.remote.asking().cloned() {
@@ -318,7 +318,7 @@ impl ExternalAgentActor {
         for (_, part) in &prompts {
             // Part of the context of what comes of this call; seen already.
             let reference = state.keep_prompt(part.role, part.text.clone(), part.after, part.classification.clone());
-            work.context.prompts.push(reference);
+            work.context.frame.prompts.push(reference);
             parts.push(part.text.clone());
         }
         let said = given.into_iter()

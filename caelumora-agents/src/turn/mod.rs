@@ -284,7 +284,7 @@ impl<'a> Turn<'a> {
     /// its private notes (issue 51) or its memory (issue 62) - so far: what the model produces from
     /// then on may reveal it (issue 61).
     pub(crate) fn saw_private_knowledge(&self) -> bool {
-        self.current().work.context.knowledge.iter()
+        self.current().work.context.frame.knowledge.iter()
             .any(|k| matches!(k.source,
                 KnowledgeSource::PrivateNotes { .. } | KnowledgeSource::Memory { .. }))
     }
@@ -467,6 +467,6 @@ mod tests {
         assert_eq!(turn.situation().label(), internal, "what others said during the turn");
         turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }], Vec::new());
         assert_eq!(turn.situation().label(), confidential, "a part that does not say counts as the channel");
-        assert_eq!(turn.situation().agent_channel_state().turn.as_ref().unwrap().work.context.prompts[0].classification, None, "and is recorded so");
+        assert_eq!(turn.situation().agent_channel_state().turn.as_ref().unwrap().work.context.frame.prompts[0].classification, None, "and is recorded so");
     }
 }

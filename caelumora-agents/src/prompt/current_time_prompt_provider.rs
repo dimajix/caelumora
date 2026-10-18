@@ -84,7 +84,7 @@ mod tests {
     /// What `provider` tells in work whose context records `zone`.
     async fn told(provider: &CurrentTimePromptProvider, zone: TimeZone) -> Prompt {
         let mut work = Work::default();
-        work.context.time_zone = zone;
+        work.context.frame.time_zone = zone;
         let (state, agent_state) = (AgentChannelState::default(), AgentStateHandle::detached());
         provider.get_prompt(&Situation::new(AgentId::new(), &work, &state, &agent_state, &detached_actor_runtime())).await.unwrap()
     }

@@ -640,6 +640,7 @@ impl HistoryEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::FrameRef;
     use crate::confidentiality::Confidentiality;
     use crate::digest::message_chain;
     use crate::message::tests::{id, make_message};
@@ -829,7 +830,7 @@ mod tests {
 
     #[test]
     fn a_history_keeps_what_its_messages_were_produced_from() {
-        let reference = ContextRef { transcript: Some(message_chain(None, &make_message(id(9)))), prompts: Vec::new(), tools: None, knowledge: Vec::new(), profile: Default::default(), time_zone: Default::default() };
+        let reference = ContextRef { transcript: Some(message_chain(None, &make_message(id(9)))), frame: FrameRef::default() };
         let turn = TurnId::new();
         let mut history = History::default();
         history.extend(vec![make_message(id(1))]);

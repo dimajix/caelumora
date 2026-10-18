@@ -509,7 +509,7 @@ mod tests {
         let summarised = Classification::join_all([&Classification::PUBLIC, &Classification::general(Confidentiality::Internal)]);
         assert_eq!(Some(replacement[0].classification.clone()), summarised, "classified by what it summarises");
         assert_eq!(replacement[1].turn_id, under_way, "what is given again is given in the turn");
-        let knowledge = &state.turn.as_ref().unwrap().work.context.knowledge;
+        let knowledge = &state.turn.as_ref().unwrap().work.context.frame.knowledge;
         assert!(knowledge.iter().any(|k| k.source.about::<Workspace>().is_some_and(|(s, _)| s == skill)), "the turn has read it");
         let usage = state.used.expect("the summary's call");
         assert_eq!((usage.prompt_tokens, usage.completion_tokens), (40, 8), "the summary's call counts");
