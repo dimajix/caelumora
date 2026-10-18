@@ -13,6 +13,7 @@ caelumora-artifacts = { path = "../caelumora-artifacts", default-features = fals
 caelumora-mcp = { path = "../caelumora-mcp" }
 caelumora-a2a = { path = "../caelumora-a2a" }
 caelumora-open-terminal = { path = "../caelumora-open-terminal" }
+caelumora-workspace-tools = { path = "../caelumora-workspace-tools" }
 caelumora-ollama = { path = "../caelumora-ollama" }
 caelumora-decision = { path = "../caelumora-decision" }
 clap = { version = "4.6.7", features = ["derive"] }

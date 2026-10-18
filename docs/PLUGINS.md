@@ -65,9 +65,10 @@ on `ChannelView`, which opens its `views` and how its viewer reads it (`reading`
 viewer reads the channel stays the channel's to decide (issue 328).
 Its routes come from `caelumora_rest_server::plugin::RestPlugin`, a `Plugin` that builds a `Router`
 with the `AppState`; the API serves them behind the same login as the core's (`routes::api`). A
-plugin that brings a component kind alone, such as `caelumora-mcp` (issue 325), `caelumora-a2a`
-(issue 326), `caelumora-ollama` (issue 329) or `caelumora-decision` (issue 403), implements
-`Plugin` only and registers the kind in `register`; whether a kind of a facet of which there is
+plugin that brings component kinds alone, such as `caelumora-mcp` (issue 325), `caelumora-a2a`
+(issue 326), `caelumora-ollama` (issue 329), `caelumora-decision` (issue 403) or
+`caelumora-workspace-tools` (issue 428), implements `Plugin` only and registers the kinds in
+`register`; whether a kind of a facet of which there is
 one is its default, the program says, not the plugin (`ComponentRegistry::set_default_kind`), so
 that two plugins of a facet cannot both claim it; one that brings
 backends alone, such as `caelumora-open-terminal` (issue 327), registers them in `backends` and

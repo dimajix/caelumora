@@ -19,10 +19,10 @@
 //! no UTF-8 is refused. A replacement reads, replaces and writes: what
 //! changed the file in between is overwritten.
 
-use super::{tool, TerminalToolConfig};
-use crate::turn::Turn;
+use crate::terminal_tool::{tool, TerminalToolConfig};
+use caelumora_agents::turn::Turn;
 use caelumora_runtime::terminal::{ByteStream, FileEntry, Terminal, TerminalError, WorkspacePath};
-use crate::tool::{arguments, ToolError, ToolResult};
+use caelumora_agents::tool::{arguments, ToolError, ToolResult};
 use caelumora_model::workspace::Workspace;
 use caelumora_model::approval::{ArgumentMatcher, ToolMatcher};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
@@ -79,7 +79,7 @@ pub const DELETE_FILE: &str = "delete_file";
 pub const PUBLISH_FILE: &str = "publish_file";
 
 /// The file tools, by name.
-pub(super) const TOOLS: [&str; 8] = [LIST_FILES, READ_FILE, GREP_FILES, WRITE_FILE, REPLACE_IN_FILE, MOVE_FILE, DELETE_FILE, PUBLISH_FILE];
+pub(crate) const TOOLS: [&str; 8] = [LIST_FILES, READ_FILE, GREP_FILES, WRITE_FILE, REPLACE_IN_FILE, MOVE_FILE, DELETE_FILE, PUBLISH_FILE];
 
 /// The largest file read or searched.
 const READ_LIMIT: u64 = 4 * 1024 * 1024;
@@ -99,7 +99,7 @@ const MAX_PATTERN_CHARS: usize = 500;
 const MAX_COMPILED_PATTERN_BYTES: usize = 1 << 20;
 
 /// Whether the file tool `name` only reads.
-pub(super) fn read_only(name: &str) -> bool {
+pub(crate) fn read_only(name: &str) -> bool {
     matches!(name, LIST_FILES | READ_FILE | GREP_FILES | PUBLISH_FILE)
 }
 
@@ -181,7 +181,7 @@ fn path(text: &str) -> ToolResult<WorkspacePath> {
     WorkspacePath::parse(text).map_err(ToolError::from)
 }
 
-pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
+pub(crate) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
     let asks = |name: &str| config.requires_approval.required(read_only(name));
     let string = ToolParameters::string;
     vec![
@@ -282,7 +282,7 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
 }
 
 /// What an approver reads: what is read, or the change whole.
-pub(super) fn describe(name: &str, params: &Value) -> ToolResult<String> {
+pub(crate) fn describe(name: &str, params: &Value) -> ToolResult<String> {
     Ok(match name {
         LIST_FILES => format!("List '{}' in the workspace", arguments::<At>(params)?.path.unwrap_or_default()),
         READ_FILE => format!("Read '{}' in the workspace", arguments::<Read>(params)?.path),
@@ -318,7 +318,7 @@ pub(super) fn describe(name: &str, params: &Value) -> ToolResult<String> {
 /// For a change, the calls changing the same file - for a move, the same
 /// move, since it changes two places; `None` for the others, which are
 /// alike when exactly alike.
-pub(super) fn matcher(name: &str, params: &Value) -> Option<ToolMatcher> {
+pub(crate) fn matcher(name: &str, params: &Value) -> Option<ToolMatcher> {
     if !TOOLS.contains(&name) || read_only(name) {
         return None;
     }
@@ -438,7 +438,7 @@ async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &Regex, 
 /// Runs the file tool `name` with `params` on `terminal`, the files of
 /// `workspace`, which take a file of `max_file_bytes` at most, recording in
 /// `turn` what was read.
-pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Value, terminal: &dyn Terminal, workspace: &Workspace, max_file_bytes: u64, turn: &mut Turn<'_>) -> ToolResult<Value> {
+pub(crate) async fn execute(config: &TerminalToolConfig, name: &str, params: &Value, terminal: &dyn Terminal, workspace: &Workspace, max_file_bytes: u64, turn: &mut Turn<'_>) -> ToolResult<Value> {
     let read = |turn: &mut Turn<'_>, digest| turn.record_knowledge(KnowledgeRef {
         channel: turn.situation().channel_id(),
         session: turn.situation().session_id(),
@@ -559,10 +559,10 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::workspace_turn;
+    use caelumora_agents::testing::workspace_turn;
     use caelumora_model::digest::Digest;
-    use crate::tool::ToolProvider;
-    use crate::tool::terminal_tool::tests::tool as terminal_tool;
+    use caelumora_agents::tool::ToolProvider;
+    use crate::terminal_tool::tests::tool as terminal_tool;
     use caelumora_runtime::workspace::testing::{session_with_workspace, MAX_FILE_BYTES};
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::digest;

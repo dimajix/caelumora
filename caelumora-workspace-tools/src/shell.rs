@@ -11,10 +11,10 @@
 //! through the same shell of the channel (`ChannelLoop::workspace_shell`)
 //! as the REST server does for them.
 
-use super::{tool, TerminalToolConfig};
+use crate::terminal_tool::{tool, TerminalToolConfig};
 use caelumora_runtime::terminal::{CommandState, Shell};
 use caelumora_model::workspace::CommandStatus;
-use crate::tool::{arguments, ToolError, ToolResult};
+use caelumora_agents::tool::{arguments, ToolError, ToolResult};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -32,7 +32,7 @@ pub const COMMAND_OUTPUT: &str = "command_output";
 pub const KILL_COMMAND: &str = "kill_command";
 
 /// The shell tools, by name.
-pub(super) const TOOLS: [&str; 3] = [RUN_COMMAND, COMMAND_OUTPUT, KILL_COMMAND];
+pub(crate) const TOOLS: [&str; 3] = [RUN_COMMAND, COMMAND_OUTPUT, KILL_COMMAND];
 
 /// The longest a call may follow a command - Open Terminal's own bound.
 const MAX_WAIT_SECS: u64 = 300;
@@ -119,7 +119,7 @@ struct Follow {
     wait_secs: Option<f64>,
 }
 
-pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
+pub(crate) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
     let most = config.max_wait_secs.min(MAX_WAIT_SECS);
     vec![
         tool(
@@ -167,7 +167,7 @@ pub(super) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
 }
 
 /// What an approver reads: the command, whole.
-pub(super) fn describe(name: &str, params: &Value) -> ToolResult<String> {
+pub(crate) fn describe(name: &str, params: &Value) -> ToolResult<String> {
     match name {
         RUN_COMMAND => {
             let Run { command, .. } = arguments(params)?;
@@ -180,7 +180,7 @@ pub(super) fn describe(name: &str, params: &Value) -> ToolResult<String> {
 
 /// Runs the shell tool `name` with `params` on `shell`, the workspace's as
 /// the turn's channel sees it.
-pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Value, shell: Arc<dyn Shell>) -> ToolResult<Value> {
+pub(crate) async fn execute(config: &TerminalToolConfig, name: &str, params: &Value, shell: Arc<dyn Shell>) -> ToolResult<Value> {
     let state = match name {
         RUN_COMMAND => {
             let Run { command, wait_secs } = arguments(params)?;
@@ -208,10 +208,10 @@ pub(super) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::workspace_turn;
-    use crate::tool::ToolProvider;
-    use crate::tool::terminal_tool::tests::tool as terminal_tool;
-    use crate::tool::terminal_tool::TerminalTool;
+    use caelumora_agents::testing::workspace_turn;
+    use caelumora_agents::tool::ToolProvider;
+    use crate::terminal_tool::tests::tool as terminal_tool;
+    use crate::terminal_tool::TerminalTool;
     use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::approval::ArgumentMatcher;

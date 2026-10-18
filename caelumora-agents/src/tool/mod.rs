@@ -10,7 +10,6 @@ pub mod echo_tool;
 mod providers;
 pub mod sleep_tool;
 pub mod stop_tool;
-pub mod terminal_tool;
 
 use crate::turn::Turn;
 use crate::situation::Situation;
@@ -23,6 +22,7 @@ use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy, Co
 use caelumora_model::security::{ActionType, Enforcement, AccessPolicy};
 use caelumora_model::question::{Answers, Questions};
 use caelumora_runtime::runtime::ActorRuntime;
+use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::view::{ViewError, WorkspaceView};
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus, ToolParameters};
@@ -59,6 +59,21 @@ impl From<ViewError> for ToolError {
             ViewError::Forbidden { .. } => ToolError::PermissionDenied(error.to_string()),
             ViewError::Failed(_) => ToolError::ExecutionFailed(error.to_string()),
             _ => ToolError::InvalidParameter(error.to_string()),
+        }
+    }
+}
+
+/// What a terminal reports, as the model is told it: what names something
+/// that is not there, or is not what the call needs, is the model's to
+/// correct; that the storage failed is not.
+impl From<TerminalError> for ToolError {
+    fn from(error: TerminalError) -> Self {
+        match error {
+            TerminalError::Unavailable(_) => ToolError::ExecutionFailed(error.to_string()),
+            TerminalError::InvalidPath(_) | TerminalError::NotFound(_) | TerminalError::Exists(_) | TerminalError::IsADirectory(_)
+            | TerminalError::NotADirectory(_) | TerminalError::NotEmpty(_) | TerminalError::TooLarge { .. } | TerminalError::UnknownCommand(_) => {
+                ToolError::InvalidParameter(error.to_string())
+            }
         }
     }
 }
@@ -390,7 +405,7 @@ pub async fn usable_workspace(situation: &Situation<'_>) -> Result<WorkspaceView
 /// offered with, as the parameters of the tool of that name among `tools`
 /// tell (`ToolMatcher::proposed`, issue 247); the calls exactly like it if
 /// none has that name.
-pub(crate) fn proposed_matcher(tools: &[Tool], name: &str, params: &Value) -> ToolMatcher {
+pub fn proposed_matcher(tools: &[Tool], name: &str, params: &Value) -> ToolMatcher {
     let call = ToolCall { id: None, function_name: name.to_string(), arguments: params.clone(), visibility: ToolVisibility::SHOWN, presentation: Default::default() };
     match tools.iter().find(|tool| tool.name == name) {
         Some(tool) => ToolMatcher::proposed(&call, &tool.parameters),
@@ -729,7 +744,6 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     echo_tool::register(registry);
     sleep_tool::register(registry);
     stop_tool::register(registry);
-    terminal_tool::register(registry);
 }
 
 #[cfg(test)]

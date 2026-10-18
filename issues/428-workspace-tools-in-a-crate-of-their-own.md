@@ -1,8 +1,7 @@
 # 428 — The tools of the workspace are part of the agents crate
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
-**Priority:** low
 **Area:** Code structure
 **Summary:** The `terminal_tool` and the `workspace_prompt_provider`, which give an agent the session's workspace, are part of the agents crate, while the tools of other subjects - artifacts, skills, MCP - are plugins.
 
@@ -76,3 +75,13 @@ rejected): this moves what an agent is given to work on them, not the workspaces
   a crate of its own, asked after issue [427](427-local-terminal-in-a-crate-of-its-own.md) was
   rejected - where moving it would not have helped. Decided with it: the workspace prompt part
   moves along.
+- **2026-10-18** — Done. `caelumora-workspace-tools` holds `terminal_tool` and
+  `workspace_prompt_provider` with their unit tests, the directory `terminal_tool/` dissolved:
+  the component in `terminal_tool.rs`, its file and shell tools in `files.rs` and `shell.rs` beside
+  it at the crate's root. `WorkspaceToolsPlugin` registers both in `Plugin::register`, and
+  `caelumora-app` and `caelumora-tui` list it. The five tests of the tool in the agents' security
+  suite are the crate's `tests/workspace_tools.rs`, in the suite's world with `TestAgents` and the
+  plugin. `proposed_matcher` is public. One thing the issue did not foresee: `impl
+  From<TerminalError> for ToolError` cannot live in the new crate (orphan rule) and stays in the
+  agents' `tool` module, beside `From<ViewError>` - both say how an error of the runtime is told to
+  a model. `caelumora-agents` no longer depends on `regex` nor on `bytes`.

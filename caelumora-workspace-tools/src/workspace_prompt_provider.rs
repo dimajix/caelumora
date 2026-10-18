@@ -19,10 +19,10 @@
 //! that cannot be reached leaves the files out, not the turn.
 
 use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
-use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
+use caelumora_agents::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
 use caelumora_runtime::terminal::{TerminalError, WorkspacePath};
 use caelumora_runtime::view::WorkspaceView;
-use crate::situation::Situation;
+use caelumora_agents::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use serde::Deserialize;
@@ -185,7 +185,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::workspace_turn;
+    use caelumora_agents::testing::workspace_turn;
     use caelumora_runtime::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::security::SecurityContext;

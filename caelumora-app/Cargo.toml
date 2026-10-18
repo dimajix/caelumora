@@ -20,6 +20,7 @@ caelumora-artifacts = { path = "../caelumora-artifacts" }
 caelumora-mcp = { path = "../caelumora-mcp" }
 caelumora-a2a = { path = "../caelumora-a2a" }
 caelumora-open-terminal = { path = "../caelumora-open-terminal" }
+caelumora-workspace-tools = { path = "../caelumora-workspace-tools" }
 caelumora-ollama = { path = "../caelumora-ollama" }
 caelumora-decision = { path = "../caelumora-decision" }
 axum = "0.8.9"

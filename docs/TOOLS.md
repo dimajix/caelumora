@@ -204,6 +204,12 @@ views on every call all the same, before anything is sent: a call where there is
 list does not grant, fails and says so. Which calls need approval is configured as for `mcp_tool`:
 all - the default -, none, or all but those that only read files.
 
+The kind lives in the plugin `caelumora-workspace-tools` (issue 428), with the prompt part that
+names its `read_file`, `workspace_prompt_provider`: the workspaces are the core's, what an agent is
+given to work on them is built on the terminal's public API and the agents' tools, as the tools of
+any other subject are. `caelumora-app` and `caelumora-tui` list the plugin, and a personality names
+the kinds as before.
+
 **Files.** The file tools work over the workspace's `Terminal`, whatever its storage, without a
 shell. A path is relative to the workspace's top; one that leaves the workspace is the model's to
 correct, as is a file that is not there or not text. Reading is bounded, and says where to read on.

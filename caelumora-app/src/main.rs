@@ -12,6 +12,7 @@ use caelumora_ollama::client::OLLAMA_CLIENT_KIND;
 use caelumora_ollama::plugin::OllamaPlugin;
 use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
+use caelumora_workspace_tools::plugin::WorkspaceToolsPlugin;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::{self, ApiError};
 use caelumora_rest_server::plugin::RestPlugin;
@@ -171,11 +172,11 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
     vec![Box::new(SkillsPlugin), Box::new(ArtifactsPlugin)]
 }
 
-/// The plugins of the program that bring no routes (issues 325, 327, 329),
-/// which only its runtime is built with - first the essential one, the
-/// agents' (issue 370).
+/// The plugins of the program that bring no routes (issues 325, 327, 329,
+/// 428), which only its runtime is built with - first the essential one,
+/// the agents' (issue 370).
 fn plugins() -> Vec<Box<dyn Plugin>> {
-    vec![Box::new(AgentsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin), Box::new(DecisionPlugin)]
+    vec![Box::new(AgentsPlugin), Box::new(OllamaPlugin), Box::new(McpPlugin), Box::new(A2aPlugin), Box::new(OpenTerminalPlugin), Box::new(WorkspaceToolsPlugin), Box::new(DecisionPlugin)]
 }
 
 /// Names the defaults of the facets of which an agent has one that the core

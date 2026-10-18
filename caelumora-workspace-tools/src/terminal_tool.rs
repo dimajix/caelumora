@@ -28,15 +28,12 @@
 //! that only read; `command_output`, `kill_command` and `publish_file`
 //! never ask.
 
-mod files;
-mod shell;
-
-use crate::turn::Turn;
-use crate::situation::Situation;
+use crate::{files, shell};
+use caelumora_agents::turn::Turn;
+use caelumora_agents::situation::Situation;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::workspace::{WorkspaceError, WorkspaceManager};
-use crate::tool::{proposed_matcher, usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_agents::tool::{proposed_matcher, usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::question::Answers;
@@ -61,15 +58,15 @@ fn default_output_bytes() -> usize {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TerminalToolConfig {
+pub(crate) struct TerminalToolConfig {
     /// How long a call follows a command at most, in seconds: 60 unless
     /// configured, never more than 300.
     #[serde(default = "default_wait_secs")]
-    max_wait_secs: u64,
+    pub(crate) max_wait_secs: u64,
     /// How much of a command's output, or of a file, one result holds at
     /// most. 64 KiB unless configured.
     #[serde(default = "default_output_bytes")]
-    max_output_bytes: usize,
+    pub(crate) max_output_bytes: usize,
     /// Which calls need approval - unless configured, all that may: a
     /// command may act anywhere its place reaches (issue 150).
     /// `"unless_read_only"` spares the tools that only read files.
@@ -77,11 +74,11 @@ struct TerminalToolConfig {
     /// already, and never do; nor does `publish_file`, which gives nothing
     /// away (issue 275).
     #[serde(default)]
-    requires_approval: ApprovalMode,
+    pub(crate) requires_approval: ApprovalMode,
     /// What the tool set is for, written for a model (issue 194); a text of
     /// its own unless configured.
     #[serde(default)]
-    description: Option<String>,
+    pub(crate) description: Option<String>,
 }
 
 #[derive(Debug)]
@@ -92,23 +89,8 @@ pub struct TerminalTool {
 }
 
 /// A tool of this component, as the model is offered it.
-fn tool(name: &str, description: String, parameters: ToolParameters, requires_approval: bool, presentation: ToolPresentation) -> Tool {
+pub(crate) fn tool(name: &str, description: String, parameters: ToolParameters, requires_approval: bool, presentation: ToolPresentation) -> Tool {
     Tool { name: name.to_string(), description, parameters, requires_approval, visibility: ToolVisibility::SHOWN, classification: None, presentation }
-}
-
-/// What a terminal reports, as the model is told it: what names something
-/// that is not there, or is not what the call needs, is the model's to
-/// correct; that the storage failed is not.
-impl From<TerminalError> for ToolError {
-    fn from(error: TerminalError) -> Self {
-        match error {
-            TerminalError::Unavailable(_) => ToolError::ExecutionFailed(error.to_string()),
-            TerminalError::InvalidPath(_) | TerminalError::NotFound(_) | TerminalError::Exists(_) | TerminalError::IsADirectory(_)
-            | TerminalError::NotADirectory(_) | TerminalError::NotEmpty(_) | TerminalError::TooLarge { .. } | TerminalError::UnknownCommand(_) => {
-                ToolError::InvalidParameter(error.to_string())
-            }
-        }
-    }
 }
 
 /// That the workspace could not be used as a call needs it, as the model is
@@ -216,9 +198,9 @@ pub fn register(registry: &mut ComponentRegistry) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use crate::testing::workspace_turn;
+    use caelumora_agents::testing::workspace_turn;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};
     use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::agent::AgentChannelState;
@@ -228,7 +210,7 @@ mod tests {
     use caelumora_model::type_map::TypeKey;
     use serde_json::json;
 
-    pub(super) fn tool(world: &WithWorkspace, params: Value) -> TerminalTool {
+    pub(crate) fn tool(world: &WithWorkspace, params: Value) -> TerminalTool {
         TerminalTool { config: serde_json::from_value(params).unwrap(), workspaces: Arc::clone(world.runtime.workspace_manager()) }
     }
 

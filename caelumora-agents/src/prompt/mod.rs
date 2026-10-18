@@ -13,7 +13,6 @@ pub mod external_context_provider;
 pub mod static_system_prompt_provider;
 pub mod tool_sets_prompt_provider;
 pub mod turn_context_provider;
-pub mod workspace_prompt_provider;
 
 use caelumora_runtime::component::{ComponentError, ComponentImpl, ComponentRegistry};
 use crate::situation::Situation;
@@ -233,7 +232,6 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     static_system_prompt_provider::register(registry);
     tool_sets_prompt_provider::register(registry);
     turn_context_provider::register(registry);
-    workspace_prompt_provider::register(registry);
 }
 
 #[cfg(test)]
