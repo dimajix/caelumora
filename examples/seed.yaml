@@ -202,6 +202,9 @@ personalities:
   - id: terminal-tool
     kind: terminal_tool
     fail_policy: FailClosed
+  - id: create-plan-tool
+    kind: create_plan_tool
+    fail_policy: FailClosed
 - id: c0bb5f0c-d731-4cf6-bef0-aabe69ea44d5
   name: team-reviewer
   description: Reviews changes for correctness, style and security
