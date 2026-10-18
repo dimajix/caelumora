@@ -393,8 +393,8 @@ mod tests {
     /// with what it was produced from (issue 417) -, resolved against
     /// `state`; `None` for a message it did not produce.
     pub(super) fn seen(state: &AgentChannelState, agent: AgentId, said: &Message) -> Option<Vec<ContextItem>> {
-        let (reference, turn) = (said.produced_from.as_ref()?, said.turn_id?);
-        Some(ContextResolver::of(state).resolve(reference, turn, ActorId::Agent(agent))?.items)
+        let reference = state.context_of(said)?;
+        Some(ContextResolver::of(state).resolve(&reference, said.turn_id?, ActorId::Agent(agent))?.items)
     }
 
     #[test]

@@ -414,7 +414,7 @@ impl ExternalAgentActor {
             }
         }
 
-        Ok(Ending::Answered(self.record(answer, work.label(), Some(work)).map(Box::new)))
+        Ok(Ending::Answered(self.record(state, answer, work.label(), Some(work)).map(Box::new)))
     }
 
     /// Records `task` as begun - or, asked back before, taken up again - by
@@ -537,7 +537,7 @@ impl ExternalAgentActor {
             // A task nobody asked for is work of its own.
             Err(reason) => vec![ActorEvent::TurnGivenUp { turn_id: work.as_ref().map_or_else(TurnId::new, |w| w.turn_id), reason: GivenUpReason::Failed { message: format!("{} could not finish: {reason}", self.name()) } }],
             // Nobody asked: it says nothing if it has nothing to say.
-            Ok(answer) => match self.record(answer, label, work.as_ref()) {
+            Ok(answer) => match self.record(state, answer, label, work.as_ref()) {
                 Some(message) => answered(work.as_ref().map(|w| w.turn_id), Some(message)),
                 None => Vec::new(),
             },
@@ -590,9 +590,14 @@ impl ExternalAgentActor {
     /// `classification`, as what came of `work`, if that is known: of its
     /// turn (issue 235), with what the remote agent was given in the call it
     /// came of (`Work::context`) as what it was produced from, for its
-    /// channel's history to hold (issue 417).
-    fn record(&self, answer: Answer, classification: Classification, work: Option<&Work>) -> Option<Message> {
-        let message = Message { produced_from: work.map(|w| w.context.clone()), ..self.message(Some(answer.finish()?), classification, work.map(|w| w.turn_id)) };
+    /// channel's history to hold (issue 417) - its frame kept once by digest
+    /// in `state` (issue 426).
+    fn record(&self, state: &mut AgentChannelState, answer: Answer, classification: Classification, work: Option<&Work>) -> Option<Message> {
+        let message = self.message(Some(answer.finish()?), classification, work.map(|w| w.turn_id));
+        let message = match work {
+            Some(work) => message.produced_from_context(work.context.transcript, state.keep_frame(&work.context.frame)),
+            None => message,
+        };
         trace!("External agent {} answers {:?}", self.id(), message.content);
         Some(message)
     }

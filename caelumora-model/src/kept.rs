@@ -1,8 +1,9 @@
-//! Values kept once by digest (issues 47, 137): the texts of an agent's
-//! prompt parts and the sets of tools its model was offered, which the
-//! `ContextRef`s in its history point to. Added to, and - like a chain -
-//! keeping what was added since it was last stored (issue 193), so that a
-//! store writes that, apart from the state's document (issue 383).
+//! Values kept once by digest (issues 47, 137, 426): the texts of an agent's
+//! prompt parts, the sets of tools its model was offered and the frames of
+//! its contexts, which the messages in its history point to. Added to,
+//! and - like a chain - keeping what was added since it was last stored
+//! (issue 193), so that a store writes that, apart from the state's
+//! document (issue 383).
 
 use crate::digest::Digest;
 use std::collections::BTreeMap;

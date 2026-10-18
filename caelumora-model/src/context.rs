@@ -2,14 +2,16 @@
 //! 47, 49, 63; see `docs/AGENT-TURN.md`).
 //!
 //! What is stored are facts: the agent's `Transcript`, and the text of every
-//! prompt part and every set of tools offered once by digest. What the model is given is not stored but
-//! resolved from them:
+//! prompt part, every set of tools offered and every frame once by digest.
+//! What the model is given is not stored but resolved from them:
 //!
 //! - A turn holds a [`ContextRef`] for its next message: the transcript so
-//!   far, the prompt parts placed in it, the tools offered, the knowledge
-//!   read and the rules of the agent's model ([`ModelProfile`]). Every
-//!   message it says goes into the transcript at once, and into the history
-//!   with the reference as it stood for that message (issue 260).
+//!   far and the frame around it ([`FrameRef`]) - the prompt parts placed
+//!   in it, the tools offered, the knowledge read and the rules of the
+//!   agent's model ([`ModelProfile`]). Every message it says goes into the
+//!   transcript at once, and into the history with the reference as it
+//!   stood for that message (issue 260): the digest of its transcript and
+//!   that of its frame, which is kept once (issue 426).
 //! - The [`ContextResolver`] resolves a reference against the transcript
 //!   and the prompt texts - for the next model call as for a message produced
 //!   earlier. What the model was given and what is told as given therefore
@@ -992,8 +994,8 @@ mod tests {
         // (issues 260, 417), resolves to what the model was given for it -
         // while the turn is under way and once it ended.
         let seen = |state: &AgentChannelState, message: &Message| {
-            let context = message.produced_from.as_ref().expect("sent with what it was produced from");
-            contents(&ContextResolver::of(state).resolve(context, turn_id, agent).expect("everything it names is here").items)
+            let context = state.context_of(message).expect("sent with what it was produced from");
+            contents(&ContextResolver::of(state).resolve(&context, turn_id, agent).expect("everything it names is here").items)
         };
         assert_eq!(seen(&state, &second), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
         assert_eq!(state.transcript.digest(), next.transcript, "the turn's context names the transcript's head");

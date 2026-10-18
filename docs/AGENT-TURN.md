@@ -349,11 +349,16 @@ transcript (see [STORAGE.md](STORAGE.md#prompt-texts-and-tool-sets)).
 
 ### What is recorded
 
-Every message a turn says is recorded in the history with the `ContextRef` it was produced from: the
-digest of the transcript before it, the prompt parts, the digest of the tools offered, the knowledge
-read (see [MEMORY.md](MEMORY.md)) and the model's profile. The turn's own messages are those
-carrying its id. The `ContextResolver` resolves such a reference into what the model saw, in the
-order it was given it.
+Every message a turn says is recorded in the history with what it was produced from, the turn's
+`ContextRef` as it stood: the digest of the transcript before it, and the frame around it
+(`FrameRef`) - the prompt parts, the digest of the tools offered, the knowledge read (see
+[MEMORY.md](MEMORY.md)), the model's profile and the time zone. The transcript moves on with every
+message, the frame only where the turn changes it - as it begins, with a step of a plan, with
+knowledge read -, so the frame is kept once by digest beside the prompt texts (see
+[STORAGE.md](STORAGE.md#prompt-texts-and-tool-sets)), and the message names both by their digests
+(`Message::context_transcript`, `Message::context_frame`, issue 426). The turn's own messages are
+those carrying its id. The `ContextResolver` resolves such a reference into what the model saw, in
+the order it was given it.
 
 ### Tools offered
 
@@ -618,10 +623,11 @@ What the model is given is not stored; it is resolved from what is (`caelumora_m
 
 *   **The turn's context** is the `ContextRef` of its next message: references only, the turn keeps
     no copy of the transcript.
-*   **What a turn says** goes into the transcript at once, and to the channel with the context it
-    was produced from (`Message::produced_from`), which its history records; the context moves on
-    to the transcript's new head (`AgentChannelState::said`). Nothing waits for the turn's end, a
-    turn given up included.
+*   **What a turn says** goes into the transcript at once, and to the channel with the digests of
+    the context it was produced from (`Message::produced_from`), which its history records - its
+    frame kept once by digest (`AgentChannelState::keep_frame`); the context moves on to the
+    transcript's new head (`AgentChannelState::said`). Nothing waits for the turn's end, a turn
+    given up included.
 *   **Prompt parts** are kept once per digest; their references go into the turn's context, where
     they count for the messages produced from then on.
 *   **Resolving** - the `ContextResolver` resolves a reference against the transcript, the prompt
@@ -644,10 +650,11 @@ given what it was produced from.
     agent's owner may, since a context holds more than the conversation: the system prompt, internal
     steps, tool results. It reads the agent's stored state, the same for both kinds of agent.
 *   `context_of(message_id)` resolves what the message was produced from, as the channel's history
-    records it with the message (`Message::produced_from`), read from the store as the agent,
-    against the path of the transcript it names, loaded from the store on whichever branch it
-    lies. For an external agent it is what its remote agent was given in the call that produced
-    it, without prompt parts or tools, which are the remote agent's own.
+    records it with the message (`Message::produced_from`), read from the store as the agent - its
+    frame read by digest (`TranscriptStore::context`) -, against the path of the transcript it
+    names, loaded from the store on whichever branch it lies. For an external agent it is what its
+    remote agent was given in the call that produced it, without prompt parts or tools, which are
+    the remote agent's own.
 *   `history_page(before, limit)` is a page of the channel's history as the agent saw it - what
     went to it, what it said in full, what it was given and when it compacted -, as the messages
     stand now, from where its view begins, read from the store as the agent (issue 417).

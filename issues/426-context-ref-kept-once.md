@@ -1,6 +1,6 @@
 # 426 — Every message a turn says is stored with its whole `ContextRef`
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Persistence
@@ -88,3 +88,12 @@ digests are fields of their own rather than a struct under `#[serde(flatten)]`, 
 every message through serde's buffer. `keep_window` need not hold the frame of the turn under way:
 the turn holds its context whole in `Work::context`. The split is done first, without a change of
 behaviour.
+
+2026-10-18: Done. `ContextRef` is `{ transcript, frame: FrameRef }`. A message names what it was
+produced from by `Message::context_transcript` and `Message::context_frame` (`produced_from`
+gives both); the frame is kept once by digest (`digest::frame`, `AgentChannelState::frames`,
+`keep_frame`) beside the prompt texts - `frame-<digest>.json` in `<agent>.given/` - and read
+through `TranscriptStore::frame` and `context`. The holder lets go of every frame once it is
+stored. An external agent keeps the frame of the call an answer came of as well, and stores its
+state before it sends the answer. Stored histories, and agent states with a turn under way, have
+to be deleted.

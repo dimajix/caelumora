@@ -1,6 +1,6 @@
 use crate::actor::ActorId;
 use crate::confidentiality::{Classification, Visibility};
-use crate::context::ContextRef;
+use crate::digest::Digest;
 use crate::store::query::FieldValue;
 use crate::tool::{ToolCall, ToolCallResult};
 use crate::work::TurnId;
@@ -119,15 +119,22 @@ pub struct Message {
     /// content says what was given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice_of: Option<MessageId>,
-    /// What the message was produced from (issues 06, 417): the context its
-    /// sender's model was given - or what an external agent's remote agent
-    /// was given in the call it came of. Set on what an agent sends, not on
-    /// what it keeps in its transcript, and recorded with the message in its
-    /// channel's history; only its owner sees it, so it is never published
-    /// (`published`). `None` for a message no turn produced. Not covered by
-    /// the digest.
+    /// What the message was produced from (issues 06, 417, 426), with
+    /// `context_frame`: the digest of the transcript its sender's model was
+    /// given - or what an external agent's remote agent was given in the
+    /// call it came of - before it, `None` if that was empty. Set on what an
+    /// agent sends, not on what it keeps in its transcript, and recorded
+    /// with the message in its channel's history; only its owner sees it,
+    /// so it is never published (`published`). Not covered by the digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub produced_from: Option<ContextRef>,
+    pub context_transcript: Option<Digest>,
+    /// The digest of the frame around `context_transcript` (`FrameRef`),
+    /// which its sender keeps once by digest (`TranscriptStore::frame`).
+    /// `None` for a message no turn produced: whether the message was
+    /// produced from a context at all (`produced_from`). Set and left out
+    /// with `context_transcript`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_frame: Option<Digest>,
 }
 
 // No `Default`: a message has no classification that would be right
@@ -156,7 +163,8 @@ impl Message {
             completion_tokens: None,
             prompt_duration: None,
             completion_duration: None,
-            produced_from: None,
+            context_transcript: None,
+            context_frame: None,
             total_duration: None,
             context_size: None,
             modified: None,
@@ -180,6 +188,19 @@ impl Message {
         estimated_tokens(bytes)
     }
 
+    /// The message as produced from the context whose transcript has the
+    /// digest `transcript` and whose frame has the digest `frame` (issue
+    /// 426): what an agent sends of what it said.
+    pub fn produced_from_context(self, transcript: Option<Digest>, frame: Digest) -> Message {
+        Message { context_transcript: transcript, context_frame: Some(frame), ..self }
+    }
+
+    /// What the message was produced from, if it was: the digest of the
+    /// transcript before it and that of the frame around it (issue 426).
+    pub fn produced_from(&self) -> Option<(Option<Digest>, Digest)> {
+        self.context_frame.map(|frame| (self.context_transcript, frame))
+    }
+
     /// The message as its sender publishes it to a channel (issues 54,
     /// 133): every part only its owner sees (`Visibility::Owner`) is
     /// withheld - a tool call or result whose call is the owner's is left
@@ -188,7 +209,7 @@ impl Message {
     /// questions - and such reasoning is dropped, and so is what it was
     /// produced from. `None` if nothing is left to show.
     pub fn published(&self) -> Option<Message> {
-        let mut message = Message { produced_from: None, ..self.clone() };
+        let mut message = Message { context_transcript: None, context_frame: None, ..self.clone() };
         if !message.reasoning_visibility.is_channel() {
             message.reasoning = None;
         }
@@ -222,7 +243,7 @@ impl Message {
         if self.tool_calls.is_empty() && self.tool_results.is_empty() {
             return None;
         }
-        let mut message = Message { content: None, reasoning: None, produced_from: None, classification: classification.clone(), ..self.clone() };
+        let mut message = Message { content: None, reasoning: None, context_transcript: None, context_frame: None, classification: classification.clone(), ..self.clone() };
         for call in &mut message.tool_calls {
             call.arguments = Value::Null;
         }

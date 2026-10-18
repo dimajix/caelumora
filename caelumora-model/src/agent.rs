@@ -328,18 +328,25 @@ pub struct AgentChannelState {
     /// only where the channel's confidentiality allows (issue 51).
     pub private_notes: NoteChain,
     /// The prompt parts the agent was given in this channel - the system
-    /// prompt, notes, ... - by digest, each kept once: what the `ContextRef`s
-    /// in the history point to (issues 06, 47). Written by the store apart
+    /// prompt, notes, ... - by digest, each kept once: what the `FrameRef`s
+    /// of its contexts point to (issues 06, 47). Written by the store apart
     /// from the document, before everything that names them, and read by
     /// digest (`TranscriptStore::prompts`, issue 383); a state loaded holds
     /// those its turn under way names.
     #[serde(skip)]
     pub prompts: Kept<String>,
     /// The tool sets the agent's model was offered in this channel, by
-    /// digest, each offer kept once: what the `ContextRef`s in the history
+    /// digest, each offer kept once: what the `FrameRef`s of its contexts
     /// point to (issues 137, 194). Kept as the prompt parts are.
     #[serde(skip)]
     pub offered_tools: Kept<Vec<ToolSet>>,
+    /// The frames of the contexts the agent's messages in this channel were
+    /// produced from (`FrameRef`), by digest, each kept once: what the
+    /// messages in the history point to beside their transcript (issue
+    /// 426). Kept as the prompt parts are, but held only until stored: the
+    /// turn under way holds its own whole (`Work::context`).
+    #[serde(skip)]
+    pub frames: Kept<FrameRef>,
     /// The turn under way, `None` between turns (issue 85). Stored with the
     /// rest, so that a turn cut off by a crash is resumed (issue 75).
     pub turn: Option<TurnState>,
@@ -382,7 +389,8 @@ impl AgentChannelState {
     /// the store (`TranscriptStore`); right after it began anew, nothing. Of
     /// the prompt texts and the tool sets those the turn under way names
     /// (issue 383): its calls read them, and between turns nothing does;
-    /// what an older message's context names is read from the store.
+    /// what an older message's context names is read from the store. Of the
+    /// frames none (issue 426): the turn under way holds its own.
     pub fn keep_window(&mut self) {
         let root = self.transcript.entries().next().map_or(self.transcript.end(), |node| node.seq);
         self.transcript.keep_from(root);
@@ -392,6 +400,7 @@ impl AgentChannelState {
         let offered = context.and_then(|context| context.frame.tools);
         self.prompts.keep_only(|digest| named.contains(digest));
         self.offered_tools.keep_only(|digest| offered == Some(*digest));
+        self.frames.keep_only(|_| false);
     }
 
     /// Makes a loaded state fit to run from (issue 75). A state stored
@@ -476,7 +485,8 @@ impl AgentChannelState {
     /// a step - its calls have their results -, what the turn was given
     /// while they ran follows it (`given`, issue 389). Returns the message
     /// as the agent sends it: with what it was produced from - the turn's
-    /// context as it stood - for its channel's history to hold (issue 417).
+    /// context as it stood, its frame kept once by digest (issue 426) - for
+    /// its channel's history to hold (issue 417).
     /// Between turns, which says nothing, it is recorded as heard would be,
     /// without a context.
     pub fn said(&mut self, mut message: Message) -> Message {
@@ -499,7 +509,8 @@ impl AgentChannelState {
                 self.given(given, knowledge);
             }
         }
-        Message { produced_from: Some(context), ..message }
+        let frame = self.keep_frame(&context.frame);
+        message.produced_from_context(context.transcript, frame)
     }
 
     /// Records `message`, given to the agent to read in the turn under way
@@ -704,13 +715,33 @@ impl AgentChannelState {
 
     /// Keeps the tool sets the agent's model is offered once by digest
     /// (issues 137, 194), and returns the digest that names the offer:
-    /// what a `ContextRef` records; `None` for no sets, an offer of nothing.
+    /// what a `FrameRef` records; `None` for no sets, an offer of nothing.
     pub fn keep_offer(&mut self, tool_sets: Vec<ToolSet>) -> Option<Digest> {
         (!tool_sets.is_empty()).then(|| {
             let digest = digest::tool_sets(&tool_sets);
             self.offered_tools.keep(digest, || tool_sets);
             digest
         })
+    }
+
+    /// Keeps the frame of a context a message was produced from once by
+    /// digest (issue 426), and returns the digest that names it: what the
+    /// message records beside the digest of its transcript.
+    pub fn keep_frame(&mut self, frame: &FrameRef) -> Digest {
+        let digest = digest::frame(frame);
+        self.frames.keep(digest, || frame.clone());
+        digest
+    }
+
+    /// The context `message`, said by the agent, was produced from, as the
+    /// state holds it (issue 426): its frame read from what is held. For a
+    /// test that resolves what its turns said in memory; `None` if the
+    /// message was not produced from a context, or its frame is stored and
+    /// let go (`keep_window`).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn context_of(&self, message: &Message) -> Option<ContextRef> {
+        let (transcript, frame) = message.produced_from()?;
+        Some(ContextRef { transcript, frame: self.frames.get(&frame)?.clone() })
     }
 
     /// Begins a turn (issue 85): fixes what it is - the envelope it answers,
@@ -1177,9 +1208,10 @@ pub(crate) mod tests {
         let sent = state.said(answer.clone());
         assert_eq!(produced_from.transcript, state.transcript.entries().nth(1).map(|n| n.digest), "said after the step, from the transcript with it");
         assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "the context moved on to the head");
-        assert_eq!((sent.turn_id, sent.produced_from.as_ref()), (Some(turn_id), Some(&produced_from)), "sent as the turn's, with what it was produced from (issue 417)");
-        assert!(step.produced_from.is_some(), "a step too");
-        assert!(state.transcript.messages().iter().all(|m| m.produced_from.is_none()), "kept without it: the transcript is what the model is given");
+        assert_eq!((sent.turn_id, state.context_of(&sent)), (Some(turn_id), Some(produced_from)), "sent as the turn's, with what it was produced from (issue 417)");
+        assert!(step.produced_from().is_some(), "a step too");
+        assert_eq!(state.frames.len(), 1, "the frame they share kept once (issue 426)");
+        assert!(state.transcript.messages().iter().all(|m| m.produced_from().is_none()), "kept without it: the transcript is what the model is given");
         assert_eq!(state.turn.as_ref().unwrap().answer.iter().map(|m| m.content.clone().unwrap_or_default()).collect::<Vec<_>>(), ["3"], "its answer, without the step");
         let note = NoteChange::Add { id: NoteId(1), text: "sums".to_string(), classification: Classification::CHANNEL_DEFAULT };
 
@@ -1209,7 +1241,7 @@ pub(crate) mod tests {
         assert_eq!(work.context.frame.knowledge, [knowledge], "the knowledge recorded with the turn");
         assert_eq!(work.label(), Classification::CHANNEL_DEFAULT, "which has seen it");
         assert_eq!(state.turn.as_ref().unwrap().work.context.transcript, state.transcript.digest(), "what the turn says next is produced from it");
-        assert!(matches!(state.take_told().as_slice(), [ActorEvent::MessageGiven { message }] if message.id == skill.id && message.produced_from.is_none()), "its channel is to be told, as what it was given (issue 417)");
+        assert!(matches!(state.take_told().as_slice(), [ActorEvent::MessageGiven { message }] if message.id == skill.id && message.produced_from().is_none()), "its channel is to be told, as what it was given (issue 417)");
         assert!(state.take_told().is_empty(), "once");
     }
 
@@ -1253,7 +1285,8 @@ pub(crate) mod tests {
         let first = state.turn.take().unwrap().work.turn_id;
         state.finish_turn(first, Vec::new(), Vec::new());
         let answered = state.transcript.entries().find(|n| n.entry.message().is_some_and(|m| m.id == answer.id)).unwrap().digest;
-        let (recorded, turn) = (sent.produced_from.expect("sent with the answer"), first);
+        let recorded = state.context_of(&sent).expect("sent with the answer");
+        let turn = first;
         let resolve = |state: &AgentChannelState| ContextResolver::of(state).resolve(&recorded, turn, agent).map(|r| r.items.len());
         let before = resolve(&state);
         let (again, gone) = (said("again", Classification::PUBLIC), said("gone", Classification::PUBLIC));
@@ -1496,14 +1529,17 @@ pub(crate) mod tests {
         let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
         state.turn.as_mut().unwrap().work.context.frame.prompts.push(system.clone());
         let offer = state.turn.as_ref().unwrap().work.context.frame.tools.expect("an offer");
+        let frame = state.keep_frame(&state.turn.as_ref().unwrap().work.context.frame.clone());
         state.keep_window();
-        assert_eq!((state.prompts.len(), state.offered_tools.len()), (2, 1), "nothing goes before it is stored");
+        assert_eq!((state.prompts.len(), state.offered_tools.len(), state.frames.len()), (2, 1, 1), "nothing goes before it is stored");
 
         state.prompts.mark_stored();
         state.offered_tools.mark_stored();
+        state.frames.mark_stored();
         state.keep_window();
         assert!(state.prompts.get(&earlier.text).is_none(), "what no turn under way names is the store's");
         assert!(state.prompts.get(&system.text).is_some() && state.offered_tools.get(&offer).is_some(), "what it names stays");
+        assert!(state.frames.get(&frame).is_none(), "a frame is the store's at once: the turn holds its own (issue 426)");
 
         state.turn = None;
         state.keep_window();

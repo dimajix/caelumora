@@ -6,7 +6,7 @@
 
 use super::{fold, History, HistoryEntry};
 use crate::chain::Position;
-use crate::context::ContextRef;
+use crate::digest::Digest;
 use crate::message::{Message, MessageId};
 use crate::work::TurnId;
 use std::collections::HashMap;
@@ -35,7 +35,7 @@ pub fn messages_of(history: &History) -> Vec<Message> {
 /// What `history` recorded the message `id` - on whichever branch - was
 /// produced from, and in which turn (`HistoryEntry::context`); `None` if its
 /// holder did not produce it.
-pub fn recorded_context(history: &History, id: MessageId) -> Option<(ContextRef, TurnId)> {
+pub fn recorded_context(history: &History, id: MessageId) -> Option<(Option<Digest>, Digest, TurnId)> {
     let said = history.all_entries().rev().find(|node| node.entry.entry.said().is_some_and(|message| message.id == id))?;
-    said.entry.entry.context().map(|(context, turn)| (context.clone(), turn))
+    said.entry.entry.context()
 }

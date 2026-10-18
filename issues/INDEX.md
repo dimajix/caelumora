@@ -47,7 +47,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [387](387-agent-history-window-without-compaction.md) | done | An agent that never compacts its context - every external agent - holds its whole history in a channel in memory, since the window of its history begins at its last compaction. |
 | [416](416-messages-stored-once-per-holder.md) | rejected | Every history and transcript stores each message it holds in full, so one message said in a channel lies in the store once for the channel and twice for every agent in it, and every change of it as often again. |
 | [421](421-history-filter-as-data.md) | done | `HistoryStore::page` takes `Keep`, a Rust closure, for what a viewer may read and what a search looks for; a database cannot turn it into a `WHERE`, so it has to become data. |
-| [426](426-context-ref-kept-once.md) | in progress | Every message a turn says is stored in its channel's history with the whole `ContextRef` it was produced from - a digest per prompt part, the knowledge read, the model profile - repeated nearly unchanged from message to message, often larger than the message itself. |
+| [426](426-context-ref-kept-once.md) | done | Every message a turn says is stored in its channel's history with the whole `ContextRef` it was produced from - a digest per prompt part, the knowledge read, the model profile - repeated nearly unchanged from message to message, often larger than the message itself. |
 
 ## Sessions and channels
 

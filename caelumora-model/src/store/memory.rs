@@ -2,6 +2,7 @@ use crate::actor::ActorId;
 use crate::agent::{AgentChannelState, AgentId, AgentState};
 use crate::chain::{Node, Position};
 use crate::channel::{ChannelId, ChannelState};
+use crate::context::FrameRef;
 use crate::user::{UserChannelState, UserId};
 use crate::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use crate::digest::Digest;
@@ -50,12 +51,13 @@ pub struct MemoryStore {
     given: RwLock<HashMap<(AgentId, ChannelId), KeptGiven>>,
 }
 
-/// The prompt texts and the tool sets an agent's model was given in a
-/// channel, as the memory store keeps them: every one, each once.
+/// The prompt texts, the tool sets and the frames an agent's model was
+/// given in a channel, as the memory store keeps them: every one, each once.
 #[derive(Debug, Default)]
 struct KeptGiven {
     prompts: BTreeMap<Digest, String>,
     offered_tools: BTreeMap<Digest, Vec<ToolSet>>,
+    frames: BTreeMap<Digest, FrameRef>,
 }
 
 /// A history as the memory store keeps it: its chain whole, and the items
@@ -140,8 +142,9 @@ impl MemoryStore {
         Ok(())
     }
 
-    /// Keeps the prompt texts and the tool sets `state`, that of `agent` in
-    /// `channel`, kept since they were last stored, and marks them stored.
+    /// Keeps the prompt texts, the tool sets and the frames `state`, that of
+    /// `agent` in `channel`, kept since they were last stored, and marks them
+    /// stored.
     fn append_given(&self, agent: AgentId, channel: ChannelId, state: &mut AgentChannelState) {
         write_lock(&self.given, |all| {
             let kept = all.entry((agent, channel)).or_default();
@@ -151,9 +154,13 @@ impl MemoryStore {
             for (digest, sets) in state.offered_tools.changes() {
                 kept.offered_tools.entry(digest).or_insert(sets);
             }
+            for (digest, frame) in state.frames.changes() {
+                kept.frames.entry(digest).or_insert(frame);
+            }
         });
         state.prompts.mark_stored();
         state.offered_tools.mark_stored();
+        state.frames.mark_stored();
     }
 
     /// The transcript of `agent` in `channel` from the position `from` on,
@@ -175,16 +182,18 @@ impl MemoryStore {
     }
 
     /// `state`'s document - what is stored of it but its transcript, its
-    /// prompt texts and its tool sets - as a copy without them, which are
-    /// kept apart.
+    /// prompt texts, its tool sets and its frames - as a copy without them,
+    /// which are kept apart.
     fn agent_document(state: &mut AgentChannelState) -> AgentChannelState {
         let transcript = std::mem::take(&mut state.transcript);
         let prompts = std::mem::take(&mut state.prompts);
         let offered_tools = std::mem::take(&mut state.offered_tools);
+        let frames = std::mem::take(&mut state.frames);
         let document = state.clone();
         state.transcript = transcript;
         state.prompts = prompts;
         state.offered_tools = offered_tools;
+        state.frames = frames;
         document
     }
 
@@ -551,6 +560,10 @@ impl TranscriptStore for MemoryStore {
 
     async fn offered_tools(&self, agent: AgentId, channel: ChannelId, digest: Digest) -> StoreResult<Option<Vec<ToolSet>>> {
         Ok(read_lock(&self.given, |all| all.get(&(agent, channel)).and_then(|kept| kept.offered_tools.get(&digest).cloned())))
+    }
+
+    async fn frame(&self, agent: AgentId, channel: ChannelId, digest: Digest) -> StoreResult<Option<FrameRef>> {
+        Ok(read_lock(&self.given, |all| all.get(&(agent, channel)).and_then(|kept| kept.frames.get(&digest).cloned())))
     }
 }
 

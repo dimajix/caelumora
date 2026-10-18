@@ -108,10 +108,11 @@ impl AgentContextView {
     /// messages the remote agent was given in the call that produced it,
     /// and nothing else: it keeps what it was given before itself, and its
     /// prompts and tools are its own (issue 205). What it was produced from
-    /// is read from the message's item in the agent's history, the path of
-    /// the transcript it names from the store, on whichever branch it lies
-    /// (issue 380), and the prompt texts and the tool sets it names from the
-    /// store too (issue 383).
+    /// is read from the message's item in the agent's history, the frame it
+    /// names from the store (issue 426), the path of the transcript it names
+    /// from the store, on whichever branch it lies (issue 380), and the
+    /// prompt texts and the tool sets it names from the store too (issue
+    /// 383).
     ///
     /// # Errors
     /// `NotRecorded` if the agent did not produce the message, or what it
@@ -120,15 +121,16 @@ impl AgentContextView {
     /// be read.
     pub async fn context_of(&self, message: MessageId) -> Result<ResolvedContext, AgentContextError> {
         let said = self.histories.said(self.channel, &self.reading_as(), message).await.map_err(|source| self.failed(message, source))?;
-        let (reference, turn) = said.as_ref().and_then(|(_, item)| item.context())
+        let (transcript, frame, turn) = said.as_ref().and_then(|(_, item)| item.context())
             .ok_or(AgentContextError::NotRecorded { actor: self.actor(), message })?;
         let unavailable = || AgentContextError::Unavailable { actor: self.actor(), message };
+        let reference = self.transcripts.context(self.agent, self.channel, transcript, frame).await.map_err(|source| self.failed(message, source))?.ok_or_else(unavailable)?;
         let path = match reference.transcript {
             Some(digest) => self.transcripts.path(self.agent, self.channel, digest).await.map_err(|source| self.failed(message, source))?.ok_or_else(unavailable)?,
             None => Vec::new(),
         };
-        let (prompts, offered_tools) = self.transcripts.named_by(self.agent, self.channel, reference).await.map_err(|source| self.failed(message, source))?;
-        ContextResolver::on_path(&path, &prompts, &offered_tools).resolve(reference, turn, self.actor()).ok_or_else(unavailable)
+        let (prompts, offered_tools) = self.transcripts.named_by(self.agent, self.channel, &reference).await.map_err(|source| self.failed(message, source))?;
+        ContextResolver::on_path(&path, &prompts, &offered_tools).resolve(&reference, turn, self.actor()).ok_or_else(unavailable)
     }
 
     /// The classification of the message `message` the agent produced, as
@@ -196,8 +198,8 @@ pub enum AgentContextError {
 mod tests {
     use super::*;
     use caelumora_model::agent::AgentId;
-    use caelumora_model::context::{ContextItem, ContextRef, FrameRef, PromptRef};
-    use caelumora_model::digest::prompt;
+    use caelumora_model::context::{ContextItem, FrameRef, PromptRef};
+    use caelumora_model::digest::{self, prompt};
     use caelumora_model::history::HistoryEntry;
     use caelumora_model::message::Message;
     use caelumora_model::message::MessageRole;
@@ -244,7 +246,7 @@ mod tests {
         history.push(question.clone());
         let answer = produced("answer");
         let before = state.transcript.push(answer.clone());
-        history.push(Message { produced_from: Some(ContextRef { transcript: before, ..ContextRef::default() }), ..answer.clone() });
+        history.push(answer.clone().produced_from_context(before, state.keep_frame(&FrameRef::default())));
         let view = AgentContextView::of_state(actor, state.clone(), history.clone()).await;
 
         let seen = view.context_of(answer.id).await.expect("the agent produced it");
@@ -280,16 +282,20 @@ mod tests {
         let system = PromptRef { text: prompt("system"), role: MessageRole::System, after: None, classification: Some(confidential.clone()) };
         state.prompts.keep(system.text, || "system".to_string());
         let told = produced("told");
-        history.push(Message { produced_from: Some(ContextRef { transcript: before, frame: FrameRef { prompts: vec![system], ..FrameRef::default() } }), ..told.clone() });
+        history.push(told.clone().produced_from_context(before, state.keep_frame(&FrameRef { prompts: vec![system], ..FrameRef::default() })));
         let seen = AgentContextView::of_state(actor, state.clone(), history.clone()).await.context_of(told.id).await.expect("resolved");
         assert!(matches!(&seen.items[0], ContextItem::Prompt { classification: Some(c), .. } if *c == confidential));
 
         // A reference to a prompt that was never kept cannot be resolved.
         let lost = produced("lost");
         let gone = PromptRef { text: prompt("gone"), role: MessageRole::System, after: None, classification: None };
-        history.push(Message { produced_from: Some(ContextRef { transcript: before, frame: FrameRef { prompts: vec![gone], ..FrameRef::default() } }), ..lost.clone() });
+        history.push(lost.clone().produced_from_context(before, state.keep_frame(&FrameRef { prompts: vec![gone], ..FrameRef::default() })));
+        // Nor one whose frame was never kept (issue 426).
+        let unframed = produced("unframed");
+        history.push(unframed.clone().produced_from_context(before, digest::frame(&FrameRef { tools: Some(prompt("never offered")), ..FrameRef::default() })));
         let view = AgentContextView::of_state(actor, state, history).await;
         assert!(matches!(view.context_of(lost.id).await, Err(AgentContextError::Unavailable { .. })));
+        assert!(matches!(view.context_of(unframed.id).await, Err(AgentContextError::Unavailable { .. })));
     }
 
     #[tokio::test]
@@ -307,7 +313,7 @@ mod tests {
         history.history.push(question.clone());
         let answer = Message { turn_id: Some(TurnId::new()), sender_id: ActorId::Agent(agent), ..text("answer") };
         let before = state.transcript.push(answer.clone());
-        history.history.push(Message { produced_from: Some(ContextRef { transcript: before, ..ContextRef::default() }), ..answer.clone() });
+        history.history.push(answer.clone().produced_from_context(before, state.keep_frame(&FrameRef::default())));
         // A branch begun anew, which the state holds alone.
         state.transcript_from = state.transcript.end();
         state.transcript.start_anew();

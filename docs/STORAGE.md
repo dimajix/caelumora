@@ -336,8 +336,13 @@ history is (issue 380), with what differs:
 
 The texts of the prompt parts an agent's model was given and the tool sets it was offered are kept
 once by digest (`Kept`), and named by digest from every `ContextRef`. A system prompt changes with
-every note and every participant, so a new text is kept nearly every turn. They are kept apart from
-the agent's state document as the transcript is (issue 383):
+every note and every participant, so a new text is kept nearly every turn. Beside them the frames of
+the contexts its messages were produced from (`FrameRef`, issue 426): what a message was given
+around its transcript - references to the prompt parts, the tools and the knowledge read, the
+profile -, which stays the same over most of a turn, while the transcript moves on with every
+message. A message in the history names its frame by digest, beside the digest of its transcript,
+so that what its context repeats is written once and not with every message. They are kept apart
+from the agent's state document as the transcript is (issue 383):
 
 *   **Written first.** The put of the agent's state writes the texts and sets kept since it was last
     stored before the history, the transcript and the document, so that nothing stored names a text
@@ -346,15 +351,16 @@ the agent's state document as the transcript is (issue 383):
     written as the same: a digest there already is not written again. A text nothing names any
     more, that of a turn cut off before it said anything, stays.
 *   **Read by digest, through the `TranscriptStore`**: the texts of some digests, the sets of an
-    offer, and both for a `ContextRef` (`named_by`) - what the context of an older message is
-    resolved with.
+    offer, a frame, a message's context with its frame (`context`), and the texts and sets of a
+    `ContextRef` (`named_by`) - what the context of an older message is resolved with.
 *   **The holder keeps what its turn under way names**, and lets go of the rest after every put
     (`keep_window`); between turns it holds none, and a state loaded holds those its turn names, so
-    that a turn cut off by a crash is resumed with them.
+    that a turn cut off by a crash is resumed with them. A frame it lets go of at once: the turn
+    under way holds its own whole, in its context.
 *   **The `JsonFileStore`** keeps them in `<agent>.given/` beside the agent's snapshot, one file per
-    digest (`prompt-<digest>.json`, `tools-<digest>.json`), and looks for the file before it writes
-    one. In Postgres each is a table keyed by agent, channel and digest, written with
-    `ON CONFLICT DO NOTHING`.
+    digest (`prompt-<digest>.json`, `tools-<digest>.json`, `frame-<digest>.json`), and looks for
+    the file before it writes one. In Postgres each is a table keyed by agent, channel and digest,
+    written with `ON CONFLICT DO NOTHING`.
 
 ### The agent state has one owner per process
 
