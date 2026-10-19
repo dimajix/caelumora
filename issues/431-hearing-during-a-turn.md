@@ -62,6 +62,42 @@ what it takes there.
 
 ## Considerations
 
+### Whether it is worth it
+
+Asked by the maintainer whether this is a good idea at all. In short: yes, but not switched on
+everywhere alike - what it is worth depends on the channel.
+
+For it:
+
+- Agents that work for a long time are steered this way elsewhere too - Claude Code, for one, puts
+  what is typed while it works between its tool rounds rather than waiting for the end. Steering
+  without cancelling is among the most useful things an agent at work can offer.
+- The alternative today is `cancel`, which throws the turn's work away, or a turn that finishes
+  what has been overtaken - with tool calls that have had their effect.
+- It is cheap and fits: the model takes in during a turn already (*What already fits*), nothing
+  stored changes, and it can be taken out again as easily.
+
+Against it, to be taken seriously:
+
+1. **The model loses its thread.** Models given a new message in the middle of their work tend to
+   answer it at once instead of going on, lose their plan, or take a remark for an instruction.
+   Small local models (gemma) do so more readily than large ones.
+2. **In a busy channel it hurts.** One user and one agent working through tools gain the most. In a
+   channel of several agents, which share the initiator and so pass the barrier of authority below,
+   the finished answer of agent B lands in the middle of agent A's turn, and A works on a
+   conversation that moves under it - the quiz of [222](222-queued-requests-answered-one-by-one.md),
+   now within the turn instead of after it.
+3. **A question may go unanswered.** Dropping a request taken in during a turn, because the next
+   call sees its message, assumes that seeing is answering. A model that works through its plan
+   regardless leaves the question unanswered, and no second answer follows - today a question is
+   answered for certain, if late (see *A request taken in during a turn*).
+4. **A turn is no longer one unit.** It answers not one situation but one that changes while it
+   works, which makes it harder to tell afterwards why an agent did what it did.
+
+Hence the narrower form below: a setting of the personality that is off unless named
+(*Whose messages a turn hears between its steps*), the model told what was said while it worked
+(*Telling the model*), and the request handled so that it is answered.
+
 ### Where in the turn
 
 - **A - before every model call (recommended).** At the start of `Planning`, once the turn may
@@ -102,15 +138,61 @@ changes. Taking past a barrier would need each of those rules to be re-examined 
 the barriers are rare (a command, an edit, an answer asked for again), and after one the agent is
 simply as deaf as today until its turn ends.
 
+### Whose messages a turn hears between its steps
+
+A setting of the personality, beside `reasoning_visibility`, as the maintainer proposed: which
+messages its agents take in between the steps of a turn.
+
+- **`none`** - nothing; the agent hears what was said when its turn has ended, as today. The
+  default, unless named.
+- **`users`** - the messages of people. What the issue is about - a person steering an agent at
+  work - without agents talking into each other's turns (point 2 above).
+- **`all`** - the messages of people and of other agents, for whoever wants agents to talk into
+  each other's work.
+
+Joins and leaves are noted whatever the setting but `none`. The barriers of kind, of authority and
+of classification (below) hold in every setting: `all` widens whose words are heard, never whose
+authority a turn acts with. Whether a message is a person's is told by its sender
+(`ActorId::User`); an external agent counts as an agent.
+
+The name of the setting is open; `hears_during_turn: none | users | all` would follow how the
+others are named. It is stored with the personality, edited where the others are (the REST routes
+of personalities and their types in `caelumora-rest-api`, the web UI if it edits them), and needs
+no compatibility code: a personality stored without it reads as `none`, as one without
+`reasoning_visibility` reads as `channel`.
+
+### Telling the model
+
+What was said while the agent worked is to be recognisable as such. The time of a message of
+someone else is given already ([424](424-time-in-the-prompt.md)); clearer is a prompt part placed
+after what was heard (`Turn::place_turn_prompt`, as the steps of a plan are), saying that this was
+said while the agent worked, that it is to be taken into account in the next steps, and that a
+question in it is to be answered in its answer. A prompt part, not a message: it goes into the
+context, not into the transcript or the channel. Its text belongs to the model's profile if
+models need it said differently.
+
 ### A request taken in during a turn
 
 The moderator sends the request to respond right after the message that asks for it
-(`PolicyModerator`). If the message is heard between two steps, the call that follows already
-answers it; a turn begun afterwards on the request would answer it a second time, on a
-conversation it has heard all of - [222](222-queued-requests-answered-one-by-one.md) in small. So a
-request taken in during a turn is dropped: the turn answers it. Since A takes in right before a
-call, a call does follow - unless the turn is cancelled or given up during it, and then the request
-was no more answered than the one the turn began with.
+(`PolicyModerator`). If the message is heard between two steps, the call that follows already sees
+it; a turn begun afterwards on the request would answer a conversation it has heard all of -
+[222](222-queued-requests-answered-one-by-one.md) in small. But seeing is not answering (point 3
+above).
+
+- **(a) Dropped, the turn answers it.** No second answer; relies on the model to answer the
+  question in its final answer, which the prompt part above asks of it. Since A takes in right
+  before a call, a call does follow - unless the turn is cancelled or given up during it, and then
+  the request was no more answered than the one the turn began with.
+- **(b) Kept until the turn ends.** One turn follows on it, as on a request queued today; it is
+  given the conversation with the agent's own answer, and the agent judges whether anything is
+  left to say. Certain, but it costs a model call per turn that heard a question, and whether an
+  agent can deliberately say nothing would have to be settled first.
+- **(c) Answered only by the final answer.** The request counts as answered if its message came
+  before the call that produced the final answer. With A that is almost always so; it does not
+  touch whether the answer addresses the question, and is (a) by another name.
+
+Recommended: (a) with the prompt part, and (b) if it turns out in use that questions go
+unanswered.
 
 ### Whose words a turn hears
 
@@ -180,6 +262,14 @@ give without a round trip: the event is not taken out of the inbox at all. `Even
 event stays where it is - the counterpart of `try_recv` with a barrier. Recommended instead of
 sending to itself.
 
+Its name follows Rust's usage, and is deliberately not that of `recv_matching`. `try_` is the
+variant that does not wait (`mpsc::Receiver::try_recv`, `Mutex::try_lock`); `_if` takes the *first*
+element only if it fulfils the predicate and otherwise leaves it (`Peekable::next_if`,
+`Vec::pop_if`, `Option::take_if`) - the barrier. `recv_matching` waits for the first event that
+matches *wherever* it is, and puts aside what it passes over: a search, as `find` or `extract_if`
+are, which an `_if` would misname. The two stay apart, and the doc comments of `EventReceiver` say
+why.
+
 ### The external agent
 
 An external agent's work is one exchange with its remote agent (`ExternalAgentActor`); what it
@@ -206,37 +296,54 @@ its `take_in` between exchanges stays as it is.
 3. Changes to messages: barriers at first (recommended), or taken in from the start?
 4. Sending to itself replaced by `EventReceiver::try_recv_if` - leaving in the inbox what waits
    (recommended)?
+5. The setting of the personality: `none | users | all`, `none` unless named (proposed by the
+   maintainer); its name.
+6. A request taken in during a turn: (a) dropped, with the prompt part asking for an answer
+   (recommended), or (b) kept for a turn afterwards?
 
 ## Estimate
 
-With the recommendations, five steps, each reviewable alone; about the size of 222. No change to
-the model's stored data, no change to the moderator or the channel.
+With the recommendations, six steps, each reviewable alone; somewhat larger than 222. No change to
+the moderator or the channel; the personality gains a field, which reads as `none` where it is
+missing, so nothing stored has to be deleted.
 
-1. **`EventReceiver::try_recv_if`** (`caelumora-runtime/src/transport`), `InMemoryEventReceiver`
+1. **The setting** (`caelumora-model/src/agent.rs`): the field of `Personality` and its type, the
+   REST routes and API types of personalities, and the web UI if it edits them; the store suite
+   round-trips it. Small, no change of behaviour.
+2. **`EventReceiver::try_recv_if`** (`caelumora-runtime/src/transport`), `InMemoryEventReceiver`
    and its tests - small, no change of behaviour.
-2. **Taking in during a turn** (`actor/intake.rs`): the per-event part of `take_in` shared, and a
-   second entry that takes the prefix of the queue up to the first barrier - by kind, by
-   initiator, by classification - perceives and notes as `take_in` does, and drops the requests.
+3. **Taking in during a turn** (`actor/intake.rs`): the per-event part of `take_in` shared, and a
+   second entry that takes the prefix of the queue up to the first barrier - by kind, by the
+   setting, by initiator, by classification - perceives and notes as `take_in` does, and drops
+   the requests.
    Unit tests next to those of `take_in`. Small to medium; the care is in the barrier predicate.
-3. **The actor** (`actor/agent.rs`): `handle_planning` takes in after `may_call_model` and before
-   `compaction_due`; the run loop commits after it stored the step. Small.
-4. **Tests.** In `channel_tests` with a scripted model: a message said while a tool runs is in the
-   context of the next call, and no second turn follows its request; a message of another user is
+4. **The actor** (`actor/agent.rs`): `handle_planning` takes in after `may_call_model` and before
+   `compaction_due`, and places the prompt part after what it heard (*Telling the model*); the run
+   loop commits after it stored the step. Small.
+5. **Tests.** In `channel_tests` with a scripted model: a message said while a tool runs is in the
+   context of the next call, with the prompt part after it, and no second turn follows its
+   request; with `none` it is heard only after the turn; with `users` a message of another agent
+   waits, with `all` it is heard; a message of another user is
    not, and is answered in a turn of its own afterwards; a command during a turn is carried out
    after it, and the message behind it heard after it; a message above the turn's classification
    waits. In the agents' security suite: a turn does not hear, between its steps, the words of
    another initiator. Medium - the largest part.
-5. **Documents.** AGENT-TURN.md, *In a turn* (`Planning` takes in what was said) and *Between
-   turns*; CHANNELS.md where the inbox is described; the doc comments of `Transcript::modify` and
-   `AgentChannelState::perceive`. Small.
+6. **Documents.** AGENT-TURN.md, *In a turn* (`Planning` takes in what was said) and *Between
+   turns*; the setting where personalities are described; CHANNELS.md where the inbox is
+   described; the doc comments of `Transcript::modify` and `AgentChannelState::perceive`. Small.
 
-Risk: low to medium. The model side exists; what is new is a decision in the actor, and its
-security rule has to be right - hence the barrier rather than a rule that reorders.
+Risk in the code: low to medium. The model side exists; what is new is a decision in the actor,
+and its security rule has to be right - hence the barrier rather than a rule that reorders. Risk
+in use: how well models keep their thread when they are spoken to at work (points 1 and 3 of
+*Whether it is worth it*) is only learnt by trying it - with the setting off unless named, that
+is tried personality by personality, with a small local model among them.
 
 ## Done when
 
-- An agent in a turn of several steps takes into account, from its next model call on, what
-  others it may hear said in the meantime; it does not answer it again afterwards.
+- An agent whose personality says so takes into account, in a turn of several steps, from its
+  next model call on, what others it may hear - people, or people and agents - said in the
+  meantime, told by a prompt part that it was said while it worked; it does not answer it again
+  afterwards. Without the setting, it hears it after the turn, as today.
 - What it may not take in during a turn - by kind, by authority, by classification - is taken in
   after the turn as today, in order.
 - Tests show both, the security suite the rule of whose words a turn hears.
@@ -252,3 +359,9 @@ security rule has to be right - hence the barrier rather than a rule that reorde
   queue up to the first event that has to wait; requests absorbed; the words of another initiator
   and messages above the turn's classification waiting for the turn's end; leaving events in the
   inbox (`try_recv_if`) rather than sending them to itself. Decisions open (above).
+- **2026-10-19** — Asked by the maintainer whether it is a good idea at all: yes, but not for every
+  channel alike (*Whether it is worth it*) - a model spoken to at work may lose its thread, agents
+  talk into each other's turns in a busy channel, and a question absorbed may go unanswered. Added
+  in answer: a setting of the personality, `none | users | all` as the maintainer proposed, off
+  unless named; a prompt part telling the model what was said while it worked; the options for a
+  request taken in during a turn; why `try_recv_if` is not named like `recv_matching`.
