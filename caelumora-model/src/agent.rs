@@ -133,12 +133,12 @@ impl HearsDuringTurn {
     /// `from` hears its sender, if the work may see it (`Work::may_see`) - what it saw above its
     /// classification would be written below its level -, and, unless `others` hears it, if it
     /// is said in the work's authority: by whoever began the chain the work answers, or an agent
-    /// working for them (`SecurityContext::initiator_id`). A request to respond: only in the
+    /// working for them (`EventContext::initiator_id`). A request to respond: only in the
     /// work's authority, which then answers it - another's is answered in a turn in theirs. Who
     /// joined or left: unless it hears nobody. Nothing else: a change to a message, a request to
     /// answer again, a command, an approval are taken in an order of their own.
     pub fn takes(&self, work: &Work, envelope: &Envelope) -> bool {
-        let in_its_authority = envelope.security.initiator_id == work.security_context.initiator_id;
+        let in_its_authority = envelope.context.initiator_id == work.event_context.initiator_id;
         match &envelope.event {
             ActorEvent::CompleteMessageGenerated(message) => {
                 self.from.hears(message.sender_id)
@@ -1186,8 +1186,8 @@ pub(crate) mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let internal = Classification::general(Confidentiality::Internal);
         let secret = Classification::general(Confidentiality::StrictlyConfidential);
-        let work = Work::new(EventContext::default(), SecurityContext { initiator_id: alice, ..SecurityContext::default() }, internal.clone());
-        let in_authority_of = |initiator: ActorId, event: ActorEvent| Envelope::new(SecurityContext { initiator_id: initiator, ..SecurityContext::default() }, EventContext::default(), event);
+        let work = Work::new(EventContext { initiator_id: alice, ..EventContext::default() }, SecurityContext::default(), internal.clone());
+        let in_authority_of = |initiator: ActorId, event: ActorEvent| Envelope::new(SecurityContext::default(), EventContext { initiator_id: initiator, ..EventContext::default() }, event);
         // Said by `sender`, in the authority of `initiator`, classified `classification`.
         let said = |sender: ActorId, initiator: ActorId, classification: &Classification| {
             in_authority_of(initiator, ActorEvent::CompleteMessageGenerated(Message { sender_id: sender, ..Message::new(classification.clone()) }))

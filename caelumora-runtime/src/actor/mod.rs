@@ -212,7 +212,8 @@ impl Answering {
     /// participant was removed, in the name of who removed them, and why it
     /// did not let something in, in its own (`SecurityContext::system`).
     pub(crate) fn in_channel(session_id: SessionId, channel_id: ChannelId, name: impl Into<String>, security: SecurityContext) -> Self {
-        Self { event_context: EventContext::new(session_id, channel_id, security.caller_id, name), security_context: security }
+        let event_context = EventContext { initiator_id: security.initiator_id, ..EventContext::new(session_id, channel_id, security.caller_id, name) };
+        Self { event_context, security_context: security }
     }
 
     /// These contexts in the span `span_id`: a user's action, whose events

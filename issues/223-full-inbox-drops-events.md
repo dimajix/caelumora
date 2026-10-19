@@ -208,3 +208,17 @@ the history would hear everything. Delivering stays; what changes is where the q
   history the channel has, though the history is informational and never to decide what reaches
   its transcript. The position up to which an actor has heard its channel, which this issue needs,
   would answer that as well; `catch_up` is to read it once it exists.
+- **2026-10-19** — Weighed with the maintainer, not decided yet: since
+  [417](417-user-history-from-its-actor.md) every entry of the history records whom it went to, as
+  the moderator decided, so the reason the plan above gives for rejecting catching up from the
+  history - a reader of the history would hear everything - no longer holds for what is recorded.
+  An inbox could be a position in the history, read as the actor (`Reader::Participant`), and a
+  small queue for what the history does not record; the bound, the gap and the deliveries per actor
+  would go. That needs envelopes built back from the history, which
+  [432](432-envelope-carries-whole-security-context.md) settled: an envelope keeps the
+  `SecurityContext` its sender's actor set when the request was given, and the history is the one
+  place a security context is built again - for an envelope built back when an actor joins or its
+  channel starts again after a pause. It records the initiator (`EventContext::initiator_id`),
+  which cannot be built again; the rest comes from the sender as it is then, so that a request
+  taken up after a pause is checked with the rights of then - a deliberate exception, to be stated
+  in the plan.

@@ -711,7 +711,11 @@ An **actor** is anything that sends and receives events in a channel.
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`, or `System` - the
     runtime itself, set only deliberately.
 *   **`Envelope`** is the unit of communication: a timestamp, a `SecurityContext`, an `EventContext`
-    and the `ActorEvent` itself. Every envelope the runtime sends is built through `Answering`
+    and the `ActorEvent` itself. The `SecurityContext` is what it is checked by, as its sender's
+    actor set it, at the time it was sent; the `EventContext` where it happens and in which chain -
+    its span, its depth, its hops between agents and the chain's initiator (issue 432), which what
+    reads the chain goes by. A client is never shown the `SecurityContext` (`ShownEnvelope`, see
+    [REST-SERVER.md](REST-SERVER.md)). Every envelope the runtime sends is built through `Answering`
     (issue 352): the contexts of a request continued in the actor's name (`to`) - an agent's, an
     external agent's, the approver's -, an actor's own (`own`) - a user's -, or, for what the
     channel says itself, its place in someone's name (`in_channel`): a removal in the name of who

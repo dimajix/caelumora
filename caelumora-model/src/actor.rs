@@ -223,7 +223,7 @@ pub enum ActorEvent {
     /// the user who ran it, sent only when the answer concerns everybody;
     /// one an agent carried out, the sender is the agent, `turn_id` the
     /// turn it was carried out in, and `to` the issuer alone if the answer
-    /// is theirs, `None` if it is everybody's - the issuer is the security
+    /// is theirs, `None` if it is everybody's - the issuer is the event
     /// context's initiator either way.
     ///
     /// Shown to users, never heard by agents. Recorded by the channel with
@@ -575,6 +575,12 @@ pub struct EventContext {
     /// to respond to an agent. Absent in what was stored before it existed.
     #[serde(default)]
     pub agent_hops: u32,
+    /// Who caused it - the root of its chain: whoever asked, or whoever
+    /// asked whoever asked, and its sender itself when nobody did (issue
+    /// 432). `next` keeps it. What the chain is read by - whose authority a
+    /// turn hears in (issue 431), who asked for a command carried out -;
+    /// the `SecurityContext` names it as well, for the checks made in it.
+    pub initiator_id: ActorId,
 }
 
 impl EventContext {
@@ -590,6 +596,7 @@ impl EventContext {
             span_depth: 0,
             position: None,
             agent_hops: 0,
+            initiator_id: sender_id,
         }
     }
 
@@ -605,6 +612,7 @@ impl EventContext {
             span_depth: self.span_depth + 1,
             position: None,
             agent_hops: self.agent_hops,
+            initiator_id: self.initiator_id,
         }
     }
 }
@@ -701,7 +709,7 @@ impl Envelope {
                 HistoryEntry::PlanStepStarted { turn_id: *turn_id, actor, step_index: *step_index, total_steps: *total_steps, description: description.clone(), at }
             }
             ActorEvent::CommandExecuted { command, args, output, to, turn_id } => HistoryEntry::CommandExecuted {
-                turn_id: *turn_id, actor, issuer: self.security.initiator_id, command: command.clone(), args: args.clone(), output: output.clone(), to: *to, at,
+                turn_id: *turn_id, actor, issuer: self.context.initiator_id, command: command.clone(), args: args.clone(), output: output.clone(), to: *to, at,
             },
             ActorEvent::CommandFailed { command, reason, to, turn_id } => {
                 HistoryEntry::CommandFailed { turn_id: *turn_id, actor, command: command.clone(), reason: reason.clone(), to: *to, at }
