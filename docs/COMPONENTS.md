@@ -299,11 +299,15 @@ endpoint:
     type: bearer
     secret: AGENT_TOKEN
   timeout_secs: 30
+  refresh_secs: 300
 ```
 
-`auth` names a secret, resolved for whoever acts on every use (see [SECURITY.md](SECURITY.md)).
-What `timeout_secs` bounds, and how long a component waits without it, the component says. An
-unknown field is refused. In messages the endpoint is shown without credentials, query or fragment.
+`auth` names a secret, resolved for whoever acts on every use (see [SECURITY.md](SECURITY.md)). What
+`timeout_secs` bounds, and how long a component waits without it, the component says. So does it for
+`refresh_secs`: how long what it reads of its remote side - an A2A agent's card - is kept before it
+is read again. That is read when it is first needed, in the name of whoever needs it, never while
+the component is built, and a read that fails is not kept (`ExpiringCache`, issue 126). An unknown
+field is refused. In messages the endpoint is shown without credentials, query or fragment.
 
 ### The components
 
@@ -332,7 +336,7 @@ unknown field is refused. In messages the endpoint is shown without credentials,
 | `tool_sets_prompt_provider` | `PromptProvider` | `position` (`start`) | Tells the model which of its tool sets are unavailable and why, nothing while all are available ([TOOLS.md](TOOLS.md#tool-sets)). |
 | `turn_context_provider` | `ContextProvider` | - | The default context provider of an agent run here: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
 | `external_context_provider` | `ContextProvider` | - | The default context provider of an external agent: each prompt part on its own, for its actor to give the remote agent when it changed ([CHANNELS.md](CHANNELS.md)). |
-| `a2a_agent` | `ExternalAgent` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`) | Of the plugin `caelumora-a2a`, registered where it is joined. An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
+| `a2a_agent` | `ExternalAgent` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins; the card kept for 300 s), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`) | Of the plugin `caelumora-a2a`, registered where it is joined. An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built; an agent not reached where its card said has its card read again at the next request. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
 | `ollama_client` | `LLMClient` | `endpoint` (`http://127.0.0.1:11434`, no timeout, no `auth`), `model` (`gemma4:26b`), `think`, `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `context_size` (Ollama's default) | The default model: a model served by Ollama ([CONFIGURATION.md](CONFIGURATION.md#the-model)). Defuses the model's control tokens in every text it sends. |
 | `policy_moderator` | `Moderator` | `max_agent_hops` (`3`), `max_span_depth` (`100`), `context_messages` (`10`) | The default moderator of a channel: routes as every channel does and asks its `ResponderPolicy` whom to ask, told the last `context_messages` messages heard before ([CHANNELS.md](CHANNELS.md#moderators)); ends a chain between agents after `max_agent_hops` hops, and asks nobody to respond to an event `max_span_depth` deep ([CHANNELS.md](CHANNELS.md#chains-between-agents)). |
 | `broadcast_policy` | `ResponderPolicy` | - | Asks every agent. |

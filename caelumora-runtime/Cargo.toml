@@ -30,7 +30,8 @@ tempfile = { version = "3.27", optional = true }
 test-support = ["dep:tempfile", "caelumora-model/test-support"]
 
 [dev-dependencies]
-tokio = { version = "1.53.1", features = ["full"] }
+# `test-util` for `start_paused`: tests that wait for a value to expire without waiting.
+tokio = { version = "1.53.1", features = ["full", "test-util"] }
 axum = "0.8.9"
 tempfile = "3.27"
 caelumora-runtime = { path = ".", features = ["test-support"] }
