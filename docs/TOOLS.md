@@ -160,18 +160,24 @@ as before. What such a component kind may use of the runtime is said in
 
 *   **Several servers.** Each server is an instance of its own; its tools are named
     `{component_id}__{remote_tool_name}`, so that servers cannot collide.
-*   **Discovery.** The tools are discovered once, when the component is built. A server that is
-    unreachable then does not fail the agent: its tool set is unavailable, with why in general
-    terms, never the error, which may name hosts; a warning is logged.
+*   **Discovery.** The tools are discovered when they are first offered, in the name of whoever
+    acts there, never while the component is built (issue 126) - a component keeps no security
+    context for later. They are discovered again once what was discovered is older than the
+    endpoint's `refresh_secs`, and after the server did not know a tool that was called, so that an
+    agent follows a server that was replaced without being built again. A server that cannot be
+    asked does not fail the agent: the tools discovered before stay; without any, its tool set is
+    unavailable, with why in general terms, never the error, which may name hosts. Either way a
+    warning is logged, and the server is asked again at the next offer. That a server announces a
+    change itself (`notifications/tools/list_changed`) is not heard (issue 433).
 *   **Description.** The parameter `description`, else what the server says of itself, else a
     generic text.
 *   **Credentials.** `auth.secret` names a secret, resolved through the secret chain (see
     [SECURITY.md](SECURITY.md)); it is never a literal credential.
 *   **Parameters.** `endpoint` (required: `url`, `auth` - optional, `bearer` -, `timeout_secs` -
-    default 10; see [COMPONENTS.md](COMPONENTS.md#remote-endpoints)), `requires_approval` (`true`
-    by default, `false` or `"unless_read_only"`; see
-    [What needs approval](APPROVALS.md#what-needs-approval)), `classification`, `description` and
-    `destination`.
+    default 10 -, `refresh_secs` - default 300; see
+    [COMPONENTS.md](COMPONENTS.md#remote-endpoints)), `requires_approval` (`true` by default,
+    `false` or `"unless_read_only"`; see [What needs approval](APPROVALS.md#what-needs-approval)),
+    `classification`, `description` and `destination`.
 *   **Calls.** Each call opens a connection, and so an MCP session, of its own. An interrupted call
     drops it, which ends the session; whether the remote tool stops is up to the server.
 

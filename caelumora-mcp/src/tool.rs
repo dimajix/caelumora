@@ -3,13 +3,15 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::question::Answers;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::{SecretError, SecretManager};
+use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use caelumora_agents::turn::Turn;
 use caelumora_agents::situation::Situation;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_runtime::remote::ExpiringCache;
 use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
-use rmcp::model::{CallToolRequestParams, CallToolResult, ToolAnnotations};
-use rmcp::service::RunningService;
+use rmcp::model::{CallToolRequestParams, CallToolResult, ErrorCode, ToolAnnotations};
+use rmcp::service::{RunningService, ServiceError};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{RoleClient, ServiceExt};
@@ -41,11 +43,16 @@ type McpResult<T> = Result<T, McpError>;
 /// endpoint says otherwise.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long the tools discovered are kept before the server is asked for
+/// them again, unless the endpoint says otherwise (issue 126).
+const DEFAULT_REFRESH: Duration = Duration::from_secs(300);
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct McpToolConfig {
     /// The MCP server. Its timeout is how long a call of one of its tools,
-    /// or the discovery of them, may take.
+    /// or the discovery of them, may take; its `refresh_secs` how long the
+    /// tools discovered are kept.
     pub endpoint: RemoteEndpoint,
     /// Whether calls to this MCP server's tools require human approval.
     /// Left out, they do: a server may act outside, and what makes an agent
@@ -98,6 +105,10 @@ impl McpToolConfig {
     fn timeout(&self) -> Duration {
         self.endpoint.timeout_or(DEFAULT_TIMEOUT)
     }
+
+    fn refresh(&self) -> Duration {
+        self.endpoint.refresh_or(DEFAULT_REFRESH)
+    }
 }
 
 /// Exposes the tools of a single remote MCP server (reached over the
@@ -107,20 +118,20 @@ impl McpToolConfig {
 ///
 /// Tools are namespaced as `"{descriptor_id}__{remote_tool_name}"` to avoid
 /// collisions with built-in tools or other MCP servers, since an agent's
-/// tools are found by name across all its providers, and two of one name
-/// are refused (`ToolProviders::new`). No connection is held open between calls: the tool list is
-/// discovered once at construction and cached, and `execute()` opens a fresh
-/// connection per call (the Streamable HTTP transport supports stateless
-/// operation), which keeps this provider free of any stale-connection state.
+/// tools are found by name across all its providers. No connection is held
+/// open between calls: the tools are discovered when they are first offered,
+/// in the name of whoever acts, and again once what was discovered is older
+/// than the endpoint's `refresh_secs`, or after the server did not know a
+/// tool that was called (issue 126); `execute()` opens a fresh connection
+/// per call (the Streamable HTTP transport supports stateless operation),
+/// which keeps this provider free of any stale-connection state.
 #[derive(Debug)]
 pub struct McpToolProvider {
     descriptor_id: String,
     config: McpToolConfig,
-    cached_tools: Vec<Tool>,
-    /// What the server says of itself (`instructions`), if it did.
-    instructions: Option<String>,
-    /// Why its tools could not be discovered, `None` if they were.
-    unavailable: Option<String>,
+    /// The server's tools, and what it says of itself (`instructions`) if
+    /// it does, as last discovered.
+    discovered: ExpiringCache<(Vec<Tool>, Option<String>)>,
     secret_manager: Arc<SecretManager>,
 }
 
@@ -129,10 +140,28 @@ pub struct McpToolProvider {
 const NAME_SEPARATOR: &str = "__";
 
 impl McpToolProvider {
+    /// The provider of the component `descriptor_id` with `config`; its
+    /// tools are not discovered yet.
+    fn new(descriptor_id: String, config: McpToolConfig, secret_manager: Arc<SecretManager>) -> Self {
+        let discovered = ExpiringCache::new(config.refresh());
+        Self { descriptor_id, config, discovered, secret_manager }
+    }
+
     fn strip_prefix<'a>(&self, name: &'a str) -> ToolResult<&'a str> {
         name.strip_prefix(self.descriptor_id.as_str())
             .and_then(|rest| rest.strip_prefix(NAME_SEPARATOR))
             .ok_or_else(|| ToolError::UnknownTool(name.to_string()))
+    }
+
+    /// The server's tools and what it says of itself, discovered in
+    /// `security` within the endpoint's timeout.
+    async fn discover(&self, security: &SecurityContext) -> McpResult<(Vec<Tool>, Option<String>)> {
+        let discover = async {
+            let auth_header = self.config.endpoint.bearer_token(&self.secret_manager, security).await?;
+            discover_tools(&self.descriptor_id, &self.config, auth_header).await
+        };
+        tokio::time::timeout(self.config.timeout(), discover).await
+            .unwrap_or_else(|_| Err(McpError::Timeout(format!("Timed out discovering tools from MCP server at '{}'", self.config.endpoint.shown()))))
     }
 }
 
@@ -272,20 +301,33 @@ fn call_tool_result_to_value(name: &str, result: CallToolResult) -> McpResult<Va
 impl ToolProvider for McpToolProvider {
     fn description(&self) -> String {
         self.config.description.clone()
-            .or_else(|| self.instructions.clone())
+            .or_else(|| self.discovered.current().and_then(|discovered| discovered.1.clone()))
             .unwrap_or_else(|| format!("The tools of the MCP server '{}'.", self.descriptor_id))
     }
 
+    /// Its tools as last discovered; none before they were.
     fn tools(&self) -> Vec<Tool> {
-        self.cached_tools.clone()
+        self.discovered.current().map(|discovered| discovered.0.clone()).unwrap_or_default()
     }
 
-    /// Its tools wherever it is asked, unless its server could not be
-    /// reached as it was built.
-    async fn offered(&self, _situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
-        match &self.unavailable {
-            Some(why) => Err(why.clone()),
-            None => Ok(self.tools()),
+    /// Its tools wherever it is asked, discovered again in the name of
+    /// whoever acts there if what was discovered is outdated. A server that
+    /// cannot be asked leaves the tools discovered before (issue 126), or,
+    /// without any, its tool set unavailable (issue 32) - and is asked again
+    /// the next time.
+    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
+        match self.discovered.get(|| self.discover(situation.security_context())).await {
+            Ok(discovered) => Ok(discovered.0.clone()),
+            Err(e) => match self.discovered.current() {
+                Some(discovered) => {
+                    warn!("MCP tool component '{}' failed to discover its tools again ({}); keeping those discovered before", self.descriptor_id, e);
+                    Ok(discovered.0.clone())
+                }
+                None => {
+                    warn!("MCP tool component '{}' failed to connect/discover tools ({}); no tools available", self.descriptor_id, e);
+                    Err(e.unavailable())
+                }
+            },
         }
     }
 
@@ -315,7 +357,14 @@ impl ToolProvider for McpToolProvider {
             let _ = service.cancel().await;
 
             let result = result.map_err(|_| McpError::Timeout(format!("MCP tool call to '{}' timed out", name)))?
-                .map_err(|e| McpError::ToolCallFailed(format!("MCP tool call to '{}' failed: {}", name, self.config.endpoint.redact_in(&e.to_string()))))?;
+                .map_err(|e| {
+                    // A server that does not know the tool answers so (MCP's
+                    // "Unknown tool"): it has others now.
+                    if matches!(&e, ServiceError::McpError(error) if error.code == ErrorCode::INVALID_PARAMS) {
+                        self.discovered.invalidate();
+                    }
+                    McpError::ToolCallFailed(format!("MCP tool call to '{}' failed: {}", name, self.config.endpoint.redact_in(&e.to_string())))
+                })?;
 
             call_tool_result_to_value(name, result)
         }.await;
@@ -325,43 +374,13 @@ impl ToolProvider for McpToolProvider {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register_async(
+    registry.register(
         ComponentKind::new(MCP_TOOL_KIND).provides::<dyn ToolProvider>().uses::<SecretManager>(),
-        |descriptor, context| async move {
+        |descriptor, context| {
             let config: McpToolConfig = config_of_params(&descriptor.params)?;
-
             let secret_manager = Arc::clone(context.service::<SecretManager>()?);
-            let discover = async {
-                let auth_header = config.endpoint.bearer_token(&secret_manager, &context.security_context).await?;
-                discover_tools(&descriptor.id, &config, auth_header).await
-            };
-            let discovery_result: McpResult<(Vec<Tool>, Option<String>)> = match tokio::time::timeout(config.timeout(), discover).await {
-                Ok(result) => result,
-                Err(_) => Err(McpError::Timeout(format!("Timed out discovering tools from MCP server at '{}'", config.endpoint.shown()))),
-            };
-
-            // Not fatal: one unreachable server must not take down the
-            // agent. Its tool set says it is unavailable (issue 32).
-            let (cached_tools, instructions, unavailable) = match discovery_result {
-                Ok((tools, instructions)) => (tools, instructions, None),
-                Err(e) => {
-                    warn!(
-                        "MCP tool component '{}' failed to connect/discover tools ({}); starting with no tools available",
-                        descriptor.id, e
-                    );
-                    (Vec::new(), None, Some(e.unavailable()))
-                }
-            };
-
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(McpToolProvider {
-                descriptor_id: descriptor.id.clone(),
-                config,
-                cached_tools,
-                instructions,
-                unavailable,
-                secret_manager,
-            }));
+            facets.insert::<dyn ToolProvider>(Arc::new(McpToolProvider::new(descriptor.id.clone(), config, secret_manager)));
             Ok(facets)
         },
     );
@@ -405,6 +424,7 @@ mod tests {
         let config: McpToolConfig = serde_json::from_value(value).unwrap();
         assert!(config.endpoint.auth.is_none());
         assert_eq!(config.timeout(), Duration::from_secs(10));
+        assert_eq!(config.refresh(), Duration::from_secs(300));
         assert_eq!(config.requires_approval, ApprovalMode::Always, "approval unless configured otherwise");
         assert!(serde_json::from_value::<McpToolConfig>(json!({ "endpoint": { "url": "x" }, "requires_aproval": true })).is_err(), "nothing unknown");
     }
@@ -427,20 +447,15 @@ mod tests {
 
     #[test]
     fn namespacing_round_trips_through_prefix_stripping() {
-        let provider = McpToolProvider {
-            descriptor_id: "github-mcp".to_string(),
-            config: McpToolConfig {
-                endpoint: RemoteEndpoint::new("http://example.invalid/mcp"),
-                requires_approval: ApprovalMode::Never,
-                classification: None,
-                description: None,
-                destination: None,
-            },
-            cached_tools: vec![],
-            instructions: None,
-            unavailable: None,
-            secret_manager: Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new()))),
+        let config = McpToolConfig {
+            endpoint: RemoteEndpoint::new("http://example.invalid/mcp"),
+            requires_approval: ApprovalMode::Never,
+            classification: None,
+            description: None,
+            destination: None,
         };
+        let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
+        let provider = McpToolProvider::new("github-mcp".to_string(), config, Arc::clone(&secret_manager));
 
         let stripped = provider.strip_prefix("github-mcp__search").unwrap();
         assert_eq!(stripped, "search");
@@ -450,7 +465,7 @@ mod tests {
         // unless configured.
         assert_eq!(provider.destination(), Some(Classification::PUBLIC));
         let internal = Classification::general(Confidentiality::Internal);
-        let cleared = McpToolProvider { config: McpToolConfig { destination: Some(internal.clone()), ..provider.config.clone() }, ..provider };
+        let cleared = McpToolProvider::new("github-mcp".to_string(), McpToolConfig { destination: Some(internal.clone()), ..provider.config.clone() }, secret_manager);
         assert_eq!(cleared.destination(), Some(internal));
         let configured: McpToolConfig = serde_json::from_value(json!({ "endpoint": { "url": "x" }, "destination": { "level": "confidential" } })).unwrap();
         assert!(configured.destination.is_some(), "read from the params");

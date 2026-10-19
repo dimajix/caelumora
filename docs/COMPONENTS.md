@@ -31,7 +31,7 @@ a list of preconfigured components kept in the `ComponentStore`, and it stands f
 their order, where it is written. It is read afresh every time it is built, in the context of the
 graph that refers to it, so secrets are resolved as that caller and a list the caller may not read
 cannot be built. The price is that the components are not shared between references: a
-preconfigured `mcp_tool` discovers its tools again for every personality that uses it.
+preconfigured `mcp_tool` discovers its tools on its own for every personality that uses it.
 
 ### Sharing components between personalities
 
@@ -304,10 +304,11 @@ endpoint:
 
 `auth` names a secret, resolved for whoever acts on every use (see [SECURITY.md](SECURITY.md)). What
 `timeout_secs` bounds, and how long a component waits without it, the component says. So does it for
-`refresh_secs`: how long what it reads of its remote side - an A2A agent's card - is kept before it
-is read again. That is read when it is first needed, in the name of whoever needs it, never while
-the component is built, and a read that fails is not kept (`ExpiringCache`, issue 126). An unknown
-field is refused. In messages the endpoint is shown without credentials, query or fragment.
+`refresh_secs`: how long what it reads of its remote side - an MCP server's tools, an A2A agent's
+card - is kept before it is read again. That is read when it is first needed, in the name of whoever
+needs it, never while the component is built, and a read that fails is not kept (`ExpiringCache`,
+issue 126). An unknown field is refused. In messages the endpoint is shown without credentials,
+query or fragment.
 
 ### The components
 
@@ -319,7 +320,7 @@ field is refused. In messages the endpoint is shown without credentials, query o
 | `stop_tool` | `ToolProvider` | - | The tools `stop`, `bye` and `silence`, with which the agent ends its turn: asleep after `stop` and `bye`, idle and without an answer after `silence` ([TOOLS.md](TOOLS.md#built-in-tools)). |
 | `ask_user_tool` | `ToolProvider` | - | The tool `ask_user`, with which the agent asks users of its channel and waits for their answers. |
 | `create_plan_tool` | `ToolProvider`, `PromptProvider` | - | The tool `create_plan` and a system prompt part telling the model when to plan. |
-| `mcp_tool` | `ToolProvider` | `endpoint` (timeout 10 s, per call or discovery), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but the tools the server marks read-only), `classification` (the channel's), `description` (the server's `instructions`), `destination` (`public`) | Of the plugin `caelumora-mcp`, registered where it is joined. The tools of a remote MCP server. `classification` is how their results are classified, `description` what they are for, as their tool set tells it, `destination` what the server is cleared for - its tools are not offered in a channel that may not flow there. |
+| `mcp_tool` | `ToolProvider` | `endpoint` (timeout 10 s, per call or discovery; the tools kept for 300 s), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but the tools the server marks read-only), `classification` (the channel's), `description` (the server's `instructions`), `destination` (`public`) | Of the plugin `caelumora-mcp`, registered where it is joined. The tools of a remote MCP server. `classification` is how their results are classified, `description` what they are for, as their tool set tells it, `destination` what the server is cleared for - its tools are not offered in a channel that may not flow there. |
 | `notes` | `ToolProvider`, `PromptProvider` | - | Public notes of the agents in a channel: `write_note`, `update_note`, `revoke_note`, `read_notes`, `reclassify_note` (asks for approval) and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `private_notes` | `ToolProvider`, `PromptProvider` | - | The agent's private notes: `write_private_note`, `update_private_note`, `revoke_private_note`, `reclassify_private_note` (asks for approval), all `HIDDEN`, and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `agent_memory` | `ToolProvider`, `PromptProvider` | - | What the agent remembers across channels and sessions: `remember`, `update_memory`, `forget`, `reclassify_memory` (asks for approval), all `HIDDEN`, and a prompt part ([MEMORY.md](MEMORY.md)). |
