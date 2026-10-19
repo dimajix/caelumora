@@ -1,6 +1,6 @@
 # 385 — An actor's inbox is lost on a restart
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Sessions and channels
@@ -67,3 +67,8 @@ the in-memory receiver's `commit` clears a list.
   recorded there - commands, retries, approvals and questions from then on too. Nothing is taken
   in twice, because the mark and what was taken in are one put; the taking in need not be
   idempotent. Done with 223's step 4, which holds this issue's test.
+- **2026-10-19** — Done with [223](223-full-inbox-drops-events.md): an agent stores where it stands
+  in its channel's history with what it took in, and its inbox opens there when it runs again.
+  The test: a message, the request to answer it and a change of what was said, delivered while the
+  agent was in its turn and not stored, are taken in once after a restart. The answers to
+  questions are no part of the history; a turn resumed asks again.

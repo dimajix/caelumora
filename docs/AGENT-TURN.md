@@ -14,11 +14,12 @@ turn](#a-command-turn)).
 
 ### Between turns
 
-`Idle` and `Sleeping` wait for the next event, and take it in together with everything queued
-behind it, in order, then commit once (`AgentBody::take_in`):
+`Idle` and `Sleeping` wait for the next event, and take it in together with everything there
+behind it in the inbox - queued, or in the history behind the queue -, in order, and write where
+the agent stands into its state with it (`AgentBody::take_in`, issue 223):
 
 *   **Perceive.** A complete message of another participant - all that was offered to it, live or
-    caught up with on joining, which its channel's history records as gone to it (issue 417) -
+    read from the history, which records it as gone to it (issue 417) -
     is heard as the sender's words (`Message::as_heard`): a `user` or `assistant` message with
     text, as a `user` message without its tool calls and results, which were the sender's; nothing
     of a tool message, an empty one or a `system` one. That is offered to the agent's
@@ -29,8 +30,8 @@ behind it, in order, then commit once (`AgentBody::take_in`):
 *   **Take note.** That someone joined or left the channel (`ParticipantJoined`, `ParticipantLeft`,
     issue 408) is recorded into the transcript (`AgentChannelState::note_announced`), where it
     happened among what was heard - also what
-    happened while the agent was not there, as it catches up. It begins no turn: the next one is
-    told of it.
+    happened while the agent was not there, as its inbox reads it from the history. It begins no
+    turn: the next one is told of it.
 *   **Begin.** The last request to respond among what was taken in begins one turn; the earlier
     ones are dropped. The one turn answers the conversation as it stands, having heard every
     message, and acts in the contexts of the last request - with the authority of the last who
@@ -260,6 +261,14 @@ resumed:
 
 A turn state stored without the turn's working state cannot be resumed; the agent starts `Idle`.
 
+What the agent took in is stored with where it stands in its channel's history (`heard`, issue
+223): taking in writes both into the state, so that every store after it - the run loop's after
+each step, a command's, a turn's end - stores them together. When the agent runs again, its inbox
+opens there: what was delivered to it and not stored - a message, a request, a change, a command, a
+decision - is read from the history again, and what was stored is not. Nothing is taken in twice,
+and nothing has to be idempotent for it (issue 385). The answers to questions are no part of the
+history: a turn resumed asks again, as it asks again for its approvals.
+
 An agent ends its task in one of two ways (see [CHANNELS.md](CHANNELS.md#ending-an-actor)):
 
 *   **Stopped** - its session is stopped, or the process shuts down - it keeps its turn: the step
@@ -364,10 +373,11 @@ nobody. Its actor tells the channel the latter after every step (`AgentChannelSt
 said (`TurnState::answer`), since a compaction in the middle of it may leave nothing of it on the
 transcript's active branch. What reads further back - what the agent saw when it produced an old
 message, a page of what it was offered and said - reads the channel's history in the store, as
-the agent, through the views. Catching up when it joins goes on after the last message it took in
-- heard, said or given -, which its state remembers (`AgentChannelState::last_message`), since the
-active branch begins anew with every compaction and every call of an external agent; without one,
-it takes in what it may see from where its view begins.
+the agent, through the views. Where it stands in the channel's history is its state's
+(`AgentChannelState::heard`, issue 223): what its inbox opens at when it runs again, or when it
+joins again - unless its new view begins later. The last message it heard, said or was given is
+kept beside it (`AgentChannelState::last_message`), for its notes and memory to anchor at, since
+the active branch begins anew with every compaction and every call of an external agent.
 
 Of its transcript the actor holds the active branch alone, from its root on (`transcript_from`,
 issue 380): right after the transcript began anew - a compaction, an external agent's call -,

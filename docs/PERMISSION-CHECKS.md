@@ -75,10 +75,13 @@ views, and maps refusals to `403`, every `*NotFound` to `404`.
 
 Notation for whose name: **U** the user's own context; **T** a turn's (the agent as caller, its
 owner as owner and principal, whoever asked as initiator); **A** the agent's own (the agent itself
-as initiator); **E** an envelope's, as its sender's actor set it; **V** a viewer's (U, or T with the
-place the agent reads from); **C** the owner's of a channel or session, with their roles as they are
-when it is built (its components, its commands - only while they are built); **S** the system's,
-which asks nothing. After the name the concept. The rule column names the reason it is asked (R1-R5,
+as initiator); **E** an envelope's, as its sender's actor set it - or, for an envelope an actor's
+inbox read from the channel's history because its queue fell short (issue 223), the sender's context
+as it is now, with the recorded initiator, and one without rights if the sender takes no part any
+more; the one check it reaches is an agent's of a command; **V** a viewer's (U, or T with the place
+the agent reads from); **C** the owner's of a channel or session, with their roles as they are when
+it is built (its components, its commands - only while they are built); **S** the system's, which
+asks nothing. After the name the concept. The rule column names the reason it is asked (R1-R5,
 SECURITY.md); "store" is the store layer, in the context the caller passes. Every Read of the store
 of what is classified - a channel, a workspace, a skill, an artifact - is followed by `cleared_for`
 in the same context (issue 322), named in the rows where it is the reason of a refusal.

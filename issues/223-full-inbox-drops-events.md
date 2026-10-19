@@ -1,6 +1,6 @@
 # 223 — An actor whose inbox is full loses what was said, silently
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** high
 **Area:** Sessions and channels
@@ -351,3 +351,15 @@ channel (`ChannelLoop::open_inbox`) and shared by its two halves under one lock,
   concern that the inbox filters, and that an agent takes approvals ahead of their turn, is what
   `Heard::taken` is for. The fallback is the channel's, in the inbox it opens, not the actors':
   `catch_up` goes.
+- **2026-10-19** — Done, in five steps on the branch, each committed: the history records envelopes
+  with their head and seven entries to be delivered again, no items; `Recipients` is one struct of
+  kinds and names, and `Envelope::recipients` the entry's rule (`concerns` gone); the inbox, a
+  queue with the history behind it (`channel::inbox`); the agents write where they stand as they
+  take in; the documents. Found on the way and decided here: the answers to questions stay out of
+  the history (issue 165) and are queued whatever the inbox's state; an approver is no
+  participant (issue 420), so what goes to the approvers needs no range; a message said comes
+  back from the history as intermediate if it is internal, so no rebuild is lossy, and a turn's
+  end with its answer from the messages before it (`HistoryStore::answer`); a join is announced
+  before the newcomer's inbox opens; what is delivered is stamped once, in `deliveries`; founders
+  of a channel built with its joins recorded read those joins from the history, as a founder
+  joining live hears them. **Every stored state is to be deleted.**

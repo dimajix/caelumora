@@ -180,7 +180,7 @@ Errors carry what failed, and only what may be shown goes to users.
     [PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-core-in-the-cores-types)). The exceptions
     are named, so that "its caller only logs it" is no excuse for the next one: traits whose only
     caller is the top of the program or of a task and logs the error whole - `Plugin::register`,
-    `SeedSection::seed`, `Actor::run` and `Actor::catch_up`.
+    `SeedSection::seed` and `Actor::run`.
 *   Avoid `unwrap()` and `expect()` in production code. Use `?` or handle the error explicitly.
 
 ### Messages name what failed

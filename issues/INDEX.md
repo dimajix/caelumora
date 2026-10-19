@@ -82,7 +82,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [199](199-external-agent-speak-wakes-all.md) | done | An external agent's report on a finished task wakes every sleeping agent and ends a quiet channel, though it addresses neither. |
 | [221](221-adding-session-participants.md) | done | A session's participants are fixed when it is created: nobody - neither a user nor an agent, existing or created from a personality - can be added to it later. |
 | [222](222-queued-requests-answered-one-by-one.md) | done | An agent - run here or external - asked while it answers works through every queued request afterwards, one answer each, to a conversation that has moved on. |
-| [223](223-full-inbox-drops-events.md) | open | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
+| [223](223-full-inbox-drops-events.md) | done | An actor whose inbox is full - an agent in a long turn in a busy channel - loses what was said, requests and approvals without anyone learning of it. |
 | [234](234-modify-revoke-and-retry-messages.md) | done | A message once said can be neither changed nor taken back by its author, and an agent cannot be asked to answer again, so a mistake keeps influencing every later turn. |
 | [235](235-retry-of-an-answer-under-way.md) | done | An answer still being generated cannot be asked for again; only stopping every agent of the channel gets there. |
 | [238](238-retry-of-an-older-answer.md) | open | Only an agent's last answer can be asked for again, and the alternatives of an answer are not kept. |
@@ -97,7 +97,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [377](377-stopping-a-session-aborts-its-actors.md) | done | Stopping or deleting a session aborts its actors at once, so a turn ends mid-step, a tool is cut off and a deleted session's external agents keep their remote tasks. |
 | [381](381-inactive-channels-held-in-memory.md) | open | A channel nobody has spoken in for days keeps its loop, its actors and their states in memory until its session is stopped, and nothing notices that it is idle. |
 | [382](382-agents-held-without-a-session.md) | open | An agent stays loaded with its memory while nothing uses it, and what still holds it once its sessions are unloaded has not been checked. |
-| [385](385-inbox-lost-on-restart.md) | open | An actor's inbox is a queue in memory, so a restart loses what was routed to it and not yet taken in - a change to a message, a request, a command - for good. |
+| [385](385-inbox-lost-on-restart.md) | done | An actor's inbox is a queue in memory, so a restart loses what was routed to it and not yet taken in - a change to a message, a request, a command - for good. |
 | [386](386-actor-state-after-a-stop.md) | done | Whoever follows a channel keeps an agent's last state and its answer under way after the session stops, and the follower's reconnect starts the session again. |
 | [388](388-resume-interrupted-work-after-a-restart.md) | open | Work interrupted by a restart - a turn stopped mid-step at the shutdown - waits until someone acts in its session, since nothing starts the session again. |
 | [403](403-decision-model-policy.md) | done | Every responder policy chooses who answers without looking at the message - by turn, by chance or by whether a user wrote - so in a channel of agents with different roles the one that fits a question is asked only if someone mentions it. |
