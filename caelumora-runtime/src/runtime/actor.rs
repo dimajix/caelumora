@@ -11,7 +11,7 @@ use caelumora_model::chain::Node;
 use caelumora_model::chain::Position;
 use caelumora_model::channel::{self, Channel, ChannelId};
 use caelumora_model::event::{Announcing, GlobalEvent};
-use caelumora_model::history::{HistoryEntry, Reader};
+use caelumora_model::history::{Reader, Recorded};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::value::time_zone::TimeZone;
@@ -151,7 +151,7 @@ impl ActorRuntime {
     ///
     /// # Errors
     /// Whatever the `HistoryStore` reports.
-    pub async fn channel_entries(&self, range: Range<Position>) -> Result<Vec<Node<HistoryEntry>>> {
+    pub async fn channel_entries(&self, range: Range<Position>) -> Result<Vec<Node<Recorded>>> {
         Ok(self.runtime.runtime_manager.history_store().entries(self.channel_id, &Reader::Newcomer(self.actor), range).await?)
     }
 

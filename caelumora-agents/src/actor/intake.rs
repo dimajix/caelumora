@@ -230,9 +230,9 @@ impl AgentBody {
         let mut heard = Vec::new();
         let (mut missed, mut taken) = (false, state.last_message);
         for node in &entries {
-            if matches!(node.entry, HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. }) {
+            if matches!(node.entry.entry, HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. }) {
                 self.perceive(&mut state, mem::take(&mut heard)).await;
-                state.note_announced(node.entry.clone());
+                state.note_announced(node.entry.entry.clone());
                 missed = true;
             } else if let Some((_, message)) = said.next_if(|(said, _)| said.seq == node.seq) {
                 // Taken in, also what it does not hear, so that it is not

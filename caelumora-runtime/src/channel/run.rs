@@ -6,7 +6,7 @@ use crate::actor::Answering;
 use crate::logging::envelope_span;
 use crate::moderator::Routing;
 use caelumora_model::chain::Position;
-use caelumora_model::history::{Audience, HistoryEntry, Recorded};
+use caelumora_model::history::{Audience, Recorded};
 use crate::transport::{EventSender, TransportError};
 use crate::transport::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
 use anyhow::{anyhow, Result};
@@ -252,7 +252,23 @@ impl ChannelLoop {
     /// nobody else (issue 417): the moderator decides on what everybody may
     /// see of it, and that is what is delivered; of an event with nothing
     /// left to show, nothing is, and its entry went to nobody.
+    ///
+    /// An answer under way asked for again (issue 235) has its turn ended
+    /// first, so that the agent finds it given up as it takes the request
+    /// in, and only if it is still the turn under way. A turn given up
+    /// already is asked for as it is, if it is the agent's last (issue 259).
+    /// Otherwise there is nothing to answer again, and the request is
+    /// dropped, unrecorded: its sender asked before, its users see the
+    /// answer end, and what is not delivered is not recorded, so that the
+    /// history never delivers it either (issue 223).
     async fn enter(&self, event: Envelope, running: &HashMap<ActorId, RunningActor>) {
+        if let ActorEvent::RetryRequested { target: RetryTarget::Turn(turn), author } = &event.event {
+            let interrupted = self.actor(*author).is_some_and(|actor| actor.retry_turn(*turn));
+            if !interrupted && !self.given_up_last(*author, *turn).await {
+                warn!(to = %author, "Dropped {}: turn {} is neither under way nor the last given up", event.describe(), turn);
+                return;
+            }
+        }
         let event = self.resolve_mentions(event);
         let shown = event.published();
         let routing = match &shown {
@@ -531,20 +547,6 @@ impl ChannelLoop {
             let mut target_event = route.1;
             let sender_id = target_event.context.sender_id;
             let event_desc = target_event.describe();
-            // An answer under way asked for again (issue 235): its turn is
-            // ended before the request is delivered, so that the agent finds
-            // it given up as it takes the request in - and only if it is
-            // still the turn under way. A turn given up already is delivered
-            // as it is, if it is the agent's last (issue 259). Otherwise
-            // there is nothing to answer again, and the request is dropped:
-            // its sender asked before, and its users see the answer end.
-            if let ActorEvent::RetryRequested { target: RetryTarget::Turn(turn), .. } = &target_event.event {
-                let interrupted = self.actor(target_id).is_some_and(|actor| actor.retry_turn(*turn));
-                if !interrupted && !self.given_up_last(target_id, *turn).await {
-                    warn!(to = %target_id, "Dropped {}: turn {} is neither under way nor the last given up", event_desc, turn);
-                    continue;
-                }
-            }
             target_event.context.channel_id = self.id;
             target_event.context.session_id = self.session_id;
             target_event.context.span_id = span_id;
@@ -565,7 +567,7 @@ impl ChannelLoop {
     /// What the channel delivers of `event`, recorded at `position`, as
     /// `routing` decided (issue 418), each envelope built here and stamped
     /// with the position of its entry (issue 417): the event as it entered,
-    /// to whom it concerns among the actors (`Envelope::concerns`) or whom
+    /// to whom it goes among the actors (`Envelope::recipients`) or whom
     /// the moderator named; each notice of the moderator's to whom it names,
     /// in the system's name; a request to respond to each it asks, in the
     /// event's contexts, with the hops it counted - unless the channel is
@@ -577,7 +579,10 @@ impl ChannelLoop {
     async fn deliveries(&self, event: &Envelope, routing: Routing, position: Option<Position>, quiet: bool) -> Vec<(ActorId, Envelope)> {
         let Routing { audience, ask, agent_hops, notices } = routing;
         let deliver_to = match audience {
-            Audience::Everybody => self.actors.load().keys().copied().filter(|id| event.concerns(*id)).collect(),
+            Audience::Everybody => {
+                let recipients = event.recipients();
+                self.actors.load().keys().copied().filter(|id| recipients.names(*id)).collect()
+            }
             Audience::Only(only) => only,
         };
         let mut delivered = event.clone();
@@ -597,8 +602,8 @@ impl ChannelLoop {
         } else if !ask.is_empty() {
             let mut request = event.forward(ActorEvent::ResponseRequested);
             request.context.agent_hops = agent_hops;
-            request.context.position = match request.entry() {
-                Some(entry) => self.record(entry, ActorId::System, Audience::Only(ask.clone())).await,
+            request.context.position = match Recorded::of(&request, ActorId::System, Audience::Only(ask.clone())) {
+                Some(recorded) => self.record(recorded).await,
                 None => None,
             };
             deliveries.extend(ask.into_iter().map(|id| (id, request.clone())));
@@ -620,18 +625,16 @@ impl ChannelLoop {
     /// position of its entry, which what is delivered of it carries; `None`
     /// if nothing was recorded.
     async fn append_history(&self, envelope: &Envelope, audience: Audience) -> Option<Position> {
-        let entry = envelope.entry()?;
-        self.record(entry, envelope.context.sender_id, audience).await
+        self.record(Recorded::of(envelope, envelope.context.sender_id, audience)?).await
     }
 
-    /// Records `entry`, sent by `sender` to `audience`, in the channel's
-    /// history and stores it (`append_history`); returns its position, or
-    /// `None` if it was not recorded - a change of a message that changes
-    /// nothing.
-    async fn record(&self, entry: HistoryEntry, sender: ActorId, audience: Audience) -> Option<Position> {
-        let said = entry.published().and_then(|entry| entry.said().cloned()).filter(Message::is_heard);
+    /// Records `recorded` in the channel's history and stores it
+    /// (`append_history`); returns its position, or `None` if it was not
+    /// recorded - a change of a message that changes nothing.
+    async fn record(&self, recorded: Recorded) -> Option<Position> {
+        let said = recorded.entry.published().and_then(|entry| entry.said().cloned()).filter(Message::is_heard);
         let mut state = self.state.lock().await;
-        if !state.history.enter(Recorded::new(entry, sender, audience)) {
+        if !state.history.enter(recorded) {
             return None;
         }
         let position = state.history.end().previous();
@@ -660,7 +663,7 @@ impl ChannelLoop {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::history::Recipients;
+    use caelumora_model::history::{HistoryEntry, Recipients};
     use crate::actor::Actor;
     use crate::component::ComponentImpl;
     use crate::transport::{EventSender, EventReceiver};
@@ -867,7 +870,7 @@ mod tests {
         assert!(matches!(recorded.as_slice(), [HistoryEntry::ParticipantJoined { .. }, HistoryEntry::MessageRejected { .. }, HistoryEntry::MessageRejected { .. }]),
             "after her own join, nothing of it is recorded, only that it was not let in (issue 417): {recorded:?}");
         let state = channel.state.lock().await;
-        assert!(state.history.entries().skip(1).all(|node| node.entry.sender == ActorId::System && node.entry.recipients == Recipients::Only(vec![her])), "told to her alone, in the system's name");
+        assert!(state.history.entries().skip(1).all(|node| node.entry.sender == ActorId::System && node.entry.recipients == Recipients::only(vec![her])), "told to her alone, in the system's name");
         drop(state);
         let mut rejected = Vec::new();
         while let Ok(envelope) = hers.try_recv() {
@@ -1424,14 +1427,14 @@ mod tests {
 
         let everybody = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
         everybody.enter(said("hello"), &HashMap::new()).await;
-        assert_eq!(recorded(Arc::clone(&everybody)).await, Some((ActorId::User(alice.id), Recipients::Members { agents: true })), "as every channel delivers: to every member");
+        assert_eq!(recorded(Arc::clone(&everybody)).await, Some((ActorId::User(alice.id), Recipients::members(true))), "as every channel delivers: to every member");
 
         let to_bob = channel_moderated_by(&[&alice, &bob], Arc::new(AskBack(ActorId::User(bob.id)))).await;
         to_bob.enter(said("psst"), &HashMap::new()).await;
-        assert_eq!(recorded(Arc::clone(&to_bob)).await, Some((ActorId::User(alice.id), Recipients::Only(vec![ActorId::User(bob.id)]))), "to whom the moderator named");
+        assert_eq!(recorded(Arc::clone(&to_bob)).await, Some((ActorId::User(alice.id), Recipients::only(vec![ActorId::User(bob.id)]))), "to whom the moderator named");
         let state = to_bob.state.lock().await;
         let asked = state.history.last().map(|node| (node.entry.entry.clone(), node.entry.sender, node.entry.recipients.clone()));
-        assert!(matches!(asked, Some((HistoryEntry::ResponseRequested { by, .. }, ActorId::System, Recipients::Only(ref only))) if by == ActorId::User(alice.id) && *only == [ActorId::User(bob.id)]),
+        assert!(matches!(asked, Some((HistoryEntry::ResponseRequested { by, .. }, ActorId::System, ref recipients)) if by == ActorId::User(alice.id) && *recipients == Recipients::only(vec![ActorId::User(bob.id)])),
             "and whom it asked to respond, after it, in the system's name: {asked:?}");
     }
 
@@ -1504,12 +1507,12 @@ mod tests {
         channel.enter(said(Message { content: Some("found it".to_string()), ..thinking.clone() }), &running).await;
         assert_eq!(parts(&rx.try_recv().expect("delivered").event), (Some("found it".to_string()), None, 0), "alice is given what everybody may see");
         assert_eq!(told.0.lock().unwrap().iter().map(|e| parts(&e.event)).collect::<Vec<_>>(), [(Some("found it".to_string()), None, 0)], "and so is the moderator");
-        assert_eq!(recorded().await, (Some((Some("found it".to_string()), Some("weighing".to_string()), 1)), Recipients::Members { agents: true }), "the channel records it whole");
+        assert_eq!(recorded().await, (Some((Some("found it".to_string()), Some("weighing".to_string()), 1)), Recipients::members(true)), "the channel records it whole");
 
         channel.enter(said(thinking), &running).await;
         assert!(rx.try_recv().is_err(), "nothing of it is left to show");
         assert_eq!(told.0.lock().unwrap().len(), 1, "nor to decide on");
-        assert_eq!(recorded().await, (Some((None, Some("weighing".to_string()), 1)), Recipients::Only(Vec::new())), "recorded whole, as gone to nobody");
+        assert_eq!(recorded().await, (Some((None, Some("weighing".to_string()), 1)), Recipients::NOBODY), "recorded whole, as gone to nobody");
     }
 
     /// Issue 404: what others hear of a message is announced with the

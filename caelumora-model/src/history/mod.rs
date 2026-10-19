@@ -4,21 +4,27 @@
 //! said (issue 234), where the steps of a plan began (issue 263), how
 //! turns ended (issue 258) and who joined or left (issue 408) - read into
 //! the messages as they stand (issue 197). Every entry is recorded with whom
-//! it was sent by and whom it went to (`Recorded`, issue 417), and read only
-//! for a reader, who is given what of it they may see (`Recorded::as_seen_by`).
+//! it was sent by and whom it went to (`Recorded`, issue 417), and with the
+//! head of the envelope it came in, so that it can be delivered again from
+//! here (`Recorded::envelope`, issue 223); and read only for a reader, who is
+//! given what of it they may see (`Recorded::as_seen_by`), and who stands
+//! somewhere in it (`Heard`).
 
-use crate::actor::{ActorId, Rejection, RetryTarget};
+use crate::actor::{ActorEvent, ActorId, Envelope, EventContext, Rejection, RetryTarget};
 use crate::agent::RetryRefused;
+use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApprovalStatus};
+use crate::question::{QuestionId, QuestionRequest};
 use crate::chain::{Chain, Node, Position};
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
+use crate::security::SecurityContext;
 use crate::turn::GivenUpReason;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::ops::Range;
+use std::ops::{Not, Range};
 use crate::digest;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -131,17 +137,51 @@ pub enum HistoryEntry {
     /// `by` said or nudged -, as the moderator decided: in the system's
     /// name, to those asked.
     ResponseRequested { by: ActorId, at: DateTime<Utc> },
+    /// `by`, a user, asked the agent `agent` at `at` to carry out the
+    /// command `command` with `args` (issues 269, 223). Like every entry
+    /// that follows, recorded to be delivered again from the history - to
+    /// an agent whose inbox fell behind, or that starts again before it
+    /// stored what it took in -, and no item: shown live alone.
+    CommandRequested { agent: ActorId, command: String, args: String, by: ActorId, at: DateTime<Utc> },
+    /// `by`, a user, asked `author`, an agent, at `at` to answer again
+    /// instead of `target` (issues 234, 223).
+    RetryRequested { target: RetryTarget, author: ActorId, by: ActorId, at: DateTime<Utc> },
+    /// `by` asked at `at` for a decision on `request` (issues 81, 223): an
+    /// agent, of the approvers; an approver, of the users.
+    ApprovalRequested { request: ApprovalRequest, by: ActorId, at: DateTime<Utc> },
+    /// `by` answered the request `response.id` with `status` at `at`
+    /// (issues 81, 419, 223): a user, to the approvers; an approver, its
+    /// decision, to the users and the agent that asked.
+    ApprovalDecided { response: ApprovalResponse, status: ApprovalStatus, by: ActorId, at: DateTime<Utc> },
+    /// `by` withdrew the request `id` at `at` (issues 148, 223): the agent
+    /// that asked, of the approvers; an approver, of the users.
+    ApprovalRequestWithdrawn { id: ApprovalId, by: ActorId, at: DateTime<Utc> },
+    /// `by`, an agent, asked the questions `request` at `at` (issues 165,
+    /// 223). The answers are no entry: they go to the tool alone, never
+    /// into a history.
+    QuestionRequested { request: QuestionRequest, by: ActorId, at: DateTime<Utc> },
+    /// `by`, an agent, no longer waits for the answers to its questions
+    /// `id` since `at` (issues 165, 223), told to whom they were shown.
+    QuestionClosed { id: QuestionId, shown_to: Option<Vec<ActorId>>, by: ActorId, at: DateTime<Utc> },
 }
 
 /// What happened in a channel, recorded (issue 417): the entry, the actor
 /// whose envelope it was - the system for what the channel says itself -,
-/// and whom it went to, resolved as it was recorded into what a store
-/// filters by (`Recipients`). The chain's entry of a `History`.
+/// whom it went to, resolved as it was recorded into what a store filters by
+/// (`Recipients`), and the head of the envelope it came in (issue 223): its
+/// context and when it was sent - what it is delivered again with from the
+/// history (`envelope`). The chain's entry of a `History`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Recorded {
     pub entry: HistoryEntry,
     pub sender: ActorId,
     pub recipients: Recipients,
+    /// The context of the envelope as it entered the channel, without a
+    /// position, which is the chain's. Its sender is the envelope's - for a
+    /// request to respond, whose context it carries, while `sender` is the
+    /// system, in whose name it is recorded.
+    pub context: EventContext,
+    pub timestamp: DateTime<Utc>,
 }
 
 /// What a range of a history - as recorded, or as a reader is given it -
@@ -164,7 +204,7 @@ impl AsRef<HistoryEntry> for HistoryEntry {
 #[serde(rename_all = "snake_case")]
 pub enum Audience {
     /// Everyone it concerns, by the rule every channel delivers by
-    /// (`Envelope::concerns`, read off an entry as `HistoryEntry::recipients`).
+    /// (`Envelope::recipients`, read off an entry as `HistoryEntry::recipients`).
     #[default]
     Everybody,
     /// These alone; nobody if empty.
@@ -175,27 +215,130 @@ pub enum Audience {
 /// and what a newcomer reads by (`Memberships::of_reader`).
 pub const EVERY_POSITION: Range<Position> = Position::START..Position::MAX;
 
-/// Whom an entry of a history went to, resolved as it was recorded (issue
-/// 417): what a store filters by - for a database, columns of the row and a
-/// `WHERE` over them and the reader's ranges (`Recorded::seen_by`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Recipients {
-    /// Every member of the channel at the time - every user, and every
-    /// agent too if `agents`: whoever's range holds the entry's position.
-    Members { agents: bool },
-    /// These alone, member or not; nobody if empty.
-    Only(Vec<ActorId>),
+/// Whom something in a channel goes to, resolved as it is recorded (issue
+/// 417): every member of the kinds it names at the time - whoever's range
+/// holds the entry's position -, the channel's approvers, and whom it names,
+/// member or not. What a store filters by - for a database, columns of the
+/// row and a `WHERE` over them and the reader's ranges (`Recorded::seen_by`);
+/// and, read off an envelope, whom a channel delivers it to
+/// (`Envelope::recipients`). Nobody if it names nobody.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Recipients {
+    /// Every user that was a member at the time.
+    #[serde(default, skip_serializing_if = "Not::not")]
+    pub users: bool,
+    /// Every agent that was a member at the time.
+    #[serde(default, skip_serializing_if = "Not::not")]
+    pub agents: bool,
+    /// The channel's approvers: its own actors, no participants (issue
+    /// 420), and so of no range - there all along.
+    #[serde(default, skip_serializing_if = "Not::not")]
+    pub approvers: bool,
+    /// These by name, member or not.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub named: Vec<ActorId>,
 }
 
 impl Recipients {
-    /// Whether it goes to `member` for what `member` is, a user or an
-    /// agent, or names it - whether `member` was one at the time is the
-    /// ranges' to say.
-    fn names(&self, member: ActorId) -> bool {
-        match self {
-            Recipients::Members { agents } => matches!(member, ActorId::User(_)) || (*agents && matches!(member, ActorId::Agent(_))),
-            Recipients::Only(only) => only.contains(&member),
+    /// Nobody.
+    pub const NOBODY: Recipients = Recipients { users: false, agents: false, approvers: false, named: Vec::new() };
+
+    /// Every user that was a member at the time, and every agent too if
+    /// `agents`.
+    pub fn members(agents: bool) -> Self {
+        Self { users: true, agents, ..Self::NOBODY }
+    }
+
+    /// The channel's approvers.
+    pub const APPROVERS: Recipients = Recipients { users: false, agents: false, approvers: true, named: Vec::new() };
+
+    /// `named` alone.
+    pub fn only(named: Vec<ActorId>) -> Self {
+        Self { named, ..Self::NOBODY }
+    }
+
+    /// Every user that was a member at the time, or, if `shown_to` names
+    /// some, the users among them alone - by name, member or not.
+    pub fn users(shown_to: Option<Vec<ActorId>>) -> Self {
+        match shown_to {
+            None => Self::members(false),
+            Some(shown_to) => Self::only(shown_to.into_iter().filter(|actor| matches!(actor, ActorId::User(_))).collect()),
+        }
+    }
+
+    /// Whether it goes to `actor` for what `actor` is or by its name -
+    /// whether a user or an agent was a member at the time is the ranges'
+    /// to say (`reaches`).
+    pub fn names(&self, actor: ActorId) -> bool {
+        self.named.contains(&actor) || self.of_kind(actor)
+    }
+
+    /// Whether it goes to `actor` for what it is: a user or an agent of the
+    /// kinds it names, or an approver.
+    fn of_kind(&self, actor: ActorId) -> bool {
+        match actor {
+            ActorId::User(_) => self.users,
+            ActorId::Agent(_) => self.agents,
+            ActorId::Approver(_) => self.approvers,
+            ActorId::System | ActorId::None => false,
+        }
+    }
+
+    /// Whether it reached `actor` at the position `seq`, `ranges` being
+    /// where `actor` was a member: by name; as an approver; as a user or an
+    /// agent while it was a member.
+    fn reaches(&self, actor: ActorId, seq: Position, ranges: &[Range<Position>]) -> bool {
+        self.named.contains(&actor)
+            || (self.approvers && matches!(actor, ActorId::Approver(_)))
+            || (self.of_kind(actor) && ranges.iter().any(|range| range.contains(&seq)))
+    }
+}
+
+/// Where a reader of a history stands in it (issue 223): `next`, the first
+/// position not yet delivered to it in order, and `taken`, the positions
+/// after it delivered ahead of their turn - an approval taken while a turn
+/// waits, the rest kept for later (`EventReceiver::recv_matching`). What a
+/// reader that falls behind reads on from, and what an agent stores with
+/// what it took in, so that a restart delivers what the stored state lacks,
+/// nothing twice.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Heard {
+    next: Position,
+    /// Each after `next`, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    taken: Vec<Position>,
+}
+
+impl Heard {
+    /// Nothing delivered from `next` on.
+    pub fn at(next: Position) -> Self {
+        Self { next, taken: Vec::new() }
+    }
+
+    /// The first position not delivered in order.
+    pub fn next(&self) -> Position {
+        self.next
+    }
+
+    /// Whether what is at `seq` was delivered.
+    pub fn has(&self, seq: Position) -> bool {
+        seq < self.next || self.taken.binary_search(&seq).is_ok()
+    }
+
+    /// What is at `seq` was delivered in order: everything before it was
+    /// delivered, or is not for the reader.
+    pub fn took(&mut self, seq: Position) {
+        self.next = self.next.max(seq.next());
+        let next = self.next;
+        self.taken.retain(|taken| *taken >= next);
+    }
+
+    /// What is at `seq` was delivered ahead of its turn.
+    pub fn took_ahead(&mut self, seq: Position) {
+        if let Err(at) = self.taken.binary_search(&seq) {
+            if seq >= self.next {
+                self.taken.insert(at, seq);
+            }
         }
     }
 }
@@ -224,15 +367,31 @@ pub enum Reader {
 }
 
 impl Recorded {
-    /// `entry`, sent by `sender` to `audience`: to everybody resolved into
+    /// `entry`, sent by `sender` to `audience` - to everybody resolved into
     /// whom it concerns by the rule every channel delivers by
-    /// (`HistoryEntry::recipients`).
+    /// (`HistoryEntry::recipients`) -, recorded by its holder itself: of no
+    /// envelope, its head names the sender alone, now.
     pub fn new(entry: HistoryEntry, sender: ActorId, audience: Audience) -> Self {
+        let context = EventContext { sender_id: sender, initiator_id: sender, ..EventContext::default() };
+        Self::with_head(entry, sender, audience, context, Utc::now())
+    }
+
+    /// What a channel records of `envelope` (issue 223): the entry it
+    /// records (`Envelope::entry`), sent by `sender` - the system for a
+    /// request to respond, else the envelope's sender - to `audience`,
+    /// with the envelope's context and time; `None` if nothing of it is
+    /// recorded.
+    pub fn of(envelope: &Envelope, sender: ActorId, audience: Audience) -> Option<Self> {
+        let context = EventContext { position: None, ..envelope.context.clone() };
+        Some(Self::with_head(envelope.entry()?, sender, audience, context, envelope.timestamp))
+    }
+
+    fn with_head(entry: HistoryEntry, sender: ActorId, audience: Audience, context: EventContext, timestamp: DateTime<Utc>) -> Self {
         let recipients = match audience {
             Audience::Everybody => entry.recipients(),
-            Audience::Only(only) => Recipients::Only(only),
+            Audience::Only(only) => Recipients::only(only),
         };
-        Self { entry, sender, recipients }
+        Self { entry, sender, recipients, context, timestamp }
     }
 
     /// `entry` as every channel delivers it, sent by whom it names
@@ -241,6 +400,17 @@ impl Recorded {
     fn delivered(entry: HistoryEntry) -> Self {
         let sender = entry.named_sender();
         Self::new(entry, sender, Audience::Everybody)
+    }
+
+    /// The envelope it came in, delivered again from the history at the
+    /// position `seq` (issue 223): its event (`HistoryEntry::event`), its
+    /// context with the position, its time, and `security`, the sender's
+    /// security context as the channel knows it now - the history does not
+    /// record it. `None` for an entry of no event. What is delivered of it
+    /// is the channel's to stamp, as it stamps what it delivers live.
+    pub fn envelope(&self, seq: Position, security: SecurityContext) -> Option<Envelope> {
+        let event = self.entry.event()?;
+        Some(Envelope { timestamp: self.timestamp, security, context: EventContext { position: Some(seq), ..self.context.clone() }, event })
     }
 
     /// Whether `reader` is given anything of the entry at the position
@@ -257,9 +427,8 @@ impl Recorded {
         match reader {
             Reader::Channel => true,
             Reader::Participant(actor) | Reader::Newcomer(actor) if *actor == self.sender => true,
-            Reader::Participant(actor) | Reader::Newcomer(actor) => self.entry.is_published() && self.recipients.names(*actor)
-                && (matches!(self.recipients, Recipients::Only(_)) || ranges.iter().any(|range| range.contains(&seq))),
-            Reader::Outsider => self.entry.is_published() && matches!(self.recipients, Recipients::Members { .. }),
+            Reader::Participant(actor) | Reader::Newcomer(actor) => self.entry.is_published() && self.recipients.reaches(*actor, seq, ranges),
+            Reader::Outsider => self.entry.is_published() && self.recipients.users,
         }
     }
 
@@ -461,7 +630,9 @@ impl Chain<Recorded> {
             | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
             | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
             | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
-            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => true,
+            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
+            | HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => true,
         };
         if applies {
             self.push_with(recorded, digest::history_chain);
@@ -476,7 +647,10 @@ impl HistoryEntry {
     /// ended, a compaction, a turn's end, a change of who takes part, a
     /// notice, a request - rather than a change of what was said before:
     /// what a reader of the history is given as it stands
-    /// (`StandingItems`), a change being in the message it changes.
+    /// (`StandingItems`), a change being in the message it changes. What is
+    /// recorded only to be delivered again (issue 223) - a command or a
+    /// request to answer again asked of an agent, approvals and questions -
+    /// is neither: never in a page, shown live alone.
     pub(crate) fn is_item(&self) -> bool {
         match self {
             HistoryEntry::Said { .. } | HistoryEntry::Given { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. }
@@ -485,6 +659,10 @@ impl HistoryEntry {
             | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => true,
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => false,
+            // Recorded to be delivered, not read (issue 223): neither an item
+            // nor a change.
+            HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => false,
         }
     }
 
@@ -500,8 +678,15 @@ impl HistoryEntry {
             | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. }
             | HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => true,
             HistoryEntry::HistoryShared { .. } | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. }
-            | HistoryEntry::ChainCutOff { .. } | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => false,
+            | HistoryEntry::ChainCutOff { .. } | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
+            | HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => false,
         }
+    }
+
+    /// Whether it ends a turn of `actor`, finished or given up.
+    pub fn ends_turn_of(&self, actor: ActorId) -> bool {
+        matches!(self, HistoryEntry::TurnFinished { actor: of, .. } | HistoryEntry::TurnGivenUp { actor: of, .. } if *of == actor)
     }
 
     /// The message, if this is one said.
@@ -512,7 +697,9 @@ impl HistoryEntry {
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
             | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
             | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
-            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => None,
+            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
+            | HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => None,
         }
     }
 
@@ -538,7 +725,9 @@ impl HistoryEntry {
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
             | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
             | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
-            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => false,
+            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
+            | HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => false,
         }
     }
 
@@ -551,35 +740,103 @@ impl HistoryEntry {
             | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. }
             | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
             | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
-            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => None,
+            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
+            | HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => None,
         }
     }
 
     /// Whom the entry goes to when it goes to everybody, by the rule every
-    /// channel delivers by (issue 417): `Envelope::concerns` for what the
-    /// entry records, resolved as it is recorded - a message to every
-    /// member who is a user, and to every agent too if there is something
-    /// to hear in it; a change of a message and who joined or left to every
-    /// user and agent; how a turn went, what it carried out and what came of
-    /// what it did of its own accord to the users; what answers a command
-    /// to the user it answers; the part of the history shared with a
-    /// newcomer to the newcomer alone; what an agent was given and a
-    /// compaction to nobody. Whether it went back to its sender is not this
-    /// rule's: a reader is given what it sent itself.
+    /// channel delivers by (issue 417, `Envelope::recipients`): a message to
+    /// every member who is a user, and to every agent too if there is
+    /// something to hear in it; a change of a message and who joined or left
+    /// to every user and agent; how a turn went, what it carried out and
+    /// what came of what it did of its own accord to the users; what
+    /// answers a command to the user it answers; the part of the history
+    /// shared with a newcomer to the newcomer alone; what an agent was given
+    /// and a compaction to nobody; a command and a request to answer again
+    /// to the agent they name (issues 234, 269); an approval through the
+    /// approvers - an agent's request to them, theirs to the users, a user's
+    /// answer to them, their decision to the users and the agent that asked
+    /// (issues 81, 148); an agent's questions and their closing to the users,
+    /// to those asked alone if they are sensitive (issue 165). Whether it
+    /// went back to its sender is not this rule's: a reader is given what it
+    /// sent itself.
     pub fn recipients(&self) -> Recipients {
         match self {
-            HistoryEntry::HistoryShared { participant, .. } => Recipients::Only(vec![*participant]),
+            HistoryEntry::HistoryShared { participant, .. } => Recipients::only(vec![*participant]),
             HistoryEntry::CommandExecuted { to: Some(to), .. } | HistoryEntry::CommandFailed { to, .. } => {
-                Recipients::Only(vec![*to].into_iter().filter(|to| matches!(to, ActorId::User(_))).collect())
+                Recipients::only(vec![*to].into_iter().filter(|to| matches!(to, ActorId::User(_))).collect())
             }
-            HistoryEntry::Said { message } => Recipients::Members { agents: message.is_heard() },
+            HistoryEntry::Said { message } => Recipients::members(message.is_heard()),
             HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. }
-            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => Recipients::Members { agents: true },
+            | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } => Recipients::members(true),
             HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { to: None, .. }
-            | HistoryEntry::ActivityFinished { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } => Recipients::Members { agents: false },
+            | HistoryEntry::ActivityFinished { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } => Recipients::members(false),
             HistoryEntry::Compacted { .. } | HistoryEntry::Given { .. } | HistoryEntry::ChainCutOff { .. } | HistoryEntry::MessageRejected { .. }
-            | HistoryEntry::ResponseRequested { .. } => Recipients::Only(Vec::new()),
+            | HistoryEntry::ResponseRequested { .. } => Recipients::NOBODY,
+            HistoryEntry::CommandRequested { agent: named, .. } | HistoryEntry::RetryRequested { author: named, .. } => {
+                Recipients::only(Some(*named).filter(|named| matches!(named, ActorId::Agent(_))).into_iter().collect())
+            }
+            HistoryEntry::ApprovalRequested { by, .. } | HistoryEntry::ApprovalRequestWithdrawn { by, .. } => match by {
+                ActorId::Agent(_) => Recipients::APPROVERS,
+                ActorId::Approver(_) => Recipients::members(false),
+                _ => Recipients::NOBODY,
+            },
+            HistoryEntry::ApprovalDecided { response, status, by, .. } => match by {
+                // A timeout is the approver's alone.
+                ActorId::User(_) if *status != ApprovalStatus::Timeout => Recipients::APPROVERS,
+                ActorId::Approver(_) => Recipients { named: vec![ActorId::Agent(response.agent_id)], ..Recipients::members(false) },
+                _ => Recipients::NOBODY,
+            },
+            HistoryEntry::QuestionRequested { by: ActorId::Agent(_), request, .. } => Recipients::users(request.shown_to()),
+            HistoryEntry::QuestionClosed { by: ActorId::Agent(_), shown_to, .. } => Recipients::users(shown_to.clone()),
+            HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => Recipients::NOBODY,
         }
+    }
+
+    /// The event the entry records, as it is delivered again from the
+    /// history (issue 223): the inverse of `Envelope::entry`, whose
+    /// envelope gives the rest - who sent it, when, who caused it. A message
+    /// said is an intermediate one if it is internal, a step of a plan, as
+    /// an agent sends it, and a complete one otherwise; a turn's end comes
+    /// without its answer, which the history holds as the messages said
+    /// before it (`HistoryStore::answer`). `None` for a fitting of the
+    /// channel's, which is no event.
+    pub fn event(&self) -> Option<ActorEvent> {
+        Some(match self.clone() {
+            HistoryEntry::Said { message } if message.internal => ActorEvent::IntermediateMessageGenerated(message),
+            HistoryEntry::Said { message } => ActorEvent::CompleteMessageGenerated(message),
+            HistoryEntry::Given { message } => ActorEvent::MessageGiven { message },
+            HistoryEntry::Reclassified { message, classification } => ActorEvent::MessageReclassified { message, classification },
+            HistoryEntry::Modified { message } => ActorEvent::MessageModified(message),
+            HistoryEntry::Revoked { message, at } => ActorEvent::MessageRevoked { message, at },
+            HistoryEntry::TurnFinished { turn_id, .. } => ActorEvent::TurnFinished { turn_id, messages: Vec::new() },
+            HistoryEntry::TurnGivenUp { turn_id, reason, .. } => ActorEvent::TurnGivenUp { turn_id, reason },
+            HistoryEntry::PlanStepStarted { turn_id, step_index, total_steps, description, .. } => ActorEvent::PlanStepStarted { turn_id, step_index, total_steps, description },
+            HistoryEntry::CommandExecuted { turn_id, command, args, output, to, .. } => ActorEvent::CommandExecuted { command, args, output, to, turn_id },
+            HistoryEntry::Compacted { turn_id, from, to, .. } => ActorEvent::ContextCompacted { turn_id, from, to },
+            HistoryEntry::ActivityFinished { turn_id, activity, output, .. } => ActorEvent::ActivityFinished { turn_id, activity, output },
+            HistoryEntry::ParticipantJoined { participant, name, .. } => ActorEvent::ParticipantJoined { participant, name },
+            HistoryEntry::ParticipantLeft { participant, name, until, .. } => ActorEvent::ParticipantLeft { participant, name, until },
+            HistoryEntry::HistoryShared { participant, from, by, by_name, .. } => ActorEvent::HistoryShared { participant, from, by, by_name },
+            HistoryEntry::CommandFailed { turn_id, command, reason, to, .. } => ActorEvent::CommandFailed { command, reason, to, turn_id },
+            HistoryEntry::RetryAccepted { target, .. } => ActorEvent::RetryAccepted { target },
+            HistoryEntry::RetryRejected { target, reason, .. } => ActorEvent::RetryRejected { target, reason },
+            HistoryEntry::ChainCutOff { message, max_agent_hops, not_asked, .. } => ActorEvent::ChainCutOff { message, max_agent_hops, not_asked },
+            HistoryEntry::MessageRejected { rejected, message, reason, .. } => ActorEvent::MessageRejected { rejected, message, reason },
+            HistoryEntry::ResponseRequested { .. } => ActorEvent::ResponseRequested,
+            HistoryEntry::CommandRequested { agent, command, args, .. } => ActorEvent::CommandRequested { command, args, agent },
+            HistoryEntry::RetryRequested { target, author, .. } => ActorEvent::RetryRequested { target, author },
+            HistoryEntry::ApprovalRequested { request, .. } => ActorEvent::ApprovalRequested(request),
+            HistoryEntry::ApprovalDecided { response, status: ApprovalStatus::Approved, .. } => ActorEvent::ApprovalGranted(response),
+            HistoryEntry::ApprovalDecided { response, status: ApprovalStatus::Denied, .. } => ActorEvent::ApprovalDenied(response),
+            HistoryEntry::ApprovalDecided { response, status: ApprovalStatus::Timeout, .. } => ActorEvent::ApprovalTimedOut(response),
+            HistoryEntry::ApprovalRequestWithdrawn { id, .. } => ActorEvent::ApprovalRequestWithdrawn { id },
+            HistoryEntry::QuestionRequested { request, .. } => ActorEvent::QuestionRequested(request),
+            HistoryEntry::QuestionClosed { id, shown_to, .. } => ActorEvent::QuestionClosed { id, shown_to },
+            HistoryEntry::Fitted { .. } => return None,
+        })
     }
 
     /// Whether anything of the entry is for others than its sender
@@ -601,7 +858,9 @@ impl HistoryEntry {
             | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. } | HistoryEntry::Compacted { .. }
             | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
             | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
-            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => Some(self.clone()),
+            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
+            | HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => Some(self.clone()),
         }
     }
 
@@ -616,7 +875,9 @@ impl HistoryEntry {
             HistoryEntry::TurnFinished { actor, .. } | HistoryEntry::TurnGivenUp { actor, .. } | HistoryEntry::PlanStepStarted { actor, .. }
             | HistoryEntry::CommandExecuted { actor, .. } | HistoryEntry::Compacted { actor, .. } | HistoryEntry::ActivityFinished { actor, .. }
             | HistoryEntry::CommandFailed { actor, .. } | HistoryEntry::RetryAccepted { actor, .. } | HistoryEntry::RetryRejected { actor, .. } => *actor,
-            HistoryEntry::ParticipantJoined { by, .. } | HistoryEntry::ParticipantLeft { by, .. } | HistoryEntry::HistoryShared { by, .. } => *by,
+            HistoryEntry::ParticipantJoined { by, .. } | HistoryEntry::ParticipantLeft { by, .. } | HistoryEntry::HistoryShared { by, .. }
+            | HistoryEntry::CommandRequested { by, .. } | HistoryEntry::RetryRequested { by, .. } | HistoryEntry::ApprovalRequested { by, .. } | HistoryEntry::ApprovalDecided { by, .. }
+            | HistoryEntry::ApprovalRequestWithdrawn { by, .. } | HistoryEntry::QuestionRequested { by, .. } | HistoryEntry::QuestionClosed { by, .. } => *by,
             HistoryEntry::ChainCutOff { .. } | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => ActorId::System,
             HistoryEntry::Revoked { .. } | HistoryEntry::Reclassified { .. } | HistoryEntry::Fitted { .. } => ActorId::None,
         }
@@ -636,7 +897,9 @@ impl HistoryEntry {
             | HistoryEntry::TurnFinished { .. } | HistoryEntry::TurnGivenUp { .. } | HistoryEntry::PlanStepStarted { .. } | HistoryEntry::CommandExecuted { .. }
             | HistoryEntry::Compacted { .. } | HistoryEntry::ActivityFinished { .. } | HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. } | HistoryEntry::HistoryShared { .. }
             | HistoryEntry::CommandFailed { .. } | HistoryEntry::RetryAccepted { .. } | HistoryEntry::RetryRejected { .. } | HistoryEntry::ChainCutOff { .. }
-            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. } => None,
+            | HistoryEntry::MessageRejected { .. } | HistoryEntry::ResponseRequested { .. }
+            | HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => None,
         }
     }
 }
@@ -652,6 +915,8 @@ mod tests {
     use crate::message::MessageRole;
     use crate::user::UserId;
     use super::testing::{items_of, messages_of, recorded_context};
+    use crate::security::SecurityContext;
+    use uuid::Uuid;
 
     /// Issue 417: a reader is given an entry only if it went to them or
     /// they sent it - an outsider what went to everybody, the channel
@@ -690,21 +955,31 @@ mod tests {
         assert!(to_nobody.as_seen_by(Position::START, &Reader::Participant(agent), ALL).is_some() && to_nobody.as_seen_by(Position::START, &Reader::Participant(user), ALL).is_none(), "to nobody: its sender alone");
     }
 
-    /// Issue 417: what the history records of an envelope goes to whom the
-    /// envelope concerned - one rule, read off the event and, resolved as it
-    /// is recorded, off the entry.
-    #[test]
-    fn an_entry_concerns_whom_its_envelope_concerned() {
-        use crate::actor::{ActorEvent, Envelope, EventContext};
-        use crate::security::SecurityContext;
-        let (agent, user) = (ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()));
+    /// Every event the history records, each with its sender - `agent`
+    /// unless it is a user's or an approver's -, about `user`.
+    fn recorded_events(agent: ActorId, user: ActorId) -> Vec<(ActorId, ActorEvent)> {
+        use crate::approval::ApproverId;
+        use crate::question::{Addressee, Question, Questions};
+        use crate::tool::ToolCall;
         let turn_id = TurnId::new();
         let heard = Message { sender_id: agent, role: MessageRole::Assistant, content: Some("hello".to_string()), ..make_message(id(1)) };
-        let unheard = Message { internal: true, ..heard.clone() };
-        let events = [
+        let step = Message { internal: true, ..heard.clone() };
+        let transcript = message_chain(None, &heard);
+        let ActorId::Agent(agent_id) = agent else { panic!("{agent} is no agent") };
+        let approver = ActorId::Approver(ApproverId::new());
+        let call = ToolCall { id: None, function_name: "noop".to_string(), arguments: serde_json::json!({}), visibility: Default::default(), presentation: Default::default() };
+        let approval = ApprovalRequest { suggested: None, explicit: false, id: Default::default(), session_id: Default::default(), channel_id: Default::default(), agent_id, tool_call: call.clone(), description: "test".to_string() };
+        let response = ApprovalResponse::new(approval.id, agent_id);
+        let questions = |sensitive| QuestionRequest {
+            id: QuestionId::new(), session_id: Default::default(), channel_id: Default::default(), agent_id, tool_call: call.clone(),
+            questions: Questions { questions: vec![Question { header: "Name".to_string(), question: "Who?".to_string(), choices: Vec::new(), multi_select: false }], ask: vec![Addressee::Actor(user)], sensitive },
+        };
+        let by_agent = [
             ActorEvent::CompleteMessageGenerated(heard.clone()),
-            ActorEvent::IntermediateMessageGenerated(unheard),
-            ActorEvent::TurnFinished { turn_id, messages: vec![heard.clone()] },
+            ActorEvent::IntermediateMessageGenerated(step),
+            ActorEvent::MessageGiven { message: heard.clone() },
+            ActorEvent::ContextCompacted { turn_id, from: transcript, to: transcript },
+            ActorEvent::TurnFinished { turn_id, messages: Vec::new() },
             ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Left },
             ActorEvent::PlanStepStarted { turn_id, step_index: 0, total_steps: 1, description: "first".to_string() },
             ActorEvent::CommandExecuted { command: "compact".to_string(), args: String::new(), output: "done".to_string(), to: None, turn_id: Some(turn_id) },
@@ -723,17 +998,112 @@ mod tests {
             ActorEvent::MessageRejected { rejected: "MessageModified".to_string(), message: Some(heard.id), reason: Rejection::Invalid },
             ActorEvent::ResponseRequested,
             ActorEvent::HistoryShared { participant: user, from: Position::new(3), by: agent, by_name: "agent".to_string() },
+            ActorEvent::ApprovalRequested(approval.clone()),
+            ActorEvent::ApprovalRequestWithdrawn { id: approval.id },
+            ActorEvent::QuestionRequested(questions(false)),
+            ActorEvent::QuestionRequested(questions(true)),
+            ActorEvent::QuestionClosed { id: QuestionId::new(), shown_to: None },
+            ActorEvent::QuestionClosed { id: QuestionId::new(), shown_to: Some(vec![user]) },
         ];
-        for event in events {
+        let mut events: Vec<(ActorId, ActorEvent)> = by_agent.into_iter().map(|event| (agent, event)).collect();
+        events.extend([
+            (user, ActorEvent::CommandRequested { command: "mark".to_string(), args: "it".to_string(), agent }),
+            (user, ActorEvent::RetryRequested { target: RetryTarget::Turn(turn_id), author: agent }),
+            (user, ActorEvent::ApprovalGranted(response.clone())),
+            (user, ActorEvent::ApprovalDenied(response.clone())),
+            (user, ActorEvent::ApprovalTimedOut(response.clone())),
+            (approver, ActorEvent::ApprovalRequested(approval.clone())),
+            (approver, ActorEvent::ApprovalRequestWithdrawn { id: approval.id }),
+            (approver, ActorEvent::ApprovalGranted(response.clone())),
+            (approver, ActorEvent::ApprovalDenied(response.clone())),
+            (approver, ActorEvent::ApprovalTimedOut(response)),
+        ]);
+        events
+    }
+
+    /// Issues 417, 223: what the history records of an envelope goes to
+    /// whom the envelope went to - one rule, read off the event and,
+    /// resolved as it is recorded, off the entry.
+    #[test]
+    fn an_entry_goes_to_whom_its_envelope_went_to() {
+        let (agent, user) = (ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()));
+        for (sender, event) in recorded_events(agent, user) {
             let kind = event.kind();
-            let envelope = Envelope::new(SecurityContext::default(), EventContext { sender_id: agent, ..EventContext::default() }, event);
-            let entry = envelope.entry().unwrap_or_else(|| panic!("{kind} is recorded"));
-            let recorded = Recorded::new(entry, ActorId::System, Audience::Everybody);
-            for participant in [user, ActorId::Agent(AgentId::new()), ActorId::Approver(Default::default())] {
+            let envelope = Envelope::new(SecurityContext::default(), EventContext { sender_id: sender, ..EventContext::default() }, event);
+            let recorded = Recorded::of(&envelope, ActorId::System, Audience::Everybody).unwrap_or_else(|| panic!("{kind} is recorded"));
+            for participant in [user, agent, ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()), ActorId::Approver(Default::default())] {
                 let member_all_along = [EVERY_POSITION];
-                assert_eq!(recorded.seen_by(Position::START, &Reader::Participant(participant), &member_all_along), envelope.concerns(participant), "{kind} for {participant}");
+                assert_eq!(recorded.seen_by(Position::START, &Reader::Participant(participant), &member_all_along), envelope.recipients().names(participant), "{kind} of {sender} for {participant}");
             }
         }
+    }
+
+    /// Issue 223: an envelope recorded comes back from the history as it
+    /// came in - its event, its context with the position of its entry, its
+    /// time -, with the security context the channel gives it; a turn's end
+    /// without its answer, which the history holds before it.
+    #[test]
+    fn an_envelope_recorded_comes_back_as_it_came_in() {
+        let (agent, user) = (ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()));
+        let context = EventContext { sender_id: agent, sender_name: "agent".to_string(), correlation_id: Uuid::new_v4(), span_depth: 2, agent_hops: 1, initiator_id: user, ..EventContext::new(Default::default(), Default::default(), agent, "agent") };
+        for (sender, event) in recorded_events(agent, user) {
+            let kind = event.kind();
+            let context = EventContext { sender_id: sender, position: Some(Position::new(4)), ..context.clone() };
+            let envelope = Envelope::new(SecurityContext::default().next(sender, ActorId::None, ActorId::None), context, event);
+            let recorded = Recorded::of(&envelope, ActorId::System, Audience::Everybody).unwrap_or_else(|| panic!("{kind} is recorded"));
+            let again = recorded.envelope(Position::new(7), SecurityContext::default()).unwrap_or_else(|| panic!("{kind} comes back"));
+            assert_eq!(serde_json::to_value(&again.event).unwrap(), serde_json::to_value(&envelope.event).unwrap(), "{kind}: the event");
+            assert_eq!((again.context.position, again.timestamp), (Some(Position::new(7)), envelope.timestamp), "{kind}: where its entry is, when it was sent");
+            assert_eq!(EventContext { position: None, ..again.context }, EventContext { position: None, ..envelope.context.clone() }, "{kind}: the context it came in");
+            assert_eq!(again.security, SecurityContext::default(), "{kind}: the context given");
+        }
+        let answer = Message { sender_id: agent, turn_id: Some(TurnId::new()), ..make_message(id(1)) };
+        let ended = Envelope::new(SecurityContext::default(), context, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![answer] });
+        let again = Recorded::of(&ended, agent, Audience::Everybody).and_then(|recorded| recorded.envelope(Position::START, SecurityContext::default()));
+        assert!(matches!(again.map(|e| e.event), Some(ActorEvent::TurnFinished { messages, .. }) if messages.is_empty()), "without its answer");
+        assert!(Recorded::new(HistoryEntry::Fitted { channel: Classification::PUBLIC }, ActorId::None, Audience::Everybody).envelope(Position::START, SecurityContext::default()).is_none(), "a fitting is no event");
+    }
+
+    /// Issue 223: what is recorded to be delivered again is neither an item
+    /// nor part of the conversation: a page shows none of it, and a turn
+    /// given up is still the last thing.
+    #[test]
+    fn what_is_recorded_to_be_delivered_again_is_no_item() {
+        let (agent, user) = (ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()));
+        let turn = TurnId::new();
+        let mut history = History::default();
+        history.record(HistoryEntry::TurnGivenUp { turn_id: turn, actor: agent, reason: GivenUpReason::Left, at: Utc::now() });
+        let delivered_alone: Vec<(ActorId, ActorEvent)> = recorded_events(agent, user).into_iter()
+            .filter(|(sender, event)| Envelope::new(SecurityContext::default(), EventContext { sender_id: *sender, ..EventContext::default() }, event.clone()).entry().is_some_and(|entry| !entry.is_item() && entry.changed().is_none() && entry.event().is_some()))
+            .collect();
+        assert_eq!(delivered_alone.len(), 16, "the requests, approvals and questions: {:?}", delivered_alone.iter().map(|(_, event)| event.kind()).collect::<Vec<_>>());
+        for (sender, event) in delivered_alone {
+            let envelope = Envelope::new(SecurityContext::default(), EventContext { sender_id: sender, ..EventContext::default() }, event);
+            assert!(history.enter(Recorded::of(&envelope, sender, Audience::Everybody).expect("recorded")));
+        }
+        assert_eq!(items_of(&history).len(), 1, "the turn given up alone");
+        assert_eq!(history.turn_given_up_last(agent), Some((turn, GivenUpReason::Left)), "nothing of the conversation followed it");
+    }
+
+    /// Issue 223: where a reader stands - what was delivered in order, and
+    /// what ahead of it, forgotten once passed.
+    #[test]
+    fn a_reader_stands_after_what_was_delivered_in_order_and_ahead() {
+        let at = Position::new;
+        let mut heard = Heard::at(at(3));
+        assert!(heard.has(at(2)) && !heard.has(at(3)), "before where it begins");
+        heard.took_ahead(at(6));
+        heard.took_ahead(at(2));
+        assert!(heard.has(at(6)) && !heard.has(at(5)), "taken ahead");
+        heard.took(at(4));
+        assert_eq!(heard.next(), at(5), "past what was delivered in order, what lies between not for it");
+        assert!(heard.has(at(6)), "still taken ahead");
+        heard.took(at(7));
+        assert_eq!(heard, Heard::at(at(8)), "what was taken ahead is forgotten once passed");
+        heard.took(at(1));
+        assert_eq!(heard.next(), at(8), "never back");
+        let stored: Heard = serde_json::from_value(serde_json::to_value(&heard).unwrap()).unwrap();
+        assert_eq!(stored, heard);
     }
 
     #[test]

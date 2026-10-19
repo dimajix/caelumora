@@ -60,3 +60,10 @@ the in-memory receiver's `commit` clears a list.
   design is 223's plan; this issue is done with it.
 - **2026-10-16** — Taken out of the epic [378](378-resource-management-epic.md) with 223, which
   records why; after [379](379-history-stored-as-it-stands.md).
+- **2026-10-19** — Decided with [223](223-full-inbox-drops-events.md), whose plan of 2026-10-19
+  replaces the one of 2026-10-16 and answers this issue without a stored inbox: the queue stays in
+  memory, and what it held that was not yet stored is delivered again from the channel's history,
+  from where the actor's stored state says it stands (`Heard`), since everything important is
+  recorded there - commands, retries, approvals and questions from then on too. Nothing is taken
+  in twice, because the mark and what was taken in are one put; the taking in need not be
+  idempotent. Done with 223's step 4, which holds this issue's test.
