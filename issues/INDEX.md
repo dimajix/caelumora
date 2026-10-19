@@ -219,6 +219,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [294](294-user-ends-a-command.md) | done | A command an agent's call handed back as running can be ended only by the model; a user who sees it hang has no way to end it. |
 | [400](400-exact-matcher-long-value.md) | done | `ToolMatcher::exact` escapes every argument's whole value into a pattern, which for a value longer than `MAX_PATTERN_CHARS` fails the check, so the rule an approval card offers for such a call is refused - only after the call was answered. |
 | [419](419-approval-recorded-with-the-call.md) | done | Once a tool call was approved, nothing stored says who approved it or by which rule, so neither the chat nor the record of the turn can show it. |
+| [433](433-mcp-tools-list-changed.md) | open | An MCP server that announces a change of its tools (`notifications/tools/list_changed`) is not heard, so an agent follows the change only once its list of the server's tools expires. |
 
 ## User interaction
 
