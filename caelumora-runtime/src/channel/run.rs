@@ -56,11 +56,11 @@ impl ChannelLoop {
         let mut changes_rx = self.changes_rx.lock().await;
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
-        let mut running = self.spawn_actors(event_tx.clone(), &mut join_set);
-        // Who joined before it ran - the founders of a channel just created
-        // (issue 420) - is announced before anything is routed: their actors
-        // run already, and what one of them says must come after the joins
-        // of all who hear it.
+        let mut running = HashMap::new();
+        // The actors taken in before it ran - as the channel was built, and
+        // the founders of a channel just created (issue 420) - are started,
+        // and who joined announced, before anything is routed: what one of
+        // them says must come after the joins of all who hear it.
         while let Ok(change) = changes_rx.try_recv() {
             self.apply_change(change, &mut running, &event_tx, &mut join_set).await;
         }
@@ -107,13 +107,12 @@ impl ChannelLoop {
     /// Starts or stops an actor as a participant joined or left (issue 46).
     async fn apply_change(&self, change: ActorChange, running: &mut HashMap<ActorId, RunningActor>, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
         match change {
-            ActorChange::Start(joined, adder, from) => {
-                // Joined before `run` started: already running. Removed
-                // again before `run` got to start it: never started, so that
-                // it cannot run next to whoever joins under its id after it
-                // (issue 171).
-                let id = joined.actor.id();
-                let still_joined = self.actors.load().get(&id).is_some_and(|current| Arc::ptr_eq(&current.actor, &joined.actor));
+            ActorChange::Start(started, from, joined) => {
+                // Removed again before `run` got to start it: never started,
+                // so that it cannot run next to whoever joins under its id
+                // after it (issue 171).
+                let id = started.actor.id();
+                let still_taken_in = self.actors.load().get(&id).is_some_and(|current| Arc::ptr_eq(&current.actor, &started.actor));
                 // Its old actor has ended - `add_participant` waited for
                 // that (`left`) - but its task's end may not have been seen
                 // yet: the removal is announced before anything of the new
@@ -123,10 +122,12 @@ impl ChannelLoop {
                         self.announce_removal(id, name, remover, until, running).await;
                     }
                 }
-                if !running.contains_key(&id) && still_joined {
-                    let handle = self.spawn_actor(&joined, event_tx.clone(), join_set);
+                if still_taken_in {
+                    let handle = self.spawn_actor(&started, event_tx.clone(), join_set);
                     running.insert(handle.id, handle);
                 }
+                // An actor that starts again with its channel joins nothing.
+                let Some(adder) = joined else { return };
                 // Once it runs, so that the newcomer hears it first (issue
                 // 408); also if it was removed again before it got to run:
                 // it was added, and its removal follows. Right before it,
@@ -138,7 +139,7 @@ impl ChannelLoop {
                     let shared = ActorEvent::HistoryShared { participant: id, from, by: adder.caller_id, by_name: self.name_of(adder.caller_id).await };
                     self.announce(shared, SecurityContext::system(), running).await;
                 }
-                let name = joined.actor.name().to_string();
+                let name = started.actor.name().to_string();
                 self.announce(ActorEvent::ParticipantJoined { participant: id, name }, adder, running).await;
             }
             ActorChange::Leave(id, name, remover) => {
@@ -256,13 +257,6 @@ impl ChannelLoop {
         if let Some(shown) = shown {
             self.route_event(running, shown, routing, position).await;
         }
-    }
-
-    /// Starts the tasks of the channel's actors as `run` begins.
-    fn spawn_actors(&self, actor_output: Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> HashMap<ActorId, RunningActor> {
-        self.actors.load().iter()
-            .map(|(id, actor)| (*id, self.spawn_actor(actor, actor_output.clone(), join_set)))
-            .collect()
     }
 
     fn spawn_actor(&self, channel_actor: &ChannelActor, actor_output: Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> RunningActor {
@@ -788,7 +782,7 @@ mod tests {
         let context = EventContext { sender_id: talker, agent_hops: 1, ..EventContext::default() };
         let said = Message { sender_id: talker, role: MessageRole::Assistant, content: Some("and you?".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let answer = Envelope::new(SecurityContext::default().next(talker, ActorId::None, ActorId::None), context, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![said] });
-        channel.adopt(Forger::sending(talker, vec![answer]), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
+        channel.adopt(Forger::sending(talker, vec![answer]), ResolvedParticipant::approver(channel.session_id, channel.id), None, None).await;
         let mut following = channel.user_actor(alice.id).unwrap().watch();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
@@ -820,7 +814,7 @@ mod tests {
             // On alice's behalf - she asked - but said by itself: as an agent answers.
             Envelope { security: SecurityContext::new(her, channel.session_id, channel.id).next(talker, her, her), ..said(talker, talker, talker, "its own") },
         ];
-        channel.adopt(Forger::sending(talker, envelopes), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
+        channel.adopt(Forger::sending(talker, envelopes), ResolvedParticipant::approver(channel.session_id, channel.id), None, None).await;
         let mut events = channel.observe();
         let running = tokio::spawn({ let channel = Arc::clone(&channel); async move { channel.run().await } });
 
@@ -934,7 +928,7 @@ mod tests {
         let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(asked.id()))).await;
         for actor in [&asked, &other] {
             // Who it is does not matter to routing: the channel only looks it up.
-            channel.adopt(Arc::<StandIn>::clone(actor), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
+            channel.adopt(Arc::<StandIn>::clone(actor), ResolvedParticipant::approver(channel.session_id, channel.id), None, None).await;
         }
         let said = || Envelope::new(
             context.clone(),
@@ -1232,7 +1226,7 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(10);
         let mut join_set = JoinSet::new();
         let mut running = HashMap::from([(participant, leaving_actor(participant, context.clone()))]);
-        channel.apply_change(ActorChange::Start(joined, context.clone(), Some(Position::START)), &mut running, &event_tx, &mut join_set).await;
+        channel.apply_change(ActorChange::Start(joined, Some(Position::START), Some(context.clone())), &mut running, &event_tx, &mut join_set).await;
 
         let announced = events.try_recv().expect("the removal is announced");
         assert!(matches!(announced.event, ActorEvent::ParticipantLeft { participant: p, .. } if p == participant), "{}", announced.describe());
@@ -1286,7 +1280,7 @@ mod tests {
         let (cancelled, other) = (sleeper(), sleeper());
         let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(other.id()))).await;
         for actor in [&cancelled, &other] {
-            channel.adopt(Arc::<StandIn>::clone(actor), ResolvedParticipant::approver(channel.session_id, channel.id)).await;
+            channel.adopt(Arc::<StandIn>::clone(actor), ResolvedParticipant::approver(channel.session_id, channel.id), None, None).await;
         }
 
         channel.cancel_actor(&context, cancelled.id()).await.expect("permitted");
