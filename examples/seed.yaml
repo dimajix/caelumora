@@ -69,6 +69,11 @@ personalities:
   description: A helpful and polite assistant
   introduction: A self-made millionaire who always wanted to be a quiz-master - polite, helpful and
     fond of a good quiz.
+  # Between the steps of a turn (issue 431): what people say in the authority of whoever asked;
+  # the words of anyone else, and what agents say, wait for the turn's end.
+  hears_during_turn:
+    from: users
+    others: wait
   components:
   - id: system-prompt
     kind: static_system_prompt_provider
@@ -107,6 +112,11 @@ personalities:
   name: sassy-assistant
   description: A sassy and witty assistant
   introduction: A witty and slightly sarcastic assistant who loves to play quiz games.
+  # Between the steps of a turn (issue 431): everyone - people and agents, also in another's
+  # authority. Another's request to respond still waits for a turn of its own.
+  hears_during_turn:
+    from: all
+    others: hear
   components:
   - id: system-prompt
     kind: static_system_prompt_provider
@@ -210,6 +220,11 @@ personalities:
   description: Reviews changes for correctness, style and security
   introduction: Reviews changes before they are merged - for correctness, readability and security -
     and says what has to change.
+  # Between the steps of a turn (issue 431): people and agents, but only in the authority of
+  # whoever asked - the team working for the same person; anyone else's words wait.
+  hears_during_turn:
+    from: all
+    others: wait
   components:
   - id: system-prompt
     kind: static_system_prompt_provider
