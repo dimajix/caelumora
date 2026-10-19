@@ -55,6 +55,21 @@ impl EventReceiver for InMemoryEventReceiver {
         Some(event)
     }
 
+    fn try_recv_if(&mut self, predicate: &dyn Fn(&Envelope) -> bool) -> Option<Envelope> {
+        // What was put aside comes first; only once it is empty is the queue
+        // looked at, and its next event then waits in the buffer.
+        if self.buffer.is_empty() {
+            let event = self.rx.try_recv().ok()?;
+            self.buffer.push_back(event);
+        }
+        if !predicate(self.buffer.front()?) {
+            return None;
+        }
+        let event = self.buffer.pop_front()?;
+        self.uncommitted.push(event.clone());
+        Some(event)
+    }
+
     async fn commit(&mut self) -> TransportResult<()> {
         self.uncommitted.clear();
         Ok(())
@@ -198,6 +213,26 @@ mod tests {
 
         drop(tx);
         assert!(receiver.try_recv().is_none(), "nothing either once the input is closed");
+    }
+
+    #[tokio::test]
+    async fn try_recv_if_takes_the_next_event_only_if_it_fulfils_the_predicate_and_leaves_it_otherwise() {
+        let (tx, rx) = mpsc::channel(4);
+        let mut receiver = InMemoryEventReceiver::new(rx);
+        let requested = |e: &Envelope| matches!(e.event, ActorEvent::ResponseRequested);
+        assert!(receiver.try_recv_if(&requested).is_none(), "nothing queued, nothing waited for");
+
+        tx.try_send(envelope(ActorEvent::ResponseRequested)).expect("room");
+        tx.try_send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() })).expect("room");
+        tx.try_send(envelope(ActorEvent::ResponseRequested)).expect("room");
+
+        assert!(receiver.try_recv_if(&requested).is_some(), "the next event fulfils it");
+        assert!(receiver.try_recv_if(&requested).is_none(), "the next one does not, and nothing behind it is looked at");
+        assert!(receiver.try_recv_if(&requested).is_none(), "and stays the next one");
+        assert_eq!(receiver.uncommitted.len(), 1, "only what it took is uncommitted");
+
+        let kinds: Vec<_> = std::iter::from_fn(|| receiver.try_recv()).map(|e| e.event.kind()).collect();
+        assert_eq!(kinds, ["ResponseStarted", "ResponseRequested"], "what it left, in order");
     }
 
     #[tokio::test]
