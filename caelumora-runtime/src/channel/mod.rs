@@ -190,11 +190,16 @@ async fn stopped(tasks: &[TaskTracker]) -> bool {
 /// A change to the actors a running channel runs (issue 46), carried out by
 /// `run`, which owns their tasks.
 enum ActorChange {
-    /// The actor that joins, on whose behalf it was added - in whose name
-    /// `run` announces it as it starts it (`ParticipantJoined`, issue 408) -,
-    /// and from which position on it is given the history (`HistoryShared`,
-    /// issue 417) - `None`: from its join on, a founder (issue 420).
-    Start(ChannelActor, SecurityContext, Option<Position>),
+    /// The actor to start - every actor of the channel is started so, as
+    /// the channel is built and as a participant joins -, from which
+    /// position on it is given the history - `None`: what is said from its
+    /// start on, a founder's (issue 420) or an actor's that starts again with
+    /// its channel -, and on whose behalf it joined, in whose name `run`
+    /// announces it as it starts it (`ParticipantJoined`, issue 408), with
+    /// what it was given (`HistoryShared`, issue 417) - `None` for an actor
+    /// that starts again with its channel, or an internal one, which join
+    /// nothing.
+    Start(ChannelActor, Option<Position>, Option<SecurityContext>),
     /// The actor that leaves, what it was called as it left, and on whose
     /// behalf it was removed - in whose name `run` announces it once its
     /// task has ended (`ParticipantLeft`, issues 162, 262, 408).
@@ -319,15 +324,15 @@ impl ChannelLoop {
         });
         channel_loop.runtime.attach(&channel_loop);
         // Its internal actors (issue 420), which are its own: nothing to
-        // resolve, nothing to leave out. `run` starts their tasks with the
+        // resolve, nothing to leave out. `run` starts them with the
         // participants'.
         let internal_actors = channel_loop.channel.load().internal_actors.clone();
         for internal in &internal_actors {
             let resolved = ResolvedParticipant::internal(internal, session_id, id);
-            let actor = channel_loop.create_actor(&resolved).await?;
-            channel_loop.adopt(Arc::from(actor), resolved).await;
+            channel_loop.start_participant(resolved, None, None).await?;
         }
-        // The participants the channel has; `run` starts their tasks.
+        // The participants the channel has, which start again with it:
+        // nothing to take in, no join to announce.
         let participants = channel_loop.channel.load().participants.clone();
         for participant in &participants {
             // A user or agent deleted since it joined - an agent rests in
@@ -351,15 +356,11 @@ impl ChannelLoop {
                 }
                 Err(e) => return Err(e),
             };
-            let actor = match channel_loop.create_actor(&resolved).await {
-                Ok(actor) => actor,
-                Err(e) if cannot_run(&e) => {
-                    warn!("{} of channel {} cannot be run and is left out: {:#}", participant.actor_id(), channel_loop.id, e);
-                    continue;
-                }
+            match channel_loop.start_participant(resolved, None, None).await {
+                Ok(()) => {}
+                Err(e) if cannot_run(&e) => warn!("{} of channel {} cannot be run and is left out: {:#}", participant.actor_id(), channel_loop.id, e),
                 Err(e) => return Err(e),
-            };
-            channel_loop.adopt(Arc::from(actor), resolved).await;
+            }
         }
         Ok(channel_loop)
     }
@@ -377,11 +378,12 @@ impl ChannelLoop {
         self.runtime.session_loop()
     }
 
-    /// Takes `actor` into the channel: the moderator routes to it, it is
-    /// among the participants' actors, and it can be mentioned. The one way
-    /// an actor enters the channel - when the channel is built and when a
-    /// participant joins (issue 91). Its task is `run`'s to start.
-    async fn adopt(&self, actor: Arc<dyn Actor>, resolved: ResolvedParticipant) -> ChannelActor {
+    /// Takes `actor` into the channel and hands it to `run` to start
+    /// (`ActorChange::Start`, given `from` and `joined` as it says): the
+    /// moderator routes to it, it is among the participants' actors, and it
+    /// can be mentioned. The one way an actor enters the channel - when the
+    /// channel is built and when a participant joins (issue 91).
+    async fn adopt(&self, actor: Arc<dyn Actor>, resolved: ResolvedParticipant, from: Option<Position>, joined: Option<SecurityContext>) {
         self.moderator.add_actor(Arc::clone(&actor));
         let id = actor.id();
         let adopted = ChannelActor { actor, participant: resolved, task: TaskTracker::new() };
@@ -391,7 +393,7 @@ impl ChannelLoop {
             actors
         });
         self.rebuild_mentions();
-        adopted
+        let _ = self.changes_tx.send(ActorChange::Start(adopted, from, joined));
     }
 
     /// Every event the channel takes in from now on (see `observed`).

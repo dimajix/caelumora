@@ -29,6 +29,7 @@ use caelumora_model::security::Grant;
 use caelumora_model::workspace::Workspace;
 use crate::terminal::{Shell, Terminal};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
+use std::ops::Range;
 use std::sync::Arc;
 use super::{ChannelRuntime, Services};
 
@@ -142,15 +143,16 @@ impl ActorRuntime {
         Ok(self.runtime.runtime_manager.history_store().said(self.channel_id, &Reader::Participant(self.actor), id).await?.map(|(at, _)| at))
     }
 
-    /// The entries of its channel's history from the position `from` on, as
-    /// they were added, as this actor is given them as it joins (issues 379,
-    /// 417, `Reader::Newcomer`): what it is given of what was said before
-    /// its join is recorded - read before its actor runs.
+    /// The entries of its channel's history at the positions `range` holds,
+    /// as they were added, as this actor is given them as it joins (issues
+    /// 379, 417, `Reader::Newcomer`): what it is given of what was said
+    /// before its inbox opened, where `range` ends (issue 423) - read before
+    /// its actor runs.
     ///
     /// # Errors
     /// Whatever the `HistoryStore` reports.
-    pub async fn channel_entries(&self, from: Position) -> Result<Vec<Node<HistoryEntry>>> {
-        Ok(self.runtime.runtime_manager.history_store().entries(self.channel_id, &Reader::Newcomer(self.actor), from).await?)
+    pub async fn channel_entries(&self, range: Range<Position>) -> Result<Vec<Node<HistoryEntry>>> {
+        Ok(self.runtime.runtime_manager.history_store().entries(self.channel_id, &Reader::Newcomer(self.actor), range).await?)
     }
 
     /// The message `id` as this agent's transcript in its channel holds it,

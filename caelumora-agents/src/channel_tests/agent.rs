@@ -1583,7 +1583,7 @@ async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_th
     let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
 
     channel.record_said(vec![answer.clone(), tool.clone()]).await;
-    actor.catch_up(Position::START).await.unwrap();
+    actor.catch_up(Position::START..Position::MAX).await.unwrap();
 
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     let heard = state.transcript.messages();
@@ -1606,7 +1606,7 @@ async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
     let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
 
     channel.record_said(vec![said("hello"), said("the secret is 42")]).await;
-    actor.catch_up(Position::START).await.unwrap();
+    actor.catch_up(Position::START..Position::MAX).await.unwrap();
 
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
     let state = channel.stored_agent_channel_state(agent).await.unwrap();

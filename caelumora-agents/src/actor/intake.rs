@@ -17,6 +17,7 @@ use caelumora_model::history::{fold, HistoryEntry};
 use caelumora_model::message::Message;
 use caelumora_model::transcript::TranscriptEntry;
 use std::mem;
+use std::ops::Range;
 use tracing::{debug, trace, warn, Instrument};
 
 impl AgentBody {
@@ -158,9 +159,10 @@ impl AgentBody {
     }
 
     /// Takes in what an actor of an agent missed of its channel as what it
-    /// hears (issues 190, 196, 206): the messages said in the channel from
-    /// the position `from` on - where the part of the channel's history it
-    /// may see begins - and after the last message it took in
+    /// hears (issues 190, 196, 206): the messages said in the channel in
+    /// `missed` - from where the part of the channel's history it may see
+    /// begins up to where its inbox opened (issue 423) - and after the last
+    /// message it took in
     /// (`AgentChannelState::last_message`), as they stand and as it may see
     /// them (issue 417), through `perceive`, and who joined or left
     /// meanwhile, where it happened (issue 408), and stores its state with
@@ -170,20 +172,20 @@ impl AgentBody {
     /// and then they are not what it heard. Older messages that a wider view
     /// grants on joining again would land after its own later answers; they
     /// are left out, and its transcript stays in the order things were
-    /// said. Called once, before its actor runs.
+    /// said. Called once, right before its actor runs.
     ///
     /// # Errors
     /// If the channel's history cannot be read, or its state not be stored.
-    pub(super) async fn catch_up(&self, from: Position) -> Result<()> {
+    pub(super) async fn catch_up(&self, missed: Range<Position>) -> Result<()> {
         let mut state = self.state.lock().await;
         let own = self.id();
-        let mut after = from;
+        let mut after = missed.start;
         if let Some(last) = state.last_message {
             if let Some(at) = self.runtime.channel_position_of(last).await? {
                 after = after.max(at.next());
             }
         }
-        let entries = self.runtime.channel_entries(after).await?;
+        let entries = self.runtime.channel_entries(after..missed.end).await?;
         // As it would have heard them (`Message::is_heard`, issue 258): the
         // steps of a plan and tool messages are kept in the channel, not
         // heard. Who joined or left is noted where it happened among them

@@ -508,8 +508,11 @@ impl HistoryStore for MemoryStore {
         })
     }
 
-    async fn entries(&self, channel: ChannelId, reader: &Reader, from: Position) -> StoreResult<Vec<Node<HistoryEntry>>> {
-        Ok(read_lock(&self.histories, |all| all.get(&channel).map(|kept| seen_nodes(reader, &kept.memberships.of_reader(reader), kept.chain.from(from))).unwrap_or_default()))
+    async fn entries(&self, channel: ChannelId, reader: &Reader, range: Range<Position>) -> StoreResult<Vec<Node<HistoryEntry>>> {
+        Ok(read_lock(&self.histories, |all| all.get(&channel).map(|kept| {
+            let nodes = kept.chain.from(range.start).iter().take_while(|node| node.seq < range.end);
+            seen_nodes(reader, &kept.memberships.of_reader(reader), nodes)
+        }).unwrap_or_default()))
     }
 
     async fn memberships(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Range<Position>>> {

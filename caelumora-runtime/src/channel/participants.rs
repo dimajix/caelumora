@@ -121,7 +121,7 @@ impl ChannelLoop {
         };
         self.channel.add_participant(&storing, found.clone()).await?;
 
-        if let Err(error) = self.start_participant(resolved, context, from).await {
+        if let Err(error) = self.start_participant(resolved, from, Some(context)).await {
             // Stored, but it cannot run: taken back out, in the runtime's
             // name - adding it was permitted.
             if let Err(undo) = self.channel.remove_participant(&SecurityContext::system(), participant).await {
@@ -198,7 +198,7 @@ impl ChannelLoop {
                 None => {
                     let rejoined = match self.resolve(&participant).await {
                         Ok(Some(resolved)) => match self.rejoining_from(actor).await {
-                            Ok(from) => self.start_participant(resolved, &SecurityContext::system(), Some(from)).await.map(|()| true),
+                            Ok(from) => self.start_participant(resolved, Some(from), Some(&SecurityContext::system())).await.map(|()| true),
                             Err(e) => Err(e.into()),
                         },
                         Ok(None) => Ok(false),
@@ -217,28 +217,25 @@ impl ChannelLoop {
         }
     }
 
-    /// Starts the actor of `resolved` in a channel that is built already - a
-    /// participant added or joining (`take_in`), an agent restored
-    /// (`follow_agents`): once the actor it had before has ended (`left`),
-    /// built, given the part of the history it may see - from the position
-    /// `from` on (`Actor::catch_up`, issue 190), nothing if `None`: what is
-    /// said from its join on -, taken in (`adopt`) and
-    /// handed to `run` to start, which records what it was given and
-    /// announces it in the name of `adder`'s caller (issues 408, 417).
-    /// `take_in` waits for `left` before it stores anything already; here it
-    /// then finds nothing left to wait for.
+    /// Starts the actor of `resolved` - the one way every actor of the
+    /// channel is started: as the channel is built (`ChannelLoop::new`), as
+    /// a participant is added or joins (`take_in`), as an agent is restored
+    /// (`follow_agents`). Once the actor it had before has ended (`left`),
+    /// built, taken in (`adopt`) and handed to `run` to start, which gives
+    /// it the part of the history it may see - from the position `from` on,
+    /// nothing if `None`: what is said from its start on -, records what it
+    /// was given and announces its join in the name of `joined`'s caller
+    /// (issues 408, 417, 423) - nothing if `None`, for an actor that starts
+    /// again with its channel. `take_in` waits for `left` before it stores
+    /// anything already; here it then finds nothing left to wait for.
     ///
     /// # Errors
-    /// `ChannelError::StillLeaving`, or what building the actor or catching
-    /// it up reports; it is not taken in then.
-    async fn start_participant(&self, resolved: ResolvedParticipant, adder: &SecurityContext, from: Option<Position>) -> Result<()> {
+    /// `ChannelError::StillLeaving`, or what building the actor reports; it
+    /// is not taken in then.
+    pub(super) async fn start_participant(&self, resolved: ResolvedParticipant, from: Option<Position>, joined: Option<&SecurityContext>) -> Result<()> {
         self.left(resolved.actor_id()).await?;
         let actor = self.create_actor(&resolved).await?;
-        if let Some(from) = from {
-            actor.catch_up(from).await?;
-        }
-        let adopted = self.adopt(Arc::from(actor), resolved).await;
-        let _ = self.changes_tx.send(ActorChange::Start(adopted, adder.clone(), from));
+        self.adopt(Arc::from(actor), resolved, from, joined.cloned()).await;
         Ok(())
     }
 

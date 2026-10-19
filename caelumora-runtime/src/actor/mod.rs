@@ -14,6 +14,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::any::Any;
 use std::fmt::Debug;
+use std::ops::Range;
 use tracing::warn;
 
 use crate::transport::{EventReceiver, EventSender};
@@ -61,16 +62,18 @@ pub trait Actor: Any + Debug + Send + Sync {
     ) -> Result<()>;
 
     /// Takes in what it missed of the channel when it joins (issue 190):
-    /// `from` is the position in the channel's history where the part it
-    /// may see begins, read from the store (issue 379). An actor that keeps
-    /// what it hears keeps of it what it does not have yet, as if it had
-    /// heard it - for one that joins again, what was said after the last
-    /// message it has. Called once, before it runs; one that keeps nothing
-    /// has nothing to do.
+    /// what `missed` holds of the channel's history, read from the store
+    /// (issue 379) - from where the part it may see begins up to where its
+    /// inbox opened, from which on it is delivered everything (issue 423).
+    /// An actor that keeps what it hears keeps of it what it does not have
+    /// yet, as if it had heard it - for one that joins again, what was said
+    /// after the last message it has. Called once, in its task, right before
+    /// it runs (`ChannelLoop::run`), which logs what fails; one that keeps
+    /// nothing has nothing to do.
     ///
     /// # Errors
     /// If what it keeps, or the channel's history, cannot be read or stored.
-    async fn catch_up(&self, _from: Position) -> Result<()> {
+    async fn catch_up(&self, _missed: Range<Position>) -> Result<()> {
         Ok(())
     }
 

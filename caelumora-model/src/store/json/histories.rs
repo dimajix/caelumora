@@ -215,10 +215,10 @@ impl HistoryStore for JsonFileStore {
         Ok(None)
     }
 
-    async fn entries(&self, channel: ChannelId, reader: &Reader, from: Position) -> StoreResult<Vec<Node<HistoryEntry>>> {
+    async fn entries(&self, channel: ChannelId, reader: &Reader, range: Range<Position>) -> StoreResult<Vec<Node<HistoryEntry>>> {
         let dir = self.history_dir(channel);
         let head = read_head(&dir).await?;
-        let chain: Vec<Node<Recorded>> = read_chain(&dir, from, head.end).await?;
+        let chain: Vec<Node<Recorded>> = read_chain(&dir, range.start, head.end.min(range.end)).await?;
         let ranges = read_memberships(&dir).await?.of_reader(reader);
         Ok(seen_nodes(reader, &ranges, &chain))
     }
