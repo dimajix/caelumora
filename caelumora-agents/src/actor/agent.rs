@@ -17,7 +17,7 @@ use crate::tool::{not_executed_result, ToolExecutor, ToolProvider};
 use caelumora_runtime::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Context, Result, Error};
 use async_trait::async_trait;
-use caelumora_model::chain::Position;
+use caelumora_model::history::Heard;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext, RetryTarget};
 use caelumora_model::agent::{AgentChannelState, RetryRefused};
 use caelumora_model::command::Command;
@@ -35,7 +35,6 @@ use caelumora_model::tool::{ToolCall, ToolCallState, ToolCallStatus, ToolSet};
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
 use tracing::{debug, info, warn, Instrument};
-use std::ops::Range;
 use std::sync::Arc;
 use chrono::Utc;
 
@@ -280,7 +279,6 @@ impl AgentActor {
         if started {
             *given_up_for = None;
         }
-        rx.commit().await?;
         Ok(Some(if started { ActorState::Planning } else { self.body.control.state() }))
     }
 
@@ -440,7 +438,6 @@ impl AgentActor {
                 .ok(),
             _ => None,
         };
-        rx.commit().await?;
         let Some(events) = settled else { return Ok(Some(ActorState::WaitingForUser)) };
         for event in events {
             turn.send_event(event, output).await?;
@@ -533,7 +530,6 @@ impl AgentActor {
         if self.body.take_in_during_turn(state, rx).await {
             self.turn_under_way(state)?.place_turn_prompt(MessageRole::System, HEARD_WHILE_WORKING.to_string());
             self.body.store(state).await;
-            rx.commit().await?;
         }
         let turn = &mut self.turn_under_way(state)?;
         if self.compaction_due(turn) {
@@ -845,11 +841,12 @@ impl Actor for AgentActor {
         self.body.visible_commands(issuer).await
     }
 
-    /// Takes in what it missed as what it hears (issues 190, 196): all of
-    /// it into its history, what passes its perceive processors into its
-    /// transcript.
-    async fn catch_up(&self, missed: Range<Position>) -> Result<()> {
-        self.body.catch_up(missed).await
+    fn security_context(&self) -> SecurityContext {
+        self.body.security_context()
+    }
+
+    async fn heard(&self) -> Option<Heard> {
+        Some(self.body.state.lock().await.heard.clone())
     }
 
     async fn run(
@@ -914,7 +911,11 @@ impl Actor for AgentActor {
                 // within it; found here, it was cut short.
                 ActorState::Idle | ActorState::Sleeping | ActorState::CarryingOutCommand => self.handle_waiting(&mut state, &mut rx, &mut given_up_for, &*output).await?,
                 ActorState::WaitingForUser => {
-                    self.handle_waiting_for_user(&mut self.turn_under_way(&mut state)?, &mut rx, &*output).await?
+                    let next = self.handle_waiting_for_user(&mut self.turn_under_way(&mut state)?, &mut rx, &*output).await?;
+                    // What it took ahead is stored with the turn it settled
+                    // (issue 223).
+                    state.heard = rx.heard();
+                    next
                 }
                 ActorState::Planning => Some(self.handle_planning(&mut state, &mut rx, &*output).await?),
                 ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut self.turn_under_way(&mut state)?, &*output).await?),

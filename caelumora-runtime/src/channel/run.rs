@@ -1,15 +1,16 @@
 //! The run loop of a channel: starting and stopping its actors, admitting, routing, recording and
 //! appending to the history what they send.
 
+use super::inbox::{Behind, Inbox, InboxReceiver, CAPACITY};
 use super::{stopped, ActorChange, ChannelActor, ChannelLoop};
 use crate::actor::Answering;
 use crate::logging::envelope_span;
 use crate::moderator::Routing;
 use caelumora_model::chain::Position;
-use caelumora_model::history::{Audience, Recorded};
-use crate::transport::{EventSender, TransportError};
-use crate::transport::{FilteringEventSender, InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
+use caelumora_model::history::{Audience, Heard, Reader, Recorded};
+use crate::transport::{InMemoryEventSender, OriginEventSender};
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use caelumora_model::channel::ChannelState;
 use caelumora_model::store::StoreResult;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, Rejection, RetryTarget};
@@ -18,9 +19,8 @@ use caelumora_model::message::Message;
 use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use caelumora_model::value::name::Name;
 use std::collections::HashMap;
-use std::ops::Range;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tokio::task::{AbortHandle, JoinSet};
@@ -39,7 +39,7 @@ struct RunningActor {
     task: TaskTracker,
     /// Its inbox - none once it was told to stop: nothing is delivered to
     /// an actor that is leaving, though what it sends is still taken.
-    sender: Option<Box<dyn EventSender>>,
+    inbox: Option<Inbox>,
     /// On whose behalf it was removed, once it was told to stop (issue
     /// 262), what it was called as it left, and the position from which on
     /// nothing was delivered to it (issue 417): its task still runs - the
@@ -124,30 +124,28 @@ impl ChannelLoop {
                         self.announce_removal(id, name, remover, until, running).await;
                     }
                 }
-                // Its inbox opens here, at the history's end: what is
-                // recorded from now on is delivered to it, what was before
-                // it catches up with (issue 423) - nothing in between, which
-                // it would be given by the record and never take in.
+                // Who joined is announced before the newcomer runs, so that
+                // its join is recorded - and with it where its view of the
+                // history begins - before it reads (issue 223); also if it
+                // was removed again before it got to run: it was added, and
+                // its removal follows. Right before it, the part of the
+                // history it was given, to it alone and in the system's
+                // name, if it was given anything before its join (issue 417).
+                // An actor that starts again with its channel joins nothing.
                 let end = self.state.lock().await.history.end();
-                let missed = from.map(|from| from..end).filter(|missed| !missed.is_empty());
+                if let Some(adder) = joined.clone() {
+                    if let Some(from) = from.filter(|from| *from < end) {
+                        let shared = ActorEvent::HistoryShared { participant: id, from, by: adder.caller_id, by_name: self.name_of(adder.caller_id).await };
+                        self.announce(shared, SecurityContext::system(), running).await;
+                    }
+                    let name = started.actor.name().to_string();
+                    self.announce(ActorEvent::ParticipantJoined { participant: id, name }, adder, running).await;
+                }
                 if still_taken_in {
-                    let handle = self.spawn_actor(&started, missed, event_tx.clone(), join_set);
+                    let heard = Self::opening(started.actor.heard().await, joined.is_some().then(|| from.unwrap_or(end)), end);
+                    let handle = self.spawn_actor(&started, heard, event_tx.clone(), join_set).await;
                     running.insert(handle.id, handle);
                 }
-                // An actor that starts again with its channel joins nothing.
-                let Some(adder) = joined else { return };
-                // Once it runs, so that the newcomer hears it first (issue
-                // 408), after what it caught up with; also if it was removed
-                // again before it got to run: it was added, and its removal
-                // follows. Right before it, the part of the history it was
-                // given, to it alone and in the system's name, if it was
-                // given anything before its join (issue 417).
-                if let Some(from) = from.filter(|from| *from < end) {
-                    let shared = ActorEvent::HistoryShared { participant: id, from, by: adder.caller_id, by_name: self.name_of(adder.caller_id).await };
-                    self.announce(shared, SecurityContext::system(), running).await;
-                }
-                let name = started.actor.name().to_string();
-                self.announce(ActorEvent::ParticipantJoined { participant: id, name }, adder, running).await;
             }
             ActorChange::Leave(id, name, remover) => {
                 // Dropping its inbox closes it; told to leave (`Actor::leave`),
@@ -161,7 +159,7 @@ impl ChannelLoop {
                 let until = self.state.lock().await.history.end();
                 match running.get_mut(&id) {
                     Some(handle) => {
-                        handle.sender = None;
+                        handle.inbox = None;
                         handle.leaving = Some((remover, name, until));
                         let (abort_handle, task) = (handle.abort_handle.clone(), handle.task.clone());
                         let (channel, actor) = (self.id, id);
@@ -282,30 +280,42 @@ impl ChannelLoop {
         }
     }
 
-    /// Starts the task of `channel_actor`, with its inbox: in it, the actor
-    /// first takes in what it `missed` (`Actor::catch_up`, issue 423) - what
-    /// arrives meanwhile waits in its inbox - and then runs. A catch-up that
-    /// fails is logged, and the actor runs without it: it is taken in
-    /// already, and the history stays the channel's.
-    fn spawn_actor(&self, channel_actor: &ChannelActor, missed: Option<Range<Position>>, actor_output: Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> RunningActor {
-        let ChannelActor { actor, task, .. } = channel_actor.clone();
-        let channel = self.id;
-        let id = actor.id();
-        let filter = actor.event_filter();
-        let (tx, rx) = mpsc::channel(100);
+    /// Where the inbox of an actor opens (issue 223) in a history that ended
+    /// at `end` before its join was announced: where it stands as it kept it
+    /// (`kept`, `Actor::heard`), or, as it joins, where its view begins
+    /// (`joins_at`) if that lies after - what it heard before is in its
+    /// transcript already (issue 387). An actor that keeps nothing opens at
+    /// `end`, and so reads its own join alone.
+    fn opening(kept: Option<Heard>, joins_at: Option<Position>, end: Position) -> Heard {
+        match (kept, joins_at) {
+            (Some(kept), Some(view)) if kept.next() < view => Heard::at(view),
+            (Some(kept), _) => kept,
+            (None, _) => Heard::at(end),
+        }
+    }
 
-        let actor_rx = Box::new(InMemoryEventReceiver::new(rx));
+    /// Starts the task of `channel_actor` with its inbox, opened at `heard`
+    /// (issue 223): behind if that lies before the history's end, so that
+    /// the actor reads on from there before what is delivered from now on.
+    async fn spawn_actor(&self, channel_actor: &ChannelActor, heard: Heard, actor_output: Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> RunningActor {
+        let ChannelActor { actor, task, .. } = channel_actor.clone();
+        let id = actor.id();
+        let end = self.state.lock().await.history.end();
+        let behind: Weak<dyn Behind> = match self.runtime.channel_loop() {
+            Some(channel) => {
+                let channel: Arc<dyn Behind> = channel;
+                Arc::downgrade(&channel)
+            }
+            None => Weak::<ChannelLoop>::new(),
+        };
+        let (inbox, actor_rx) = Inbox::open(id, actor.event_filter(), heard, end, behind);
+        let actor_rx: Box<InboxReceiver> = Box::new(actor_rx);
         // It sends only in its own name (issue 228).
         let actor_tx = Box::new(OriginEventSender::new(id, Box::new(InMemoryEventSender::new(actor_output))));
 
         // Tracked inside the `JoinSet`'s task: a task that is aborted counts
         // as ended, too.
         let abort_handle = join_set.spawn(task.track_future(async move {
-            if let Some(missed) = missed {
-                if let Err(e) = actor.catch_up(missed).await {
-                    error!("Actor {} could not catch up with channel {}: {:#}", id, channel, e);
-                }
-            }
             let result = actor.run(actor_rx, actor_tx).await;
             if let Err(e) = result {
                 error!("Actor {} stopped with an error: {:#}", actor.id(), e)
@@ -313,13 +323,28 @@ impl ChannelLoop {
             id
         }));
 
-        // Wrap the actor's input sender with its declared filter predicate.
-        let filtered_sender = Box::new(FilteringEventSender::new(
-            Box::new(InMemoryEventSender::new(tx)),
-            filter,
-        ));
+        RunningActor { id, abort_handle, task, inbox: Some(inbox), leaving: None }
+    }
 
-        RunningActor { id, abort_handle, task, sender: Some(filtered_sender), leaving: None }
+    /// Stamps `envelope` as the channel delivers it, live or read from the
+    /// history (issue 223): in the channel and its session, one step deeper
+    /// in its span than what it was delivered of.
+    fn stamp(&self, envelope: &mut Envelope) {
+        envelope.context.channel_id = self.id;
+        envelope.context.session_id = self.session_id;
+        envelope.context.span_depth += 1;
+    }
+
+    /// The security context of `sender`, whose envelope with the initiator
+    /// `initiator` is read from the history (issue 223): its actor's as it
+    /// is now; one without rights if it takes no part any more, or is none
+    /// - the channel, the system. The initiator is the one recorded.
+    fn security_context_of(&self, sender: ActorId, initiator: ActorId) -> SecurityContext {
+        let now = match self.actor(sender) {
+            Some(actor) => actor.security_context(),
+            None => SecurityContext::new(ActorId::None, self.session_id, self.id),
+        };
+        SecurityContext { initiator_id: initiator, session_id: self.session_id, channel_id: self.id, ..now }
     }
 
     /// Nothing if `event` may enter the channel; why not otherwise (issue
@@ -461,13 +486,11 @@ impl ChannelLoop {
     async fn reject(&self, event: &Envelope, reason: Rejection, running: &HashMap<ActorId, RunningActor>) {
         warn!("Dropped {}: {}", event.describe(), reason);
         let sender = event.context.sender_id;
-        let Some(inbox) = running.get(&sender).and_then(|actor| actor.sender.as_ref()) else { return };
+        let Some(inbox) = running.get(&sender).and_then(|actor| actor.inbox.as_ref()) else { return };
         let rejected = ActorEvent::MessageRejected { rejected: event.event.kind().to_string(), message: event.event.subject_message(), reason };
         let mut envelope = Answering::in_channel(self.session_id, self.id, ActorId::System.to_string(), SecurityContext::system()).replying_to(&event.context).envelope(rejected);
         envelope.context.position = self.append_history(&envelope, Audience::Only(vec![sender])).await;
-        if let Err(e) = inbox.try_send(envelope) {
-            warn!("Could not tell {} that channel {} did not let in what it sent: {:?}", sender, self.id, e);
-        }
+        inbox.deliver(envelope);
     }
 
     /// Resolves the `@`-mentions in every complete message carried by `event`
@@ -509,8 +532,6 @@ impl ChannelLoop {
     }
 
     async fn route_event_impl(&self, running: &HashMap<ActorId, RunningActor>, event: &Envelope, routing: Routing, position: Option<Position>) {
-        let span_id = event.context.span_id;
-        let span_depth = event.context.span_depth + 1;
         let quiet = self.quiet.load(Ordering::SeqCst);
         let decision = self.deliveries(event, routing, position, quiet).await;
 
@@ -544,29 +565,18 @@ impl ChannelLoop {
             if target_id == event.context.sender_id && route.1.context.sender_id == event.context.sender_id && !event.event.is_announcement() {
                 continue;
             }
-            let mut target_event = route.1;
-            let sender_id = target_event.context.sender_id;
-            let event_desc = target_event.describe();
-            target_event.context.channel_id = self.id;
-            target_event.context.session_id = self.session_id;
-            target_event.context.span_id = span_id;
-            target_event.context.span_depth = span_depth;
             // Not to an actor that is leaving: its inbox is closed.
-            if let Some(sender) = running.get(&target_id).and_then(|actor| actor.sender.as_ref()) {
-                debug!(to = %target_id, "Forwarding {}", event_desc);
-                if let Err(e) = sender.try_send(target_event) {
-                    match e {
-                        TransportError::Full => warn!("Queue full for actor {}", target_id),
-                        _ => warn!("Could not forward event {} from={} to={}: {:?}", event_desc, sender_id, target_id, e)
-                    }
-                }
+            if let Some(inbox) = running.get(&target_id).and_then(|actor| actor.inbox.as_ref()) {
+                debug!(to = %target_id, "Forwarding {}", route.1.describe());
+                inbox.deliver(route.1);
             }
         }
     }
 
     /// What the channel delivers of `event`, recorded at `position`, as
-    /// `routing` decided (issue 418), each envelope built here and stamped
-    /// with the position of its entry (issue 417): the event as it entered,
+    /// `routing` decided (issue 418), each envelope built here, stamped
+    /// with the position of its entry (issue 417) and as everything is that
+    /// the channel delivers (`stamp`, issue 223): the event as it entered,
     /// to whom it goes among the actors (`Envelope::recipients`) or whom
     /// the moderator named; each notice of the moderator's to whom it names,
     /// in the system's name; a request to respond to each it asks, in the
@@ -574,8 +584,9 @@ impl ChannelLoop {
     /// `quiet` after a cancel: what was said still reaches everyone, so that
     /// every transcript keeps up with the history, but nobody is asked to
     /// answer it. Each notice and request is recorded, in the system's name,
-    /// to whom it goes, before it is delivered. Whom none of it goes back to
-    /// is `route_event_impl`'s to see to.
+    /// to whom it goes, before it is stamped and delivered: the history keeps
+    /// it as it entered, to be stamped again as it is read from there. Whom
+    /// none of it goes back to is `route_event_impl`'s to see to.
     async fn deliveries(&self, event: &Envelope, routing: Routing, position: Option<Position>, quiet: bool) -> Vec<(ActorId, Envelope)> {
         let Routing { audience, ask, agent_hops, notices } = routing;
         let deliver_to = match audience {
@@ -587,12 +598,14 @@ impl ChannelLoop {
         };
         let mut delivered = event.clone();
         delivered.context.position = position;
+        self.stamp(&mut delivered);
         let mut deliveries: Vec<(ActorId, Envelope)> = deliver_to.into_iter().map(|id| (id, delivered.clone())).collect();
         for (recipients, notice) in notices {
             let mut told = event.forward(notice.into());
             told.context.sender_id = ActorId::System;
             told.context.sender_name = ActorId::System.fixed_name().unwrap_or_default().to_string();
             told.context.position = self.append_history(&told, Audience::Only(recipients.clone())).await;
+            self.stamp(&mut told);
             deliveries.extend(recipients.into_iter().map(|id| (id, told.clone())));
         }
         if quiet {
@@ -606,6 +619,7 @@ impl ChannelLoop {
                 Some(recorded) => self.record(recorded).await,
                 None => None,
             };
+            self.stamp(&mut request);
             deliveries.extend(ask.into_iter().map(|id| (id, request.clone())));
         }
         deliveries
@@ -660,14 +674,52 @@ impl ChannelLoop {
     }
 }
 
+/// What an actor is delivered of the channel's history where its inbox fell
+/// short (issue 223): read as the actor, so that it is given what went to
+/// it, as it went to it; without what it sent itself, as `route_event_impl`
+/// delivers nothing back to its sender but what the channel announced in its
+/// name; each envelope with its sender's security context as it is now, a
+/// turn's end with its answer, stamped as what is delivered live.
+#[async_trait]
+impl Behind for ChannelLoop {
+    async fn recorded_for(&self, actor: ActorId, from: Position) -> Result<(Vec<Envelope>, Position)> {
+        let end = self.state.lock().await.history.end();
+        let to = from.after(CAPACITY as u64).min(end);
+        if from >= to {
+            return Ok((Vec::new(), from));
+        }
+        let reader = Reader::Participant(actor);
+        let mut delivered = Vec::new();
+        for node in self.history_store.entries(self.id, &reader, from..to).await? {
+            let context = &node.entry.context;
+            let security = self.security_context_of(context.sender_id, context.initiator_id);
+            let Some(mut envelope) = node.entry.envelope(node.seq, security) else { continue };
+            if envelope.context.sender_id == actor && !envelope.event.is_announcement() {
+                continue;
+            }
+            if let ActorEvent::TurnFinished { messages, .. } = &mut envelope.event {
+                *messages = self.history_store.answer(self.id, &reader, node.seq).await?;
+            }
+            self.stamp(&mut envelope);
+            delivered.push(envelope);
+        }
+        Ok((delivered, to))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An inbox the test reads what the channel delivers from, with nothing
+    /// behind it.
+    fn opened() -> (Inbox, InboxReceiver) {
+        Inbox::open(ActorId::None, |_| true, Heard::default(), Position::START, Weak::<ChannelLoop>::new())
+    }
     use caelumora_model::history::{HistoryEntry, Recipients};
     use crate::actor::Actor;
     use crate::component::ComponentImpl;
     use crate::transport::{EventSender, EventReceiver};
-    use crate::transport::InMemoryEventSender;
     use anyhow::Result;
     use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RetryTarget};
     use caelumora_model::agent::AgentId;
@@ -741,9 +793,9 @@ mod tests {
         let alice = user("alice");
         let bob = ActorId::Agent(AgentId::new());
         let channel = channel_moderated_by(&[&alice], Arc::new(TellsTheSender)).await;
-        let (tx, mut rx) = mpsc::channel(8);
+        let (tx, mut rx) = opened();
         let abort_handle = tokio::spawn(async {}).abort_handle();
-        let actors = HashMap::from([(bob, RunningActor { id: bob, abort_handle, task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(tx))), leaving: None })]);
+        let actors = HashMap::from([(bob, RunningActor { id: bob, abort_handle, task: TaskTracker::new(), inbox: Some(tx), leaving: None })]);
         let said = Envelope::new(
             SecurityContext::default(),
             EventContext { sender_id: bob, ..EventContext::default() },
@@ -752,7 +804,7 @@ mod tests {
 
         routed(&channel, &actors, said).await;
         let mut kinds = Vec::new();
-        while let Ok(envelope) = rx.try_recv() { kinds.push(envelope.event.kind()); }
+        while let Some(envelope) = rx.try_recv().await { kinds.push(envelope.event.kind()); }
         assert_eq!(kinds, ["ChainCutOff"], "its own message is not sent back, but what the system tells it is (issue 200)");
     }
 
@@ -859,8 +911,8 @@ mod tests {
         let her = ActorId::User(alice.id);
         let stranger = ActorId::User(UserId::new());
         let from_her = |event| Envelope::new(SecurityContext::new(her, channel.session_id, channel.id), EventContext { sender_id: her, ..EventContext::default() }, event);
-        let (to_her, mut hers) = mpsc::channel(16);
-        let actors = HashMap::from([(her, RunningActor { id: her, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(to_her))), leaving: None })]);
+        let (to_her, mut hers) = opened();
+        let actors = HashMap::from([(her, RunningActor { id: her, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), inbox: Some(to_her), leaving: None })]);
 
         // In her own name, but no actor's to say (issue 408).
         channel.process_envelope(from_her(ActorEvent::ParticipantJoined { participant: stranger, name: "mallory".to_string() }), &actors).await;
@@ -873,7 +925,7 @@ mod tests {
         assert!(state.history.entries().skip(1).all(|node| node.entry.sender == ActorId::System && node.entry.recipients == Recipients::only(vec![her])), "told to her alone, in the system's name");
         drop(state);
         let mut rejected = Vec::new();
-        while let Ok(envelope) = hers.try_recv() {
+        while let Some(envelope) = hers.try_recv().await {
             if let ActorEvent::MessageRejected { rejected: kind, reason, .. } = envelope.event {
                 rejected.push((kind, reason));
             }
@@ -892,8 +944,8 @@ mod tests {
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let (her, bob) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
         let from_her = |event| Envelope::new(SecurityContext::new(her, channel.session_id, channel.id), EventContext { sender_id: her, ..EventContext::default() }, event);
-        let (to_her, mut hers) = mpsc::channel(16);
-        let actors = HashMap::from([(her, RunningActor { id: her, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(to_her))), leaving: None })]);
+        let (to_her, mut hers) = opened();
+        let actors = HashMap::from([(her, RunningActor { id: her, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), inbox: Some(to_her), leaving: None })]);
         let part = |by: ActorId| ApprovalDecision { by, name: String::new(), by_rule: None, at: Utc::now() };
         let answer = |decisions| ApprovalResponse { decisions, ..ApprovalResponse::new(Default::default(), AgentId::new()) };
 
@@ -902,7 +954,7 @@ mod tests {
         }
 
         let mut rejected = Vec::new();
-        while let Ok(envelope) = hers.try_recv() {
+        while let Some(envelope) = hers.try_recv().await {
             if let ActorEvent::MessageRejected { rejected: kind, reason, .. } = envelope.event {
                 rejected.push((kind, reason));
             }
@@ -1063,8 +1115,8 @@ mod tests {
         let alice_id = ActorId::User(alice.id);
         let from = |event| Envelope::new(SecurityContext::new(alice_id, Default::default(), Default::default()), EventContext { sender_id: alice_id, ..EventContext::default() }, event);
         let said = |n: usize| Message { id: MessageId::new(), sender_id: alice_id, role: MessageRole::User, content: Some(format!("message {n}")), ..Message::new(Classification::CHANNEL_DEFAULT) };
-        let (to_alice, _alices) = mpsc::channel(16);
-        let actors = HashMap::from([(alice_id, RunningActor { id: alice_id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(to_alice))), leaving: None })]);
+        let (to_alice, _alices) = opened();
+        let actors = HashMap::from([(alice_id, RunningActor { id: alice_id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), inbox: Some(to_alice), leaving: None })]);
         let first = said(0);
         channel.process_envelope(from(ActorEvent::CompleteMessageGenerated(first.clone())), &actors).await;
         for n in 1..250 {
@@ -1095,13 +1147,13 @@ mod tests {
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));
         let said = Message { id: MessageId::new(), sender_id: alice_id, role: MessageRole::User, content: Some("helo".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let from = |sender: ActorId, event| Envelope::new(SecurityContext::new(sender, Default::default(), Default::default()), EventContext { sender_id: sender, ..EventContext::default() }, event);
-        let (to_alice, mut alices) = mpsc::channel(16);
-        let (to_bob, mut bobs) = mpsc::channel(16);
-        let running = |id: ActorId, tx| (id, RunningActor { id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(tx))), leaving: None });
+        let (to_alice, mut alices) = opened();
+        let (to_bob, mut bobs) = opened();
+        let running = |id: ActorId, tx| (id, RunningActor { id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), inbox: Some(tx), leaving: None });
         let actors = HashMap::from([running(alice_id, to_alice), running(bob_id, to_bob)]);
-        let rejected = |rx: &mut mpsc::Receiver<Envelope>| {
+        let rejected = async |rx: &mut InboxReceiver| {
             let mut rejections = Vec::new();
-            while let Ok(envelope) = rx.try_recv() {
+            while let Some(envelope) = rx.try_recv().await {
                 if let ActorEvent::MessageRejected { rejected, message, reason } = envelope.event {
                     assert_eq!(envelope.context.sender_id, ActorId::System, "in the channel's name");
                     rejections.push((rejected, message, reason));
@@ -1121,23 +1173,23 @@ mod tests {
         channel.process_envelope(from(bob_id, revoked(said.id)), &actors).await;
         channel.process_envelope(from(bob_id, reclassified(&Classification::PUBLIC)), &actors).await;
         let kind = |rejected: &str, reason| (rejected.to_string(), Some(said.id), reason);
-        assert_eq!(rejected(&mut bobs), [kind("MessageModified", Rejection::Forbidden), kind("MessageRevoked", Rejection::Forbidden), kind("MessageReclassified", Rejection::Forbidden)], "not his");
+        assert_eq!(rejected(&mut bobs).await, [kind("MessageModified", Rejection::Forbidden), kind("MessageRevoked", Rejection::Forbidden), kind("MessageReclassified", Rejection::Forbidden)], "not his");
         let never = MessageId::new();
         channel.process_envelope(from(alice_id, revoked(never)), &actors).await;
         channel.process_envelope(from(alice_id, modified("hello", &above)), &actors).await;
         channel.process_envelope(from(alice_id, reclassified(&above)), &actors).await;
         let secret = Message { id: MessageId::new(), ..Message::new(above.clone()) };
         channel.process_envelope(from(alice_id, ActorEvent::CompleteMessageGenerated(secret.clone())), &actors).await;
-        assert_eq!(rejected(&mut alices), [
+        assert_eq!(rejected(&mut alices).await, [
             ("MessageRevoked".to_string(), Some(never), Rejection::MessageNotFound),
             kind("MessageModified", Rejection::ClassificationRefused),
             kind("MessageReclassified", Rejection::ClassificationRefused),
             ("CompleteMessageGenerated".to_string(), Some(secret.id), Rejection::ClassificationRefused),
         ], "never said, and never above the channel - the flow, not her permission");
-        assert!(rejected(&mut bobs).is_empty(), "nor is anyone else told");
+        assert!(rejected(&mut bobs).await.is_empty(), "nor is anyone else told");
         channel.process_envelope(from(alice_id, revoked(said.id)), &actors).await;
         channel.process_envelope(from(alice_id, modified("hello", &Classification::CHANNEL_DEFAULT)), &actors).await;
-        assert_eq!(rejected(&mut alices), [kind("MessageModified", Rejection::MessageUnchangeable)], "taken back, it stays so");
+        assert_eq!(rejected(&mut alices).await, [kind("MessageModified", Rejection::MessageUnchangeable)], "taken back, it stays so");
 
         // A request to answer again names an agent taking part, of a
         // message as of a turn (issue 362): of one that left, its sender is
@@ -1147,7 +1199,7 @@ mod tests {
         channel.process_envelope(from(gone, ActorEvent::CompleteMessageGenerated(its.clone())), &actors).await;
         channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Message(its.id), author: gone }), &actors).await;
         channel.process_envelope(from(alice_id, ActorEvent::RetryRequested { target: RetryTarget::Turn(TurnId::new()), author: gone }), &actors).await;
-        assert_eq!(rejected(&mut alices), [
+        assert_eq!(rejected(&mut alices).await, [
             ("RetryRequested".to_string(), Some(its.id), Rejection::Invalid),
             ("RetryRequested".to_string(), None, Rejection::Invalid),
         ], "an agent that left answers nothing again");
@@ -1214,7 +1266,7 @@ mod tests {
     /// removed it.
     fn leaving_actor(id: ActorId, remover: SecurityContext) -> RunningActor {
         let name = Name::new("helper").expect("a name");
-        RunningActor { id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), sender: None, leaving: Some((remover, name, Position::START)) }
+        RunningActor { id, abort_handle: tokio::spawn(async {}).abort_handle(), task: TaskTracker::new(), inbox: None, leaving: Some((remover, name, Position::START)) }
     }
 
     #[tokio::test]
@@ -1264,12 +1316,11 @@ mod tests {
     /// What a `Listener` took in, in the order it took it in.
     #[derive(Debug, PartialEq)]
     enum TakenIn {
-        CaughtUp(Range<Position>),
         Heard(&'static str, Option<Position>),
     }
 
-    /// An actor that tells what it catches up with and, once it runs, what
-    /// is delivered to it, with the position of its entry.
+    /// An actor that keeps where it stands, nothing yet, and tells what is
+    /// delivered to it, with the position of its entry.
     #[derive(Debug)]
     struct Listener {
         id: ActorId,
@@ -1288,9 +1339,8 @@ mod tests {
         fn id(&self) -> ActorId { self.id }
         fn name(&self) -> Name { Name::new("listener").expect("a name") }
         fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
-        async fn catch_up(&self, missed: Range<Position>) -> Result<()> {
-            let _ = self.taken_in.send(TakenIn::CaughtUp(missed));
-            Ok(())
+        async fn heard(&self) -> Option<Heard> {
+            Some(Heard::default())
         }
         async fn run(&self, mut rx: Box<dyn EventReceiver>, _tx: Box<dyn EventSender>) -> Result<()> {
             while let Some(envelope) = rx.recv().await {
@@ -1304,7 +1354,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_newcomer_catches_up_with_what_was_said_before_its_inbox_opened_and_is_delivered_the_rest() {
+    async fn a_newcomer_reads_what_it_was_given_then_its_join_then_what_is_said_from_there_on() {
         let alice = user("alice");
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
@@ -1329,7 +1379,6 @@ mod tests {
         // has no inbox to go to.
         channel.adopt(Arc::<Listener>::clone(&newcomer), ResolvedParticipant::approver(channel.session_id, channel.id), Some(from), Some(context.clone())).await;
         channel.enter(said(), &running).await;
-        let opened = channel.state.lock().await.history.end();
         start_all(&mut running, &mut join_set).await;
         channel.enter(said(), &running).await;
 
@@ -1339,11 +1388,11 @@ mod tests {
         }
         join_set.abort_all();
         assert_eq!(told, [
-            TakenIn::CaughtUp(from..opened),
-            TakenIn::Heard("HistoryShared", Some(opened)),
-            TakenIn::Heard("ParticipantJoined", Some(opened.next())),
-            TakenIn::Heard("CompleteMessageGenerated", Some(opened.after(2))),
-        ], "what was said before its inbox opened by catching up, first, and everything from there on delivered: nothing twice, nothing missed (issue 423)");
+            TakenIn::Heard("CompleteMessageGenerated", Some(from)),
+            TakenIn::Heard("HistoryShared", Some(from.next())),
+            TakenIn::Heard("ParticipantJoined", Some(from.after(2))),
+            TakenIn::Heard("CompleteMessageGenerated", Some(from.after(3))),
+        ], "what was said before it ran, read from the history, its join, and what is said from there on: nothing twice, nothing missed (issues 423, 223)");
     }
 
     #[tokio::test]
@@ -1352,31 +1401,31 @@ mod tests {
         let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let bob = ActorId::Agent(AgentId::new());
         let channel = channel_moderated_by(&[&alice], Arc::new(AskBack(bob))).await;
-        let (tx, mut rx) = mpsc::channel(8);
+        let (tx, mut rx) = opened();
         let abort_handle = tokio::spawn(async {}).abort_handle();
-        let actors = HashMap::from([(bob, RunningActor { id: bob, abort_handle, task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(tx))), leaving: None })]);
+        let actors = HashMap::from([(bob, RunningActor { id: bob, abort_handle, task: TaskTracker::new(), inbox: Some(tx), leaving: None })]);
         let from_alice = |event| Envelope::new(
             context.clone(),
             EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
             event,
         );
         let said = || from_alice(ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![Message::new(Classification::CHANNEL_DEFAULT)] });
-        let delivered = |rx: &mut mpsc::Receiver<Envelope>| {
+        let delivered = async |rx: &mut InboxReceiver| {
             let mut kinds = Vec::new();
-            while let Ok(envelope) = rx.try_recv() { kinds.push(envelope.event.kind()); }
+            while let Some(envelope) = rx.try_recv().await { kinds.push(envelope.event.kind()); }
             kinds
         };
 
         channel.cancel(&context).await.expect("permitted");
         routed(&channel, &actors, said()).await;
-        assert_eq!(delivered(&mut rx), ["TurnFinished"], "what was said still arrives, but nobody is asked");
+        assert_eq!(delivered(&mut rx).await, ["TurnFinished"], "what was said still arrives, but nobody is asked");
 
         // A message alone does not wake it: its sender asks for that, as a
         // user's actor does with every message (issue 90).
         routed(&channel, &actors, from_alice(ActorEvent::WakeupRequested)).await;
-        delivered(&mut rx); // this test's moderator forwards the request, too
+        delivered(&mut rx).await; // this test's moderator forwards the request, too
         routed(&channel, &actors, said()).await;
-        assert_eq!(delivered(&mut rx), ["TurnFinished", "ResponseRequested"], "woken, the channel asks again");
+        assert_eq!(delivered(&mut rx).await, ["TurnFinished", "ResponseRequested"], "woken, the channel asks again");
     }
 
     #[tokio::test]
@@ -1446,19 +1495,19 @@ mod tests {
     async fn what_is_delivered_carries_the_position_of_its_entry() {
         let (alice, bob) = (user("alice"), user("bob"));
         let channel = channel_moderated_by(&[&alice, &bob], Arc::new(AskBack(ActorId::User(bob.id)))).await;
-        let (tx, mut rx) = mpsc::channel(8);
+        let (tx, mut rx) = opened();
         let his = ActorId::User(bob.id);
         let abort_handle = tokio::spawn(async {}).abort_handle();
-        let running = HashMap::from([(his, RunningActor { id: his, abort_handle, task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(tx))), leaving: None })]);
+        let running = HashMap::from([(his, RunningActor { id: his, abort_handle, task: TaskTracker::new(), inbox: Some(tx), leaving: None })]);
         let hers = ActorId::User(alice.id);
         let said = Message { sender_id: hers, role: MessageRole::User, content: Some("hello".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         channel.enter(Envelope::new(SecurityContext::default(), EventContext { sender_id: hers, ..EventContext::default() }, ActorEvent::CompleteMessageGenerated(said)), &running).await;
 
         let state = channel.state.lock().await;
         let at = |position: Option<Position>| position.and_then(|seq| state.history.at(seq)).map(|node| node.entry.entry.clone());
-        let delivered = rx.try_recv().expect("delivered");
+        let delivered = rx.try_recv().await.expect("delivered");
         assert!(matches!(at(delivered.context.position), Some(HistoryEntry::Said { .. })), "the message, at its entry: {:?}", delivered.context.position);
-        let asked = rx.try_recv().expect("and he is asked");
+        let asked = rx.try_recv().await.expect("and he is asked");
         assert!(matches!(at(asked.context.position), Some(HistoryEntry::ResponseRequested { .. })), "the request, at its own: {:?}", asked.context.position);
         assert!(asked.context.position > delivered.context.position, "recorded after it");
     }
@@ -1486,10 +1535,10 @@ mod tests {
         let alice = user("alice");
         let told = Arc::new(Told::default());
         let channel = channel_moderated_by(&[&alice], Arc::<Told>::clone(&told)).await;
-        let (tx, mut rx) = mpsc::channel(8);
+        let (tx, mut rx) = opened();
         let hers = ActorId::User(alice.id);
         let abort_handle = tokio::spawn(async {}).abort_handle();
-        let running = HashMap::from([(hers, RunningActor { id: hers, abort_handle, task: TaskTracker::new(), sender: Some(Box::new(InMemoryEventSender::new(tx))), leaving: None })]);
+        let running = HashMap::from([(hers, RunningActor { id: hers, abort_handle, task: TaskTracker::new(), inbox: Some(tx), leaving: None })]);
         let agent = ActorId::Agent(AgentId::new());
         let hidden = ToolCall { id: Some("1".to_string()), function_name: "look".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
         let thinking = Message { sender_id: agent, role: MessageRole::Assistant, reasoning: Some("weighing".to_string()), reasoning_visibility: Visibility::Owner, tool_calls: vec![hidden], ..Message::new(Classification::CHANNEL_DEFAULT) };
@@ -1505,12 +1554,12 @@ mod tests {
         };
 
         channel.enter(said(Message { content: Some("found it".to_string()), ..thinking.clone() }), &running).await;
-        assert_eq!(parts(&rx.try_recv().expect("delivered").event), (Some("found it".to_string()), None, 0), "alice is given what everybody may see");
+        assert_eq!(parts(&rx.try_recv().await.expect("delivered").event), (Some("found it".to_string()), None, 0), "alice is given what everybody may see");
         assert_eq!(told.0.lock().unwrap().iter().map(|e| parts(&e.event)).collect::<Vec<_>>(), [(Some("found it".to_string()), None, 0)], "and so is the moderator");
         assert_eq!(recorded().await, (Some((Some("found it".to_string()), Some("weighing".to_string()), 1)), Recipients::members(true)), "the channel records it whole");
 
         channel.enter(said(thinking), &running).await;
-        assert!(rx.try_recv().is_err(), "nothing of it is left to show");
+        assert!(rx.try_recv().await.is_none(), "nothing of it is left to show");
         assert_eq!(told.0.lock().unwrap().len(), 1, "nor to decide on");
         assert_eq!(recorded().await, (Some((None, Some("weighing".to_string()), 1)), Recipients::NOBODY), "recorded whole, as gone to nobody");
     }

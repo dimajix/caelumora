@@ -211,8 +211,7 @@ pub enum Audience {
     Only(Vec<ActorId>),
 }
 
-/// Every position of a history: the range of a member from its start on,
-/// and what a newcomer reads by (`Memberships::of_reader`).
+/// Every position of a history: the range of a member from its start on.
 pub const EVERY_POSITION: Range<Position> = Position::START..Position::MAX;
 
 /// Whom something in a channel goes to, resolved as it is recorded (issue
@@ -326,17 +325,26 @@ impl Heard {
     }
 
     /// What is at `seq` was delivered in order: everything before it was
-    /// delivered, or is not for the reader.
+    /// delivered, or is not for the reader - and so was what was taken
+    /// ahead right after it.
     pub fn took(&mut self, seq: Position) {
         self.next = self.next.max(seq.next());
         let next = self.next;
         self.taken.retain(|taken| *taken >= next);
+        while self.taken.first() == Some(&self.next) {
+            self.taken.remove(0);
+            self.next = self.next.next();
+        }
     }
 
-    /// What is at `seq` was delivered ahead of its turn.
+    /// What is at `seq` was delivered ahead of its turn - in order, if it
+    /// is the next.
     pub fn took_ahead(&mut self, seq: Position) {
+        if seq == self.next {
+            return self.took(seq);
+        }
         if let Err(at) = self.taken.binary_search(&seq) {
-            if seq >= self.next {
+            if seq > self.next {
                 self.taken.insert(at, seq);
             }
         }
@@ -352,11 +360,6 @@ pub enum Reader {
     /// reading as that agent: what went to them and what they sent, the
     /// latter in full.
     Participant(ActorId),
-    /// A participant as it joins, reading what it is given up to where its
-    /// inbox opened, before its join is recorded (issues 417, 423) - as a
-    /// participant, and as a member from where it reads on, which is where
-    /// what it is given begins.
-    Newcomer(ActorId),
     /// Someone who may read the channel but takes no part in it - its
     /// session's owner, a reader from another channel: what went to
     /// everybody, as everybody was given it.
@@ -426,8 +429,8 @@ impl Recorded {
     pub fn seen_by(&self, seq: Position, reader: &Reader, ranges: &[Range<Position>]) -> bool {
         match reader {
             Reader::Channel => true,
-            Reader::Participant(actor) | Reader::Newcomer(actor) if *actor == self.sender => true,
-            Reader::Participant(actor) | Reader::Newcomer(actor) => self.entry.is_published() && self.recipients.reaches(*actor, seq, ranges),
+            Reader::Participant(actor) if *actor == self.sender => true,
+            Reader::Participant(actor) => self.entry.is_published() && self.recipients.reaches(*actor, seq, ranges),
             Reader::Outsider => self.entry.is_published() && self.recipients.users,
         }
     }
@@ -442,8 +445,8 @@ impl Recorded {
         }
         match reader {
             Reader::Channel => Some(self.entry.clone()),
-            Reader::Participant(actor) | Reader::Newcomer(actor) if *actor == self.sender => Some(self.entry.clone()),
-            Reader::Participant(_) | Reader::Newcomer(_) | Reader::Outsider => self.entry.published(),
+            Reader::Participant(actor) if *actor == self.sender => Some(self.entry.clone()),
+            Reader::Participant(_) | Reader::Outsider => self.entry.published(),
         }
     }
 }
@@ -915,6 +918,7 @@ mod tests {
     use crate::message::MessageRole;
     use crate::user::UserId;
     use super::testing::{items_of, messages_of, recorded_context};
+    use crate::actor::ActorState;
     use crate::security::SecurityContext;
     use uuid::Uuid;
 
@@ -1031,6 +1035,7 @@ mod tests {
             let kind = event.kind();
             let envelope = Envelope::new(SecurityContext::default(), EventContext { sender_id: sender, ..EventContext::default() }, event);
             let recorded = Recorded::of(&envelope, ActorId::System, Audience::Everybody).unwrap_or_else(|| panic!("{kind} is recorded"));
+            assert!(!envelope.event.is_transient(), "{kind}: what is recorded is delivered from the history, never lost");
             for participant in [user, agent, ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()), ActorId::Approver(Default::default())] {
                 let member_all_along = [EVERY_POSITION];
                 assert_eq!(recorded.seen_by(Position::START, &Reader::Participant(participant), &member_all_along), envelope.recipients().names(participant), "{kind} of {sender} for {participant}");
@@ -1062,6 +1067,32 @@ mod tests {
         let again = Recorded::of(&ended, agent, Audience::Everybody).and_then(|recorded| recorded.envelope(Position::START, SecurityContext::default()));
         assert!(matches!(again.map(|e| e.event), Some(ActorEvent::TurnFinished { messages, .. }) if messages.is_empty()), "without its answer");
         assert!(Recorded::new(HistoryEntry::Fitted { channel: Classification::PUBLIC }, ActorId::None, Audience::Everybody).envelope(Position::START, SecurityContext::default()).is_none(), "a fitting is no event");
+    }
+
+    /// Issue 223: of what the history does not record, the answers to
+    /// questions are not lost on the way; the rest is transient.
+    #[test]
+    fn of_what_is_not_recorded_only_the_answers_are_kept() {
+        use crate::question::QuestionId;
+        let turn_id = TurnId::new();
+        let message = make_message(id(1));
+        for (event, transient) in [
+            (ActorEvent::QuestionAnswered { id: QuestionId::new(), agent_id: AgentId::new(), responses: Vec::new() }, false),
+            (ActorEvent::QuestionDeclined { id: QuestionId::new(), agent_id: AgentId::new() }, false),
+            (ActorEvent::PartialMessageGenerated(message.clone()), true),
+            (ActorEvent::IntermediatePartialGenerated(message), true),
+            (ActorEvent::StateChanged(ActorState::Idle), true),
+            (ActorEvent::ResponseStarted { turn_id }, true),
+            (ActorEvent::CommandStarted { command: "mark".to_string(), args: String::new(), to: ActorId::None, turn_id }, true),
+            (ActorEvent::ActivityStarted { turn_id, activity: "compacting".to_string() }, true),
+            (ActorEvent::PlanStepFinished { turn_id, step_index: 0, total_steps: 1, description: "first".to_string() }, true),
+            (ActorEvent::WakeupRequested, true),
+            (ActorEvent::NudgeRequested { participant: ActorId::None }, true),
+        ] {
+            let kind = event.kind();
+            assert!(Envelope::new(SecurityContext::default(), EventContext::default(), event.clone()).entry().is_none(), "{kind} is not recorded");
+            assert_eq!(event.is_transient(), transient, "{kind}");
+        }
     }
 
     /// Issue 223: what is recorded to be delivered again is neither an item
@@ -1098,10 +1129,13 @@ mod tests {
         heard.took(at(4));
         assert_eq!(heard.next(), at(5), "past what was delivered in order, what lies between not for it");
         assert!(heard.has(at(6)), "still taken ahead");
-        heard.took(at(7));
-        assert_eq!(heard, Heard::at(at(8)), "what was taken ahead is forgotten once passed");
+        heard.took(at(5));
+        assert_eq!(heard, Heard::at(at(7)), "and what was taken ahead right after it");
+        heard.took_ahead(at(9));
+        heard.took(at(10));
+        assert_eq!(heard, Heard::at(at(11)), "what was taken ahead is forgotten once passed");
         heard.took(at(1));
-        assert_eq!(heard.next(), at(8), "never back");
+        assert_eq!(heard.next(), at(11), "never back");
         let stored: Heard = serde_json::from_value(serde_json::to_value(&heard).unwrap()).unwrap();
         assert_eq!(stored, heard);
     }

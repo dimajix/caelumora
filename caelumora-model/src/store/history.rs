@@ -16,7 +16,7 @@ use crate::chain::{Node, Position};
 use crate::channel::ChannelId;
 use crate::confidentiality::{Classification, Compartments, Confidentiality, Reading};
 use crate::digest::Digest;
-use crate::history::{HistoryEntry, HistoryPage, Reader, Recorded, EVERY_POSITION};
+use crate::history::{HistoryEntry, HistoryPage, Reader, Recorded};
 use crate::message::{Message, MessageId, MessageRole};
 use crate::store::query::{meeting, Field, Filter};
 use crate::store::StoreResult;
@@ -236,12 +236,10 @@ impl Memberships {
     }
 
     /// The ranges `reader` reads by (`Recorded::seen_by`): a participant's
-    /// own; a newcomer's all of the history, of which it reads what it is
-    /// given; none for anyone else.
+    /// own; none for anyone else.
     pub fn of_reader(&self, reader: &Reader) -> Vec<Range<Position>> {
         match reader {
             Reader::Participant(member) => self.of_member(*member),
-            Reader::Newcomer(_) => vec![EVERY_POSITION],
             Reader::Outsider | Reader::Channel => Vec::new(),
         }
     }

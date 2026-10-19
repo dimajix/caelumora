@@ -83,6 +83,13 @@ impl ChannelRuntime {
     /// The controller of the channel (issue 374).
     pub(crate) fn channel_controller(&self) -> &Arc<ChannelController> { &self.channel }
 
+    /// The loop of the channel this runtime is for, once it exists and while
+    /// it does: what its actors' inboxes read its history through (issue
+    /// 223).
+    pub(crate) fn channel_loop(&self) -> Option<Arc<ChannelLoop>> {
+        self.channel_loop.get()
+    }
+
     /// The loop of the channel's session, for the channel (`ChannelLoop::session_loop`); `None`
     /// once the session is gone, or for a channel of none, in tests.
     pub(crate) fn session_loop(&self) -> Option<Arc<SessionLoop>> { self.session_loop.upgrade() }

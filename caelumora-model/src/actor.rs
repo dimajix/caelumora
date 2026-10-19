@@ -465,6 +465,30 @@ impl ActorEvent {
         }
     }
 
+    /// Whether it may be lost on its way to an actor whose inbox has no
+    /// room (issue 223): what streams, where an actor stands, the start of
+    /// what ends with an event the history records, and what only asks to
+    /// be woken or asks for a response, which the channel records as the
+    /// request it becomes. What the history records is delivered from there
+    /// instead; the answers to questions, which it never records (issue
+    /// 165), are not lost.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_) | ActorEvent::StateChanged(_)
+            | ActorEvent::ResponseStarted { .. } | ActorEvent::CommandStarted { .. } | ActorEvent::ActivityStarted { .. }
+            | ActorEvent::PlanStepFinished { .. } | ActorEvent::WakeupRequested | ActorEvent::NudgeRequested { .. } => true,
+            ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalGranted(_) | ActorEvent::ApprovalDenied(_) | ActorEvent::ApprovalTimedOut(_)
+            | ActorEvent::ApprovalRequestWithdrawn { .. } | ActorEvent::QuestionRequested(_) | ActorEvent::QuestionAnswered { .. }
+            | ActorEvent::QuestionDeclined { .. } | ActorEvent::QuestionClosed { .. } | ActorEvent::ResponseRequested | ActorEvent::CompleteMessageGenerated(_)
+            | ActorEvent::TurnFinished { .. } | ActorEvent::IntermediateMessageGenerated(_) | ActorEvent::PlanStepStarted { .. } | ActorEvent::TurnGivenUp { .. }
+            | ActorEvent::CommandRequested { .. } | ActorEvent::CommandExecuted { .. } | ActorEvent::CommandFailed { .. } | ActorEvent::ActivityFinished { .. }
+            | ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } | ActorEvent::HistoryShared { .. } | ActorEvent::MessageModified(_)
+            | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. } | ActorEvent::RetryAccepted { .. }
+            | ActorEvent::RetryRejected { .. } | ActorEvent::ChainCutOff { .. } | ActorEvent::MessageRejected { .. } | ActorEvent::MessageGiven { .. }
+            | ActorEvent::ContextCompacted { .. } => false,
+        }
+    }
+
     /// The message the event is or is about, if any: a message said, or one
     /// it changes, takes back, reclassifies or asks to be answered again -
     /// what a rejection of it names (`MessageRejected`).

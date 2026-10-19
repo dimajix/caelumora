@@ -180,12 +180,34 @@ impl ChannelLoop {
     }
 
     /// Records `messages` as said in the channel - in its history, stored -
-    /// without routing them: what an actor that joins finds there
-    /// (`Actor::catch_up`).
+    /// without routing them: what an actor that starts reads from there
+    /// (issue 223).
     pub async fn record_said(&self, messages: Vec<Message>) {
         let mut state = self.state.lock().await;
         state.history.extend(messages);
         self.state_store.put_channel_state(self.id, &mut state).await.expect("the history is stored");
+    }
+
+    /// Runs the channel until the stored state of `agent` fulfils `done` -
+    /// what it takes in as it starts, read from the history behind its inbox
+    /// (issue 223) -, then stops it; that state.
+    ///
+    /// # Panics
+    /// If it does not within five seconds.
+    pub async fn run_until(self: &Arc<Self>, agent: AgentId, done: impl Fn(&AgentChannelState) -> bool) -> AgentChannelState {
+        let running = tokio::spawn({ let channel = Arc::clone(self); async move { channel.run().await } });
+        let state = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(state) = self.stored_agent_channel_state(agent).await {
+                    if done(&state) {
+                        break state;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.expect("the agent's state comes to stand so");
+        running.abort();
+        state
     }
 
     /// The messages `participant` sees of the history, read from the store

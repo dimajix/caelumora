@@ -3,7 +3,6 @@
 
 use super::*;
 use anyhow::Result;
-use caelumora_model::chain::Position;
 use caelumora_model::agent::{AgentChannelState, AgentId, HearsDuringTurn, HearsFrom, RetryRefused};
 use caelumora_model::approval::{ApprovalRequest, ApprovalResponse};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -1605,7 +1604,7 @@ async fn a_removed_agent_gives_its_turn_up_says_so_and_leaves_an_idle_state_behi
 }
 
 #[tokio::test]
-async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_the_tool_traffic() {
+async fn an_agent_that_starts_hears_another_agents_answer_as_its_words_without_the_tool_traffic() {
     use caelumora_model::message::MessageId;
     use caelumora_model::tool::{ToolCall, ToolCallResult, ToolVisibility};
     let (channel, _, agent, _) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default()).await;
@@ -1615,12 +1614,10 @@ async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_th
     // Another agent's answer, as the channel's history keeps it.
     let answer = Message { id: MessageId::new(), sender_id: other, sender_name: "hermes".to_string(), role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call], ..Message::new(Classification::CHANNEL_DEFAULT) };
     let tool = Message { id: MessageId::new(), sender_id: other, role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result], ..Message::new(Classification::CHANNEL_DEFAULT) };
-    let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
 
     channel.record_said(vec![answer.clone(), tool.clone()]).await;
-    actor.catch_up(Position::START..Position::MAX).await.unwrap();
+    let state = channel.run_until(agent, |state| state.last_message == Some(answer.id)).await;
 
-    let state = channel.stored_agent_channel_state(agent).await.unwrap();
     let heard = state.transcript.messages();
     assert_eq!(heard.len(), 1, "nothing of the tool message: {heard:?}");
     assert_eq!((heard[0].id, heard[0].role, heard[0].content.as_deref()), (answer.id, MessageRole::User, Some("Let me check.")), "the other's words, as another's");
@@ -1630,7 +1627,7 @@ async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_th
 }
 
 #[tokio::test]
-async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
+async fn an_agent_that_starts_takes_in_what_it_missed_as_what_it_hears() {
     use caelumora_model::message::MessageId;
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("filter", "test_no_secrets")] };
     let (channel, context, agent, _) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), components).await;
@@ -1638,13 +1635,12 @@ async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
         id: MessageId::new(), role: MessageRole::User, sender_id: context.initiator_id, content: Some(text.to_string()),
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
-    let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
+    let secret = said("the secret is 42");
 
-    channel.record_said(vec![said("hello"), said("the secret is 42")]).await;
-    actor.catch_up(Position::START..Position::MAX).await.unwrap();
+    channel.record_said(vec![said("hello"), secret.clone()]).await;
+    let state = channel.run_until(agent, |state| state.last_message == Some(secret.id)).await;
 
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
-    let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(contents(channel.visible_messages(ActorId::Agent(agent)).await), ["hello", "the secret is 42"], "the channel's history holds all it missed, for it");
     assert_eq!(contents(state.transcript.messages()), ["hello"], "its transcript what passed its processors");
 }

@@ -107,18 +107,23 @@ reconstructs a context is the channel, and the one check it reaches is an agent'
   `position: Some(seq)`, the timestamp, and the `SecurityContext` the caller gives - the model
   does not know who the sender is now.
 - **What is recorded anew** - what an actor's state depends on receiving, and the history does not
-  hold today: `CommandRequested { agent, command, args }`, `RetryRequested { target, author }`,
-  `ApprovalRequested { request }`, `ApprovalDecided { response, status }` - granted, denied and
-  timed out as one entry with its `ApprovalStatus` -, `ApprovalRequestWithdrawn { id }`,
-  `QuestionRequested { request }`, `QuestionAnswered { id, agent, responses }`,
-  `QuestionDeclined { id, agent }` and `QuestionClosed { id, shown_to }`: nine variants,
-  `Envelope::entry` and `HistoryEntry::event` an arm each. They are **no items** (`is_item`
-  false): in the chain for delivery alone, never in a page, in `StandingItems` or in a
-  `HistoryItemResponse` - the clients are shown them live, as today, and nothing changes for the
-  web UI. Everything else that is not recorded is transient - streamed chunks, `StateChanged`,
-  `ResponseStarted`, `CommandStarted`, `ActivityStarted`, `PlanStepFinished`, `WakeupRequested`,
-  `NudgeRequested` (which becomes a recorded `ResponseRequested`) - and may be lost in the
-  fallback: what each announces the start of is recorded at its end.
+  hold today: `CommandRequested { agent, command, args, by }`, `RetryRequested { target, author,
+  by }`, `ApprovalRequested { request, by }`, `ApprovalDecided { response, status, by }` -
+  granted, denied and timed out as one entry with its `ApprovalStatus` -,
+  `ApprovalRequestWithdrawn { id, by }`, `QuestionRequested { request, by }` and `QuestionClosed {
+  id, shown_to, by }`: seven variants, each naming its sender (`by`), as `ResponseRequested` does,
+  so that whom it goes to is read off the entry alone; `Envelope::entry` and `HistoryEntry::event`
+  an arm each. They are **no items** (`is_item` false) and no changes: in the chain for delivery
+  alone, never in a page, in `StandingItems` or in a `HistoryItemResponse` - the clients are shown
+  them live, as today, and nothing changes for the web UI. **The answers to questions stay out of
+  the history** - `QuestionAnswered` and `QuestionDeclined` -, since they go to the tool alone and
+  never into a history (issue 165, `question.rs`): an inbox queues them whatever its state, as
+  they are neither in the history nor may be lost, and a turn resumed after a restart asks again,
+  as APPROVALS.md says. Everything else that is not recorded is transient
+  (`ActorEvent::is_transient`) - streamed chunks, `StateChanged`, `ResponseStarted`,
+  `CommandStarted`, `ActivityStarted`, `PlanStepFinished`, `WakeupRequested`, `NudgeRequested`
+  (which becomes a recorded `ResponseRequested`) - and may be lost in the fallback: what each
+  announces the start of is recorded at its end.
 - **Whom they went to** is a rule like every entry's - `Envelope::concerns` states it by kinds and
   by name: the approvers, the agent that asked, the users and that agent - and `Recipients` says
   it once it names kinds and names together: one struct, `Recipients { users, agents, approvers,
@@ -132,12 +137,12 @@ reconstructs a context is the channel, and the one check it reaches is an agent'
   answer does. No `Option`, no resolution by the channel, and no marker value that must never be
   stored.
 - **One rule, not two.** `concerns` and `recipients` state the same rule today, for every
-  recorded event, in two places; with nine more they would do so twice over. `Envelope::concerns`
+  recorded event, in two places; with seven more they would do so twice over. `Envelope::concerns`
   becomes `Envelope::recipients`: for a recorded event its entry's rule, for the rest - chunks,
   states, the start of a step, a command or an activity, approvals and questions until step 2
   records them - its own; what only asks goes to nobody, as now. The channel computes it once per
   event and asks it of each actor (`Recipients::names`). A refactoring without a change of
-  behaviour, before the nine entries (step 1).
+  behaviour, before the seven entries (step 1).
 - **`Heard`** (`caelumora_model::history`): where a reader of a history stands - `next`, the first
   position not delivered to it in order, and `taken`, the positions after it delivered ahead of
   their turn (an approval taken while a turn waits, `recv_matching`). `took(seq)` moves `next`
@@ -198,11 +203,18 @@ channel (`ChannelLoop::open_inbox`) and shared by its two halves under one lock,
   inbox opened before the end is behind from the start: a join and a restart are the overflow
   case, nothing of their own. `Actor::catch_up` goes, and with it `AgentBody::catch_up`,
   `ActorRuntime::channel_entries` and `channel_position_of`.
-- **The order of a join** (`apply_change`): the inbox is opened and put among `running` first,
-  then `HistoryShared` and `ParticipantJoined` are announced - recorded, and dropped by the inbox
-  as it is behind -, then the actor's task is spawned. So the join is recorded before the newcomer
-  reads, its membership range is derived, and it reads as a participant: `Reader::Newcomer` goes
-  (issue 423's gap between catching up and the inbox cannot open, since there is no catching up).
+- **The order of a join** (`apply_change`): `HistoryShared` and `ParticipantJoined` are announced
+  first, before the newcomer's inbox exists - recorded, delivered to the others -, then its inbox
+  is opened, behind, at where its view begins, and its task spawned. So the join is recorded before
+  the newcomer reads, its membership range is derived, and it reads as a participant:
+  `Reader::Newcomer` goes (issue 423's gap between catching up and the inbox cannot open, since
+  there is no catching up). An actor that keeps nothing opens at the end before the announcements,
+  and so reads its own join alone. A channel founded with its participants' joins recorded (issue
+  420) starts its agents as after a restart: one without a stored state reads its founding joins
+  from the history, as a founder that joins live hears them.
+- **Stamping**: what the channel delivers is stamped once, as `deliveries` builds it, after it is
+  recorded - the history keeps an envelope as it entered -, and what is read from the history is
+  stamped by the same function (`ChannelLoop::stamp`).
 - **Delivering** (`route_event_impl`) changes in one thing besides `deliver`: a `RetryRequested`
   for a turn is checked - under way, or the last given up - before it is recorded, in `enter`,
   rather than as it is delivered: what is not delivered is not recorded, so that the fallback
@@ -268,8 +280,8 @@ channel (`ChannelLoop::open_inbox`) and shared by its two halves under one lock,
    `Heard`, `AgentChannelState.heard`, `HistoryStore::entries` over `Recorded` and
    `HistoryStore::answer`; `Recipients` by kinds and names, `Envelope::recipients` by the entry's
    rule; the tests of the model and the store suite. **Every stored state is to be deleted.**
-2. The model, extended: the nine entries, no items, each with its `recipients`; `Envelope::entry`
-   and `HistoryEntry::event`.
+2. The model, extended: the seven entries, no items, each with its `recipients`; `Envelope::entry`
+   and `HistoryEntry::event`; the check of a retry of a turn moved before it is recorded.
 3. The runtime: `Inbox` and its tests; the `EventReceiver` trait; `Actor::security_context`,
    `Actor::heard`, `catch_up` removed; `open_inbox`, `recorded_for`, the stamping shared; the
    order of a join; the retry check moved; `Reader::Newcomer` removed; the channel's tests.
