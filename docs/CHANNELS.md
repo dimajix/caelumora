@@ -687,7 +687,10 @@ An **actor** is anything that sends and receives events in a channel.
     others queued - as an agent waiting for approvals does - and acknowledges what was taken. Both
     kinds of agent take an envelope together with everything queued behind it: every message heard
     is taken in, in order, and only the last request is answered, once (see
-    [AGENT-TURN.md](AGENT-TURN.md#the-cognitive-cycle)).
+    [AGENT-TURN.md](AGENT-TURN.md#the-cognitive-cycle)). During a turn, an agent whose personality
+    hears then takes what it may hear only up to the first envelope that has to wait, which stays
+    where it is with everything behind it (see
+    [AGENT-TURN.md](AGENT-TURN.md#hearing-during-a-turn)).
 *   **Which actor runs an agent** is its personality's `kind`: `internal` - the default - an
     `AgentActor`; `external` an `ExternalAgentActor`, for an agent that runs elsewhere and is
     reached through the personality's one `ExternalAgent` component. What builds the actor of each

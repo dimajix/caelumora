@@ -354,6 +354,7 @@ impl World {
             components: Default::default(),
             security_attributes: attributes(owner, contributors),
             reasoning_visibility: Default::default(),
+            hears_during_turn: Default::default(),
             deleted: None,
         };
         self.runtime.entity_stores().personalities.create(&Self::system(), &personality).await.unwrap();

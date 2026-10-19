@@ -194,8 +194,9 @@ impl Chain<TranscriptEntry> {
     /// recorded, if the message is not on the active path as it stands -
     /// never given to the model, on a branch no longer active, or taken
     /// back - or cannot be modified so (`Message::modify`). Taken in between
-    /// turns, as everything an agent hears: a turn under way produces its
-    /// next message from the transcript as its context names it.
+    /// turns - a change waits for a turn's end even where what is said is
+    /// heard during it (issue 431) -: a turn under way produces its next
+    /// message from the transcript as its context names it.
     pub fn modify(&mut self, modified: Message) -> bool {
         if !self.standing(modified.id).is_some_and(|mut m| m.modify(&modified)) {
             return false;

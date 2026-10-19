@@ -67,6 +67,13 @@ impl Work {
         self.seen.clone().unwrap_or_else(|| self.classification.clone())
     }
 
+    /// Whether it may see what is classified `classification` while it is under way (issue
+    /// 431): if it flows into its classification. What it saw above it would be written below
+    /// its level, since `see` keeps its label within its classification.
+    pub fn may_see(&self, classification: &Classification) -> bool {
+        classification.surely_flows_to(&self.classification)
+    }
+
     /// Records that it has seen what is classified `classification`: its
     /// label rises to the join of both, within the channel's
     /// classification, which everything it sees flows into
@@ -140,6 +147,15 @@ mod tests {
         assert_eq!(work.label(), internal, "and seen");
         work.take_in_context(&[part(None)], Vec::new());
         assert_eq!(work.label(), confidential, "a part that does not say counts as the channel");
+    }
+
+    #[test]
+    fn work_may_see_what_flows_into_its_classification() {
+        let internal = Classification::general(Confidentiality::Internal);
+        let work = Work::new(EventContext::default(), SecurityContext::default(), internal.clone());
+        assert!(work.may_see(&Classification::PUBLIC), "below its classification");
+        assert!(work.may_see(&internal), "at it");
+        assert!(!work.may_see(&Classification::general(Confidentiality::Confidential)), "above it");
     }
 
     #[test]

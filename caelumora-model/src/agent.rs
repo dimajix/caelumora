@@ -1,4 +1,4 @@
-use crate::actor::{ActorEvent, ActorId, ActorState, EventContext};
+use crate::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use crate::approval::ApprovalRequest;
 use crate::chain::{Position, Stored};
 use crate::component::ComponentConfig;
@@ -74,6 +74,84 @@ impl PersonalityKind {
     }
 }
 
+/// How the agents of a personality hear between the steps of a turn (issue 431), rather than
+/// once the turn has ended: whose messages (`from`), and whether also what is said in another's
+/// authority (`others`). Written by hand too: what is left out is the default, `from: none`
+/// and `others: wait`. A personality can only narrow what the core allows, never widen it: a
+/// request to respond in another's authority, and what is above the turn's classification, wait
+/// for the turn's end whatever this says (`takes`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HearsDuringTurn {
+    pub from: HearsFrom,
+    pub others: OthersWords,
+}
+
+/// Whose messages an agent takes in between the steps of a turn (issue 431).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HearsFrom {
+    /// Nobody's: what is said while a turn runs is heard once it has ended.
+    #[default]
+    None,
+    /// The people's, not those of other agents.
+    Users,
+    /// Everyone's, other agents' too.
+    All,
+}
+
+/// Whether a turn takes in, between its steps, what is said in another's authority than its own
+/// (issue 431) - by someone other than whoever began the chain it answers, or an agent working
+/// for them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OthersWords {
+    /// It waits for the turn's end, with everything said after it: nobody steers what a turn
+    /// does in someone else's authority, but the agent hears nothing more in that turn once
+    /// another has spoken.
+    #[default]
+    Wait,
+    /// It is heard, as between turns: the agent stays able to hear, and another's words may
+    /// steer what the turn does. A request of theirs still waits.
+    Hear,
+}
+
+impl HearsFrom {
+    /// Whether a message of `sender` is taken in, as far as whose it is goes.
+    pub fn hears(self, sender: ActorId) -> bool {
+        match self {
+            Self::None => false,
+            Self::Users => matches!(sender, ActorId::User(_)),
+            Self::All => true,
+        }
+    }
+}
+
+impl HearsDuringTurn {
+    /// Whether the piece of work `work`, under way, takes in `envelope` between its steps, rather
+    /// than leaving it, and everything behind it, for its end (issue 431). What was said: if
+    /// `from` hears its sender, if the work may see it (`Work::may_see`) - what it saw above its
+    /// classification would be written below its level -, and, unless `others` hears it, if it
+    /// is said in the work's authority: by whoever began the chain the work answers, or an agent
+    /// working for them (`SecurityContext::initiator_id`). A request to respond: only in the
+    /// work's authority, which then answers it - another's is answered in a turn in theirs. Who
+    /// joined or left: unless it hears nobody. Nothing else: a change to a message, a request to
+    /// answer again, a command, an approval are taken in an order of their own.
+    pub fn takes(&self, work: &Work, envelope: &Envelope) -> bool {
+        let in_its_authority = envelope.security.initiator_id == work.security_context.initiator_id;
+        match &envelope.event {
+            ActorEvent::CompleteMessageGenerated(message) => {
+                self.from.hears(message.sender_id)
+                    && work.may_see(&message.classification)
+                    && (self.others == OthersWords::Hear || in_its_authority)
+            }
+            ActorEvent::ResponseRequested => self.from != HearsFrom::None && in_its_authority,
+            ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } => self.from != HearsFrom::None,
+            _ => false,
+        }
+    }
+}
+
 /// An agent's traits: its components and how confidential its reasoning is.
 /// Written by hand, too (a seed file, issue 105): the fields with a default
 /// may be left out there (issue 108).
@@ -115,6 +193,10 @@ pub struct Personality {
     /// `channel` unless named.
     #[serde(default)]
     pub reasoning_visibility: Visibility,
+    /// How its agents hear between the steps of a turn (issue 431):
+    /// nobody unless named.
+    #[serde(default)]
+    pub hears_during_turn: HearsDuringTurn,
     /// Set when it was deleted (issue 164): it stays stored, hidden from
     /// every read but those for what was deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1081,6 +1163,54 @@ pub(crate) mod tests {
         let external: Personality = serde_json::from_value(written("external")).unwrap();
         assert_eq!(external.kind, PersonalityKind::External);
         assert!(serde_json::from_value::<Personality>(written("remote")).is_err(), "no other kind");
+    }
+
+    #[test]
+    fn a_personality_hears_nobody_during_a_turn_unless_named_and_waits_with_others_words() {
+        let id = PersonalityId::new();
+        let written = |hears: serde_json::Value| serde_json::from_value::<Personality>(serde_json::json!({ "id": id, "name": "plain", "hears_during_turn": hears }));
+        let plain: Personality = serde_json::from_value(serde_json::json!({ "id": id, "name": "plain" })).unwrap();
+        assert_eq!(plain.hears_during_turn, HearsDuringTurn { from: HearsFrom::None, others: OthersWords::Wait }, "left out");
+        let users = written(serde_json::json!({ "from": "users" })).unwrap();
+        assert_eq!(users.hears_during_turn, HearsDuringTurn { from: HearsFrom::Users, others: OthersWords::Wait }, "others' words wait unless named");
+        let all = written(serde_json::json!({ "from": "all", "others": "hear" })).unwrap();
+        assert_eq!(all.hears_during_turn, HearsDuringTurn { from: HearsFrom::All, others: OthersWords::Hear });
+        assert!(written(serde_json::json!({ "from": "agents" })).is_err(), "nothing else");
+    }
+
+    #[test]
+    fn a_turn_takes_in_between_its_steps_what_its_personality_hears_and_never_a_request_in_anothers_authority() {
+        use crate::confidentiality::Confidentiality;
+        let alice = ActorId::User(UserId::new());
+        let bob = ActorId::User(UserId::new());
+        let agent = ActorId::Agent(AgentId::new());
+        let internal = Classification::general(Confidentiality::Internal);
+        let secret = Classification::general(Confidentiality::StrictlyConfidential);
+        let work = Work::new(EventContext::default(), SecurityContext { initiator_id: alice, ..SecurityContext::default() }, internal.clone());
+        let in_authority_of = |initiator: ActorId, event: ActorEvent| Envelope::new(SecurityContext { initiator_id: initiator, ..SecurityContext::default() }, EventContext::default(), event);
+        // Said by `sender`, in the authority of `initiator`, classified `classification`.
+        let said = |sender: ActorId, initiator: ActorId, classification: &Classification| {
+            in_authority_of(initiator, ActorEvent::CompleteMessageGenerated(Message { sender_id: sender, ..Message::new(classification.clone()) }))
+        };
+        let hears = |from, others| HearsDuringTurn { from, others };
+        let (wait, hear) = (OthersWords::Wait, OthersWords::Hear);
+        let cases = [
+            ("nobody's", hears(HearsFrom::None, hear), said(alice, alice, &internal), false),
+            ("hers", hears(HearsFrom::Users, wait), said(alice, alice, &internal), true),
+            ("an agent's, hearing users", hears(HearsFrom::Users, hear), said(agent, alice, &internal), false),
+            ("an agent's, hearing all", hears(HearsFrom::All, wait), said(agent, alice, &internal), true),
+            ("his, waiting with others' words", hears(HearsFrom::All, wait), said(bob, bob, &internal), false),
+            ("his, hearing others' words", hears(HearsFrom::Users, hear), said(bob, bob, &internal), true),
+            ("an agent's for him, waiting", hears(HearsFrom::All, wait), said(agent, bob, &internal), false),
+            ("above the turn's classification", hears(HearsFrom::All, hear), said(alice, alice, &secret), false),
+            ("her request", hears(HearsFrom::Users, wait), in_authority_of(alice, ActorEvent::ResponseRequested), true),
+            ("his request, hearing others' words", hears(HearsFrom::All, hear), in_authority_of(bob, ActorEvent::ResponseRequested), false),
+            ("her request, hearing nobody", hears(HearsFrom::None, hear), in_authority_of(alice, ActorEvent::ResponseRequested), false),
+            ("a command", hears(HearsFrom::All, hear), in_authority_of(alice, ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: ActorId::None }), false),
+        ];
+        for (what, hears, envelope, taken) in cases {
+            assert_eq!(hears.takes(&work, &envelope), taken, "{what}");
+        }
     }
 
     /// Issue 341: an agent acting when nobody asked it is the caller and

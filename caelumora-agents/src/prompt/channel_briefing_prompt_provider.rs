@@ -174,7 +174,7 @@ mod tests {
         let personality = Personality {
             description: None, id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
             kind: Default::default(), roles: None, introduction: None, components: Default::default(),
-            security_attributes: Default::default(), reasoning_visibility: Visibility::Channel, deleted: None,
+            security_attributes: Default::default(), reasoning_visibility: Visibility::Channel, hears_during_turn: Default::default(), deleted: None,
         };
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let agent = Agent::new(ScopedName::new("Jonathan", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);

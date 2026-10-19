@@ -310,7 +310,7 @@ mod tests {
                     id: PersonalityId::new(), name: ScopedName::new(name, Default::default()).unwrap(), kind,
                     roles: roles.map(|roles| ids.ids_of(roles).unwrap()),
                     description: None, introduction: None, components: Default::default(),
-                    security_attributes: Default::default(), reasoning_visibility: Default::default(),
+                    security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(),
                     deleted: None,
                 };
                 store.entity_stores().personalities.create(&system, &personality).await.unwrap();
@@ -377,7 +377,7 @@ mod tests {
         let personality = Personality {
             id: PersonalityId::new(), name: ScopedName::new("plain", Scope::GlobalScope).unwrap(), kind: Default::default(),
             roles: None, description: None, introduction: None, components: Default::default(),
-            security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
+            security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(), deleted: None,
         };
         personalities.create(&system, &personality).await.unwrap();
         let mut session = make_session("scoped", ActorId::None);

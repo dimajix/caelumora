@@ -79,7 +79,9 @@ pub trait EventReceiver: Send {
 
     /// Block until an event matching `predicate` arrives.
     /// Non-matching events are stored in an internal buffer and returned by
-    /// subsequent `recv()` calls.
+    /// subsequent `recv()` calls. A search: it passes over what does not
+    /// match, wherever the match is - unlike `try_recv_if`, which looks at
+    /// the next event only.
     async fn recv_matching(&mut self, predicate: EventPredicate) -> Option<Envelope>;
 
     /// The next event that is there already, without waiting (checks the
@@ -87,6 +89,14 @@ pub trait EventReceiver: Send {
     /// `None` says that nothing is queued now, not that the input is
     /// closed: that is `recv`'s to tell.
     fn try_recv(&mut self) -> Option<Envelope>;
+
+    /// The next event that is there already, without waiting, if it
+    /// fulfils `predicate`; otherwise nothing, and the event stays where it
+    /// is, to be taken next (issue 431) - what an actor takes in up to the
+    /// first event that has to wait, so that everything behind it waits too,
+    /// in order. Named as Rust names it (`Peekable::next_if`, `Vec::pop_if`):
+    /// `_if` looks at the next event only, where `recv_matching` searches.
+    fn try_recv_if(&mut self, predicate: &dyn Fn(&Envelope) -> bool) -> Option<Envelope>;
 
     /// Commit all events delivered since the last commit.
     /// In-memory transport: no-op. Persistent transports: advance offset / send ack.

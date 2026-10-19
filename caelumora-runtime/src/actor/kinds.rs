@@ -97,7 +97,7 @@ mod tests {
         Personality {
             id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(), kind,
             roles: None, description: None, introduction: None, components: ComponentConfig::default(),
-            security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
+            security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(), deleted: None,
         }
     }
 

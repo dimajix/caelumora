@@ -77,6 +77,7 @@ pub async fn alice_and_an_agent(store: &MemoryStore, components: ComponentConfig
         description: None,
         introduction: None,
         reasoning_visibility: Visibility::Channel,
+        hears_during_turn: Default::default(),
         id: PersonalityId::new(),
         name: ScopedName::new("plain", Default::default()).unwrap(),
         kind: Default::default(),

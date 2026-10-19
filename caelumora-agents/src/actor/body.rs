@@ -23,7 +23,7 @@ use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::transport::{EventReceiver, EventSender};
 use anyhow::{Context, Result};
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget};
-use caelumora_model::agent::{AgentChannelState, AgentId, RetryRefused};
+use caelumora_model::agent::{AgentChannelState, AgentId, HearsDuringTurn, RetryRefused};
 use caelumora_model::confidentiality::Visibility;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
@@ -203,6 +203,12 @@ impl AgentBody {
         self.personality.load().reasoning_visibility
     }
 
+    /// Whose messages it takes in between the steps of a turn (issue 431),
+    /// as its personality says now.
+    pub(super) fn hears_during_turn(&self) -> HearsDuringTurn {
+        self.personality.load().hears_during_turn
+    }
+
     /// What it was built from, its preconfigured components resolved (issue
     /// 270).
     pub(super) fn components(&self) -> ComponentConfig {
@@ -345,7 +351,7 @@ mod testing {
             let personality = Personality {
                 id: PersonalityId::new(), name: ScopedName::new("plain", Scope::GlobalScope).unwrap_or_else(|e| panic!("{e}")), kind: Default::default(),
                 roles: None, description: None, introduction: None, components: ComponentConfig::default(),
-                security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
+                security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(), deleted: None,
             };
             let agent = Agent::new(ScopedName::new("agent", Scope::GlobalScope).unwrap_or_else(|e| panic!("{e}")), personality.id, ActorId::None);
             let agent = Arc::new(AgentController::new(agent, None, Arc::new(()), runtime.entity_stores()));
@@ -370,6 +376,13 @@ mod testing {
                 state: Mutex::new(AgentChannelState::default()),
                 control: RunControl::new(ActorState::Idle, None),
             }
+        }
+
+        /// This body, of a personality that hears between the steps of a
+        /// turn as `hears` says (issue 431).
+        pub(in crate::actor) fn hearing(self, hears: HearsDuringTurn) -> Self {
+            let personality = Personality { hears_during_turn: hears, ..Personality::clone(&self.personality.load()) };
+            Self { personality: Arc::new(PersonalityController::new(personality)), ..self }
         }
     }
 }

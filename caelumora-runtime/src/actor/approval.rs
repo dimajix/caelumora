@@ -459,6 +459,7 @@ mod tests {
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: Default::default(),
+            hears_during_turn: Default::default(),
             deleted: None,
         };
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();

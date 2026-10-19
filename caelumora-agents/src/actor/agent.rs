@@ -27,7 +27,7 @@ use caelumora_model::work::{TurnId, Work};
 use caelumora_runtime::controller::{AgentController, PersonalityController};
 use caelumora_model::approval::{ApprovalResponse, ApprovalStatus};
 use caelumora_model::confidentiality::{Classification, Visibility};
-use caelumora_model::message::{Message, MessageEvent};
+use caelumora_model::message::{Message, MessageEvent, MessageRole};
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::plan::PlanProgress;
 use caelumora_model::security::SecurityContext;
@@ -514,16 +514,28 @@ impl AgentActor {
     async fn handle_planning(
         &self,
         state: &mut AgentChannelState,
+        rx: &mut Box<dyn EventReceiver>,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
         let agent_name = self.body.agent.name();
 
-        let turn = &mut self.turn_under_way(state)?;
-        if !turn.may_call_model() {
+        if !self.turn_under_way(state)?.may_call_model() {
             warn!("Agent {} {} asked its model {} times in one turn; the turn is given up", self.id(), agent_name, MAX_MODEL_CALLS);
             self.give_up(state, GivenUpReason::CallLimit { calls: MAX_MODEL_CALLS }, output).await;
             return Ok(ActorState::Idle);
         }
+        // What was said since the last call, for this one to take into
+        // account (issue 431) - once it is sure to be made, and before the
+        // size of the context is judged -, followed by a prompt part that
+        // tells the model so: it is to go on with its work rather than lose
+        // its thread, and to answer what it was asked there, since no other
+        // turn follows for it. Stored before it is committed.
+        if self.body.take_in_during_turn(state, rx).await {
+            self.turn_under_way(state)?.place_turn_prompt(MessageRole::System, HEARD_WHILE_WORKING.to_string());
+            self.body.store(state).await;
+            rx.commit().await?;
+        }
+        let turn = &mut self.turn_under_way(state)?;
         if self.compaction_due(turn) {
             return Ok(ActorState::Busy);
         }
@@ -713,6 +725,11 @@ impl AgentActor {
     }
 }
 
+/// What the model is told after what was said while it worked (issue 431).
+const HEARD_WHILE_WORKING: &str = "What is just above was said by others, or happened, while you were working. \
+    Take them into account from here on: if they change what you were asked, act on that. \
+    Otherwise go on with your work. If they ask you something, answer it in your final answer.";
+
 /// Withdraws the requests of the calls a turn `abandoned` as it ended, in
 /// its contexts (`answering`), so that nobody is asked any longer to decide
 /// on, or answer for, a call that will not run (issue 148) - the counterpart of
@@ -899,7 +916,7 @@ impl Actor for AgentActor {
                 ActorState::WaitingForUser => {
                     self.handle_waiting_for_user(&mut self.turn_under_way(&mut state)?, &mut rx, &*output).await?
                 }
-                ActorState::Planning => Some(self.handle_planning(&mut state, &*output).await?),
+                ActorState::Planning => Some(self.handle_planning(&mut state, &mut rx, &*output).await?),
                 ActorState::ExecutingTools => Some(self.handle_executing_tools(&mut self.turn_under_way(&mut state)?, &*output).await?),
                 ActorState::Busy => Some(self.handle_busy(&mut state, &*output).await?),
                 ActorState::Cancelling => Some(self.handle_cancelling(&mut state, &*output).await?),
@@ -1047,7 +1064,7 @@ mod tests {
 
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
-    use caelumora_model::message::{MessageId, MessageRole};
+    use caelumora_model::message::MessageId;
     use caelumora_model::tool::{Tool, ToolParameters, ToolSet, ToolVisibility};
 
     fn tool(name: &str, visibility: ToolVisibility) -> Tool {

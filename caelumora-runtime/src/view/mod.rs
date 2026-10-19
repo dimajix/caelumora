@@ -850,6 +850,7 @@ mod tests {
             description: None,
             introduction: None,
             reasoning_visibility: Visibility::Channel,
+            hears_during_turn: Default::default(),
             id: PersonalityId::new(),
             name: ScopedName::new("plain", Default::default()).unwrap(),
             kind,
@@ -1807,7 +1808,7 @@ mod tests {
             id: PersonalityId::new(), name: ScopedName::new("thinker", Default::default()).unwrap(), kind: PersonalityKind::Internal,
             roles: None, description: None, introduction: None,
             components: Default::default(),
-            security_attributes: Default::default(), reasoning_visibility: Default::default(),
+            security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(),
             deleted: None,
         };
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();

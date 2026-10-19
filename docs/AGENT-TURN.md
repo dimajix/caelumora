@@ -52,8 +52,10 @@ behind it, in order, then commit once (`AgentBody::take_in`):
     counted across a restart, and each step of its plan and the plan's final answer as many again
     (issue 412); one that would make another is given up as `CallLimit` (issue 411), its users are
     told, and the agent may be asked to answer anew. The limit is a safety net against a model that
-    does not come to an end; reaching it is no answer. Before a call whose context is too full by
-    its `CompactionPolicy`, it goes to `Busy` instead (see [Compaction](#compaction)) - not at the
+    does not come to an end; reaching it is no answer. Before the call it takes in what was said
+    since the last one, as far as its personality hears during a turn (see [Hearing during a
+    turn](#hearing-during-a-turn)). Before a call whose context is too full by its
+    `CompactionPolicy`, it goes to `Busy` instead (see [Compaction](#compaction)) - not at the
     limit, where the call would not be made.
 *   **`Busy`** does something of the agent's own accord, besides answering - the counterpart of
     `CarryingOutCommand`, which it does when asked. So far that is compacting its context; it
@@ -66,7 +68,8 @@ behind it, in order, then commit once (`AgentBody::take_in`):
     cancel or stop interrupts the call under way, which is answered as interrupted, and starts no
     further one.
 *   **`WaitingForUser`** waits for an approval decided or timed out, or questions answered or
-    declined, and returns to `ExecutingTools`. Other events stay queued until the turn is over.
+    declined, and returns to `ExecutingTools`. Other events stay queued: what may be heard during
+    a turn until the next call of the model, the rest until the turn is over.
 *   **`Reflecting`** takes the turn over, stores the state and announces its end. The agent then
     lands in the state a tool requested (`Sleeping` after `stop` or `bye`) or in `Idle`.
 *   **`Cancelling`** takes the turn over like `Reflecting` and returns to `Idle`. Calls of the step
@@ -75,6 +78,43 @@ behind it, in order, then commit once (`AgentBody::take_in`):
 
 An error in a turn ends the turn, not the agent: it is logged, the turn is given up as `Failed`
 and the agent returns to `Idle` (see [CODING-GUIDELINES.md](CODING-GUIDELINES.md)).
+
+### Hearing during a turn
+
+How an agent hears between the steps of a turn, rather than once it has ended, is its
+personality's `hears_during_turn` (`HearsDuringTurn`), with two settings:
+
+*   **`from`** - whose messages: `none`, the default - nobody's -, `users` - the people's, not
+    those of other agents -, or `all`.
+*   **`others`** - what is said in another's authority than the turn's: `wait`, the default, or
+    `hear`.
+
+A turn of many steps can so be steered by what is said while it works, without cancelling it;
+with `from: none` an agent hears what was said when the turn has ended, as between turns.
+
+*   **When.** At the start of `Planning`, once the model may be called again and before the size of
+    the context is judged (`AgentBody::take_in_during_turn`): every call of the step before has its
+    result there, so nothing comes between a call and its result, and the call that follows is
+    given what was heard.
+*   **What.** What was said is perceived and who joined or left noted, as between turns. A request
+    to respond is dropped: the turn answers it, having heard its message. After what was heard the
+    model is told, by a prompt part, that it was said while it worked, to take it into account and
+    to answer what it asks in its answer.
+*   **Up to the first event that has to wait.** It takes the queue in order and stops at the first
+    event it may not take (`HearsDuringTurn::takes`), which stays where it is with everything
+    behind it (`EventReceiver::try_recv_if`), for the turn's end: a message the personality does
+    not hear; one above the classification the turn began with, which it would write below its
+    level; a request to respond in another's authority; a change to a message, a request to answer
+    again, a command. So the order every rule of taking in relies on holds.
+*   **In whose authority.** A turn acts in the authority of whoever began the chain it answers
+    (`SecurityContext::initiator_id`). With `others: wait`, it hears only what is said in that
+    authority - by them, or an agent working for them -, so that nobody steers what it does in an
+    authority they do not have; but once another has spoken, it hears nothing more until it ends.
+    With `others: hear` it hears another's words too, as between turns, and stays able to hear;
+    they may then steer what it does. Either way another's request to respond waits, and is
+    answered after the turn in a turn in their authority: a personality widens whose words are
+    heard, never whose authority a turn acts with. An external agent is not affected: it takes in
+    between its exchanges with its remote agent, as before.
 
 ### What leaves the agent
 

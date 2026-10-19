@@ -4,7 +4,7 @@
 use super::*;
 use anyhow::Result;
 use caelumora_model::chain::Position;
-use caelumora_model::agent::{AgentChannelState, AgentId, RetryRefused};
+use caelumora_model::agent::{AgentChannelState, AgentId, HearsDuringTurn, HearsFrom, RetryRefused};
 use caelumora_model::approval::{ApprovalRequest, ApprovalResponse};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::confidentiality::Classification;
@@ -33,11 +33,7 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from_then_on() {
-    let model = Arc::new(Gated {
-        answers: Mutex::new(["first", "second"].into()),
-        gate: Arc::new(Semaphore::new(0)),
-        seen: Default::default(),
-    });
+    let model = Arc::new(Gated::saying(&["first", "second"], 0));
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
     tokio::time::timeout(Duration::from_secs(5), async {
         while model.seen.lock().unwrap().is_empty() {
@@ -99,11 +95,7 @@ async fn an_agent_takes_a_change_in_after_its_turn_and_is_given_what_stands_from
 
 #[tokio::test]
 async fn an_agent_asked_to_answer_again_takes_its_answer_back_and_answers_without_it() {
-    let model = Arc::new(Gated {
-        answers: Mutex::new(["first", "second"].into()),
-        gate: Arc::new(Semaphore::new(1)),
-        seen: Default::default(),
-    });
+    let model = Arc::new(Gated::saying(&["first", "second"], 1));
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
     let first = answered(&mut events, agent).await.pop().expect("an answer");
     let alice = channel.user_actor(alice_of(&context)).unwrap();
@@ -126,11 +118,7 @@ async fn an_agent_asked_to_answer_again_takes_its_answer_back_and_answers_withou
 
 #[tokio::test]
 async fn an_agent_does_not_answer_again_once_more_was_said() {
-    let model = Arc::new(Gated {
-        answers: Mutex::new(["first", "second", "third"].into()),
-        gate: Arc::new(Semaphore::new(2)),
-        seen: Default::default(),
-    });
+    let model = Arc::new(Gated::saying(&["first", "second", "third"], 2));
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
     let first = answered(&mut events, agent).await.pop().expect("an answer");
     let alice = channel.user_actor(alice_of(&context)).unwrap();
@@ -148,12 +136,8 @@ async fn an_agent_does_not_answer_again_once_more_was_said() {
 
 /// A gated model, its agent in a channel, and the agent's first turn
 /// asking the model about "hello", its answers held back.
-async fn asking_a_gated_model(answers: &[&'static str]) -> (Stuck, Arc<Gated>) {
-    let model = Arc::new(Gated {
-        answers: Mutex::new(answers.iter().copied().collect()),
-        gate: Arc::new(Semaphore::new(0)),
-        seen: Default::default(),
-    });
+async fn asking_a_gated_model(answers: &[&str]) -> (Stuck, Arc<Gated>) {
+    let model = Arc::new(Gated::saying(answers, 0));
     let stuck = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
     asked(&model, 1).await;
     (stuck, model)
@@ -253,9 +237,21 @@ async fn an_older_answer_asked_for_again_leaves_the_answer_under_way_alone() {
 /// `gate` lets it, and remembers the contents each call was given.
 #[derive(Debug)]
 struct Gated {
-    answers: Mutex<VecDeque<&'static str>>,
+    answers: Mutex<VecDeque<Message>>,
     gate: Arc<Semaphore>,
     seen: Mutex<Vec<Vec<String>>>,
+}
+
+impl Gated {
+    /// A gated model that gives `answers`, the first `permits` of them at once.
+    fn new(answers: impl IntoIterator<Item = Message>, permits: usize) -> Self {
+        Self { answers: Mutex::new(answers.into_iter().collect()), gate: Arc::new(Semaphore::new(permits)), seen: Default::default() }
+    }
+
+    /// A gated model that says `answers`, the first `permits` of them at once.
+    fn saying(answers: &[&str], permits: usize) -> Self {
+        Self::new(answers.iter().map(|answer| model_says(answer)), permits)
+    }
 }
 
 #[async_trait::async_trait]
@@ -268,13 +264,7 @@ impl LLMClient for Gated {
         let gate = Arc::clone(&self.gate);
         Box::pin(futures::stream::once(async move {
             gate.acquire().await.unwrap().forget();
-            // An id of its own, as every model client gives its answers.
-            Ok(MessageEvent::Complete(Message {
-                id: MessageId::new(),
-                role: MessageRole::Assistant,
-                content: Some(answer.to_string()),
-                ..Message::new(Classification::CHANNEL_DEFAULT)
-            }))
+            Ok(MessageEvent::Complete(answer))
         }))
     }
 
@@ -285,11 +275,7 @@ impl LLMClient for Gated {
 
 #[tokio::test]
 async fn what_a_user_says_during_a_turn_is_answered_after_it() {
-    let model = Arc::new(Gated {
-        answers: Mutex::new(["first", "second"].into()),
-        gate: Arc::new(Semaphore::new(0)),
-        seen: Default::default(),
-    });
+    let model = Arc::new(Gated::saying(&["first", "second"], 0));
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
     tokio::time::timeout(Duration::from_secs(5), async {
         while model.seen.lock().unwrap().is_empty() {
@@ -320,13 +306,66 @@ async fn what_a_user_says_during_a_turn_is_answered_after_it() {
     running.abort();
 }
 
+/// A gated model whose first answer calls the calculator and whose next say "done" and "again",
+/// its agent hearing between the steps of a turn as `hears` says (issue 431): the agent asked
+/// about "hello", the call held back, and alice saying "and this too" meanwhile.
+async fn told_while_calculating(hears: HearsDuringTurn) -> (Stuck, Arc<Gated>) {
+    let (calculate, components) = calculator();
+    let model = Arc::new(Gated::new([calculate, model_says("done"), model_says("again")], 0));
+    let mut stuck = with_an_agent_hearing(hears, Arc::<Gated>::clone(&model), components).await;
+    asked(&model, 1).await;
+    let alice = alice_of(&stuck.context);
+    stuck.channel.user_actor(alice).unwrap().send_message("and this too".to_string(), None).await.expect("taken during a turn");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = stuck.events.recv().await.expect("the channel is running");
+            if let ActorEvent::CompleteMessageGenerated(message) = envelope.event {
+                if message.content.as_deref() == Some("and this too") { break }
+            }
+        }
+    }).await.expect("the message is said in the channel");
+    (stuck, model)
+}
+
+/// Where in `call` - what a model was given - a content with `text` is.
+fn given_at(call: &[String], text: &str) -> Option<usize> {
+    call.iter().position(|content| content.contains(text))
+}
+
+#[tokio::test]
+async fn what_a_user_says_between_the_steps_of_a_turn_is_given_to_its_next_step_and_answered_by_it() {
+    let (Stuck { agent, mut events, running, .. }, model) = told_while_calculating(HearsDuringTurn { from: HearsFrom::Users, ..Default::default() }).await;
+    model.gate.add_permits(3);
+
+    let answer = answered(&mut events, agent).await;
+    assert_eq!(answer.last().and_then(|m| m.content.as_deref()), Some("done"), "the turn ends after its tool step");
+    let seen = model.seen.lock().unwrap().clone();
+    assert!(given_at(&seen[0], "and this too").is_none(), "the first step was asked before it was said");
+    let heard = given_at(&seen[1], "and this too").expect("the next step is given it");
+    let told = given_at(&seen[1], "while you were working").expect("and told that it was said meanwhile");
+    assert!(heard < told, "after what was heard: {:?}", seen[1]);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(model.seen.lock().unwrap().len(), 2, "the turn answered its request: no other follows");
+    running.abort();
+}
+
+#[tokio::test]
+async fn an_agent_that_hears_nobody_during_a_turn_answers_what_was_said_after_it() {
+    let (Stuck { agent, mut events, running, .. }, model) = told_while_calculating(HearsDuringTurn::default()).await;
+    model.gate.add_permits(3);
+
+    let said = |messages: Vec<Message>| messages.last().and_then(|m| m.content.clone());
+    assert_eq!(said(answered(&mut events, agent).await).as_deref(), Some("done"));
+    assert_eq!(said(answered(&mut events, agent).await).as_deref(), Some("again"), "a turn of its own answers it");
+    let seen = model.seen.lock().unwrap().clone();
+    assert!(given_at(&seen[1], "and this too").is_none(), "the running turn does not hear it");
+    assert!(given_at(&seen[2], "and this too").is_some() && given_at(&seen[2], "while you were working").is_none(), "the next turn does, as it hears between turns");
+    running.abort();
+}
+
 #[tokio::test]
 async fn an_agent_takes_note_of_who_left_without_responding() {
-    let model = Arc::new(Gated {
-        answers: Mutex::new(["first", "second"].into()),
-        gate: Arc::new(Semaphore::new(1)),
-        seen: Default::default(),
-    });
+    let model = Arc::new(Gated::saying(&["first", "second"], 1));
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
     answered(&mut events, agent).await;
 
@@ -351,11 +390,7 @@ async fn an_agent_takes_note_of_who_left_without_responding() {
 
 #[tokio::test]
 async fn an_agent_asked_several_times_during_a_turn_answers_once_after_it() {
-    let model = Arc::new(Gated {
-        answers: Mutex::new(["first", "second", "third"].into()),
-        gate: Arc::new(Semaphore::new(0)),
-        seen: Default::default(),
-    });
+    let model = Arc::new(Gated::saying(&["first", "second", "third"], 0));
     let Stuck { channel, context, agent, mut events, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), Default::default()).await;
     tokio::time::timeout(Duration::from_secs(5), async {
         while model.seen.lock().unwrap().is_empty() {
