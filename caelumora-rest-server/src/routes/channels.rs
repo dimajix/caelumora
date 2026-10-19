@@ -21,7 +21,7 @@ use caelumora_rest_api::channel::{AddParticipantRequest, AnswerQuestionsRequest,
 use caelumora_rest_api::context::{AgentComponentsResponse, AgentToolsResponse, KnowledgeRefResponse, MessageContextResponse, SeenItemResponse};
 use caelumora_rest_api::history::{HistoryMessageResponse, HistoryPageResponse, HistoryQuery};
 use caelumora_rest_api::session::DescriptionRequest;
-use caelumora_rest_api::stream::StreamOptions;
+use caelumora_rest_api::stream::{ShownEnvelope, StreamOptions};
 use caelumora_rest_api::trash::{DeletedResponse, ListOptions};
 use caelumora_runtime::actor::Shown;
 use caelumora_runtime::actor::user::{ChannelWatch, UserActor};
@@ -260,7 +260,7 @@ impl ChannelFollower {
             () = self.shutdown.cancelled() => return None,
         };
         let event = match shown {
-            Ok(Shown::Envelope(envelope)) => data_event(&envelope),
+            Ok(Shown::Envelope(envelope)) => data_event(&ShownEnvelope::from(envelope)),
             Ok(Shown::Started) => self.anew("started").await?,
             Ok(Shown::Ended) => self.anew("stopped").await?,
             Err(RecvError::Lagged(lost)) => {

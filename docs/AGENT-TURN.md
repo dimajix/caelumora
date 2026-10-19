@@ -107,14 +107,14 @@ with `from: none` an agent hears what was said when the turn has ended, as betwe
     level; a request to respond in another's authority; a change to a message, a request to answer
     again, a command. So the order every rule of taking in relies on holds.
 *   **In whose authority.** A turn acts in the authority of whoever began the chain it answers
-    (`SecurityContext::initiator_id`). With `others: wait`, it hears only what is said in that
+    (`EventContext::initiator_id`). With `others: wait`, it hears only what is said in that
     authority - by them, or an agent working for them -, so that nobody steers what it does in an
     authority they do not have; but once another has spoken, it hears nothing more until it ends.
-    With `others: hear` it hears another's words too, as between turns, and stays able to hear;
-    they may then steer what it does. Either way another's request to respond waits, and is
-    answered after the turn in a turn in their authority: a personality widens whose words are
-    heard, never whose authority a turn acts with. An external agent is not affected: it takes in
-    between its exchanges with its remote agent, as before.
+    With `others: hear` it hears another's words too, as between turns, and stays able to hear; they
+    may then steer what it does. Either way another's request to respond waits, and is answered
+    after the turn in a turn in their authority: a personality widens whose words are heard, never
+    whose authority a turn acts with. An external agent is not affected: it takes in between its
+    exchanges with its remote agent, as before.
 
 ### What leaves the agent
 

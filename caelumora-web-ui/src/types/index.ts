@@ -874,7 +874,6 @@ export interface Envelope {
   timestamp: string;
   event: ActorEvent | UnitActorEvent;
   context: EventContext;
-  security: unknown;
 }
 
 /** A compartment a classification may name, as `GET /compartments` offers it (issue 133). */

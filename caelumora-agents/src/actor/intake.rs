@@ -353,8 +353,8 @@ mod tests {
     /// A turn begun for `initiator` in a channel classified as the default,
     /// in `state`.
     fn under_way_for(state: &mut AgentChannelState, initiator: ActorId) {
-        let security = SecurityContext { initiator_id: initiator, ..SecurityContext::default() };
-        state.begin_turn(EventContext::default(), security, Classification::CHANNEL_DEFAULT, Default::default(), Default::default());
+        let context = EventContext { initiator_id: initiator, ..EventContext::default() };
+        state.begin_turn(context, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default(), Default::default());
     }
 
     #[tokio::test]
@@ -365,7 +365,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         under_way_for(&mut state, alice);
         let body = AgentBody::detached(Vec::new()).hearing(HearsDuringTurn { from: HearsFrom::Users, ..Default::default() });
-        let in_her_authority = |event: ActorEvent| Envelope::new(SecurityContext { initiator_id: alice, ..SecurityContext::default() }, EventContext::default(), event);
+        let in_her_authority = |event: ActorEvent| Envelope::new(SecurityContext::default(), EventContext { initiator_id: alice, ..EventContext::default() }, event);
         let of_alice = |text: &str| in_her_authority(ActorEvent::CompleteMessageGenerated(Message { sender_id: alice, ..said(text) }));
         let command = in_her_authority(ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: ActorId::None });
         for event in [of_alice("one"), in_her_authority(ActorEvent::ResponseRequested), of_alice("two"), command, of_alice("three")] {

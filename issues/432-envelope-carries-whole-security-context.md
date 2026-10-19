@@ -1,6 +1,6 @@
 # 432 — Every envelope carries its sender's whole security context, to everyone it reaches
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Identity and access management
@@ -115,3 +115,28 @@ Rejected: the context holds the owner's roles and the personality's limit as the
   from the channel's history, an envelope would need its head recorded, and looking at which of
   its security context is read showed that a receiver needs the initiator alone, and that the
   whole context reaches every frontend. The maintainer chose B, to be done before 223.
+- **2026-10-19** — Done, not as B. B was built and taken back at the maintainer's word: a context
+  the sender gives reflects its rights and ownership when the request was given, a context built
+  again those when it is carried out - two times to keep apart, a more complicated model than one.
+  So an envelope keeps the `SecurityContext` its sender's actor set, as "E" says, and the checks
+  read it as before; actors give theirs at many places anyway. `session_id` and `channel_id` stay
+  in both contexts: the `EventContext` says where something happens, the `SecurityContext` where
+  it is checked - the same values for very different purposes.
+
+  What is done: the frontends are shown no `SecurityContext`. A channel's stream serializes an
+  envelope as a `ShownEnvelope` (`caelumora-rest-api`), its time, its event context and its event;
+  the web UI's `Envelope` type no longer names `security`. And the initiator is part of the
+  `EventContext` as well (`initiator_id`, the sender by `EventContext::new`, kept by `next`, set
+  from the security context by `Answering::in_channel`), beside the span, its depth and the hops
+  of the chain it belongs to: what goes by the chain reads it there - whose authority a turn hears
+  between its steps (`HearsDuringTurn::takes`, comparing the work's event context), who asked for
+  a command carried out (`HistoryEntry::CommandExecuted::issuer`) -, what checks rights the
+  security context.
+
+  For [223](223-full-inbox-drops-events.md): the history is the one place a security context is
+  built again - for an envelope built back from it when an actor joins or its channel starts again
+  after a pause. It records the initiator, which cannot be built again; the rest comes from the
+  sender as it is then, so that a request taken up after a pause is checked with the rights of
+  then - the one deliberate exception, to be stated there. Stored data: an agent's channel state
+  stored while a turn was under way holds the turn's `EventContext`, which now needs
+  `initiator_id` - such states are to be deleted.
