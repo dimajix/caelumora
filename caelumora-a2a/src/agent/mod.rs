@@ -37,7 +37,6 @@ use serde::de::IgnoredAny;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::warn;
 
 pub const A2A_AGENT_KIND: &str = "a2a_agent";
 
@@ -49,6 +48,10 @@ const POLL_LONGEST: Duration = Duration::from_secs(30);
 /// How long one request may take unless the endpoint says otherwise.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long the agent card is kept once read unless the endpoint says
+/// otherwise.
+const DEFAULT_REFRESH: Duration = Duration::from_secs(300);
+
 /// The parameters of an `a2a_agent`, written by hand.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,7 +59,8 @@ struct A2aAgentConfig {
     /// The agent: its base URL, below which its card is published - or the
     /// card's own URL, ending in `.json`. Its timeout is how long one
     /// request may take to be answered - a streamed one until its stream
-    /// begins; not how long a task may run.
+    /// begins; not how long a task may run. Its `refresh_secs`, how long
+    /// the card is kept once read.
     endpoint: RemoteEndpoint,
     /// How the agent's answers are classified (issue 133); the channel's
     /// unless named.
@@ -79,6 +83,10 @@ impl A2aAgentConfig {
     fn timeout(&self) -> Duration {
         self.endpoint.timeout_or(DEFAULT_TIMEOUT)
     }
+
+    fn refresh(&self) -> Duration {
+        self.endpoint.refresh_or(DEFAULT_REFRESH)
+    }
 }
 
 /// An agent reached over A2A, as the `ExternalAgent` of an external
@@ -91,15 +99,13 @@ pub struct A2aAgentComponent {
 }
 
 impl A2aAgentComponent {
-    /// The component `id` with `config`, its card read if it can be, in
-    /// `security`: an agent that cannot be reached yet does not keep its
-    /// personality from being built.
-    async fn build(id: String, config: A2aAgentConfig, secret_manager: Arc<SecretManager>, security: &SecurityContext) -> Result<Self, ComponentError> {
-        let timeout = config.timeout();
-        let client = A2aClient::new(id.clone(), config.endpoint, timeout, secret_manager)?;
-        if let Err(e) = client.streaming(security).await {
-            warn!("A2A agent component '{}' cannot read its agent card yet: {}", id, e);
-        }
+    /// The component `id` with `config`. Its card is read when the agent
+    /// is first asked, in the name of whoever asks (issue 126): an agent
+    /// that cannot be reached yet does not keep its personality from being
+    /// built, nor delays it.
+    fn new(id: String, config: A2aAgentConfig, secret_manager: Arc<SecretManager>) -> Result<Self, ComponentError> {
+        let (timeout, refresh) = (config.timeout(), config.refresh());
+        let client = A2aClient::new(id, config.endpoint, timeout, refresh, secret_manager)?;
         let profile = ModelProfile { sender_format: config.sender_format, sender_style: config.sender_style, message_times: config.message_times, ..ModelProfile::default() };
         Ok(Self { client: Arc::new(client), classification: config.classification, profile })
     }
@@ -226,11 +232,11 @@ impl ExternalAgent for A2aAgentComponent {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register_async(
+    registry.register(
         ComponentKind::new(A2A_AGENT_KIND).provides::<dyn ExternalAgent>().uses::<SecretManager>(),
-        |descriptor, context| async move {
+        |descriptor, context| {
             let config: A2aAgentConfig = config_of_params(&descriptor.params)?;
-            let component = A2aAgentComponent::build(descriptor.id.clone(), config, Arc::clone(context.service::<SecretManager>()?), &context.security_context).await?;
+            let component = A2aAgentComponent::new(descriptor.id.clone(), config, Arc::clone(context.service::<SecretManager>()?))?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ExternalAgent>(Arc::new(component));
             Ok(facets)
@@ -325,13 +331,15 @@ mod tests {
         }));
         let app = Router::new().route("/.well-known/agent-card.json", get(card)).route("/a2a", post(rpc)).with_state(Arc::clone(&stub));
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        (component(&format!("http://{address}")).await, stub)
+        (component(&format!("http://{address}"), None), stub)
     }
 
-    async fn component(url: &str) -> A2aAgentComponent {
-        let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": url, "auth": { "type": "bearer", "secret": "HERMES_TOKEN" }, "timeout_secs": 2 } })).unwrap();
+    /// The component that reaches the agent at `url`, its card kept for
+    /// `refresh_secs` - by default if `None`.
+    fn component(url: &str, refresh_secs: Option<u64>) -> A2aAgentComponent {
+        let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": url, "auth": { "type": "bearer", "secret": "HERMES_TOKEN" }, "timeout_secs": 2, "refresh_secs": refresh_secs } })).unwrap();
         let secrets = Arc::new(SecretManager::new(vec![Arc::new(Token)], Arc::new(AllowAllPolicy::new())));
-        A2aAgentComponent::build("hermes".to_string(), config, secrets, &SecurityContext::default()).await.unwrap()
+        A2aAgentComponent::new("hermes".to_string(), config, secrets).unwrap()
     }
 
     fn hello() -> OutboundMessage {
@@ -350,6 +358,7 @@ mod tests {
     fn the_parameters_name_the_agent_and_how_to_reach_it() {
         let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": "https://hermes.example/" } })).unwrap();
         assert_eq!(config.timeout(), Duration::from_secs(30));
+        assert_eq!(config.refresh(), Duration::from_secs(300));
         assert_eq!((config.sender_format, config.sender_style), (SenderFormat::Prefix, SenderStyle::Handle), "told who said what (issue 135)");
         assert!(config.message_times, "and when (issue 424)");
         let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": "x" }, "sender_format": "none", "sender_style": "name", "message_times": false })).unwrap();
@@ -410,6 +419,38 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(10));
     }
 
+    /// The methods the stub was asked, in turn.
+    fn methods(stub: &Shared) -> Vec<String> {
+        stub.lock().unwrap().asked.iter().map(|(method, ..)| method.clone()).collect()
+    }
+
+    #[tokio::test]
+    async fn the_card_is_read_again_once_it_is_older_than_its_time_to_keep_it() {
+        let (kept, stub) = agent("1.0", false, Vec::new()).await;
+        let interface = stub.lock().unwrap().card["supportedInterfaces"][0]["url"].as_str().unwrap().to_string();
+        let refreshed = component(interface.trim_end_matches("/a2a"), Some(0));
+        let _ = kept.send(&SecurityContext::default(), None, hello()).await;
+        let _ = refreshed.send(&SecurityContext::default(), None, hello()).await;
+
+        stub.lock().unwrap().card["capabilities"]["streaming"] = json!(true);
+        let _ = kept.send(&SecurityContext::default(), None, hello()).await;
+        let _ = refreshed.send(&SecurityContext::default(), None, hello()).await;
+        assert_eq!(methods(&stub), ["SendMessage", "SendMessage", "SendMessage", "SendStreamingMessage"], "the change seen only where the card was kept for no time");
+    }
+
+    #[tokio::test]
+    async fn an_agent_not_reached_where_its_card_said_has_its_card_read_again() {
+        let (agent, stub) = agent("1.0", false, Vec::new()).await;
+        let interface = stub.lock().unwrap().card["supportedInterfaces"][0]["url"].clone();
+        stub.lock().unwrap().card["supportedInterfaces"][0]["url"] = json!("http://127.0.0.1:1/a2a");
+        let error = agent.send(&SecurityContext::default(), None, hello()).await.err().expect("nobody there").to_string();
+        assert!(error.contains("cannot reach the external agent"), "{error}");
+
+        stub.lock().unwrap().card["supportedInterfaces"][0]["url"] = interface;
+        let _ = agent.send(&SecurityContext::default(), None, hello()).await;
+        assert_eq!(methods(&stub), ["SendMessage"], "reached where the card says now");
+    }
+
     #[tokio::test]
     async fn a_task_is_resumed_cancelled_and_a_task_past_cancelling_is_no_error() {
         let (agent, _) = agent("1.0", true, vec![
@@ -460,10 +501,10 @@ mod tests {
     #[tokio::test]
     async fn an_agent_that_cannot_be_reached_or_speaks_no_a2a_1_is_refused_when_asked() {
         // Nobody listens there: built all the same.
-        let gone = component("http://127.0.0.1:9").await;
+        let gone = component("http://127.0.0.1:9", None);
         let unreachable = gone.send(&SecurityContext::default(), None, hello()).await.err().expect("nobody there").to_string();
         assert!(unreachable.contains("cannot reach the external agent at http://127.0.0.1:9"), "{unreachable}");
-        let secret = component("http://user:secret@127.0.0.1:9/a2a.json?key=secret").await;
+        let secret = component("http://user:secret@127.0.0.1:9/a2a.json?key=secret", None);
         let unreachable = secret.send(&SecurityContext::default(), None, hello()).await.err().expect("nobody there").to_string();
         assert!(unreachable.contains("at http://127.0.0.1:9/a2a.json") && !unreachable.contains("secret"), "{unreachable}");
 

@@ -1,10 +1,11 @@
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use caelumora_mcp::plugin::McpPlugin;
 use caelumora_mcp::tool::MCP_TOOL_KIND;
 use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{AgentChannelState, AgentId};
+use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy, StoredComponents};
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::security::SecurityContext;
@@ -12,16 +13,18 @@ use caelumora_model::channel::Channel;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::ComponentStore;
+use caelumora_model::tool::Tool;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
-use caelumora_runtime::agent::state::AgentStates;
+use caelumora_runtime::agent::state::AgentStateHandle;
 use caelumora_agents::turn::Turn;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext, PRECONFIGURED_REF_KIND};
 use caelumora_runtime::runtime::{ActorRuntime, RuntimeManager};
 use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime_in};
-use caelumora_runtime::testing::TestRuntime;
-use caelumora_agents::testing::offered_anywhere;
-use caelumora_agents::tool::ToolProvider;
+use caelumora_runtime::testing::{asked_for, TestRuntime, World};
+use caelumora_agents::testing::{offered_anywhere, TestAgents};
+use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
+use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, ServerConfig};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -39,10 +42,12 @@ struct EchoArgs {
     message: String,
 }
 
-/// A tool server with two tools; `#[tool_handler]` routes to them through
-/// `Self::tool_router()`.
+/// A tool server with two tools - or, once it was replaced, with `echo`
+/// alone; `#[tool_handler]` routes to them through its `tool_router`.
 #[derive(Clone)]
-struct EchoServer;
+struct EchoServer {
+    tool_router: ToolRouter<Self>,
+}
 
 #[tool_router]
 impl EchoServer {
@@ -57,7 +62,18 @@ impl EchoServer {
     }
 }
 
-#[tool_handler]
+impl EchoServer {
+    /// The server with both its tools, or with `echo` alone once `replaced`.
+    fn new(replaced: bool) -> Self {
+        let mut tool_router = Self::tool_router();
+        if replaced {
+            tool_router.remove_route("forget");
+        }
+        Self { tool_router }
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for EchoServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::default().with_instructions("  Echo messages back, for testing.  ")
@@ -65,24 +81,53 @@ impl ServerHandler for EchoServer {
 }
 
 async fn start_test_server() -> (SocketAddr, JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    (addr, serve(listener, Arc::new(AtomicBool::new(false))))
+}
+
+/// Serves the test server on `listener`, replaced - with `echo` alone - for
+/// every connection made once `replaced` is set.
+fn serve(listener: TcpListener, replaced: Arc<AtomicBool>) -> JoinHandle<()> {
     let service = StreamableHttpService::new(
-        || Ok(EchoServer),
+        move || Ok(EchoServer::new(replaced.load(Ordering::SeqCst))),
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default(),
     );
     let router = Router::new().route_service("/mcp", service);
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let handle = tokio::spawn(async move {
+    tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
-    });
-    (addr, handle)
+    })
+}
+
+/// The names of `tools`, sorted.
+fn names(tools: &[Tool]) -> Vec<String> {
+    let mut names: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
+    names.sort();
+    names
 }
 
 /// A runtime over `store` with the plugin of MCP servers, as the programs
 /// build theirs.
 fn runtime(store: &Arc<MemoryStore>) -> Arc<RuntimeManager> {
     TestRuntime { store: Arc::clone(store), plugins: vec![&McpPlugin], ..Default::default() }.build()
+}
+
+/// The tool provider of the one MCP tool component configured with
+/// `params`.
+async fn provider(params: Value) -> Arc<dyn ToolProvider> {
+    let container = build_container(params).await;
+    Arc::clone(&container.get_all::<dyn ToolProvider>(None).unwrap()[0].facet)
+}
+
+/// What `provider` gives for the call of its tool `name` with `params`, in
+/// a turn that reaches no channel.
+async fn executed(provider: &dyn ToolProvider, name: &str, params: Value) -> ToolResult<ToolOutput> {
+    let mut state = AgentChannelState::default();
+    state.begin_turn(Default::default(), Default::default(), Default::default(), Default::default(), Default::default());
+    let agent = AgentId::default();
+    let mut turn = Turn::of(agent, "test-agent".to_string(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
+    provider.execute(name, &params, None, &mut turn).await
 }
 
 /// A container with one MCP tool component configured with `params`.
@@ -121,26 +166,16 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let providers = container.get_all::<dyn ToolProvider>(None).unwrap();
     assert_eq!(providers.len(), 1);
     let provider = Arc::clone(&providers[0].facet);
+    assert!(provider.tools().is_empty(), "not discovered while built (issue 126)");
+    assert_eq!(provider.description(), "The tools of the MCP server 'test-echo'.");
 
+    assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| tools.len()), Ok(2), "all of them, wherever");
     let tools = provider.tools();
-    let mut names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
-    names.sort();
-    assert_eq!(names, ["test-echo__echo", "test-echo__forget"]);
+    assert_eq!(names(&tools), ["test-echo__echo", "test-echo__forget"], "as discovered when offered");
     assert!(tools.iter().all(|t| t.requires_approval), "approval unless configured otherwise, read-only or not");
     assert_eq!(provider.description(), "Echo messages back, for testing.", "what the server says of itself");
-    assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| tools.len()), Ok(2), "all of them, wherever");
 
-    let mut agent_channel_state = AgentChannelState::default();
-    agent_channel_state.begin_turn(Default::default(), Default::default(), Default::default(), Default::default(), Default::default());
-    let states = AgentStates::new(Arc::new(MemoryStore::new()), Arc::new(()));
-    let agent_id = AgentId::default();
-    let agent_state = states.get(agent_id, Default::default()).await.expect("the state of the agent was loaded");
-    let mut turn = Turn::of(agent_id, "test-agent".to_string(), &mut agent_channel_state, agent_state, detached_actor_runtime()).expect("a turn was begun");
-
-    let result = provider
-        .execute("test-echo__echo", &json!({ "message": "hello mcp" }), None, &mut turn)
-        .await
-        .unwrap();
+    let result = executed(provider.as_ref(), "test-echo__echo", json!({ "message": "hello mcp" })).await.unwrap();
     assert_eq!(result.value, json!("hello mcp"));
     assert!(result.classification.is_none(), "an MCP server does not classify its results");
 }
@@ -150,14 +185,13 @@ async fn a_configured_approval_and_classification_reach_every_discovered_tool() 
     let (addr, _server) = start_test_server().await;
     let url = format!("http://{}/mcp", addr);
 
-    let container = build_container(json!({
+    let provider = provider(json!({
         "endpoint": { "url": url },
         "requires_approval": false,
         "classification": { "level": "confidential" },
     })).await;
-    let provider = Arc::clone(&container.get_all::<dyn ToolProvider>(None).unwrap()[0].facet);
 
-    let tools = provider.tools();
+    let tools = offered_anywhere(provider.as_ref()).await.unwrap();
     assert!(!tools.is_empty(), "the server's tools are discovered");
     assert!(tools.iter().all(|t| !t.requires_approval), "no tool of this server needs approval: {tools:?}");
     let confidential = Classification::general(Confidentiality::Confidential);
@@ -169,10 +203,9 @@ async fn unless_read_only_the_tools_the_server_says_only_read_need_no_approval()
     let (addr, _server) = start_test_server().await;
     let url = format!("http://{}/mcp", addr);
 
-    let container = build_container(json!({ "endpoint": { "url": url }, "requires_approval": "unless_read_only" })).await;
-    let provider = Arc::clone(&container.get_all::<dyn ToolProvider>(None).unwrap()[0].facet);
+    let provider = provider(json!({ "endpoint": { "url": url }, "requires_approval": "unless_read_only" })).await;
 
-    let tools = provider.tools();
+    let tools = offered_anywhere(provider.as_ref()).await.unwrap();
     let asks = |name: &str| tools.iter().find(|t| t.name == name).map(|t| t.requires_approval);
     assert_eq!(asks("test-echo__echo"), Some(false), "read-only, as the server says");
     assert_eq!(asks("test-echo__forget"), Some(true), "it changes something");
@@ -230,7 +263,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
     assert!(!Arc::ptr_eq(&provider_a, &provider_b));
 
     for provider in [&provider_a, &provider_b] {
-        let tools = provider.tools();
+        let tools = offered_anywhere(provider.as_ref()).await.unwrap();
         assert_eq!(tools.len(), 2);
         assert!(tools.iter().all(|t| t.name.starts_with("shared-echo__")), "{tools:?}");
     }
@@ -244,8 +277,8 @@ async fn unreachable_server_degrades_gracefully_instead_of_failing_construction(
     let container = build_container(json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } })).await;
     let providers = container.get_all::<dyn ToolProvider>(None).unwrap();
     assert_eq!(providers.len(), 1);
-    assert_eq!(providers[0].tools().len(), 0);
     assert_eq!(offered_anywhere(providers[0].facet.as_ref()).await, Err("its server cannot be reached".to_string()), "its tool set says so, without the error (issue 32)");
+    assert_eq!(providers[0].tools().len(), 0);
     assert_eq!(providers[0].description(), "The tools of the MCP server 'test-echo'.");
 }
 
@@ -254,7 +287,103 @@ async fn a_configured_description_replaces_what_the_server_says_of_itself() {
     let (addr, _server) = start_test_server().await;
     let url = format!("http://{}/mcp", addr);
 
-    let container = build_container(json!({ "endpoint": { "url": url }, "description": "Messages echoed by the test server." })).await;
-    let provider = Arc::clone(&container.get_all::<dyn ToolProvider>(None).unwrap()[0].facet);
+    let provider = provider(json!({ "endpoint": { "url": url }, "description": "Messages echoed by the test server." })).await;
+    offered_anywhere(provider.as_ref()).await.unwrap();
     assert_eq!(provider.description(), "Messages echoed by the test server.");
+}
+
+/// Issue 126: the tools follow a server that was replaced once what was
+/// discovered is older than the endpoint's `refresh_secs` - by default
+/// five minutes.
+#[tokio::test]
+async fn the_tools_follow_a_replaced_server_once_those_discovered_expired() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let replaced = Arc::new(AtomicBool::new(false));
+    let _server = serve(listener, Arc::clone(&replaced));
+    let kept = provider(json!({ "endpoint": { "url": url } })).await;
+    let refreshed = provider(json!({ "endpoint": { "url": url, "refresh_secs": 0 } })).await;
+    for provider in [&kept, &refreshed] {
+        assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| names(&tools)), Ok(vec!["test-echo__echo".to_string(), "test-echo__forget".to_string()]));
+    }
+
+    replaced.store(true, Ordering::SeqCst);
+    assert_eq!(offered_anywhere(refreshed.as_ref()).await.map(|tools| names(&tools)), Ok(vec!["test-echo__echo".to_string()]), "discovered again");
+    assert_eq!(names(&refreshed.tools()), ["test-echo__echo"], "and so found by a call");
+    assert_eq!(offered_anywhere(kept.as_ref()).await.map(|tools| tools.len()), Ok(2), "kept for five minutes");
+}
+
+/// Issue 126: a call of a tool the server no longer knows fails, and has
+/// the tools discovered again at the next offer.
+#[tokio::test]
+async fn a_tool_the_server_no_longer_knows_has_the_tools_discovered_again() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let replaced = Arc::new(AtomicBool::new(false));
+    let _server = serve(listener, Arc::clone(&replaced));
+    let provider = provider(json!({ "endpoint": { "url": url } })).await;
+    assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| tools.len()), Ok(2));
+
+    replaced.store(true, Ordering::SeqCst);
+    let failed = executed(provider.as_ref(), "test-echo__forget", json!({})).await;
+    assert!(matches!(&failed, Err(ToolError::ExecutionFailed(why)) if why.contains("tool not found")), "{failed:?}");
+    assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| names(&tools)), Ok(vec!["test-echo__echo".to_string()]));
+}
+
+/// Issue 126: a server that cannot be reached when its tools are first
+/// offered is asked again the next time, and its tools are offered once it
+/// answers.
+#[tokio::test]
+async fn a_server_unreachable_at_first_is_followed_once_it_answers() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let provider = provider(json!({ "endpoint": { "url": format!("http://{address}/mcp") } })).await;
+    assert_eq!(offered_anywhere(provider.as_ref()).await, Err("its server cannot be reached".to_string()));
+
+    let _server = serve(TcpListener::bind(address).await.unwrap(), Arc::new(AtomicBool::new(false)));
+    assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| tools.len()), Ok(2), "asked again");
+    assert_eq!(provider.description(), "Echo messages back, for testing.");
+}
+
+/// Issue 126: a server that cannot be asked again leaves the tools
+/// discovered before.
+#[tokio::test]
+async fn a_server_gone_leaves_the_tools_discovered_before() {
+    let (addr, server) = start_test_server().await;
+    let provider = provider(json!({ "endpoint": { "url": format!("http://{addr}/mcp"), "refresh_secs": 0 } })).await;
+    assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| tools.len()), Ok(2));
+
+    server.abort();
+    let _ = server.await;
+    assert_eq!(offered_anywhere(provider.as_ref()).await.map(|tools| tools.len()), Ok(2), "kept");
+}
+
+/// Issue 126: the tools are discovered in the name of whoever acts, as a
+/// call is made (`ComponentContext` keeps no security context for later):
+/// nothing is read while the agent is built, and its credential is read
+/// for alice's agent, asked by bob, as its turn begins.
+#[tokio::test]
+async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
+    let world = World::with(&[&TestAgents, &McpPlugin], |_| {}).await;
+    let mcp = ComponentDescriptor {
+        params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp", "auth": { "type": "bearer", "secret": "MCP_TOKEN" } } }),
+        ..ComponentDescriptor::new("tools", MCP_TOOL_KIND)
+    };
+    let personality = world.personality("working", None, &[]).await;
+    let working = Personality { components: ComponentConfig { component_nodes: vec![mcp] }, ..personality };
+    world.runtime.entity_stores().personalities.update(&World::system(), &working).await.unwrap();
+    let helper = world.agent("helper", world.alice, &working).await;
+
+    let (session, asked) = world.asked(world.shared_session(&[helper], &[])).await;
+    assert!(!asked.iter().any(|line| line.contains("ReadSecret")), "nothing read while built: {asked:?}");
+
+    let main = Arc::clone(&session.channels()[0]);
+    let (_, asked) = world.asked(async {
+        main.user_actor(world.bob).expect("he takes part").send_message("@helper do it".to_string(), None).await.expect("sent");
+        asked_for(&world, "alice as helper, asked by bob: ReadSecret yes").await;
+    }).await;
+    let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
+    assert_eq!(read_secret, ["alice as helper, asked by bob: ReadSecret yes"], "with alice's credential, asked by bob");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }

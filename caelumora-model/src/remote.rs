@@ -23,12 +23,19 @@ pub struct RemoteEndpoint {
     /// and how long without it, each component says.
     #[serde(default)]
     pub timeout_secs: Option<u64>,
+    /// How long what the component reads of its remote side - an MCP
+    /// server's tools, an A2A agent's card - is kept before it is read
+    /// again (issue 126); what it reads, and how long without it, each
+    /// component says.
+    #[serde(default)]
+    pub refresh_secs: Option<u64>,
 }
 
 impl RemoteEndpoint {
-    /// `url`, without authentication or a timeout.
+    /// `url`, without authentication, a timeout or a time to keep what is
+    /// read.
     pub fn new(url: impl Into<String>) -> Self {
-        Self { url: url.into(), auth: None, timeout_secs: None }
+        Self { url: url.into(), auth: None, timeout_secs: None, refresh_secs: None }
     }
 
     /// The URL, for messages: without credentials.
@@ -56,6 +63,12 @@ impl RemoteEndpoint {
     /// The timeout, `default` unless it is written.
     pub fn timeout_or(&self, default: Duration) -> Duration {
         self.timeout_secs.map_or(default, Duration::from_secs)
+    }
+
+    /// How long what is read of the remote side is kept, `default` unless
+    /// it is written.
+    pub fn refresh_or(&self, default: Duration) -> Duration {
+        self.refresh_secs.map_or(default, Duration::from_secs)
     }
 
     /// The bearer token `auth` names, resolved in `context`; `None` without

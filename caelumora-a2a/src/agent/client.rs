@@ -4,14 +4,13 @@
 //! knows nothing of `ExternalEvent`s.
 
 use super::wire::{is_version_1, AgentCard, RpcError, RpcRequest, RpcResponse, StreamResponse, A2A_VERSION, CARD_PATH, JSONRPC_BINDING};
-use arc_swap::ArcSwapOption;
 use bytes::Buf;
 use caelumora_model::remote::{redact_endpoint, RemoteEndpoint};
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
 use caelumora_runtime::component::ComponentError;
 use caelumora_agents::external::{ExternalAgentError, ExternalAgentResult};
-use caelumora_runtime::remote::{describe_chain, describe_request_error};
+use caelumora_runtime::remote::{describe_chain, describe_request_error, ExpiringCache};
 use futures::stream::{once, BoxStream};
 use futures::{Stream, StreamExt};
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
@@ -38,7 +37,9 @@ struct Interface {
 }
 
 /// One A2A agent, reached over JSON-RPC as its agent card says - read the
-/// first time it is needed, and kept.
+/// first time it is needed, in the name of whoever needs it, and again once
+/// what was read is older than its time to keep it, or the agent could not
+/// be reached where its card said (issue 126).
 #[derive(Debug)]
 pub(super) struct A2aClient {
     /// The component's, for the log.
@@ -49,21 +50,21 @@ pub(super) struct A2aClient {
     timeout: Duration,
     http: Client,
     secret_manager: Arc<SecretManager>,
-    interface: ArcSwapOption<Interface>,
+    interface: ExpiringCache<Interface>,
 }
 
 impl A2aClient {
-    /// The client of the component `id` for the agent at `endpoint`; its
-    /// card is not read yet.
+    /// The client of the component `id` for the agent at `endpoint`, whose
+    /// card is kept for `refresh` once read; it is not read yet.
     ///
     /// # Errors
     /// If no HTTP client can be made.
-    pub(super) fn new(id: String, endpoint: RemoteEndpoint, timeout: Duration, secret_manager: Arc<SecretManager>) -> Result<Self, ComponentError> {
+    pub(super) fn new(id: String, endpoint: RemoteEndpoint, timeout: Duration, refresh: Duration, secret_manager: Arc<SecretManager>) -> Result<Self, ComponentError> {
         let http = Client::builder()
             .connect_timeout(timeout)
             .build()
             .map_err(|e| ComponentError::InvalidConfig(format!("no HTTP client for '{}': {e}", endpoint.shown())))?;
-        Ok(Self { id, endpoint, timeout, http, secret_manager, interface: ArcSwapOption::empty() })
+        Ok(Self { id, endpoint, timeout, http, secret_manager, interface: ExpiringCache::new(refresh) })
     }
 
     /// Whether the agent streams its answers.
@@ -130,14 +131,10 @@ impl A2aClient {
         }
     }
 
-    /// Where and how to reach the agent, read from its card the first time.
-    async fn interface(&self, security: &SecurityContext) -> ExternalAgentResult<Interface> {
-        if let Some(interface) = self.interface.load_full() {
-            return Ok((*interface).clone());
-        }
-        let interface = self.discover(security).await?;
-        self.interface.store(Some(Arc::new(interface.clone())));
-        Ok(interface)
+    /// Where and how to reach the agent, as its card says: read in
+    /// `security` unless what was read is kept still.
+    async fn interface(&self, security: &SecurityContext) -> ExternalAgentResult<Arc<Interface>> {
+        self.interface.get(|| self.discover(security)).await
     }
 
     /// Reads the agent card and chooses its JSON-RPC interface of A2A 1.x.
@@ -201,7 +198,12 @@ impl A2aClient {
             request = request.bearer_auth(token);
         }
         match timeout(self.timeout, request.send()).await {
-            Ok(response) => response.map_err(|e| self.connection(e)),
+            Ok(Ok(response)) => Ok(response),
+            // It may have moved: its card is read again at the next request.
+            Ok(Err(e)) => {
+                self.interface.invalidate();
+                Err(self.connection(e))
+            }
             Err(_) => Err(ExternalAgentError::Connection { endpoint: self.shown(), reason: format!("no answer within {} s", self.timeout.as_secs()) }),
         }
     }
@@ -261,7 +263,7 @@ mod tests {
     fn client(url: &str) -> A2aClient {
         let endpoint: RemoteEndpoint = serde_json::from_value(json!({ "url": url })).unwrap();
         let secrets = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
-        A2aClient::new("hermes".to_string(), endpoint, Duration::from_secs(1), secrets).unwrap()
+        A2aClient::new("hermes".to_string(), endpoint, Duration::from_secs(1), Duration::from_secs(300), secrets).unwrap()
     }
 
     fn event(result: Value) -> String {

@@ -10,6 +10,7 @@ use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::question::{Answers, Questions};
 use caelumora_model::tool::{ToolCall, ToolSet};
+use tracing::warn;
 
 /// The tool providers of an agent's components. It keeps the providers,
 /// not their tools: those are asked for each time, since a provider's tools
@@ -83,14 +84,24 @@ impl ToolProviders {
     /// The tools offered in `situation`, in the sets of the providers they come
     /// from (issue 194), in the order of the configuration: each as its
     /// provider offers them there (`ToolProvider::offered`, issue 290), or
-    /// unavailable without tools, saying why.
+    /// unavailable without tools, saying why. A tool of the name of one
+    /// offered before is withheld, with a warning: a provider's tools may
+    /// change after `new` checked them (issue 126), and a call of that name
+    /// reaches the first (`provider_of`).
     pub(super) async fn tool_sets(&self, situation: &Situation<'_>) -> Vec<ToolSet> {
-        let mut sets = Vec::with_capacity(self.providers.len());
+        let mut sets: Vec<ToolSet> = Vec::with_capacity(self.providers.len());
         for provider in &self.providers {
-            let (tools, unavailable) = match provider.offered(situation).await {
+            let (mut tools, unavailable) = match provider.offered(situation).await {
                 Ok(tools) => (tools, None),
                 Err(why) => (Vec::new(), Some(why)),
             };
+            tools.retain(|tool| match sets.iter().find(|set| set.tools.iter().any(|t| t.name == tool.name)) {
+                Some(set) => {
+                    warn!("Tool '{}' of component '{}' is not offered: component '{}' offers a tool of that name", tool.name, provider.id, set.name);
+                    false
+                }
+                None => true,
+            });
             sets.push(ToolSet { unavailable, destination: provider.destination(), ..ToolSet::new(provider.id.clone(), provider.description(), tools) });
         }
         sets
@@ -101,7 +112,7 @@ impl ToolProviders {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::security::SecurityContext;
@@ -233,6 +244,41 @@ mod tests {
             ("local".to_string(), "mock tools".to_string(), vec!["test_tool".to_string()], None),
             ("remote".to_string(), "remote tools".to_string(), Vec::new(), Some("its server cannot be reached".to_string())),
         ], "in the order of the configuration, an unavailable one included, without the tools it has");
+    }
+
+    /// A provider whose tools are as it is told, and may change.
+    #[derive(Debug)]
+    struct Changing(Mutex<Vec<Tool>>);
+
+    #[async_trait]
+    impl ToolProvider for Changing {
+        fn description(&self) -> String {
+            "changing tools".to_string()
+        }
+        fn tools(&self) -> Vec<Tool> {
+            self.0.lock().unwrap().clone()
+        }
+        async fn execute(&self, name: &str, _params: &Value, _answers: Option<&Answers>, _turn: &mut Turn) -> ToolResult<ToolOutput> {
+            Err(ToolError::UnknownTool(name.to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_tool_whose_name_another_provider_took_since_is_not_offered() {
+        let tool = |name: &str| Tool { name: name.to_string(), ..MockToolProvider.tools().remove(0) };
+        let changing = Arc::new(Changing(Mutex::new(vec![tool("other_tool")])));
+        let providers = ToolProviders::new(vec![component("local"), ComponentImpl { id: "changing".to_string(), fail_policy: Default::default(), facet: Arc::clone(&changing) as Arc<dyn ToolProvider> }]).unwrap();
+        *changing.0.lock().unwrap() = vec![tool("test_tool"), tool("other_tool")];
+
+        let mut agent_channel_state = agent_state();
+        let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
+        let offered: Vec<_> = providers.tool_sets(&turn.situation()).await.into_iter()
+            .map(|set| (set.name, set.tools.into_iter().map(|t| t.name).collect::<Vec<_>>()))
+            .collect();
+        assert_eq!(offered, [
+            ("local".to_string(), vec!["test_tool".to_string()]),
+            ("changing".to_string(), vec!["other_tool".to_string()]),
+        ], "the first keeps the name, as a call of it reaches the first");
     }
 
     #[test]
