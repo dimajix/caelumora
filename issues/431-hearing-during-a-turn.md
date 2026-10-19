@@ -1,6 +1,6 @@
 # 431 — An agent hears nothing of what others say while its turn runs
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -365,3 +365,31 @@ is tried personality by personality, with a small local model among them.
   in answer: a setting of the personality, `none | users | all` as the maintainer proposed, off
   unless named; a prompt part telling the model what was said while it worked; the options for a
   request taken in during a turn; why `try_recv_if` is not named like `recv_matching`.
+- **2026-10-19** — Asked by the maintainer to begin, with the recommendations as the decisions:
+  taking in before every model call (A); a barrier at another initiator (ii) and above the turn's
+  classification; changes to messages as barriers; `EventReceiver::try_recv_if` instead of sending
+  to itself; `hears_during_turn: none | users | all` on the personality, `none` unless named; a
+  request taken in during a turn dropped (a), with the prompt part asking for an answer.
+  Implemented on the branch `issue-431-hearing-during-a-turn`: the setting
+  (`HearsDuringTurn`), `Work::may_hear` for the authority and the classification,
+  `EventReceiver::try_recv_if`, `AgentBody::take_in_during_turn` - the part of `take_in` that takes
+  in what was said, changed or noted shared as `take_in_said` - called by `handle_planning` before
+  the size of the context is judged, placing the prompt part itself. Tests in the model,
+  the transport, the intake, the channel's tests and the agents' security suite; AGENT-TURN.md
+  (*Hearing during a turn*) and CHANNELS.md. Not yet tried with a real model.
+- **2026-10-19** — The maintainer noticed that with the barrier at another initiator's words, an
+  agent in a channel of several people hears nothing more in a turn once someone else has spoken,
+  its own user included. Weighed: (A) as implemented; (B) hearing another's words and stopping
+  only at their request to respond; (C) as B, the request kept by the actor - rejected, a request
+  outside the inbox is lost on a restart and does not fit the stored inbox of
+  [223](223-full-inbox-drops-events.md); whether the agent is mentioned (`Message::mentions`) -
+  rejected as the signal, since whom to ask is the moderator's, and the request carries the
+  authority. Taking another's request into the turn - no barrier at all - is not offered: it would
+  answer someone with another's authority, which [222](222-queued-requests-answered-one-by-one.md)
+  rules out; a personality may narrow what the core allows, never widen it, as its roles do.
+  Decided by the maintainer: both A and B, as the personality says - `hears_during_turn` became
+  `{ from: none | users | all, others: wait | hear }`, `others: wait` (A) unless named. The rule
+  is the model's, `HearsDuringTurn::takes`, which compares the authority itself and asks
+  `Work::may_see` of a message's classification - a question of the work's, on a
+  classification rather than an envelope -; `Work::may_hear` is gone. The security suite tests
+  both settings.
