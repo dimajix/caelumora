@@ -248,9 +248,11 @@ channel (`ChannelLoop::open_inbox`) and shared by its two halves under one lock,
 - **223's:** an agent whose turn outlasts more envelopes than the queue holds - two hundred
   messages, a modification, a command - hears all of them afterwards, in order, and carries the
   command out, in the agents' channel tests.
-- **385's:** a channel stopped while an agent is in its turn and started again: a change to a
-  message, a request to respond and a decision on an approval that were delivered and not stored
-  are taken in once; what was stored is not taken in again.
+- **385's:** a channel stopped while an agent is in its turn and started again: a message, the
+  request to answer it and a change of what was said, delivered and not stored, are taken in once;
+  what was stored is not taken in again. A decision on an approval is taken as it arrives - a turn
+  that waits for it reads nothing else - and a turn resumed asks again (`request_pending`); one
+  given while the inbox is behind is found in the history (the inbox's test of a search).
 - **The inbox** (`inbox.rs`): the queue in order; an overflow marks it behind and the history is
   read from `heard.next`; `taken` is skipped; the inbox stops being behind only once the read
   passed every drop; `recv_matching` from the history; a closed inbox ends.

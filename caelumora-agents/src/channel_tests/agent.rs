@@ -305,6 +305,101 @@ async fn what_a_user_says_during_a_turn_is_answered_after_it() {
     running.abort();
 }
 
+/// Issue 223: an agent whose turn outlasts more than its inbox holds - two
+/// hundred messages, a modification of one of them, a command and a message
+/// after it - hears all of it once its turn is over, in order and as it
+/// stands, and carries the command out where it came.
+#[tokio::test]
+async fn an_agent_whose_turn_outlasts_its_inbox_hears_all_of_it_afterwards() {
+    use caelumora_model::component::ComponentDescriptor;
+    const SAID: usize = 200;
+    let model = Arc::new(Gated::saying(&["first", "second"], 0));
+    let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("marking", "test_marking")] };
+    // What the channel takes in is not watched: more than a watcher holds.
+    let Stuck { channel, context, agent, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), components).await;
+    asked(&model, 1).await;
+
+    let alice = channel.user_actor(alice_of(&context)).unwrap();
+    for n in 0..SAID {
+        alice.send_message(format!("message {n}"), None).await.expect("taken during a turn");
+    }
+    // Read from the store: the channel holds a window of its history alone.
+    let last = format!("message {}", SAID - 1);
+    let first = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let said = channel.visible_messages(ActorId::User(alice_of(&context))).await;
+            if said.iter().any(|m| m.content.as_deref() == Some(last.as_str())) {
+                break said.into_iter().find(|m| m.content.as_deref() == Some("message 0")).expect("said first");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("all of it is said in the channel");
+    alice.modify_message(first.id, "message 0, corrected".to_string(), None).await.expect("hers to modify");
+    alice.execute_command("mark", "@helper during").await.expect("sent to the agent");
+    alice.send_message("after the command".to_string(), None).await.expect("said");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !channel.visible_messages(ActorId::User(alice_of(&context))).await.iter().any(|m| m.content.as_deref() == Some("after the command")) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("all of it is in the channel before the turn ends");
+    model.gate.add_permits(2);
+
+    let answers = |state: &AgentChannelState| state.transcript.messages().into_iter().filter(|m| m.role == MessageRole::Assistant).filter_map(|m| m.content).collect::<Vec<_>>();
+    let state = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let state = channel.stored_agent_channel_state(agent).await.unwrap();
+            if state.turn.is_none() && answers(&state).len() == 2 {
+                break state;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("the agent answers twice");
+    assert_eq!(answers(&state), ["first", "second"], "the turn ends as it began, and one turn answers all of it");
+    let heard: Vec<String> = state.transcript.messages().into_iter().filter(|m| m.role == MessageRole::User).filter_map(|m| m.content).collect();
+    let mut expected: Vec<String> = vec!["hello".to_string(), "message 0, corrected".to_string()];
+    expected.extend((1..SAID).map(|n| format!("message {n}")));
+    expected.push("after the command".to_string());
+    assert_eq!(heard, expected, "all of it, once, in order, as it stands");
+    assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["marked during"], "the command carried out");
+    let seen = model.seen.lock().unwrap().clone();
+    assert!(seen[1].iter().any(|c| c.contains("after the command")), "the next turn is given all of it");
+    running.abort();
+}
+
+/// Issue 385: a channel that stops while an agent is in its turn, and runs
+/// again: what was delivered to the agent and not taken in - a message, a
+/// request to answer it, a change of what was said - is delivered again from
+/// the history, and taken in once; what it took in and stored is not
+/// delivered again.
+#[tokio::test]
+async fn what_an_agent_was_delivered_and_did_not_store_before_a_restart_is_delivered_again_once() {
+    let (Stuck { channel, context, agent, running, .. }, model) = asking_a_gated_model(&["never given", "Answered.", "Again."]).await;
+    let alice = channel.user_actor(alice_of(&context)).unwrap();
+    let hello = channel.whole_history().await.into_iter().find(|m| m.content.as_deref() == Some("hello")).expect("said");
+    alice.send_message("and this too".to_string(), None).await.expect("taken during a turn");
+    alice.modify_message(hello.id, "hello, corrected".to_string(), None).await.expect("hers to modify");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while channel.message_of(hello.id).await.and_then(|m| m.content).as_deref() != Some("hello, corrected") {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("the change is recorded");
+
+    stop_and_wait(&channel, running).await;
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert!(stored.transcript.messages().iter().all(|m| m.content.as_deref() != Some("and this too")), "not taken in before the stop");
+
+    let (_restarted, mut events, running) = run_again(&channel).await;
+    asked(&model, 2).await;
+    model.gate.add_permits(2);
+    let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+    assert_eq!(said(answered(&mut events, agent).await), ["Answered."], "the turn resumed");
+    assert_eq!(said(answered(&mut events, agent).await), ["Again."], "and what it was delivered asks it again");
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
+    let heard: Vec<String> = state.transcript.messages().into_iter().filter(|m| m.role == MessageRole::User).filter_map(|m| m.content).collect();
+    assert_eq!(heard, ["hello, corrected", "and this too"], "each once, as it stands");
+    running.abort();
+}
+
 /// A gated model whose first answer calls the calculator and whose next say "done" and "again",
 /// its agent hearing between the steps of a turn as `hears` says (issue 431): the agent asked
 /// about "hello", the call held back, and alice saying "and this too" meanwhile.
