@@ -84,24 +84,17 @@ impl AgentBody {
 
     /// Takes in what an agent was told while it could not listen (issue 222),
     /// the same for both kinds of agent: `received`, and everything `rx` holds
-    /// already behind it, in order. What others said is perceived as it comes
-    /// (`perceive`), and so is a message
-    /// modified or taken back since (issue 234); a reclassification is recorded
-    /// as it is (issue 239), in the transcript where it holds the message on
-    /// its active path, and so is who joined or left (issue 408). Of the requests to respond the last is returned -
-    /// one answer to the conversation as it stands, in the authority of the
-    /// last who asked - and the others are dropped, as is
+    /// already behind it, in order. What was said, changed or noted is taken
+    /// in as it comes (`take_in_said`). Of the requests to respond the last is
+    /// returned - one answer to the conversation as it stands, in the
+    /// authority of the last who asked - and the others are dropped, as is
     /// every other event but the requests to answer again (issue 234), which
-    /// are returned in order, each to be answered. A modification or revocation
-    /// is recorded in the transcript where it holds the message on its active
-    /// path; one it did not take is handed over (`AgentBody::hand_over`) where it came (issue 236) - so in order
-    /// with what was said - as the agent hears it, a modification of which
-    /// nothing passes as taken back: for an actor that gave its transcript
-    /// elsewhere to tell. A command it is asked to carry out (issue 269) ends
-    /// the batch: it is returned, and what follows it stays in `rx`, so that the
-    /// actor carries it out where it came - after what was said before it,
-    /// before what was said after - and then takes in the rest. Neither commits
-    /// nor stores: when that happens is the actor's.
+    /// are returned in order, each to be answered. A command it is asked to
+    /// carry out (issue 269) ends the batch: it is returned, and what follows
+    /// it stays in `rx`, so that the actor carries it out where it came -
+    /// after what was said before it, before what was said after - and then
+    /// takes in the rest. Neither commits nor stores: when that happens is
+    /// the actor's.
     pub(super) async fn take_in(&self, state: &mut AgentChannelState, received: Envelope, rx: &mut Box<dyn EventReceiver>) -> TakenIn {
         let mut request = None;
         let mut retries = Vec::new();
@@ -113,36 +106,8 @@ impl AgentBody {
             let span = envelope_span(&event.context, event.event.kind());
             let asked = async {
                 debug!("Received {}", event.describe());
+                let event = self.take_in_said(state, event).await?;
                 match event.event {
-                    ActorEvent::CompleteMessageGenerated(message) => {
-                        trace!("Heard {:?}", message.content);
-                        self.perceive(state, vec![message]).await;
-                        None
-                    }
-                    ActorEvent::MessageModified(modified) => {
-                        if let Some(change) = self.take_in_modified(state, modified).await {
-                            (self.hand_over)(&self.runtime, state, change).await;
-                        }
-                        None
-                    }
-                    ActorEvent::MessageRevoked { message, at } => {
-                        if !state.transcript.revoke(message, at) {
-                            (self.hand_over)(&self.runtime, state, TranscriptEntry::Revoked { message, at }).await;
-                        }
-                        None
-                    }
-                    ActorEvent::MessageReclassified { message, classification } => {
-                        state.transcript.reclassify(message, classification);
-                        None
-                    }
-                    // Who joined or left (issue 408): noted where it came,
-                    // asking nothing of the agent.
-                    ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } => {
-                        if let Some(entry) = event.announced() {
-                            state.note_announced(entry);
-                        }
-                        None
-                    }
                     ActorEvent::ResponseRequested => Some(event),
                     ActorEvent::RetryRequested { .. } => {
                         retries.push(event);
@@ -155,6 +120,45 @@ impl AgentBody {
             next = rx.try_recv();
         }
         TakenIn { request, retries, command: None }
+    }
+    /// Takes in `event` if it is something said, changed or noted, for
+    /// `take_in`: what others said is perceived as it comes
+    /// (`perceive`), and so is a message modified or taken back since
+    /// (issue 234); a reclassification is recorded as it is (issue 239),
+    /// in the transcript where it holds the message on its active path, and
+    /// so is who joined or left (issue 408). A modification or revocation
+    /// the transcript did not take is handed over (`AgentBody::hand_over`,
+    /// issue 236), as the agent hears it. Returns any other event, for the
+    /// caller to handle.
+    async fn take_in_said(&self, state: &mut AgentChannelState, event: Envelope) -> Option<Envelope> {
+        match event.event {
+            ActorEvent::CompleteMessageGenerated(message) => {
+                trace!("Heard {:?}", message.content);
+                self.perceive(state, vec![message]).await;
+            }
+            ActorEvent::MessageModified(modified) => {
+                if let Some(change) = self.take_in_modified(state, modified).await {
+                    (self.hand_over)(&self.runtime, state, change).await;
+                }
+            }
+            ActorEvent::MessageRevoked { message, at } => {
+                if !state.transcript.revoke(message, at) {
+                    (self.hand_over)(&self.runtime, state, TranscriptEntry::Revoked { message, at }).await;
+                }
+            }
+            ActorEvent::MessageReclassified { message, classification } => {
+                state.transcript.reclassify(message, classification);
+            }
+            // Who joined or left (issue 408): noted where it came, asking
+            // nothing of the agent.
+            ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } => {
+                if let Some(entry) = event.announced() {
+                    state.note_announced(entry);
+                }
+            }
+            _ => return Some(event),
+        }
+        None
     }
 
     /// Takes in what an actor of an agent missed of its channel as what it
