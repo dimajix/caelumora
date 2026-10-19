@@ -776,7 +776,7 @@ mod tests {
         let personality = Personality {
             id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
             kind: Default::default(), roles: None, description: None, introduction: None,
-            components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(),
+            components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(),
             deleted: None,
         };
         personalities.create(&system, &personality).await.unwrap();
@@ -812,7 +812,7 @@ mod tests {
         let personality = Personality {
             id: PersonalityId::new(), name: ScopedName::new("plain", Default::default()).unwrap(),
             kind: Default::default(), roles: None, description: None, introduction: None,
-            components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(),
+            components: Default::default(), security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(),
             deleted: None,
         };
 

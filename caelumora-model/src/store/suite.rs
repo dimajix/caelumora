@@ -89,6 +89,7 @@ fn personality() -> Personality {
     Personality {
         introduction: None,
         reasoning_visibility: Visibility::Channel,
+        hears_during_turn: Default::default(),
         security_attributes: Default::default(),
         id: PersonalityId(Uuid::new_v4()),
         name: scoped("assistant"),

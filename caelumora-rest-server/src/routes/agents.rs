@@ -154,6 +154,7 @@ mod tests {
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: Visibility::Channel,
+            hears_during_turn: Default::default(),
             deleted: None,
         };
         state.runtime_manager.entity_stores().personalities.create(&SecurityContext::system(), &plain).await.unwrap();

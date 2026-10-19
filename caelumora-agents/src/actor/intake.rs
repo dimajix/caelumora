@@ -12,7 +12,7 @@ use caelumora_runtime::transport::EventReceiver;
 use anyhow::Result;
 use caelumora_model::chain::Position;
 use caelumora_model::actor::{ActorEvent, Envelope};
-use caelumora_model::agent::AgentChannelState;
+use caelumora_model::agent::{AgentChannelState, HearsFrom};
 use caelumora_model::history::{fold, HistoryEntry};
 use caelumora_model::message::Message;
 use caelumora_model::transcript::TranscriptEntry;
@@ -121,8 +121,40 @@ impl AgentBody {
         }
         TakenIn { request, retries, command: None }
     }
-    /// Takes in `event` if it is something said, changed or noted, for
-    /// `take_in`: what others said is perceived as it comes
+
+    /// Takes in what `rx` holds already while a turn is under way in `state`
+    /// (issue 431), between two of its steps - before its model is called
+    /// again, so that the call is given it: what others said, as `take_in`
+    /// perceives it, and who joined or left. What its personality hears
+    /// then, and what the turn may hear at all, is the model's to say
+    /// (`HearsDuringTurn::takes`). A request to respond it takes is dropped:
+    /// the turn answers it, its message heard. It takes up to the first
+    /// event it may not take and leaves that event and everything behind it
+    /// where they are, in order, for `take_in` to take after the turn.
+    /// Returns whether it took in anything. Neither commits nor stores.
+    pub(super) async fn take_in_during_turn(&self, state: &mut AgentChannelState, rx: &mut Box<dyn EventReceiver>) -> bool {
+        let hears = self.hears_during_turn();
+        let Some(under_way) = state.turn.as_ref().filter(|_| hears.from != HearsFrom::None) else {
+            return false;
+        };
+        let work = under_way.work.clone();
+        let may_take = |envelope: &Envelope| hears.takes(&work, envelope);
+        let mut taken = false;
+        while let Some(event) = rx.try_recv_if(&may_take) {
+            taken = true;
+            let span = envelope_span(&event.context, event.event.kind());
+            async {
+                debug!("Received {} during a turn", event.describe());
+                // A request left over is answered by the turn under way.
+                self.take_in_said(state, event).await;
+            }.instrument(span).await;
+        }
+        taken
+    }
+
+    /// Takes in `event` if it is something said, changed or noted - the
+    /// same between turns (`take_in`) and during one
+    /// (`take_in_during_turn`): what others said is perceived as it comes
     /// (`perceive`), and so is a message modified or taken back since
     /// (issue 234); a reclassification is recorded as it is (issue 239),
     /// in the transcript where it holds the message on its active path, and
@@ -242,6 +274,7 @@ impl TakenIn {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::agent::HearsDuringTurn;
     use caelumora_runtime::component::ComponentImpl;
     use crate::message::testing::Without;
     use crate::message::PerceiveInProcessor;
@@ -313,6 +346,47 @@ mod tests {
         let request = body.take_in(&mut state, heard("four"), &mut rx).await.request;
         assert!(request.is_none(), "heard, but nobody asked");
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three", "four"]);
+    }
+
+    /// A turn begun for `initiator` in a channel classified as the default,
+    /// in `state`.
+    fn under_way_for(state: &mut AgentChannelState, initiator: ActorId) {
+        let security = SecurityContext { initiator_id: initiator, ..SecurityContext::default() };
+        state.begin_turn(EventContext::default(), security, Classification::CHANNEL_DEFAULT, Default::default(), Default::default());
+    }
+
+    #[tokio::test]
+    async fn during_a_turn_what_may_be_heard_is_taken_up_to_the_first_event_that_has_to_wait() {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+        let alice = ActorId::User(UserId::new());
+        let mut state = AgentChannelState::default();
+        under_way_for(&mut state, alice);
+        let body = AgentBody::detached(Vec::new()).hearing(HearsDuringTurn { from: HearsFrom::Users, ..Default::default() });
+        let in_her_authority = |event: ActorEvent| Envelope::new(SecurityContext { initiator_id: alice, ..SecurityContext::default() }, EventContext::default(), event);
+        let of_alice = |text: &str| in_her_authority(ActorEvent::CompleteMessageGenerated(Message { sender_id: alice, ..said(text) }));
+        let command = in_her_authority(ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: ActorId::None });
+        for event in [of_alice("one"), in_her_authority(ActorEvent::ResponseRequested), of_alice("two"), command, of_alice("three")] {
+            tx.try_send(event).expect("room");
+        }
+
+        assert!(body.take_in_during_turn(&mut state, &mut rx).await, "it took something in");
+        assert_eq!(texts(&state.transcript.messages()), ["one", "two"], "what was said before the command");
+        let turn = state.turn.as_ref().expect("still under way");
+        assert_eq!(turn.work.context.transcript, state.transcript.digest(), "the turn's next call is given it");
+        let left: Vec<_> = std::iter::from_fn(|| rx.try_recv()).map(|e| e.event.kind()).collect();
+        assert_eq!(left, ["CommandRequested", "CompleteMessageGenerated"], "the command and what follows it wait, in order; the request was the turn's");
+    }
+
+    #[tokio::test]
+    async fn between_turns_nothing_is_taken_in_as_during_one() {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+        let mut state = AgentChannelState::default();
+        tx.try_send(envelope(ActorEvent::CompleteMessageGenerated(said("one")))).expect("room");
+        let body = AgentBody::detached(Vec::new()).hearing(HearsDuringTurn { from: HearsFrom::All, ..Default::default() });
+        assert!(!body.take_in_during_turn(&mut state, &mut rx).await, "no turn, nothing taken");
+        assert!(rx.try_recv().is_some(), "it waits for take_in");
     }
 
     #[tokio::test]

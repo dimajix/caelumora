@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use caelumora_runtime::command::help_command::HelpCommandProvider;
 use caelumora_runtime::command::{CommandExecutor, CommandResult, ProvidesCommands};
-use caelumora_model::agent::AgentId;
+use caelumora_model::agent::{AgentId, HearsDuringTurn, Personality};
 use caelumora_model::component::{ComponentConfig, ComponentFailPolicy, ComponentDescriptor};
 use caelumora_model::config::AppConfig;
 use caelumora_model::security::AllowAllPolicy;
@@ -128,8 +128,26 @@ async fn with_an_agent_under(access_policy: Arc<dyn AccessPolicy>, model: Arc<dy
 /// A channel of alice and an agent that talks to `model` and has
 /// `components`, under `access_policy`, built but not running.
 pub(super) async fn agent_channel(access_policy: Arc<dyn AccessPolicy>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
+    agent_channel_hearing(HearsDuringTurn::default(), access_policy, model, components).await
+}
+
+/// A running channel with alice and an agent that talks to `model`, has
+/// `components` and hears, between the steps of a turn, as `hears` says
+/// (issue 431), after alice said "hello".
+async fn with_an_agent_hearing(hears: HearsDuringTurn, model: Arc<dyn LLMClient>, components: ComponentConfig) -> Stuck {
+    start(agent_channel_hearing(hears, Arc::new(AllowAllPolicy::new()), model, components).await).await
+}
+
+/// `agent_channel`, of an agent whose personality hears between the
+/// steps of a turn as `hears` says (issue 431).
+async fn agent_channel_hearing(hears: HearsDuringTurn, access_policy: Arc<dyn AccessPolicy>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
     let store = Arc::new(MemoryStore::new());
     let (context, agent, alice) = alice_and_an_agent(&store, components).await;
+    let system = SecurityContext::system();
+    let personalities = &store.entity_stores().personalities;
+    let personality_id = store.entity_stores().agents.get(&system, agent).await.expect("stored").personality_id;
+    let personality = Personality { hears_during_turn: hears, ..personalities.get(&system, personality_id).await.expect("stored") };
+    personalities.update(&system, &personality).await.expect("stored");
     // The model is a component (issue 130): the stand-in is registered as
     // a kind of its own and made every agent's default.
     let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));

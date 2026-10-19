@@ -90,6 +90,7 @@ mod tests {
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: Visibility::Channel,
+            hears_during_turn: Default::default(),
             deleted: None,
         };
         let agent = Agent::new(ScopedName::new("assistant", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
@@ -140,6 +141,7 @@ mod tests {
             components: Default::default(),
             security_attributes: Default::default(),
             reasoning_visibility: Visibility::Channel,
+            hears_during_turn: Default::default(),
             deleted: None,
         }
     }

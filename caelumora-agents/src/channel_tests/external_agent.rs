@@ -63,6 +63,7 @@ async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: Compon
         description: None,
         introduction: None,
         reasoning_visibility: Visibility::Channel,
+        hears_during_turn: Default::default(),
         id: PersonalityId::new(),
         name: ScopedName::new("remote", Default::default()).unwrap(),
         kind: PersonalityKind::External,
@@ -1238,7 +1239,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
         id: PersonalityId::new(), name: ScopedName::new("remote", Default::default()).unwrap(), kind: PersonalityKind::External,
         roles: None, description: None, introduction: None,
         components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("remote", "test_remote"), roster] },
-        security_attributes: Default::default(), reasoning_visibility: Default::default(),
+        security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(),
         deleted: None,
     };
     store.entity_stores().personalities.create(&system, &personality).await.unwrap();

@@ -19,8 +19,10 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use futures::StreamExt;
+use futures::stream::BoxStream;
+use std::collections::VecDeque;
 use caelumora_model::actor::{ActorId, Rejection, ActorEvent, Envelope};
-use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityKind};
+use caelumora_model::agent::{Agent, AgentId, HearsDuringTurn, HearsFrom, OthersWords, Personality, PersonalityKind};
 use caelumora_model::approval::{ApprovalDecision, ApprovalRule, ArgumentMatcher, Reach, RuleDecision, ToolMatcher, ApprovalRequest, ApprovalRuleId};
 use caelumora_model::channel::HistoryAccess;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, StoredComponents};
@@ -52,14 +54,14 @@ use anyhow::Error;
 use caelumora_agents::command::AgentCommandProvider;
 use caelumora_agents::compaction::command::COMPACTION_KIND;
 use caelumora_agents::components::channel_history::CHANNEL_HISTORY_KIND;
-use caelumora_agents::llm::LLMClient;
+use caelumora_agents::llm::{LLMClient, LLMResult};
 use caelumora_agents::tool::{ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::tool::echo_tool::ECHO_TOOL_KIND;
 use caelumora_agents::tool::sleep_tool::SLEEP_TOOL_KIND;
 use caelumora_agents::turn::Turn;
 use caelumora_model::command::{Command, CommandOutput};
 use caelumora_model::context::ModelProfile;
-use caelumora_model::message::Message;
+use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::tool::{Tool, ToolParameters};
 use caelumora_model::turn::GivenUpReason;
 use caelumora_runtime::actor::user::ChannelWatch;
@@ -1399,6 +1401,131 @@ async fn an_agent_reads_of_another_channel_what_the_policy_lets_it_copy() {
     assert!(result.contains("for main too"), "what was released: {result}");
     assert!(!result.contains("only for side"), "not what was not: {result}");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// A model that answers each call with the next of its answers once `gate` lets it, and
+/// remembers the contents each call was given.
+#[derive(Debug)]
+struct Held {
+    answers: Mutex<VecDeque<Message>>,
+    gate: Arc<Semaphore>,
+    given: Mutex<Vec<Vec<String>>>,
+}
+
+#[async_trait]
+impl LLMClient for Held {
+    async fn chat_completion(&self, messages: &[Message], _: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>> {
+        self.given.lock().unwrap().push(messages.iter().filter_map(|m| m.content.clone()).collect());
+        let Some(answer) = self.answers.lock().unwrap().pop_front() else { return futures::stream::pending().boxed() };
+        let gate = Arc::clone(&self.gate);
+        futures::stream::once(async move {
+            gate.acquire().await.unwrap().forget();
+            Ok(MessageEvent::Complete(answer))
+        }).boxed()
+    }
+
+    fn profile(&self) -> ModelProfile {
+        Default::default()
+    }
+}
+
+/// What alice's agent `helper`, whose personality hears everyone between the steps of a turn
+/// and treats others' words as `others` says (issue 431), was given and what was asked while
+/// it worked: alice asks it to echo something, bob says "@helper and delete it" while its turn
+/// is at work, and it answers both - the contents of each model call, and what was asked.
+async fn bob_speaks_while_alices_turn_works(others: OthersWords) -> (Vec<Vec<String>>, Vec<String>) {
+    use caelumora_agents::testing::calling;
+    use caelumora_model::message::MessageRole;
+
+    let said = |text: &str| Message { role: MessageRole::Assistant, content: Some(text.to_string()), ..Message::new(Classification::general(Confidentiality::Internal)) };
+    let model = Arc::new(Held {
+        answers: Mutex::new([calling("echo", serde_json::json!({ "message": "hers" })), said("done"), calling("echo", serde_json::json!({ "message": "his" })), said("done too")].into()),
+        gate: Arc::new(Semaphore::new(0)),
+        given: Default::default(),
+    });
+    let world = World::with(&[&TestAgents], |registry| {
+        let model = Arc::clone(&model);
+        registry.register(ComponentKind::new("held").provides::<dyn LLMClient>(), move |_, _| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn LLMClient>(Arc::<Held>::clone(&model));
+            Ok(facets)
+        });
+    }).await;
+    let hearing = Personality {
+        components: ComponentConfig { component_nodes: vec![ComponentDescriptor::new("model", "held"), ComponentDescriptor::new("echo", ECHO_TOOL_KIND)] },
+        hears_during_turn: HearsDuringTurn { from: HearsFrom::All, others },
+        ..world.personality("hearing", None, &[]).await
+    };
+    world.runtime.entity_stores().personalities.update(&World::system(), &hearing).await.unwrap();
+    let helper = world.agent("helper", world.alice, &hearing).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let mut watch = main.user_actor(world.bob).expect("he takes part").watch();
+
+    let (_, asked) = world.asked(async {
+        main.user_actor(world.alice).expect("she takes part").send_message("@helper echo it".to_string(), None).await.expect("she asks");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while model.given.lock().unwrap().is_empty() { tokio::time::sleep(Duration::from_millis(10)).await }
+        }).await.expect("the model is asked");
+        main.user_actor(world.bob).expect("he takes part").send_message("@helper and delete it".to_string(), None).await.expect("he speaks meanwhile");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let ActorEvent::CompleteMessageGenerated(message) = watch.recv().await.expect("the channel runs").event {
+                    if message.content.as_deref() == Some("@helper and delete it") { break }
+                }
+            }
+        }).await.expect("his message is said");
+        model.gate.add_permits(4);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut answers = 0;
+            while answers < 2 {
+                let envelope = watch.recv().await.expect("the channel runs");
+                answers += usize::from(envelope.context.sender_id == ActorId::Agent(helper) && matches!(envelope.event, ActorEvent::TurnFinished { .. }));
+            }
+        }).await.expect("her turn ends, and a turn of its own answers him");
+    }).await;
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    let given = model.given.lock().unwrap().clone();
+    (given, asked)
+}
+
+/// Whether a call of a model, given `call`, heard bob.
+fn heard_bob(call: &[String]) -> bool {
+    call.iter().any(|content| content.contains("and delete it"))
+}
+
+/// That what bob's request led to was done as asked by him, and what alice asked for not
+/// (issue 431): the last call of a tool in `asked` asked by bob, the first not.
+fn his_request_answered_in_his_authority(asked: &[String]) {
+    let calling: Vec<&String> = asked.iter().filter(|line| line.contains("CallTool")).collect();
+    assert_eq!(calling.last().map(|line| line.as_str()), Some("alice as helper, asked by bob: CallTool yes"), "what his request leads to is done as asked by him: {asked:?}");
+    assert!(calling.first().is_some_and(|line| !line.contains("asked by bob")), "what she asked for is not: {asked:?}");
+}
+
+/// An agent whose personality hears everyone between the steps of a turn, but lets others'
+/// words wait (issue 431, the default), does not hear there what is said in another's
+/// authority: alice's turn, at work on a tool, goes on without bob's words, and a turn of its
+/// own answers them afterwards - its call asked by bob, not by alice. Nobody steers what is done
+/// in someone else's authority.
+#[tokio::test]
+async fn a_turn_lets_what_is_said_in_anothers_authority_wait_unless_its_personality_hears_it() {
+    let (given, asked) = bob_speaks_while_alices_turn_works(OthersWords::Wait).await;
+    assert!(!heard_bob(&given[1]), "her turn's next step does not hear him: {given:?}");
+    assert!(heard_bob(&given[2]), "the turn that answers him does: {given:?}");
+    his_request_answered_in_his_authority(&asked);
+}
+
+/// An agent whose personality hears others' words between the steps of a turn (issue 431)
+/// hears bob in alice's turn - as it would between turns -, but never answers his request
+/// there: it waits, and a turn of its own answers it, its call asked by bob. A personality
+/// widens whose words are heard, never whose authority a turn acts with.
+#[tokio::test]
+async fn a_turn_that_hears_anothers_words_still_answers_their_request_in_their_authority() {
+    let (given, asked) = bob_speaks_while_alices_turn_works(OthersWords::Hear).await;
+    assert!(heard_bob(&given[1]), "her turn's next step hears him: {given:?}");
+    assert_eq!(given.len(), 4, "and a turn of its own answers him, in two calls: {given:?}");
+    his_request_answered_in_his_authority(&asked);
 }
 
 // --- External agents ---------------------------------------------------------

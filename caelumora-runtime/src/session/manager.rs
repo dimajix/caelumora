@@ -917,7 +917,7 @@ mod tests {
         let personality = Personality {
             id: PersonalityId::new(), name: ScopedName::new("plain", Scope::GlobalScope).unwrap(), kind: Default::default(),
             roles: None, description: None, introduction: None, components: Default::default(),
-            security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
+            security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(), deleted: None,
         };
         runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let helper = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
@@ -994,7 +994,7 @@ mod tests {
         let personality = Personality {
             id: PersonalityId::new(), name: ScopedName::new("plain", Scope::GlobalScope).unwrap(), kind: Default::default(),
             roles: None, description: None, introduction: None, components: Default::default(),
-            security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
+            security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(), deleted: None,
         };
         runtime.entity_stores().personalities.create(&system, &personality).await.unwrap();
         let helper = Agent::new(ScopedName::new("helper", Scope::GlobalScope).unwrap(), personality.id, ActorId::None);
@@ -1146,7 +1146,7 @@ mod tests {
         let personality = Personality {
             id: PersonalityId::new(), name: ScopedName::new("planner", Scope::SessionScope { session_id: id }).unwrap(), kind: Default::default(),
             roles: None, description: None, introduction: None, components: Default::default(),
-            security_attributes: Default::default(), reasoning_visibility: Default::default(), deleted: None,
+            security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(), deleted: None,
         };
         personalities.create(&system, &personality).await.unwrap();
         let agent_in = |name: &str, scope| Agent::new(ScopedName::new(name, scope).unwrap(), personality.id, ActorId::None);
@@ -1248,7 +1248,7 @@ mod tests {
             id: PersonalityId::new(), name: ScopedName::new("thinker", Default::default()).unwrap(), kind: PersonalityKind::Internal,
             roles: None, description: None, introduction: None,
             components: Default::default(),
-            security_attributes: Default::default(), reasoning_visibility: Default::default(),
+            security_attributes: Default::default(), reasoning_visibility: Default::default(), hears_during_turn: Default::default(),
             deleted: None,
         };
         store.entity_stores().personalities.create(&system, &personality).await.unwrap();
