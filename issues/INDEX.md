@@ -109,7 +109,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [420](420-channel-built-empty.md) | done | A channel's founders are written into its document as it is built and never join, so no `ParticipantJoined` records them; build it empty and let its builder add them as anyone is added. |
 | [422](422-route-depth-in-moderator.md) | done | `ChannelLoop::decide` refuses to ask the moderator about an event once its `span_depth` reaches a hard-coded `max_route_decisions`, so the channel keeps a routing rule of its own beside the moderator, which decides everything else about routing. |
 | [423](423-newcomer-misses-what-is-said-as-it-joins.md) | done | An actor added to a running channel catches up from the store before `run` takes it in, so what the channel records in between is in the newcomer's range but neither caught up nor delivered to it. |
-| [431](431-hearing-during-a-turn.md) | in progress | An agent takes in what others say only between its turns, so a turn of many steps - tool calls, a plan - works on to its end without what was said meanwhile: a correction, an addition, an instruction to stop doing something reaches it only after it has done it. |
+| [431](431-hearing-during-a-turn.md) | done | An agent takes in what others say only between its turns, so a turn of many steps - tool calls, a plan - works on to its end without what was said meanwhile: a correction, an addition, an instruction to stop doing something reaches it only after it has done it. |
 
 ## Identity and access management
 

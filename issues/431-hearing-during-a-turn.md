@@ -1,6 +1,6 @@
 # 431 — An agent hears nothing of what others say while its turn runs
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -397,3 +397,4 @@ is tried personality by personality, with a small local model among them.
   own: what is not taken now stays where it is, in the inbox's queue or in the history behind it,
   and `try_recv_if` looks at the next of both. Nothing is committed: where the agent stands is
   written into its state as it takes in, and stored with what it took in.
+- **2026-10-19** — Tried by the maintainer with a real model: works as intended. Done.
