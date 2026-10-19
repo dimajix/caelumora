@@ -90,7 +90,9 @@ may not flow into the channel and marks what only the owner sees.
 
 **Two tools of the same name** are a configuration error that keeps the agent from starting, naming
 both components: resolved by order, one of them would be silently unreachable. User commands follow
-the same rule.
+the same rule. A provider whose tools change while the agent runs - an MCP server's - can bring
+such a clash later: then the tool of the component configured first keeps the name, the other is
+not offered, and a warning names both (issue 126).
 
 **A call is not waited for longer than its turn lasts.** A cancel or a stop drops the tool's future
 wherever it stands; the call is answered as `interrupted`, and the agent starts no further call of
