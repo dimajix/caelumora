@@ -121,3 +121,7 @@ holds no `Compacted`, and its copies would count as measured.
   `Turn::messages`, used only in tests, is gone. Found on the way: `History::turn_began` answered
   `0` for a turn whose end before lay before the window, so that `said_in_turn` read nothing; it
   answers where what is held begins. Stored agent states and transcripts are to be deleted.
+- **2026-10-19** — The position up to which an actor has heard its channel, noted here for
+  [223](223-full-inbox-drops-events.md), is `AgentChannelState::heard` since 223; `catch_up` and
+  the lookup of the last message it reads by are gone. `last_message` stays, for the notes and
+  the memory.

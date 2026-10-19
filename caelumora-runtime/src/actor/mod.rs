@@ -14,16 +14,15 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::any::Any;
 use std::fmt::Debug;
-use std::ops::Range;
 use tracing::warn;
 
 use crate::transport::{EventReceiver, EventSender};
 pub use kinds::AgentKinds;
 pub use manager::{ActorManager, Shown};
-use caelumora_model::chain::Position;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::command::Command;
+use caelumora_model::history::Heard;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
@@ -35,7 +34,7 @@ use uuid::Uuid;
 /// A participant of a channel as the channel runs it. The runtime's own are
 /// the user's and the approver's; an agent's is built by its kind
 /// (`AgentKinds`, issue 370). Public, so that a kind of agent can be built
-/// in a crate of its own; its control methods - `run`, `catch_up`,
+/// in a crate of its own; its control methods - `run`,
 /// `wakeup`, `cancel`, `interrupt_tool_call`, `retry_turn`, `stop` - check
 /// nothing and are called by the channel alone, as the consequence of an
 /// act that was checked (SECURITY.md).
@@ -50,9 +49,8 @@ pub trait Actor: Any + Debug + Send + Sync {
         ActorDescription { id: self.id(), name: self.name(), introduction: None }
     }
 
-    /// Returns the predicate that declares which events this actor wants to receive.
-    /// The ChannelLoop wraps the actor's input sender in a `FilteringEventSender` using
-    /// this predicate, so events that don't match are silently dropped at dispatch time.
+    /// What it takes of what its channel delivers: its inbox drops the rest,
+    /// live and read from the history alike (issue 223).
     fn event_filter(&self) -> fn(&Envelope) -> bool;
 
     async fn run(
@@ -61,20 +59,22 @@ pub trait Actor: Any + Debug + Send + Sync {
         tx: Box<dyn EventSender>,
     ) -> Result<()>;
 
-    /// Takes in what it missed of the channel when it joins (issue 190):
-    /// what `missed` holds of the channel's history, read from the store
-    /// (issue 379) - from where the part it may see begins up to where its
-    /// inbox opened, from which on it is delivered everything (issue 423).
-    /// An actor that keeps what it hears keeps of it what it does not have
-    /// yet, as if it had heard it - for one that joins again, what was said
-    /// after the last message it has. Called once, in its task, right before
-    /// it runs (`ChannelLoop::run`), which logs what fails; one that keeps
-    /// nothing has nothing to do.
-    ///
-    /// # Errors
-    /// If what it keeps, or the channel's history, cannot be read or stored.
-    async fn catch_up(&self, _missed: Range<Position>) -> Result<()> {
-        Ok(())
+    /// Its security context as it is now (issue 223): what an envelope it
+    /// sent is delivered with when it is read from the channel's history -
+    /// the sender's context as it is then, rather than as it was when it
+    /// was sent, which the history does not record. By default its id
+    /// alone, without roles.
+    fn security_context(&self) -> SecurityContext {
+        SecurityContext::new(self.id(), SessionId::default(), ChannelId::default())
+    }
+
+    /// Where it stands in its channel's history, as its state stores it
+    /// (issue 223, `EventReceiver::heard`): where its inbox opens when it
+    /// runs again, and when it joins again with what it kept. `None` for an
+    /// actor that keeps nothing - a user, an approver -: its inbox opens at
+    /// the history's end.
+    async fn heard(&self) -> Option<Heard> {
+        None
     }
 
     /// Returns the current processing state of the actor.

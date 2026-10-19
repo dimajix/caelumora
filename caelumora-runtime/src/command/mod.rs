@@ -15,6 +15,7 @@ pub mod nudge_command;
 pub mod wakeup_command;
 
 use crate::actor::user::UserActor;
+use crate::actor::Actor;
 use crate::channel::{ChannelLoop, ChannelParticipant};
 use crate::component::{ComponentError, ComponentImpl, ComponentRegistry, ComponentResult};
 use async_trait::async_trait;

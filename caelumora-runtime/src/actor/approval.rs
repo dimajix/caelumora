@@ -81,13 +81,6 @@ impl ApproverActor {
         }
     }
 
-    /// The context it acts in, here: its own, answered for by the owner of
-    /// its channel (issue 341).
-    fn security_context(&self) -> SecurityContext {
-        let channel = self.channel.load();
-        SecurityContext { owner_id: channel.security_attributes.owner_id, ..SecurityContext::new(self.id, channel.session_id, channel.id) }
-    }
-
     /// The contexts it answers `request`, an agent's request for approval,
     /// in (`Answering::to`): in its own name, about the call of whoever asked
     /// (issue 255), answered for by the owner of its channel as it is when
@@ -304,6 +297,13 @@ impl ApproverActor {
 
 #[async_trait]
 impl Actor for ApproverActor {
+    /// The context it acts in, here: its own, answered for by the owner of
+    /// its channel (issue 341).
+    fn security_context(&self) -> SecurityContext {
+        let channel = self.channel.load();
+        SecurityContext { owner_id: channel.security_attributes.owner_id, ..SecurityContext::new(self.id, channel.session_id, channel.id) }
+    }
+
     fn id(&self) -> ActorId {
         self.id
     }

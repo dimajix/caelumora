@@ -7,11 +7,8 @@ use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::approval::ApprovalRule;
-use caelumora_model::chain::Node;
-use caelumora_model::chain::Position;
 use caelumora_model::channel::{self, Channel, ChannelId};
 use caelumora_model::event::{Announcing, GlobalEvent};
-use caelumora_model::history::{HistoryEntry, Reader};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::security::SecurityAttributes;
 use caelumora_model::value::time_zone::TimeZone;
@@ -29,7 +26,6 @@ use caelumora_model::security::Grant;
 use caelumora_model::workspace::Workspace;
 use crate::terminal::{Shell, Terminal};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
-use std::ops::Range;
 use std::sync::Arc;
 use super::{ChannelRuntime, Services};
 
@@ -131,28 +127,6 @@ impl ActorRuntime {
     pub async fn load_channel_state(&self) -> Result<AgentChannelState> {
         let agent = self.agent_id()?;
         Ok(self.runtime.runtime_manager.state_store().get_agent_channel_state(agent, self.channel_id).await?)
-    }
-
-    /// The position in its channel's history of the entry that said the
-    /// message `id`; `None` if the channel never heard it, or not to this
-    /// actor (issues 379, 417).
-    ///
-    /// # Errors
-    /// Whatever the `HistoryStore` reports.
-    pub async fn channel_position_of(&self, id: MessageId) -> Result<Option<Position>> {
-        Ok(self.runtime.runtime_manager.history_store().said(self.channel_id, &Reader::Participant(self.actor), id).await?.map(|(at, _)| at))
-    }
-
-    /// The entries of its channel's history at the positions `range` holds,
-    /// as they were added, as this actor is given them as it joins (issues
-    /// 379, 417, `Reader::Newcomer`): what it is given of what was said
-    /// before its inbox opened, where `range` ends (issue 423) - read before
-    /// its actor runs.
-    ///
-    /// # Errors
-    /// Whatever the `HistoryStore` reports.
-    pub async fn channel_entries(&self, range: Range<Position>) -> Result<Vec<Node<HistoryEntry>>> {
-        Ok(self.runtime.runtime_manager.history_store().entries(self.channel_id, &Reader::Newcomer(self.actor), range).await?)
     }
 
     /// The message `id` as this agent's transcript in its channel holds it,

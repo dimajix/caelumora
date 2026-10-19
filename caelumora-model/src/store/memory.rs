@@ -12,7 +12,7 @@ use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use crate::removal::{Deletable, Removal};
 use crate::security::{ActionType, AllowAllPolicy, SecurityContext, AccessPolicy};
 use crate::store::access::{name_free, Access};
-use crate::store::history::{page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems};
+use crate::store::history::{answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems};
 use crate::store::kept_chain::KeptChain;
 use crate::store::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
 use crate::transcript::{known, Transcript, TranscriptEntry};
@@ -508,10 +508,18 @@ impl HistoryStore for MemoryStore {
         })
     }
 
-    async fn entries(&self, channel: ChannelId, reader: &Reader, range: Range<Position>) -> StoreResult<Vec<Node<HistoryEntry>>> {
+    async fn entries(&self, channel: ChannelId, reader: &Reader, range: Range<Position>) -> StoreResult<Vec<Node<Recorded>>> {
         Ok(read_lock(&self.histories, |all| all.get(&channel).map(|kept| {
             let nodes = kept.chain.from(range.start).iter().take_while(|node| node.seq < range.end);
             seen_nodes(reader, &kept.memberships.of_reader(reader), nodes)
+        }).unwrap_or_default()))
+    }
+
+    async fn answer(&self, channel: ChannelId, reader: &Reader, end: Position) -> StoreResult<Vec<Message>> {
+        Ok(read_lock(&self.histories, |all| all.get(&channel).and_then(|kept| {
+            let nodes = kept.chain.from(Position::START);
+            let at = usize::try_from(end.get()).ok().filter(|at| *at < nodes.len())?;
+            Some(answer_of(&nodes[at].entry.entry, nodes[..at].iter().rev(), reader, &kept.memberships.of_reader(reader)))
         }).unwrap_or_default()))
     }
 

@@ -6,7 +6,7 @@ use crate::confidentiality::{Classification, Visibility};
 use crate::context::{ContextRef, ContextResolver, FrameRef, KnowledgeRef, ModelProfile, PromptRef};
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
-use crate::history::HistoryEntry;
+use crate::history::{Heard, HistoryEntry};
 use crate::kept::Kept;
 use crate::ledger::LedgerEntry;
 use crate::memory::{Memories, MemoryChain};
@@ -459,6 +459,12 @@ pub struct AgentChannelState {
     /// branch alone, which begins anew with every call of an external agent
     /// and every compaction. `None` before the first.
     pub last_message: Option<MessageId>,
+    /// Where the agent stands in its channel's history (issue 223): what
+    /// of it was delivered to it and taken in. Written as it takes in, so
+    /// that every put stores it with what it took in; what its channel
+    /// delivers on from after a restart - what the stored state lacks,
+    /// nothing twice.
+    pub heard: Heard,
 }
 
 impl AgentChannelState {

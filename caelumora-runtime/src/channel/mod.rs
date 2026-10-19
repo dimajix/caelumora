@@ -45,6 +45,7 @@ use tokio_util::task::TaskTracker;
 
 mod control;
 mod history;
+mod inbox;
 mod participation;
 mod participants;
 mod run;

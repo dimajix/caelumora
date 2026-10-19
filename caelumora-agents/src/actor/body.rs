@@ -276,7 +276,7 @@ impl AgentBody {
             if awake {
                 self.control.go_to(ActorState::Idle);
             }
-            let Some(next) = rx.try_recv() else { break };
+            let Some(next) = rx.try_recv().await else { break };
             taken = taken.then(self.take_in(state, next, rx).await);
         }
         taken

@@ -1,61 +1,69 @@
 use crate::transport::{EventPredicate, EventReceiver, EventSender, TransportError, TransportResult};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorId, Envelope};
+use caelumora_model::history::Heard;
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
 
+/// A queue an actor receives from, without a history behind it: for tests
+/// of an actor, and for whatever runs an actor outside of a channel. What
+/// `recv_matching` passes over it puts aside, to be taken first.
 pub struct InMemoryEventReceiver {
     rx: mpsc::Receiver<Envelope>,
     buffer: VecDeque<Envelope>,
-    uncommitted: Vec<Envelope>,
+    heard: Heard,
 }
 
 impl InMemoryEventReceiver {
     pub fn new(rx: mpsc::Receiver<Envelope>) -> Self {
-        Self {
-            rx,
-            buffer: VecDeque::new(),
-            uncommitted: Vec::new(),
+        Self { rx, buffer: VecDeque::new(), heard: Heard::default() }
+    }
+
+    /// `event`, taken in order.
+    fn took(&mut self, event: Envelope) -> Envelope {
+        if let Some(seq) = event.context.position {
+            self.heard.took(seq);
         }
+        event
     }
 }
 
 #[async_trait]
 impl EventReceiver for InMemoryEventReceiver {
     async fn recv(&mut self) -> Option<Envelope> {
-        if let Some(event) = self.buffer.pop_front() {
-            self.uncommitted.push(event.clone());
-            return Some(event);
-        }
-        let event = self.rx.recv().await?;
-        self.uncommitted.push(event.clone());
-        Some(event)
+        let event = match self.buffer.pop_front() {
+            Some(event) => event,
+            None => self.rx.recv().await?,
+        };
+        Some(self.took(event))
     }
 
     async fn recv_matching(&mut self, pred: EventPredicate) -> Option<Envelope> {
-        if let Some(event) = self.buffer.iter().position(pred).and_then(|i| self.buffer.remove(i)) {
-            self.uncommitted.push(event.clone());
-            return Some(event);
-        }
-        loop {
-            let event = self.rx.recv().await?;
-            let is_match = pred(&event);
-            if is_match {
-                self.uncommitted.push(event.clone());
-                return Some(event);
-            } else {
+        let found = match self.buffer.iter().position(pred).and_then(|i| self.buffer.remove(i)) {
+            Some(event) => event,
+            None => loop {
+                let event = self.rx.recv().await?;
+                if pred(&event) {
+                    break event;
+                }
                 self.buffer.push_back(event);
-            }
+            },
+        };
+        // Ahead of what it put aside, if anything is; in order otherwise.
+        match (self.buffer.is_empty(), found.context.position) {
+            (false, Some(seq)) => self.heard.took_ahead(seq),
+            (true, Some(seq)) => self.heard.took(seq),
+            (_, None) => {}
         }
+        Some(found)
     }
 
-    fn try_recv(&mut self) -> Option<Envelope> {
+    async fn try_recv(&mut self) -> Option<Envelope> {
         let event = self.buffer.pop_front().or_else(|| self.rx.try_recv().ok())?;
-        self.uncommitted.push(event.clone());
-        Some(event)
+        Some(self.took(event))
     }
 
-    fn try_recv_if(&mut self, predicate: &dyn Fn(&Envelope) -> bool) -> Option<Envelope> {
+    async fn try_recv_if(&mut self, predicate: &(dyn for<'a> Fn(&'a Envelope) -> bool + Sync)) -> Option<Envelope> {
         // What was put aside comes first; only once it is empty is the queue
         // looked at, and its next event then waits in the buffer.
         if self.buffer.is_empty() {
@@ -66,13 +74,11 @@ impl EventReceiver for InMemoryEventReceiver {
             return None;
         }
         let event = self.buffer.pop_front()?;
-        self.uncommitted.push(event.clone());
-        Some(event)
+        Some(self.took(event))
     }
 
-    async fn commit(&mut self) -> TransportResult<()> {
-        self.uncommitted.clear();
-        Ok(())
+    fn heard(&self) -> Heard {
+        self.heard.clone()
     }
 }
 
@@ -93,10 +99,6 @@ impl EventSender for InMemoryEventSender {
             .send(event)
             .await
             .map_err(|_| TransportError::Closed)
-    }
-
-    fn try_send(&self, event: Envelope) -> TransportResult<()> {
-        self.tx.try_send(event).map_err(TransportError::from)
     }
 }
 
@@ -141,51 +143,13 @@ impl EventSender for OriginEventSender {
         self.admits(&event)?;
         self.inner.send(event).await
     }
-
-    fn try_send(&self, event: Envelope) -> TransportResult<()> {
-        self.admits(&event)?;
-        self.inner.try_send(event)
-    }
-}
-
-/// Decorator that applies a filter predicate before forwarding to an inner `EventSender`.
-/// An event the filter rejects is dropped and the send succeeds, on `send()` and
-/// `try_send()` alike: filtering is what this sender is for, not a failure (issue 115).
-/// Implements `EventSender`, so it can be composed with another `FilteringEventSender`.
-pub struct FilteringEventSender {
-    inner: Box<dyn EventSender>,
-    filter: fn(&Envelope) -> bool,
-}
-
-impl FilteringEventSender {
-    pub fn new(inner: Box<dyn EventSender>, filter: fn(&Envelope) -> bool) -> Self {
-        Self { inner, filter }
-    }
-}
-
-#[async_trait]
-impl EventSender for FilteringEventSender {
-    async fn send(&self, event: Envelope) -> TransportResult<()> {
-        if (self.filter)(&event) {
-            self.inner.send(event).await
-        } else {
-            Ok(())
-        }
-    }
-
-    fn try_send(&self, event: Envelope) -> TransportResult<()> {
-        if (self.filter)(&event) {
-            self.inner.try_send(event)
-        } else {
-            Ok(())
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use caelumora_model::actor::{ActorEvent, EventContext};
+    use caelumora_model::chain::Position;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::work::TurnId;
 
@@ -193,26 +157,33 @@ mod tests {
         Envelope::new(SecurityContext::default(), EventContext::default(), event)
     }
 
+    /// `event`, delivered as the entry at the position `seq`.
+    fn at(seq: u64, event: ActorEvent) -> Envelope {
+        Envelope::new(SecurityContext::default(), EventContext { position: Some(Position::new(seq)), ..EventContext::default() }, event)
+    }
+
     #[tokio::test]
     async fn try_recv_takes_what_was_put_aside_before_what_is_queued_and_never_waits() {
         let (tx, rx) = mpsc::channel(4);
         let mut receiver = InMemoryEventReceiver::new(rx);
-        assert!(receiver.try_recv().is_none(), "nothing queued, nothing waited for");
+        assert!(receiver.try_recv().await.is_none(), "nothing queued, nothing waited for");
 
-        tx.try_send(envelope(ActorEvent::ResponseRequested)).expect("room");
-        tx.try_send(envelope(ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: Vec::new() })).expect("room");
+        tx.try_send(at(0, ActorEvent::ResponseRequested)).expect("room");
+        tx.try_send(at(1, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: Vec::new() })).expect("room");
         tx.try_send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() })).expect("room");
         // Puts the request aside while it takes what it waits for.
         receiver.recv_matching(|e| matches!(e.event, ActorEvent::TurnFinished { .. })).await.expect("queued");
+        assert!(receiver.heard().has(Position::new(1)) && receiver.heard().next() == Position::START, "taken ahead of what it put aside");
 
-        let kinds: Vec<_> = std::iter::from_fn(|| receiver.try_recv()).map(|e| e.event.kind()).collect();
+        let mut kinds = Vec::new();
+        while let Some(event) = receiver.try_recv().await {
+            kinds.push(event.event.kind());
+        }
         assert_eq!(kinds, ["ResponseRequested", "ResponseStarted"], "what was put aside first, then what is queued");
-        assert_eq!(receiver.uncommitted.len(), 3, "uncommitted like what recv delivers");
-        receiver.commit().await.expect("in memory");
-        assert!(receiver.uncommitted.is_empty(), "committed with the next commit");
+        assert_eq!(receiver.heard(), Heard::at(Position::new(2)), "everything up to the last taken");
 
         drop(tx);
-        assert!(receiver.try_recv().is_none(), "nothing either once the input is closed");
+        assert!(receiver.try_recv().await.is_none(), "nothing either once the input is closed");
     }
 
     #[tokio::test]
@@ -220,35 +191,21 @@ mod tests {
         let (tx, rx) = mpsc::channel(4);
         let mut receiver = InMemoryEventReceiver::new(rx);
         let requested = |e: &Envelope| matches!(e.event, ActorEvent::ResponseRequested);
-        assert!(receiver.try_recv_if(&requested).is_none(), "nothing queued, nothing waited for");
+        assert!(receiver.try_recv_if(&requested).await.is_none(), "nothing queued, nothing waited for");
 
         tx.try_send(envelope(ActorEvent::ResponseRequested)).expect("room");
         tx.try_send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() })).expect("room");
         tx.try_send(envelope(ActorEvent::ResponseRequested)).expect("room");
 
-        assert!(receiver.try_recv_if(&requested).is_some(), "the next event fulfils it");
-        assert!(receiver.try_recv_if(&requested).is_none(), "the next one does not, and nothing behind it is looked at");
-        assert!(receiver.try_recv_if(&requested).is_none(), "and stays the next one");
-        assert_eq!(receiver.uncommitted.len(), 1, "only what it took is uncommitted");
+        assert!(receiver.try_recv_if(&requested).await.is_some(), "the next event fulfils it");
+        assert!(receiver.try_recv_if(&requested).await.is_none(), "the next one does not, and nothing behind it is looked at");
+        assert!(receiver.try_recv_if(&requested).await.is_none(), "and stays the next one");
 
-        let kinds: Vec<_> = std::iter::from_fn(|| receiver.try_recv()).map(|e| e.event.kind()).collect();
+        let mut kinds = Vec::new();
+        while let Some(event) = receiver.try_recv().await {
+            kinds.push(event.event.kind());
+        }
         assert_eq!(kinds, ["ResponseStarted", "ResponseRequested"], "what it left, in order");
-    }
-
-    #[tokio::test]
-    async fn a_filtered_event_is_dropped_and_both_sends_succeed() {
-        let (tx, mut rx) = mpsc::channel(4);
-        let sender = FilteringEventSender::new(
-            Box::new(InMemoryEventSender::new(tx)),
-            |e| matches!(e.event, ActorEvent::ResponseRequested),
-        );
-
-        sender.send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() })).await.expect("filtered, not failed");
-        sender.try_send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() })).expect("filtered, not failed");
-        sender.try_send(envelope(ActorEvent::ResponseRequested)).expect("passes the filter");
-
-        assert!(matches!(rx.try_recv().map(|e| e.event), Ok(ActorEvent::ResponseRequested)), "only what passes arrives");
-        assert!(rx.try_recv().is_err(), "nothing else");
     }
 
     #[tokio::test]
@@ -265,7 +222,7 @@ mod tests {
         let someone = ActorId::System;
 
         assert!(matches!(sender.send(as_actor(someone, agent)).await, Err(TransportError::Refused { origin }) if origin == agent), "another's envelope");
-        assert!(matches!(sender.try_send(as_actor(agent, someone)), Err(TransportError::Refused { .. })), "another's context");
+        assert!(matches!(sender.send(as_actor(agent, someone)).await, Err(TransportError::Refused { .. })), "another's context");
         sender.send(as_actor(agent, agent)).await.expect("its own");
         assert_eq!(rx.try_recv().map(|e| e.context.sender_id).ok(), Some(agent), "only its own is passed on");
         assert!(rx.try_recv().is_err());

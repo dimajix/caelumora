@@ -1,23 +1,19 @@
 //! How an actor of an agent takes in what it is told (issues 196, 206, 222,
 //! 234), the same for both kinds of agent - the `AgentActor` and the
 //! `ExternalAgentActor`: what others said, as it passes the agent's perceive
-//! processors, a message modified or taken back since, and what it missed
-//! of its channel while it was not there - into its transcript; what it was
+//! processors, a message modified or taken back since - into its
+//! transcript, and where it stands in its channel's history into its state
+//! (issue 223); what it was
 //! offered is its channel's history (issue 417). Its body's (`AgentBody`).
 
 use super::body::AgentBody;
 use crate::message::apply_stage_processors;
 use caelumora_runtime::logging::envelope_span;
 use caelumora_runtime::transport::EventReceiver;
-use anyhow::Result;
-use caelumora_model::chain::Position;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::{AgentChannelState, HearsFrom};
-use caelumora_model::history::{fold, HistoryEntry};
 use caelumora_model::message::Message;
 use caelumora_model::transcript::TranscriptEntry;
-use std::mem;
-use std::ops::Range;
 use tracing::{debug, trace, warn, Instrument};
 
 impl AgentBody {
@@ -29,9 +25,9 @@ impl AgentBody {
     /// history, and is not offered again.
     ///
     /// What is heard is never the agent's own: the channel delivers nothing
-    /// back to its sender (`ChannelLoop::route_event_impl`), every message an
-    /// envelope carries is its sender's (`OriginEventSender`), and what an
-    /// agent catches up with is rid of its own first (`catch_up`).
+    /// back to its sender (`ChannelLoop::route_event_impl`), live or from its
+    /// history, and every message an envelope carries is its sender's
+    /// (`OriginEventSender`).
     async fn perceive(&self, state: &mut AgentChannelState, heard: Vec<Message>) {
         let Some(last) = heard.last() else {
             return;
@@ -94,14 +90,17 @@ impl AgentBody {
     /// carry out (issue 269) ends the batch: it is returned, and what follows
     /// it stays in `rx`, so that the actor carries it out where it came -
     /// after what was said before it, before what was said after - and then
-    /// takes in the rest. Neither commits nor stores: when that happens is
-    /// the actor's.
+    /// takes in the rest. Where the agent stands in its channel's history
+    /// is written into `state` with what it took in (issue 223), so that
+    /// every store that follows stores both; when that happens is the
+    /// actor's.
     pub(super) async fn take_in(&self, state: &mut AgentChannelState, received: Envelope, rx: &mut Box<dyn EventReceiver>) -> TakenIn {
         let mut request = None;
         let mut retries = Vec::new();
         let mut next = Some(received);
         while let Some(event) = next {
             if matches!(event.event, ActorEvent::CommandRequested { .. }) {
+                state.heard = rx.heard();
                 return TakenIn { request, retries, command: Some(event) };
             }
             let span = envelope_span(&event.context, event.event.kind());
@@ -118,8 +117,9 @@ impl AgentBody {
                 }
             }.instrument(span).await;
             request = asked.or(request);
-            next = rx.try_recv();
+            next = rx.try_recv().await;
         }
+        state.heard = rx.heard();
         TakenIn { request, retries, command: None }
     }
 
@@ -132,7 +132,8 @@ impl AgentBody {
     /// the turn answers it, its message heard. It takes up to the first
     /// event it may not take and leaves that event and everything behind it
     /// where they are, in order, for `take_in` to take after the turn.
-    /// Returns whether it took in anything. Neither commits nor stores.
+    /// Returns whether it took in anything. Writes where the agent stands
+    /// into `state`, as `take_in` does, and does not store.
     pub(super) async fn take_in_during_turn(&self, state: &mut AgentChannelState, rx: &mut Box<dyn EventReceiver>) -> bool {
         let hears = self.hears_during_turn();
         let Some(under_way) = state.turn.as_ref().filter(|_| hears.from != HearsFrom::None) else {
@@ -141,7 +142,7 @@ impl AgentBody {
         let work = under_way.work.clone();
         let may_take = |envelope: &Envelope| hears.takes(&work, envelope);
         let mut taken = false;
-        while let Some(event) = rx.try_recv_if(&may_take) {
+        while let Some(event) = rx.try_recv_if(&may_take).await {
             taken = true;
             let span = envelope_span(&event.context, event.event.kind());
             async {
@@ -150,6 +151,7 @@ impl AgentBody {
                 self.take_in_said(state, event).await;
             }.instrument(span).await;
         }
+        state.heard = rx.heard();
         taken
     }
 
@@ -192,64 +194,6 @@ impl AgentBody {
             _ => return Some(event),
         }
         None
-    }
-
-    /// Takes in what an actor of an agent missed of its channel as what it
-    /// hears (issues 190, 196, 206): the messages said in the channel in
-    /// `missed` - from where the part of the channel's history it may see
-    /// begins up to where its inbox opened (issue 423) - and after the last
-    /// message it took in
-    /// (`AgentChannelState::last_message`), as they stand and as it may see
-    /// them (issue 417), through `perceive`, and who joined or left
-    /// meanwhile, where it happened (issue 408), and stores its state with
-    /// them. Read from the store (issue 379). The one way in that does not
-    /// pass the channel's routing, so the agent's own messages are left out
-    /// here: they are in its transcript already, unless its state was lost,
-    /// and then they are not what it heard. Older messages that a wider view
-    /// grants on joining again would land after its own later answers; they
-    /// are left out, and its transcript stays in the order things were
-    /// said. Called once, right before its actor runs.
-    ///
-    /// # Errors
-    /// If the channel's history cannot be read, or its state not be stored.
-    pub(super) async fn catch_up(&self, missed: Range<Position>) -> Result<()> {
-        let mut state = self.state.lock().await;
-        let own = self.id();
-        let mut after = missed.start;
-        if let Some(last) = state.last_message {
-            if let Some(at) = self.runtime.channel_position_of(last).await? {
-                after = after.max(at.next());
-            }
-        }
-        let entries = self.runtime.channel_entries(after..missed.end).await?;
-        // As it would have heard them (`Message::is_heard`, issue 258): the
-        // steps of a plan and tool messages are kept in the channel, not
-        // heard. Who joined or left is noted where it happened among them
-        // (issue 408).
-        let mut said = fold(&entries).into_iter().peekable();
-        let mut heard = Vec::new();
-        let (mut missed, mut taken) = (false, state.last_message);
-        for node in &entries {
-            if matches!(node.entry, HistoryEntry::ParticipantJoined { .. } | HistoryEntry::ParticipantLeft { .. }) {
-                self.perceive(&mut state, mem::take(&mut heard)).await;
-                state.note_announced(node.entry.clone());
-                missed = true;
-            } else if let Some((_, message)) = said.next_if(|(said, _)| said.seq == node.seq) {
-                // Taken in, also what it does not hear, so that it is not
-                // offered again.
-                taken = Some(message.id);
-                if message.sender_id != own && message.is_heard() {
-                    heard.push(message);
-                    missed = true;
-                }
-            }
-        }
-        if !missed {
-            return Ok(());
-        }
-        self.perceive(&mut state, heard).await;
-        state.last_message = taken;
-        self.runtime.store_channel_state(&mut state).await
     }
 }
 
@@ -343,7 +287,7 @@ mod tests {
         let request = body.take_in(&mut state, heard("one"), &mut rx).await.request;
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three"], "all of it, in order, also what came after the last request");
         assert_eq!(request.map(|r| r.security.caller_id), Some(ActorId::System), "the last request");
-        assert!(rx.try_recv().is_none(), "nothing left behind");
+        assert!(rx.try_recv().await.is_none(), "nothing left behind");
 
         let request = body.take_in(&mut state, heard("four"), &mut rx).await.request;
         assert!(request.is_none(), "heard, but nobody asked");
@@ -376,7 +320,10 @@ mod tests {
         assert_eq!(texts(&state.transcript.messages()), ["one", "two"], "what was said before the command");
         let turn = state.turn.as_ref().expect("still under way");
         assert_eq!(turn.work.context.transcript, state.transcript.digest(), "the turn's next call is given it");
-        let left: Vec<_> = std::iter::from_fn(|| rx.try_recv()).map(|e| e.event.kind()).collect();
+        let mut left = Vec::new();
+        while let Some(event) = rx.try_recv().await {
+            left.push(event.event.kind());
+        }
         assert_eq!(left, ["CommandRequested", "CompleteMessageGenerated"], "the command and what follows it wait, in order; the request was the turn's");
     }
 
@@ -388,7 +335,7 @@ mod tests {
         tx.try_send(envelope(ActorEvent::CompleteMessageGenerated(said("one")))).expect("room");
         let body = AgentBody::detached(Vec::new()).hearing(HearsDuringTurn { from: HearsFrom::All, ..Default::default() });
         assert!(!body.take_in_during_turn(&mut state, &mut rx).await, "no turn, nothing taken");
-        assert!(rx.try_recv().is_some(), "it waits for take_in");
+        assert!(rx.try_recv().await.is_some(), "it waits for take_in");
     }
 
     #[tokio::test]
@@ -409,7 +356,7 @@ mod tests {
         assert!(first.request.is_some(), "the request before it is kept");
 
         // The actor carries it out here, then takes in the rest.
-        let next = rx.try_recv().expect("what follows the command stays queued");
+        let next = rx.try_recv().await.expect("what follows the command stays queued");
         let rest = body.take_in(&mut state, next, &mut rx).await;
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three"], "in the order it was said");
         let all = first.then(rest);

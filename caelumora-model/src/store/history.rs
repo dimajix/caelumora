@@ -16,8 +16,8 @@ use crate::chain::{Node, Position};
 use crate::channel::ChannelId;
 use crate::confidentiality::{Classification, Compartments, Confidentiality, Reading};
 use crate::digest::Digest;
-use crate::history::{HistoryEntry, HistoryPage, Reader, Recorded, EVERY_POSITION};
-use crate::message::{MessageId, MessageRole};
+use crate::history::{HistoryEntry, HistoryPage, Reader, Recorded};
+use crate::message::{Message, MessageId, MessageRole};
 use crate::store::query::{meeting, Field, Filter};
 use crate::store::StoreResult;
 use async_trait::async_trait;
@@ -152,8 +152,18 @@ pub trait HistoryStore: Debug + Send + Sync {
     /// The entries of the chain at the positions `range` holds that `reader`
     /// may see, as they may see them, in the order they were added: what was
     /// added since an entry before the range was, up to its end. Each keeps
-    /// its node's position and digest, the chain's.
-    async fn entries(&self, channel: ChannelId, reader: &Reader, range: Range<Position>) -> StoreResult<Vec<Node<HistoryEntry>>>;
+    /// its node's position and digest, the chain's, and the head of the
+    /// envelope it came in (issue 223): what an envelope is delivered again
+    /// from (`Recorded::envelope`).
+    async fn entries(&self, channel: ChannelId, reader: &Reader, range: Range<Position>) -> StoreResult<Vec<Node<Recorded>>>;
+
+    /// The answer of the turn whose end is at the position `end` (issue
+    /// 223): its messages said that are not internal, as they were said,
+    /// as `reader` may see them, oldest first - what its end carried as it
+    /// was delivered (`ActorEvent::TurnFinished`), and what the history
+    /// holds as the messages said before it (`answer_of`). Empty if nothing
+    /// at `end` ends a turn.
+    async fn answer(&self, channel: ChannelId, reader: &Reader, end: Position) -> StoreResult<Vec<Message>>;
 
     /// The ranges of positions in which `actor` was given what went to
     /// every member of the channel (`Memberships`), oldest first: none if it
@@ -226,12 +236,10 @@ impl Memberships {
     }
 
     /// The ranges `reader` reads by (`Recorded::seen_by`): a participant's
-    /// own; a newcomer's all of the history, of which it reads what it is
-    /// given; none for anyone else.
+    /// own; none for anyone else.
     pub fn of_reader(&self, reader: &Reader) -> Vec<Range<Position>> {
         match reader {
             Reader::Participant(member) => self.of_member(*member),
-            Reader::Newcomer(_) => vec![EVERY_POSITION],
             Reader::Outsider | Reader::Channel => Vec::new(),
         }
     }
@@ -351,10 +359,31 @@ pub(crate) fn seen(reader: &Reader, ranges: &[Range<Position>], filter: Option<&
 }
 
 /// The entries of `nodes` that `reader`, with `ranges` as theirs, may see,
-/// as they may see them, each in its node: what a store returns of the
-/// chain it read.
-pub(crate) fn seen_nodes<'a>(reader: &Reader, ranges: &[Range<Position>], nodes: impl IntoIterator<Item = &'a Node<Recorded>>) -> Vec<Node<HistoryEntry>> {
-    nodes.into_iter().filter_map(|node| node.entry.as_seen_by(node.seq, reader, ranges).map(|entry| node.with_entry(entry))).collect()
+/// as they may see them, each in its node with what else was recorded of
+/// it: what a store returns of the chain it read.
+pub(crate) fn seen_nodes<'a>(reader: &Reader, ranges: &[Range<Position>], nodes: impl IntoIterator<Item = &'a Node<Recorded>>) -> Vec<Node<Recorded>> {
+    nodes.into_iter().filter_map(|node| {
+        let Recorded { sender, recipients, context, timestamp, .. } = &node.entry;
+        let entry = node.entry.as_seen_by(node.seq, reader, ranges)?;
+        Some(node.with_entry(Recorded { entry, sender: *sender, recipients: recipients.clone(), context: context.clone(), timestamp: *timestamp }))
+    }).collect()
+}
+
+/// The answer of the turn whose end is `ended` (`HistoryStore::answer`):
+/// its messages said that are not internal, as `reader`, with `ranges` as
+/// theirs, may see them, oldest first, gathered from `older` - the entries
+/// before its end, newest first - back to the end of the turn before of
+/// the same actor: an agent's turns do not overlap, so none of the turn's
+/// messages lies before it. Empty if `ended` is no turn's end.
+pub(crate) fn answer_of<'a>(ended: &HistoryEntry, older: impl IntoIterator<Item = &'a Node<Recorded>>, reader: &Reader, ranges: &[Range<Position>]) -> Vec<Message> {
+    let HistoryEntry::TurnFinished { turn_id, actor, .. } = ended else { return Vec::new() };
+    let mut answer: Vec<Message> = older.into_iter()
+        .take_while(|node| !node.entry.entry.ends_turn_of(*actor))
+        .filter(|node| node.entry.entry.said().is_some_and(|message| message.turn_id == Some(*turn_id) && !message.internal))
+        .filter_map(|node| node.entry.as_seen_by(node.seq, reader, ranges).and_then(|entry| entry.said().cloned()))
+        .collect();
+    answer.reverse();
+    answer
 }
 
 /// The page that `newest` - items newest first, as `reader` may see them and

@@ -153,13 +153,6 @@ impl UserActor {
         })
     }
 
-    /// The context this user acts in, here - what their answers carry, so
-    /// that whoever decides on them asks about them in the same one (the
-    /// approver, issue 14).
-    pub(crate) fn security_context(&self) -> SecurityContext {
-        self.user.security_context(self.session_id, self.channel_id)
-    }
-
     /// An envelope from this user, in the span `span_id`. Envelopes are only
     /// ever built here, so the sender, session, channel and security context
     /// are always this actor's own (`Answering::own`), whatever the caller of
@@ -717,6 +710,13 @@ impl Drop for EndOfRun<'_> {
 
 #[async_trait]
 impl Actor for UserActor {
+    /// The context this user acts in, here - what their answers carry, so
+    /// that whoever decides on them asks about them in the same one (the
+    /// approver, issue 14).
+    fn security_context(&self) -> SecurityContext {
+        self.user.security_context(self.session_id, self.channel_id)
+    }
+
     fn id(&self) -> ActorId {
         self.id
     }

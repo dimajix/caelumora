@@ -306,7 +306,9 @@ fn taking_part(scheme: &str, previous: Option<&Digest>, participant: &ActorId, n
 
 /// The digest of a history (issue 06) ending in `recorded`, whose
 /// predecessor chain has the digest `previous`: of what the entry says, who
-/// sent it and whom it went to, as recorded (issue 417). What an entry says is digested
+/// sent it and whom it went to, as recorded (issue 417) - not the head of
+/// the envelope it came in (issue 223), which says when and in which chain
+/// of events, not what. What an entry says is digested
 /// by its kind: a message said as `message_chain`; the channel's
 /// classification fitted into (issue 133), a turn's end (issue 258) and the
 /// start of a step of its plan (issue 263) in schemes of their own - the
@@ -316,7 +318,7 @@ fn taking_part(scheme: &str, previous: Option<&Digest>, participant: &ActorId, n
 /// reclassified as `message_modified`, `message_revoked` and
 /// `message_reclassified`.
 pub fn history_chain(previous: Option<&Digest>, recorded: &Recorded) -> Digest {
-    let mut e = Encoder::new("caelumora.history-recorded.v2");
+    let mut e = Encoder::new("caelumora.history-recorded.v3");
     e.opt_digest(previous);
     e.opt_digest(Some(&history_entry(None, &recorded.entry)));
     e.json(&to_json(&recorded.sender));
@@ -401,6 +403,52 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             let mut e = Encoder::new("caelumora.history-response-requested.v1");
             e.opt_digest(previous);
             e.json(&to_json(by));
+            e.finish()
+        }
+        // What is recorded to be delivered again (issue 223): by what it
+        // says, not when.
+        HistoryEntry::CommandRequested { agent, command, args, by, .. } => {
+            let mut e = Encoder::new("caelumora.history-command-requested.v1");
+            e.opt_digest(previous);
+            e.json(&serde_json::json!([agent, by]));
+            e.str(command);
+            e.str(args);
+            e.finish()
+        }
+        HistoryEntry::RetryRequested { target, author, by, .. } => {
+            let mut e = Encoder::new("caelumora.history-retry-requested.v1");
+            e.opt_digest(previous);
+            e.json(&serde_json::json!([target, author, by]));
+            e.finish()
+        }
+        HistoryEntry::ApprovalRequested { request, by, .. } => {
+            let mut e = Encoder::new("caelumora.history-approval-requested.v1");
+            e.opt_digest(previous);
+            e.json(&serde_json::json!([request, by]));
+            e.finish()
+        }
+        HistoryEntry::ApprovalDecided { response, status, by, .. } => {
+            let mut e = Encoder::new("caelumora.history-approval-decided.v1");
+            e.opt_digest(previous);
+            e.json(&serde_json::json!([response, status, by]));
+            e.finish()
+        }
+        HistoryEntry::ApprovalRequestWithdrawn { id, by, .. } => {
+            let mut e = Encoder::new("caelumora.history-approval-request-withdrawn.v1");
+            e.opt_digest(previous);
+            e.json(&serde_json::json!([id, by]));
+            e.finish()
+        }
+        HistoryEntry::QuestionRequested { request, by, .. } => {
+            let mut e = Encoder::new("caelumora.history-question-requested.v1");
+            e.opt_digest(previous);
+            e.json(&serde_json::json!([request, by]));
+            e.finish()
+        }
+        HistoryEntry::QuestionClosed { id, shown_to, by, .. } => {
+            let mut e = Encoder::new("caelumora.history-question-closed.v1");
+            e.opt_digest(previous);
+            e.json(&serde_json::json!([id, shown_to, by]));
             e.finish()
         }
         HistoryEntry::ActivityFinished { turn_id, actor, activity, output, .. } => {

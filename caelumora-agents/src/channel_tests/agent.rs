@@ -3,7 +3,6 @@
 
 use super::*;
 use anyhow::Result;
-use caelumora_model::chain::Position;
 use caelumora_model::agent::{AgentChannelState, AgentId, HearsDuringTurn, HearsFrom, RetryRefused};
 use caelumora_model::approval::{ApprovalRequest, ApprovalResponse};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -303,6 +302,101 @@ async fn what_a_user_says_during_a_turn_is_answered_after_it() {
     let heard = |call: &[String], text: &str| call.iter().any(|c| c.contains(text));
     assert!(heard(&seen[0], "hello") && !heard(&seen[0], "and this too"), "the running turn does not see it");
     assert!(heard(&seen[1], "and this too"), "the next one does");
+    running.abort();
+}
+
+/// Issue 223: an agent whose turn outlasts more than its inbox holds - two
+/// hundred messages, a modification of one of them, a command and a message
+/// after it - hears all of it once its turn is over, in order and as it
+/// stands, and carries the command out where it came.
+#[tokio::test]
+async fn an_agent_whose_turn_outlasts_its_inbox_hears_all_of_it_afterwards() {
+    use caelumora_model::component::ComponentDescriptor;
+    const SAID: usize = 200;
+    let model = Arc::new(Gated::saying(&["first", "second"], 0));
+    let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("marking", "test_marking")] };
+    // What the channel takes in is not watched: more than a watcher holds.
+    let Stuck { channel, context, agent, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), components).await;
+    asked(&model, 1).await;
+
+    let alice = channel.user_actor(alice_of(&context)).unwrap();
+    for n in 0..SAID {
+        alice.send_message(format!("message {n}"), None).await.expect("taken during a turn");
+    }
+    // Read from the store: the channel holds a window of its history alone.
+    let last = format!("message {}", SAID - 1);
+    let first = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let said = channel.visible_messages(ActorId::User(alice_of(&context))).await;
+            if said.iter().any(|m| m.content.as_deref() == Some(last.as_str())) {
+                break said.into_iter().find(|m| m.content.as_deref() == Some("message 0")).expect("said first");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("all of it is said in the channel");
+    alice.modify_message(first.id, "message 0, corrected".to_string(), None).await.expect("hers to modify");
+    alice.execute_command("mark", "@helper during").await.expect("sent to the agent");
+    alice.send_message("after the command".to_string(), None).await.expect("said");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !channel.visible_messages(ActorId::User(alice_of(&context))).await.iter().any(|m| m.content.as_deref() == Some("after the command")) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("all of it is in the channel before the turn ends");
+    model.gate.add_permits(2);
+
+    let answers = |state: &AgentChannelState| state.transcript.messages().into_iter().filter(|m| m.role == MessageRole::Assistant).filter_map(|m| m.content).collect::<Vec<_>>();
+    let state = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let state = channel.stored_agent_channel_state(agent).await.unwrap();
+            if state.turn.is_none() && answers(&state).len() == 2 {
+                break state;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("the agent answers twice");
+    assert_eq!(answers(&state), ["first", "second"], "the turn ends as it began, and one turn answers all of it");
+    let heard: Vec<String> = state.transcript.messages().into_iter().filter(|m| m.role == MessageRole::User).filter_map(|m| m.content).collect();
+    let mut expected: Vec<String> = vec!["hello".to_string(), "message 0, corrected".to_string()];
+    expected.extend((1..SAID).map(|n| format!("message {n}")));
+    expected.push("after the command".to_string());
+    assert_eq!(heard, expected, "all of it, once, in order, as it stands");
+    assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["marked during"], "the command carried out");
+    let seen = model.seen.lock().unwrap().clone();
+    assert!(seen[1].iter().any(|c| c.contains("after the command")), "the next turn is given all of it");
+    running.abort();
+}
+
+/// Issue 385: a channel that stops while an agent is in its turn, and runs
+/// again: what was delivered to the agent and not taken in - a message, a
+/// request to answer it, a change of what was said - is delivered again from
+/// the history, and taken in once; what it took in and stored is not
+/// delivered again.
+#[tokio::test]
+async fn what_an_agent_was_delivered_and_did_not_store_before_a_restart_is_delivered_again_once() {
+    let (Stuck { channel, context, agent, running, .. }, model) = asking_a_gated_model(&["never given", "Answered.", "Again."]).await;
+    let alice = channel.user_actor(alice_of(&context)).unwrap();
+    let hello = channel.whole_history().await.into_iter().find(|m| m.content.as_deref() == Some("hello")).expect("said");
+    alice.send_message("and this too".to_string(), None).await.expect("taken during a turn");
+    alice.modify_message(hello.id, "hello, corrected".to_string(), None).await.expect("hers to modify");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while channel.message_of(hello.id).await.and_then(|m| m.content).as_deref() != Some("hello, corrected") {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("the change is recorded");
+
+    stop_and_wait(&channel, running).await;
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert!(stored.transcript.messages().iter().all(|m| m.content.as_deref() != Some("and this too")), "not taken in before the stop");
+
+    let (_restarted, mut events, running) = run_again(&channel).await;
+    asked(&model, 2).await;
+    model.gate.add_permits(2);
+    let said = |messages: Vec<Message>| messages.iter().filter_map(|m| m.content.clone()).collect::<Vec<_>>();
+    assert_eq!(said(answered(&mut events, agent).await), ["Answered."], "the turn resumed");
+    assert_eq!(said(answered(&mut events, agent).await), ["Again."], "and what it was delivered asks it again");
+    let state = channel.stored_agent_channel_state(agent).await.unwrap();
+    let heard: Vec<String> = state.transcript.messages().into_iter().filter(|m| m.role == MessageRole::User).filter_map(|m| m.content).collect();
+    assert_eq!(heard, ["hello, corrected", "and this too"], "each once, as it stands");
     running.abort();
 }
 
@@ -1605,7 +1699,7 @@ async fn a_removed_agent_gives_its_turn_up_says_so_and_leaves_an_idle_state_behi
 }
 
 #[tokio::test]
-async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_the_tool_traffic() {
+async fn an_agent_that_starts_hears_another_agents_answer_as_its_words_without_the_tool_traffic() {
     use caelumora_model::message::MessageId;
     use caelumora_model::tool::{ToolCall, ToolCallResult, ToolVisibility};
     let (channel, _, agent, _) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default()).await;
@@ -1615,12 +1709,10 @@ async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_th
     // Another agent's answer, as the channel's history keeps it.
     let answer = Message { id: MessageId::new(), sender_id: other, sender_name: "hermes".to_string(), role: MessageRole::Assistant, content: Some("Let me check.".to_string()), tool_calls: vec![call], ..Message::new(Classification::CHANNEL_DEFAULT) };
     let tool = Message { id: MessageId::new(), sender_id: other, role: MessageRole::Tool, content: Some("done".to_string()), tool_results: vec![result], ..Message::new(Classification::CHANNEL_DEFAULT) };
-    let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
 
     channel.record_said(vec![answer.clone(), tool.clone()]).await;
-    actor.catch_up(Position::START..Position::MAX).await.unwrap();
+    let state = channel.run_until(agent, |state| state.last_message == Some(answer.id)).await;
 
-    let state = channel.stored_agent_channel_state(agent).await.unwrap();
     let heard = state.transcript.messages();
     assert_eq!(heard.len(), 1, "nothing of the tool message: {heard:?}");
     assert_eq!((heard[0].id, heard[0].role, heard[0].content.as_deref()), (answer.id, MessageRole::User, Some("Let me check.")), "the other's words, as another's");
@@ -1630,7 +1722,7 @@ async fn an_agent_that_joins_hears_another_agents_answer_as_its_words_without_th
 }
 
 #[tokio::test]
-async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
+async fn an_agent_that_starts_takes_in_what_it_missed_as_what_it_hears() {
     use caelumora_model::message::MessageId;
     let components = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("filter", "test_no_secrets")] };
     let (channel, context, agent, _) = agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), components).await;
@@ -1638,13 +1730,12 @@ async fn an_agent_that_joins_takes_in_what_it_missed_as_what_it_hears() {
         id: MessageId::new(), role: MessageRole::User, sender_id: context.initiator_id, content: Some(text.to_string()),
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
-    let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
+    let secret = said("the secret is 42");
 
-    channel.record_said(vec![said("hello"), said("the secret is 42")]).await;
-    actor.catch_up(Position::START..Position::MAX).await.unwrap();
+    channel.record_said(vec![said("hello"), secret.clone()]).await;
+    let state = channel.run_until(agent, |state| state.last_message == Some(secret.id)).await;
 
     let contents = |messages: Vec<Message>| messages.into_iter().filter_map(|m| m.content).collect::<Vec<_>>();
-    let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert_eq!(contents(channel.visible_messages(ActorId::Agent(agent)).await), ["hello", "the secret is 42"], "the channel's history holds all it missed, for it");
     assert_eq!(contents(state.transcript.messages()), ["hello"], "its transcript what passed its processors");
 }

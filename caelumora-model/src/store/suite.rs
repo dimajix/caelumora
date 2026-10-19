@@ -20,7 +20,9 @@ use crate::session::{Session, SessionId};
 use crate::store::{ComponentStore, EntityKind, EntityStore, EntityStores, Journaled, NoEntity, StateStore, StoreError, Stored};
 use crate::store::history::HistoryStore;
 use crate::store::transcript::TranscriptStore;
-use crate::actor::EventContext;
+use crate::actor::{ActorEvent, Envelope, EventContext};
+use crate::history::History;
+use crate::work::TurnId;
 use crate::context::ModelProfile;
 use crate::tool::{ToolCall, ToolSet, ToolVisibility};
 use std::collections::BTreeMap;
@@ -779,7 +781,7 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     let (user, other, stranger) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()), ActorId::User(UserId::new()));
     let speaker = ActorId::Agent(agent);
     let hidden = ToolCall { id: Some("1".to_string()), function_name: "look".to_string(), arguments: serde_json::json!({}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
-    let answer = Message { sender_id: speaker, role: MessageRole::Assistant, content: Some("found it".to_string()), tool_calls: vec![hidden], ..make_message(id(602)) };
+    let answer = Message { sender_id: speaker, role: MessageRole::Assistant, content: Some("found it".to_string()), tool_calls: vec![hidden.clone()], ..make_message(id(602)) };
     let mut more = states.get_channel_state(channel).await.expect("get");
     for member in [user, other] {
         more.history.enter(Recorded::new(HistoryEntry::HistoryShared { participant: member, from: Position::new(0), by: speaker, by_name: String::new(), at: Utc::now() }, ActorId::System, Audience::Everybody));
@@ -803,7 +805,38 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     // Newest first, what they see: the answer, their join and share, the other's join, 601.
     assert_eq!(last(histories.page(key, &Reader::Participant(other), Position::START, None, 5, None).await.unwrap()), [id(601), id(602)], "a page is filled with what they may see");
     let seen = histories.entries(key, &Reader::Participant(other), Position::new(600)..Position::MAX).await.unwrap();
-    assert_eq!(seen.iter().filter_map(|node| node.entry.said()).map(|m| m.id).collect::<Vec<_>>(), [id(601), id(602)], "and so is the chain");
+    assert_eq!(seen.iter().filter_map(|node| node.entry.entry.said()).map(|m| m.id).collect::<Vec<_>>(), [id(601), id(602)], "and so is the chain");
+
+    // Issue 223: what was recorded of an envelope is read with its head, and
+    // the answer of a turn from the messages said before its end - those of
+    // the turn that are not internal, as the reader may see them, back to
+    // the turn before, also over more than a segment of the JSON store.
+    let (earlier, turn) = (TurnId::new(), TurnId::new());
+    let by_speaker = |n: u128, turn_id: TurnId, internal: bool| Message { sender_id: speaker, role: MessageRole::Assistant, content: Some(format!("{n}")), turn_id: Some(turn_id), internal, tool_calls: vec![hidden.clone()], ..make_message(id(n)) };
+    let sent = |event: ActorEvent| Envelope::new(SecurityContext::default(), EventContext { sender_id: speaker, initiator_id: user, agent_hops: 2, ..EventContext::default() }, event);
+    let mut turns = states.get_channel_state(channel).await.expect("get");
+    let record = |history: &mut History, event: ActorEvent| assert!(history.enter(Recorded::of(&sent(event), speaker, Audience::Everybody).expect("recorded")));
+    let first = turns.history.end();
+    record(&mut turns.history, ActorEvent::CompleteMessageGenerated(by_speaker(700, earlier, false)));
+    record(&mut turns.history, ActorEvent::TurnFinished { turn_id: earlier, messages: Vec::new() });
+    record(&mut turns.history, ActorEvent::CompleteMessageGenerated(by_speaker(701, turn, false)));
+    record(&mut turns.history, ActorEvent::IntermediateMessageGenerated(by_speaker(702, turn, true)));
+    for n in 0..300 {
+        turns.history.push(Message { sender_id: user, ..make_message(id(800 + n)) });
+    }
+    record(&mut turns.history, ActorEvent::CompleteMessageGenerated(by_speaker(703, turn, false)));
+    let ended = turns.history.end();
+    record(&mut turns.history, ActorEvent::TurnFinished { turn_id: turn, messages: Vec::new() });
+    states.put_channel_state(channel, &mut turns).await.expect("put");
+    let head = histories.entries(key, &Reader::Participant(user), first..first.next()).await.unwrap();
+    assert_eq!(head.first().map(|node| (node.entry.context.initiator_id, node.entry.context.agent_hops)), Some((user, 2)), "with the context it came in");
+    let answer = histories.answer(key, &Reader::Participant(user), ended).await.unwrap();
+    assert_eq!(answer.iter().map(|m| (m.id, m.tool_calls.len())).collect::<Vec<_>>(), [(id(701), 0), (id(703), 0)], "the turn's, not internal, as published");
+    let of_sender = histories.answer(key, &Reader::Participant(speaker), ended).await.unwrap();
+    assert_eq!(of_sender.iter().map(|m| m.tool_calls.len()).collect::<Vec<_>>(), [1, 1], "its sender reads it in full");
+    assert_eq!(histories.answer(key, &Reader::Participant(user), first.next()).await.unwrap().iter().map(|m| m.id).collect::<Vec<_>>(), [id(700)], "the turn before");
+    assert!(histories.answer(key, &Reader::Participant(user), first).await.unwrap().is_empty(), "no turn ends there");
+    assert!(histories.answer(key, &Reader::Participant(user), Position::new(100_000)).await.unwrap().is_empty(), "nothing there");
 
     states.delete_channel_state(channel).await.expect("delete");
     assert!(histories.page(key, &Reader::Channel, Position::START, None, 10, None).await.unwrap().items.is_empty(), "the channel's history is gone with its state");

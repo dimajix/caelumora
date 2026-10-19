@@ -1,5 +1,6 @@
 //! The built-in `/help` command (issue 28).
 
+use crate::actor::Actor;
 use crate::command::{CommandContext, CommandError, CommandResult, ProvidesCommands, ChannelCommandProvider};
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use async_trait::async_trait;

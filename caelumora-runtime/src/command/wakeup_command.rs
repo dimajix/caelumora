@@ -1,5 +1,6 @@
 //! The built-in `/wakeup` command (issue 28).
 
+use crate::actor::Actor;
 use crate::command::{named_participant, names, CommandContext, CommandError, CommandResult, ProvidesCommands, ChannelCommandProvider};
 use crate::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use async_trait::async_trait;

@@ -16,8 +16,8 @@ use crate::actor::ActorId;
 use crate::chain::{Node, Position};
 use crate::channel::ChannelId;
 use crate::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
-use crate::message::MessageId;
-use crate::store::history::{page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems};
+use crate::message::{Message, MessageId};
+use crate::store::history::{answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems};
 use crate::store::query::Filter;
 use crate::store::{StoreError, StoreResult};
 use async_trait::async_trait;
@@ -81,7 +81,8 @@ impl<'a> ItemSegments<'a> {
     /// Takes `node`, the next entry of a chain that ends at `end`, in: an
     /// item into its segment, a change into the segment that holds the item
     /// it changes - found from the end backwards -, a fitting into every
-    /// segment.
+    /// segment; what is neither, recorded to be delivered alone (issue 223),
+    /// nowhere.
     async fn take(&mut self, node: &Node<Recorded>, end: Position) -> StoreResult<()> {
         if node.entry.entry.is_item() {
             let from = segment_of(node.seq);
@@ -90,6 +91,9 @@ impl<'a> ItemSegments<'a> {
             return Ok(());
         }
         let fitting = matches!(node.entry.entry, HistoryEntry::Fitted { .. });
+        if !fitting && node.entry.entry.changed().is_none() {
+            return Ok(());
+        }
         let mut segment = end.previous().map(segment_of);
         while let Some(from) = segment {
             if self.segment(from).await?.amend(&node.entry.entry) {
@@ -215,12 +219,35 @@ impl HistoryStore for JsonFileStore {
         Ok(None)
     }
 
-    async fn entries(&self, channel: ChannelId, reader: &Reader, range: Range<Position>) -> StoreResult<Vec<Node<HistoryEntry>>> {
+    async fn entries(&self, channel: ChannelId, reader: &Reader, range: Range<Position>) -> StoreResult<Vec<Node<Recorded>>> {
         let dir = self.history_dir(channel);
         let head = read_head(&dir).await?;
         let chain: Vec<Node<Recorded>> = read_chain(&dir, range.start, head.end.min(range.end)).await?;
         let ranges = read_memberships(&dir).await?.of_reader(reader);
         Ok(seen_nodes(reader, &ranges, &chain))
+    }
+
+    /// Reads the chain backwards a segment at a time, until a segment holds
+    /// the end of the turn before.
+    async fn answer(&self, channel: ChannelId, reader: &Reader, end: Position) -> StoreResult<Vec<Message>> {
+        let dir = self.history_dir(channel);
+        let Some(ended) = read_chain::<Recorded>(&dir, end, end.next()).await?.pop() else { return Ok(Vec::new()) };
+        let HistoryEntry::TurnFinished { actor, .. } = ended.entry.entry else { return Ok(Vec::new()) };
+        let mut older: Vec<Node<Recorded>> = Vec::new();
+        let mut before = end;
+        while before > Position::START {
+            let from = Position::new(before.get().saturating_sub(SEGMENT));
+            let mut read: Vec<Node<Recorded>> = read_chain(&dir, from, before).await?;
+            let reached = read.iter().any(|node| node.entry.entry.ends_turn_of(actor));
+            read.append(&mut older);
+            older = read;
+            if reached {
+                break;
+            }
+            before = from;
+        }
+        let ranges = read_memberships(&dir).await?.of_reader(reader);
+        Ok(answer_of(&ended.entry.entry, older.iter().rev(), reader, &ranges))
     }
 
     async fn memberships(&self, channel: ChannelId, actor: ActorId) -> StoreResult<Vec<Range<Position>>> {

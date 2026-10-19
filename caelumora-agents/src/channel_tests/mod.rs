@@ -249,10 +249,10 @@ impl PerceiveInProcessor for NoSecrets {}
 /// many entries its transcript was given, on every branch - also an
 /// external agent's, which begins anew with every call.
 #[derive(Debug)]
-struct Heard;
+struct HeardCount;
 
 #[async_trait::async_trait]
-impl PromptProvider for Heard {
+impl PromptProvider for HeardCount {
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         Ok(Prompt::from(format!("[Heard]\n{}", situation.agent_channel_state().transcript.end())))
     }

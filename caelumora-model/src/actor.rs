@@ -1,10 +1,10 @@
 use crate::chain::Position;
 use crate::agent::{AgentId, RetryRefused};
-use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApproverId};
+use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApprovalStatus, ApproverId};
 use crate::channel::ChannelId;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
-use crate::history::HistoryEntry;
+use crate::history::{HistoryEntry, Recipients};
 use crate::message::{Message, MessageId};
 use crate::question::{QuestionId, QuestionRequest, Response};
 use crate::security::SecurityContext;
@@ -465,6 +465,30 @@ impl ActorEvent {
         }
     }
 
+    /// Whether it may be lost on its way to an actor whose inbox has no
+    /// room (issue 223): what streams, where an actor stands, the start of
+    /// what ends with an event the history records, and what only asks to
+    /// be woken or asks for a response, which the channel records as the
+    /// request it becomes. What the history records is delivered from there
+    /// instead; the answers to questions, which it never records (issue
+    /// 165), are not lost.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_) | ActorEvent::StateChanged(_)
+            | ActorEvent::ResponseStarted { .. } | ActorEvent::CommandStarted { .. } | ActorEvent::ActivityStarted { .. }
+            | ActorEvent::PlanStepFinished { .. } | ActorEvent::WakeupRequested | ActorEvent::NudgeRequested { .. } => true,
+            ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalGranted(_) | ActorEvent::ApprovalDenied(_) | ActorEvent::ApprovalTimedOut(_)
+            | ActorEvent::ApprovalRequestWithdrawn { .. } | ActorEvent::QuestionRequested(_) | ActorEvent::QuestionAnswered { .. }
+            | ActorEvent::QuestionDeclined { .. } | ActorEvent::QuestionClosed { .. } | ActorEvent::ResponseRequested | ActorEvent::CompleteMessageGenerated(_)
+            | ActorEvent::TurnFinished { .. } | ActorEvent::IntermediateMessageGenerated(_) | ActorEvent::PlanStepStarted { .. } | ActorEvent::TurnGivenUp { .. }
+            | ActorEvent::CommandRequested { .. } | ActorEvent::CommandExecuted { .. } | ActorEvent::CommandFailed { .. } | ActorEvent::ActivityFinished { .. }
+            | ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } | ActorEvent::HistoryShared { .. } | ActorEvent::MessageModified(_)
+            | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. } | ActorEvent::RetryAccepted { .. }
+            | ActorEvent::RetryRejected { .. } | ActorEvent::ChainCutOff { .. } | ActorEvent::MessageRejected { .. } | ActorEvent::MessageGiven { .. }
+            | ActorEvent::ContextCompacted { .. } => false,
+        }
+    }
+
     /// The message the event is or is about, if any: a message said, or one
     /// it changes, takes back, reclassifies or asks to be answered again -
     /// what a rejection of it names (`MessageRejected`).
@@ -690,12 +714,14 @@ impl Envelope {
     /// joined or left, by its sender (issue 408); a change of a message
     /// (issue 234); what an agent was given and a compaction of its context;
     /// the answer to a request to answer again, a chain cut off, a rejection
-    /// and a request to respond (issue 417). Every mark in the name of its
-    /// sender, when it was sent. `None` for what the history does not
-    /// record: what streams, a beginning whose end is recorded, where an
-    /// actor stands, what asks for an answer to be redone, a command or a
-    /// nudge asked for - recorded as what comes of them -, approvals and
-    /// questions.
+    /// and a request to respond (issue 417); what an actor's state depends
+    /// on receiving, to be delivered again from the history (issue 223) - a
+    /// command and a request to answer again asked of an agent, approvals,
+    /// questions asked and closed. Every mark in the name of its sender,
+    /// when it was sent. `None` for what the history does not record: what
+    /// streams, a beginning whose end is recorded, where an actor stands, a
+    /// nudge - recorded as the request it becomes -, and the answers to
+    /// questions, which go to the tool alone (issue 165).
     pub fn entry(&self) -> Option<HistoryEntry> {
         let actor = self.context.sender_id;
         let at = self.timestamp;
@@ -734,12 +760,21 @@ impl Envelope {
             ActorEvent::MessageModified(modified) => HistoryEntry::Modified { message: modified.clone() },
             ActorEvent::MessageRevoked { message, at } => HistoryEntry::Revoked { message: *message, at: *at },
             ActorEvent::MessageReclassified { message, classification } => HistoryEntry::Reclassified { message: *message, classification: classification.clone() },
-            ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalGranted(_) | ActorEvent::ApprovalDenied(_) | ActorEvent::ApprovalTimedOut(_)
-            | ActorEvent::ApprovalRequestWithdrawn { .. } | ActorEvent::QuestionRequested(_) | ActorEvent::QuestionAnswered { .. }
-            | ActorEvent::QuestionDeclined { .. } | ActorEvent::QuestionClosed { .. } | ActorEvent::ResponseStarted { .. }
+            ActorEvent::CommandRequested { command, args, agent } => HistoryEntry::CommandRequested { agent: *agent, command: command.clone(), args: args.clone(), by: actor, at },
+            ActorEvent::RetryRequested { target, author } => HistoryEntry::RetryRequested { target: *target, author: *author, by: actor, at },
+            ActorEvent::ApprovalRequested(request) => HistoryEntry::ApprovalRequested { request: request.clone(), by: actor, at },
+            ActorEvent::ApprovalGranted(response) => HistoryEntry::ApprovalDecided { response: response.clone(), status: ApprovalStatus::Approved, by: actor, at },
+            ActorEvent::ApprovalDenied(response) => HistoryEntry::ApprovalDecided { response: response.clone(), status: ApprovalStatus::Denied, by: actor, at },
+            ActorEvent::ApprovalTimedOut(response) => HistoryEntry::ApprovalDecided { response: response.clone(), status: ApprovalStatus::Timeout, by: actor, at },
+            ActorEvent::ApprovalRequestWithdrawn { id } => HistoryEntry::ApprovalRequestWithdrawn { id: *id, by: actor, at },
+            ActorEvent::QuestionRequested(request) => HistoryEntry::QuestionRequested { request: request.clone(), by: actor, at },
+            ActorEvent::QuestionClosed { id, shown_to } => HistoryEntry::QuestionClosed { id: *id, shown_to: shown_to.clone(), by: actor, at },
+            // The answers to questions go to the tool alone, never into a
+            // history (issue 165).
+            ActorEvent::QuestionAnswered { .. } | ActorEvent::QuestionDeclined { .. } | ActorEvent::ResponseStarted { .. }
             | ActorEvent::StateChanged(_) | ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_) | ActorEvent::WakeupRequested
-            | ActorEvent::PlanStepFinished { .. } | ActorEvent::CommandRequested { .. } | ActorEvent::NudgeRequested { .. }
-            | ActorEvent::CommandStarted { .. } | ActorEvent::ActivityStarted { .. } | ActorEvent::RetryRequested { .. } => return None,
+            | ActorEvent::PlanStepFinished { .. } | ActorEvent::NudgeRequested { .. }
+            | ActorEvent::CommandStarted { .. } | ActorEvent::ActivityStarted { .. } => return None,
         })
     }
 
@@ -752,60 +787,30 @@ impl Envelope {
         self.event.clone().published().map(|event| Envelope { event, ..self.clone() })
     }
 
-    /// Whether the envelope concerns `participant` by the rule every channel
-    /// delivers by (issue 418): whom it goes to unless a moderator decides
-    /// otherwise. What an agent read and did to its context concerns
-    /// nobody. A message to every user, and to every agent if there is
-    /// something to hear in it (`Message::is_heard`, issues 224, 258); a
-    /// change of a message to every user and agent (issue 234); who joined
-    /// or left to every user and agent (issue 408), the part of the history
-    /// shared with a newcomer to the newcomer alone (issue 417); how an answer comes
-    /// about, how a turn ended, where an agent stands, what it does of its
-    /// own accord and an answer to a retry to the users (issues 220, 243,
-    /// 284); a command, a request to answer again and an answer to questions
-    /// to the agent they name, what a command answers to whom it names, or
-    /// to every user (issues 165, 234, 269, 299); an approval through the
-    /// approvers - an agent's request to them, theirs to the users, a user's
-    /// answer to them, their decision to the users and the agent that asked
-    /// (issues 81, 148); an agent's questions to the users, to those asked
-    /// alone if they are sensitive (issue 165). Nothing that only asks - a
-    /// request to respond, a nudge, a wakeup - nor what the channel or the
-    /// moderator say of their own.
+    /// Whom the envelope goes to by the rule every channel delivers by
+    /// (issue 418), unless a moderator decides otherwise. What the history
+    /// records goes to whom its entry goes to (`HistoryEntry::recipients`,
+    /// issue 223): one rule for what is delivered and what is read later.
+    /// Of the rest, how an answer comes about, where an agent stands and the
+    /// start of what it does of its own accord go to the users (issues 220,
+    /// 243, 284); the start of a command to whom asked for it (issue 299);
+    /// a user's answers to questions to the agent that asked them (issue
+    /// 165). Nothing that only asks - a nudge, a wakeup.
     ///
     /// Whether it goes back to its sender is the channel's to decide: only
     /// what it announces in someone's name does.
-    pub fn concerns(&self, participant: ActorId) -> bool {
+    pub fn recipients(&self) -> Recipients {
+        if let Some(entry) = self.entry() {
+            return entry.recipients();
+        }
         let sender = self.context.sender_id;
-        let user = matches!(participant, ActorId::User(_));
-        let agent = matches!(participant, ActorId::Agent(_));
-        let approver = matches!(participant, ActorId::Approver(_));
         match &self.event {
-            ActorEvent::CompleteMessageGenerated(message) => user || (agent && message.is_heard()),
-            ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. }
-            | ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } => user || agent,
-            ActorEvent::HistoryShared { participant: shared_with, .. } => participant == *shared_with,
-            ActorEvent::TurnFinished { .. } | ActorEvent::TurnGivenUp { .. } | ActorEvent::ResponseStarted { .. } | ActorEvent::StateChanged(_)
-            | ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_) | ActorEvent::IntermediateMessageGenerated(_)
-            | ActorEvent::PlanStepStarted { .. } | ActorEvent::PlanStepFinished { .. } | ActorEvent::ActivityStarted { .. } | ActorEvent::ActivityFinished { .. }
-            | ActorEvent::RetryAccepted { .. } | ActorEvent::RetryRejected { .. } | ActorEvent::CommandExecuted { to: None, .. } => user,
-            ActorEvent::CommandRequested { agent: named, .. } | ActorEvent::RetryRequested { author: named, .. } => agent && participant == *named,
-            ActorEvent::CommandStarted { to, .. } | ActorEvent::CommandExecuted { to: Some(to), .. } | ActorEvent::CommandFailed { to, .. } => user && participant == *to,
-            ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalRequestWithdrawn { .. } => match sender {
-                ActorId::Agent(_) => approver,
-                ActorId::Approver(_) => user,
-                _ => false,
-            },
-            ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) | ActorEvent::ApprovalTimedOut(response) => match sender {
-                // A timeout is the approver's alone.
-                ActorId::User(_) => approver && !matches!(self.event, ActorEvent::ApprovalTimedOut(_)),
-                ActorId::Approver(_) => user || participant == ActorId::Agent(response.agent_id),
-                _ => false,
-            },
-            ActorEvent::QuestionRequested(request) => sender.as_agent_id().is_some() && user && request.shown_to().is_none_or(|only| only.contains(&participant)),
-            ActorEvent::QuestionClosed { shown_to, .. } => sender.as_agent_id().is_some() && user && shown_to.as_ref().is_none_or(|only| only.contains(&participant)),
-            ActorEvent::QuestionAnswered { agent_id, .. } | ActorEvent::QuestionDeclined { agent_id, .. } => sender.as_user_id().is_some() && participant == ActorId::Agent(*agent_id),
-            ActorEvent::ResponseRequested | ActorEvent::NudgeRequested { .. } | ActorEvent::WakeupRequested | ActorEvent::ChainCutOff { .. } | ActorEvent::MessageRejected { .. }
-            | ActorEvent::MessageGiven { .. } | ActorEvent::ContextCompacted { .. } => false,
+            ActorEvent::ResponseStarted { .. } | ActorEvent::StateChanged(_) | ActorEvent::PartialMessageGenerated(_) | ActorEvent::IntermediatePartialGenerated(_)
+            | ActorEvent::PlanStepFinished { .. } | ActorEvent::ActivityStarted { .. } => Recipients::members(false),
+            ActorEvent::CommandStarted { to, .. } => Recipients::users(Some(vec![*to])),
+            ActorEvent::QuestionAnswered { agent_id, .. } | ActorEvent::QuestionDeclined { agent_id, .. } if sender.as_user_id().is_some() => Recipients::only(vec![ActorId::Agent(*agent_id)]),
+            // What only asks, and what is sent in a name it may not be.
+            _ => Recipients::NOBODY,
         }
     }
 
@@ -1113,10 +1118,11 @@ mod tests {
             Self { agents: [agent(), agent()], users: [user(), user()], approver: ActorId::Approver(ApproverId::new()) }
         }
 
-        /// Whom of them `event` of `sender` concerns (`Envelope::concerns`).
+        /// Whom of them `event` of `sender` goes to (`Envelope::recipients`).
         fn concerned(&self, sender: ActorId, event: ActorEvent) -> HashSet<ActorId> {
             let envelope = Envelope::new(SecurityContext::default(), EventContext { sender_id: sender, ..EventContext::default() }, event);
-            self.agents.iter().chain(&self.users).chain([&self.approver]).copied().filter(|id| envelope.concerns(*id)).collect()
+            let recipients = envelope.recipients();
+            self.agents.iter().chain(&self.users).chain([&self.approver]).copied().filter(|id| recipients.names(*id)).collect()
         }
 
         fn users_and_agents(&self) -> HashSet<ActorId> {

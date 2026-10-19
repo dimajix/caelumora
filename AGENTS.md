@@ -181,10 +181,12 @@ taken where everybody takes them, and is published before anyone else can take i
 Changing an existing issue - its status, its history, a decision recorded - belongs to the work on
 it and happens on that work's branch.
 
-Do not commit on your own: leave the changes in the working tree and say what they are, so that the
-maintainer can review them first. Commit only when explicitly asked to - and then only what was
-reviewed. The same holds for pushing, except for a new issue, which is pushed as soon as it is
-committed (above).
+Work of several steps - a plan whose steps an issue records - is committed step by step: once a
+step is done and every test passes, as does `cargo clippy --workspace --all-targets`, commit it on
+the work's branch, a commit per step, so that each can be reviewed on its own. Apart from that, do
+not commit on your own: leave the changes in the working tree and say what they are, so that the
+maintainer can review them first, and commit only when explicitly asked to. Do not push unless
+asked to, except a new issue, which is pushed as soon as it is committed (above).
 
 When the work is done, ask whether the branch should be merged into `main`, and merge only after
 the maintainer agreed. Before merging, update `main` from the remote repository (`git fetch`, then

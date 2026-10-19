@@ -98,6 +98,9 @@ impl<M> HistoryItemResponse<M> {
             // no client shows it (issue 417).
             HistoryEntry::HistoryShared { .. } => None,
             HistoryEntry::Reclassified { .. } | HistoryEntry::Modified { .. } | HistoryEntry::Revoked { .. } | HistoryEntry::Fitted { .. } => None,
+            // Recorded to be delivered again, never in a page (issue 223).
+            HistoryEntry::CommandRequested { .. } | HistoryEntry::RetryRequested { .. } | HistoryEntry::ApprovalRequested { .. } | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalRequestWithdrawn { .. } | HistoryEntry::QuestionRequested { .. } | HistoryEntry::QuestionClosed { .. } => None,
         }
     }
 }

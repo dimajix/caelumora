@@ -393,3 +393,7 @@ is tried personality by personality, with a small local model among them.
   `Work::may_see` of a message's classification - a question of the work's, on a
   classification rather than an envelope -; `Work::may_hear` is gone. The security suite tests
   both settings.
+- **2026-10-19** — Since [223](223-full-inbox-drops-events.md), the receiver keeps no buffer of its
+  own: what is not taken now stays where it is, in the inbox's queue or in the history behind it,
+  and `try_recv_if` looks at the next of both. Nothing is committed: where the agent stands is
+  written into its state as it takes in, and stored with what it took in.

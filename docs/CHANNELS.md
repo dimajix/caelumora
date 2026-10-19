@@ -509,11 +509,11 @@ none, the last n messages or the last n days (`HistoryAccess`). It is fixed at o
 in the history the participant's view starts at, so "the last three days" does not move day by day;
 to fix it, the history is read back from its end only as far as the grant reaches.
 
-As the newcomer's actor starts, the channel records what it was given - `HistoryShared`, with the
-position and who granted it - right before its `ParticipantJoined`, in the system's name and
-delivered to the newcomer alone: catching up is a delivery too, and the history says what every
+Before the newcomer's actor starts, the channel records what it was given - `HistoryShared`, with
+the position and who granted it - right before its `ParticipantJoined`, in the system's name and to
+the newcomer alone: what it reads of the history is a delivery too, and the history says what every
 participant received (issue 417). It is recorded only if it shares something, if the position lies
-before the join; a newcomer granted nothing, or a founder, is given what is said from its join on.
+before the join; a newcomer granted nothing is given what is said from its join on.
 When a participant leaves, its `ParticipantLeft` says from which position on the channel delivered
 nothing to it any more (`until`) - where it stopped, which may lie before the entry, since what the
 leaving actor still sends comes first (issue 262).
@@ -525,19 +525,19 @@ from the position shared with them, or else from their join, up to where deliver
 [MEMORY.md](MEMORY.md)) and for what a joining actor is given. A former participant reads what went
 to it while it took part, and nothing after.
 
-*   A **joining actor** is given the position where its view begins and takes in what was said
-    from there as what it hears, read from the store as what a newcomer is given
-    (`Reader::Newcomer`): an agent keeps what passes its perceive processors in its transcript.
-    Users keep nothing; a founder takes in nothing. It catches up in its own task, right before
-    it runs, up to the position where `run` opened its inbox as it started it: what was recorded
-    before is caught up with, everything from there on is delivered, and what arrives meanwhile
-    waits in its inbox. So nothing that the history says it was given escapes it, and nothing
-    comes twice (issue 423). A catch-up that fails is logged, and the actor runs without it.
-*   A **rejoining actor** takes in only what was said after the last message it took in, which an
-    agent's state remembers (`AgentChannelState::last_message`). The transcript is only ever
-    appended to, so older messages
-    that a wider grant makes visible would land after the agent's own later answers; the agent
-    reaches them through `read_history`, and what it keeps stays in the order things were said.
+*   A **joining actor** reads what it was given through its inbox (issue 223, see
+    [Actors and envelopes](#actors-and-envelopes)): the inbox opens behind, at where its view
+    begins, and reads the history on from there as the actor - a participant whose membership the
+    join just recorded -, then what is delivered from there on. An agent takes it in as what it
+    hears, and keeps what passes its perceive processors in its transcript; an actor that keeps
+    nothing - a user, the approver - opens at the end, and reads its own join alone. Nothing the
+    history says it was given escapes it, and nothing comes twice (issue 423): there is no catching
+    up beside the inbox.
+*   A **rejoining actor** opens where it stood, as its state stores it (`AgentChannelState::heard`),
+    or where its new view begins if that lies after. The transcript is only ever appended to, so
+    older messages that a wider grant makes visible would land after the agent's own later answers;
+    the agent reaches them through `read_history`, and what it keeps stays in the order things were
+    said.
 
 Notes stay visible to everyone in the channel: they are written on paper, not part of the
 conversation.
@@ -570,9 +570,12 @@ carries the participant's name as it was, so that it reads the same after a rena
 *   **Recorded where it happened.** The channel keeps it in its history
     (`HistoryEntry::ParticipantJoined`, `ParticipantLeft`, with who made it and when), among what
     was said, as it keeps the end of a turn.
-*   **A join** is announced as the newcomer's actor starts, after where its view of the history
-    begins was fixed: the newcomer hears it first, whatever it was granted of the history before -
-    right after `HistoryShared`, which records what it was granted, to it alone, if anything.
+*   **A join** is announced before the newcomer's actor starts, after where its view of the
+    history begins was fixed - right after `HistoryShared`, which records what it was granted, to
+    it alone, if anything -, so that it is recorded before the newcomer reads, which reads it after
+    what it was granted. A channel founded with its participants' joins recorded (issue 420) starts
+    its agents as after a restart: one that kept nothing yet reads the founding joins from the
+    history, as a founder joining live hears them.
 *   **A leave** is announced once the actor's task has ended, and at the latest before an actor
     starts under the same id. Until then the channel takes what the actor still sends; after it,
     nothing of the actor enters the channel. That is how a frontend ends what an actor aborted
@@ -683,13 +686,28 @@ An **actor** is anything that sends and receives events in a channel.
     code, not a boundary (see [SECURITY.md](SECURITY.md#operations-that-check-themselves)). What an
     agent's model saw is read through the views, not asked of its actor (see
     [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw)).
-*   **An actor's inbox** (`EventReceiver`) can wait for the next envelope of a kind, leaving the
-    others queued - as an agent waiting for approvals does - and acknowledges what was taken. Both
-    kinds of agent take an envelope together with everything queued behind it: every message heard
-    is taken in, in order, and only the last request is answered, once (see
-    [AGENT-TURN.md](AGENT-TURN.md#the-cognitive-cycle)). During a turn, an agent whose personality
-    hears then takes what it may hear only up to the first envelope that has to wait, which stays
-    where it is with everything behind it (see
+*   **An actor's inbox** (`channel::inbox`, issue 223) is a bounded queue of the envelopes the
+    channel delivers live, and behind it the channel's history, which it reads from wherever the
+    queue fell short. The channel opens it as the actor starts, at where the actor stands in the
+    history (`Heard`): its stored mark after a restart, where its view begins as it joins, the end
+    for an actor that keeps nothing. Opened before the end, or once its queue is full, the inbox is
+    *behind*: a recorded envelope is dropped - the history has it - and read from the history once
+    the queue is empty, as the actor, from where it stands, until nothing more is to read; then the
+    queue takes over again. An overflow, a restart and a join are one case. What is not recorded is
+    transient and may be lost while the inbox is behind (`ActorEvent::is_transient`) - streamed
+    chunks, where an actor stands, the start of what ends recorded -, except the answers to
+    questions, which the history never holds (issue 165) and the inbox queues regardless. A live
+    envelope carries the security context its sender set as it sent it; one read from the history
+    carries the recorded initiator and the sender's context as it is now (`Actor::security_context`,
+    see [PERMISSION-CHECKS.md](PERMISSION-CHECKS.md)) - less exact, and the fallback alone. The
+    actor's half (`EventReceiver`) takes from one sequence, queue then history, nothing twice: it
+    can wait for the next envelope of a kind, taking it ahead of the others, which stay where they
+    are - as an agent waiting for approvals does -, and says where the actor stands (`heard`),
+    which an agent stores with what it took in. Both kinds of agent take an envelope together with
+    everything there behind it: every message heard is taken in, in order, and only the last
+    request is answered, once (see [AGENT-TURN.md](AGENT-TURN.md#the-cognitive-cycle)). During a
+    turn, an agent whose personality hears then takes what it may hear only up to the first
+    envelope that has to wait, which stays where it is with everything behind it (see
     [AGENT-TURN.md](AGENT-TURN.md#hearing-during-a-turn)).
 *   **Which actor runs an agent** is its personality's `kind`: `internal` - the default - an
     `AgentActor`; `external` an `ExternalAgentActor`, for an agent that runs elsewhere and is
@@ -825,7 +843,8 @@ channels:
     kind: mentions_only_policy
 ```
 
-Every channel delivers by one rule, the channel's and not a moderator's (`Envelope::concerns`):
+Every channel delivers by one rule, the channel's and not a moderator's (`Envelope::recipients`),
+which for what the history records is the rule its entry is read by (`HistoryEntry::recipients`):
 
 *   every message said goes, as it was said, to every other participant: to the users always, to the
     agents if there is something to hear in it - each agent takes in its words itself;

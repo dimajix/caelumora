@@ -40,7 +40,7 @@ use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::transport::{EventReceiver, EventSender};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use caelumora_model::chain::Position;
+use caelumora_model::history::Heard;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::RetryRefused;
 use caelumora_model::type_map::TypeKey;
@@ -61,7 +61,6 @@ use futures::future::BoxFuture;
 use futures::stream::{BoxStream, SelectAll};
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
-use std::ops::Range;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn, Instrument};
@@ -850,10 +849,12 @@ impl Actor for ExternalAgentActor {
         self.body.visible_commands(issuer).await
     }
 
-    /// Takes in what it missed as what it hears (issues 190, 196, 206); the
-    /// remote agent is given it when it is next asked.
-    async fn catch_up(&self, missed: Range<Position>) -> Result<()> {
-        self.body.catch_up(missed).await
+    fn security_context(&self) -> SecurityContext {
+        self.body.security_context()
+    }
+
+    async fn heard(&self) -> Option<Heard> {
+        Some(self.body.state.lock().await.heard.clone())
     }
 
     async fn run(&self, mut rx: Box<dyn EventReceiver>, output: Box<dyn EventSender>) -> Result<()> {
@@ -880,7 +881,6 @@ impl Actor for ExternalAgentActor {
                         self.respond(&mut state, &request, &*output).instrument(span).await;
                         self.follow_open_tasks(&mut state, &mut followed, &mut attempted, &*output).await;
                     }
-                    rx.commit().await?;
                 }
                 Some((task, event)) = followed.next(), if !followed.is_empty() => {
                     self.on_followed(&mut state, task, event, &mut pending, &*output).await;

@@ -3,7 +3,6 @@
 
 use crate::plugin::AgentsPlugin;
 use super::*;
-use caelumora_model::chain::Position;
 use caelumora_model::value::name::Name;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::runtime::ChannelRuntime;
@@ -11,6 +10,8 @@ use crate::testing::test_registry;
 use caelumora_runtime::testing::TestRuntime;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
+use caelumora_model::chain::Position;
+use caelumora_model::history::Heard;
 use caelumora_model::channel::{Channel, HistoryAccess, moderation_components};
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId, Participant};
@@ -54,6 +55,18 @@ fn external_components() -> ComponentConfig {
 /// A channel of alice and an external agent with `components`, built but
 /// not running - with the agent's state in it `stored`, as a restart
 /// finds it.
+/// What an agent of a channel `external_channel` builds hears first: its
+/// own join, in the name of the channel's owner, nobody here - recorded as
+/// the channel was founded, and read from its history as the agent starts
+/// (issue 223), as a founder hears it live.
+const FOUNDED: &str = "Channel notice:  added you to the channel.";
+
+/// Where an agent stands in a channel `external_channel` builds once it
+/// took in the joins of its founding, alice's and its own (issue 223).
+fn after_founding() -> Heard {
+    Heard::at(Position::new(2))
+}
+
 async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: ComponentConfig, stored: impl FnOnce(AgentId) -> Option<AgentChannelState>) -> Result<(Arc<ChannelLoop>, SecurityContext, AgentId, UserId)> {
     use caelumora_model::agent::{Agent, Personality, PersonalityId, PersonalityKind};
     use caelumora_model::scope::Scope;
@@ -122,20 +135,22 @@ async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: Compon
     Ok((channel, context, agent_id, alice.id))
 }
 
-/// Registers `Heard` as the kind `test_heard`.
+/// Registers `HeardCount` as the kind `test_heard`.
 fn register_heard(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new("test_heard").provides::<dyn PromptProvider>(),
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(Heard));
+            facets.insert::<dyn PromptProvider>(Arc::new(HeardCount));
             Ok(facets)
         },
     );
 }
 
+/// Issue 223: an external agent that starts takes in what it missed from
+/// its channel's history, as what it hears - without what it said itself.
 #[tokio::test]
-async fn an_external_agent_that_joins_keeps_what_it_may_see_and_on_joining_again_what_it_missed() {
+async fn an_external_agent_that_starts_takes_in_what_it_missed_without_its_own() {
     use caelumora_model::message::{MessageId, MessageRole};
     let remote = Arc::new(ScriptedExternalAgent::default());
     let (channel, context, agent, _) = external_channel(remote, external_components(), |_| None).await.unwrap();
@@ -144,20 +159,12 @@ async fn an_external_agent_that_joins_keeps_what_it_may_see_and_on_joining_again
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
     let said = |text: &str| message(context.initiator_id, text);
-    let (one, two, three) = (said("one"), said("two"), said("three"));
-    let own = message(ActorId::Agent(agent), "mine");
-    let actor = channel.actor_of(ActorId::Agent(agent)).unwrap();
-    let kept = || async {
-        channel.stored_agent_channel_state(agent).await.unwrap().transcript.messages().into_iter().map(|m| m.content.unwrap()).collect::<Vec<_>>()
-    };
+    let three = said("three");
 
-    // After the joins of alice and the agent, one at 2 and two at 3.
-    channel.record_said(vec![one, two]).await;
-    actor.catch_up(Position::new(3)..Position::MAX).await.unwrap();
-    assert_eq!(kept().await, ["two"], "what it may see");
-    channel.record_said(vec![own, three]).await;
-    actor.catch_up(Position::START..Position::MAX).await.unwrap();
-    assert_eq!(kept().await, ["two", "three"], "what it missed, and nothing older nor its own");
+    channel.record_said(vec![said("one"), message(ActorId::Agent(agent), "mine"), said("two"), three.clone()]).await;
+    let state = channel.run_until(agent, |state| state.last_message == Some(three.id)).await;
+    let kept: Vec<_> = state.transcript.messages().into_iter().map(|m| m.content.unwrap()).collect();
+    assert_eq!(kept, ["one", "two", "three"], "what it missed, without its own");
 }
 
 #[tokio::test]
@@ -272,7 +279,8 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
     let sent = remote.sent.lock().unwrap().clone();
     let said = |text: &str| Said { sender: "alice".to_string(), text: text.to_string() };
     assert_eq!(sent[0].0, None, "the remote agent opens the conversation");
-    assert_eq!(sent[0].1.said, vec![said("@alice: hello")], "marked with its sender, as the component's profile says");
+    let founded = Said { sender: String::new(), text: FOUNDED.to_string() };
+    assert_eq!(sent[0].1.said, vec![founded, said("@alice: hello")], "marked with its sender, as the component's profile says");
     assert_eq!(sent[1].0, Some(conversation.clone()), "and keeps it");
     assert_eq!(sent[1].1.said, vec![said("@alice: How are you?")], "only what it has not heard, not its own answer");
 
@@ -288,7 +296,7 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
     assert_eq!(given, vec!["hello", "How are you?"], "what the remote agent was given, on whichever branch");
     assert!(state.transcript.messages().is_empty(), "all of it sent: nothing to give next");
     // The context of each answer is what was given in its call (issue 205).
-    assert_eq!(given_for(&channel, agent, &first[0]).await, ["@alice: hello"], "as it was given, marked");
+    assert_eq!(given_for(&channel, agent, &first[0]).await, [FOUNDED, "@alice: hello"], "as it was given, marked");
     assert_eq!(given_for(&channel, agent, &second[0]).await, ["@alice: How are you?"], "not what it was given before");
     running.abort();
 }
@@ -322,11 +330,12 @@ async fn an_agent_is_given_the_times_of_messages_in_its_sessions_time_zone_as_it
     let (hello, how) = (TimeZone::UTC.format(at("hello")), berlin.format(at("How are you?")));
     let sent = remote.sent.lock().unwrap().clone();
     let said = |text: String| Said { sender: "alice".to_string(), text };
-    assert_eq!(sent[0].1.said, vec![said(format!("@alice ({hello}): hello"))], "in UTC while the session names no time zone");
+    let founded = Said { sender: String::new(), text: FOUNDED.to_string() };
+    assert_eq!(sent[0].1.said, vec![founded, said(format!("@alice ({hello}): hello"))], "in UTC while the session names no time zone");
     assert_eq!(sent[1].1.said, vec![said(format!("@alice ({how}): How are you?"))], "in the session's, once it names one");
 
     session.update_time_zone(&SecurityContext::system(), Some("Asia/Tokyo")).await.unwrap();
-    assert_eq!(given_for(&channel, agent, &first[0]).await, [format!("@alice ({hello}): hello")], "told as it was given, whatever the session's is now");
+    assert_eq!(given_for(&channel, agent, &first[0]).await, [FOUNDED.to_string(), format!("@alice ({hello}): hello")], "told as it was given, whatever the session's is now");
     assert_eq!(given_for(&channel, agent, &second[0]).await, [format!("@alice ({how}): How are you?")]);
     running.abort();
 }
@@ -539,7 +548,7 @@ async fn what_an_external_agent_could_not_send_is_sent_with_its_next_call() {
     answered(&mut events, agent).await;
     let sent = remote.sent.lock().unwrap().clone();
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].1.said.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), ["hello", "Still there?"], "nothing lost, nothing twice");
+    assert_eq!(sent[0].1.said.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), [FOUNDED, "hello", "Still there?"], "nothing lost, nothing twice");
     running.abort();
 }
 
@@ -570,8 +579,8 @@ async fn an_external_agent_is_given_its_prompt_parts_first_and_again_only_when_t
 
     let sent = remote.sent.lock().unwrap().clone();
     let prompts = &sent[0].1.prompts;
-    assert_eq!(prompts, &["[Frame]\nBe brief.", "[Heard]\n1"], "first, in the order of the configuration, whatever their position");
-    assert_eq!(sent[1].1.prompts, ["[Heard]\n2"], "again only what changed");
+    assert_eq!(prompts, &["[Frame]\nBe brief.", "[Heard]\n2"], "first, in the order of the configuration, whatever their position");
+    assert_eq!(sent[1].1.prompts, ["[Heard]\n3"], "again only what changed");
 
     // What it was given is the context of its answer (issue 205).
     let seen = channel.agent_context(agent).await;
@@ -598,6 +607,7 @@ async fn after_a_restart_an_external_agent_is_given_only_the_prompt_parts_it_was
     stored.remote.converse_in(ConversationId("c-1".to_string()));
     stored.remote.give("frame".to_string(), digest::prompt("[Frame]\nBe brief."));
     stored.remote.give("heard".to_string(), digest::prompt("[Heard]\n0"));
+    stored.heard = after_founding();
     let built = external_channel(Arc::clone(&remote), external_components_with_prompts(), |_| Some(stored)).await.expect("the external agent can be run");
     let Stuck { agent, mut events, running, .. } = start(built).await;
     answered(&mut events, agent).await;
@@ -636,6 +646,7 @@ async fn after_a_restart_an_external_agent_sends_what_it_heard_but_had_not_sent(
     stored.perceive(vec![said("sent before")]);
     stored.transcript.start_anew();
     stored.perceive(vec![said("heard, then the crash")]);
+    stored.heard = after_founding();
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![
         vec![Ok(ExternalEvent::Message("Noted.".to_string())), Ok(ExternalEvent::Completed)],
     ]));
@@ -799,7 +810,7 @@ async fn an_external_agent_that_asked_back_is_answered_within_the_same_task() {
     assert_eq!(remote.sent.lock().unwrap()[1].1.answers, Some(task("t-1")), "the reply continues the task that asked");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "and it ended");
-    assert_eq!(given_for(&channel, agent, &question[0]).await, ["hello"], "the question back came of the first call");
+    assert_eq!(given_for(&channel, agent, &question[0]).await, [FOUNDED, "hello"], "the question back came of the first call");
     assert_eq!(given_for(&channel, agent, &answer[0]).await, ["Bonn"], "the answer of the call that answered it (issue 205)");
     running.abort();
 }
@@ -874,7 +885,7 @@ async fn an_open_task_whose_answer_broke_off_is_followed_and_its_end_said_unaske
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "the task ended");
     assert_eq!(channel.visible_messages(ActorId::Agent(agent)).await.last().and_then(|m| m.content.clone()).as_deref(), Some("Here it is."), "recorded as said");
-    assert_eq!(given_for(&channel, agent, &said[0]).await, ["hello"], "with what the call that began the task was given (issue 205)");
+    assert_eq!(given_for(&channel, agent, &said[0]).await, [FOUNDED, "hello"], "with what the call that began the task was given (issue 205)");
     running.abort();
 }
 

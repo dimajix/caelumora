@@ -44,7 +44,9 @@ tool message in the transcript and the channel's history says by whom the call w
 denied - whether it was, its status says. It is published with the call even where its result is
 withheld, since every user was told the decision, and never given to the model. The chat shows it
 at the call ("Approved by …", "Denied by …"). The act itself, for an audit across channels, is
-[140](../issues/140-audit-log.md)'s; approvals are no entries of the history (issue 417).
+[140](../issues/140-audit-log.md)'s. Approvals are no items of the history (issue 417): the
+history records the requests, decisions and withdrawals only to deliver them again to an actor
+whose inbox fell behind (issue 223), and no page shows them.
 
 A turn that ends while it waits - cancelled, given up - withdraws its requests. The approver takes a
 withdrawal only from the agent that asked, forgets the request without deciding it, and tells the
