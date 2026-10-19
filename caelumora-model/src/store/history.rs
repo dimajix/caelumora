@@ -149,11 +149,11 @@ pub trait HistoryStore: Debug + Send + Sync {
     /// history, or not to them.
     async fn said(&self, channel: ChannelId, reader: &Reader, id: MessageId) -> StoreResult<Option<(Position, HistoryEntry)>>;
 
-    /// The entries of the chain from the position `from` on that `reader`
+    /// The entries of the chain at the positions `range` holds that `reader`
     /// may see, as they may see them, in the order they were added: what was
-    /// added since an entry before `from` was. Each keeps its node's
-    /// position and digest, the chain's.
-    async fn entries(&self, channel: ChannelId, reader: &Reader, from: Position) -> StoreResult<Vec<Node<HistoryEntry>>>;
+    /// added since an entry before the range was, up to its end. Each keeps
+    /// its node's position and digest, the chain's.
+    async fn entries(&self, channel: ChannelId, reader: &Reader, range: Range<Position>) -> StoreResult<Vec<Node<HistoryEntry>>>;
 
     /// The ranges of positions in which `actor` was given what went to
     /// every member of the channel (`Memberships`), oldest first: none if it

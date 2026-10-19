@@ -18,13 +18,14 @@ use caelumora_model::message::Message;
 use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use caelumora_model::value::name::Name;
 use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tokio::task::{AbortHandle, JoinSet};
 use tokio_util::task::TaskTracker;
-use tracing::{debug, info, trace, warn, Instrument};
+use tracing::{debug, error, info, trace, warn, Instrument};
 
 /// The task of a running actor and its inbox. Owned by `run`, which keeps
 /// them apart from `ChannelLoop::actors`: that table says who takes part and
@@ -104,7 +105,8 @@ impl ChannelLoop {
         Ok(())
     }
 
-    /// Starts or stops an actor as a participant joined or left (issue 46).
+    /// Starts an actor taken in, as the channel was built or as someone
+    /// joined, or stops one that left (issue 46).
     async fn apply_change(&self, change: ActorChange, running: &mut HashMap<ActorId, RunningActor>, event_tx: &Sender<Envelope>, join_set: &mut JoinSet<ActorId>) {
         match change {
             ActorChange::Start(started, from, joined) => {
@@ -122,19 +124,24 @@ impl ChannelLoop {
                         self.announce_removal(id, name, remover, until, running).await;
                     }
                 }
+                // Its inbox opens here, at the history's end: what is
+                // recorded from now on is delivered to it, what was before
+                // it catches up with (issue 423) - nothing in between, which
+                // it would be given by the record and never take in.
+                let end = self.state.lock().await.history.end();
+                let missed = from.map(|from| from..end).filter(|missed| !missed.is_empty());
                 if still_taken_in {
-                    let handle = self.spawn_actor(&started, event_tx.clone(), join_set);
+                    let handle = self.spawn_actor(&started, missed, event_tx.clone(), join_set);
                     running.insert(handle.id, handle);
                 }
                 // An actor that starts again with its channel joins nothing.
                 let Some(adder) = joined else { return };
                 // Once it runs, so that the newcomer hears it first (issue
-                // 408); also if it was removed again before it got to run:
-                // it was added, and its removal follows. Right before it,
-                // the part of the history it was given, to it alone and in
-                // the system's name, if it was given anything before its
-                // join (issue 417).
-                let end = self.state.lock().await.history.end();
+                // 408), after what it caught up with; also if it was removed
+                // again before it got to run: it was added, and its removal
+                // follows. Right before it, the part of the history it was
+                // given, to it alone and in the system's name, if it was
+                // given anything before its join (issue 417).
                 if let Some(from) = from.filter(|from| *from < end) {
                     let shared = ActorEvent::HistoryShared { participant: id, from, by: adder.caller_id, by_name: self.name_of(adder.caller_id).await };
                     self.announce(shared, SecurityContext::system(), running).await;
@@ -259,8 +266,14 @@ impl ChannelLoop {
         }
     }
 
-    fn spawn_actor(&self, channel_actor: &ChannelActor, actor_output: Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> RunningActor {
+    /// Starts the task of `channel_actor`, with its inbox: in it, the actor
+    /// first takes in what it `missed` (`Actor::catch_up`, issue 423) - what
+    /// arrives meanwhile waits in its inbox - and then runs. A catch-up that
+    /// fails is logged, and the actor runs without it: it is taken in
+    /// already, and the history stays the channel's.
+    fn spawn_actor(&self, channel_actor: &ChannelActor, missed: Option<Range<Position>>, actor_output: Sender<Envelope>, join_set: &mut JoinSet<ActorId>) -> RunningActor {
         let ChannelActor { actor, task, .. } = channel_actor.clone();
+        let channel = self.id;
         let id = actor.id();
         let filter = actor.event_filter();
         let (tx, rx) = mpsc::channel(100);
@@ -272,9 +285,14 @@ impl ChannelLoop {
         // Tracked inside the `JoinSet`'s task: a task that is aborted counts
         // as ended, too.
         let abort_handle = join_set.spawn(task.track_future(async move {
+            if let Some(missed) = missed {
+                if let Err(e) = actor.catch_up(missed).await {
+                    error!("Actor {} could not catch up with channel {}: {:#}", id, channel, e);
+                }
+            }
             let result = actor.run(actor_rx, actor_tx).await;
             if let Err(e) = result {
-                tracing::error!("Actor {} stopped with an error: {:#}", actor.id(), e)
+                error!("Actor {} stopped with an error: {:#}", actor.id(), e)
             }
             id
         }));
@@ -1238,6 +1256,91 @@ mod tests {
         assert!(matches!(added.event, ActorEvent::ParticipantJoined { participant: p, .. } if p == participant), "{}", added.describe());
         assert!(running.get(&participant).is_some_and(|actor| actor.leaving.is_none()), "and then the new actor runs");
         join_set.abort_all();
+    }
+
+    /// What a `Listener` took in, in the order it took it in.
+    #[derive(Debug, PartialEq)]
+    enum TakenIn {
+        CaughtUp(Range<Position>),
+        Heard(&'static str, Option<Position>),
+    }
+
+    /// An actor that tells what it catches up with and, once it runs, what
+    /// is delivered to it, with the position of its entry.
+    #[derive(Debug)]
+    struct Listener {
+        id: ActorId,
+        taken_in: mpsc::UnboundedSender<TakenIn>,
+    }
+
+    impl Listener {
+        fn new(id: ActorId) -> (Arc<Self>, mpsc::UnboundedReceiver<TakenIn>) {
+            let (taken_in, told) = mpsc::unbounded_channel();
+            (Arc::new(Self { id, taken_in }), told)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Actor for Listener {
+        fn id(&self) -> ActorId { self.id }
+        fn name(&self) -> Name { Name::new("listener").expect("a name") }
+        fn event_filter(&self) -> fn(&Envelope) -> bool { |_| true }
+        async fn catch_up(&self, missed: Range<Position>) -> Result<()> {
+            let _ = self.taken_in.send(TakenIn::CaughtUp(missed));
+            Ok(())
+        }
+        async fn run(&self, mut rx: Box<dyn EventReceiver>, _tx: Box<dyn EventSender>) -> Result<()> {
+            while let Some(envelope) = rx.recv().await {
+                let _ = self.taken_in.send(TakenIn::Heard(envelope.event.kind(), envelope.context.position));
+            }
+            Ok(())
+        }
+        fn state(&self) -> ActorState { ActorState::Idle }
+        fn stop(&self) {}
+        fn leave(&self) {}
+    }
+
+    #[tokio::test]
+    async fn a_newcomer_catches_up_with_what_was_said_before_its_inbox_opened_and_is_delivered_the_rest() {
+        let alice = user("alice");
+        let context = SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
+        let said = || Envelope::new(
+            context.clone(),
+            EventContext { sender_id: ActorId::User(alice.id), ..EventContext::default() },
+            ActorEvent::CompleteMessageGenerated(Message { id: MessageId::new(), sender_id: ActorId::User(alice.id), role: MessageRole::User, content: Some("hello".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }),
+        );
+        let (event_tx, _event_rx) = mpsc::channel(10);
+        let mut join_set = JoinSet::new();
+        let mut running = HashMap::new();
+        let start_all = async |running: &mut HashMap<ActorId, RunningActor>, join_set: &mut JoinSet<ActorId>| {
+            while let Ok(change) = channel.changes_rx.lock().await.try_recv() {
+                channel.apply_change(change, running, &event_tx, join_set).await;
+            }
+        };
+        start_all(&mut running, &mut join_set).await;
+        let (newcomer, mut taken_in) = Listener::new(ActorId::User(UserId::new()));
+        let from = channel.state.lock().await.history.end();
+
+        // Taken in, but `run` has not started it yet: what is said meanwhile
+        // has no inbox to go to.
+        channel.adopt(Arc::<Listener>::clone(&newcomer), ResolvedParticipant::approver(channel.session_id, channel.id), Some(from), Some(context.clone())).await;
+        channel.enter(said(), &running).await;
+        let opened = channel.state.lock().await.history.end();
+        start_all(&mut running, &mut join_set).await;
+        channel.enter(said(), &running).await;
+
+        let mut told = Vec::new();
+        while told.len() < 4 {
+            told.push(tokio::time::timeout(Duration::from_secs(5), taken_in.recv()).await.expect("taken in").expect("the listener runs"));
+        }
+        join_set.abort_all();
+        assert_eq!(told, [
+            TakenIn::CaughtUp(from..opened),
+            TakenIn::Heard("HistoryShared", Some(opened)),
+            TakenIn::Heard("ParticipantJoined", Some(opened.next())),
+            TakenIn::Heard("CompleteMessageGenerated", Some(opened.after(2))),
+        ], "what was said before its inbox opened by catching up, first, and everything from there on delivered: nothing twice, nothing missed (issue 423)");
     }
 
     #[tokio::test]

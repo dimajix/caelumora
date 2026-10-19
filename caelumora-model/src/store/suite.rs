@@ -748,9 +748,11 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     assert_eq!((at, first.said().and_then(|m| m.content.as_deref())), (Position::START, Some("changed")), "as it stands, where it was said");
     assert!(histories.said(key, &Reader::Channel, id(300)).await.unwrap().is_some_and(|(_, item)| item.said().is_some_and(|m| m.revoked.is_some())));
     assert_eq!(histories.page(key, &Reader::Channel, Position::START, None, 1, None).await.unwrap().digest, state.history.digest(), "read from the history as it is");
-    let entries = histories.entries(key, &Reader::Channel, Position::new(598)).await.unwrap();
+    let entries = histories.entries(key, &Reader::Channel, Position::new(598)..Position::MAX).await.unwrap();
     assert_eq!(entries.iter().map(|node| node.seq.get()).collect::<Vec<_>>(), state.history.from(Position::new(598)).map(|node| node.seq.get()).collect::<Vec<_>>(), "the chain itself from a position on");
-    assert!(histories.entries(key, &Reader::Channel, Position::new(10_000)).await.unwrap().is_empty());
+    let between = histories.entries(key, &Reader::Channel, Position::new(250)..Position::new(253)).await.unwrap();
+    assert_eq!(between.iter().map(|node| node.seq.get()).collect::<Vec<_>>(), [250, 251, 252], "and up to where a range ends");
+    assert!(histories.entries(key, &Reader::Channel, Position::new(10_000)..Position::MAX).await.unwrap().is_empty());
 
     let changed_or_revoked = Filter::Or(vec![Filter::containing("changed"), Filter::all_of([Filter::said(), Filter::negated(Filter::written())])]);
     let kept = histories.page(key, &Reader::Channel, Position::START, None, 5, Some(&changed_or_revoked)).await.unwrap();
@@ -799,7 +801,7 @@ pub(crate) async fn history_store_behaves(states: &dyn StateStore, histories: &d
     assert_eq!(last(histories.page(key, &Reader::Participant(user), Position::START, None, 2, None).await.unwrap()), [id(602), id(603)]);
     // Newest first, what they see: the answer, their join and share, the other's join, 601.
     assert_eq!(last(histories.page(key, &Reader::Participant(other), Position::START, None, 5, None).await.unwrap()), [id(601), id(602)], "a page is filled with what they may see");
-    let seen = histories.entries(key, &Reader::Participant(other), Position::new(600)).await.unwrap();
+    let seen = histories.entries(key, &Reader::Participant(other), Position::new(600)..Position::MAX).await.unwrap();
     assert_eq!(seen.iter().filter_map(|node| node.entry.said()).map(|m| m.id).collect::<Vec<_>>(), [id(601), id(602)], "and so is the chain");
 
     states.delete_channel_state(channel).await.expect("delete");

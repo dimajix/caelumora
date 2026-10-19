@@ -209,9 +209,10 @@ pub enum Reader {
     /// reading as that agent: what went to them and what they sent, the
     /// latter in full.
     Participant(ActorId),
-    /// A participant as it joins, before its join is recorded (issue 417):
-    /// reading what it is given - as a participant, and as a member from
-    /// where it reads on, which is where what it is given begins.
+    /// A participant as it joins, reading what it is given up to where its
+    /// inbox opened, before its join is recorded (issues 417, 423) - as a
+    /// participant, and as a member from where it reads on, which is where
+    /// what it is given begins.
     Newcomer(ActorId),
     /// Someone who may read the channel but takes no part in it - its
     /// session's owner, a reader from another channel: what went to

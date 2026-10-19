@@ -35,6 +35,7 @@ use caelumora_model::tool::{ToolCall, ToolCallState, ToolCallStatus, ToolSet};
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
 use tracing::{debug, info, warn, Instrument};
+use std::ops::Range;
 use std::sync::Arc;
 use chrono::Utc;
 
@@ -830,8 +831,8 @@ impl Actor for AgentActor {
     /// Takes in what it missed as what it hears (issues 190, 196): all of
     /// it into its history, what passes its perceive processors into its
     /// transcript.
-    async fn catch_up(&self, from: Position) -> Result<()> {
-        self.body.catch_up(from).await
+    async fn catch_up(&self, missed: Range<Position>) -> Result<()> {
+        self.body.catch_up(missed).await
     }
 
     async fn run(

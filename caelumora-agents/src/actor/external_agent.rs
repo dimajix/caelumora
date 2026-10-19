@@ -61,6 +61,7 @@ use futures::future::BoxFuture;
 use futures::stream::{BoxStream, SelectAll};
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn, Instrument};
@@ -851,8 +852,8 @@ impl Actor for ExternalAgentActor {
 
     /// Takes in what it missed as what it hears (issues 190, 196, 206); the
     /// remote agent is given it when it is next asked.
-    async fn catch_up(&self, from: Position) -> Result<()> {
-        self.body.catch_up(from).await
+    async fn catch_up(&self, missed: Range<Position>) -> Result<()> {
+        self.body.catch_up(missed).await
     }
 
     async fn run(&self, mut rx: Box<dyn EventReceiver>, output: Box<dyn EventSender>) -> Result<()> {

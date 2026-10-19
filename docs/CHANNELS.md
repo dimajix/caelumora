@@ -221,6 +221,13 @@ may use it. How a session comes to its workspace and who reaches the files is in
 
 `SessionLoop::run` runs every channel, those the session had and those created later.
 
+Every actor of a channel is started the one way (`ChannelLoop::start_participant`): built, taken
+in (`adopt`) and handed to `run` (`ActorChange::Start`), which starts its task - as the channel is
+built, its participants and its internal actors, as someone is added, joins or founds it, and as
+an agent is restored. They differ only in what they hand over: from which position the actor is
+given the history, and on whose behalf it joined, if it did - a channel started again records no
+joins. What waits when `run` begins is started before anything is routed.
+
 *   Stopping the session stops the actors of every channel (`SessionLoop::stop_actors`), all at
     once, waits for them up to `STOP_GRACE` and then aborts every channel; the commands started in
     its workspace shell are ended. A stop therefore takes as long as its slowest actor needs to
@@ -519,9 +526,13 @@ from the position shared with them, or else from their join, up to where deliver
 to it while it took part, and nothing after.
 
 *   A **joining actor** is given the position where its view begins and takes in what was said
-    from there as what it hears, read from the store before its join is recorded, as what a
-    newcomer is given (`Reader::Newcomer`): an agent keeps what passes its perceive processors in
-    its transcript. Users keep nothing; a founder takes in nothing.
+    from there as what it hears, read from the store as what a newcomer is given
+    (`Reader::Newcomer`): an agent keeps what passes its perceive processors in its transcript.
+    Users keep nothing; a founder takes in nothing. It catches up in its own task, right before
+    it runs, up to the position where `run` opened its inbox as it started it: what was recorded
+    before is caught up with, everything from there on is delivered, and what arrives meanwhile
+    waits in its inbox. So nothing that the history says it was given escapes it, and nothing
+    comes twice (issue 423). A catch-up that fails is logged, and the actor runs without it.
 *   A **rejoining actor** takes in only what was said after the last message it took in, which an
     agent's state remembers (`AgentChannelState::last_message`). The transcript is only ever
     appended to, so older messages

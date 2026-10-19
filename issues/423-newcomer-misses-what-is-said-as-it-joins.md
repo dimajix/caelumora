@@ -1,6 +1,6 @@
 # 423 — A participant added misses what is said between catching up and its join
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Sessions and channels
@@ -46,3 +46,31 @@ it.
 ## History
 
 - **2026-10-18** — Opened from issue 417, step 7, where it was noted in the history.
+- **2026-10-19** — Done, in neither of the ways weighed above: the history is cut at one position,
+  set by `run` as it opens the newcomer's inbox (`history.end()` as it handles
+  `ActorChange::Start`). Everything recorded before it the actor catches up with
+  (`Actor::catch_up` now takes the range `from..until`, `HistoryStore::entries` a range), in its
+  own task right before `Actor::run`, which `ChannelLoop::spawn_actor` starts; everything from it
+  on is delivered, and what arrives while it catches up waits in its inbox. `run` reads no store
+  and waits for nothing; nothing is given twice or missed. Catching up inside `run` was dropped
+  because an agent's catch-up runs its perceive processors, for as long as they take; delivering
+  the rest after the join because it needs the history's entries turned back into envelopes and a
+  second way in beside the catch-up. The third consideration contradicts the decision of
+  [223](223-full-inbox-drops-events.md) of 2026-10-16, which rejected catching up from the history
+  in place of delivering, since the moderator decides who hears what.
+
+  It needed a refactoring first, a step of its own: an actor was started on two ways - by
+  `spawn_actors` as `run` began, for every actor taken in by then, and by `ActorChange::Start`
+  for one that joined later - and only the second knew from where the actor was given the
+  history. Now every actor is started by `ActorChange::Start`, built and taken in by
+  `start_participant` - as the channel is built, as someone joins, as an agent is restored -;
+  `Start` carries from where the actor is given the history and on whose behalf it joined, `None`
+  for an actor that starts again with its channel. `spawn_actors` is gone, and with it the race in
+  which a founder was started either way.
+
+  A catch-up that fails no longer refuses the join: the participant is taken in already, the
+  failure is logged in the actor's task, and the actor runs without it. Whether an actor starting
+  again with its channel should catch up as well - what its inbox lost on a restart
+  ([385](385-inbox-lost-on-restart.md)), as far as it was said - is left open: it would need
+  `AgentChannelState::last_message` to be a position, or the joins and leaves noted after the
+  last message would be noted again.
