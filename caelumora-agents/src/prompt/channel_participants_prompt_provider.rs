@@ -71,24 +71,32 @@ impl PromptProvider for ChannelParticipantsPromptProvider {
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         // Work that reaches no session (`Situation::channel`) has nobody to name.
-        let Some(channel) = situation.channel().await? else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
-        let own = ActorId::Agent(situation.agent_id());
-        let mut me = None;
-        let mut others = Vec::new();
-        for participant in channel.participants().await {
-            // Who no longer exists cannot be addressed.
-            let Some(entry) = participant.describe().await? else { continue };
-            if participant.id() == own {
-                me = Some(entry);
-            } else {
-                others.push(entry);
-            }
-        }
+        let Some((me, others)) = participants(situation).await? else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let explanation = situation.profile().framing_explanation();
         let text = self.text(render(me.as_ref(), &others, explanation.as_deref()));
         // Names and introductions are public (issue 176).
         Ok(Prompt::classified(text, Classification::PUBLIC))
     }
+}
+
+/// The agent of `situation` and the others in its channel, each as the
+/// views describe them, the agent `None` if it is not among them; `None`
+/// for work that reaches no session. Who no longer exists is left out: it
+/// cannot be addressed.
+pub(crate) async fn participants(situation: &Situation<'_>) -> Result<Option<(Option<ActorDescription>, Vec<ActorDescription>)>, ContextError> {
+    let Some(channel) = situation.channel().await? else { return Ok(None) };
+    let own = ActorId::Agent(situation.agent_id());
+    let mut me = None;
+    let mut others = Vec::new();
+    for participant in channel.participants().await {
+        let Some(entry) = participant.describe().await? else { continue };
+        if participant.id() == own {
+            me = Some(entry);
+        } else {
+            others.push(entry);
+        }
+    }
+    Ok(Some((me, others)))
 }
 
 /// The prompt part naming the agent itself, `me`, and the `others`.
@@ -109,12 +117,9 @@ fn render(me: Option<&ActorDescription>, others: &[ActorDescription], explanatio
         text.push_str("Nobody else is in this channel.\n");
         return titled("Who is in this channel", &text);
     }
-    // `@all` addresses every one of them, with a handle or without (issue 401).
-    if others.iter().any(|m| m.handle().is_some()) {
-        text.push_str("The others - mention one by their @handle to address them, or all of them with @all:\n");
-    } else {
-        text.push_str("The others - mention all of them with @all to address them:\n");
-    }
+    // Not "to address them": to a model, an @handle offered as the form of
+    // address is one for every greeting (issue 442).
+    text.push_str("The others:\n");
     for participant in others {
         let line = match (participant.is_person(), participant.introduction.as_ref().map(one_line)) {
             (true, Some(introduction)) => format!("{} In their own words: \"{introduction}\"", described(participant)),
@@ -124,10 +129,20 @@ fn render(me: Option<&ActorDescription>, others: &[ActorDescription], explanatio
         text.push_str(&format!("- {line}\n"));
     }
     // A mention of an agent is a request to respond, not a form of address
-    // (issue 438): agents that greet each other with `@` keep asking the
-    // next one to answer. A mention of a person asks nothing of them.
-    if others.iter().any(|participant| !participant.is_person()) {
-        text.push_str("Mentioning an agent - by its @handle, or with @all - asks it to respond, in a turn of its own: mention one only when you want its answer, and otherwise refer to it by its name without @.\n");
+    // (issues 438, 442): agents that greet each other with `@` keep asking
+    // the next one to answer. Said as when which form is written, with the
+    // cases that are no request named - there the habit sits -, and bounded
+    // to the one participant needed now: allowed for every task, an @ is
+    // written for everybody (`work/quiet_agents/MENTIONS.md`, finding 4).
+    // `@all` addresses every one of them, with a handle or without (issue 401).
+    if let Some(agent) = others.iter().find(|participant| !participant.is_person()) {
+        let name = &agent.name;
+        text.push_str(&format!(
+            "When to write an @handle, and when a name:\n\
+             - @handle, or @all for all of them: only when you need that participant to answer you or to act, now. Mentioning an agent this way makes it stop and take a turn of its own.\n\
+             - Name, without @: in everything else - when you greet, thank, praise, agree, answer, or speak about someone. \"Thanks, {name}\", \"as {name} said\".\n\
+             - Check every @ before you send: if you do not need an answer or an action from that participant, write the name instead.\n"
+        ));
     }
     if let Some(explanation) = explanation {
         text.push_str(&format!("{explanation}\n"));
@@ -207,13 +222,20 @@ mod tests {
         assert_eq!(text, "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
             About you: A quiz master.\n\
-            The others - mention one by their @handle to address them, or all of them with @all:\n\
+            The others:\n\
             - Kaya (@kaya), a person. In their own words: \"I run the budget.\"\n\
             - Sassy (@sassy), an agent.\n\
-            Mentioning an agent - by its @handle, or with @all - asks it to respond, in a turn of its own: mention one only when you want its answer, and otherwise refer to it by its name without @.\n");
+            When to write an @handle, and when a name:\n\
+            - @handle, or @all for all of them: only when you need that participant to answer you or to act, now. Mentioning an agent this way makes it stop and take a turn of its own.\n\
+            - Name, without @: in everything else - when you greet, thank, praise, agree, answer, or speak about someone. \"Thanks, Sassy\", \"as Sassy said\".\n\
+            - Check every @ before you send: if you do not need an answer or an action from that participant, write the name instead.\n");
         assert!(render(Some(&me), &[], Some("Marked.")).ends_with("Nobody else is in this channel.\n"), "nothing to explain without others");
-        assert!(render(Some(&me), &others, Some("Messages of the others begin ...")).ends_with("by its name without @.\nMessages of the others begin ...\n"), "told with the others (issue 135)");
-        assert!(!render(Some(&me), &others[..1], None).contains("Mentioning an agent"), "among people alone, a mention asks nobody (issue 438)");
+        assert!(render(Some(&me), &others, Some("Messages of the others begin ...")).ends_with("write the name instead.\nMessages of the others begin ...\n"), "told with the others (issue 135)");
+        assert_eq!(render(Some(&me), &others[..1], None), "[Who is in this channel]\n\
+            You are Jonathan (@jonathan).\n\
+            About you: A quiz master.\n\
+            The others:\n\
+            - Kaya (@kaya), a person. In their own words: \"I run the budget.\"\n", "among people alone, a mention asks nobody (issues 438, 442)");
     }
 
     #[test]
@@ -310,11 +332,14 @@ mod tests {
         assert_eq!(prompt.text, "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
             About you: A quiz master.\n\
-            The others - mention one by their @handle to address them, or all of them with @all:\n\
+            The others:\n\
             - Kaya (@kaya), a person. In their own words: \"I run the budget.\"\n\
             - Sassy (@sassy), an agent.\n\
             - Bob (@bob), a person.\n\
-            Mentioning an agent - by its @handle, or with @all - asks it to respond, in a turn of its own: mention one only when you want its answer, and otherwise refer to it by its name without @.\n", "no approver, nobody who no longer exists");
+            When to write an @handle, and when a name:\n\
+            - @handle, or @all for all of them: only when you need that participant to answer you or to act, now. Mentioning an agent this way makes it stop and take a turn of its own.\n\
+            - Name, without @: in everything else - when you greet, thank, praise, agree, answer, or speak about someone. \"Thanks, Sassy\", \"as Sassy said\".\n\
+            - Check every @ before you send: if you do not need an answer or an action from that participant, write the name instead.\n", "no approver, nobody who no longer exists");
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));
     }
 

@@ -26,8 +26,9 @@
 
 components:
 # Who is in the channel, which language it speaks, what it is about, what
-# time it is and - when only the responder policy chose the agent - that it
-# may stay silent.
+# time it is, - when only the responder policy chose the agent - that it
+# may stay silent, and - where another agent could be asked - when to write
+# an @handle and when a name.
 - id: channel-context
   components:
   - id: channel-participants
@@ -44,6 +45,9 @@ components:
     fail_policy: FailClosed
   - id: request-reason
     kind: request_reason_prompt_provider
+    fail_policy: FailClosed
+  - id: channel-mentions
+    kind: channel_mentions_prompt_provider
     fail_policy: FailClosed
 # What every agent run here needs to take part in a channel.
 - id: agent-basics
@@ -260,6 +264,12 @@ personalities:
   description: Splits work into tasks, estimates and schedules them
   introduction: Keeps the backlog - splits work into tasks, estimates them and decides in which
     order they are done.
+  # Between the steps of a turn (issue 431): what people say in the authority of whoever asked;
+  # the words of anyone else wait until whoever asked asks again after them (issue 435), and what
+  # agents say waits for the turn's end.
+  hears_during_turn:
+    from: users
+    others: when_asked
   components:
   - id: system-prompt
     kind: static_system_prompt_provider
@@ -450,9 +460,9 @@ session_templates:
 # is loaded. Loading it took over a minute, far beyond the endpoint's
 # timeout of 5 s, so it is kept loaded for an hour after each decision. The
 # server is local, so what is said may go to it up to the highest level;
-# what is classified with a compartment is not sent, and everybody is asked
-# instead, as when the model cannot be reached. A template may write the
-# policy itself - its params are the operator's -, a channel created on
+# what is classified with a compartment is not sent, and nobody is asked, as
+# when the model cannot be reached (`on_failure: none`). A template may write
+# the policy itself - its params are the operator's -, a channel created on
 # request only names preconfigured ones.
 - id: b6f36657-cb30-4fac-8873-c216b46bbf2c
   name: team-session
@@ -460,7 +470,7 @@ session_templates:
   summary: Software work with a small team
   briefing: |-
     The user works on software with a small team: a coder, a reviewer and a planner. Each answers
-    what concerns them; mention one with @ to ask them directly.
+    what concerns them.
   participants:
   - User:
       name: user

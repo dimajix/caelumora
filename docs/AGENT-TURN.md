@@ -631,10 +631,22 @@ with their introductions, read at the start of every turn - each as the views de
 (`ParticipantView::describe`), in the same `ActorDescription` a responder policy is given of a
 running actor (see [CHANNELS.md](CHANNELS.md#moderators)). A person's introduction is marked as
 written by them, so that it does not read as an instruction of the system, and kept to one line. It
-also says that `@all` addresses all of them, and explains how the others' messages are marked.
-Where the others include an agent, it says that mentioning an agent, or `@all`, asks it to respond,
-and that a name without `@` refers to one without asking it (issue 438): to a model a mention reads
-as a form of address, and agents that greet each other with `@` keep asking the next one to answer.
+also explains how the others' messages are marked. Where the others include an agent, it says when
+to write an `@handle` - or `@all` - and when a name (issues 438, 442): a handle only when that
+participant's answer or action is needed now, since it makes an agent take a turn of its own; the
+name, without `@`, to greet, thank, praise, agree, answer or speak about someone. It does not offer
+the handles as the way to address the others: to a model a mention reads as a form of address,
+and agents that greet each other with `@` keep asking the next one to answer.
+
+### When to mention
+
+Said once in the system prompt, the rule changes little: by the time the model writes, everything
+said since stands between, full of handles. `channel_mentions_prompt_provider` says it again before
+the turn's input, every turn - an `@handle` only for an answer or an action needed from that
+participant now; never to greet, thank, praise, agree with or refer to someone, but the name - and
+only where another agent is in the channel: a mention of a person asks no agent. Read last, it
+keeps the mentions that hand over work and drops those of courtesy
+([work/quiet_agents](../work/quiet_agents/MENTIONS.md)).
 
 That the roster changed is told where it happened: a transcript entry of someone who joined or left
 is given to the model as the channel's notice - "Channel notice: @alice added @bob to the channel.",

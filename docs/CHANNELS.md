@@ -1023,7 +1023,11 @@ Mentioned agents that are asleep are woken first (see [Waking](#waking)).
 Mentions written by agents are routed as well: an agent can hand a question to another
 (`@researcher, can you look this up?`). The limit on chains between agents keeps two agents from
 addressing each other indefinitely; an agent that mentions itself or an author of the message is not
-asked.
+asked. Since every mention of an agent asks it, agents are told when to write a handle and when a
+name - a handle only for an answer or an action needed from that participant now, never in a
+greeting, thanks or praise -, in the roster and again before every turn's input (issue 442, see
+[AGENT-TURN.md](AGENT-TURN.md#when-to-mention)): models take a handle for a form of address, and
+agents that greet each other with `@` keep asking the next one to answer.
 An `@all` asks every agent but the author, whoever wrote it, and needs no permission of its own: it
 asks nothing that mentioning each participant would not. What it fans out to is bounded by the same
 limit, as under `broadcast_policy`. An agent's question to `@all` (`ask_user`) is put to every user

@@ -216,22 +216,26 @@ def apply(variant, context, turn, data):
         text = why_asked(turn, data, tool, spec["reason"] if spec["reason"] != "chosen" else None, spec.get("chosen") == "soft")
         end = len(context["transcript"]) - 1
         if spec.get("place") == "before":
-            # As a `PromptPosition::BeforeTurnInput` part: joined with the others there, before the
-            # newest message.
-            # `TurnContextProvider`: after the message before the newest, unless the agent wrote
-            # the newest itself.
-            said = [i for i, e in enumerate(context["transcript"]) if e["kind"] in ("message", "given")]
-            newest = said[-1] if said else None
-            mine = newest is not None and context["transcript"][newest]["message"]["sender"] == context["me"]
-            before = newest if mine else (said[-2] if len(said) > 1 else None)
-            joined = next((p for p in context["parts"] if p["role"] == "User" and p["after"] == before), None)
-            if joined:
-                joined["text"] = joined["text"].rstrip("\n") + "\n\n" + text
-            else:
-                context["parts"].append({"role": "User", "after": before, "text": text})
+            before_turn_input(context, text)
         else:
             context["parts"].append({"role": "User", "after": end, "text": text})
     return context
+
+
+def before_turn_input(context, text):
+    """`text` added to `context` as a `PromptPosition::BeforeTurnInput` part: joined with the
+    others there, before the newest message."""
+    # `TurnContextProvider`: after the message before the newest, unless the agent wrote the
+    # newest itself.
+    said = [i for i, e in enumerate(context["transcript"]) if e["kind"] in ("message", "given")]
+    newest = said[-1] if said else None
+    mine = newest is not None and context["transcript"][newest]["message"]["sender"] == context["me"]
+    before = newest if mine else (said[-2] if len(said) > 1 else None)
+    joined = next((p for p in context["parts"] if p["role"] == "User" and p["after"] == before), None)
+    if joined:
+        joined["text"] = joined["text"].rstrip("\n") + "\n\n" + text
+    else:
+        context["parts"].append({"role": "User", "after": before, "text": text})
 
 
 # --- Classifying an answer -------------------------------------------------------
