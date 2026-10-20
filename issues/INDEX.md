@@ -116,6 +116,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [436](436-work-resumed-after-a-restart-is-not-bounded.md) | open | A server that went down with many turns under way starts every session with work under way at its start, and all their turns then run at once, however many there are. |
 | [437](437-mentions-of-people-and-failed-decisions-ask-agents.md) | open | A message that `@`-mentions only a person is answered by the agents the responder policy chooses, and when the decision model of `decision_policy` does not choose in time, every agent of the channel is asked - so in a channel of several agents, agents answer what was not meant for them. |
 | [439](439-an-agent-is-not-told-why-it-was-asked.md) | done | A request to respond carries no reason, so an agent cannot tell whether it was mentioned or only chosen by a responder policy that guessed it might fit, takes every request as an order to answer, and answers with small talk or that it has nothing to say instead of staying silent. |
+| [441](441-nobody-is-told-when-no-responder-was-chosen.md) | open | When the decision model of `decision_policy` does not choose - a timeout, an error, an answer naming no option - and nobody is asked, a person's message that mentions nobody stays unanswered without anyone telling them why. |
 
 ## Identity and access management
 
