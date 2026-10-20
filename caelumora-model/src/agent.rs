@@ -1,4 +1,4 @@
-use crate::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
+use crate::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, Pick};
 use crate::approval::ApprovalRequest;
 use crate::chain::{Position, Stored};
 use crate::component::ComponentConfig;
@@ -111,6 +111,11 @@ pub enum OthersWords {
     /// another has spoken.
     #[default]
     Wait,
+    /// It waits as with `Wait`, until the turn's own initiator asks the agent again after it
+    /// (issue 435) - by mentioning it, or as the moderator asks it otherwise: what was said
+    /// before that request is heard then, as between turns, where a turn hears what was said
+    /// before the request it answers. A request of another still waits.
+    WhenAsked,
     /// It is heard, as between turns: the agent stays able to hear, and another's words may
     /// steer what the turn does. A request of theirs still waits.
     Hear,
@@ -140,15 +145,71 @@ impl HearsDuringTurn {
     pub fn takes(&self, work: &Work, envelope: &Envelope) -> bool {
         let in_its_authority = envelope.context.initiator_id == work.event_context.initiator_id;
         match &envelope.event {
-            ActorEvent::CompleteMessageGenerated(message) => {
-                self.from.hears(message.sender_id)
-                    && work.may_see(&message.classification)
-                    && (self.others == OthersWords::Hear || in_its_authority)
-            }
+            ActorEvent::CompleteMessageGenerated(message) => self.hears_said(work, message) && (self.others == OthersWords::Hear || in_its_authority),
             ActorEvent::ResponseRequested => self.from != HearsFrom::None && in_its_authority,
             ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } => self.from != HearsFrom::None,
             _ => false,
         }
+    }
+
+    /// What the piece of work `work`, under way, does with `envelope` it looks at between its
+    /// steps (issues 431, 435). What it `takes` it takes. Before `asked` - the position of a
+    /// request in its authority it took ahead (`pick_request`) - it takes too what waits only
+    /// for the authority it was said in, as between turns a turn hears what was said before
+    /// the request it answers, and passes over another's request, which waits for a turn in
+    /// theirs. At anything else it stops.
+    pub fn pick(&self, work: &Work, envelope: &Envelope, asked: Option<Position>) -> Pick {
+        if self.takes(work, envelope) {
+            return Pick::Take;
+        }
+        let before_asked = asked.zip(envelope.context.position).is_some_and(|(asked, at)| at < asked);
+        match &envelope.event {
+            ActorEvent::ResponseRequested if before_asked => Pick::PassOver,
+            _ if before_asked && self.waits_for_authority(work, envelope) => Pick::Take,
+            _ => Pick::Stop,
+        }
+    }
+
+    /// What `work` does with `envelope` looking past what waits for the authority it was said
+    /// in, for a request in its own authority that lets it hear what came before (issue 435):
+    /// with `others: when_asked`, it takes such a request, passes over what it would take
+    /// before it (`pick`) - what was said, by anyone, another's request, who joined or left -,
+    /// and stops at anything else. Otherwise it stops at once. A request not recorded cannot
+    /// say what came before it: it is stopped at too.
+    pub fn pick_request(&self, work: &Work, envelope: &Envelope) -> Pick {
+        if self.others != OthersWords::WhenAsked {
+            return Pick::Stop;
+        }
+        let in_its_authority = envelope.context.initiator_id == work.event_context.initiator_id;
+        match &envelope.event {
+            ActorEvent::ResponseRequested if in_its_authority => {
+                if self.takes(work, envelope) && envelope.context.position.is_some() { Pick::Take } else { Pick::Stop }
+            }
+            ActorEvent::ResponseRequested => Pick::PassOver,
+            _ if self.takes(work, envelope) || self.waits_for_authority(work, envelope) => Pick::PassOver,
+            _ => Pick::Stop,
+        }
+    }
+
+    /// Whether `envelope` is something said that `work` would take but for the authority it is
+    /// said in: what a request in the work's own authority after it lets it hear, with
+    /// `others: when_asked`.
+    fn waits_for_authority(&self, work: &Work, envelope: &Envelope) -> bool {
+        match &envelope.event {
+            ActorEvent::CompleteMessageGenerated(message) => {
+                self.others == OthersWords::WhenAsked
+                    && self.hears_said(work, message)
+                    && envelope.context.initiator_id != work.event_context.initiator_id
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `work` hears `message` whoever's authority it is said in: if `from` hears its
+    /// sender, and if the work may see it (`Work::may_see`) - what it saw above its
+    /// classification would be written below its level.
+    fn hears_said(&self, work: &Work, message: &Message) -> bool {
+        self.from.hears(message.sender_id) && work.may_see(&message.classification)
     }
 }
 
@@ -1181,6 +1242,8 @@ pub(crate) mod tests {
         assert_eq!(users.hears_during_turn, HearsDuringTurn { from: HearsFrom::Users, others: OthersWords::Wait }, "others' words wait unless named");
         let all = written(serde_json::json!({ "from": "all", "others": "hear" })).unwrap();
         assert_eq!(all.hears_during_turn, HearsDuringTurn { from: HearsFrom::All, others: OthersWords::Hear });
+        let asked = written(serde_json::json!({ "from": "users", "others": "when_asked" })).unwrap();
+        assert_eq!(asked.hears_during_turn, HearsDuringTurn { from: HearsFrom::Users, others: OthersWords::WhenAsked });
         assert!(written(serde_json::json!({ "from": "agents" })).is_err(), "nothing else");
     }
 
@@ -1207,6 +1270,7 @@ pub(crate) mod tests {
             ("an agent's, hearing all", hears(HearsFrom::All, wait), said(agent, alice, &internal), true),
             ("his, waiting with others' words", hears(HearsFrom::All, wait), said(bob, bob, &internal), false),
             ("his, hearing others' words", hears(HearsFrom::Users, hear), said(bob, bob, &internal), true),
+            ("his, until she asks", hears(HearsFrom::Users, OthersWords::WhenAsked), said(bob, bob, &internal), false),
             ("an agent's for him, waiting", hears(HearsFrom::All, wait), said(agent, bob, &internal), false),
             ("above the turn's classification", hears(HearsFrom::All, hear), said(alice, alice, &secret), false),
             ("her request", hears(HearsFrom::Users, wait), in_authority_of(alice, ActorEvent::ResponseRequested), true),
@@ -1216,6 +1280,60 @@ pub(crate) mod tests {
         ];
         for (what, hears, envelope, taken) in cases {
             assert_eq!(hears.takes(&work, &envelope), taken, "{what}");
+        }
+    }
+
+    /// Issue 435: with `others: when_asked`, a request in the work's authority lets it hear
+    /// another's words said before it - and nothing else that waits; another's request lifts
+    /// nothing, and is passed over.
+    #[test]
+    fn a_request_in_the_works_authority_lets_it_hear_anothers_words_said_before_it() {
+        use crate::confidentiality::Confidentiality;
+        let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let agent = ActorId::Agent(AgentId::new());
+        let internal = Classification::general(Confidentiality::Internal);
+        let secret = Classification::general(Confidentiality::StrictlyConfidential);
+        let work = Work::new(EventContext { initiator_id: alice, ..EventContext::default() }, SecurityContext::default(), internal.clone());
+        let at = |seq: u64, initiator: ActorId, event: ActorEvent| {
+            Envelope::new(SecurityContext::default(), EventContext { initiator_id: initiator, position: Some(Position::new(seq)), ..EventContext::default() }, event)
+        };
+        let said = |seq, sender: ActorId, classification: &Classification| {
+            at(seq, sender, ActorEvent::CompleteMessageGenerated(Message { sender_id: sender, ..Message::new(classification.clone()) }))
+        };
+        let command = ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: ActorId::None };
+        let hears = |others| HearsDuringTurn { from: HearsFrom::Users, others };
+        let (asked, wait) = (hears(OthersWords::WhenAsked), hears(OthersWords::Wait));
+
+        let looking_for_a_request = [
+            ("her request", asked, at(5, alice, ActorEvent::ResponseRequested), Pick::Take),
+            ("her request, unrecorded", asked, Envelope::new(SecurityContext::default(), EventContext { initiator_id: alice, ..EventContext::default() }, ActorEvent::ResponseRequested), Pick::Stop),
+            ("his words", asked, said(5, bob, &internal), Pick::PassOver),
+            ("her words", asked, said(5, alice, &internal), Pick::PassOver),
+            ("his request", asked, at(5, bob, ActorEvent::ResponseRequested), Pick::PassOver),
+            ("an agent's words, hearing users", asked, said(5, agent, &internal), Pick::Stop),
+            ("his words above the work's classification", asked, said(5, bob, &secret), Pick::Stop),
+            ("a command", asked, at(5, alice, command.clone()), Pick::Stop),
+            ("her request, waiting", wait, at(5, alice, ActorEvent::ResponseRequested), Pick::Stop),
+        ];
+        for (what, hears, envelope, picked) in looking_for_a_request {
+            assert_eq!(hears.pick_request(&work, &envelope), picked, "{what}");
+        }
+
+        let asked_at = Some(Position::new(5));
+        let looking_before_it = [
+            ("his words before", asked, said(3, bob, &internal), asked_at, Pick::Take),
+            ("his words after", asked, said(7, bob, &internal), asked_at, Pick::Stop),
+            ("his words, nobody asked", asked, said(3, bob, &internal), None, Pick::Stop),
+            ("his words before, waiting", wait, said(3, bob, &internal), asked_at, Pick::Stop),
+            ("his request before", asked, at(3, bob, ActorEvent::ResponseRequested), asked_at, Pick::PassOver),
+            ("his request after", asked, at(7, bob, ActorEvent::ResponseRequested), asked_at, Pick::Stop),
+            ("her words after", asked, said(7, alice, &internal), asked_at, Pick::Take),
+            ("his words above the work's classification before", asked, said(3, bob, &secret), asked_at, Pick::Stop),
+            ("an agent's words before, hearing users", asked, said(3, agent, &internal), asked_at, Pick::Stop),
+            ("a command before", asked, at(3, alice, command.clone()), asked_at, Pick::Stop),
+        ];
+        for (what, hears, envelope, asked, picked) in looking_before_it {
+            assert_eq!(hears.pick(&work, &envelope, asked), picked, "{what}");
         }
     }
 

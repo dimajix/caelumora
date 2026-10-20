@@ -87,8 +87,8 @@ personality's `hears_during_turn` (`HearsDuringTurn`), with two settings:
 
 *   **`from`** - whose messages: `none`, the default - nobody's -, `users` - the people's, not
     those of other agents -, or `all`.
-*   **`others`** - what is said in another's authority than the turn's: `wait`, the default, or
-    `hear`.
+*   **`others`** - what is said in another's authority than the turn's: `wait`, the default,
+    `when_asked` or `hear`.
 
 A turn of many steps can so be steered by what is said while it works, without cancelling it;
 with `from: none` an agent hears what was said when the turn has ended, as between turns.
@@ -102,19 +102,29 @@ with `from: none` an agent hears what was said when the turn has ended, as betwe
     model is told, by a prompt part, that it was said while it worked, to take it into account and
     to answer what it asks in its answer.
 *   **Up to the first event that has to wait.** It takes the queue in order and stops at the first
-    event it may not take (`HearsDuringTurn::takes`), which stays where it is with everything
+    event it may not take (`HearsDuringTurn::pick`), which stays where it is with everything
     behind it (`EventReceiver::try_recv_if`), for the turn's end: a message the personality does
     not hear; one above the classification the turn began with, which it would write below its
     level; a request to respond in another's authority; a change to a message, a request to answer
-    again, a command. So the order every rule of taking in relies on holds.
+    again, a command. So the order every rule of taking in relies on holds. The one exception is
+    `others: when_asked`, below: what is left behind what it took is only ever another's request,
+    and requests are not in the transcript.
 *   **In whose authority.** A turn acts in the authority of whoever began the chain it answers
     (`EventContext::initiator_id`). With `others: wait`, it hears only what is said in that
     authority - by them, or an agent working for them -, so that nobody steers what it does in an
     authority they do not have; but once another has spoken, it hears nothing more until it ends.
-    With `others: hear` it hears another's words too, as between turns, and stays able to hear; they
-    may then steer what it does. Either way another's request to respond waits, and is answered
-    after the turn in a turn in their authority: a personality widens whose words are heard, never
-    whose authority a turn acts with. An external agent is not affected: it takes in between its
+    With `others: when_asked` another's words wait as with `wait`, until a request in the turn's
+    own authority follows them - its initiator mentions the agent, or the moderator asks it
+    otherwise -: then the turn takes that request ahead (`HearsDuringTurn::pick_request`) and hears
+    what was said before it, another's words included, as between turns a turn hears what was said
+    before the request it answers; another's requests are passed over and stay where they are, and
+    what is said after the request waits again. Only a request lifts what waits, and only one in the
+    turn's authority: another who mentions the agent lifts nothing. A command, a change or a message
+    above the turn's classification before it is not passed over. With `others: hear` it hears
+    another's words too, as between turns, and stays able to hear; they may then steer what it
+    does. In every setting another's request to respond waits, and is answered after the turn in a
+    turn in their authority: a personality widens whose words are heard, never whose authority a
+    turn acts with. An external agent is not affected: it takes in between its
     exchanges with its remote agent, as before.
 
 ### What leaves the agent

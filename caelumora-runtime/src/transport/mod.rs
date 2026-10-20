@@ -2,7 +2,7 @@ pub mod memory;
 pub use memory::{InMemoryEventReceiver, InMemoryEventSender, OriginEventSender};
 
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorId, Envelope};
+use caelumora_model::actor::{ActorId, Envelope, Pick};
 use caelumora_model::history::Heard;
 use anyhow::Error;
 
@@ -52,6 +52,11 @@ impl EventSender for Discard {
 /// to one lifetime of the future.
 pub type EventPredicate = for<'a> fn(&'a Envelope) -> bool;
 
+/// What is done with each event looked at, for `EventReceiver::try_recv_if`
+/// (issue 435). Spelt with its lifetime bound for every reference, as
+/// `EventPredicate` is.
+pub type EventPick<'p> = dyn for<'a> Fn(&'a Envelope) -> Pick + Sync + 'p;
+
 /// What an actor receives by (issue 223): in a channel, its inbox
 /// (`channel::inbox`) - a queue of what is delivered live, and behind it the
 /// channel's history -, in a test a queue alone. Every method takes from one
@@ -66,8 +71,8 @@ pub trait EventReceiver: Send {
 
     /// The next event that fulfils `predicate`, waiting for one, taken ahead
     /// of what does not, which stays where it is, in order, to be taken
-    /// next. A search: it passes over what does not match, wherever the
-    /// match is - unlike `try_recv_if`, which looks at the next event only.
+    /// next. A search: it passes over whatever does not match, wherever the
+    /// match is - unlike `try_recv_if`, which stops where it is told to.
     async fn recv_matching(&mut self, predicate: EventPredicate) -> Option<Envelope>;
 
     /// The next event that is there already, without waiting for one to
@@ -75,13 +80,17 @@ pub trait EventReceiver: Send {
     /// is closed: that is `recv`'s to tell.
     async fn try_recv(&mut self) -> Option<Envelope>;
 
-    /// The next event that is there already, without waiting, if it
-    /// fulfils `predicate`; otherwise nothing, and the event stays where it
-    /// is, to be taken next (issue 431) - what an actor takes in up to the
-    /// first event that has to wait, so that everything behind it waits too,
-    /// in order. Named as Rust names it (`Peekable::next_if`, `Vec::pop_if`):
-    /// `_if` looks at the next event only, where `recv_matching` searches.
-    async fn try_recv_if(&mut self, predicate: &(dyn for<'a> Fn(&'a Envelope) -> bool + Sync)) -> Option<Envelope>;
+    /// The first event that is there already, without waiting, that `pick`
+    /// takes (issue 431): looked at in order, each event `pick` passes over
+    /// stays where it is, to be taken later, and at the first it stops at
+    /// nothing is taken - it and everything behind it stay where they are,
+    /// in order. What an actor takes in up to the first event that has to
+    /// wait; passing over, it takes what may come ahead of what waits (issue
+    /// 435), taken ahead as `recv_matching` takes. Named as Rust names it
+    /// (`Peekable::next_if`, `Vec::pop_if`): with `pick` taking or stopping
+    /// only, it looks at the next event alone - what `recv_matching`, which
+    /// searches and waits, is not.
+    async fn try_recv_if(&mut self, pick: &EventPick<'_>) -> Option<Envelope>;
 
     /// Where the actor stands in its channel's history (issue 223): what of
     /// it was taken from here so far, in order and ahead. What an actor that

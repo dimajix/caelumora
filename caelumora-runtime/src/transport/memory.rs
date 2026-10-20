@@ -1,13 +1,14 @@
-use crate::transport::{EventPredicate, EventReceiver, EventSender, TransportError, TransportResult};
+use crate::transport::{EventPick, EventPredicate, EventReceiver, EventSender, TransportError, TransportResult};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorId, Envelope};
+use caelumora_model::actor::{ActorId, Envelope, Pick};
 use caelumora_model::history::Heard;
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
 
 /// A queue an actor receives from, without a history behind it: for tests
 /// of an actor, and for whatever runs an actor outside of a channel. What
-/// `recv_matching` passes over it puts aside, to be taken first.
+/// `recv_matching` and `try_recv_if` pass over it puts aside, to be taken
+/// first.
 pub struct InMemoryEventReceiver {
     rx: mpsc::Receiver<Envelope>,
     buffer: VecDeque<Envelope>,
@@ -63,18 +64,30 @@ impl EventReceiver for InMemoryEventReceiver {
         Some(self.took(event))
     }
 
-    async fn try_recv_if(&mut self, predicate: &(dyn for<'a> Fn(&'a Envelope) -> bool + Sync)) -> Option<Envelope> {
-        // What was put aside comes first; only once it is empty is the queue
-        // looked at, and its next event then waits in the buffer.
-        if self.buffer.is_empty() {
-            let event = self.rx.try_recv().ok()?;
-            self.buffer.push_back(event);
+    async fn try_recv_if(&mut self, pick: &EventPick<'_>) -> Option<Envelope> {
+        // What was put aside comes first; what is queued is looked at once
+        // that is passed over, and waits in the buffer then.
+        let mut at = 0;
+        loop {
+            if at == self.buffer.len() {
+                let event = self.rx.try_recv().ok()?;
+                self.buffer.push_back(event);
+            }
+            match pick(&self.buffer[at]) {
+                Pick::Take => break,
+                Pick::PassOver => at += 1,
+                Pick::Stop => return None,
+            }
         }
-        if !predicate(self.buffer.front()?) {
-            return None;
+        let event = self.buffer.remove(at)?;
+        match (at, event.context.position) {
+            (0, _) => Some(self.took(event)),
+            (_, Some(seq)) => {
+                self.heard.took_ahead(seq);
+                Some(event)
+            }
+            (_, None) => Some(event),
         }
-        let event = self.buffer.pop_front()?;
-        Some(self.took(event))
     }
 
     fn heard(&self) -> Heard {
@@ -190,7 +203,7 @@ mod tests {
     async fn try_recv_if_takes_the_next_event_only_if_it_fulfils_the_predicate_and_leaves_it_otherwise() {
         let (tx, rx) = mpsc::channel(4);
         let mut receiver = InMemoryEventReceiver::new(rx);
-        let requested = |e: &Envelope| matches!(e.event, ActorEvent::ResponseRequested);
+        let requested = |e: &Envelope| if matches!(e.event, ActorEvent::ResponseRequested) { Pick::Take } else { Pick::Stop };
         assert!(receiver.try_recv_if(&requested).await.is_none(), "nothing queued, nothing waited for");
 
         tx.try_send(envelope(ActorEvent::ResponseRequested)).expect("room");
@@ -206,6 +219,35 @@ mod tests {
             kinds.push(event.event.kind());
         }
         assert_eq!(kinds, ["ResponseStarted", "ResponseRequested"], "what it left, in order");
+    }
+
+    /// Issue 435: what is passed over stays where it is, what is taken
+    /// past it is taken ahead, and nothing past a stop is taken.
+    #[tokio::test]
+    async fn try_recv_if_takes_past_what_it_passes_over_and_never_past_a_stop() {
+        let (tx, rx) = mpsc::channel(8);
+        let mut receiver = InMemoryEventReceiver::new(rx);
+        let requests_past_starts = |e: &Envelope| match e.event {
+            ActorEvent::ResponseRequested => Pick::Take,
+            ActorEvent::ResponseStarted { .. } => Pick::PassOver,
+            _ => Pick::Stop,
+        };
+        let started = || ActorEvent::ResponseStarted { turn_id: TurnId::new() };
+        for (seq, event) in [(0, started()), (1, ActorEvent::ResponseRequested), (2, started()), (3, ActorEvent::WakeupRequested), (4, ActorEvent::ResponseRequested)] {
+            tx.try_send(at(seq, event)).expect("room");
+        }
+
+        let taken = receiver.try_recv_if(&requests_past_starts).await.expect("past what it passes over");
+        assert_eq!(taken.context.position, Some(Position::new(1)));
+        assert!(receiver.try_recv_if(&requests_past_starts).await.is_none(), "never past a stop");
+        assert!(receiver.heard().has(Position::new(1)) && !receiver.heard().has(Position::new(0)), "taken ahead of what it passed over");
+
+        let mut left = Vec::new();
+        while let Some(event) = receiver.try_recv().await {
+            left.push(event.context.position.map(|seq| seq.get()));
+        }
+        assert_eq!(left, [Some(0), Some(2), Some(3), Some(4)], "the rest, in order");
+        assert_eq!(receiver.heard(), Heard::at(Position::new(5)));
     }
 
     #[tokio::test]

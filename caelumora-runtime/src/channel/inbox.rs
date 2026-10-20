@@ -11,10 +11,10 @@
 //! everything important is recorded; what is not recorded, and so may be
 //! lost while the inbox is behind, is transient (`ActorEvent::is_transient`).
 
-use crate::transport::{EventPredicate, EventReceiver};
+use crate::transport::{EventPick, EventPredicate, EventReceiver};
 use anyhow::Result;
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorId, Envelope};
+use caelumora_model::actor::{ActorId, Envelope, Pick};
 use caelumora_model::chain::Position;
 use caelumora_model::history::Heard;
 use std::collections::VecDeque;
@@ -216,43 +216,62 @@ impl InboxReceiver {
         }
     }
 
-    /// The next envelope - from the queue, or once that is empty and the
-    /// inbox behind, from the history - if `take` takes it; waiting for one
-    /// if `wait`. Cancel-safe.
-    async fn next(&mut self, wait: bool, take: &(dyn for<'a> Fn(&'a Envelope) -> bool + Sync)) -> Option<Envelope> {
+    /// The first envelope `pick` takes - from the queue, and once the inbox
+    /// is behind from the history behind it: what was read of it, then the
+    /// history itself -, looked at in order; what it passes over stays where
+    /// it is, and nothing past what it stops at is taken. Waits for one if
+    /// `wait`. Cancel-safe.
+    async fn next(&mut self, wait: bool, pick: &EventPick<'_>) -> Option<Envelope> {
+        // Searched already in this call: what arrives meanwhile is read
+        // from there on.
+        let mut searched: Option<Position> = None;
         loop {
-            let behind = {
+            let (behind, passed) = {
                 let mut queue = self.shared.queue();
-                if let Some(front) = queue.envelopes.front() {
-                    if !take(front) {
-                        return None;
+                match Self::first(queue.envelopes.iter(), pick) {
+                    Found::Taken(at) => {
+                        let envelope = queue.envelopes.remove(at)?;
+                        drop(queue);
+                        return Some(if at == 0 { self.took(envelope) } else { self.took_ahead(envelope) });
                     }
-                    let envelope = queue.envelopes.pop_front()?;
-                    drop(queue);
-                    return Some(self.took(envelope));
+                    Found::Stopped => return None,
+                    Found::Passed => {}
                 }
                 if queue.closed {
                     return None;
                 }
-                queue.behind.is_some()
+                (queue.behind.is_some(), !queue.envelopes.is_empty())
             };
             if behind {
-                match self.read().await {
-                    Read::Ready => {
-                        if !take(self.read.front()?) {
-                            return None;
-                        }
-                        let envelope = self.read.pop_front()?;
-                        return Some(self.took(envelope));
+                // What the queue still holds lies before what is read of the
+                // history: read on only once it is taken.
+                if !passed {
+                    match self.read().await {
+                        Read::Ready => {}
+                        Read::Again => continue,
+                        // Caught up: the queue again.
+                        Read::Done if self.shared.queue().behind.is_none() => continue,
+                        Read::Done => {}
+                        Read::Gone => return None,
                     }
-                    Read::Again => continue,
-                    // Caught up: the queue again.
-                    Read::Done => {
-                        if self.shared.queue().behind.is_none() {
-                            continue;
-                        }
+                }
+                // Without what was handed out already, taken ahead.
+                let read = std::mem::take(&mut self.read);
+                self.read = read.into_iter().filter(|envelope| self.fresh(envelope)).collect();
+                match Self::first(self.read.iter(), pick) {
+                    Found::Taken(at) => {
+                        let envelope = self.read.remove(at)?;
+                        return Some(if !passed && at == 0 { self.took(envelope) } else { self.took_ahead(envelope) });
                     }
-                    Read::Gone => return None,
+                    Found::Stopped => return None,
+                    Found::Passed => {}
+                }
+                let from = searched.unwrap_or_else(|| self.shared.queue().read_to.max(self.heard.next()));
+                match self.search(from, pick).await {
+                    Searched::Taken(envelope) => return Some(self.took_ahead(*envelope)),
+                    Searched::Stopped => return None,
+                    Searched::Passed(to) => searched = Some(to),
+                    Searched::Gone => return None,
                 }
             }
             if !wait {
@@ -262,79 +281,88 @@ impl InboxReceiver {
         }
     }
 
-    /// The first envelope in the history from `from` on that fulfils
-    /// `predicate`, and where the history was read up to: from there on the
-    /// next search goes on.
-    async fn search(&self, from: Position, predicate: EventPredicate) -> Option<(Option<Envelope>, Position)> {
-        let channel = self.channel.upgrade()?;
+    /// Where among `envelopes`, in order, the first that `pick` takes is,
+    /// or whether it stops before one or passes over all of them.
+    fn first<'e>(envelopes: impl Iterator<Item = &'e Envelope>, pick: &EventPick<'_>) -> Found {
+        for (at, envelope) in envelopes.enumerate() {
+            match pick(envelope) {
+                Pick::Take => return Found::Taken(at),
+                Pick::PassOver => {}
+                Pick::Stop => return Found::Stopped,
+            }
+        }
+        Found::Passed
+    }
+
+    /// Looks for the first envelope `pick` takes in the history from `from`
+    /// on, without keeping what it passes over: that stays where it is, to
+    /// be read again in order.
+    async fn search(&self, from: Position, pick: &EventPick<'_>) -> Searched {
+        let Some(channel) = self.channel.upgrade() else { return Searched::Gone };
         let mut from = from;
         loop {
             let (envelopes, to) = match channel.recorded_for(self.actor, from).await {
                 Ok(read) => read,
                 Err(e) => {
                     warn!("Cannot search the history of the channel of {} from position {}: {:#}", self.actor, from, e);
-                    return Some((None, from));
+                    return Searched::Passed(from);
                 }
             };
-            if let Some(found) = envelopes.into_iter().find(|envelope| self.fresh(envelope) && predicate(envelope)) {
-                return Some((Some(found), to));
+            let mut fresh: Vec<Envelope> = envelopes.into_iter().filter(|envelope| self.fresh(envelope)).collect();
+            match Self::first(fresh.iter(), pick) {
+                Found::Taken(at) => return Searched::Taken(Box::new(fresh.swap_remove(at))),
+                Found::Stopped => return Searched::Stopped,
+                Found::Passed => {}
             }
             if to <= from {
-                return Some((None, from));
+                return Searched::Passed(from);
             }
             from = to;
         }
     }
 }
 
+/// Where in what is looked at the envelope a pick takes is (`InboxReceiver::first`).
+enum Found {
+    /// At this index.
+    Taken(usize),
+    /// Nowhere: it stopped before one.
+    Stopped,
+    /// Nowhere: it passed over all of them.
+    Passed,
+}
+
+/// What a search of the history found (`InboxReceiver::search`).
+enum Searched {
+    /// The envelope taken, boxed: the other variants are small.
+    Taken(Box<Envelope>),
+    /// Nothing: it stopped before one.
+    Stopped,
+    /// Nothing up to this position, where the next search goes on.
+    Passed(Position),
+    /// The channel is gone.
+    Gone,
+}
+
 #[async_trait]
 impl EventReceiver for InboxReceiver {
     async fn recv(&mut self) -> Option<Envelope> {
-        self.next(true, &|_| true).await
+        self.next(true, &|_| Pick::Take).await
     }
 
     /// Searches the queue, then what was read of the history, then the
     /// history itself, without keeping what it passes over: that stays
     /// where it is, to be read again in order.
     async fn recv_matching(&mut self, predicate: EventPredicate) -> Option<Envelope> {
-        // Searched already in this call: what arrives meanwhile is read
-        // from there on.
-        let mut searched: Option<Position> = None;
-        loop {
-            let behind = {
-                let mut queue = self.shared.queue();
-                if let Some(at) = queue.envelopes.iter().position(predicate) {
-                    let envelope = queue.envelopes.remove(at)?;
-                    drop(queue);
-                    return Some(if at == 0 { self.took(envelope) } else { self.took_ahead(envelope) });
-                }
-                if queue.closed {
-                    return None;
-                }
-                queue.behind.is_some()
-            };
-            if behind {
-                if let Some(at) = self.read.iter().position(|envelope| self.fresh(envelope) && predicate(envelope)) {
-                    let envelope = self.read.remove(at)?;
-                    return Some(self.took_ahead(envelope));
-                }
-                let from = searched.unwrap_or_else(|| self.shared.queue().read_to.max(self.heard.next()));
-                match self.search(from, predicate).await {
-                    Some((Some(found), _)) => return Some(self.took_ahead(found)),
-                    Some((None, to)) => searched = Some(to),
-                    None => return None,
-                }
-            }
-            self.shared.arrived.notified().await;
-        }
+        self.next(true, &|envelope| if predicate(envelope) { Pick::Take } else { Pick::PassOver }).await
     }
 
     async fn try_recv(&mut self) -> Option<Envelope> {
-        self.next(false, &|_| true).await
+        self.next(false, &|_| Pick::Take).await
     }
 
-    async fn try_recv_if(&mut self, predicate: &(dyn for<'a> Fn(&'a Envelope) -> bool + Sync)) -> Option<Envelope> {
-        self.next(false, predicate).await
+    async fn try_recv_if(&mut self, pick: &EventPick<'_>) -> Option<Envelope> {
+        self.next(false, pick).await
     }
 
     fn heard(&self) -> Heard {
@@ -493,10 +521,68 @@ mod tests {
         history.record(said(0));
         history.record(ActorEvent::ResponseRequested);
         let (_inbox, mut rx) = open(&history, Heard::default());
-        let heard = |e: &Envelope| matches!(e.event, ActorEvent::CompleteMessageGenerated(_));
+        let heard = |e: &Envelope| if matches!(e.event, ActorEvent::CompleteMessageGenerated(_)) { Pick::Take } else { Pick::Stop };
         assert!(rx.try_recv_if(&heard).await.is_some());
         assert!(rx.try_recv_if(&heard).await.is_none(), "a request waits");
         assert_eq!(all_of(&mut rx).await, ["ResponseRequested"], "and is still the next");
+    }
+
+    /// Takes a request to respond past what was said, and stops at
+    /// anything else.
+    fn requests_past_what_was_said(envelope: &Envelope) -> Pick {
+        match envelope.event {
+            ActorEvent::ResponseRequested => Pick::Take,
+            ActorEvent::CompleteMessageGenerated(_) => Pick::PassOver,
+            _ => Pick::Stop,
+        }
+    }
+
+    fn command() -> ActorEvent {
+        ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: ActorId::None }
+    }
+
+    /// Issue 435: what is passed over stays where it is, in the queue as in
+    /// the history behind it; what is taken past it is taken ahead, and
+    /// nothing past a stop is taken.
+    #[tokio::test]
+    async fn what_is_passed_over_stays_where_it_is_and_nothing_past_a_stop_is_taken() {
+        let history = Arc::new(History::default());
+        let (inbox, mut rx) = open(&history, Heard::default());
+        let (queued, read, stop) = (30, CAPACITY + 20, CAPACITY + 40);
+        for n in 0..CAPACITY + 50 {
+            let event = match n {
+                n if n == queued || n == read => ActorEvent::ResponseRequested,
+                n if n == stop => command(),
+                n => said(n),
+            };
+            inbox.deliver(history.record(event));
+        }
+        let position = |envelope: Option<Envelope>| envelope.and_then(|e| e.context.position).map(|seq| seq.get() as usize);
+        assert_eq!(position(rx.try_recv_if(&requests_past_what_was_said).await), Some(queued), "from the queue");
+        assert_eq!(position(rx.try_recv_if(&requests_past_what_was_said).await), Some(read), "from the history behind it");
+        assert!(rx.try_recv_if(&requests_past_what_was_said).await.is_none(), "never past a stop");
+        assert!(rx.heard().has(Position::new(read as u64)) && !rx.heard().has(Position::START), "taken ahead");
+
+        let rest = all_of(&mut rx).await;
+        let mut expected: Vec<String> = (0..CAPACITY + 50).filter(|n| *n != queued && *n != read).map(|n| n.to_string()).collect();
+        expected[stop - 2] = "CommandRequested".to_string();
+        assert_eq!(rest, expected, "the rest, in order, once");
+        assert_eq!(rx.heard(), Heard::at(history.end()));
+    }
+
+    /// Issue 435: what was read of the history is passed over as the queue
+    /// is.
+    #[tokio::test]
+    async fn what_was_read_of_the_history_is_passed_over_as_the_queue_is() {
+        let history = Arc::new(History::default());
+        for event in [said(0), said(1), ActorEvent::ResponseRequested, command(), ActorEvent::ResponseRequested] {
+            history.record(event);
+        }
+        let (_inbox, mut rx) = open(&history, Heard::default());
+        let taken = rx.try_recv_if(&requests_past_what_was_said).await.expect("past what was said");
+        assert_eq!(taken.context.position, Some(Position::new(2)));
+        assert!(rx.try_recv_if(&requests_past_what_was_said).await.is_none(), "never past a stop");
+        assert_eq!(all_of(&mut rx).await, ["0", "1", "CommandRequested", "ResponseRequested"]);
     }
 
     /// Issue 223: what the channel delivers of what was read from the

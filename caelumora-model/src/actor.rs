@@ -668,6 +668,18 @@ pub enum Rejection {
     Invalid,
 }
 
+/// What is done with an envelope an actor looks at in its inbox, looking for the next it takes
+/// without waiting (`EventReceiver::try_recv_if` of the runtime, issue 435).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pick {
+    /// It is taken - ahead of what was passed over before it, if anything was.
+    Take,
+    /// It stays where it is, to be taken later, and what follows it is looked at.
+    PassOver,
+    /// It stays where it is, and so does everything behind it: nothing past it is taken.
+    Stop,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Envelope {
     pub timestamp: DateTime<Utc>,

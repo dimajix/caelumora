@@ -70,10 +70,11 @@ personalities:
   introduction: A self-made millionaire who always wanted to be a quiz-master - polite, helpful and
     fond of a good quiz.
   # Between the steps of a turn (issue 431): what people say in the authority of whoever asked;
-  # the words of anyone else, and what agents say, wait for the turn's end.
+  # the words of anyone else wait until whoever asked asks again after them (issue 435), and what
+  # agents say waits for the turn's end.
   hears_during_turn:
     from: users
-    others: wait
+    others: when_asked
   components:
   - id: system-prompt
     kind: static_system_prompt_provider
