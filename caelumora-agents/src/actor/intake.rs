@@ -408,6 +408,26 @@ mod tests {
         }
     }
 
+    /// Issue 435: a command between bob's words and alice's request stays
+    /// a barrier: her request lifts nothing past it.
+    #[tokio::test]
+    async fn during_a_turn_a_command_before_its_initiators_request_lifts_nothing() {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+        let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let mut state = AgentChannelState::default();
+        under_way_for(&mut state, alice);
+        let mut said = bob_then_alice_then_bob(alice, bob);
+        let command = ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: ActorId::None };
+        said.insert(2, Envelope::new(SecurityContext::default(), EventContext { initiator_id: alice, ..EventContext::default() }, command));
+        for event in said {
+            tx.try_send(event).expect("room");
+        }
+        let body = AgentBody::detached(Vec::new()).hearing(HearsDuringTurn { from: HearsFrom::Users, others: OthersWords::WhenAsked });
+        assert!(!body.take_in_during_turn(&mut state, &mut rx).await, "nothing taken in");
+        assert_eq!(left_in(&mut rx).await.len(), 7, "all of it waits");
+    }
+
     #[tokio::test]
     async fn between_turns_nothing_is_taken_in_as_during_one() {
         let (tx, rx) = tokio::sync::mpsc::channel(8);

@@ -1432,8 +1432,9 @@ impl LLMClient for Held {
 /// What alice's agent `helper`, whose personality hears everyone between the steps of a turn
 /// and treats others' words as `others` says (issue 431), was given and what was asked while
 /// it worked: alice asks it to echo something, bob says "@helper and delete it" while its turn
-/// is at work, and it answers both - the contents of each model call, and what was asked.
-async fn bob_speaks_while_alices_turn_works(others: OthersWords) -> (Vec<Vec<String>>, Vec<String>) {
+/// is at work - and then alice says `alice_again`, if anything (issue 435) -, and it answers
+/// them - the contents of each model call, and what was asked.
+async fn bob_speaks_while_alices_turn_works(others: OthersWords, alice_again: Option<&str>) -> (Vec<Vec<String>>, Vec<String>) {
     use caelumora_agents::testing::calling;
     use caelumora_model::message::MessageRole;
 
@@ -1476,6 +1477,16 @@ async fn bob_speaks_while_alices_turn_works(others: OthersWords) -> (Vec<Vec<Str
                 }
             }
         }).await.expect("his message is said");
+        if let Some(again) = alice_again {
+            main.user_actor(world.alice).expect("she takes part").send_message(again.to_string(), None).await.expect("she speaks again");
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if let ActorEvent::CompleteMessageGenerated(message) = watch.recv().await.expect("the channel runs").event {
+                        if message.content.as_deref() == Some(again) { break }
+                    }
+                }
+            }).await.expect("her message is said");
+        }
         model.gate.add_permits(4);
         tokio::time::timeout(Duration::from_secs(5), async {
             let mut answers = 0;
@@ -1510,7 +1521,7 @@ fn his_request_answered_in_his_authority(asked: &[String]) {
 /// in someone else's authority.
 #[tokio::test]
 async fn a_turn_lets_what_is_said_in_anothers_authority_wait_unless_its_personality_hears_it() {
-    let (given, asked) = bob_speaks_while_alices_turn_works(OthersWords::Wait).await;
+    let (given, asked) = bob_speaks_while_alices_turn_works(OthersWords::Wait, None).await;
     assert!(!heard_bob(&given[1]), "her turn's next step does not hear him: {given:?}");
     assert!(heard_bob(&given[2]), "the turn that answers him does: {given:?}");
     his_request_answered_in_his_authority(&asked);
@@ -1522,9 +1533,32 @@ async fn a_turn_lets_what_is_said_in_anothers_authority_wait_unless_its_personal
 /// widens whose words are heard, never whose authority a turn acts with.
 #[tokio::test]
 async fn a_turn_that_hears_anothers_words_still_answers_their_request_in_their_authority() {
-    let (given, asked) = bob_speaks_while_alices_turn_works(OthersWords::Hear).await;
+    let (given, asked) = bob_speaks_while_alices_turn_works(OthersWords::Hear, None).await;
     assert!(heard_bob(&given[1]), "her turn's next step hears him: {given:?}");
     assert_eq!(given.len(), 4, "and a turn of its own answers him, in two calls: {given:?}");
+    his_request_answered_in_his_authority(&asked);
+}
+
+/// An agent whose personality lets others' words wait until its turn's initiator asks again
+/// (issue 435) hears bob in alice's turn once she asks it after him - as between turns a turn
+/// hears what was said before the request it answers -, and answers her there; bob's request
+/// still waits, and a turn of its own answers it, its call asked by bob.
+#[tokio::test]
+async fn a_turn_hears_anothers_words_once_its_own_initiator_asks_again_and_still_answers_theirs_in_their_authority() {
+    let (given, asked) = bob_speaks_while_alices_turn_works(OthersWords::WhenAsked, Some("@helper go on")).await;
+    assert!(heard_bob(&given[1]) && given[1].iter().any(|content| content.contains("go on")), "her turn's next step hears him, and her: {given:?}");
+    assert_eq!(given.len(), 4, "her request is answered by her turn, and a turn of its own answers him, in two calls: {given:?}");
+    his_request_answered_in_his_authority(&asked);
+}
+
+/// An agent whose personality lets others' words wait until its turn's initiator asks again
+/// (issue 435) does not hear bob in alice's turn when only he asks it, by mentioning it: his
+/// request lifts nothing, and a turn of its own answers it afterwards.
+#[tokio::test]
+async fn a_turn_that_waits_until_its_initiator_asks_hears_nothing_of_another_who_asks_it_himself() {
+    let (given, asked) = bob_speaks_while_alices_turn_works(OthersWords::WhenAsked, None).await;
+    assert!(!heard_bob(&given[1]), "her turn's next step does not hear him: {given:?}");
+    assert!(heard_bob(&given[2]), "the turn that answers him does: {given:?}");
     his_request_answered_in_his_authority(&asked);
 }
 

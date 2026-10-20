@@ -1,6 +1,6 @@
 # 435 — A turn that waits at another's words stays deaf though its own initiator asks again
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -144,3 +144,16 @@ Nothing stored changes; a personality without the new value reads as before.
   the request is the signal rather than the mention, since the mention only makes the moderator
   ask. Recorded with the recommendations: the request as the signal, a third value
   `others: when_asked`, and `try_recv_if` generalized to pass over what may wait.
+- **2026-10-20** — Asked by the maintainer to implement it with the recommendations as the
+  decisions: the request in the turn's authority as the signal, `others: when_asked` beside `wait`,
+  `try_recv_if` generalized. Implemented on the branch `issue-435-hearing-when-asked` in the four
+  steps of the estimate: `OthersWords::WhenAsked`; `try_recv_if` taking a `Pick` per event - take,
+  pass over, stop -, `InboxReceiver` looking through queue, what was read of the history and the
+  history in one pass for every way of receiving; `HearsDuringTurn::pick` and `pick_request`, what
+  both check of a message shared with `takes` as `hears_said`, applied by
+  `AgentBody::take_in_during_turn`, which after a stop looks on for a request in the turn's
+  authority, takes it ahead, and then takes what came before it. A request not recorded is
+  stopped at: without a position it cannot say what came before it. Tests in the model, the
+  transport, the inbox, the intake and the agents' security suite, each checked to fail with the
+  fault it is meant to catch; AGENT-TURN.md (*Hearing during a turn*). No personality of the seed
+  uses the new value yet. Not yet tried with a real model.
