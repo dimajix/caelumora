@@ -2,7 +2,10 @@
 //! it is configured with another (issue 174). It lets every event go where
 //! every channel delivers it (issue 418), asks every agent a message
 //! `@`-mentions to respond, and asks the `ResponderPolicy` of its channel,
-//! its slot, whom to ask when nobody was mentioned (issue 44).
+//! its slot, whom to ask when nobody was mentioned (issue 44). Whose mention
+//! replaces the policy is `mentions_replace_policy` (parameter, default
+//! `anyone`; issue 437): a mention of any participant, so that a message to
+//! a person asks no agent the policy would choose, or of an agent alone.
 //!
 //! An agent's message that makes other agents respond is a hop of a chain
 //! between agents, whether they were mentioned or chosen by the policy. The
@@ -26,6 +29,7 @@ use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RequestReason};
 use caelumora_model::message::Message;
+use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::{debug, warn};
@@ -45,14 +49,48 @@ pub const DEFAULT_MAX_SPAN_DEPTH: i32 = 100;
 /// it is configured otherwise.
 pub const DEFAULT_CONTEXT_MESSAGES: usize = 10;
 
+/// Whose `@`-mention replaces the moderator's policy (issue 437): a message
+/// that mentions them is addressed to them, and of those only the agents are
+/// asked to respond. A mention of a sender of the message never counts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MentionsReplacePolicy {
+    /// Any participant: a message to a person asks nobody.
+    #[default]
+    Anyone,
+    /// An agent alone: a message that mentions only people is answered by
+    /// whom the policy chooses.
+    Agents,
+}
+
+impl MentionsReplacePolicy {
+    /// The parameter `mentions_replace_policy` of a moderator's `params`,
+    /// `Anyone` if it has none.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` if it is neither `anyone` nor
+    /// `agents`.
+    fn of_params(params: &Value) -> Result<Self, ComponentError> {
+        match params.get("mentions_replace_policy") {
+            None => Ok(Self::default()),
+            Some(value) => match value.as_str() {
+                Some("anyone") => Ok(Self::Anyone),
+                Some("agents") => Ok(Self::Agents),
+                _ => Err(ComponentError::InvalidConfig("parameter 'mentions_replace_policy' must be 'anyone' or 'agents'".to_string())),
+            },
+        }
+    }
+}
+
 /// A moderator that delivers like every other and asks whom `policy` chooses
-/// to respond when a message mentions nobody - in a chain between agents
-/// only up to `max_agent_hops` hops, and for no event `max_span_depth` deep
-/// -, told the last `context_messages` messages heard before the message.
+/// to respond when a message mentions nobody whose mention replaces it
+/// (`mentions_replace_policy`) - in a chain between agents only up to
+/// `max_agent_hops` hops, and for no event `max_span_depth` deep -, told the
+/// last `context_messages` messages heard before the message.
 #[derive(Debug)]
 pub struct PolicyModerator {
     actors: Mutex<ModeratorActors>,
     policy: ComponentImpl<dyn ResponderPolicy>,
+    mentions_replace_policy: MentionsReplacePolicy,
     max_agent_hops: u32,
     max_span_depth: i32,
     /// The messages heard, the oldest first, at most `context_messages`.
@@ -62,7 +100,21 @@ pub struct PolicyModerator {
 
 impl PolicyModerator {
     pub fn new(policy: ComponentImpl<dyn ResponderPolicy>, max_agent_hops: u32, context_messages: usize) -> Self {
-        Self { actors: Mutex::new(ModeratorActors::new()), policy, max_agent_hops, max_span_depth: DEFAULT_MAX_SPAN_DEPTH, heard: Mutex::default(), context_messages }
+        Self {
+            actors: Mutex::new(ModeratorActors::new()),
+            policy,
+            mentions_replace_policy: MentionsReplacePolicy::default(),
+            max_agent_hops,
+            max_span_depth: DEFAULT_MAX_SPAN_DEPTH,
+            heard: Mutex::default(),
+            context_messages,
+        }
+    }
+
+    /// This moderator, its policy replaced by the mentions of those
+    /// `mentions_replace_policy` says.
+    pub fn with_mentions_replace_policy(self, mentions_replace_policy: MentionsReplacePolicy) -> Self {
+        Self { mentions_replace_policy, ..self }
     }
 
     /// This moderator, asking nobody to respond to an event `max_span_depth`
@@ -134,7 +186,7 @@ impl PolicyModerator {
         let heard = messages.iter().any(Message::is_heard);
         let (mentioned, candidates, users) = {
             let actors = self.actors();
-            (actors.mentioned_responders(messages), actors.actor_candidates(messages), actors.user_ids())
+            (actors.mentioned_responders(messages, self.mentions_replace_policy), actors.actor_candidates(messages), actors.user_ids())
         };
         let conversation: Vec<Message> = self.heard().iter().chain(messages).cloned().collect();
         if !heard {
@@ -160,8 +212,9 @@ impl PolicyModerator {
             return self.cut_off(event, messages, mentioned.unwrap_or_default(), users);
         }
 
-        // Mentioned agents respond instead of those the policy would choose;
-        // the policy is not consulted, so a rotation is left as it is.
+        // Mentioned agents respond instead of those the policy would choose -
+        // nobody, if the message is addressed to people alone; the policy is
+        // not consulted, so a rotation is left as it is.
         let (ask, reason) = match mentioned {
             Some(mentioned) => (mentioned, RequestReason::Mentioned),
             None => (self.policy.choose(event, &conversation, candidates).await, RequestReason::Chosen),
@@ -282,24 +335,30 @@ impl ModeratorActors {
             .collect()
     }
 
-    /// Agents explicitly addressed by `@`-mentions in `messages` (issue 29),
-    /// or `None` if there are none - in which case the moderator applies its
-    /// own policy. A mention overrides that policy: every mentioned agent is
-    /// asked to respond, and nobody else - whether a user or an agent wrote
-    /// it; the limit on hops between agents bounds the latter (issue 45).
-    /// Sleeping agents are not filtered out here - the channel wakes whom
-    /// the moderator asks to respond before it delivers anything of the
-    /// decision.
-    fn mentioned_responders(&self, messages: &[Message]) -> Option<Vec<ActorId>> {
+    /// The agents explicitly addressed by `@`-mentions in `messages` (issue
+    /// 29), if the messages are addressed by a mention that `replacing` says
+    /// replaces the moderator's policy - of an agent, or of any participant
+    /// (issue 437) -, else `None`, in which case the moderator applies its
+    /// policy. A mention overrides that policy: every mentioned agent is
+    /// asked to respond, and nobody else - nobody at all for a message to
+    /// people alone -, whether a user or an agent wrote it; the limit on
+    /// hops between agents bounds the latter (issue 45). A mention of a
+    /// sender of the messages counts for nothing. Sleeping agents are not
+    /// filtered out here - the channel wakes whom the moderator asks to
+    /// respond before it delivers anything of the decision.
+    fn mentioned_responders(&self, messages: &[Message], replacing: MentionsReplacePolicy) -> Option<Vec<ActorId>> {
         let sender_ids: HashSet<ActorId> = messages.iter().map(|m| m.sender_id).collect();
+        let mut addressed = false;
         let mut responders: Vec<ActorId> = Vec::new();
-        for id in messages.iter().flat_map(|m| m.mentions.iter()) {
-            if self.agent_actors.contains_key(id) && !sender_ids.contains(id) && !responders.contains(id) {
+        for id in messages.iter().flat_map(|m| m.mentions.iter()).filter(|id| !sender_ids.contains(id)) {
+            let agent = self.agent_actors.contains_key(id);
+            addressed |= agent || (replacing == MentionsReplacePolicy::Anyone && self.takes_part(*id));
+            if agent && !responders.contains(id) {
                 responders.push(*id);
             }
         }
 
-        if responders.is_empty() { None } else { Some(responders) }
+        addressed.then_some(responders)
     }
 
     /// The users in the channel.
@@ -323,6 +382,7 @@ pub fn register(registry: &mut ComponentRegistry) {
                 Some(value) => value.as_u64().and_then(|depth| i32::try_from(depth).ok())
                     .ok_or_else(|| ComponentError::InvalidConfig("parameter 'max_span_depth' must be a number of at least 0".to_string()))?,
             };
+            let mentions_replace_policy = MentionsReplacePolicy::of_params(&descriptor.params)?;
             let context_messages = match descriptor.params.get("context_messages") {
                 None => DEFAULT_CONTEXT_MESSAGES,
                 Some(value) => value.as_u64().and_then(|count| usize::try_from(count).ok())
@@ -331,7 +391,10 @@ pub fn register(registry: &mut ComponentRegistry) {
             // The channel's policy, or the default one.
             let policy = context.one::<dyn ResponderPolicy>().await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn Moderator>(Arc::new(PolicyModerator::new(policy, max_agent_hops, context_messages).with_max_span_depth(max_span_depth)));
+            let moderator = PolicyModerator::new(policy, max_agent_hops, context_messages)
+                .with_max_span_depth(max_span_depth)
+                .with_mentions_replace_policy(mentions_replace_policy);
+            facets.insert::<dyn Moderator>(Arc::new(moderator));
             Ok(facets)
         },
     );
@@ -565,6 +628,46 @@ mod tests {
             assert!(!routing.ask.contains(&agents[1]), "{:?} must not ask the sleeping agent without a mention", moderator);
             assert_eq!(routing.reason, RequestReason::Chosen, "{:?} must say its policy chose them", moderator);
         }
+    }
+
+    /// Issue 437: a message to a person is addressed to them - it asks no
+    /// agent the policy would choose -, unless only a mention of an agent
+    /// replaces the policy; mentioned beside them, an agent is asked, and a
+    /// mention of the message's own sender counts for nothing.
+    #[tokio::test]
+    async fn a_message_to_a_person_asks_nobody_unless_only_agents_replace_the_policy() {
+        for moderator in answering_moderators() {
+            let agents = add_agents(&moderator);
+            let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+            moderator.add_actor(Arc::new(StandIn::new(user, "test", ActorState::Idle)));
+            moderator.add_actor(Arc::new(StandIn::new(other, "test", ActorState::Idle)));
+
+            let to_her = moderator.route(&message_from(user, "@other, look", vec![other])).await;
+            assert!(to_her.ask.is_empty(), "{:?} must ask nobody for a message to a person", moderator);
+            let to_both = moderator.route(&message_from(user, "@other and @c, look", vec![other, agents[2]])).await;
+            assert_eq!(to_both.ask, vec![agents[2]], "{:?} must ask the agent mentioned beside her", moderator);
+            assert_eq!(to_both.reason, RequestReason::Mentioned);
+            let to_himself = moderator.route(&message_from(user, "@user, note to self", vec![user])).await;
+            assert!(!to_himself.ask.is_empty(), "{:?} must apply its policy to a mention of the sender alone", moderator);
+        }
+        for moderator in answering_moderators() {
+            let moderator = moderator.with_mentions_replace_policy(MentionsReplacePolicy::Agents);
+            let agents = add_agents(&moderator);
+            let (user, other) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+            moderator.add_actor(Arc::new(StandIn::new(other, "test", ActorState::Idle)));
+
+            let to_her = moderator.route(&message_from(user, "@other, look", vec![other])).await;
+            assert!(!to_her.ask.is_empty() && !to_her.ask.contains(&agents[1]), "{:?} must apply its policy, with only agents replacing it", moderator);
+            assert_eq!(to_her.reason, RequestReason::Chosen);
+        }
+    }
+
+    #[test]
+    fn whose_mentions_replace_the_policy_is_configured() {
+        let of = |params| MentionsReplacePolicy::of_params(&params);
+        assert_eq!(of(serde_json::json!({})).unwrap(), MentionsReplacePolicy::Anyone, "anyone's by default");
+        assert_eq!(of(serde_json::json!({ "mentions_replace_policy": "agents" })).unwrap(), MentionsReplacePolicy::Agents);
+        assert!(of(serde_json::json!({ "mentions_replace_policy": "people" })).is_err());
     }
 
     #[tokio::test]

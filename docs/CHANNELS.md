@@ -883,10 +883,15 @@ it, and decides:
 *   whom to ask to respond, when an answer is complete: for a message said outside of any turn as it
     is said, for the messages of a turn at its end. The decision follows from the messages - whether
     a turn is theirs - never from the kind of their sender;
-*   every agent a message `@`-mentions is asked to respond;
+*   every agent a message `@`-mentions is asked to respond, and nobody else: a message that mentions
+    anyone is addressed to them, so one to people alone asks no agent (`mentions_replace_policy:
+    anyone`, the default, issue 437). With `agents`, only a mention of an agent replaces the policy,
+    and a message to people alone is answered by whom the policy chooses. A mention of a sender of
+    the message counts for nothing;
 *   a chain between agents ends at a limit (see below).
 
-Whom it asks when a message mentions no agent is the channel's `ResponderPolicy`, which is told the
+Whom it asks when a message mentions nobody whose mention replaces it is the channel's
+`ResponderPolicy`, which is told the
 event to answer, the conversation and which agents could answer, as an `ActorDescription` each:
 what of an actor is public to everyone in its channel, its id, name and introduction
 (`Actor::describe`), and nothing a policy from another crate could act on. The conversation ends
@@ -935,9 +940,11 @@ it asks whether each should respond, up to 64, and asks those at or above `thres
 
 The channel waits for the decision before it routes anything else, so it is bounded by the
 endpoint's timeout, 5 s unless written. What keeps the model from choosing - a timeout, an error,
-an answer naming no option, more than 64 candidates - asks whom `on_failure` says: `all` (the
-default), so that nothing said is left unanswered in silence, or `none`. It is logged without
-anything that was said.
+an answer naming no option, more than 64 candidates - asks whom `on_failure` says: `none` (the
+default, issue 437), so that a model that is slow or down leaves the agents quiet rather than makes
+every one of them answer, or `all`, so that nothing said is left unanswered. It is logged without
+anything that was said; the users are not told
+([441](../issues/441-nobody-is-told-when-no-responder-was-chosen.md)).
 
 What was said leaves the system where the endpoint lies outside it. The policy sends a message only
 if it may flow to the endpoint's `destination` - `public` unless configured, as for an MCP server -
@@ -954,7 +961,7 @@ only through a `ref` to preconfigured components, while a template may write it.
 | `keep_alive` | How long the model stays loaded after a decision | the server's |
 | `threshold` | How probable it must be that a candidate fits | `0.3` |
 | `max_responders` | How many are asked at most | `1` |
-| `on_failure` | Whom to ask when the model does not choose: `all` or `none` | `all` |
+| `on_failure` | Whom to ask when the model does not choose: `none` or `all` | `none` |
 | `destination` | What the server is cleared for | `public` |
 | `sender_format` | How the model is told who said what: `none`, `prefix` or `xml` | `prefix` |
 | `sender_style` | By which name a sender is marked: `handle` or `name` | `handle` |
@@ -1008,7 +1015,9 @@ message - for `@all`, the participants of that moment. Nothing downstream parses
 a later rename, or a participant who joins later, cannot change whom a past message addressed.
 
 A mention changes who is asked to respond, not who receives the message: every participant still
-gets it, but every moderator asks exactly the mentioned agents instead of applying its own policy.
+gets it, but every moderator asks exactly the mentioned agents instead of applying its own policy -
+nobody, for a message that mentions only people, unless the `policy_moderator` is configured with
+`mentions_replace_policy: agents` (see [Moderators](#moderators)).
 Mentioned agents that are asleep are woken first (see [Waking](#waking)).
 
 Mentions written by agents are routed as well: an agent can hand a question to another
