@@ -1,7 +1,7 @@
 [package]
 name = "caelumora-skills"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 license.workspace = true
 
 # The layers of the plugin (issue 323, cut 11): without features the entity

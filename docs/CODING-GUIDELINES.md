@@ -67,6 +67,10 @@ modules use.
     types in `caelumora-rest-api` -, keep `caelumora-web-ui` compatible with it.
 *   **Components.** A new component kind is registered in the `ComponentRegistry`; where it goes and
     how it is named is described in [COMPONENTS.md](COMPONENTS.md).
+*   **A new crate.** A crate of the workspace takes `version`, `edition` and `license` from
+    `[workspace.package]` in the root `Cargo.toml` (`version.workspace = true`, ...) and its lints
+    from `[workspace.lints]` (`[lints] workspace = true`); it states none of them itself. Without
+    them it builds as well, but has no license and escapes the lints.
 
 ### A module's manager
 
