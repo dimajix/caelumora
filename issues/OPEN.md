@@ -8,7 +8,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [440](440-agent-position-in-history-not-journaled.md) | open | high | bug | The journal of an agent's channel state records neither what of the channel's history the agent took in (`heard`) nor its last message (`last_message`), so a state loaded again stands where its last snapshot left it, and its channel delivers everything since once more - old requests to respond among it, which every agent then answers again. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 
 ## Persistence

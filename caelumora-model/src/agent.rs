@@ -1094,6 +1094,11 @@ pub enum AgentChannelStateChange {
     Remote(RemoteState),
     /// From where the transcript is held, whole.
     TranscriptFrom(Position),
+    /// The last of its channel's messages the agent took in, whole.
+    LastMessage(Option<MessageId>),
+    /// Where the agent stands in its channel's history, whole: small, and
+    /// moved at almost every put (issue 440).
+    Heard(Heard),
 }
 
 impl Journaled for AgentChannelState {
@@ -1108,6 +1113,8 @@ impl Journaled for AgentChannelState {
         changes.push(AgentChannelStateChange::Used(self.used));
         changes.push(AgentChannelStateChange::Remote(self.remote.clone()));
         changes.push(AgentChannelStateChange::TranscriptFrom(self.transcript_from));
+        changes.push(AgentChannelStateChange::LastMessage(self.last_message));
+        changes.push(AgentChannelStateChange::Heard(self.heard.clone()));
         changes
     }
 
@@ -1127,6 +1134,8 @@ impl Journaled for AgentChannelState {
             AgentChannelStateChange::Used(used) => self.used = used,
             AgentChannelStateChange::Remote(remote) => self.remote = remote,
             AgentChannelStateChange::TranscriptFrom(from) => self.transcript_from = from,
+            AgentChannelStateChange::LastMessage(message) => self.last_message = message,
+            AgentChannelStateChange::Heard(heard) => self.heard = heard,
         }
         Ok(())
     }
@@ -1848,6 +1857,9 @@ pub(crate) mod tests {
         state.processing_state = ActorState::WaitingForUser;
         state.turn = Some(TurnState { model_calls: 3, ..TurnState::default() });
         state.used = TokenUsage::counted(None, &Message { prompt_tokens: Some(5), ..make_message(id(2)) });
+        state.last_message = Some(id(2));
+        state.heard.took(Position::new(4));
+        state.heard.took_ahead(Position::new(7));
 
         let changes = state.changes();
         let parts: Vec<&str> = changes.iter().map(|c| match c {
@@ -1858,14 +1870,18 @@ pub(crate) mod tests {
             AgentChannelStateChange::Used(_) => "used",
             AgentChannelStateChange::Remote(_) => "remote",
             AgentChannelStateChange::TranscriptFrom(_) => "transcript_from",
+            AgentChannelStateChange::LastMessage(_) => "last_message",
+            AgentChannelStateChange::Heard(_) => "heard",
         }).collect();
-        assert_eq!(parts, ["notes", "private_notes", "processing_state", "turn", "used", "remote", "transcript_from"], "what was added, then the small parts whole; the transcript, the prompt parts and the tool sets are the store's to write");
+        assert_eq!(parts, ["notes", "private_notes", "processing_state", "turn", "used", "remote", "transcript_from", "last_message", "heard"], "what was added, then the small parts whole; the transcript, the prompt parts and the tool sets are the store's to write");
         replayed(&state, &mut copy);
         assert_eq!(copy.used, state.used, "the running total with them");
+        assert_eq!((copy.last_message, &copy.heard), (Some(id(2)), &state.heard), "and where it stands in its channel's history (issue 440)");
 
         state.mark_stored();
         state.turn = None;
-        assert_eq!(state.changes().len(), 5, "between turns a step is the small parts alone");
+        state.heard.took(Position::new(5));
+        assert_eq!(state.changes().len(), 7, "between turns a step is the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.turn.is_none());
     }
@@ -1916,12 +1932,12 @@ pub(crate) mod tests {
         let remote = &mut state.remote;
         remote.conversation = Some(ConversationId("c-1".to_string()));
         remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: Utc::now(), state: OpenTaskState::Working, unsaid: Some("so far".to_string()), work: None });
-        assert_eq!(state.changes().len(), 5, "the small parts; the transcript is the store's");
+        assert_eq!(state.changes().len(), 7, "the small parts; the transcript is the store's");
         replayed(&state, &mut copy);
 
         state.mark_stored();
         state.remote.open_tasks.clear();
-        assert_eq!(state.changes().len(), 5, "the small parts alone");
+        assert_eq!(state.changes().len(), 7, "the small parts alone");
         replayed(&state, &mut copy);
         assert!(copy.remote.open_tasks.is_empty());
     }
