@@ -61,7 +61,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [58](58-notes-in-every-prompt.md) | open | high | feature | Every note is put into every prompt in full, which grows without bound, and the writing agent sees its notes a second time as tool calls - revoked ones included. |
 | [338](338-artifacts-go-with-their-session.md) | open | high | feature | An artifact is published into its session's scope and is deleted with the session unless its owner keeps it elsewhere, though it is meant to outlive the conversation. |
 | [55](55-notes-by-reflection.md) | open | medium | feature | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |
-| [57](57-prompt-catalogue.md) | open | medium | question | The prompts the runtime gives models are English constants spread through the code, in one variant for every language and model. |
+| [57](57-prompt-catalogue.md) | open | medium | feature | The prompts the runtime gives models are English constants spread through the code, in one variant for every language and model. |
 | [166](166-memory-as-topic-documents.md) | open | medium | feature | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 
 ## Maintenance
