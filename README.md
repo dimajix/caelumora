@@ -96,7 +96,19 @@ carries the same `span_id`.
 
 ## License
 
-*See individual crates or project root for license information.*
+Caelumora is licensed under either of
+
+*   Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
+    <https://www.apache.org/licenses/LICENSE-2.0>)
+*   MIT license ([LICENSE-MIT](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
+
+at your option. The Caelumora Authors are the people named in the Git history of this repository.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
+Caelumora by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without
+any additional terms or conditions.
+
+### Third-party licenses
 
 The licenses of the third-party dependencies are listed in
 [licenses/BACKEND.md](licenses/BACKEND.md) and [licenses/FRONTEND.md](licenses/FRONTEND.md). Both
