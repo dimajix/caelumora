@@ -17,7 +17,7 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::user::UserId;
 use caelumora_model::security::{AccessQuestions, ActionType, Enforcement, SecurityAttributes, SecurityContext, AccessPolicy, Subject, JOIN};
 use crate::view::{Viewer, Views};
-use caelumora_model::store::{EntityStores, StoreError, Stored};
+use caelumora_model::store::{EntityStores, StateStore, StoreError, Stored};
 use tracing::{info, warn};
 use caelumora_model::scope::Scope;
 use caelumora_model::session::{ChannelId, Session, SessionId};
@@ -63,6 +63,7 @@ pub struct SessionManager {
     /// 229).
     access_policy: Arc<dyn AccessPolicy>,
     stores: EntityStores,
+    state_store: Arc<dyn StateStore>,
     events: Arc<EventBus>,
     /// What ends the commands of a stopped session's channels (issue 254).
     command_reaper: Arc<CommandReaper>,
@@ -112,6 +113,7 @@ impl SessionManager {
             shutting_down: AtomicBool::new(false),
             access_policy: Arc::clone(runtime_manager.access_policy()),
             stores: runtime_manager.entity_stores().clone(),
+            state_store: Arc::clone(runtime_manager.state_store()),
             events: Arc::clone(runtime_manager.event_bus()),
             command_reaper: Arc::clone(runtime_manager.command_reaper()),
             agents: Arc::clone(runtime_manager.agent_manager()),
@@ -419,6 +421,50 @@ impl SessionManager {
         Ok(session_loop)
     }
 
+    /// Starts again, as the process starts, every session in which an
+    /// agent's work was under way when it last ended (issue 388) - shut down
+    /// or crashed -, as the state store's index of the work under way lists
+    /// them (`StateStore::channels_with_work_under_way`): the turns stored
+    /// mid-way go on from the step they stood at, the remote tasks are
+    /// followed again. Nobody asked for it, so the runtime opens them in its
+    /// own name, as `join` does; what the agents then do is done in their
+    /// own names, as at every start. One after another, not bounded
+    /// otherwise. A session that is gone or deleted is passed over; the
+    /// sessions with no work under way stay stopped until someone acts in
+    /// them. Ends early once the sessions are shut down. Returns how many
+    /// it started.
+    pub async fn resume_interrupted(&self) -> usize {
+        let channels = match self.state_store.channels_with_work_under_way().await {
+            Ok(channels) => channels,
+            Err(error) => {
+                warn!("The work under way at the last end cannot be read, nothing is started again: {error}");
+                return 0;
+            }
+        };
+        let system = SecurityContext::system();
+        let mut sessions = HashSet::new();
+        for channel_id in channels {
+            match self.stores.channels.get(&system, channel_id).await {
+                Ok(channel) => { sessions.insert(channel.session_id); }
+                Err(error) => info!("Channel {channel_id}, in which work was under way, is passed over: {error}"),
+            }
+        }
+        let mut started = 0;
+        for session_id in sessions {
+            if self.refuse_while_shutting_down().is_err() {
+                break;
+            }
+            match self.open(&system, session_id).await {
+                Ok(_) => {
+                    info!("Session {session_id} started again: work was under way in it");
+                    started += 1;
+                }
+                Err(error) => info!("Session {session_id}, in which work was under way, is not started again: {error}"),
+            }
+        }
+        started
+    }
+
     /// Stops session `id` on behalf of `context` without deleting it: its
     /// channels and actors stop, for everybody in it (`StopSession`) - each
     /// actor keeps what it is in the middle of, to be resumed when the
@@ -658,10 +704,9 @@ impl SessionManager {
         channels.extend(self.stores.channels.list_deleted(&SecurityContext::system(), &of_it).await?.items.into_iter().map(|c| c.id));
         // The state lives in the `StateStore`, which may be another store
         // than the session's.
-        let state_store = self.runtime_manager.state_store();
         for channel_id in channels {
             purge_channel_document(&self.stores, channel_id).await?;
-            state_store.delete_channel_state(channel_id).await?;
+            self.state_store.delete_channel_state(channel_id).await?;
         }
         // And what lay in its scope and in its channels' (issue 178), and the
         // group of its participants, as a channel's (issue 348).
@@ -728,8 +773,10 @@ mod tests {
     use super::SHUTDOWN_BOUND;
     use anyhow::Result;
     use crate::session::SessionLoop;
-    use caelumora_model::actor::{ActorEvent, Envelope};
-    use caelumora_model::turn::GivenUpReason;
+    use caelumora_model::actor::{ActorEvent, ActorState, Envelope};
+    use caelumora_model::turn::{GivenUpReason, TurnState};
+    use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_model::session::ChannelId;
     use tokio::sync::broadcast::Receiver;
 
     #[tokio::test]
@@ -1317,6 +1364,42 @@ mod tests {
         assert!(refused(manager.open(&alice, stored).await), "a stored one is not started");
         assert!(refused(manager.open(&alice, session.id()).await), "nor one that ran");
         assert!(refused(create(&manager, &alice, make_session("new", ActorId::None)).await), "nor a new one");
+    }
+
+    /// After a restart (issue 388) the runtime starts again the sessions in
+    /// which an agent's stored state has work under way, each once however
+    /// many agents have, and no other: not one whose agents wait for a
+    /// person or idle, not one deleted, nor what a channel that is gone
+    /// leaves in the index. Once shut down, none.
+    #[tokio::test]
+    async fn a_restart_starts_again_the_sessions_with_work_under_way_and_no_other() {
+        let runtime = test_runtime();
+        let manager = SessionManager::new(Arc::clone(&runtime));
+        let ctx = SecurityContext::default();
+        let sessions = ["interrupted", "waiting", "idle", "deleted"].map(|name| make_session(name, ActorId::None));
+        for session in &sessions {
+            persist(&runtime, &ctx, session).await;
+        }
+        let [interrupted, waiting, idle, deleted] = sessions.map(|session| (session.id, session.channels[0]));
+        let in_turn = |processing_state| AgentChannelState { processing_state, turn: Some(TurnState::default()), ..AgentChannelState::default() };
+        let states = runtime.state_store();
+        for agent in [AgentId::new(), AgentId::new()] {
+            states.put_agent_channel_state(agent, interrupted.1, &mut in_turn(ActorState::Planning)).await.unwrap();
+        }
+        states.put_agent_channel_state(AgentId::new(), waiting.1, &mut in_turn(ActorState::WaitingForUser)).await.unwrap();
+        states.put_agent_channel_state(AgentId::new(), idle.1, &mut AgentChannelState::default()).await.unwrap();
+        states.put_agent_channel_state(AgentId::new(), deleted.1, &mut in_turn(ActorState::ExecutingTools)).await.unwrap();
+        states.put_agent_channel_state(AgentId::new(), ChannelId::new(), &mut in_turn(ActorState::Planning)).await.unwrap();
+        assert!(manager.delete(&ctx, deleted.0).await.unwrap(), "deleted while it does not run, its state kept");
+
+        assert_eq!(manager.resume_interrupted().await, 1, "one session, though two of its agents had work under way");
+        assert!(manager.running(interrupted.0).is_some(), "the session with work under way runs again");
+        for (id, _) in [waiting, idle, deleted] {
+            assert!(manager.running(id).is_none(), "no other");
+        }
+
+        manager.shutdown().await;
+        assert_eq!(manager.resume_interrupted().await, 0, "none once shut down");
     }
 
     /// A session deleted (issue 377) has its actors leave, as a deleted

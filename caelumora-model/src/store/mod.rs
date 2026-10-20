@@ -515,7 +515,16 @@ pub trait ComponentStore : Debug + Sync + Send {
 pub trait StateStore : Debug + Sync + Send {
     /// An agent in a channel, of either kind (issue 206).
     async fn get_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId) -> StoreResult<AgentChannelState>;
+    /// Stores the agent's state in the channel, and keeps the index of the
+    /// work under way with it (issue 388): the agent is in it for the channel
+    /// while the state stored has work under way
+    /// (`AgentChannelState::has_work_under_way`).
     async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()>;
+
+    /// The channels in which an agent's state stored has work under way
+    /// (issue 388), each once, in no particular order: what a restart starts
+    /// again. Read from the index, without loading a state.
+    async fn channels_with_work_under_way(&self) -> StoreResult<Vec<ChannelId>>;
 
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState>;
     async fn put_agent_state(&self, agent_id: AgentId, state: &mut AgentState) -> StoreResult<()>;

@@ -5,7 +5,7 @@
 
 use crate::history::testing::items_of;
 use crate::store::query::{Field, Filter, Query};
-use crate::actor::ActorId;
+use crate::actor::{ActorId, ActorState};
 use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
 use crate::turn::TurnState;
 use crate::channel::{Channel, ChannelId, ChannelState, moderation_components};
@@ -25,7 +25,7 @@ use crate::history::History;
 use crate::work::TurnId;
 use crate::context::ModelProfile;
 use crate::tool::{ToolCall, ToolSet, ToolVisibility};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use crate::chain::{Node, Position};
 use crate::digest;
 use crate::transcript::TranscriptEntry;
@@ -685,6 +685,39 @@ pub(crate) async fn state_store_behaves(store: &dyn StateStore) {
     assert!(store.get_agent_channel_state(remote_agent, other_channel).await.expect("get").remote.conversation.is_some(), "other channels keep theirs");
     store.get_channel_state(other_channel).await.expect("other channels keep theirs");
     store.delete_channel_state(channel).await.expect("nothing left to delete is no error");
+}
+
+/// The index of the work under way (issue 388): a channel is listed while
+/// an agent's state stored in it has work under way, once however many
+/// agents have; it leaves the list with the put that ends the last one's
+/// work, and with the agent's or the channel's state deleted.
+pub(crate) async fn work_under_way_is_indexed(store: &dyn StateStore) {
+    let (agent, other_agent) = (AgentId::new(), AgentId::new());
+    let (channel, other_channel, waiting_channel) = (ChannelId::new(), ChannelId::new(), ChannelId::new());
+    let listed = async || store.channels_with_work_under_way().await.expect("listed").into_iter().collect::<HashSet<_>>();
+    assert!(listed().await.is_empty(), "nothing stored, nothing under way");
+
+    let in_turn = |processing_state: ActorState| AgentChannelState { processing_state, turn: Some(TurnState::default()), ..AgentChannelState::default() };
+    let mut planning = in_turn(ActorState::Planning);
+    store.put_agent_channel_state(agent, channel, &mut planning).await.expect("put");
+    store.put_agent_channel_state(other_agent, channel, &mut planning).await.expect("put");
+    store.put_agent_channel_state(agent, other_channel, &mut planning).await.expect("put");
+    store.put_agent_channel_state(agent, waiting_channel, &mut in_turn(ActorState::WaitingForUser)).await.expect("put");
+    store.put_agent_channel_state(other_agent, waiting_channel, &mut AgentChannelState::default()).await.expect("put");
+    assert_eq!(listed().await, HashSet::from([channel, other_channel]), "each channel with work under way once, none that waits or idles");
+    store.put_agent_channel_state(agent, channel, &mut planning).await.expect("put");
+    assert_eq!(listed().await, HashSet::from([channel, other_channel]), "a put that goes on with the work keeps it listed");
+
+    store.put_agent_channel_state(agent, channel, &mut AgentChannelState::default()).await.expect("put");
+    assert_eq!(listed().await, HashSet::from([channel, other_channel]), "another agent's work in the channel is still under way");
+    store.put_agent_channel_state(other_agent, channel, &mut in_turn(ActorState::WaitingForUser)).await.expect("put");
+    assert_eq!(listed().await, HashSet::from([other_channel]), "the last one's work ended");
+
+    store.delete_agent_state(agent).await.expect("delete agent state");
+    assert!(listed().await.is_empty(), "the agent's work goes with its state");
+    store.put_agent_channel_state(other_agent, channel, &mut planning).await.expect("put");
+    store.delete_channel_state(channel).await.expect("delete channel state");
+    assert!(listed().await.is_empty(), "the channel's work goes with its state");
 }
 /// A history's item as a test compares it: its message's id and how it
 /// stands, or what else it is.

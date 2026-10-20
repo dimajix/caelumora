@@ -14,6 +14,7 @@ use crate::value::name::ScopedName;
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fmt::{self, Debug, Display};
 use std::fs;
@@ -92,7 +93,7 @@ impl JsonFileStore {
     }
 
     fn ensure_layout(&self) -> StoreResult<()> {
-        for dir in [self.agent_states_dir(), self.agent_channel_states_dir(), self.channel_states_dir(), self.user_channel_states_dir()] {
+        for dir in [self.agent_states_dir(), self.agent_channel_states_dir(), self.channel_states_dir(), self.user_channel_states_dir(), self.under_way_dir()] {
             fs::create_dir_all(dir).map_err(to_backend_error)?;
         }
         Ok(())
@@ -135,6 +136,18 @@ impl JsonFileStore {
     }
 
 
+
+    /// The index of the work under way (issue 388): an empty file
+    /// `<channel_id>.<agent_id>` for each agent whose state in that channel
+    /// has work under way. In one directory, so that adding a file never
+    /// races with removing a directory emptied.
+    fn under_way_dir(&self) -> PathBuf {
+        self.root.join("runtime").join("under_way")
+    }
+
+    fn under_way_path(&self, agent_id: AgentId, channel_id: ChannelId) -> PathBuf {
+        self.under_way_dir().join(format!("{channel_id}.{agent_id}"))
+    }
 
     fn agent_state_path(&self, id: AgentId) -> PathBuf {
         self.agent_states_dir().join(format!("{id}.json"))
@@ -237,6 +250,15 @@ async fn delete_if_exists(path: &Path) -> StoreResult<bool> {
     match tokio::fs::remove_file(path).await {
         Ok(()) => Ok(true),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(to_backend_error(err)),
+    }
+}
+
+/// Creates the empty file `path` unless it exists.
+async fn create_if_missing(path: &Path) -> StoreResult<()> {
+    match tokio::fs::OpenOptions::new().write(true).create_new(true).open(path).await {
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => Ok(()),
         Err(err) => Err(to_backend_error(err)),
     }
 }
@@ -556,6 +578,23 @@ impl ComponentStore for JsonFileStore {
 
 /// The state operations: a snapshot and a journal per state (issue 193).
 impl JsonFileStore {
+    /// Takes out of the index of the work under way every entry whose
+    /// channel and agent, as written in its name, `matches`.
+    async fn leave_under_way(&self, matches: impl Fn(&str, &str) -> bool) -> StoreResult<()> {
+        let mut entries = match tokio::fs::read_dir(self.under_way_dir()).await {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(to_backend_error(err)),
+        };
+        while let Some(entry) = entries.next_entry().await.map_err(to_backend_error)? {
+            let name = entry.file_name();
+            if name.to_str().and_then(|name| name.split_once('.')).is_some_and(|(channel, agent)| matches(channel, agent)) {
+                delete_if_exists(&entry.path()).await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Stores `state` at `path`, and marks it stored: as a line of its
     /// journal, or - if there is no snapshot yet, or the journal is as large
     /// as the snapshot and `journal_floor` - as a new snapshot, after which
@@ -596,11 +635,37 @@ impl StateStore for JsonFileStore {
 
     /// The prompt texts and the tool sets first, which what follows names,
     /// then the transcript, then the document, which says from where it is
-    /// loaded.
+    /// loaded. The index of the work under way is entered before the
+    /// document and left after it: what a crash leaves between the two is a
+    /// session started for nothing, never work that is not started.
     async fn put_agent_channel_state(&self, agent_id: AgentId, channel_id: ChannelId, state: &mut AgentChannelState) -> StoreResult<()> {
         self.append_given(agent_id, channel_id, state).await?;
         self.append_transcript(agent_id, channel_id, &mut state.transcript).await?;
-        self.store_state(&self.agent_channel_state_path(agent_id, channel_id), state).await
+        let under_way = self.under_way_path(agent_id, channel_id);
+        if state.has_work_under_way() {
+            create_if_missing(&under_way).await?;
+            self.store_state(&self.agent_channel_state_path(agent_id, channel_id), state).await
+        } else {
+            self.store_state(&self.agent_channel_state_path(agent_id, channel_id), state).await?;
+            delete_if_exists(&under_way).await.map(drop)
+        }
+    }
+
+    async fn channels_with_work_under_way(&self) -> StoreResult<Vec<ChannelId>> {
+        let mut entries = match tokio::fs::read_dir(self.under_way_dir()).await {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(err) => return Err(to_backend_error(err)),
+        };
+        let mut channels = HashSet::new();
+        while let Some(entry) = entries.next_entry().await.map_err(to_backend_error)? {
+            let name = entry.file_name();
+            match name.to_str().and_then(|name| name.split_once('.')).and_then(|(channel, _)| channel.parse::<ChannelId>().ok()) {
+                Some(channel_id) => { channels.insert(channel_id); }
+                None => warn!("The index of the work under way holds a file that names no channel: {}", name.to_string_lossy()),
+            }
+        }
+        Ok(channels.into_iter().collect())
     }
 
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
@@ -649,7 +714,8 @@ impl StateStore for JsonFileStore {
         delete_dir_if_exists(&self.history_dir(channel_id)).await?;
         delete_dir_if_exists(&self.agent_channel_state_dir(channel_id)).await?;
         delete_dir_if_exists(&self.user_channel_state_dir(channel_id)).await?;
-        Ok(())
+        let channel_id = channel_id.to_string();
+        self.leave_under_way(|channel, _| channel == channel_id).await
     }
 
     async fn delete_agent_state(&self, agent_id: AgentId) -> StoreResult<()> {
@@ -669,13 +735,15 @@ impl StateStore for JsonFileStore {
             delete_dir_if_exists(&path.with_extension("transcript")).await?;
             delete_dir_if_exists(&path.with_extension("given")).await?;
         }
-        Ok(())
+        let agent_id = agent_id.to_string();
+        self.leave_under_way(|_, agent| agent == agent_id).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::chain::Position;
+    use crate::turn::TurnState;
     use crate::session::{Session, SessionId};
     use super::*;
     use chrono::Utc;
@@ -714,6 +782,19 @@ mod tests {
     async fn behaves_as_a_state_store() {
         let dir = tempdir().unwrap();
         suite::state_store_behaves(&store(dir.path())).await;
+    }
+
+    #[tokio::test]
+    async fn keeps_the_index_of_the_work_under_way() {
+        let dir = tempdir().unwrap();
+        suite::work_under_way_is_indexed(&store(dir.path())).await;
+
+        // Read from the files: a store opened anew over them, as after a
+        // restart, finds what was under way.
+        let (agent, channel) = (AgentId::new(), ChannelId::new());
+        let mut planning = AgentChannelState { processing_state: ActorState::Planning, turn: Some(TurnState::default()), ..AgentChannelState::default() };
+        store(dir.path()).put_agent_channel_state(agent, channel, &mut planning).await.unwrap();
+        assert_eq!(store(dir.path()).channels_with_work_under_way().await.unwrap(), [channel]);
     }
 
     #[tokio::test]

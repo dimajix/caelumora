@@ -283,7 +283,9 @@ An agent ends its task in one of two ways (see [CHANNELS.md](CHANNELS.md#ending-
 
 *   **Stopped** - its session is stopped, or the process shuts down - it keeps its turn: the step
     under way is interrupted and the turn stored at the step it stood at, to be resumed as above
-    when the session runs again (issue 377). A model call is made again, and a tool call that ran
+    when the session runs again (issue 377) - after a restart without anyone acting in it, unless
+    the turn waits for a person (issue 388, see
+    [CHANNELS.md](CHANNELS.md#starting-again-after-a-restart)). A model call is made again, and a tool call that ran
     is answered as interrupted because the session was stopped; a call that had not run yet is
     answered as not executed, as after a crash. An approval it waits for stays pending and is asked
     for again. Nothing is given up and nothing announced.

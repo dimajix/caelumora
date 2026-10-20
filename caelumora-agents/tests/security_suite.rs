@@ -1656,15 +1656,11 @@ async fn calls_made(calls: &Mutex<Vec<&'static str>>, count: usize) {
     }).await.expect("the remote agent is called");
 }
 
-/// An external agent's task is done as the request that began it, as an
-/// agent's turn is (issue 211), with its owner's rights (issue 255): asked
-/// by bob, the remote agent is sent his request with alice's credential,
-/// asked by him - and followed so after a restart, whoever opened the
-/// session.
-#[tokio::test]
-async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_began_it() {
-    let calls = Arc::new(Mutex::new(Vec::new()));
-    let world = with_remote_at_work(&calls, None).await;
+/// The world with hermes, alice's external agent (`with_remote_at_work`),
+/// in a session she shares with bob, at work on a task bob asked for, stored
+/// as begun: the world, the session, and what was asked as he asked.
+async fn with_a_task_bob_asked_for(calls: &Arc<Mutex<Vec<&'static str>>>) -> (World, Arc<SessionLoop>, Vec<String>) {
+    let world = with_remote_at_work(calls, None).await;
     let remote = remote_personality(&world).await;
     let hermes = world.agent("hermes", world.alice, &remote).await;
     let session = world.shared_session(&[hermes], &[]).await;
@@ -1673,17 +1669,29 @@ async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_bega
 
     let (_, asked) = world.asked(async {
         main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
-        calls_made(&calls, 1).await;
+        calls_made(calls, 1).await;
     }).await;
-    let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
-    assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "with alice's credential, asked by bob");
-
-    // The task is stored as begun; the session stops with it still open.
     tokio::time::timeout(Duration::from_secs(5), async {
         while world.store.get_agent_channel_state(hermes, main.id()).await.unwrap().remote.open_tasks.is_empty() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("the task is stored");
+    (world, session, asked)
+}
+
+/// An external agent's task is done as the request that began it, as an
+/// agent's turn is (issue 211), with its owner's rights (issue 255): asked
+/// by bob, the remote agent is sent his request with alice's credential,
+/// asked by him - and followed so after a restart, whoever opened the
+/// session.
+#[tokio::test]
+async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_began_it() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let (world, session, asked) = with_a_task_bob_asked_for(&calls).await;
+    let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
+    assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "with alice's credential, asked by bob");
+
+    // The session stops with the task still open.
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 
     let (reopened, asked) = world.asked(async {
@@ -1697,6 +1705,28 @@ async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_bega
     world.manager.stop(&World::as_user(world.alice), reopened.id()).await.unwrap();
 }
 
+/// A session restarted by the runtime (issue 388) - nobody asked for it -
+/// has an external agent's open task followed in the name it was begun in,
+/// alice's credential, asked by bob, as when someone opens the session: the
+/// runtime's name reaches nothing the agent does.
+#[tokio::test]
+async fn a_task_resumed_after_a_restart_is_followed_as_whoever_asked_began_it_not_as_the_runtime() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let (world, session, _) = with_a_task_bob_asked_for(&calls).await;
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+
+    let (resumed, asked) = world.recorded(async {
+        let resumed = world.manager.resume_interrupted().await;
+        calls_made(&calls, 2).await;
+        resumed
+    }).await;
+    assert_eq!(resumed, 1, "the session with the open task is started again");
+    assert_eq!(calls.lock().unwrap().as_slice(), ["send", "resume"]);
+    let read_secret: Vec<&String> = asked.iter().filter(|line| line.contains("ReadSecret")).collect();
+    assert_eq!(read_secret, ["alice as hermes, asked by bob: ReadSecret yes"], "followed in the name it was begun in, and in no other");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// A session deleted has its external agents leave, as a deleted channel
 /// does (issue 377): the open remote task is cancelled, in the name it
 /// was begun in - alice's credential, asked by bob - as he asked, though
@@ -1704,19 +1734,7 @@ async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_bega
 #[tokio::test]
 async fn deleting_a_session_cancels_its_external_agents_task_as_whoever_asked_began_it() {
     let calls = Arc::new(Mutex::new(Vec::new()));
-    let world = with_remote_at_work(&calls, None).await;
-    let remote = remote_personality(&world).await;
-    let hermes = world.agent("hermes", world.alice, &remote).await;
-    let session = world.shared_session(&[hermes], &[]).await;
-    let main = Arc::clone(&session.channels()[0]);
-    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
-    main.user_actor(world.bob).expect("he takes part").send_message("@hermes find it out".to_string(), None).await.expect("and asks");
-    calls_made(&calls, 1).await;
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while world.store.get_agent_channel_state(hermes, main.id()).await.unwrap().remote.open_tasks.is_empty() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }).await.expect("the task is stored");
+    let (world, session, _) = with_a_task_bob_asked_for(&calls).await;
 
     let (deleted, asked) = world.asked(world.manager.delete(&World::as_user(world.alice), session.id())).await;
     assert!(deleted.expect("hers to delete"), "it ran");

@@ -1,6 +1,6 @@
 # 388 — Work interrupted by a restart waits until someone acts in its session
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -40,6 +40,39 @@ the agent not running, may not know that it had work left.
 - **Bounded.** A server that went down with many turns under way should not start all of them at
   once; a limit, or starting them one after another.
 
+## Decision
+
+Decided with the maintainer on 2026-10-20: **an index of the work under way, kept by the state
+store**, rather than a note at the shutdown or a scan at the start.
+
+- **What is work under way** is the model's rule, `AgentChannelState::has_work_under_way`: a turn
+  stored at a step it goes on from by itself - not `WaitingForUser`, which waits for a person, who
+  starts the session by answering -, or an external agent's open task the remote agent is working
+  on - not one `InputRequired`, which waits as well.
+- **The state store keeps the index** as it puts an agent's channel state: the pair of agent and
+  channel is in it while the state has work under way, and leaves it with the put that has none,
+  and with the state deleted. It is written only when that changes, not at every step.
+  `StateStore::channels_with_work_under_way` lists the channels. Since a turn is stored after every
+  step, the index is as current after a crash as after an orderly shutdown: work cut off by a
+  crash goes on as well.
+- **`SessionManager::resume_interrupted`** starts the session of every such channel once, in the
+  runtime's name - as `join` opens one -, called by the server after it is seeded. A session that
+  no longer exists or is deleted is passed over.
+- **Started one after another**, not bounded otherwise: starting costs little, the turns that then
+  run cost. A real bound, which waits for a session's work to end, is an issue of its own under
+  [378](378-resource-management-epic.md).
+
+Not covered: words delivered to an agent but not yet taken in leave it `Idle`, so a message written
+just before the shutdown waits for the next act in its session. With several instances
+([122](122-several-instances.md)) every instance would start what the index lists.
+
+## Steps
+
+1. **The model and the stores**: `has_work_under_way`, the index in `JsonFileStore` and
+   `MemoryStore`, `channels_with_work_under_way`, the state store suite; STORAGE.md.
+2. **Resuming**: `SessionManager::resume_interrupted`, called by `caelumora-app`; tests of a
+   restart over the same stores; CHANNELS.md, AGENT-TURN.md.
+
 ## Done when
 
 - After an orderly restart, a turn that was under way when the server stopped goes on by itself.
@@ -49,3 +82,20 @@ the agent not running, may not know that it had work left.
 
 - **2026-10-16** — Split from [297](297-orderly-shutdown.md) while deciding its open points with the
   maintainer: the shutdown comes first; resuming what it interrupted is a step of its own.
+- **2026-10-20** — Decided with the maintainer: an index of the work under way kept by the state
+  store, started one after another in the runtime's name by `SessionManager::resume_interrupted`;
+  `WaitingForUser` and an external agent's task `InputRequired` are no work under way; a real bound
+  is an issue of its own. Recorded under *Decision* and *Steps*; implemented on the branch
+  `issue-388-resume-after-restart`.
+- **2026-10-20** — Done in the two steps of *Steps*. `AgentChannelState::has_work_under_way` and
+  `RemoteState::has_work_under_way` hold the rule; the `JsonFileStore` keeps an empty file
+  `runtime/under_way/<channel_id>.<agent_id>` per entry, entered before the state is written and
+  taken out after it, the `MemoryStore` asks its states. `SessionManager::resume_interrupted` maps
+  the channels to their sessions and opens each once in the runtime's name; `caelumora-app` spawns
+  it once seeded. The `SessionManager` now keeps the state store as a field, which `purge` uses
+  too. It holds after a crash as well, since a turn is stored after every step (CHANNELS.md,
+  *Starting again after a restart*). Tests: the rule, the index in both stores and across a
+  reopened `JsonFileStore`, which sessions a restart starts, and in the agents' security suite an
+  external agent's task followed after the restart in the name it was begun in. An agent run here
+  is not tested end to end through a restart, only its resume (issue 377) and the start apart; not
+  yet tried with a real server restart.
