@@ -260,6 +260,12 @@ personalities:
   description: Splits work into tasks, estimates and schedules them
   introduction: Keeps the backlog - splits work into tasks, estimates them and decides in which
     order they are done.
+  # Between the steps of a turn (issue 431): what people say in the authority of whoever asked;
+  # the words of anyone else wait until whoever asked asks again after them (issue 435), and what
+  # agents say waits for the turn's end.
+  hears_during_turn:
+    from: users
+    others: when_asked
   components:
   - id: system-prompt
     kind: static_system_prompt_provider
