@@ -341,6 +341,7 @@ mod tests {
     use crate::llm::{LLMResult, unlabelled_message};
     use futures::stream::BoxStream;
     use serde_json::Value;
+    use caelumora_model::work::Work;
 
     /// What the agent of a test is given, as a plugin gives it - a skill,
     /// say: a workspace, here, and its text.
@@ -594,7 +595,7 @@ mod tests {
         let marking = ModelProfile { sender_format: SenderFormat::Prefix, message_times: true, ..ModelProfile::default() };
         let berlin = TimeZone::new("Europe/Berlin").unwrap();
         let channel = &world.session.channels()[0];
-        state.begin_turn(EventContext::new(world.session.id(), channel.id(), ActorId::None, String::new()), world.context.clone(), channel.classification(), marking, berlin);
+        state.begin_turn(Work::new(EventContext::new(world.session.id(), channel.id(), ActorId::None, String::new()), None, world.context.clone(), channel.classification(), berlin).given_as(marking));
         let model = Arc::new(Summariser::default());
         let strategy = SummaryCompaction { llm_client: Arc::<Summariser>::clone(&model), keep: 0.1, restorers: Vec::new() };
         let mut turn = Turn::of(world.agent, "Jonathan".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(channel, ActorId::Agent(world.agent))).expect("a turn was begun");

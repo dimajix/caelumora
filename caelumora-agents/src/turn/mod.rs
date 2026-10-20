@@ -53,6 +53,8 @@ use caelumora_model::actor::{ActorEvent, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::turn::TurnState;
 use caelumora_model::work::TurnId;
+#[cfg(test)]
+use caelumora_model::work::Work;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::digest::Digest;
@@ -102,7 +104,7 @@ impl<'a> Turn<'a> {
     /// work in one.
     #[cfg(test)]
     pub(crate) fn begun(agent_id: AgentId, agent_channel_state: &'a mut AgentChannelState) -> Self {
-        agent_channel_state.begin_turn(Default::default(), Default::default(), Default::default(), Default::default(), Default::default());
+        agent_channel_state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default(), Default::default()));
         Self::under_way(agent_id, agent_channel_state)
     }
 
@@ -430,7 +432,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(4);
         let output = InMemoryEventSender::new(tx);
         let mut state = AgentChannelState::default();
-        state.begin_turn(Default::default(), Default::default(), Default::default(), Default::default(), Default::default());
+        state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default(), Default::default()));
         let mut turn = Turn::under_way(AgentId::new(), &mut state);
 
         let call = ToolCall { id: Some("1".to_string()), function_name: "write_private_note".to_string(), arguments: serde_json::json!({"text": "secret"}), visibility: ToolVisibility::HIDDEN, presentation: Default::default() };
@@ -456,7 +458,7 @@ mod tests {
         let said = |classification: &Classification, content: &str| Message { content: Some(content.to_string()), ..message_classified(classification) };
         let mut state = AgentChannelState::default();
         state.transcript.extend(vec![said(&Classification::PUBLIC, "Hello.")]);
-        state.begin_turn(EventContext::default(), SecurityContext::default(), confidential.clone(), Default::default(), Default::default());
+        state.begin_turn(Work::new(EventContext::default(), None, SecurityContext::default(), confidential.clone(), Default::default()));
         let mut turn = Turn::under_way(AgentId::new(), &mut state);
         assert_eq!(turn.situation().label(), Classification::PUBLIC, "a public transcript");
 

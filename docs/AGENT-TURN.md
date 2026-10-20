@@ -35,7 +35,9 @@ the agent stands into its state with it (`AgentBody::take_in`, issue 223):
 *   **Begin.** The last request to respond among what was taken in begins one turn; the earlier
     ones are dropped. The one turn answers the conversation as it stands, having heard every
     message, and acts in the contexts of the last request - with the authority of the last who
-    asked, never of someone who did not. An agent that falls behind thus answers once when it is
+    asked, never of someone who did not -, for the strongest reason among them (issue 439): a
+    mention among them is a reason to answer, though the last request was only a choice of the
+    policy. An agent that falls behind thus answers once when it is
     free again, not once per request that waited. A sleeping agent ignores the request; only
     `wakeup` ends the sleep. Whether it sleeps is read once everything is taken in, since the
     channel wakes an agent before it delivers the message that asks it.
@@ -169,12 +171,20 @@ The working state of a turn is one value, `AgentChannelState::turn`, `None` betw
 with its remote agent (`caelumora_model::work`):
 
 *   which turn it is (`TurnId`),
-*   the envelope it answers and the authority it acts with,
+*   the envelope it answers, why it was asked to (see [Why the agent was
+    asked](#why-the-agent-was-asked)) and the authority it acts with,
 *   the classification of its channel as the turn began, which bounds what it may read,
 *   its label - the join of everything it has seen, at most the channel's - which everything it
     writes is classified as (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as)),
 *   the context its next message is produced from (see [The turn's context and the
-    resolver](#the-turns-context-and-the-resolver)).
+    resolver](#the-turns-context-and-the-resolver)), with the session's time zone as the work
+    began and how its model is given what was said.
+
+Whoever answers begins the work (`AgentBody::work_for`): the contexts of the request continued in
+the agent's name, its reason, the channel's classification and the session's time zone, as they
+are now - the same for a turn, a command turn and an external agent's exchange. It adds how its
+model is given its context (`Work::given_as`) and hands the work to the state, which adds only what
+the state knows: the transcript the turn begins with (`AgentChannelState::begin_turn`).
 
 The rest is the turn's own: the changes staged to the agent's states, the tool calls, the plan, the
 state a tool requested.
@@ -670,6 +680,20 @@ last, to write the final answer (`Turn::advance_plan`). Such an instruction is a
 after the messages the turn has produced so far - never between a tool call and its result. It is
 given again within its turn, never to later turns, which see the plan through the `create_plan`
 call.
+
+### Why the agent was asked
+
+Every turn records why it was asked (`Work::asked`, issue 439): the reason of the request it
+answers, the strongest of those it took in - `mentioned`, `nudged`, `chosen` by the channel's
+responder policy (see [CHANNELS.md](CHANNELS.md#moderators)) -, none for an answer given again.
+`request_reason_prompt_provider` reads it (`Situation::asked`) and tells an agent that was only
+chosen so, before the turn's input: that it is asked because what was said last might concern it,
+and that with nothing to add - nothing new, only agreement, a greeting, thanks, that it waits - it
+calls `silence` and writes nothing, or, where `silence` is not offered, writes nothing. Without it,
+a model takes every request for an order to answer, and greets back or writes that it has nothing
+to say. A mentioned or nudged agent is told nothing: told when to stay silent, a mentioned agent
+judged the message that mentioned it rather than what was its own to do, and stopped working where
+it was only cheered on ([work/quiet_agents](../work/quiet_agents/RESULTS.md)).
 
 ### System messages
 

@@ -231,11 +231,13 @@ impl ExternalAgentActor {
     /// (issue 377); and the state is stored. An error ends the
     /// answer, never the actor.
     async fn respond(&self, state: &mut AgentChannelState, request: &Envelope, output: &dyn EventSender) {
-        let answering = Answering::to(request, self.id(), self.name(), &self.body.security_context());
-        let classification = self.body.runtime.channel_classification();
         // The work of this exchange, as a turn: bound by the channel as it
-        // is now (issue 212), and how it ends is told as its turn's end.
-        let mut work = Work::new(answering.event_context.clone(), answering.security_context.clone(), classification);
+        // is now (issue 212), and how it ends is told as its turn's end. How
+        // the remote agent is given what was said is recorded with the
+        // context of what comes of it, so that the context is resolved as it
+        // was given (issue 135).
+        let (answering, work) = self.body.work_for(request);
+        let mut work = work.given_as(self.remote.profile());
         // A turn of its own, whose token `cancel`, `stop` and `leave` reach.
         self.body.control.begin_turn(work.turn_id);
         let token = self.body.control.token();
@@ -283,11 +285,6 @@ impl ExternalAgentActor {
         // `work` is written as what it has seen - what the remote agent
         // brings in itself, and all it was given in this channel (issue 212).
         answering.send(ActorEvent::ResponseStarted { turn_id: work.turn_id }, output).await?;
-        // How it is given what was said, and in which time zone, recorded
-        // with the context of what comes of it, so that the context is
-        // resolved as it was given (issues 135, 424).
-        work.context.frame.profile = self.remote.profile();
-        work.context.frame.time_zone = self.body.runtime.session_time_zone();
         let brought = self.remote.classification().unwrap_or_else(|| work.classification.clone());
         if !self.body.runtime.confidentiality().may_publish(&work.security_context, &brought, &work.classification) {
             return Ok(Ending::Failed(format!("its answers are classified {brought}, which may not be published in this channel ({})", work.classification)));
@@ -837,7 +834,7 @@ impl Actor for ExternalAgentActor {
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {
-        |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::CompleteMessageGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. } | ActorEvent::CommandRequested { .. }
+        |event| matches!(event.event, ActorEvent::ResponseRequested { .. } | ActorEvent::CompleteMessageGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. } | ActorEvent::CommandRequested { .. }
             | ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. })
     }
 

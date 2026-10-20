@@ -545,7 +545,7 @@ impl ChannelLoop {
         if !quiet {
             let actors = self.actors.load();
             let asked = decision.iter()
-                .filter(|(target_id, route)| *target_id != event.context.sender_id && matches!(route.event, ActorEvent::ResponseRequested | ActorEvent::RetryRequested { .. }));
+                .filter(|(target_id, route)| *target_id != event.context.sender_id && matches!(route.event, ActorEvent::ResponseRequested { .. } | ActorEvent::RetryRequested { .. }));
             for (target_id, _) in asked {
                 if let Some(ChannelActor { actor, .. }) = actors.get(target_id) {
                     actor.wakeup();
@@ -588,7 +588,7 @@ impl ChannelLoop {
     /// it as it entered, to be stamped again as it is read from there. Whom
     /// none of it goes back to is `route_event_impl`'s to see to.
     async fn deliveries(&self, event: &Envelope, routing: Routing, position: Option<Position>, quiet: bool) -> Vec<(ActorId, Envelope)> {
-        let Routing { audience, ask, agent_hops, notices } = routing;
+        let Routing { audience, ask, reason, agent_hops, notices } = routing;
         let deliver_to = match audience {
             Audience::Everybody => {
                 let recipients = event.recipients();
@@ -613,7 +613,7 @@ impl ChannelLoop {
                 debug!("Not asking for a response: the channel is quiet after a cancel");
             }
         } else if !ask.is_empty() {
-            let mut request = event.forward(ActorEvent::ResponseRequested);
+            let mut request = event.forward(ActorEvent::ResponseRequested { reason });
             request.context.agent_hops = agent_hops;
             request.context.position = match Recorded::of(&request, ActorId::System, Audience::Only(ask.clone())) {
                 Some(recorded) => self.record(recorded).await,
@@ -721,7 +721,7 @@ mod tests {
     use crate::component::ComponentImpl;
     use crate::transport::{EventSender, EventReceiver};
     use anyhow::Result;
-    use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RetryTarget};
+    use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RequestReason, RetryTarget};
     use caelumora_model::agent::AgentId;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::message::{Message, MessageId, MessageRole};
@@ -1483,8 +1483,8 @@ mod tests {
         assert_eq!(recorded(Arc::clone(&to_bob)).await, Some((ActorId::User(alice.id), Recipients::only(vec![ActorId::User(bob.id)]))), "to whom the moderator named");
         let state = to_bob.state.lock().await;
         let asked = state.history.last().map(|node| (node.entry.entry.clone(), node.entry.sender, node.entry.recipients.clone()));
-        assert!(matches!(asked, Some((HistoryEntry::ResponseRequested { by, .. }, ActorId::System, ref recipients)) if by == ActorId::User(alice.id) && *recipients == Recipients::only(vec![ActorId::User(bob.id)])),
-            "and whom it asked to respond, after it, in the system's name: {asked:?}");
+        assert!(matches!(asked, Some((HistoryEntry::ResponseRequested { by, reason: RequestReason::Mentioned, .. }, ActorId::System, ref recipients)) if by == ActorId::User(alice.id) && *recipients == Recipients::only(vec![ActorId::User(bob.id)])),
+            "and whom it asked to respond, after it, in the system's name, and why: {asked:?}");
     }
 
     /// Issue 417: what the channel delivers carries the position of its
@@ -1509,6 +1509,7 @@ mod tests {
         assert!(matches!(at(delivered.context.position), Some(HistoryEntry::Said { .. })), "the message, at its entry: {:?}", delivered.context.position);
         let asked = rx.try_recv().await.expect("and he is asked");
         assert!(matches!(at(asked.context.position), Some(HistoryEntry::ResponseRequested { .. })), "the request, at its own: {:?}", asked.context.position);
+        assert!(matches!(asked.event, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), "for the reason the moderator gave: {:?}", asked.event);
         assert!(asked.context.position > delivered.context.position, "recorded after it");
     }
 

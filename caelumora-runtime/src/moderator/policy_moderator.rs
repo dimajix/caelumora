@@ -24,7 +24,7 @@ use crate::actor::Actor;
 use crate::component::{ComponentError, ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry};
 use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing};
 use async_trait::async_trait;
-use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope};
+use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RequestReason};
 use caelumora_model::message::Message;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -162,11 +162,11 @@ impl PolicyModerator {
 
         // Mentioned agents respond instead of those the policy would choose;
         // the policy is not consulted, so a rotation is left as it is.
-        let ask = match mentioned {
-            Some(mentioned) => mentioned,
-            None => self.policy.choose(event, &conversation, candidates).await,
+        let (ask, reason) = match mentioned {
+            Some(mentioned) => (mentioned, RequestReason::Mentioned),
+            None => (self.policy.choose(event, &conversation, candidates).await, RequestReason::Chosen),
         };
-        Routing { ask, agent_hops, ..Routing::default() }
+        Routing { ask, reason, agent_hops, ..Routing::default() }
     }
 
     /// Tells that the response `messages` of `event` made nobody respond,
@@ -211,7 +211,7 @@ impl Moderator for PolicyModerator {
             // policy is consulted, and no chain between agents counted.
             ActorEvent::NudgeRequested { participant } => {
                 let ask = self.actors().takes_part(*participant).then_some(*participant).into_iter().collect();
-                Routing { ask, agent_hops: event.context.agent_hops, ..Routing::default() }
+                Routing { ask, reason: RequestReason::Nudged, agent_hops: event.context.agent_hops, ..Routing::default() }
             }
             // A change to what was said, in what the moderator keeps of
             // what was heard (issue 234).
@@ -544,6 +544,7 @@ mod tests {
             let routing = moderator.route(&event).await;
 
             assert_eq!(routing.ask, vec![agents[1], agents[2]], "{:?} must ask the mentioned agents, the sleeping one included", moderator);
+            assert_eq!(routing.reason, RequestReason::Mentioned, "{:?} must say they were mentioned", moderator);
             assert!(routing.audience == Audience::Everybody, "{:?} must deliver the end of the turn as every channel does", moderator);
             let said = moderator.route(&said_from(user, "@b and @c, please", vec![agents[1], agents[2]])).await;
             assert!(said.audience == Audience::Everybody, "{:?} must deliver the message as every channel does", moderator);
@@ -558,10 +559,11 @@ mod tests {
             let other_user = ActorId::User(UserId::new());
             let event = message_from(user, "@other", vec![other_user]);
 
-            let asked = moderator.route(&event).await.ask;
+            let routing = moderator.route(&event).await;
 
-            assert!(!asked.is_empty(), "{:?} must apply its own policy", moderator);
-            assert!(!asked.contains(&agents[1]), "{:?} must not ask the sleeping agent without a mention", moderator);
+            assert!(!routing.ask.is_empty(), "{:?} must apply its own policy", moderator);
+            assert!(!routing.ask.contains(&agents[1]), "{:?} must not ask the sleeping agent without a mention", moderator);
+            assert_eq!(routing.reason, RequestReason::Chosen, "{:?} must say its policy chose them", moderator);
         }
     }
 
@@ -586,9 +588,10 @@ mod tests {
             // `@all`, as the channel resolves it (issue 401): every participant, the sender included.
             let event = message_from(agents[0], "@all, what do you think?", vec![user, agents[0], agents[1], agents[2]]);
 
-            let asked = moderator.route(&event).await.ask;
+            let routing = moderator.route(&event).await;
 
-            assert_eq!(asked, vec![agents[1], agents[2]], "{:?} must ask every other agent, the sleeping one included", moderator);
+            assert_eq!(routing.ask, vec![agents[1], agents[2]], "{:?} must ask every other agent, the sleeping one included", moderator);
+            assert_eq!(routing.reason, RequestReason::Mentioned, "{:?} must say they were mentioned, as everyone", moderator);
         }
     }
 
@@ -809,6 +812,7 @@ mod tests {
             for nudged in [agents[1], other] {
                 let routing = moderator.route(&envelope(user, ActorEvent::NudgeRequested { participant: nudged })).await;
                 assert_eq!(routing.ask, vec![nudged], "{:?} must ask whom the nudge names, and no policy", moderator);
+                assert_eq!(routing.reason, RequestReason::Nudged, "{:?} must say they were nudged", moderator);
                 assert!(routing.audience == Audience::Everybody && routing.notices.is_empty(), "{:?} must tell nobody else", moderator);
             }
             let stranger = ActorId::Agent(AgentId::new());

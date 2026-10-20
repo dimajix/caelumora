@@ -20,6 +20,7 @@ use crate::llm::{LLMClient, LLMError, LLMResult};
 use crate::message::testing::given_up_turns;
 use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
 use crate::tool::sleep_tool::SLEEP_TOOL_KIND;
+use crate::prompt::request_reason_prompt_provider::REQUEST_REASON_PROMPT_PROVIDER_KIND;
 use crate::tool::stop_tool::STOP_TOOL_KIND;
 use crate::turn::MAX_MODEL_CALLS;
 use futures::stream::BoxStream;
@@ -466,6 +467,35 @@ async fn an_agent_that_hears_nobody_during_a_turn_answers_what_was_said_after_it
     let seen = model.seen.lock().unwrap().clone();
     assert!(given_at(&seen[1], "and this too").is_none(), "the running turn does not hear it");
     assert!(given_at(&seen[2], "and this too").is_some() && given_at(&seen[2], "while you were working").is_none(), "the next turn does, as it hears between turns");
+    running.abort();
+}
+
+/// Issue 439: an agent whose personality has the `request_reason_prompt_provider`, chosen by the
+/// channel's policy, is told so before the message it answers - and how to stay silent; one
+/// mentioned is told nothing.
+#[tokio::test]
+async fn an_agent_only_chosen_is_told_so_and_one_mentioned_is_not() {
+    let component = |id: &str, kind: &str| ComponentDescriptor {
+        id: id.to_string(),
+        kind: kind.to_string(),
+        params: Value::Null,
+        tags: vec![],
+        fail_policy: ComponentFailPolicy::FailClosed,
+    };
+    let components = ComponentConfig { component_nodes: vec![component("stop", STOP_TOOL_KIND), component("reason", REQUEST_REASON_PROMPT_PROVIDER_KIND)] };
+    let model = Arc::new(Gated::saying(&["Hi.", "Yes."], 1));
+    let Stuck { channel, context, running, .. } = with_an_agent(Arc::<Gated>::clone(&model), components).await;
+    asked(&model, 1).await;
+    let seen = model.seen.lock().unwrap().clone();
+    let told = given_at(&seen[0], "[Why you are asked to respond]").expect("chosen for \"hello\": told why");
+    assert!(seen[0][told].contains("Nobody mentioned you") && seen[0][told].contains("call `silence` and write nothing."), "{:?}", seen[0][told]);
+    assert!(given_at(&seen[0], "hello").is_some_and(|hello| told < hello), "before the message it answers: {:?}", seen[0]);
+
+    channel.user_actor(alice_of(&context)).unwrap().send_message("@helper, are you there?".to_string(), None).await.expect("sent");
+    asked(&model, 2).await;
+    let seen = model.seen.lock().unwrap().clone();
+    assert!(given_at(&seen[1], "are you there?").is_some(), "the next turn hears the mention");
+    assert!(given_at(&seen[1], "[Why you are asked to respond]").is_none(), "and, mentioned, is told nothing: {:?}", seen[1]);
     running.abort();
 }
 

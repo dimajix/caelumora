@@ -147,15 +147,8 @@ impl AgentActor {
         request: &Envelope,
         output: &dyn EventSender,
     ) -> Result<()> {
-        let classification = self.body.runtime.channel_classification();
-        let Answering { event_context, security_context } = Answering::to(request, self.id(), self.body.agent.name(), &self.body.security_context());
-        let turn_id = state.begin_turn(
-            event_context,
-            security_context,
-            classification,
-            self.llm_client.profile(),
-            self.body.runtime.session_time_zone(),
-        );
+        let (_, work) = self.body.work_for(request);
+        let turn_id = state.begin_turn(work.given_as(self.llm_client.profile()));
         self.body.control.begin_turn(turn_id);
         let mut turn = self.turn_under_way(state)?;
         // Judged for whoever asked, in the channel as the turn begins.
@@ -825,7 +818,7 @@ impl Actor for AgentActor {
                     | ActorEvent::MessageRevoked { .. }
                     | ActorEvent::MessageReclassified { .. }
                     | ActorEvent::RetryRequested { .. }
-                    | ActorEvent::ResponseRequested
+                    | ActorEvent::ResponseRequested { .. }
                     | ActorEvent::CommandRequested { .. }
                     | ActorEvent::ParticipantJoined { .. }
                     | ActorEvent::ParticipantLeft { .. }
@@ -1003,7 +996,7 @@ impl Actor for AgentActor {
             }
         };
         let at = EventContext::new(runtime.session_controller().load().id, runtime.channel_controller().load().id, ActorId::None, String::new());
-        let work = Work::new(at, self.body.security_context(), runtime.channel_classification());
+        let work = Work::new(at, None, self.body.security_context(), runtime.channel_classification(), runtime.session_time_zone());
         self.tool_executor.tool_sets(&self.body.situation(&work, &state)).await
     }
 
@@ -1101,7 +1094,7 @@ mod tests {
         let agent = AgentId::new();
         let channel = Classification::general(Confidentiality::Confidential);
         let mut agent_channel_state = AgentChannelState::default();
-        agent_channel_state.begin_turn(Default::default(), Default::default(), channel.clone(), Default::default(), Default::default());
+        agent_channel_state.begin_turn(Work::new(Default::default(), None, Default::default(), channel.clone(), Default::default()));
         agent_channel_state.offer_tools(vec![ToolSet::new("tools", "some tools", vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY)])]);
         let mut turn = Turn::under_way(agent, &mut agent_channel_state);
 
@@ -1132,7 +1125,7 @@ mod tests {
         let both = || vec![tool("shown", ToolVisibility::SHOWN), tool("call_only", ToolVisibility::CALL_ONLY), tool("without_result", ToolVisibility::WITHOUT_RESULT)];
         let reasoning = |tools: Vec<Tool>, personality: Visibility, private_knowledge: bool, calls: &[&str], complete: bool| {
             let mut agent_channel_state = AgentChannelState::default();
-            agent_channel_state.begin_turn(Default::default(), Default::default(), Classification::CHANNEL_DEFAULT, Default::default(), Default::default());
+            agent_channel_state.begin_turn(Work::new(Default::default(), None, Default::default(), Classification::CHANNEL_DEFAULT, Default::default()));
             agent_channel_state.offer_tools(vec![ToolSet::new("tools", "some tools", tools)]);
             let mut turn = Turn::under_way(agent, &mut agent_channel_state);
             if private_knowledge {

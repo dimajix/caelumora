@@ -1,7 +1,7 @@
 //! Histories (issue 258): what was said and how turns went, item by item.
 
 use caelumora_model::chain::Position;
-use caelumora_model::actor::{ActorId, Rejection, RetryTarget};
+use caelumora_model::actor::{ActorId, Rejection, RequestReason, RetryTarget};
 use caelumora_model::agent::RetryRefused;
 use caelumora_model::digest::Digest;
 use caelumora_model::history::{HistoryEntry, HistoryPage};
@@ -55,9 +55,9 @@ pub enum HistoryItemResponse<M> {
     ChainCutOff { message: MessageId, max_agent_hops: u32, not_asked: Vec<ActorId>, at: DateTime<Utc> },
     /// What the reader sent was not let into the channel (issue 304).
     MessageRejected { rejected: String, message: Option<MessageId>, reason: Rejection, at: DateTime<Utc> },
-    /// The reader was asked to respond, to what `by` said or nudged (issues
-    /// 278, 417).
-    ResponseRequested { by: ActorId, at: DateTime<Utc> },
+    /// The reader was asked to respond, to what `by` said or nudged, for
+    /// `reason` (issues 278, 417, 439).
+    ResponseRequested { by: ActorId, reason: RequestReason, at: DateTime<Utc> },
 }
 
 /// An item of a page of a history (issue 417): the item, and `seq`, the
@@ -93,7 +93,7 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::RetryRejected { target, reason, actor, at } => Some(Self::RetryRejected { target, reason, actor, at }),
             HistoryEntry::ChainCutOff { message, max_agent_hops, not_asked, at } => Some(Self::ChainCutOff { message, max_agent_hops, not_asked, at }),
             HistoryEntry::MessageRejected { rejected, message, reason, at } => Some(Self::MessageRejected { rejected, message, reason, at }),
-            HistoryEntry::ResponseRequested { by, at } => Some(Self::ResponseRequested { by, at }),
+            HistoryEntry::ResponseRequested { by, reason, at } => Some(Self::ResponseRequested { by, reason, at }),
             // What a newcomer was given of the history records a delivery;
             // no client shows it (issue 417).
             HistoryEntry::HistoryShared { .. } => None,

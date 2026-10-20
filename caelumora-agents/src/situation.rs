@@ -17,7 +17,7 @@ use caelumora_runtime::terminal::Terminal;
 use caelumora_runtime::runtime::ActorRuntime;
 use caelumora_runtime::view::{ChannelView, SessionView, ViewResult, WorkspaceView};
 use caelumora_runtime::workspace::WorkspaceResult;
-use caelumora_model::actor::ActorId;
+use caelumora_model::actor::{ActorId, RequestReason};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextResolver, ModelProfile};
@@ -68,6 +68,12 @@ impl<'a> Situation<'a> {
     /// The session of the agent's channel, as `channel_id`.
     pub fn session_id(&self) -> SessionId {
         self.work.event_context.session_id
+    }
+
+    /// Why the work was asked for (issue 439): the reason of the request
+    /// to respond it answers, `None` if no request began it.
+    pub fn asked(&self) -> Option<RequestReason> {
+        self.work.asked
     }
 
     /// Whose authority the work acts with.

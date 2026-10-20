@@ -221,6 +221,24 @@ impl AgentBody {
         Turn::of(self.agent_id(), self.agent.name(), state, Arc::clone(&self.agent_state), self.runtime.clone())
     }
 
+    /// The contexts `request` is answered in, continued in the agent's name
+    /// and with its rights (`Answering::to`), and the work that answers it:
+    /// asked for as the request says (issue 439), bound by the channel as it
+    /// is now - its classification (issue 212), and its session's time zone
+    /// the times of messages are given in (issue 424). How its model is
+    /// given its context is the answerer's to add (`Work::given_as`).
+    pub(super) fn work_for(&self, request: &Envelope) -> (Answering, Work) {
+        let answering = Answering::to(request, self.id(), self.name(), &self.security_context());
+        let work = Work::new(
+            answering.event_context.clone(),
+            request.event.request_reason(),
+            answering.security_context.clone(),
+            self.runtime.channel_classification(),
+            self.runtime.session_time_zone(),
+        );
+        (answering, work)
+    }
+
     /// The situation of `work`, as the agent's components read it, with its
     /// `state` in the channel - for work that is no turn of `state`, as an
     /// external agent's answer is.

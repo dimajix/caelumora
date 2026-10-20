@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::actor::Actor;
 use crate::component::ComponentRegistry;
-use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, Envelope};
+use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, Envelope, RequestReason};
 use caelumora_model::history::Audience;
 use caelumora_model::message::{Message, MessageId};
 
@@ -51,6 +51,9 @@ pub(crate) struct Routing {
     /// Whom to ask to respond to what the event said, each by a
     /// `ResponseRequested` in the event's contexts, after it.
     pub ask: Vec<ActorId>,
+    /// Why those of `ask` are asked (issue 439), which their requests
+    /// carry: all of them for the same reason.
+    pub reason: RequestReason,
     /// How many hops since the last message of a user the requests of
     /// `ask` carry (`EventContext::agent_hops`, issue 45): the moderator
     /// decides the chain, so it counts them.

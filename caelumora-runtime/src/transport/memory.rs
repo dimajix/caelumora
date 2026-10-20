@@ -161,7 +161,7 @@ impl EventSender for OriginEventSender {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::actor::{ActorEvent, EventContext};
+    use caelumora_model::actor::{ActorEvent, EventContext, RequestReason};
     use caelumora_model::chain::Position;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::work::TurnId;
@@ -181,7 +181,7 @@ mod tests {
         let mut receiver = InMemoryEventReceiver::new(rx);
         assert!(receiver.try_recv().await.is_none(), "nothing queued, nothing waited for");
 
-        tx.try_send(at(0, ActorEvent::ResponseRequested)).expect("room");
+        tx.try_send(at(0, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned })).expect("room");
         tx.try_send(at(1, ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: Vec::new() })).expect("room");
         tx.try_send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() })).expect("room");
         // Puts the request aside while it takes what it waits for.
@@ -203,12 +203,12 @@ mod tests {
     async fn try_recv_if_takes_the_next_event_only_if_it_fulfils_the_predicate_and_leaves_it_otherwise() {
         let (tx, rx) = mpsc::channel(4);
         let mut receiver = InMemoryEventReceiver::new(rx);
-        let requested = |e: &Envelope| if matches!(e.event, ActorEvent::ResponseRequested) { Pick::Take } else { Pick::Stop };
+        let requested = |e: &Envelope| if matches!(e.event, ActorEvent::ResponseRequested { .. }) { Pick::Take } else { Pick::Stop };
         assert!(receiver.try_recv_if(&requested).await.is_none(), "nothing queued, nothing waited for");
 
-        tx.try_send(envelope(ActorEvent::ResponseRequested)).expect("room");
+        tx.try_send(envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned })).expect("room");
         tx.try_send(envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() })).expect("room");
-        tx.try_send(envelope(ActorEvent::ResponseRequested)).expect("room");
+        tx.try_send(envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned })).expect("room");
 
         assert!(receiver.try_recv_if(&requested).await.is_some(), "the next event fulfils it");
         assert!(receiver.try_recv_if(&requested).await.is_none(), "the next one does not, and nothing behind it is looked at");
@@ -228,12 +228,12 @@ mod tests {
         let (tx, rx) = mpsc::channel(8);
         let mut receiver = InMemoryEventReceiver::new(rx);
         let requests_past_starts = |e: &Envelope| match e.event {
-            ActorEvent::ResponseRequested => Pick::Take,
+            ActorEvent::ResponseRequested { .. } => Pick::Take,
             ActorEvent::ResponseStarted { .. } => Pick::PassOver,
             _ => Pick::Stop,
         };
         let started = || ActorEvent::ResponseStarted { turn_id: TurnId::new() };
-        for (seq, event) in [(0, started()), (1, ActorEvent::ResponseRequested), (2, started()), (3, ActorEvent::WakeupRequested), (4, ActorEvent::ResponseRequested)] {
+        for (seq, event) in [(0, started()), (1, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), (2, started()), (3, ActorEvent::WakeupRequested), (4, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned })] {
             tx.try_send(at(seq, event)).expect("room");
         }
 

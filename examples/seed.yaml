@@ -25,8 +25,9 @@
 # it. A component of an included one must not be written again beside it.
 
 components:
-# Who is in the channel, which language it speaks, what it is about and
-# what time it is.
+# Who is in the channel, which language it speaks, what it is about, what
+# time it is and - when only the responder policy chose the agent - that it
+# may stay silent.
 - id: channel-context
   components:
   - id: channel-participants
@@ -40,6 +41,9 @@ components:
     fail_policy: FailClosed
   - id: current-time
     kind: current_time_prompt_provider
+    fail_policy: FailClosed
+  - id: request-reason
+    kind: request_reason_prompt_provider
     fail_policy: FailClosed
 # What every agent run here needs to take part in a channel.
 - id: agent-basics

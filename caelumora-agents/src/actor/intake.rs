@@ -108,7 +108,7 @@ impl AgentBody {
                 debug!("Received {}", event.describe());
                 let event = self.take_in_said(state, event).await?;
                 match event.event {
-                    ActorEvent::ResponseRequested => Some(event),
+                    ActorEvent::ResponseRequested { .. } => Some(event),
                     ActorEvent::RetryRequested { .. } => {
                         retries.push(event);
                         None
@@ -116,7 +116,7 @@ impl AgentBody {
                     _ => None,
                 }
             }.instrument(span).await;
-            request = asked.or(request);
+            request = answered(request, asked);
             next = rx.try_recv().await;
         }
         state.heard = rx.heard();
@@ -227,8 +227,23 @@ impl TakenIn {
     pub(super) fn then(self, next: TakenIn) -> TakenIn {
         let mut retries = self.retries;
         retries.extend(next.retries);
-        TakenIn { request: next.request.or(self.request), retries, command: next.command }
+        TakenIn { request: answered(self.request, next.request), retries, command: next.command }
     }
+}
+
+/// Which of two requests to respond, `earlier` and `later`, both taken in
+/// for one turn, the turn answers: the later, in whose contexts it acts -
+/// for the stronger reason of the two (issue 439), since a mention among
+/// them is a reason to answer though the last request was only a choice.
+fn answered(earlier: Option<Envelope>, later: Option<Envelope>) -> Option<Envelope> {
+    let Some(mut later) = later else {
+        return earlier;
+    };
+    let before = earlier.and_then(|earlier| earlier.event.request_reason());
+    if let (Some(before), ActorEvent::ResponseRequested { reason }) = (before, &mut later.event) {
+        *reason = (*reason).max(before);
+    }
+    Some(later)
 }
 
 #[cfg(test)]
@@ -239,7 +254,7 @@ mod tests {
     use caelumora_runtime::component::ComponentImpl;
     use crate::message::testing::Without;
     use crate::message::PerceiveInProcessor;
-    use caelumora_model::actor::{ActorId, EventContext};
+    use caelumora_model::actor::{ActorId, EventContext, RequestReason};
     use caelumora_model::security::SecurityContext;
     use caelumora_runtime::runtime::ActorRuntime;
     use caelumora_runtime::transport::{EventReceiver, InMemoryEventReceiver};
@@ -252,6 +267,7 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
     use chrono::Utc;
+    use caelumora_model::work::Work;
 
     fn said(text: &str) -> Message {
         Message { role: MessageRole::User, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
@@ -293,9 +309,9 @@ mod tests {
         let body = AgentBody::detached(Vec::new());
 
         let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(said(text)));
-        let mut last = envelope(ActorEvent::ResponseRequested);
+        let mut last = envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned });
         last.security.caller_id = ActorId::System;
-        for event in [envelope(ActorEvent::ResponseRequested), heard("two"), envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() }), last, heard("three")] {
+        for event in [envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), heard("two"), envelope(ActorEvent::ResponseStarted { turn_id: TurnId::new() }), last, heard("three")] {
             tx.try_send(event).expect("room");
         }
 
@@ -309,11 +325,43 @@ mod tests {
         assert_eq!(texts(&state.transcript.messages()), ["one", "two", "three", "four"]);
     }
 
+    /// Issue 439: of the requests a turn takes in, it answers the last - in
+    /// whose contexts it acts - for the strongest reason among them, also
+    /// across a command that ended a batch.
+    #[tokio::test]
+    async fn the_request_answered_keeps_the_strongest_reason() {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+        let mut state = AgentChannelState::default();
+        let body = AgentBody::detached(Vec::new());
+        let asked = |reason| envelope(ActorEvent::ResponseRequested { reason });
+        let reason = |taken: &TakenIn| match taken.request.as_ref().map(|r| &r.event) {
+            Some(ActorEvent::ResponseRequested { reason }) => Some(*reason),
+            _ => None,
+        };
+
+        let mut last = asked(RequestReason::Chosen);
+        last.security.caller_id = ActorId::System;
+        tx.try_send(last).expect("room");
+        let taken = body.take_in(&mut state, asked(RequestReason::Mentioned), &mut rx).await;
+        assert_eq!(taken.request.as_ref().map(|r| r.security.caller_id), Some(ActorId::System), "the last request");
+        assert_eq!(reason(&taken), Some(RequestReason::Mentioned), "for the mention before it");
+
+        tx.try_send(asked(RequestReason::Mentioned)).expect("room");
+        let taken = body.take_in(&mut state, asked(RequestReason::Chosen), &mut rx).await;
+        assert_eq!(reason(&taken), Some(RequestReason::Mentioned), "a later mention is the stronger reason as well");
+
+        let only_chosen = body.take_in(&mut state, asked(RequestReason::Chosen), &mut rx).await;
+        assert_eq!(reason(&only_chosen), Some(RequestReason::Chosen), "chosen alone, chosen");
+        let then = TakenIn { request: Some(asked(RequestReason::Nudged)), retries: Vec::new(), command: None }.then(only_chosen);
+        assert_eq!(reason(&then), Some(RequestReason::Nudged), "across a command, too");
+    }
+
     /// A turn begun for `initiator` in a channel classified as the default,
     /// in `state`.
     fn under_way_for(state: &mut AgentChannelState, initiator: ActorId) {
         let context = EventContext { initiator_id: initiator, ..EventContext::default() };
-        state.begin_turn(context, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default(), Default::default());
+        state.begin_turn(Work::new(context, None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default()));
     }
 
     #[tokio::test]
@@ -327,7 +375,7 @@ mod tests {
         let in_her_authority = |event: ActorEvent| Envelope::new(SecurityContext::default(), EventContext { initiator_id: alice, ..EventContext::default() }, event);
         let of_alice = |text: &str| in_her_authority(ActorEvent::CompleteMessageGenerated(Message { sender_id: alice, ..said(text) }));
         let command = in_her_authority(ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: ActorId::None });
-        for event in [of_alice("one"), in_her_authority(ActorEvent::ResponseRequested), of_alice("two"), command, of_alice("three")] {
+        for event in [of_alice("one"), in_her_authority(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), of_alice("two"), command, of_alice("three")] {
             tx.try_send(event).expect("room");
         }
 
@@ -351,9 +399,9 @@ mod tests {
         };
         let of = |seq, sender: ActorId, text: &str| at(seq, sender, ActorEvent::CompleteMessageGenerated(Message { sender_id: sender, ..said(text) }));
         vec![
-            of(0, bob, "his first"), at(1, bob, ActorEvent::ResponseRequested),
-            of(2, alice, "hers"), at(3, alice, ActorEvent::ResponseRequested),
-            of(4, bob, "his second"), at(5, bob, ActorEvent::ResponseRequested),
+            of(0, bob, "his first"), at(1, bob, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
+            of(2, alice, "hers"), at(3, alice, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
+            of(4, bob, "his second"), at(5, bob, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
         ]
     }
 
@@ -447,7 +495,7 @@ mod tests {
         let body = AgentBody::detached(Vec::new());
         let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(said(text)));
         let command = envelope(ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: ActorId::None });
-        for event in [envelope(ActorEvent::ResponseRequested), heard("two"), command, heard("three"), envelope(ActorEvent::ResponseRequested)] {
+        for event in [envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), heard("two"), command, heard("three"), envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned })] {
             tx.try_send(event).expect("room");
         }
 

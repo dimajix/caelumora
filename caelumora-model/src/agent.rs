@@ -1,9 +1,11 @@
-use crate::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, Pick};
+use crate::actor::{ActorEvent, ActorId, ActorState, Envelope, Pick};
 use crate::approval::ApprovalRequest;
 use crate::chain::{Position, Stored};
 use crate::component::ComponentConfig;
 use crate::confidentiality::{Classification, Visibility};
-use crate::context::{ContextRef, ContextResolver, FrameRef, KnowledgeRef, ModelProfile, PromptRef};
+use crate::context::{ContextResolver, FrameRef, KnowledgeRef, PromptRef};
+#[cfg(any(test, feature = "test-support"))]
+use crate::context::ContextRef;
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
 use crate::history::{Heard, HistoryEntry};
@@ -23,7 +25,6 @@ use crate::turn::GivenUpReason;
 use crate::turn::{CommandRequest, TurnState};
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Description, Introduction};
-use crate::value::time_zone::TimeZone;
 use crate::value::ValueError;
 use crate::work::{TurnId, Work};
 use serde::{Deserialize, Serialize};
@@ -146,7 +147,7 @@ impl HearsDuringTurn {
         let in_its_authority = envelope.context.initiator_id == work.event_context.initiator_id;
         match &envelope.event {
             ActorEvent::CompleteMessageGenerated(message) => self.hears_said(work, message) && (self.others == OthersWords::Hear || in_its_authority),
-            ActorEvent::ResponseRequested => self.from != HearsFrom::None && in_its_authority,
+            ActorEvent::ResponseRequested { .. } => self.from != HearsFrom::None && in_its_authority,
             ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } => self.from != HearsFrom::None,
             _ => false,
         }
@@ -164,7 +165,7 @@ impl HearsDuringTurn {
         }
         let before_asked = asked.zip(envelope.context.position).is_some_and(|(asked, at)| at < asked);
         match &envelope.event {
-            ActorEvent::ResponseRequested if before_asked => Pick::PassOver,
+            ActorEvent::ResponseRequested { .. } if before_asked => Pick::PassOver,
             _ if before_asked && self.waits_for_authority(work, envelope) => Pick::Take,
             _ => Pick::Stop,
         }
@@ -182,10 +183,10 @@ impl HearsDuringTurn {
         }
         let in_its_authority = envelope.context.initiator_id == work.event_context.initiator_id;
         match &envelope.event {
-            ActorEvent::ResponseRequested if in_its_authority => {
+            ActorEvent::ResponseRequested { .. } if in_its_authority => {
                 if self.takes(work, envelope) && envelope.context.position.is_some() { Pick::Take } else { Pick::Stop }
             }
-            ActorEvent::ResponseRequested => Pick::PassOver,
+            ActorEvent::ResponseRequested { .. } => Pick::PassOver,
             _ if self.takes(work, envelope) || self.waits_for_authority(work, envelope) => Pick::PassOver,
             _ => Pick::Stop,
         }
@@ -905,31 +906,24 @@ impl AgentChannelState {
         Some(ContextRef { transcript, frame: self.frames.get(&frame)?.clone() })
     }
 
-    /// Begins a turn (issue 85): fixes what it is - the envelope it answers,
-    /// whose authority it acts with, the channel's classification now and
-    /// how the agent's model is given its context (the `profile`, issues
-    /// 49, 63) - with the times of messages in `time_zone`, the session's
-    /// (issue 424). What its model is offered is added once it is begun
-    /// (`offer_tools`), since what may be called depends on the work.
-    /// All but the first two hold for the whole turn - also one resumed after
-    /// the model's configuration changed - so that what it reads, publishes
-    /// and remembers is judged alike, and what its model is given too. The
-    /// turn has seen the transcript, which is what the model is given first
-    /// (issue 168). Whatever a previous turn left behind is gone. Returns the
-    /// turn's id (issue 235).
-    pub fn begin_turn(
-        &mut self,
-        event_context: EventContext,
-        security_context: SecurityContext,
-        classification: Classification,
-        profile: ModelProfile,
-        time_zone: TimeZone,
-    ) -> TurnId {
+    /// Begins a turn (issue 85) that does `work` - begun by whoever answers
+    /// (`Work::new`): the envelope it answers and why it was asked to (issue
+    /// 439), whose authority it acts with, the channel's classification and
+    /// its session's time zone (issue 424) as it began, and how the agent's
+    /// model is given its context (`Work::given_as`, issues 49, 63). The
+    /// turn adds what only it knows: the transcript the model is given
+    /// first, which the turn has seen (issue 168). What its model is offered
+    /// is added once it is begun (`offer_tools`), since what may be called
+    /// depends on the work. All but the envelope and the authority hold for
+    /// the whole turn - also one resumed after the model's configuration
+    /// changed - so that what it reads, publishes and remembers is judged
+    /// alike, and what its model is given too. Whatever a previous turn left
+    /// behind is gone. Returns the turn's id (issue 235).
+    pub fn begin_turn(&mut self, mut work: Work) -> TurnId {
         if self.turn.is_some() {
             tracing::warn!("A turn was begun while another was under way; the other ends without an end recorded");
         }
-        let mut work = Work::new(event_context, security_context, classification);
-        work.context = ContextRef { transcript: self.transcript.digest(), frame: FrameRef { profile, time_zone, ..FrameRef::default() } };
+        work.context.transcript = self.transcript.digest();
         self.transcript.messages().iter().for_each(|m| work.see_message(m));
         let turn_id = work.turn_id;
         let turn = TurnState { work, ..TurnState::default() };
@@ -958,16 +952,8 @@ impl AgentChannelState {
     /// does, offering no tools - a command turn offers its model nothing -
     /// and the command kept with the turn, so that one resumed after a
     /// restart knows what to do.
-    pub fn begin_command_turn(
-        &mut self,
-        event_context: EventContext,
-        security_context: SecurityContext,
-        classification: Classification,
-        profile: ModelProfile,
-        time_zone: TimeZone,
-        request: CommandRequest,
-    ) -> TurnId {
-        let turn_id = self.begin_turn(event_context, security_context, classification, profile, time_zone);
+    pub fn begin_command_turn(&mut self, work: Work, request: CommandRequest) -> TurnId {
+        let turn_id = self.begin_turn(work);
         if let Some(turn) = &mut self.turn {
             turn.command = Some(request);
         }
@@ -1180,7 +1166,7 @@ impl Journaled for AgentState {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::actor::ActorState;
+    use crate::actor::{ActorState, EventContext, RequestReason};
     use crate::confidentiality::Confidentiality;
     use crate::context::{ContextResolver, KnowledgeSource};
     use crate::digest;
@@ -1299,7 +1285,7 @@ pub(crate) mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let internal = Classification::general(Confidentiality::Internal);
         let secret = Classification::general(Confidentiality::StrictlyConfidential);
-        let work = Work::new(EventContext { initiator_id: alice, ..EventContext::default() }, SecurityContext::default(), internal.clone());
+        let work = Work::new(EventContext { initiator_id: alice, ..EventContext::default() }, None, SecurityContext::default(), internal.clone(), Default::default());
         let in_authority_of = |initiator: ActorId, event: ActorEvent| Envelope::new(SecurityContext::default(), EventContext { initiator_id: initiator, ..EventContext::default() }, event);
         // Said by `sender`, in the authority of `initiator`, classified `classification`.
         let said = |sender: ActorId, initiator: ActorId, classification: &Classification| {
@@ -1317,9 +1303,9 @@ pub(crate) mod tests {
             ("his, until she asks", hears(HearsFrom::Users, OthersWords::WhenAsked), said(bob, bob, &internal), false),
             ("an agent's for him, waiting", hears(HearsFrom::All, wait), said(agent, bob, &internal), false),
             ("above the turn's classification", hears(HearsFrom::All, hear), said(alice, alice, &secret), false),
-            ("her request", hears(HearsFrom::Users, wait), in_authority_of(alice, ActorEvent::ResponseRequested), true),
-            ("his request, hearing others' words", hears(HearsFrom::All, hear), in_authority_of(bob, ActorEvent::ResponseRequested), false),
-            ("her request, hearing nobody", hears(HearsFrom::None, hear), in_authority_of(alice, ActorEvent::ResponseRequested), false),
+            ("her request", hears(HearsFrom::Users, wait), in_authority_of(alice, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), true),
+            ("his request, hearing others' words", hears(HearsFrom::All, hear), in_authority_of(bob, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), false),
+            ("her request, hearing nobody", hears(HearsFrom::None, hear), in_authority_of(alice, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), false),
             ("a command", hears(HearsFrom::All, hear), in_authority_of(alice, ActorEvent::CommandRequested { command: "mark".to_string(), args: String::new(), agent: ActorId::None }), false),
         ];
         for (what, hears, envelope, taken) in cases {
@@ -1337,7 +1323,7 @@ pub(crate) mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let internal = Classification::general(Confidentiality::Internal);
         let secret = Classification::general(Confidentiality::StrictlyConfidential);
-        let work = Work::new(EventContext { initiator_id: alice, ..EventContext::default() }, SecurityContext::default(), internal.clone());
+        let work = Work::new(EventContext { initiator_id: alice, ..EventContext::default() }, None, SecurityContext::default(), internal.clone(), Default::default());
         let at = |seq: u64, initiator: ActorId, event: ActorEvent| {
             Envelope::new(SecurityContext::default(), EventContext { initiator_id: initiator, position: Some(Position::new(seq)), ..EventContext::default() }, event)
         };
@@ -1349,15 +1335,15 @@ pub(crate) mod tests {
         let (asked, wait) = (hears(OthersWords::WhenAsked), hears(OthersWords::Wait));
 
         let looking_for_a_request = [
-            ("her request", asked, at(5, alice, ActorEvent::ResponseRequested), Pick::Take),
-            ("her request, unrecorded", asked, Envelope::new(SecurityContext::default(), EventContext { initiator_id: alice, ..EventContext::default() }, ActorEvent::ResponseRequested), Pick::Stop),
+            ("her request", asked, at(5, alice, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), Pick::Take),
+            ("her request, unrecorded", asked, Envelope::new(SecurityContext::default(), EventContext { initiator_id: alice, ..EventContext::default() }, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), Pick::Stop),
             ("his words", asked, said(5, bob, &internal), Pick::PassOver),
             ("her words", asked, said(5, alice, &internal), Pick::PassOver),
-            ("his request", asked, at(5, bob, ActorEvent::ResponseRequested), Pick::PassOver),
+            ("his request", asked, at(5, bob, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), Pick::PassOver),
             ("an agent's words, hearing users", asked, said(5, agent, &internal), Pick::Stop),
             ("his words above the work's classification", asked, said(5, bob, &secret), Pick::Stop),
             ("a command", asked, at(5, alice, command.clone()), Pick::Stop),
-            ("her request, waiting", wait, at(5, alice, ActorEvent::ResponseRequested), Pick::Stop),
+            ("her request, waiting", wait, at(5, alice, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), Pick::Stop),
         ];
         for (what, hears, envelope, picked) in looking_for_a_request {
             assert_eq!(hears.pick_request(&work, &envelope), picked, "{what}");
@@ -1369,8 +1355,8 @@ pub(crate) mod tests {
             ("his words after", asked, said(7, bob, &internal), asked_at, Pick::Stop),
             ("his words, nobody asked", asked, said(3, bob, &internal), None, Pick::Stop),
             ("his words before, waiting", wait, said(3, bob, &internal), asked_at, Pick::Stop),
-            ("his request before", asked, at(3, bob, ActorEvent::ResponseRequested), asked_at, Pick::PassOver),
-            ("his request after", asked, at(7, bob, ActorEvent::ResponseRequested), asked_at, Pick::Stop),
+            ("his request before", asked, at(3, bob, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), asked_at, Pick::PassOver),
+            ("his request after", asked, at(7, bob, ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }), asked_at, Pick::Stop),
             ("her words after", asked, said(7, alice, &internal), asked_at, Pick::Take),
             ("his words above the work's classification before", asked, said(3, bob, &secret), asked_at, Pick::Stop),
             ("an agent's words before, hearing users", asked, said(3, agent, &internal), asked_at, Pick::Stop),
@@ -1463,7 +1449,7 @@ pub(crate) mod tests {
     /// Begins a turn offering `tools` as one set, or none.
     fn begin(state: &mut AgentChannelState, tools: Vec<Tool>) {
         let sets = if tools.is_empty() { Vec::new() } else { vec![ToolSet::new("tools", "some tools", tools)] };
-        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default());
+        state.begin_turn(Work::new(EventContext::default(), None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default()));
         state.offer_tools(sets);
     }
 
@@ -1692,7 +1678,7 @@ pub(crate) mod tests {
         let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
         let issuer = ActorId::User(UserId::new());
         let request = CommandRequest { command: "compact".to_string(), args: "hard".to_string(), issuer };
-        let turn_id = state.begin_command_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default(), request.clone());
+        let turn_id = state.begin_command_turn(Work::new(EventContext::default(), None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default()), request.clone());
         let turn = state.turn.as_ref().expect("a turn was begun");
         assert_eq!(turn.command.as_ref(), Some(&request), "kept with the turn, for one resumed");
         assert!(turn.work.context.frame.tools.is_none(), "a command turn offers its model nothing");
@@ -1822,7 +1808,7 @@ pub(crate) mod tests {
         let mut state = AgentChannelState::default();
         let earlier = state.keep_prompt(MessageRole::System, "earlier".to_string(), None, None);
         let sets = vec![ToolSet::new("calc", "calculates", Vec::new())];
-        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default());
+        state.begin_turn(Work::new(EventContext::default(), None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default()));
         state.offer_tools(sets);
         let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
         state.turn.as_mut().unwrap().work.context.frame.prompts.push(system.clone());
@@ -1894,7 +1880,7 @@ pub(crate) mod tests {
         assert_eq!(state.transcript.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1)], "what was perceived");
 
         let channel = Classification::general(Confidentiality::Confidential);
-        state.turn = Some(TurnState { work: Work::new(Default::default(), Default::default(), channel.clone()), ..TurnState::default() });
+        state.turn = Some(TurnState { work: Work::new(Default::default(), None, Default::default(), channel.clone(), Default::default()), ..TurnState::default() });
         let confidential = Message { classification: channel.clone(), ..make_message(id(3)) };
         state.perceive(vec![confidential]);
         assert_eq!(state.turn.as_ref().map(|t| t.work.label()), Some(channel), "the turn has seen it");

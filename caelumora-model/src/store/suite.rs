@@ -23,7 +23,6 @@ use crate::store::transcript::TranscriptStore;
 use crate::actor::{ActorEvent, Envelope, EventContext};
 use crate::history::History;
 use crate::work::TurnId;
-use crate::context::ModelProfile;
 use crate::tool::{ToolCall, ToolSet, ToolVisibility};
 use std::collections::{BTreeMap, HashSet};
 use crate::chain::{Node, Position};
@@ -41,6 +40,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::message::{Message, MessageRole};
 use crate::role::RoleId;
+use crate::work::Work;
 
 /// Runs one kind through its whole life: create, create again, update, get,
 /// list, delete, delete again, and get and update once it is gone.
@@ -949,7 +949,7 @@ pub(crate) async fn given_store_behaves(states: &dyn StateStore, transcripts: &d
     states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
     assert!(state.prompts.changes().is_empty(), "the texts are marked stored");
 
-    state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default());
+    state.begin_turn(Work::new(EventContext::default(), None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default()));
     state.offer_tools(sets.clone());
     let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
     state.turn.as_mut().expect("a turn").work.context.frame.prompts.push(system.clone());
