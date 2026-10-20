@@ -353,6 +353,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [424](424-time-in-the-prompt.md) | done | A model is given the messages of its channel without when they were said and is never told the current date and time, so it cannot tell a message of a minute ago from one of last week, answers questions about today from its training cutoff, and a session has no time zone that times could be given in. |
 | [430](430-summary-given-times-in-utc.md) | done | `Turn::context_until`, which hands a component the transcript to work on - the summary of a compaction -, takes the turn's profile but not its time zone, so the model that summarizes reads the times of messages in UTC while the turn's own model reads them in the session's zone. |
 | [438](438-agents-mention-without-knowing-it-asks.md) | done | An agent is told to mention others by their `@handle` to address them, but not that a mention of an agent asks that agent to respond, so agents greet and thank each other with `@` and every greeting starts another turn. |
+| [442](442-agents-mention-each-other-despite-the-roster.md) | open | Agents greet, thank and praise each other with `@handle` although the roster says since issue 438 that a mention asks the agent to respond, because the rule stands once in the system prompt next to an invitation to address others by `@handle`, so nearly every turn in a channel of several agents is asked for by another agent's courtesy. |
 
 ## Maintenance
 
