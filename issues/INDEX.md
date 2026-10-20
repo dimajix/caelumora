@@ -110,6 +110,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [422](422-route-depth-in-moderator.md) | done | `ChannelLoop::decide` refuses to ask the moderator about an event once its `span_depth` reaches a hard-coded `max_route_decisions`, so the channel keeps a routing rule of its own beside the moderator, which decides everything else about routing. |
 | [423](423-newcomer-misses-what-is-said-as-it-joins.md) | done | An actor added to a running channel catches up from the store before `run` takes it in, so what the channel records in between is in the newcomer's range but neither caught up nor delivered to it. |
 | [431](431-hearing-during-a-turn.md) | done | An agent takes in what others say only between its turns, so a turn of many steps - tool calls, a plan - works on to its end without what was said meanwhile: a correction, an addition, an instruction to stop doing something reaches it only after it has done it. |
+| [434](434-hearing-during-a-turn-from-the-history-untested.md) | open | That an agent hears between the steps of a turn (issue 431) is tested only with an inbox whose queue holds everything, so nothing shows that it works the same when the inbox is behind and reads from the channel's history, or after a restart in the middle of a turn that heard something. |
 
 ## Identity and access management
 
