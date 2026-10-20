@@ -64,6 +64,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [55](55-notes-by-reflection.md) | open | medium | feature | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |
 | [57](57-prompt-catalogue.md) | open | medium | question | The prompts the runtime gives models are English constants spread through the code, in one variant for every language and model. |
 | [166](166-memory-as-topic-documents.md) | open | medium | feature | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
+| [438](438-agents-mention-without-knowing-it-asks.md) | open | medium | feature | An agent is told to mention others by their `@handle` to address them, but not that a mention of an agent asks that agent to respond, so agents greet and thank each other with `@` and every greeting starts another turn. |
 
 ## Maintenance
 
