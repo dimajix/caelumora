@@ -205,6 +205,7 @@ mod tests {
     use caelumora_model::message::MessageRole;
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::work::TurnId;
+    use caelumora_model::work::Work;
 
     /// The items of the agent's history as the view reads them.
     async fn items_of(view: &AgentContextView) -> Vec<HistoryEntry> {
@@ -217,7 +218,7 @@ mod tests {
         let mut state = AgentChannelState::default();
         let question = Message { id: MessageId::new(), role: MessageRole::User, content: Some("question".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         state.perceive(vec![question.clone()]);
-        state.begin_turn(Default::default(), None, Default::default(), Classification::CHANNEL_DEFAULT, Default::default(), Default::default());
+        state.begin_turn(Work::new(Default::default(), None, Default::default(), Classification::CHANNEL_DEFAULT, Default::default()));
         let step = Message { id: MessageId::new(), sender_id: actor, role: MessageRole::Assistant, content: Some("thinking".to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) };
         let sent = state.said(step.clone());
         // Its channel's history, as it records what was said (issue 417).

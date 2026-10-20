@@ -267,6 +267,7 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
     use chrono::Utc;
+    use caelumora_model::work::Work;
 
     fn said(text: &str) -> Message {
         Message { role: MessageRole::User, content: Some(text.to_string()), ..Message::new(Classification::CHANNEL_DEFAULT) }
@@ -360,7 +361,7 @@ mod tests {
     /// in `state`.
     fn under_way_for(state: &mut AgentChannelState, initiator: ActorId) {
         let context = EventContext { initiator_id: initiator, ..EventContext::default() };
-        state.begin_turn(context, None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default(), Default::default());
+        state.begin_turn(Work::new(context, None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default()));
     }
 
     #[tokio::test]

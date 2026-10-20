@@ -1,9 +1,11 @@
-use crate::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext, Pick, RequestReason};
+use crate::actor::{ActorEvent, ActorId, ActorState, Envelope, Pick};
 use crate::approval::ApprovalRequest;
 use crate::chain::{Position, Stored};
 use crate::component::ComponentConfig;
 use crate::confidentiality::{Classification, Visibility};
-use crate::context::{ContextRef, ContextResolver, FrameRef, KnowledgeRef, ModelProfile, PromptRef};
+use crate::context::{ContextResolver, FrameRef, KnowledgeRef, PromptRef};
+#[cfg(any(test, feature = "test-support"))]
+use crate::context::ContextRef;
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
 use crate::history::{Heard, HistoryEntry};
@@ -23,7 +25,6 @@ use crate::turn::GivenUpReason;
 use crate::turn::{CommandRequest, TurnState};
 use crate::value::name::{Name, ScopedName};
 use crate::value::text::{Description, Introduction};
-use crate::value::time_zone::TimeZone;
 use crate::value::ValueError;
 use crate::work::{TurnId, Work};
 use serde::{Deserialize, Serialize};
@@ -905,33 +906,24 @@ impl AgentChannelState {
         Some(ContextRef { transcript, frame: self.frames.get(&frame)?.clone() })
     }
 
-    /// Begins a turn (issue 85): fixes what it is - the envelope it answers
-    /// and why it was asked to (`asked`, issue 439), whose authority it acts
-    /// with, the channel's classification now and how the agent's model is
-    /// given its context (the `profile`, issues 49, 63) - with the times of
-    /// messages in `time_zone`, the session's (issue 424). What its model is
-    /// offered is added once it is begun (`offer_tools`), since what may be
-    /// called depends on the work. All but the envelope and the authority
-    /// hold for the whole turn - also one resumed after
-    /// the model's configuration changed - so that what it reads, publishes
-    /// and remembers is judged alike, and what its model is given too. The
-    /// turn has seen the transcript, which is what the model is given first
-    /// (issue 168). Whatever a previous turn left behind is gone. Returns the
-    /// turn's id (issue 235).
-    pub fn begin_turn(
-        &mut self,
-        event_context: EventContext,
-        asked: Option<RequestReason>,
-        security_context: SecurityContext,
-        classification: Classification,
-        profile: ModelProfile,
-        time_zone: TimeZone,
-    ) -> TurnId {
+    /// Begins a turn (issue 85) that does `work` - begun by whoever answers
+    /// (`Work::new`): the envelope it answers and why it was asked to (issue
+    /// 439), whose authority it acts with, the channel's classification and
+    /// its session's time zone (issue 424) as it began, and how the agent's
+    /// model is given its context (`Work::given_as`, issues 49, 63). The
+    /// turn adds what only it knows: the transcript the model is given
+    /// first, which the turn has seen (issue 168). What its model is offered
+    /// is added once it is begun (`offer_tools`), since what may be called
+    /// depends on the work. All but the envelope and the authority hold for
+    /// the whole turn - also one resumed after the model's configuration
+    /// changed - so that what it reads, publishes and remembers is judged
+    /// alike, and what its model is given too. Whatever a previous turn left
+    /// behind is gone. Returns the turn's id (issue 235).
+    pub fn begin_turn(&mut self, mut work: Work) -> TurnId {
         if self.turn.is_some() {
             tracing::warn!("A turn was begun while another was under way; the other ends without an end recorded");
         }
-        let mut work = Work::new(event_context, asked, security_context, classification);
-        work.context = ContextRef { transcript: self.transcript.digest(), frame: FrameRef { profile, time_zone, ..FrameRef::default() } };
+        work.context.transcript = self.transcript.digest();
         self.transcript.messages().iter().for_each(|m| work.see_message(m));
         let turn_id = work.turn_id;
         let turn = TurnState { work, ..TurnState::default() };
@@ -960,16 +952,8 @@ impl AgentChannelState {
     /// does, offering no tools - a command turn offers its model nothing -
     /// and the command kept with the turn, so that one resumed after a
     /// restart knows what to do.
-    pub fn begin_command_turn(
-        &mut self,
-        event_context: EventContext,
-        security_context: SecurityContext,
-        classification: Classification,
-        profile: ModelProfile,
-        time_zone: TimeZone,
-        request: CommandRequest,
-    ) -> TurnId {
-        let turn_id = self.begin_turn(event_context, None, security_context, classification, profile, time_zone);
+    pub fn begin_command_turn(&mut self, work: Work, request: CommandRequest) -> TurnId {
+        let turn_id = self.begin_turn(work);
         if let Some(turn) = &mut self.turn {
             turn.command = Some(request);
         }
@@ -1182,7 +1166,7 @@ impl Journaled for AgentState {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::actor::{ActorState, RequestReason};
+    use crate::actor::{ActorState, EventContext, RequestReason};
     use crate::confidentiality::Confidentiality;
     use crate::context::{ContextResolver, KnowledgeSource};
     use crate::digest;
@@ -1301,7 +1285,7 @@ pub(crate) mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let internal = Classification::general(Confidentiality::Internal);
         let secret = Classification::general(Confidentiality::StrictlyConfidential);
-        let work = Work::new(EventContext { initiator_id: alice, ..EventContext::default() }, None, SecurityContext::default(), internal.clone());
+        let work = Work::new(EventContext { initiator_id: alice, ..EventContext::default() }, None, SecurityContext::default(), internal.clone(), Default::default());
         let in_authority_of = |initiator: ActorId, event: ActorEvent| Envelope::new(SecurityContext::default(), EventContext { initiator_id: initiator, ..EventContext::default() }, event);
         // Said by `sender`, in the authority of `initiator`, classified `classification`.
         let said = |sender: ActorId, initiator: ActorId, classification: &Classification| {
@@ -1339,7 +1323,7 @@ pub(crate) mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let internal = Classification::general(Confidentiality::Internal);
         let secret = Classification::general(Confidentiality::StrictlyConfidential);
-        let work = Work::new(EventContext { initiator_id: alice, ..EventContext::default() }, None, SecurityContext::default(), internal.clone());
+        let work = Work::new(EventContext { initiator_id: alice, ..EventContext::default() }, None, SecurityContext::default(), internal.clone(), Default::default());
         let at = |seq: u64, initiator: ActorId, event: ActorEvent| {
             Envelope::new(SecurityContext::default(), EventContext { initiator_id: initiator, position: Some(Position::new(seq)), ..EventContext::default() }, event)
         };
@@ -1465,7 +1449,7 @@ pub(crate) mod tests {
     /// Begins a turn offering `tools` as one set, or none.
     fn begin(state: &mut AgentChannelState, tools: Vec<Tool>) {
         let sets = if tools.is_empty() { Vec::new() } else { vec![ToolSet::new("tools", "some tools", tools)] };
-        state.begin_turn(EventContext::default(), None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default());
+        state.begin_turn(Work::new(EventContext::default(), None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default()));
         state.offer_tools(sets);
     }
 
@@ -1694,7 +1678,7 @@ pub(crate) mod tests {
         let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
         let issuer = ActorId::User(UserId::new());
         let request = CommandRequest { command: "compact".to_string(), args: "hard".to_string(), issuer };
-        let turn_id = state.begin_command_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default(), request.clone());
+        let turn_id = state.begin_command_turn(Work::new(EventContext::default(), None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default()), request.clone());
         let turn = state.turn.as_ref().expect("a turn was begun");
         assert_eq!(turn.command.as_ref(), Some(&request), "kept with the turn, for one resumed");
         assert!(turn.work.context.frame.tools.is_none(), "a command turn offers its model nothing");
@@ -1824,7 +1808,7 @@ pub(crate) mod tests {
         let mut state = AgentChannelState::default();
         let earlier = state.keep_prompt(MessageRole::System, "earlier".to_string(), None, None);
         let sets = vec![ToolSet::new("calc", "calculates", Vec::new())];
-        state.begin_turn(EventContext::default(), None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default());
+        state.begin_turn(Work::new(EventContext::default(), None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, Default::default()));
         state.offer_tools(sets);
         let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
         state.turn.as_mut().unwrap().work.context.frame.prompts.push(system.clone());
@@ -1896,7 +1880,7 @@ pub(crate) mod tests {
         assert_eq!(state.transcript.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1)], "what was perceived");
 
         let channel = Classification::general(Confidentiality::Confidential);
-        state.turn = Some(TurnState { work: Work::new(Default::default(), None, Default::default(), channel.clone()), ..TurnState::default() });
+        state.turn = Some(TurnState { work: Work::new(Default::default(), None, Default::default(), channel.clone(), Default::default()), ..TurnState::default() });
         let confidential = Message { classification: channel.clone(), ..make_message(id(3)) };
         state.perceive(vec![confidential]);
         assert_eq!(state.turn.as_ref().map(|t| t.work.label()), Some(channel), "the turn has seen it");

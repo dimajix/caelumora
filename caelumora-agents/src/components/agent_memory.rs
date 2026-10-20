@@ -258,6 +258,7 @@ mod tests {
     use caelumora_model::value::name::Name;
     use chrono::Utc;
     use std::ops::Deref;
+    use caelumora_model::work::Work;
 
     /// A channel of the tests: where it is - its session and itself - and
     /// how it is classified.
@@ -284,7 +285,7 @@ mod tests {
         /// begins one: the agent acting with its owner's rights.
         fn begin(&self, state: &mut AgentChannelState, at: &At, agent: AgentId) {
             let context = SecurityContext::new(self.owner, at.0.0, at.0.1).next(ActorId::Agent(agent), self.owner, self.owner);
-            state.begin_turn(in_channel(at), None, context, at.1.clone(), Default::default(), Default::default());
+            state.begin_turn(Work::new(in_channel(at), None, context, at.1.clone(), Default::default()));
         }
     }
 

@@ -171,12 +171,20 @@ The working state of a turn is one value, `AgentChannelState::turn`, `None` betw
 with its remote agent (`caelumora_model::work`):
 
 *   which turn it is (`TurnId`),
-*   the envelope it answers and the authority it acts with,
+*   the envelope it answers, why it was asked to (see [Why the agent was
+    asked](#why-the-agent-was-asked)) and the authority it acts with,
 *   the classification of its channel as the turn began, which bounds what it may read,
 *   its label - the join of everything it has seen, at most the channel's - which everything it
     writes is classified as (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as)),
 *   the context its next message is produced from (see [The turn's context and the
-    resolver](#the-turns-context-and-the-resolver)).
+    resolver](#the-turns-context-and-the-resolver)), with the session's time zone as the work
+    began and how its model is given what was said.
+
+Whoever answers begins the work (`AgentBody::work_for`): the contexts of the request continued in
+the agent's name, its reason, the channel's classification and the session's time zone, as they
+are now - the same for a turn, a command turn and an external agent's exchange. It adds how its
+model is given its context (`Work::given_as`) and hands the work to the state, which adds only what
+the state knows: the transcript the turn begins with (`AgentChannelState::begin_turn`).
 
 The rest is the turn's own: the changes staged to the agent's states, the tool calls, the plan, the
 state a tool requested.

@@ -83,7 +83,7 @@ mod tests {
     /// tools named `tools`.
     async fn told(asked: Option<RequestReason>, tools: &[&str]) -> String {
         let mut state = AgentChannelState::default();
-        state.begin_turn(Default::default(), asked, Default::default(), Classification::CHANNEL_DEFAULT, Default::default(), Default::default());
+        state.begin_turn(Work::new(Default::default(), asked, Default::default(), Classification::CHANNEL_DEFAULT, Default::default()));
         let tools = tools.iter().map(|name| Tool {
             name: name.to_string(),
             description: String::new(),

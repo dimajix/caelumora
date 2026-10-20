@@ -4,7 +4,6 @@
 //! body's (`AgentBody`).
 
 use super::body::AgentBody;
-use caelumora_runtime::actor::Answering;
 use crate::command::{AgentCommandAccess, AgentCommandProvider};
 use caelumora_runtime::command::{CommandError, CommandExecutor};
 use caelumora_runtime::component::{ComponentContainer, ComponentError, ComponentResult};
@@ -68,18 +67,11 @@ impl AgentBody {
         let ActorEvent::CommandRequested { command, args, .. } = &request.event else { return };
         let issuer = request.context.sender_id;
         let (agent_id, name) = (self.agent_id(), self.agent.name());
-        let answering = Answering::to(request, self.id(), name.clone(), &self.security_context());
-        let (channel_attributes, classification) = (self.runtime.channel_attributes(), self.runtime.channel_classification());
+        let (answering, work) = self.work_for(request);
+        let channel_attributes = self.runtime.channel_attributes();
         let attributes = self.agent.load().security_attributes.clone();
         let kept = CommandRequest { command: command.clone(), args: args.clone(), issuer };
-        let turn_id = state.begin_command_turn(
-            answering.event_context.clone(),
-            answering.security_context.clone(),
-            classification,
-            self.profile,
-            self.runtime.session_time_zone(),
-            kept,
-        );
+        let turn_id = state.begin_command_turn(work.given_as(self.profile), kept);
         let Some(mut turn) = self.turn(state) else {
             warn!("Agent {} lost the turn it began for /{}", agent_id, command);
             return;
