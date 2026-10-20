@@ -112,6 +112,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [431](431-hearing-during-a-turn.md) | done | An agent takes in what others say only between its turns, so a turn of many steps - tool calls, a plan - works on to its end without what was said meanwhile: a correction, an addition, an instruction to stop doing something reaches it only after it has done it. |
 | [434](434-hearing-during-a-turn-from-the-history-untested.md) | done | That an agent hears between the steps of a turn (issue 431) is tested only with an inbox whose queue holds everything, so nothing shows that it works the same when the inbox is behind and reads from the channel's history, or after a restart in the middle of a turn that heard something. |
 | [435](435-another-initiators-words-wait-though-asked-again.md) | done | An agent whose personality hears during a turn with `others: wait` hears nothing more in that turn once someone other than its initiator has spoken, even when its initiator asks it again afterwards - by mentioning it or otherwise - though between turns that request would let it hear the other's words. |
+| [436](436-work-resumed-after-a-restart-is-not-bounded.md) | open | A server that went down with many turns under way starts every session with work under way at its start, and all their turns then run at once, however many there are. |
 
 ## Identity and access management
 
