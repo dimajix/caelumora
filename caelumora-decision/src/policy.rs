@@ -21,9 +21,11 @@
 //! said before is left out if it may not; what is to be answered keeps the
 //! model from choosing.
 //! Whatever keeps the model from choosing - that, a timeout, an error, too
-//! many candidates - asks whom `on_failure` says: everyone by default, so
-//! that nothing said is left unanswered in silence. It is logged, without
-//! anything that was said.
+//! many candidates - asks whom `on_failure` says: nobody by default (issue
+//! 437), so that a model that is slow or down leaves the agents quiet
+//! rather than makes every one of them answer; `all` asks everyone, so that
+//! nothing said is left unanswered. It is logged, without anything that was
+//! said.
 //!
 //! Its params say where what it is given goes, so only an operator
 //! configures it (`ComponentKind::operator_only`).
@@ -62,9 +64,9 @@ const MAX_STATE_TOKENS: u64 = 4096;
 #[serde(rename_all = "snake_case")]
 enum OnFailure {
     /// Every candidate.
-    #[default]
     All,
-    /// Nobody.
+    /// Nobody (issue 437).
+    #[default]
     None,
 }
 
@@ -556,12 +558,12 @@ mod tests {
         let (a, b) = (agent("A", None), agent("B", None));
         let (event, messages) = said("Who?", Classification::PUBLIC);
 
-        assert_eq!(policy(&url, json!({})).choose(&event, &messages, vec![a.clone(), b.clone()]).await, [a.id, b.id], "everyone by default");
-        assert!(policy(&url, json!({ "on_failure": "none" })).choose(&event, &messages, vec![a, b]).await.is_empty());
+        assert!(policy(&url, json!({})).choose(&event, &messages, vec![a.clone(), b.clone()]).await.is_empty(), "nobody by default");
+        assert_eq!(policy(&url, json!({ "on_failure": "all" })).choose(&event, &messages, vec![a, b]).await.len(), 2, "everyone, as configured");
 
         let url = serve(FakeModel::answering(choosing("someone", json!({})))).await;
         let (a, b) = (agent("A", None), agent("B", None));
-        assert_eq!(policy(&url, json!({})).choose(&event, &messages, vec![a.clone(), b.clone()]).await, [a.id, b.id], "an answer that names no option");
+        assert_eq!(policy(&url, json!({ "on_failure": "all" })).choose(&event, &messages, vec![a.clone(), b.clone()]).await, [a.id, b.id], "an answer that names no option");
     }
 
     #[tokio::test]
@@ -571,7 +573,7 @@ mod tests {
         let a = agent("A", None);
         let (event, messages) = said("Internal matters.", Classification::general(Confidentiality::Internal));
 
-        assert_eq!(policy(&url, json!({})).choose(&event, &messages, vec![a.clone()]).await, [a.id], "asked as on failure");
+        assert!(policy(&url, json!({})).choose(&event, &messages, vec![a.clone()]).await.is_empty(), "asked as on failure: nobody");
         assert!(fake.asked().is_empty(), "nothing sent to a public endpoint");
         assert_eq!(policy(&url, json!({ "destination": { "level": "internal" } })).choose(&event, &messages, vec![a.clone()]).await, [a.id]);
         assert_eq!(fake.asked().len(), 1, "sent where it is cleared");

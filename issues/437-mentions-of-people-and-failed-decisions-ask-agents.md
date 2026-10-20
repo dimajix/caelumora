@@ -1,6 +1,6 @@
 # 437 — A message to a person makes agents answer, and a failed decision asks every agent
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -48,6 +48,8 @@ chain cut off at `max_agent_hops` is unaffected.
 the round in the `team-session`; it changes how existing channels route. `agents` keeps them as
 they are and leaves `anyone` to the template.
 
+**Decided:** `anyone`, the parameter named `mentions_replace_policy`.
+
 ### Whom a failed decision asks
 
 The decision model is asked only when the message mentions no agent - with `anyone`, no participant
@@ -67,6 +69,9 @@ its own.
 **To decide:** whether the notice is part of this issue, or `none` comes first and the notice
 separately.
 
+**Decided:** `none` comes first; the notice is
+[441](441-nobody-is-told-when-no-responder-was-chosen.md).
+
 ### Not part of this issue
 
 *   A separate `max_responders` for messages of agents: `max_responders` (default 1) already bounds
@@ -81,6 +86,12 @@ separately.
     only people asks nobody under `anyone` - for every policy, in the moderator's tests.
 *   `decision_policy` asks nobody by default when its model does not choose; `all` stays
     configurable.
+- **2026-10-20** — Decided: `mentions_replace_policy` defaults to `anyone`, and the notice of a
+  failed decision is an issue of its own, 441.
+- **2026-10-20** — Done: `policy_moderator` takes `mentions_replace_policy` (`anyone`, `agents`); a
+  message that mentions only people asks nobody under `anyone`, and a mention of its own sender
+  counts for nothing. `decision_policy` asks nobody by default when its model does not choose. The
+  seed's `team-session` names both.
 *   [CHANNELS.md](../docs/CHANNELS.md#moderators) describes both, and the seed's `team-session`
     says what it uses.
 

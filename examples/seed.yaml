@@ -479,10 +479,13 @@ session_templates:
   channels:
   - name: main
     components:
+    # A message to alice is addressed to her and asks no agent; a decision
+    # model that does not choose in time asks nobody either (issue 437).
     - id: moderator
       kind: policy_moderator
       params:
         max_agent_hops: 3
+        mentions_replace_policy: anyone
     - id: responders
       kind: decision_policy
       params:
@@ -491,6 +494,7 @@ session_templates:
         model: "nimble:9b"
         keep_alive: 1h
         max_responders: 2
+        on_failure: none
         destination: { level: strictly_confidential }
     internal_actors:
     - Approver:

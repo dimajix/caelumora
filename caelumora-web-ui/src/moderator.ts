@@ -28,8 +28,9 @@ export const DEFAULT_RESPONDER_POLICY = 'round_robin_policy';
 /**
  * The label and explanation of a policy kind. A kind this UI does not know
  * is shown by its name; `null` is a preconfigured policy, whose kind the
- * server does not tell. In every channel, @-mentioned agents answer instead
- * of those the policy would choose.
+ * server does not tell. In every channel, a message that @-mentions someone
+ * is answered by the mentioned agents alone - by none, if it mentions only
+ * people (issue 437) - instead of those the policy would choose.
  */
 export function responderPolicyInfo(kind: string | null | undefined): ResponderPolicyInfo {
   if (!kind) {
