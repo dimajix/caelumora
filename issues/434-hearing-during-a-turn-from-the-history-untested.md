@@ -1,6 +1,6 @@
 # 434 — Hearing during a turn is not tested with an inbox that reads from the history
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** Sessions and channels
@@ -65,3 +65,15 @@ heard across a restart.
 - **2026-10-20** — Opened after a review of how issues 431 and 223 work together: they fit, but
   the tests do not show the combination - neither hearing from an inbox that is behind, nor a
   restart after a turn heard something.
+- **2026-10-20** — Implemented on the branch `issue-434-hearing-from-the-history`: three tests in
+  `channel_tests/agent.rs` -
+  `an_agent_hearing_during_a_turn_hears_what_its_inbox_reads_from_the_history` (two hundred messages said during a tool step, all given to the next step in order and once, no
+  other turn), `behind_a_barrier_an_agent_hearing_during_a_turn_waits_for_what_the_history_holds`
+  (a command with a hundred and fifty messages behind it: the turn hears what came before it, the
+  command is carried out after the turn, the rest answered by one turn) and
+  `what_a_turn_heard_before_a_restart_is_neither_delivered_nor_answered_again`. Each was checked to
+  fail with the fault it is meant to catch: a history path of `try_recv_if` that refuses, and a
+  turn that does not store what it heard before its model call. The waiting for what is said and
+  for the stored state, written twice in the test of an inbox that overflows, became the helpers
+  `until_said` and `stored_once_answered`, which the new tests share. No change of behaviour, no
+  stored data affected.

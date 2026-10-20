@@ -151,6 +151,40 @@ async fn asked(model: &Gated, calls: usize) {
     }).await.unwrap_or_else(|_| panic!("the model is asked {calls} times"));
 }
 
+/// Until `text` is said in `channel`, as `alice` sees it - read from the
+/// store, since the channel holds a window of its history alone -: what
+/// she sees said then.
+async fn until_said(channel: &ChannelLoop, alice: UserId, text: &str) -> Vec<Message> {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let said = channel.visible_messages(ActorId::User(alice)).await;
+            if said.iter().any(|m| m.content.as_deref() == Some(text)) {
+                break said;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.unwrap_or_else(|_| panic!("{text:?} is said in the channel"))
+}
+
+/// The state of `agent` as stored once no turn is under way and its
+/// transcript holds `answers` answers with text.
+async fn stored_once_answered(channel: &ChannelLoop, agent: AgentId, answers: usize) -> AgentChannelState {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let state = channel.stored_agent_channel_state(agent).await.unwrap();
+            if state.turn.is_none() && contents_of(&state, MessageRole::Assistant).len() == answers {
+                break state;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.unwrap_or_else(|_| panic!("the agent answers {answers} times"))
+}
+
+/// What the messages of `role` in the transcript of `state` say, in order.
+fn contents_of(state: &AgentChannelState, role: MessageRole) -> Vec<String> {
+    state.transcript.messages().into_iter().filter(|m| m.role == role).filter_map(|m| m.content).collect()
+}
+
 #[tokio::test]
 async fn an_answer_under_way_asked_for_again_is_given_up_and_answered_anew() {
     let (Stuck { channel, context, agent, mut events, running, .. }, model) = asking_a_gated_model(&["first", "second"]).await;
@@ -323,39 +357,17 @@ async fn an_agent_whose_turn_outlasts_its_inbox_hears_all_of_it_afterwards() {
     for n in 0..SAID {
         alice.send_message(format!("message {n}"), None).await.expect("taken during a turn");
     }
-    // Read from the store: the channel holds a window of its history alone.
-    let last = format!("message {}", SAID - 1);
-    let first = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let said = channel.visible_messages(ActorId::User(alice_of(&context))).await;
-            if said.iter().any(|m| m.content.as_deref() == Some(last.as_str())) {
-                break said.into_iter().find(|m| m.content.as_deref() == Some("message 0")).expect("said first");
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }).await.expect("all of it is said in the channel");
+    let said = until_said(&channel, alice_of(&context), &format!("message {}", SAID - 1)).await;
+    let first = said.into_iter().find(|m| m.content.as_deref() == Some("message 0")).expect("said first");
     alice.modify_message(first.id, "message 0, corrected".to_string(), None).await.expect("hers to modify");
     alice.execute_command("mark", "@helper during").await.expect("sent to the agent");
     alice.send_message("after the command".to_string(), None).await.expect("said");
-    tokio::time::timeout(Duration::from_secs(10), async {
-        while !channel.visible_messages(ActorId::User(alice_of(&context))).await.iter().any(|m| m.content.as_deref() == Some("after the command")) {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }).await.expect("all of it is in the channel before the turn ends");
+    until_said(&channel, alice_of(&context), "after the command").await;
     model.gate.add_permits(2);
 
-    let answers = |state: &AgentChannelState| state.transcript.messages().into_iter().filter(|m| m.role == MessageRole::Assistant).filter_map(|m| m.content).collect::<Vec<_>>();
-    let state = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let state = channel.stored_agent_channel_state(agent).await.unwrap();
-            if state.turn.is_none() && answers(&state).len() == 2 {
-                break state;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }).await.expect("the agent answers twice");
-    assert_eq!(answers(&state), ["first", "second"], "the turn ends as it began, and one turn answers all of it");
-    let heard: Vec<String> = state.transcript.messages().into_iter().filter(|m| m.role == MessageRole::User).filter_map(|m| m.content).collect();
+    let state = stored_once_answered(&channel, agent, 2).await;
+    assert_eq!(contents_of(&state, MessageRole::Assistant), ["first", "second"], "the turn ends as it began, and one turn answers all of it");
+    let heard = contents_of(&state, MessageRole::User);
     let mut expected: Vec<String> = vec!["hello".to_string(), "message 0, corrected".to_string()];
     expected.extend((1..SAID).map(|n| format!("message {n}")));
     expected.push("after the command".to_string());
@@ -454,6 +466,133 @@ async fn an_agent_that_hears_nobody_during_a_turn_answers_what_was_said_after_it
     let seen = model.seen.lock().unwrap().clone();
     assert!(given_at(&seen[1], "and this too").is_none(), "the running turn does not hear it");
     assert!(given_at(&seen[2], "and this too").is_some() && given_at(&seen[2], "while you were working").is_none(), "the next turn does, as it hears between turns");
+    running.abort();
+}
+
+/// What alice says `n`-th in the tests of issue 434: unique as a part of a
+/// content - "message 1" would be part of "message 10".
+fn numbered(text: &str, n: usize) -> String {
+    format!("{text} {n:03}.")
+}
+
+/// Asserts that `call` - what a model was given - holds each of `texts`
+/// once, in order.
+fn given_once_in_order(call: &[String], texts: &[String]) {
+    let mut at = Vec::new();
+    for text in texts {
+        let holding: Vec<usize> = call.iter().enumerate().filter(|(_, c)| c.contains(text.as_str())).map(|(i, _)| i).collect();
+        assert_eq!(holding.len(), 1, "{text:?} is given once: {call:?}");
+        at.push(holding[0]);
+    }
+    assert!(at.is_sorted(), "in order: {call:?}");
+}
+
+/// Issue 434: an agent that hears during a turn takes in, between two of
+/// its steps, more than its inbox's queue holds - the rest read from the
+/// channel's history behind it (issue 223) -, gives the next step all of
+/// it, in order and once, and answers the requests among it with that turn.
+#[tokio::test]
+async fn an_agent_hearing_during_a_turn_hears_what_its_inbox_reads_from_the_history() {
+    const SAID: usize = 200;
+    let (calculate, components) = calculator();
+    let model = Arc::new(Gated::new([calculate, model_says("done"), model_says("again")], 0));
+    let hears = HearsDuringTurn { from: HearsFrom::Users, ..Default::default() };
+    // What the channel takes in is not watched: more than a watcher holds.
+    let Stuck { channel, context, agent, running, .. } = with_an_agent_hearing(hears, Arc::<Gated>::clone(&model), components).await;
+    asked(&model, 1).await;
+    let alice = alice_of(&context);
+    let said: Vec<String> = (0..SAID).map(|n| numbered("message", n)).collect();
+    for text in &said {
+        channel.user_actor(alice).unwrap().send_message(text.clone(), None).await.expect("taken during a turn");
+    }
+    until_said(&channel, alice, &said[SAID - 1]).await;
+    model.gate.add_permits(3);
+
+    let state = stored_once_answered(&channel, agent, 1).await;
+    assert_eq!(contents_of(&state, MessageRole::Assistant), ["done"], "the turn ends after its tool step");
+    let mut heard = vec!["hello".to_string()];
+    heard.extend(said.iter().cloned());
+    assert_eq!(contents_of(&state, MessageRole::User), heard, "all of it, once, in order");
+    let seen = model.seen.lock().unwrap().clone();
+    given_once_in_order(&seen[1], &said);
+    let told = given_at(&seen[1], "while you were working").expect("told that it was said meanwhile");
+    assert!(given_at(&seen[1], &said[SAID - 1]).is_some_and(|last| last < told), "after all that was heard");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(model.seen.lock().unwrap().len(), 2, "the turn answered the requests: no other follows");
+    running.abort();
+}
+
+/// Issue 434: a command said during a turn, with more behind it than the
+/// queue holds, is a barrier there as in the queue: the turn hears what
+/// came before it; after the turn the command is carried out where it
+/// came, and what follows it, read from the history, is taken in in
+/// order, once, and answered by a turn of its own.
+#[tokio::test]
+async fn behind_a_barrier_an_agent_hearing_during_a_turn_waits_for_what_the_history_holds() {
+    const AFTER: usize = 150;
+    let (calculate, mut components) = calculator();
+    components.component_nodes.push(ComponentDescriptor::new("marking", "test_marking"));
+    let model = Arc::new(Gated::new([calculate, model_says("done"), model_says("again")], 0));
+    let hears = HearsDuringTurn { from: HearsFrom::Users, ..Default::default() };
+    let Stuck { channel, context, agent, running, .. } = with_an_agent_hearing(hears, Arc::<Gated>::clone(&model), components).await;
+    asked(&model, 1).await;
+    let alice = channel.user_actor(alice_of(&context)).unwrap();
+    alice.send_message("before the command.".to_string(), None).await.expect("taken during a turn");
+    alice.execute_command("mark", "@helper during").await.expect("sent to the agent");
+    let after: Vec<String> = (0..AFTER).map(|n| numbered("after the command", n)).collect();
+    for text in &after {
+        alice.send_message(text.clone(), None).await.expect("taken during a turn");
+    }
+    until_said(&channel, alice_of(&context), &after[AFTER - 1]).await;
+    model.gate.add_permits(3);
+
+    let state = stored_once_answered(&channel, agent, 2).await;
+    assert_eq!(contents_of(&state, MessageRole::Assistant), ["done", "again"], "the turn, and one turn after it");
+    let mut heard = vec!["hello".to_string(), "before the command.".to_string()];
+    heard.extend(after.iter().cloned());
+    assert_eq!(contents_of(&state, MessageRole::User), heard, "all of it, once, in order");
+    assert_eq!(state.notes.current().iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["marked during"], "the command carried out");
+    let seen = model.seen.lock().unwrap().clone();
+    assert!(given_at(&seen[1], "before the command.").is_some(), "the turn hears what came before the command");
+    assert!(given_at(&seen[1], "after the command").is_none(), "and nothing behind it: {:?}", seen[1]);
+    given_once_in_order(&seen[2], &after);
+    assert_eq!(seen.len(), 3, "one turn answers what waited");
+    running.abort();
+}
+
+/// Issue 434: a turn that heard a message and its request between two
+/// steps, and is stopped in the next, resumes once its channel runs again:
+/// the message is given to it once, neither is delivered again, and no
+/// other turn answers the request.
+#[tokio::test]
+async fn what_a_turn_heard_before_a_restart_is_neither_delivered_nor_answered_again() {
+    let (calculate, components) = calculator();
+    let model = Arc::new(Gated::new([calculate, model_says("never given"), model_says("done"), model_says("again")], 0));
+    let hears = HearsDuringTurn { from: HearsFrom::Users, ..Default::default() };
+    let Stuck { channel, context, agent, running, .. } = with_an_agent_hearing(hears, Arc::<Gated>::clone(&model), components).await;
+    asked(&model, 1).await;
+    let alice = alice_of(&context);
+    channel.user_actor(alice).unwrap().send_message("and this too".to_string(), None).await.expect("taken during a turn");
+    until_said(&channel, alice, "and this too").await;
+    model.gate.add_permits(1);
+    asked(&model, 2).await;
+    assert!(given_at(&model.seen.lock().unwrap()[1], "and this too").is_some(), "the next step is given it");
+    let stored = channel.stored_agent_channel_state(agent).await.unwrap();
+    assert!(stored.turn.is_some(), "the turn is under way");
+    assert_eq!(contents_of(&stored, MessageRole::User), ["hello", "and this too"], "and what it heard stored before its model is called");
+
+    stop_and_wait(&channel, running).await;
+    let (restarted, mut events, running) = run_again(&channel).await;
+    asked(&model, 3).await;
+    model.gate.add_permits(2);
+    let answer = answered(&mut events, agent).await;
+    assert_eq!(answer.last().and_then(|m| m.content.as_deref()), Some("done"), "the turn resumed");
+    let seen = model.seen.lock().unwrap().clone();
+    given_once_in_order(&seen[2], &["and this too".to_string()]);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(model.seen.lock().unwrap().len(), 3, "no other turn answers the request");
+    let state = restarted.stored_agent_channel_state(agent).await.unwrap();
+    assert_eq!(contents_of(&state, MessageRole::User), ["hello", "and this too"], "heard once");
     running.abort();
 }
 
