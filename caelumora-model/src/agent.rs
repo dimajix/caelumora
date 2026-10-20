@@ -111,6 +111,11 @@ pub enum OthersWords {
     /// another has spoken.
     #[default]
     Wait,
+    /// It waits as with `Wait`, until the turn's own initiator asks the agent again after it
+    /// (issue 435) - by mentioning it, or as the moderator asks it otherwise: what was said
+    /// before that request is heard then, as between turns, where a turn hears what was said
+    /// before the request it answers. A request of another still waits.
+    WhenAsked,
     /// It is heard, as between turns: the agent stays able to hear, and another's words may
     /// steer what the turn does. A request of theirs still waits.
     Hear,
@@ -1181,6 +1186,8 @@ pub(crate) mod tests {
         assert_eq!(users.hears_during_turn, HearsDuringTurn { from: HearsFrom::Users, others: OthersWords::Wait }, "others' words wait unless named");
         let all = written(serde_json::json!({ "from": "all", "others": "hear" })).unwrap();
         assert_eq!(all.hears_during_turn, HearsDuringTurn { from: HearsFrom::All, others: OthersWords::Hear });
+        let asked = written(serde_json::json!({ "from": "users", "others": "when_asked" })).unwrap();
+        assert_eq!(asked.hears_during_turn, HearsDuringTurn { from: HearsFrom::Users, others: OthersWords::WhenAsked });
         assert!(written(serde_json::json!({ "from": "agents" })).is_err(), "nothing else");
     }
 
@@ -1207,6 +1214,7 @@ pub(crate) mod tests {
             ("an agent's, hearing all", hears(HearsFrom::All, wait), said(agent, alice, &internal), true),
             ("his, waiting with others' words", hears(HearsFrom::All, wait), said(bob, bob, &internal), false),
             ("his, hearing others' words", hears(HearsFrom::Users, hear), said(bob, bob, &internal), true),
+            ("his, until she asks", hears(HearsFrom::Users, OthersWords::WhenAsked), said(bob, bob, &internal), false),
             ("an agent's for him, waiting", hears(HearsFrom::All, wait), said(agent, bob, &internal), false),
             ("above the turn's classification", hears(HearsFrom::All, hear), said(alice, alice, &secret), false),
             ("her request", hears(HearsFrom::Users, wait), in_authority_of(alice, ActorEvent::ResponseRequested), true),
