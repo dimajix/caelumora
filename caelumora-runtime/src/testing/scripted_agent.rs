@@ -226,7 +226,7 @@ impl Actor for ScriptedAgent {
             if let Ok(mut heard) = self.heard.lock() {
                 heard.push(envelope.clone());
             }
-            if matches!(envelope.event, ActorEvent::ResponseRequested) && self.respond(&envelope, &*tx).await {
+            if matches!(envelope.event, ActorEvent::ResponseRequested { .. }) && self.respond(&envelope, &*tx).await {
                 break;
             }
         }

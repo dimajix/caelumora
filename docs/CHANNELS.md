@@ -911,6 +911,13 @@ each other. Under `user_driven_policy` the agents answer when a person writes an
 between: an agent's message is still delivered to the other agents, but starts no turn. Loops come
 from asking to respond, not from delivering.
 
+A `Routing` also says why it asks (`RequestReason`, issue 439): `mentioned` - by the agent's handle
+or `@all` -, `nudged` by a user (see [Nudging someone](#nudging-someone)), or `chosen` by the
+policy. The request to respond carries it, and the history records it with the request. An agent
+whose personality has the `request_reason_prompt_provider` is told, when only chosen, that it may
+stay silent (see [AGENT-TURN.md](AGENT-TURN.md#why-the-agent-was-asked)): what a policy chooses is
+a guess whether the agent has anything to add.
+
 ### Choosing by what was said
 
 `decision_policy`, of the plugin `caelumora-decision` (issue 403), asks a decision model which of

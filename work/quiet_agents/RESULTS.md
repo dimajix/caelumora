@@ -41,6 +41,7 @@ The variants:
 | `reason_all` | `reason`, and a mentioned agent is told: "@x mentioned you: they want your answer. Answer what they want of you. If their message wants nothing of you - a greeting, thanks, agreement - call `silence` and write nothing." |
 | `reason_pass` | `reason_all` with the tool `silence` renamed `pass` ("Pass your turn: ...") |
 | `reason_soft` | as `reason`, but put the other way round: "Nobody mentioned you. You are asked because what was said last might concern you. If it does - something is yours to do or to say, by your role - do it. If you have nothing to add - ... - call `silence` and write nothing." |
+| `reason_before` | `reason`, but the part placed where a `before_turn_input` part goes: joined with the current time, before the newest message |
 | `reason_work` | `reason`, and a mentioned agent is told: "@x mentioned you: they want your answer. Answer what they want of you, and go on with any work that is yours to do. If there is neither - their message only greets, thanks or agrees - call `silence` and write nothing." |
 
 ## Results
@@ -55,6 +56,7 @@ The variants:
 | `credits_msg` | 3/21 (1) | 0/15 | 9/9 | 6/6 | - | - | 29/42 | 0/42 |
 | `reason` | 27/27 (27) | 0/15 | 9/9 | 6/6 | **0/6** | **6/6** | 31/32 | - |
 | `reason_soft` | 27/27 (27) | - | - | - | 2/6 | 6/6 | 4/4 | - |
+| `reason_before` | 27/27 (27) | - | - | - | 1/6 | 6/6 | 5/5 | - |
 | `reason_all` | 21/21 (21) | 15/15 (15) | 8/9 | **0/6** | 1/6 | - | 6/9 | - |
 | `reason_pass` | 20/21 (20) | 13/15 (13) | 8/9 | 2/6 | - | - | 7/13 | - |
 | `reason_work` | 21/21 (21) | 15/15 (15) | 8/9 | 4/6 | 0/6 | - | 6/10 | - |
@@ -97,7 +99,9 @@ tokens was set); it is not counted.
     6). So the part tells a report that is meant for the agent from small talk that is not.
     Putting the chance that it concerns the agent first (`reason_soft`) changes neither: silent 27
     of 27, contribute 6 of 6; only in the *concerned* situations does the agent look around now
-    and then (2 of 6: the coder lists the workspace, the planner reads its notes).
+    and then (2 of 6: the coder lists the workspace, the planner reads its notes). Nor does its
+    place: before the newest message, with the current time (`reason_before`), it does what it does
+    after everything heard - silent 27 of 27, contribute 6 of 6, concerned 1 of 6.
 6.  **A mentioned agent told when to stay silent stops working, too.** `reason_all` silences
     every chatter (15 of 15), but also the coder that was to start its task (0 of 6, against 6 of 6
     under every other variant). The go reached the coder in mentions that only cheered it on ("Ich
@@ -132,8 +136,8 @@ marker.
     the roster's sentence or credits.
 *   **For the chosen agent** the part does what it should: silent where nothing was to be said
     (27 of 27), speaking and working where something was its own (6 of 6, finding 5). Issue 439
-    gives it, worded as `reason`; `reason_soft` does as well and may be tried if chosen agents turn
-    out too quiet in use.
+    gives it, worded as `reason`, as a prompt part before the turn's input (`reason_before`);
+    `reason_soft` does as well and may be tried if chosen agents turn out too quiet in use.
 *   **For the mentioned agent**, no wording found here is safe: whatever invites it to stay silent
     also lets it skip work it was meant to do (findings 6, 7). It is told nothing. Chatter between
     mentioned agents is left to the routing - fewer asks

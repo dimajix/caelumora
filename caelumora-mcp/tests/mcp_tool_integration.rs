@@ -124,7 +124,7 @@ async fn provider(params: Value) -> Arc<dyn ToolProvider> {
 /// a turn that reaches no channel.
 async fn executed(provider: &dyn ToolProvider, name: &str, params: Value) -> ToolResult<ToolOutput> {
     let mut state = AgentChannelState::default();
-    state.begin_turn(Default::default(), Default::default(), Default::default(), Default::default(), Default::default());
+    state.begin_turn(Default::default(), None, Default::default(), Default::default(), Default::default(), Default::default());
     let agent = AgentId::default();
     let mut turn = Turn::of(agent, "test-agent".to_string(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()).expect("a turn was begun");
     provider.execute(name, &params, None, &mut turn).await

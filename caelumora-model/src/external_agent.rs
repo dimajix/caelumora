@@ -221,7 +221,7 @@ mod tests {
         assert_eq!(remote.unsaid_of(&two).as_deref(), Some("so far"));
         assert_eq!(remote.unsaid_of(&one), None);
         let bob = SecurityContext::new(ActorId::User(UserId::new()), Default::default(), Default::default());
-        remote.begin(&one, &Work::new(EventContext::default(), bob.clone(), Classification::CHANNEL_DEFAULT));
+        remote.begin(&one, &Work::new(EventContext::default(), None, bob.clone(), Classification::CHANNEL_DEFAULT));
         assert_eq!(remote.working().collect::<Vec<_>>(), [&one, &two], "taken up again, it works");
         assert_eq!(remote.work_of(&one).map(|w| w.security_context.initiator_id), Some(bob.initiator_id), "in the contexts of the request");
         assert!(remote.work_of(&two).is_none(), "none kept");

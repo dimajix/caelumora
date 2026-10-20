@@ -302,7 +302,7 @@ mod tests {
 
         let context = SecurityContext::default().next(ActorId::Agent(jonathan.id), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
-        state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Default::default(), Default::default());
+        state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), None, context.clone(), channel.classification.clone(), Default::default(), Default::default());
         let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(jonathan.id))).expect("a turn was begun");
 
         let prompt = ChannelParticipantsPromptProvider::new(PromptPosition::Start).get_prompt(&turn.situation()).await.unwrap();
@@ -327,7 +327,7 @@ mod tests {
         // In its own name alone: nobody it acts for may read the session.
         let context = SecurityContext::default().next(ActorId::Agent(outsider), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
-        state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), context, channel.classification(), Default::default(), Default::default());
+        state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), None, context, channel.classification(), Default::default(), Default::default());
         let turn = Turn::of(outsider, "outsider".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(channel, ActorId::Agent(outsider))).expect("a turn was begun");
         assert!(matches!(turn.situation().session().await, Err(ViewError::SessionNotFound(_))), "reached, but not to be read (issue 399)");
         let failed = ChannelParticipantsPromptProvider::new(PromptPosition::Start).get_prompt(&turn.situation()).await;

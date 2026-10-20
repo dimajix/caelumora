@@ -5,7 +5,7 @@ use crate::actor::Actor;
 use crate::component::{ComponentImpl, ComponentRegistry};
 use crate::runtime::ChannelRuntime;
 use crate::testing::{test_registry, Script, ScriptedAgent, ScriptedAgents, StandIn, TestRuntime};
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
+use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RequestReason};
 use caelumora_model::channel::{Channel, ChannelId, Participant, moderation_components};
 use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext, AccessPolicy};
 use caelumora_model::session::SessionId;
@@ -125,7 +125,7 @@ pub(super) struct AskBack(pub(super) ActorId);
 #[async_trait::async_trait]
 impl Moderator for AskBack {
     async fn route(&self, event: &Envelope) -> Routing {
-        Routing { audience: Audience::Only(vec![self.0]), ask: vec![self.0], agent_hops: event.context.agent_hops, ..Routing::default() }
+        Routing { audience: Audience::Only(vec![self.0]), ask: vec![self.0], reason: RequestReason::Mentioned, agent_hops: event.context.agent_hops, ..Routing::default() }
     }
     fn add_actor(&self, _: Arc<dyn Actor>) {}
     fn remove_actor(&self, _: ActorId) {}

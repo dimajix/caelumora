@@ -310,7 +310,7 @@ mod tests {
         let (step, answer) = (text(MessageRole::Assistant, "step done"), text(MessageRole::Assistant, "all done"));
         let keeps_system = ModelProfile { system_messages: SystemMessages::Anywhere, ..ModelProfile::default() };
         let answer = {
-            state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), keeps_system, Default::default());
+            state.begin_turn(EventContext::default(), None, SecurityContext::default(), Classification::default(), keeps_system, Default::default());
             let mut turn = Turn::under_way(agent, &mut state);
             turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }], Vec::new());
             turn.set_plan(plan_of(&["only"]));
@@ -336,7 +336,7 @@ mod tests {
             "each instruction where it was given");
         assert_eq!(state.transcript.messages().len(), 3, "the instructions are not in the transcript");
 
-        state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::default(), keeps_system, Default::default());
+        state.begin_turn(EventContext::default(), None, SecurityContext::default(), Classification::default(), keeps_system, Default::default());
         let mut turn = Turn::under_way(agent, &mut state);
         turn.set_context(Vec::new(), Vec::new());
         assert_eq!(given(&turn).len(), 3, "a later turn is not given them");

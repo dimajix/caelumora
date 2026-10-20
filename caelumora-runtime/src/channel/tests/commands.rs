@@ -152,7 +152,7 @@ async fn a_nudged_agent_responds_in_the_name_of_who_nudged_it_and_the_history_ke
     let said: Vec<_> = channel.history().await.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["hello", "Again.", "Again."], "the nudge leaves nothing in the history");
     while let Ok(envelope) = following.try_recv() {
-        assert!(!matches!(envelope.event, ActorEvent::NudgeRequested { .. } | ActorEvent::ResponseRequested), "nor is it shown: {}", envelope.event.kind());
+        assert!(!matches!(envelope.event, ActorEvent::NudgeRequested { .. } | ActorEvent::ResponseRequested { .. }), "nor is it shown: {}", envelope.event.kind());
     }
     running.abort();
 }
@@ -214,7 +214,7 @@ async fn a_nudged_user_is_shown_who_asks_them_to_respond() {
     assert_eq!(output.text, "Asked bob to respond.");
 
     let asked = tokio::time::timeout(Duration::from_secs(5), his.recv()).await.expect("he is asked").unwrap();
-    assert!(matches!(asked.event, ActorEvent::ResponseRequested), "{}", asked.event.kind());
+    assert!(matches!(asked.event, ActorEvent::ResponseRequested { .. }), "{}", asked.event.kind());
     assert_eq!(asked.context.sender_id, ActorId::User(alice.id), "by her");
     assert!(channel.history().await.is_empty(), "the history keeps nothing of it");
     running.abort();

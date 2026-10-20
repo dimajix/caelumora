@@ -127,10 +127,10 @@ pub enum ActorEvent {
     /// frontends no longer offer to answer.
     QuestionClosed { id: QuestionId, shown_to: Option<Vec<ActorId>> },
     /// Asks its receiver to respond to the event whose contexts it carries
-    /// (issue 45): built by the channel for each its moderator asks, and
-    /// recorded in the system's name to them (`HistoryEntry::
-    /// ResponseRequested`, issue 417).
-    ResponseRequested,
+    /// (issue 45), for `reason` (issue 439): built by the channel for each
+    /// its moderator asks, and recorded in the system's name to them
+    /// (`HistoryEntry::ResponseRequested`, issue 417).
+    ResponseRequested { reason: RequestReason },
     /// An answer begins: the turn `turn_id` of the sender (issue 235) - an
     /// agent's turn or an external agent's work - whose messages carry the
     /// same id. Announced before anything of it, so that an answer that is
@@ -422,6 +422,22 @@ pub enum ActorEvent {
     },
 }
 
+/// Why a moderator asks an actor to respond (issue 439). Ordered by how much
+/// the answer is wanted: an agent that takes several requests into one turn
+/// answers for the strongest reason among them. The default is the weakest.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestReason {
+    /// Its `ResponderPolicy` chose it: nobody mentioned it, and whether it
+    /// has anything to add is the policy's guess.
+    #[default]
+    Chosen,
+    /// A user nudged it to go on (issue 278).
+    Nudged,
+    /// What it responds to mentions it, by its handle or with `@all`.
+    Mentioned,
+}
+
 /// What a request to answer again is about (issue 235).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -479,7 +495,7 @@ impl ActorEvent {
             | ActorEvent::PlanStepFinished { .. } | ActorEvent::WakeupRequested | ActorEvent::NudgeRequested { .. } => true,
             ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalGranted(_) | ActorEvent::ApprovalDenied(_) | ActorEvent::ApprovalTimedOut(_)
             | ActorEvent::ApprovalRequestWithdrawn { .. } | ActorEvent::QuestionRequested(_) | ActorEvent::QuestionAnswered { .. }
-            | ActorEvent::QuestionDeclined { .. } | ActorEvent::QuestionClosed { .. } | ActorEvent::ResponseRequested | ActorEvent::CompleteMessageGenerated(_)
+            | ActorEvent::QuestionDeclined { .. } | ActorEvent::QuestionClosed { .. } | ActorEvent::ResponseRequested { .. } | ActorEvent::CompleteMessageGenerated(_)
             | ActorEvent::TurnFinished { .. } | ActorEvent::IntermediateMessageGenerated(_) | ActorEvent::PlanStepStarted { .. } | ActorEvent::TurnGivenUp { .. }
             | ActorEvent::CommandRequested { .. } | ActorEvent::CommandExecuted { .. } | ActorEvent::CommandFailed { .. } | ActorEvent::ActivityFinished { .. }
             | ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } | ActorEvent::HistoryShared { .. } | ActorEvent::MessageModified(_)
@@ -527,6 +543,15 @@ impl ActorEvent {
         matches!(self, ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. } | ActorEvent::HistoryShared { .. })
     }
 
+    /// Why a request to respond asks (issue 439); `None` for every other
+    /// event.
+    pub fn request_reason(&self) -> Option<RequestReason> {
+        match self {
+            ActorEvent::ResponseRequested { reason } => Some(*reason),
+            _ => None,
+        }
+    }
+
     /// The variant's name, for logs - never the payload, which may carry
     /// message content.
     pub fn kind(&self) -> &'static str {
@@ -540,7 +565,7 @@ impl ActorEvent {
             ActorEvent::QuestionAnswered { .. } => "QuestionAnswered",
             ActorEvent::QuestionDeclined { .. } => "QuestionDeclined",
             ActorEvent::QuestionClosed { .. } => "QuestionClosed",
-            ActorEvent::ResponseRequested => "ResponseRequested",
+            ActorEvent::ResponseRequested { .. } => "ResponseRequested",
             ActorEvent::ResponseStarted { .. } => "ResponseStarted",
             ActorEvent::StateChanged(_) => "StateChanged",
             ActorEvent::PartialMessageGenerated(_) => "PartialMessageGenerated",
@@ -758,7 +783,7 @@ impl Envelope {
                 HistoryEntry::ChainCutOff { message: *message, max_agent_hops: *max_agent_hops, not_asked: not_asked.clone(), at }
             }
             ActorEvent::MessageRejected { rejected, message, reason } => HistoryEntry::MessageRejected { rejected: rejected.clone(), message: *message, reason: *reason, at },
-            ActorEvent::ResponseRequested => HistoryEntry::ResponseRequested { by: actor, at },
+            ActorEvent::ResponseRequested { reason } => HistoryEntry::ResponseRequested { by: actor, reason: *reason, at },
             ActorEvent::ActivityFinished { turn_id, activity, output } => HistoryEntry::ActivityFinished { turn_id: *turn_id, actor, activity: activity.clone(), output: output.clone(), at },
             ActorEvent::ParticipantJoined { participant, name } => {
                 HistoryEntry::ParticipantJoined { participant: *participant, name: name.clone(), by: actor, by_name: self.context.sender_name.clone(), at }
@@ -840,8 +865,8 @@ impl Envelope {
                 Some(m) => format!("EndOfTurn(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id),
                 None => format!("EndOfTurn(sender_id={}, sender_name={}, no message)", ctx.sender_id, ctx.sender_name),
             },
-            ActorEvent::ResponseRequested => {
-                format!("ResponseRequested(sender_id={}, sender_name={}", ctx.sender_id, ctx.sender_name)
+            ActorEvent::ResponseRequested { reason } => {
+                format!("ResponseRequested(sender_id={}, sender_name={}, reason={:?})", ctx.sender_id, ctx.sender_name, reason)
             }
             ActorEvent::IntermediatePartialGenerated(m) => {
                 format!("IntermediatePartial(sender_id={}, sender_name={}, role={:?}, mid={})", ctx.sender_id, ctx.sender_name, m.role, m.id)
@@ -1298,7 +1323,7 @@ mod tests {
         let present = Present::new();
         let user = present.users[0];
         for event in [
-            ActorEvent::ResponseRequested,
+            ActorEvent::ResponseRequested { reason: RequestReason::Chosen },
             ActorEvent::WakeupRequested,
             ActorEvent::NudgeRequested { participant: present.agents[0] },
             ActorEvent::ChainCutOff { message: MessageId::new(), max_agent_hops: 3, not_asked: Vec::new() },

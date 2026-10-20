@@ -373,7 +373,7 @@ impl EventReceiver for InboxReceiver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::actor::{ActorEvent, EventContext};
+    use caelumora_model::actor::{ActorEvent, EventContext, RequestReason};
     use caelumora_model::approval::ApprovalResponse;
     use caelumora_model::message::Message;
     use caelumora_model::confidentiality::Classification;
@@ -519,7 +519,7 @@ mod tests {
     async fn the_next_is_taken_only_if_it_may_be() {
         let history = Arc::new(History::default());
         history.record(said(0));
-        history.record(ActorEvent::ResponseRequested);
+        history.record(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned });
         let (_inbox, mut rx) = open(&history, Heard::default());
         let heard = |e: &Envelope| if matches!(e.event, ActorEvent::CompleteMessageGenerated(_)) { Pick::Take } else { Pick::Stop };
         assert!(rx.try_recv_if(&heard).await.is_some());
@@ -531,7 +531,7 @@ mod tests {
     /// anything else.
     fn requests_past_what_was_said(envelope: &Envelope) -> Pick {
         match envelope.event {
-            ActorEvent::ResponseRequested => Pick::Take,
+            ActorEvent::ResponseRequested { .. } => Pick::Take,
             ActorEvent::CompleteMessageGenerated(_) => Pick::PassOver,
             _ => Pick::Stop,
         }
@@ -551,7 +551,7 @@ mod tests {
         let (queued, read, stop) = (30, CAPACITY + 20, CAPACITY + 40);
         for n in 0..CAPACITY + 50 {
             let event = match n {
-                n if n == queued || n == read => ActorEvent::ResponseRequested,
+                n if n == queued || n == read => ActorEvent::ResponseRequested { reason: RequestReason::Mentioned },
                 n if n == stop => command(),
                 n => said(n),
             };
@@ -575,7 +575,7 @@ mod tests {
     #[tokio::test]
     async fn what_was_read_of_the_history_is_passed_over_as_the_queue_is() {
         let history = Arc::new(History::default());
-        for event in [said(0), said(1), ActorEvent::ResponseRequested, command(), ActorEvent::ResponseRequested] {
+        for event in [said(0), said(1), ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }, command(), ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }] {
             history.record(event);
         }
         let (_inbox, mut rx) = open(&history, Heard::default());

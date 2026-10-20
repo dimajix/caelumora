@@ -198,7 +198,7 @@ mod tests {
 
         let context = SecurityContext::default().next(ActorId::Agent(agent.id), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
-        state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), context.clone(), channel.classification.clone(), Default::default(), Default::default());
+        state.begin_turn(EventContext::new(session.id, channel.id, ActorId::None, String::new()), None, context.clone(), channel.classification.clone(), Default::default(), Default::default());
         let provider = ChannelBriefingPromptProvider::new(PromptPosition::Start);
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(prompt.text.contains("In short: Release 2.0") && !prompt.text.contains("[About this channel]"), "{}", prompt.text);

@@ -756,12 +756,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         // history the snapshot or a page read (issue 417).
         const showOnce = (notice: Message) => setMessages(prev => notice.id && prev.some(m => m.id === notice.id) ? prev : [...prev, notice]);
         const position = envelope.context.position;
-        if (actorEvent === 'ResponseRequested') {
+        if (typeof actorEvent === 'string') {
+          // The payload-less events have nothing to show.
+        } else if (actorEvent.ResponseRequested) {
           // Someone asks you to respond (issue 278) - an agent is asked so,
           // too, but a user only by a nudge.
           showOnce(nudgeNotice(answererName ?? undefined, envelope.timestamp, position));
-        } else if (typeof actorEvent === 'string') {
-          // The other payload-less events have nothing to show.
         } else if (actorEvent.ResponseStarted) {
           // A new answer begins after those under way, as the turn it names.
           const turnId = actorEvent.ResponseStarted.turn_id;

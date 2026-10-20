@@ -68,7 +68,7 @@ pub async fn world() -> World {
 pub fn turn<'a>(session: &Arc<SessionLoop>, agent: AgentId, owner: UserId, state: &'a mut AgentChannelState) -> Turn<'a> {
     let channel = &session.channels()[0];
     let context = SecurityContext::new(ActorId::User(owner), session.id(), channel.id()).next(ActorId::Agent(agent), ActorId::User(owner), ActorId::User(owner)).with_roles(vec![*STAFF], None);
-    state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), context, channel.classification(), Default::default(), Default::default());
+    state.begin_turn(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), None, context, channel.classification(), Default::default(), Default::default());
     Turn::of(agent, agent.to_string(), state, AgentStateHandle::detached(), actor_runtime_in(channel, ActorId::Agent(agent))).expect("a turn was begun")
 }
 
@@ -76,7 +76,7 @@ pub fn turn<'a>(session: &Arc<SessionLoop>, agent: AgentId, owner: UserId, state
 /// for a provider whose offer does not depend on the place.
 pub async fn offered_anywhere(provider: &dyn ToolProvider) -> Result<Vec<Tool>, String> {
     let mut state = AgentChannelState::default();
-    state.begin_turn(Default::default(), Default::default(), Default::default(), Default::default(), Default::default());
+    state.begin_turn(Default::default(), None, Default::default(), Default::default(), Default::default(), Default::default());
     let agent = AgentId::new();
     let Some(turn) = Turn::of(agent, agent.to_string(), &mut state, AgentStateHandle::detached(), detached_actor_runtime()) else {
         return Err("no turn was begun".to_string());
@@ -241,6 +241,6 @@ pub fn register_once(registry: &mut ComponentRegistry, kind: &str, answer: Messa
 /// test of a tool on the workspace calls it.
 pub fn workspace_turn<'a>(with: &WithWorkspace, state: &'a mut AgentChannelState) -> Turn<'a> {
     let channel = &with.session.channels()[0];
-    state.begin_turn(EventContext::new(with.session.id(), channel.id(), ActorId::None, String::new()), with.context.clone(), channel.classification(), Default::default(), Default::default());
+    state.begin_turn(EventContext::new(with.session.id(), channel.id(), ActorId::None, String::new()), None, with.context.clone(), channel.classification(), Default::default(), Default::default());
     Turn::of(with.agent, "Jonathan".to_string(), state, AgentStateHandle::detached(), actor_runtime_in(channel, ActorId::Agent(with.agent))).expect("a turn was begun")
 }

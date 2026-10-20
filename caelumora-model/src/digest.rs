@@ -399,10 +399,11 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             e.json(&serde_json::json!([message, reason]));
             e.finish()
         }
-        HistoryEntry::ResponseRequested { by, .. } => {
-            let mut e = Encoder::new("caelumora.history-response-requested.v1");
+        HistoryEntry::ResponseRequested { by, reason, .. } => {
+            let mut e = Encoder::new("caelumora.history-response-requested.v2");
             e.opt_digest(previous);
             e.json(&to_json(by));
+            e.json(&to_json(reason));
             e.finish()
         }
         // What is recorded to be delivered again (issue 223): by what it

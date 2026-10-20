@@ -949,7 +949,7 @@ pub(crate) async fn given_store_behaves(states: &dyn StateStore, transcripts: &d
     states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
     assert!(state.prompts.changes().is_empty(), "the texts are marked stored");
 
-    state.begin_turn(EventContext::default(), SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default());
+    state.begin_turn(EventContext::default(), None, SecurityContext::default(), Classification::CHANNEL_DEFAULT, ModelProfile::default(), Default::default());
     state.offer_tools(sets.clone());
     let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
     state.turn.as_mut().expect("a turn").work.context.frame.prompts.push(system.clone());

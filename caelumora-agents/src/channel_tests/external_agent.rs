@@ -1057,6 +1057,7 @@ async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_tha
                 unsaid: None,
                 work: Some(Work::new(
                     begun.next(hermes, "hermes".to_string()),
+                    None,
                     SecurityContext::new(bob, SessionId::default(), ChannelId::default()).next(hermes, ActorId::None, ActorId::None),
                     Classification::CHANNEL_DEFAULT,
                 )),
@@ -1093,7 +1094,7 @@ fn begun_above(agent: AgentId, open: &str, standing: OpenTaskState) -> AgentChan
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::external_agent::{OpenTask, RemoteState};
     let own = ActorId::Agent(agent);
-    let work = Work::new(EventContext::default().next(own, "hermes".to_string()), SecurityContext::default().next(own, ActorId::None, ActorId::None), Classification::general(Confidentiality::Confidential));
+    let work = Work::new(EventContext::default().next(own, "hermes".to_string()), None, SecurityContext::default().next(own, ActorId::None, ActorId::None), Classification::general(Confidentiality::Confidential));
     AgentChannelState {
         remote: RemoteState {
             open_tasks: vec![OpenTask { task: task(open), since: Utc::now(), state: standing, unsaid: None, work: Some(work) }],

@@ -1,6 +1,6 @@
 # 439 — An agent is not told why it was asked to respond
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -95,3 +95,11 @@ in - mentioned before chosen - while it acts in the contexts of the last, as tod
   chosen agent why it was asked silences it where it had nothing to add; telling a mentioned agent
   when to stay silent stops it working, too; a chosen agent with something of its own to do still
   does it. The part is narrowed to the chosen agent; the tool stays `silence`.
+- **2026-10-20** — Done: a `Routing` says why it asks (`RequestReason`: `mentioned`, `nudged`,
+  `chosen`), the request to respond carries it and the history records it; the work of a turn
+  keeps the strongest reason of the requests it took in (`Work::asked`). The part is a component,
+  `request_reason_prompt_provider`, before the turn's input - placed there, it worked as well as
+  after everything heard (`reason_before`) -, with `silence` where it is offered; the seed's
+  `channel-context` includes it. An external agent's work records the reason too, but its
+  personality in the seed does not include the provider; what its remote agent is told stays with
+  the A2A mapping.

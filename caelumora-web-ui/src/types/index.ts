@@ -705,12 +705,19 @@ export interface PlanStepEvent extends PlanStep {
 
 /**
  * Events without a payload. The server sends them as a bare string
- * (`"WakeupRequested"`), not as an object like the other events. A user is
- * sent `ResponseRequested` only when someone nudges them (issue 278).
+ * (`"WakeupRequested"`), not as an object like the other events.
  */
-export type UnitActorEvent = 'ResponseRequested' | 'WakeupRequested';
+export type UnitActorEvent = 'WakeupRequested';
+
+/** Why someone is asked to respond (issue 439). */
+export type RequestReason = 'chosen' | 'nudged' | 'mentioned';
 
 export interface ActorEvent {
+  /**
+   * The receiver is asked to respond, for `reason`. A user is sent it only
+   * when someone nudges them (issue 278).
+   */
+  ResponseRequested?: { reason: RequestReason };
   /**
    * An answer of the sender begins: its turn (issue 235), whose messages
    * carry the same `turn_id`.
@@ -1183,8 +1190,8 @@ export type HistoryItemKind<M> =
   | {chain_cut_off: {message: string; max_agent_hops: number; not_asked: ActorId[]; at: string}}
   /** What the reader sent was not let into the channel (issue 304). */
   | {message_rejected: {rejected: string; message: string | null; reason: Rejection; at: string}}
-  /** The reader was asked to respond, to what `by` said or nudged (issues 278, 417). */
-  | {response_requested: {by: ActorId; at: string}};
+  /** The reader was asked to respond, to what `by` said or nudged, for `reason` (issues 278, 417, 439). */
+  | {response_requested: {by: ActorId; reason: RequestReason; at: string}};
 
 /**
  * A page of a history (issue 218): its items, oldest first, and `earlier`,

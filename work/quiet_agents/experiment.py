@@ -151,6 +151,7 @@ VARIANTS = {
     "reason_pass": {"roster": True, "reason": "all", "pass": True},
     "reason_work": {"roster": True, "reason": "work"},
     "reason_soft": {"roster": True, "reason": "chosen", "chosen": "soft"},
+    "reason_before": {"roster": True, "reason": "chosen", "place": "before"},
 }
 
 # What a mentioned agent is told under `reason_work`: writing nothing is not doing nothing.
@@ -212,10 +213,24 @@ def apply(variant, context, turn, data):
         for tool_set in context["tool_sets"]:
             tool_set["tools"] = [PASS_TOOL if t["name"] == "silence" else t for t in tool_set["tools"]]
     if spec.get("reason"):
+        text = why_asked(turn, data, tool, spec["reason"] if spec["reason"] != "chosen" else None, spec.get("chosen") == "soft")
         end = len(context["transcript"]) - 1
-        context["parts"].append({"role": "User", "after": end,
-                                 "text": why_asked(turn, data, tool, spec["reason"] if spec["reason"] != "chosen" else None,
-                                           spec.get("chosen") == "soft")})
+        if spec.get("place") == "before":
+            # As a `PromptPosition::BeforeTurnInput` part: joined with the others there, before the
+            # newest message.
+            # `TurnContextProvider`: after the message before the newest, unless the agent wrote
+            # the newest itself.
+            said = [i for i, e in enumerate(context["transcript"]) if e["kind"] in ("message", "given")]
+            newest = said[-1] if said else None
+            mine = newest is not None and context["transcript"][newest]["message"]["sender"] == context["me"]
+            before = newest if mine else (said[-2] if len(said) > 1 else None)
+            joined = next((p for p in context["parts"] if p["role"] == "User" and p["after"] == before), None)
+            if joined:
+                joined["text"] = joined["text"].rstrip("\n") + "\n\n" + text
+            else:
+                context["parts"].append({"role": "User", "after": before, "text": text})
+        else:
+            context["parts"].append({"role": "User", "after": end, "text": text})
     return context
 
 

@@ -418,6 +418,7 @@ pub(crate) fn page_of(newest: impl IntoIterator<Item = StoreResult<Option<(Posit
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actor::RequestReason;
     use crate::history::testing::items_of;
     use crate::confidentiality::Compartment;
     use crate::user::UserId;
@@ -497,7 +498,7 @@ mod tests {
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let said = |message: Message| HistoryEntry::Said { message };
         let by_alice = Message { sender_id: alice, content: Some("Zoë likes tea".to_string()), mentions: vec![bob], ..make_message(id(1)) };
-        let other = HistoryEntry::ResponseRequested { by: alice, at: Utc::now() };
+        let other = HistoryEntry::ResponseRequested { by: alice, reason: RequestReason::Mentioned, at: Utc::now() };
 
         assert!(keeps(&Filter::said(), said(by_alice.clone())) && !keeps(&Filter::said(), other.clone()), "a message said");
         assert!(keeps(&Filter::said_by(alice), said(by_alice.clone())) && !keeps(&Filter::said_by(bob), said(by_alice.clone())));
@@ -537,7 +538,7 @@ mod tests {
                 assert_eq!(kept, reading.admits(classification, &compartments), "{classification} under {reading:?}");
             }
         }
-        let other = HistoryEntry::ResponseRequested { by: ActorId::System, at: Utc::now() };
+        let other = HistoryEntry::ResponseRequested { by: ActorId::System, reason: RequestReason::Chosen, at: Utc::now() };
         assert!(!keeps(&Filter::readable(&Reading::Released(Classification::PUBLIC), &compartments).unwrap(), other), "messages only");
     }
 

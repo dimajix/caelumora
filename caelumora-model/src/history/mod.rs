@@ -10,7 +10,7 @@
 //! given what of it they may see (`Recorded::as_seen_by`), and who stands
 //! somewhere in it (`Heard`).
 
-use crate::actor::{ActorEvent, ActorId, Envelope, EventContext, Rejection, RetryTarget};
+use crate::actor::{ActorEvent, ActorId, Envelope, EventContext, Rejection, RequestReason, RetryTarget};
 use crate::agent::RetryRefused;
 use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApprovalStatus};
 use crate::question::{QuestionId, QuestionRequest};
@@ -134,9 +134,9 @@ pub enum HistoryEntry {
     /// name. What was rejected entered nothing and is not recorded.
     MessageRejected { rejected: String, message: Option<MessageId>, reason: Rejection, at: DateTime<Utc> },
     /// Whom it went to was asked to respond at `at` (issue 417) - to what
-    /// `by` said or nudged -, as the moderator decided: in the system's
-    /// name, to those asked.
-    ResponseRequested { by: ActorId, at: DateTime<Utc> },
+    /// `by` said or nudged -, as the moderator decided and for `reason`
+    /// (issue 439): in the system's name, to those asked.
+    ResponseRequested { by: ActorId, reason: RequestReason, at: DateTime<Utc> },
     /// `by`, a user, asked the agent `agent` at `at` to carry out the
     /// command `command` with `args` (issues 269, 223). Like every entry
     /// that follows, recorded to be delivered again from the history - to
@@ -828,7 +828,7 @@ impl HistoryEntry {
             HistoryEntry::RetryRejected { target, reason, .. } => ActorEvent::RetryRejected { target, reason },
             HistoryEntry::ChainCutOff { message, max_agent_hops, not_asked, .. } => ActorEvent::ChainCutOff { message, max_agent_hops, not_asked },
             HistoryEntry::MessageRejected { rejected, message, reason, .. } => ActorEvent::MessageRejected { rejected, message, reason },
-            HistoryEntry::ResponseRequested { .. } => ActorEvent::ResponseRequested,
+            HistoryEntry::ResponseRequested { reason, .. } => ActorEvent::ResponseRequested { reason },
             HistoryEntry::CommandRequested { agent, command, args, .. } => ActorEvent::CommandRequested { command, args, agent },
             HistoryEntry::RetryRequested { target, author, .. } => ActorEvent::RetryRequested { target, author },
             HistoryEntry::ApprovalRequested { request, .. } => ActorEvent::ApprovalRequested(request),
@@ -1000,7 +1000,7 @@ mod tests {
             ActorEvent::RetryRejected { target: RetryTarget::Turn(turn_id), reason: RetryRefused::NotLast },
             ActorEvent::ChainCutOff { message: heard.id, max_agent_hops: 3, not_asked: vec![agent] },
             ActorEvent::MessageRejected { rejected: "MessageModified".to_string(), message: Some(heard.id), reason: Rejection::Invalid },
-            ActorEvent::ResponseRequested,
+            ActorEvent::ResponseRequested { reason: RequestReason::Mentioned },
             ActorEvent::HistoryShared { participant: user, from: Position::new(3), by: agent, by_name: "agent".to_string() },
             ActorEvent::ApprovalRequested(approval.clone()),
             ActorEvent::ApprovalRequestWithdrawn { id: approval.id },
@@ -1153,7 +1153,7 @@ mod tests {
         // What was only told or asked of it is no part of the conversation
         // (issue 417).
         history.record(HistoryEntry::RetryRejected { target: RetryTarget::Turn(turn), reason: RetryRefused::NotLast, actor: other, at: Utc::now() });
-        history.record(HistoryEntry::ResponseRequested { by: other, at: Utc::now() });
+        history.record(HistoryEntry::ResponseRequested { by: other, reason: RequestReason::Chosen, at: Utc::now() });
         assert_eq!(history.turn_given_up_last(agent), Some((turn, GivenUpReason::Left)), "a notice and a request do not count");
         history.push(make_message(id(2)));
         assert_eq!(history.turn_given_up_last(agent), None, "something followed it");

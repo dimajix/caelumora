@@ -235,7 +235,7 @@ impl ExternalAgentActor {
         let classification = self.body.runtime.channel_classification();
         // The work of this exchange, as a turn: bound by the channel as it
         // is now (issue 212), and how it ends is told as its turn's end.
-        let mut work = Work::new(answering.event_context.clone(), answering.security_context.clone(), classification);
+        let mut work = Work::new(answering.event_context.clone(), request.event.request_reason(), answering.security_context.clone(), classification);
         // A turn of its own, whose token `cancel`, `stop` and `leave` reach.
         self.body.control.begin_turn(work.turn_id);
         let token = self.body.control.token();
@@ -837,7 +837,7 @@ impl Actor for ExternalAgentActor {
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {
-        |event| matches!(event.event, ActorEvent::ResponseRequested | ActorEvent::CompleteMessageGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. } | ActorEvent::CommandRequested { .. }
+        |event| matches!(event.event, ActorEvent::ResponseRequested { .. } | ActorEvent::CompleteMessageGenerated(_) | ActorEvent::MessageModified(_) | ActorEvent::MessageRevoked { .. } | ActorEvent::MessageReclassified { .. } | ActorEvent::RetryRequested { .. } | ActorEvent::CommandRequested { .. }
             | ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. })
     }
 

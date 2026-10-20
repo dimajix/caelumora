@@ -35,7 +35,9 @@ the agent stands into its state with it (`AgentBody::take_in`, issue 223):
 *   **Begin.** The last request to respond among what was taken in begins one turn; the earlier
     ones are dropped. The one turn answers the conversation as it stands, having heard every
     message, and acts in the contexts of the last request - with the authority of the last who
-    asked, never of someone who did not. An agent that falls behind thus answers once when it is
+    asked, never of someone who did not -, for the strongest reason among them (issue 439): a
+    mention among them is a reason to answer, though the last request was only a choice of the
+    policy. An agent that falls behind thus answers once when it is
     free again, not once per request that waited. A sleeping agent ignores the request; only
     `wakeup` ends the sleep. Whether it sleeps is read once everything is taken in, since the
     channel wakes an agent before it delivers the message that asks it.
@@ -670,6 +672,20 @@ last, to write the final answer (`Turn::advance_plan`). Such an instruction is a
 after the messages the turn has produced so far - never between a tool call and its result. It is
 given again within its turn, never to later turns, which see the plan through the `create_plan`
 call.
+
+### Why the agent was asked
+
+Every turn records why it was asked (`Work::asked`, issue 439): the reason of the request it
+answers, the strongest of those it took in - `mentioned`, `nudged`, `chosen` by the channel's
+responder policy (see [CHANNELS.md](CHANNELS.md#moderators)) -, none for an answer given again.
+`request_reason_prompt_provider` reads it (`Situation::asked`) and tells an agent that was only
+chosen so, before the turn's input: that it is asked because what was said last might concern it,
+and that with nothing to add - nothing new, only agreement, a greeting, thanks, that it waits - it
+calls `silence` and writes nothing, or, where `silence` is not offered, writes nothing. Without it,
+a model takes every request for an order to answer, and greets back or writes that it has nothing
+to say. A mentioned or nudged agent is told nothing: told when to stay silent, a mentioned agent
+judged the message that mentioned it rather than what was its own to do, and stopped working where
+it was only cheered on ([work/quiet_agents](../work/quiet_agents/RESULTS.md)).
 
 ### System messages
 
