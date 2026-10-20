@@ -11,33 +11,33 @@ default = ["web-ui"]
 web-ui = ["dep:rust-embed", "dep:mime_guess"]
 
 [dependencies]
-caelumora-model = { path = "../caelumora-model" }
-caelumora-runtime = { path = "../caelumora-runtime" }
-caelumora-agents = { path = "../caelumora-agents" }
-caelumora-logging = { path = "../caelumora-logging" }
-caelumora-rest-server = { path = "../caelumora-rest-server" }
-caelumora-skills = { path = "../caelumora-skills" }
-caelumora-artifacts = { path = "../caelumora-artifacts" }
-caelumora-mcp = { path = "../caelumora-mcp" }
-caelumora-a2a = { path = "../caelumora-a2a" }
-caelumora-open-terminal = { path = "../caelumora-open-terminal" }
-caelumora-workspace-tools = { path = "../caelumora-workspace-tools" }
-caelumora-ollama = { path = "../caelumora-ollama" }
-caelumora-decision = { path = "../caelumora-decision" }
-axum = "0.8.9"
-tokio = { version = "1.0", features = ["full"] }
-tokio-util = "0.7"
-tracing = "0.1"
-anyhow = "1.0"
-tower-http = { version = "0.7.1", features = ["trace"] }
-clap = { version = "4.6.7", features = ["derive"] }
-rust-embed = { version = "8.5.0", optional = true }
-mime_guess = { version = "2.0.5", optional = true }
+caelumora-model.workspace = true
+caelumora-runtime.workspace = true
+caelumora-agents.workspace = true
+caelumora-logging.workspace = true
+caelumora-rest-server.workspace = true
+caelumora-skills = { workspace = true, default-features = true }
+caelumora-artifacts = { workspace = true, default-features = true }
+caelumora-mcp.workspace = true
+caelumora-a2a.workspace = true
+caelumora-open-terminal.workspace = true
+caelumora-workspace-tools.workspace = true
+caelumora-ollama.workspace = true
+caelumora-decision.workspace = true
+axum.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-util.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+tower-http.workspace = true
+clap.workspace = true
+rust-embed = { workspace = true, optional = true }
+mime_guess = { workspace = true, optional = true }
 
 [dev-dependencies]
-caelumora-agents = { path = "../caelumora-agents", features = ["test-support"] }
-tower = { version = "0.5.3", features = ["util"] }
-serde_json = "1.0"
+caelumora-agents = { workspace = true, features = ["test-support"] }
+tower.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

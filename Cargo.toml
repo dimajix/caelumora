@@ -25,6 +25,70 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[workspace.dependencies]
+aho-corasick = "1.1"
+# Pinned to the version of the npm package the web UI uses (issue 177).
+any_ascii = "=0.3.3"
+anyhow = "1.0.104"
+arc-swap = "1.9.2"
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }
+async-stream = "0.3.6"
+async-trait = "0.1"
+axum = "0.8.9"
+bitflags = "2"
+bollard = "0.21"
+bytes = "1"
+chrono = "0.4.45"
+chrono-tz = "0.10"
+clap = { version = "4.6.7", features = ["derive"] }
+dashmap = "6.2.1"
+derive_more = { version = "2.1.1", features = ["display"] }
+futures = "0.3"
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
+meval = "0.2.0"
+mime_guess = "2.0.5"
+nix = { version = "0.31", features = ["signal", "process"] }
+percent-encoding = "2.3"
+rand = "0.10.3"
+regex = "1.12"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "native-tls"] }
+rmcp = { version = "3.4", features = ["client", "transport-streamable-http-client-reqwest"] }
+rust-embed = "8.5.0"
+rustyline = "18.0.1"
+schemars = "1.2"
+serde = { version = "1.0", features = ["derive"] }
+serde-saphyr = { version = "1.3", default-features = false, features = ["deserialize"] }
+serde_json = "1.0"
+sha2 = "0.11"
+sse-stream = "0.2"
+tempfile = "3.27"
+thiserror = "2.0.21"
+tokio = "1.53.1"
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = "0.7"
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.1", features = ["trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+url = "2.5"
+uuid = "1.26"
+
+# The crates of the workspace.
+caelumora-model = { path = "caelumora-model" }
+caelumora-runtime = { path = "caelumora-runtime" }
+caelumora-agents = { path = "caelumora-agents" }
+caelumora-logging = { path = "caelumora-logging" }
+caelumora-rest-api = { path = "caelumora-rest-api" }
+caelumora-rest-server = { path = "caelumora-rest-server" }
+caelumora-skills = { path = "caelumora-skills", default-features = false }
+caelumora-artifacts = { path = "caelumora-artifacts", default-features = false }
+caelumora-mcp = { path = "caelumora-mcp" }
+caelumora-a2a = { path = "caelumora-a2a" }
+caelumora-open-terminal = { path = "caelumora-open-terminal" }
+caelumora-workspace-tools = { path = "caelumora-workspace-tools" }
+caelumora-ollama = { path = "caelumora-ollama" }
+caelumora-decision = { path = "caelumora-decision" }
+
 [profile.release]
 opt-level = 3
 lto = true

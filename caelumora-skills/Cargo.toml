@@ -14,28 +14,28 @@ runtime = ["dep:caelumora-runtime", "dep:caelumora-agents", "dep:async-trait", "
 server = ["runtime", "dep:caelumora-rest-server", "dep:axum"]
 
 [dependencies]
-caelumora-model = { path = "../caelumora-model" }
-caelumora-rest-api = { path = "../caelumora-rest-api" }
-serde = { version = "1.0", features = ["derive"] }
-uuid = { version = "1.0", features = ["v4", "serde"] }
-chrono = { version = "0.4.45", features = ["serde"] }
-caelumora-runtime = { path = "../caelumora-runtime", optional = true }
-caelumora-agents = { path = "../caelumora-agents", optional = true }
-caelumora-rest-server = { path = "../caelumora-rest-server", optional = true }
-axum = { version = "0.8.9", optional = true }
-async-trait = { version = "0.1", optional = true }
-tokio = { version = "1.53.1", features = ["sync"], optional = true }
-tracing = { version = "0.1.44", optional = true }
-anyhow = { version = "1.0", optional = true }
-thiserror = { version = "2.0.21", optional = true }
-serde_json = { version = "1.0", optional = true }
+caelumora-model.workspace = true
+caelumora-rest-api.workspace = true
+serde.workspace = true
+uuid = { workspace = true, features = ["v4", "serde"] }
+chrono = { workspace = true, features = ["serde"] }
+caelumora-runtime = { workspace = true, optional = true }
+caelumora-agents = { workspace = true, optional = true }
+caelumora-rest-server = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["sync"], optional = true }
+tracing = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
-caelumora-agents = { path = "../caelumora-agents", features = ["test-support"] }
-caelumora-runtime = { path = "../caelumora-runtime", features = ["test-support"] }
-tokio = { version = "1.53.1", features = ["full"] }
-serde_json = "1.0"
-tempfile = "3.27"
+caelumora-agents = { workspace = true, features = ["test-support"] }
+caelumora-runtime = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["full"] }
+serde_json.workspace = true
+tempfile.workspace = true
 
 # Without the feature the test is skipped rather than failing to build:
 # its tests run the plugin in a runtime.

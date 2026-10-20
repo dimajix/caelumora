@@ -71,6 +71,10 @@ modules use.
     `[workspace.package]` in the root `Cargo.toml` (`version.workspace = true`, ...) and its lints
     from `[workspace.lints]` (`[lints] workspace = true`); it states none of them itself. Without
     them it builds as well, but has no license and escapes the lints.
+*   **Dependencies.** Every dependency - of another crate of the workspace too - is declared once
+    in `[workspace.dependencies]`, with its version, `default-features = false` if any crate needs
+    it, and the features every crate using it needs. A crate names it with `workspace = true` and
+    adds only its own features and `optional`. A version is raised there, for all crates at once.
 
 ### A module's manager
 

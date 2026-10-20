@@ -5,39 +5,39 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde.workspace = true
+serde_json.workspace = true
 # Only parsing is needed; the snippet rendering it brings is switched off
 # in `AppConfig::from_yaml`.
-serde-saphyr = { version = "1.3", default-features = false, features = ["deserialize"] }
-uuid = { version = "1.26", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-anyhow = "1.0"
-sha2 = "0.11"
-thiserror = "2.0.21"
-derive_more = { version = "2.1.1", features = ["display"] }
-bitflags = "2"
-async-trait = "0.1"
-tracing = "0.1.44"
+serde-saphyr.workspace = true
+uuid = { workspace = true, features = ["v4", "serde"] }
+chrono = { workspace = true, features = ["serde"] }
+anyhow.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+derive_more.workspace = true
+bitflags.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
 # Names and handles are compared by their ASCII form (issue 177); the web UI
 # uses the npm package of the same name. Both pinned to one version, so that
 # their tables agree.
-any_ascii = "=0.3.3"
+any_ascii.workspace = true
 # The patterns of approval rules (issue 13): no backtracking, so that a
 # pattern takes linear time whatever it is matched against.
-regex = "1.12"
+regex.workspace = true
 # The JSON store reads and writes files asynchronously, and keeps names
 # unique under a lock per kind (issue 250); the user file verifies a
 # password on a blocking thread (`rt`, issue 25).
-tokio = { version = "1.53.1", features = ["fs", "io-util", "rt", "sync"] }
+tokio = { workspace = true, features = ["fs", "io-util", "rt", "sync"] }
 # The URL of a remote endpoint, parsed to show it without credentials.
-url = "2.5"
+url.workspace = true
 # The password hashes of the user file (issue 25), verified only: hashes
 # are made by hand, so no random salts are needed here.
-argon2 = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }
+argon2.workspace = true
 # The time zone a session is held in (issue 424): the IANA names and their
 # rules, compiled in, so that a time is given the same on every machine.
-chrono-tz = "0.10"
+chrono-tz.workspace = true
 
 [features]
 # What the tests of other crates read of a model value held in memory
@@ -45,8 +45,8 @@ chrono-tz = "0.10"
 test-support = []
 
 [dev-dependencies]
-tokio = { version = "1.53.1", features = ["macros", "rt", "sync"] }
-tempfile = "3.27"
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
+tempfile.workspace = true
 
 [lints]
 workspace = true
