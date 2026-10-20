@@ -84,6 +84,12 @@ async fn main() -> Result<()> {
     });
 
     runtime_manager.seed(&config.seed).await?;
+    // What was under way when the process last ended goes on (issue 388),
+    // beside the requests rather than before them.
+    tokio::spawn({
+        let session_manager = Arc::clone(&session_manager);
+        async move { session_manager.resume_interrupted().await }
+    });
 
     let shutdown = CancellationToken::new();
     let state = Arc::new(AppState {

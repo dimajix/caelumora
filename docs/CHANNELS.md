@@ -116,8 +116,22 @@ the commands, only what does not outlive the process ends: each storage decides
 (`TerminalProvider::shutdown`) - the `local` shell ends its commands, an Open Terminal instance
 keeps them, which the model can follow after a restart and their bound ends. The whole takes at most
 `SHUTDOWN_BOUND`, eight seconds, within the ten Docker leaves between SIGTERM and SIGKILL; what is
-still under way then ends with the process. What a shutdown interrupted runs again once someone acts
-in its session (issue [388](../issues/388-resume-interrupted-work-after-a-restart.md)).
+still under way then ends with the process.
+
+### Starting again after a restart
+
+What a shutdown or a crash interrupted goes on by itself when the server starts again (issue
+[388](../issues/388-resume-interrupted-work-after-a-restart.md)). Once it is seeded, the server has
+`SessionManager::resume_interrupted` start every session in which an agent's stored state has work
+under way: a turn stored at a step it goes on from, or a remote task the remote agent works on. The
+state store keeps an index of them (see [STORAGE.md](STORAGE.md#work-under-way)), so nothing else is
+loaded. Nobody asked for these sessions, so the runtime opens them in its own name; what the agents
+then do is done in their own names, as at every start. They are started one after another, beside
+the first requests, and not bounded otherwise.
+
+Not started is a session whose agents only wait for a person - an approval, a question, a remote
+task that asked back -, since the person's answer starts it; nor one deleted. A message delivered to
+an agent but not yet taken in leaves the agent idle, so it waits for the next act in its session.
 
 ### One writer per document
 

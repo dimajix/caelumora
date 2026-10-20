@@ -1,6 +1,6 @@
 # 388 — Work interrupted by a restart waits until someone acts in its session
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -87,3 +87,15 @@ just before the shutdown waits for the next act in its session. With several ins
   `WaitingForUser` and an external agent's task `InputRequired` are no work under way; a real bound
   is an issue of its own. Recorded under *Decision* and *Steps*; implemented on the branch
   `issue-388-resume-after-restart`.
+- **2026-10-20** — Done in the two steps of *Steps*. `AgentChannelState::has_work_under_way` and
+  `RemoteState::has_work_under_way` hold the rule; the `JsonFileStore` keeps an empty file
+  `runtime/under_way/<channel_id>.<agent_id>` per entry, entered before the state is written and
+  taken out after it, the `MemoryStore` asks its states. `SessionManager::resume_interrupted` maps
+  the channels to their sessions and opens each once in the runtime's name; `caelumora-app` spawns
+  it once seeded. The `SessionManager` now keeps the state store as a field, which `purge` uses
+  too. It holds after a crash as well, since a turn is stored after every step (CHANNELS.md,
+  *Starting again after a restart*). Tests: the rule, the index in both stores and across a
+  reopened `JsonFileStore`, which sessions a restart starts, and in the agents' security suite an
+  external agent's task followed after the restart in the name it was begun in. An agent run here
+  is not tested end to end through a restart, only its resume (issue 377) and the start apart; not
+  yet tried with a real server restart.
