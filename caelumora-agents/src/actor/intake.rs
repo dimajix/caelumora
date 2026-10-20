@@ -10,7 +10,7 @@ use super::body::AgentBody;
 use crate::message::apply_stage_processors;
 use caelumora_runtime::logging::envelope_span;
 use caelumora_runtime::transport::EventReceiver;
-use caelumora_model::actor::{ActorEvent, Envelope};
+use caelumora_model::actor::{ActorEvent, Envelope, Pick};
 use caelumora_model::agent::{AgentChannelState, HearsFrom};
 use caelumora_model::message::Message;
 use caelumora_model::transcript::TranscriptEntry;
@@ -140,7 +140,7 @@ impl AgentBody {
             return false;
         };
         let work = under_way.work.clone();
-        let may_take = |envelope: &Envelope| hears.takes(&work, envelope);
+        let may_take = |envelope: &Envelope| if hears.takes(&work, envelope) { Pick::Take } else { Pick::Stop };
         let mut taken = false;
         while let Some(event) = rx.try_recv_if(&may_take).await {
             taken = true;
