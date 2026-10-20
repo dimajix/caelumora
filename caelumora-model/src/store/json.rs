@@ -1042,11 +1042,15 @@ mod tests {
         journal_path(&store.agent_channel_state_path(agent, channel))
     }
 
-    /// A state with messages `from..to` in its transcript, and a note
-    /// published for each in its document, which grows with them.
+    /// A state with messages `from..to` in its transcript, taken in as an
+    /// agent takes them in from its channel's history - moving where it
+    /// stands in it (issue 440) -, and a note published for each in its
+    /// document, which grows with them.
     fn said(state: &mut AgentChannelState, from: u128, to: u128) {
         for n in from..to {
             state.transcript.push(make_message(id(n)));
+            state.last_message = Some(id(n));
+            state.heard.took(Position::new(n as u64));
             let note = NoteChange::Add { id: NoteId(n as u32), text: format!("note {n}"), classification: Classification::CHANNEL_DEFAULT };
             state.notes.push(note, Default::default(), id(n));
         }
@@ -1059,24 +1063,26 @@ mod tests {
     #[tokio::test]
     async fn a_put_appends_what_changed_to_the_journal_and_a_get_replays_it() {
         let dir = tempdir().unwrap();
-        let store = store(dir.path());
+        let opened = store(dir.path());
         let (agent, channel) = (AgentId::new(), ChannelId::new());
         let mut state = AgentChannelState::default();
         said(&mut state, 1, 3);
-        store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
-        assert_eq!(journal_lines(&store, agent, channel), None, "the first put is the snapshot");
-        let snapshot = std::fs::metadata(store.agent_channel_state_path(agent, channel)).unwrap().len();
+        opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        assert_eq!(journal_lines(&opened, agent, channel), None, "the first put is the snapshot");
+        let snapshot = std::fs::metadata(opened.agent_channel_state_path(agent, channel)).unwrap().len();
 
         said(&mut state, 3, 5);
-        store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
         state.processing_state = ActorState::WaitingForUser;
-        store.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
-        assert_eq!(journal_lines(&store, agent, channel), Some(2), "one line per put");
-        assert_eq!(std::fs::metadata(store.agent_channel_state_path(agent, channel)).unwrap().len(), snapshot, "the snapshot is untouched");
+        opened.put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+        assert_eq!(journal_lines(&opened, agent, channel), Some(2), "one line per put");
+        assert_eq!(std::fs::metadata(opened.agent_channel_state_path(agent, channel)).unwrap().len(), snapshot, "the snapshot is untouched");
 
-        let loaded = store.get_agent_channel_state(agent, channel).await.unwrap();
+        // Read from the files, by a store opened anew, as after a restart.
+        let loaded = store(dir.path()).get_agent_channel_state(agent, channel).await.unwrap();
         assert!(same(&loaded, &state), "{loaded:?}");
         assert_eq!(loaded.transcript.messages().len(), 4);
+        assert_eq!((loaded.last_message, loaded.heard.next()), (Some(id(4)), Position::new(5)), "where it stands in its channel's history (issue 440)");
     }
 
     #[tokio::test]

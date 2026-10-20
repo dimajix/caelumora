@@ -1,6 +1,6 @@
 # 440 — Where an agent stands in its channel's history is lost with the journal
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** high
 **Area:** Persistence
@@ -48,3 +48,10 @@ compares the whole state replayed with the state, but changes neither field.
 
 - **2026-10-20** — Opened after a restart of the `team-session`, in which every agent began a turn
   answering what it had answered before the shutdown.
+- **2026-10-20** — Done: `AgentChannelStateChange` records `LastMessage` and `Heard`, whole, at
+  every put. The replay test sets both, and the `JsonFileStore`'s test of the journal reads what two
+  puts appended through a store opened anew over the files; its messages are now taken in as an
+  agent takes them in. That an agent does not answer again after a restart follows from its inbox
+  opening at `heard` (issue 223); it is not tested end to end through a restart. STORAGE.md says
+  that every part a state stores is among its changes. Stored states stay readable; one stored
+  before stands where its last snapshot left it until its next put.

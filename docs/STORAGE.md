@@ -221,10 +221,12 @@ against an update of the entity.
     one: a page and its cursor, a delivery, a mark of what was read, a member's range, where a
     window begins.
 *   A small part - the processing state, the turn under way, the tokens the agent's calls used, an
-    external agent's open tasks and the classifications it was given - is recorded whole: it is
-    changed in place and bounded by one turn, one exchange, or the labels in use. What would be
-    summed over a whole chain is kept as such a part instead, so that a chain is never read whole
-    for it.
+    external agent's open tasks and the classifications it was given, where an agent stands in its
+    channel's history and the last message it took in - is recorded whole: it is changed in place
+    and bounded by one turn, one exchange, or the labels in use. What would be summed over a whole
+    chain is kept as such a part instead, so that a chain is never read whole for it. Every part a
+    state stores is among its changes: one left out is stored only with the next snapshot, and a
+    state loaded again stands where that left it (issue 440).
 
 Replaying is idempotent, and nothing replayed is a change to store again. Every reference between
 parts is a digest or an id, resolved when read and never while replaying, so the order across parts
