@@ -432,6 +432,15 @@ impl StateStore for MemoryStore {
         Ok(())
     }
 
+    /// The states kept are the index: each knows whether it has work under
+    /// way.
+    async fn channels_with_work_under_way(&self) -> StoreResult<Vec<ChannelId>> {
+        let channels: HashSet<ChannelId> = read_lock(&self.agent_channel_states, |v| {
+            v.iter().filter(|(_, state)| state.has_work_under_way()).map(|((_, channel_id), _)| *channel_id).collect()
+        });
+        Ok(channels.into_iter().collect())
+    }
+
     async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
         Ok(read_lock(&self.agent_states, |v| v.get(&agent_id).cloned()).unwrap_or_default())
     }
@@ -641,6 +650,11 @@ mod tests {
     #[tokio::test]
     async fn behaves_as_a_state_store() {
         suite::state_store_behaves(&MemoryStore::new()).await;
+    }
+
+    #[tokio::test]
+    async fn keeps_the_index_of_the_work_under_way() {
+        suite::work_under_way_is_indexed(&MemoryStore::new()).await;
     }
 
     #[tokio::test]

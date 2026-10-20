@@ -100,6 +100,12 @@ impl RemoteState {
         self.conversation.is_none() && self.open_tasks.is_empty() && self.given_prompts.is_empty() && self.given_classifications.is_empty()
     }
 
+    /// Whether the remote agent works on a task it was given (issue 388):
+    /// one that asked something back waits for an answer instead.
+    pub fn has_work_under_way(&self) -> bool {
+        self.open_tasks.iter().any(|task| task.state == OpenTaskState::Working)
+    }
+
     /// Records that the remote agent keeps its conversation as
     /// `conversation`. If it opened another than the one it had, what it was
     /// given of the prompt parts is no longer known to it.

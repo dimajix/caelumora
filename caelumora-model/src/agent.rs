@@ -596,6 +596,18 @@ impl AgentChannelState {
         answered
     }
 
+    /// Whether the agent has work under way that goes on by itself once its
+    /// channel runs again (issue 388): a turn stored at a step it resumes
+    /// from - not one waiting for a person, whose answer starts the channel
+    /// anyway -, or a remote task the remote agent works on. What a store
+    /// keeps an index of, so that a restart finds the sessions to start.
+    pub fn has_work_under_way(&self) -> bool {
+        let turn_goes_on = self.turn.as_ref().is_some_and(|turn| turn.command.is_none())
+            && self.processing_state.in_turn()
+            && self.processing_state != ActorState::WaitingForUser;
+        turn_goes_on || self.remote.has_work_under_way()
+    }
+
     /// Takes in what it perceived of what others said (issues 196, 206),
     /// the same for both kinds of agent - what passed its perceive
     /// processors - into its transcript, which a turn under way has then
@@ -1219,6 +1231,29 @@ pub(crate) mod tests {
         command.prepare_resume("not executed");
         assert!(command.turn.is_none());
         assert_eq!(command.processing_state, ActorState::Idle);
+    }
+
+    #[test]
+    fn work_under_way_is_what_goes_on_by_itself_when_the_channel_runs_again() {
+        use crate::external_agent::{OpenTask, OpenTaskState, TaskId};
+        let in_turn = |actor_state: ActorState| AgentChannelState { processing_state: actor_state, turn: Some(TurnState::default()), ..AgentChannelState::default() };
+        for going_on in [ActorState::Planning, ActorState::ExecutingTools, ActorState::Reflecting, ActorState::Cancelling, ActorState::Busy] {
+            assert!(in_turn(going_on).has_work_under_way(), "{going_on:?}");
+        }
+        assert!(!in_turn(ActorState::WaitingForUser).has_work_under_way(), "it waits for a person");
+        assert!(!AgentChannelState::default().has_work_under_way(), "idle");
+        assert!(!AgentChannelState { processing_state: ActorState::Planning, ..AgentChannelState::default() }.has_work_under_way(), "a turn state without the turn starts idle");
+        let mut command = in_turn(ActorState::Planning);
+        command.turn = Some(TurnState { command: Some(CommandRequest { command: "mark".to_string(), args: String::new(), issuer: ActorId::None }), ..Default::default() });
+        assert!(!command.has_work_under_way(), "a command turn is dropped");
+
+        let open = |state: OpenTaskState| {
+            let mut external = AgentChannelState::default();
+            external.remote.open_tasks.push(OpenTask { task: TaskId("t-1".to_string()), since: Utc::now(), state, unsaid: None, work: None });
+            external
+        };
+        assert!(open(OpenTaskState::Working).has_work_under_way(), "the remote agent works on it");
+        assert!(!open(OpenTaskState::InputRequired).has_work_under_way(), "it waits for an answer");
     }
 
     #[test]

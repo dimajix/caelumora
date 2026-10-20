@@ -401,6 +401,20 @@ Entities have no such rule: two requests may change one at the same time, and th
 The JSON stores write every file through a temporary file of its own, so that neither write fails
 for the other's.
 
+### Work under way
+
+What a restart is to start again is read from an index the state store keeps beside the agents'
+states (issue 388), not by loading every state: a put of an `AgentChannelState` enters the agent
+and channel in it while the state has work under way (`AgentChannelState::has_work_under_way`) and
+takes them out with the put that has none, and deleting the state takes them out with it.
+`StateStore::channels_with_work_under_way` lists the channels. Since a turn is stored after every
+step, the index is as current after a crash as after an orderly shutdown.
+
+The `JsonFileStore` keeps an empty file per entry, `runtime/under_way/<channel_id>.<agent_id>`,
+written only when the entry comes or goes. It is entered before the state is written and taken out
+after it: what a crash leaves between the two is a session started for nothing, never work that is
+not started. The `MemoryStore` asks the states it keeps.
+
 ### Deleting state
 
 Deleting a session or a channel keeps its state, hidden with it; purging removes the state too, with
