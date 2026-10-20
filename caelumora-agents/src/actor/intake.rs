@@ -10,7 +10,7 @@ use super::body::AgentBody;
 use crate::message::apply_stage_processors;
 use caelumora_runtime::logging::envelope_span;
 use caelumora_runtime::transport::EventReceiver;
-use caelumora_model::actor::{ActorEvent, Envelope, Pick};
+use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::{AgentChannelState, HearsFrom};
 use caelumora_model::message::Message;
 use caelumora_model::transcript::TranscriptEntry;
@@ -128,28 +128,42 @@ impl AgentBody {
     /// again, so that the call is given it: what others said, as `take_in`
     /// perceives it, and who joined or left. What its personality hears
     /// then, and what the turn may hear at all, is the model's to say
-    /// (`HearsDuringTurn::takes`). A request to respond it takes is dropped:
+    /// (`HearsDuringTurn::pick`). A request to respond it takes is dropped:
     /// the turn answers it, its message heard. It takes up to the first
     /// event it may not take and leaves that event and everything behind it
-    /// where they are, in order, for `take_in` to take after the turn.
-    /// Returns whether it took in anything. Writes where the agent stands
-    /// into `state`, as `take_in` does, and does not store.
+    /// where they are, in order, for `take_in` to take after the turn -
+    /// unless a request in the turn's own authority lies further on, which
+    /// lets it hear what waited only for the authority it was said in
+    /// (`HearsDuringTurn::pick_request`, issue 435): it takes that request
+    /// ahead and then what came before it, passing over the requests of
+    /// others, which wait for a turn in theirs. Returns whether it took in
+    /// anything. Writes where the agent stands into `state`, as `take_in`
+    /// does, and does not store.
     pub(super) async fn take_in_during_turn(&self, state: &mut AgentChannelState, rx: &mut Box<dyn EventReceiver>) -> bool {
         let hears = self.hears_during_turn();
         let Some(under_way) = state.turn.as_ref().filter(|_| hears.from != HearsFrom::None) else {
             return false;
         };
         let work = under_way.work.clone();
-        let may_take = |envelope: &Envelope| if hears.takes(&work, envelope) { Pick::Take } else { Pick::Stop };
         let mut taken = false;
-        while let Some(event) = rx.try_recv_if(&may_take).await {
+        // Where the last request in the turn's authority taken ahead was.
+        let mut asked = None;
+        loop {
+            while let Some(event) = rx.try_recv_if(&|envelope: &Envelope| hears.pick(&work, envelope, asked)).await {
+                taken = true;
+                let span = envelope_span(&event.context, event.event.kind());
+                async {
+                    debug!("Received {} during a turn", event.describe());
+                    // A request left over is answered by the turn under way.
+                    self.take_in_said(state, event).await;
+                }.instrument(span).await;
+            }
+            let Some(request) = rx.try_recv_if(&|envelope: &Envelope| hears.pick_request(&work, envelope)).await else {
+                break;
+            };
+            debug!("Received {} during a turn, ahead of what waited before it", request.describe());
             taken = true;
-            let span = envelope_span(&event.context, event.event.kind());
-            async {
-                debug!("Received {} during a turn", event.describe());
-                // A request left over is answered by the turn under way.
-                self.take_in_said(state, event).await;
-            }.instrument(span).await;
+            asked = request.context.position;
         }
         state.heard = rx.heard();
         taken
@@ -220,7 +234,8 @@ impl TakenIn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::agent::HearsDuringTurn;
+    use caelumora_model::agent::{HearsDuringTurn, OthersWords};
+    use caelumora_model::chain::Position;
     use caelumora_runtime::component::ComponentImpl;
     use crate::message::testing::Without;
     use crate::message::PerceiveInProcessor;
@@ -325,6 +340,72 @@ mod tests {
             left.push(event.event.kind());
         }
         assert_eq!(left, ["CommandRequested", "CompleteMessageGenerated"], "the command and what follows it wait, in order; the request was the turn's");
+    }
+
+    /// What bob and alice say during alice's turn, each at its position:
+    /// bob's words and request, alice's words and request, bob's words
+    /// and request again.
+    fn bob_then_alice_then_bob(alice: ActorId, bob: ActorId) -> Vec<Envelope> {
+        let at = |seq: u64, initiator: ActorId, event: ActorEvent| {
+            Envelope::new(SecurityContext::default(), EventContext { initiator_id: initiator, position: Some(Position::new(seq)), ..EventContext::default() }, event)
+        };
+        let of = |seq, sender: ActorId, text: &str| at(seq, sender, ActorEvent::CompleteMessageGenerated(Message { sender_id: sender, ..said(text) }));
+        vec![
+            of(0, bob, "his first"), at(1, bob, ActorEvent::ResponseRequested),
+            of(2, alice, "hers"), at(3, alice, ActorEvent::ResponseRequested),
+            of(4, bob, "his second"), at(5, bob, ActorEvent::ResponseRequested),
+        ]
+    }
+
+    /// What `rx` holds still, as the kinds of its events and their
+    /// positions.
+    async fn left_in(rx: &mut Box<dyn EventReceiver>) -> Vec<(&'static str, u64)> {
+        let mut left = Vec::new();
+        while let Some(event) = rx.try_recv().await {
+            left.push((event.event.kind(), event.context.position.map_or(u64::MAX, |seq| seq.get())));
+        }
+        left
+    }
+
+    /// Issue 435: with `others: when_asked`, alice asking after bob spoke
+    /// lets her turn hear him up to her request; his requests wait, and
+    /// what he says after it waits too.
+    #[tokio::test]
+    async fn during_a_turn_its_initiator_asking_again_lets_it_hear_what_another_said_before() {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+        let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let mut state = AgentChannelState::default();
+        under_way_for(&mut state, alice);
+        for event in bob_then_alice_then_bob(alice, bob) {
+            tx.try_send(event).expect("room");
+        }
+        let body = AgentBody::detached(Vec::new()).hearing(HearsDuringTurn { from: HearsFrom::Users, others: OthersWords::WhenAsked });
+
+        assert!(body.take_in_during_turn(&mut state, &mut rx).await, "it took something in");
+        assert_eq!(texts(&state.transcript.messages()), ["his first", "hers"], "what was said before her request, in order");
+        assert!(state.heard.has(Position::new(3)) && !state.heard.has(Position::new(1)), "where it stands: his request not taken");
+        assert_eq!(left_in(&mut rx).await, [("ResponseRequested", 1), ("CompleteMessageGenerated", 4), ("ResponseRequested", 5)], "his requests and what he said after hers wait, in order");
+    }
+
+    /// Issue 435: with `others: wait`, or when only bob asks, nothing he
+    /// said is heard.
+    #[tokio::test]
+    async fn during_a_turn_anothers_request_or_waiting_lets_it_hear_nothing_of_him() {
+        let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        for (others, said) in [(OthersWords::Wait, bob_then_alice_then_bob(alice, bob)), (OthersWords::WhenAsked, bob_then_alice_then_bob(alice, bob).into_iter().filter(|e| e.context.initiator_id == bob).collect())] {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+            let mut state = AgentChannelState::default();
+            under_way_for(&mut state, alice);
+            let count = said.len();
+            for event in said {
+                tx.try_send(event).expect("room");
+            }
+            let body = AgentBody::detached(Vec::new()).hearing(HearsDuringTurn { from: HearsFrom::Users, others });
+            assert!(!body.take_in_during_turn(&mut state, &mut rx).await, "{others:?}: nothing taken in");
+            assert_eq!(left_in(&mut rx).await.len(), count, "{others:?}: all of it waits");
+        }
     }
 
     #[tokio::test]
