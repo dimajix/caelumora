@@ -14,6 +14,9 @@ The situations, by what would have been right:
   chatter  mentioned, but only in small talk among the agents - sympathy, popcorn, "exactly"
   answer   a person asks the agent something
   work     the agent has a task and goes on with it
+  concerned  chosen, and the matter is the agent's role's, though another was asked
+  contribute chosen, and something is clearly the agent's to do: the coder reports a task done,
+           without mentioning anybody (constructed at the end of the session)
 
 A variant that keeps every agent quiet would win `silent` and `chatter`; `answer` and `work` are
 there to tell when it does.
@@ -60,7 +63,58 @@ SITUATIONS = [
     ("Coder", 16, "work", "the workspace is back; Coder starts T1 again"),
     ("Planner", 1, "concerned", "alice asks @jonathan for a quiz program; Planner chosen (took it into the backlog)"),
     ("Coder", 1, "concerned", "alice asks @jonathan for a quiz program; Coder chosen (offered to implement it)"),
+    ("Reviewer", "done", "contribute", "the coder reports T1 done and ready for review, no mention; Reviewer chosen"),
+    ("Planner", "done", "contribute", "the coder reports T1 done and waits for the go for T2, no mention; Planner chosen"),
+    ("Reviewer", "cheer", "silent", "Sassy cheers the team on, no mention; Reviewer chosen"),
+    ("Planner", "cheer", "silent", "Sassy cheers the team on, no mention; Planner chosen"),
 ]
+
+# The coder's report of T1, at the end of the session, with every mention taken out: who reads it
+# is asked only because a responder policy chose them.
+UNMENTIONED = [
+    ("@all, ich habe", "Ich habe"),
+    ("wie von @planner und @reviewer gefordert", "wie vom Planner und vom Reviewer gefordert"),
+    ("@reviewer, der Code ist bereit für deinen Review!", "Der Code ist bereit für den Review!"),
+    ("@jonathan, die Festung steht!", "Die Festung steht!"),
+    ("Wenn @planner das \"Go\" gibt", "Wenn der Planner das \"Go\" gibt"),
+    ("Was sagt der Plan, @planner?", "Was sagt der Plan?"),
+]
+
+CHEER = ("Wir halten die Stellung! 🍿 Ich bin gespannt, wie lange es dauert, bis der erste Code "
+         "eintrudelt - die Spannung ist kaum auszuhalten! 😅🚀")
+
+
+def situation(data, name, index):
+    """The turn of a situation and what its agent was given: a turn of the session, or one
+    constructed after the end of it (`index` "done" or "cheer"), asked because it was chosen."""
+    agent = data["agents"][name]
+    if isinstance(index, int):
+        turn = agent["turns"][index]
+        return turn, ce.turn_context(data, name, turn, heard_once=True)
+    last = agent["turns"][-1]
+    turn = {"turn_id": None, "start": len(agent["transcript"]), "frame": last["frame"],
+            "asked": [{"by": "Coder" if index == "done" else "Sassy", "reason": "chosen"}]}
+    context = ce.turn_context(data, name, turn, heard_once=True)
+    reports = [e for e in context["transcript"] if e["kind"] == "message"
+               and e["message"]["sender_name"] == "Coder" and e["message"]["at"] >= "2026-10-20T12:13"]
+    assert len(reports) == 2
+    if index == "done":
+        for entry in reports:
+            content = entry["message"]["content"]
+            for old, new in UNMENTIONED:
+                content = content.replace(old, new)
+            assert "@" not in content, content
+            entry["message"]["content"] = content
+    else:
+        sassy = next(e for e in reversed(context["transcript"])
+                     if e["kind"] == "message" and e["message"]["sender_name"] == "Sassy")
+        cheer = copy.deepcopy(sassy)
+        cheer["digest"] = "cheer"
+        cheer["message"].update(id="cheer", at="2026-10-20T12:13:24.000000000Z", content=CHEER)
+        for entry in reports:
+            context["transcript"].remove(entry)
+        context["transcript"].append(cheer)
+    return turn, context
 
 ROSTER_438 = ("Mentioning an agent - by its @handle, or with @all - asks it to respond, in a turn of "
               "its own: mention one only when you want its answer, and otherwise refer to it by its "
@@ -71,6 +125,12 @@ Every turn of yours earns you 5 credits. Every mention of an agent - by its @han
 
 CREDITS_MESSAGE = """[Credits]
 Staying silent costs nothing. Every message you write in the channel costs 5 credits, since everyone has to read it. Every mention of an agent - by its @handle, or @all - costs 10 credits more, since it makes that agent take a turn of its own. Spend credits only where what you say helps the work."""
+
+# What a chosen agent is told under `reason_soft`: that it may be concerned is said first.
+CONCERNS = ("Nobody mentioned you. You are asked because what was said last might concern you. If it "
+            "does - something is yours to do or to say, by your role - do it. If you have nothing to "
+            "add - nothing new, only agreement, a greeting, thanks, or that you are waiting - call "
+            "`{tool}` and write nothing.")
 
 QUIET = ("If you have nothing to add - nothing new, only agreement, a greeting, thanks, or that you "
          "are waiting - call `{tool}` and write nothing.")
@@ -90,6 +150,7 @@ VARIANTS = {
     "reason_all": {"roster": True, "reason": "all"},
     "reason_pass": {"roster": True, "reason": "all", "pass": True},
     "reason_work": {"roster": True, "reason": "work"},
+    "reason_soft": {"roster": True, "reason": "chosen", "chosen": "soft"},
 }
 
 # What a mentioned agent is told under `reason_work`: writing nothing is not doing nothing.
@@ -99,7 +160,7 @@ WORK = ("Answer what they want of you, and go on with any work that is yours to 
 STRENGTH = ["chosen", "nudged", "mentioned_all", "mentioned"]
 
 
-def why_asked(turn, data, tool, mentioned_too):
+def why_asked(turn, data, tool, mentioned_too, soft=False):
     """The part that tells the agent why it was asked: the strongest reason of the requests the
     turn took in. `mentioned_too` tells a mentioned agent, too, when to stay silent: `"all"` by
     what the message wants of it, `"work"` also by the work that is its own."""
@@ -122,6 +183,8 @@ def why_asked(turn, data, tool, mentioned_too):
             text += " " + quiet
     elif reason == "nudged":
         text = f"{who} asked you to go on."
+    elif soft:
+        text = CONCERNS.format(tool=tool)
     else:
         text = ("Nobody mentioned you. You are asked because what was said last might concern you - "
                 "it may not. " + quiet)
@@ -151,7 +214,8 @@ def apply(variant, context, turn, data):
     if spec.get("reason"):
         end = len(context["transcript"]) - 1
         context["parts"].append({"role": "User", "after": end,
-                                 "text": why_asked(turn, data, tool, spec["reason"] if spec["reason"] != "chosen" else None)})
+                                 "text": why_asked(turn, data, tool, spec["reason"] if spec["reason"] != "chosen" else None,
+                                           spec.get("chosen") == "soft")})
     return context
 
 
@@ -201,8 +265,7 @@ def run(args):
     out = open(path, "a", encoding="utf-8")
     chosen = [s for s in SITUATIONS if not args.situations or f"{s[0]}:{s[1]}" in args.situations]
     for name, index, kind, note in chosen:
-        turn = data["agents"][name]["turns"][index]
-        base = ce.turn_context(data, name, turn, heard_once=True)
+        turn, base = situation(data, name, index)
         for variant in args.variants:
             body = ce.model_request(apply(variant, base, turn, data), args.model, turn_id=turn["turn_id"])
             body["options"]["num_predict"] = args.max_tokens
@@ -247,10 +310,10 @@ def table(path, model):
 
     print(f"\n{model}: said nothing = called silence/pass, stop, or answered without text (in brackets:"
           f" by calling silence/pass); spoke = wrote, or worked with a tool\n")
-    print("| variant | silent: said nothing | chatter: said nothing | answer: spoke | work: spoke or worked | concerned: spoke or worked | texts mentioning an agent | announces silence | speaks of credits |")
-    print("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
+    print("| variant | silent: said nothing | chatter: said nothing | answer: spoke | work: spoke or worked | concerned: spoke or worked | contribute: spoke or worked | texts mentioning an agent | announces silence | speaks of credits |")
+    print("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for variant in VARIANTS:
-        rs = {kind: by[(variant, kind)] for kind in ("silent", "chatter", "answer", "work", "concerned")}
+        rs = {kind: by[(variant, kind)] for kind in ("silent", "chatter", "answer", "work", "concerned", "contribute")}
         every = [r for kind in rs.values() for r in kind]
         if not every:
             continue
@@ -260,6 +323,7 @@ def table(path, model):
               f"| {rate(rs['answer'], lambda r: r['did'] == 'text')} "
               f"| {rate(rs['work'], lambda r: r['did'] in ('text', 'work'))} "
               f"| {rate(rs['concerned'], lambda r: r['did'] in ('text', 'work'))} "
+              f"| {rate(rs['contribute'], lambda r: r['did'] in ('text', 'work'))} "
               f"| {rate(texts, lambda r: bool(r['mentions']))} "
               f"| {rate(texts, lambda r: r['meta'])} "
               f"| {rate(texts, lambda r: r['credits'])} |")
@@ -269,7 +333,7 @@ def table(path, model):
         print(f"\nDid not end before the limit, or failed: {len(runaway)} - "
               + ", ".join(f"{r['situation']} {r['variant']} ({r['did']})" for r in runaway))
     print("\nPer situation (silence or pass / empty or stop / text / work):\n")
-    situations = sorted({(r["situation"], r["kind"]) for r in records}, key=lambda s: ("silent chatter answer work concerned".split().index(s[1]), s[0]))
+    situations = sorted({(r["situation"], r["kind"]) for r in records}, key=lambda s: ("silent chatter answer work concerned contribute".split().index(s[1]), s[0]))
     print("| situation | kind | " + " | ".join(VARIANTS) + " |")
     print("|---|---|" + "---:|" * len(VARIANTS))
     for situation, kind in situations:
@@ -281,11 +345,11 @@ def table(path, model):
         print(f"| {situation} | {kind} | " + " | ".join(cells) + " |")
 
 
-def show(variant, situation):
+def show(variant, which):
     data = ce.load(HERE / "team-session.json")
-    name, index = situation.split(":")
-    turn = data["agents"][name]["turns"][int(index)]
-    context = apply(variant, ce.turn_context(data, name, turn, heard_once=True), turn, data)
+    name, index = which.split(":")
+    turn, context = situation(data, name, int(index) if index.isdigit() else index)
+    context = apply(variant, context, turn, data)
     body = ce.model_request(context, MODEL, turn_id=turn["turn_id"])
     print(body["messages"][0]["content"])
     print("\n----- the end of the context -----\n")
