@@ -113,6 +113,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [434](434-hearing-during-a-turn-from-the-history-untested.md) | done | That an agent hears between the steps of a turn (issue 431) is tested only with an inbox whose queue holds everything, so nothing shows that it works the same when the inbox is behind and reads from the channel's history, or after a restart in the middle of a turn that heard something. |
 | [435](435-another-initiators-words-wait-though-asked-again.md) | done | An agent whose personality hears during a turn with `others: wait` hears nothing more in that turn once someone other than its initiator has spoken, even when its initiator asks it again afterwards - by mentioning it or otherwise - though between turns that request would let it hear the other's words. |
 | [436](436-work-resumed-after-a-restart-is-not-bounded.md) | open | A server that went down with many turns under way starts every session with work under way at its start, and all their turns then run at once, however many there are. |
+| [437](437-mentions-of-people-and-failed-decisions-ask-agents.md) | open | A message that `@`-mentions only a person is answered by the agents the responder policy chooses, and when the decision model of `decision_policy` does not choose in time, every agent of the channel is asked - so in a channel of several agents, agents answer what was not meant for them. |
 
 ## Identity and access management
 
