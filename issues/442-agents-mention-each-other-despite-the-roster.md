@@ -1,6 +1,6 @@
 # 442 — Agents keep mentioning each other although the roster says what a mention does
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -94,3 +94,10 @@ own; the name, without @, to greet, thank, praise, agree, answer or speak about 
   sentence left nearly every turn asked for by another agent's mention, and the experiments in
   `work/quiet_agents/mentions.py`. The maintainer decided on a prompt provider of its own for the
   reminder before the turn's input.
+- **2026-10-20** — Done: the roster opens the list of the others without inviting mentions and
+  says, where an agent is among them, when to write an @handle and when a name, as `test_names`
+  of the experiments worded it, with the name of one of the agents as its example. The new
+  `channel_mentions_prompt_provider` gives the condition before the turn's input where another
+  agent is in the channel; both read the channel's participants the same way
+  (`channel_participants_prompt_provider::participants`). The seed's `channel-context` includes
+  it, and the `team-session`'s briefing no longer tells agents to mention.
