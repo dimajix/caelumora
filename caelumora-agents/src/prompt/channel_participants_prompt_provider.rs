@@ -123,6 +123,12 @@ fn render(me: Option<&ActorDescription>, others: &[ActorDescription], explanatio
         };
         text.push_str(&format!("- {line}\n"));
     }
+    // A mention of an agent is a request to respond, not a form of address
+    // (issue 438): agents that greet each other with `@` keep asking the
+    // next one to answer. A mention of a person asks nothing of them.
+    if others.iter().any(|participant| !participant.is_person()) {
+        text.push_str("Mentioning an agent - by its @handle, or with @all - asks it to respond, in a turn of its own: mention one only when you want its answer, and otherwise refer to it by its name without @.\n");
+    }
     if let Some(explanation) = explanation {
         text.push_str(&format!("{explanation}\n"));
     }
@@ -202,9 +208,11 @@ mod tests {
             About you: A quiz master.\n\
             The others - mention one by their @handle to address them, or all of them with @all:\n\
             - Kaya (@kaya), a person. In their own words: \"I run the budget.\"\n\
-            - Sassy (@sassy), an agent.\n");
+            - Sassy (@sassy), an agent.\n\
+            Mentioning an agent - by its @handle, or with @all - asks it to respond, in a turn of its own: mention one only when you want its answer, and otherwise refer to it by its name without @.\n");
         assert!(render(Some(&me), &[], Some("Marked.")).ends_with("Nobody else is in this channel.\n"), "nothing to explain without others");
-        assert!(render(Some(&me), &others, Some("Messages of the others begin ...")).ends_with("- Sassy (@sassy), an agent.\nMessages of the others begin ...\n"), "told with the others (issue 135)");
+        assert!(render(Some(&me), &others, Some("Messages of the others begin ...")).ends_with("by its name without @.\nMessages of the others begin ...\n"), "told with the others (issue 135)");
+        assert!(!render(Some(&me), &others[..1], None).contains("Mentioning an agent"), "among people alone, a mention asks nobody (issue 438)");
     }
 
     #[test]
@@ -304,7 +312,8 @@ mod tests {
             The others - mention one by their @handle to address them, or all of them with @all:\n\
             - Kaya (@kaya), a person. In their own words: \"I run the budget.\"\n\
             - Sassy (@sassy), an agent.\n\
-            - Bob (@bob), a person.\n", "no approver, nobody who no longer exists");
+            - Bob (@bob), a person.\n\
+            Mentioning an agent - by its @handle, or with @all - asks it to respond, in a turn of its own: mention one only when you want its answer, and otherwise refer to it by its name without @.\n", "no approver, nobody who no longer exists");
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));
     }
 

@@ -622,6 +622,9 @@ with their introductions, read at the start of every turn - each as the views de
 running actor (see [CHANNELS.md](CHANNELS.md#moderators)). A person's introduction is marked as
 written by them, so that it does not read as an instruction of the system, and kept to one line. It
 also says that `@all` addresses all of them, and explains how the others' messages are marked.
+Where the others include an agent, it says that mentioning an agent, or `@all`, asks it to respond,
+and that a name without `@` refers to one without asking it (issue 438): to a model a mention reads
+as a form of address, and agents that greet each other with `@` keep asking the next one to answer.
 
 That the roster changed is told where it happened: a transcript entry of someone who joined or left
 is given to the model as the channel's notice - "Channel notice: @alice added @bob to the channel.",
