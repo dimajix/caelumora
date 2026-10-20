@@ -24,6 +24,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [381](381-inactive-channels-held-in-memory.md) | open | medium | feature | A channel nobody has spoken in for days keeps its loop, its actors and their states in memory until its session is stopped, and nothing notices that it is idle. Part of epic [378](378-resource-management-epic.md). |
 | [382](382-agents-held-without-a-session.md) | open | medium | feature | An agent stays loaded with its memory while nothing uses it, and what still holds it once its sessions are unloaded has not been checked. Part of epic [378](378-resource-management-epic.md). |
 | [437](437-mentions-of-people-and-failed-decisions-ask-agents.md) | open | medium | feature | A message that `@`-mentions only a person is answered by the agents the responder policy chooses, and when the decision model of `decision_policy` does not choose in time, every agent of the channel is asked - so in a channel of several agents, agents answer what was not meant for them. |
+| [439](439-an-agent-is-not-told-why-it-was-asked.md) | open | medium | feature | A request to respond carries no reason, so an agent cannot tell whether it was mentioned or only chosen by a responder policy that guessed it might fit, takes every request as an order to answer, and answers with small talk or that it has nothing to say instead of staying silent. |
 
 ## Identity and access management
 

@@ -114,6 +114,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [435](435-another-initiators-words-wait-though-asked-again.md) | done | An agent whose personality hears during a turn with `others: wait` hears nothing more in that turn once someone other than its initiator has spoken, even when its initiator asks it again afterwards - by mentioning it or otherwise - though between turns that request would let it hear the other's words. |
 | [436](436-work-resumed-after-a-restart-is-not-bounded.md) | open | A server that went down with many turns under way starts every session with work under way at its start, and all their turns then run at once, however many there are. |
 | [437](437-mentions-of-people-and-failed-decisions-ask-agents.md) | open | A message that `@`-mentions only a person is answered by the agents the responder policy chooses, and when the decision model of `decision_policy` does not choose in time, every agent of the channel is asked - so in a channel of several agents, agents answer what was not meant for them. |
+| [439](439-an-agent-is-not-told-why-it-was-asked.md) | open | A request to respond carries no reason, so an agent cannot tell whether it was mentioned or only chosen by a responder policy that guessed it might fit, takes every request as an order to answer, and answers with small talk or that it has nothing to say instead of staying silent. |
 
 ## Identity and access management
 
