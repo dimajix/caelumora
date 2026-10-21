@@ -1,6 +1,6 @@
 # 57 — Prompts are English constants spread through the code
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -166,3 +166,10 @@ personality and component, and repeat them in each.
   templates of `minijinja` with loops and conditions instead of placeholders, at the maintainer's
   suggestion, so that a variant can change how a part is built and not only its words; the variant
   named in `ModelProfile`; the first step in four commits.
+- **2026-10-21** — Step 1, commit 1: `PromptCatalogue` in `caelumora-model` (`minijinja` 2.24),
+  filled through `RuntimeBuilder::prompts` and offered as a service once the runtime is built; the
+  agents' texts in `caelumora-agents/src/prompts.yaml`, namespace `agents`, rendered by the prompt
+  providers of `prompt/` and by the prompt parts of `notes`, `private_notes` and `agent_memory`,
+  word for word as before. A template that does not parse stops the start; that the code gives every
+  value a text names is checked by the tests, which render every part - the check of overrides
+  against their defaults comes with them in step 2.

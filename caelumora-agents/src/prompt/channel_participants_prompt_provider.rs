@@ -18,15 +18,19 @@
 //! again after a restart.
 
 use caelumora_runtime::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorId};
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
 use caelumora_model::value::text::Introduction;
 use std::sync::{Arc, Mutex};
 
 pub const CHANNEL_PARTICIPANTS_PROMPT_PROVIDER_KIND: &str = "channel_participants_prompt_provider";
+
+/// Its text in the prompt catalogue.
+const TEXT: &str = "agents.channel_participants";
 
 #[derive(Debug)]
 pub struct ChannelParticipantsPromptProvider {
@@ -34,18 +38,19 @@ pub struct ChannelParticipantsPromptProvider {
     /// Whether it tells only of changes: then what it told last, `None`
     /// before it told anything. A plain lock, never held across an await.
     told: Option<Mutex<Option<String>>>,
+    prompts: Arc<PromptCatalogue>,
 }
 
 impl ChannelParticipantsPromptProvider {
     /// The roster at `position`, told every time it is asked.
-    pub fn new(position: PromptPosition) -> Self {
-        Self { position, told: None }
+    pub fn new(position: PromptPosition, prompts: Arc<PromptCatalogue>) -> Self {
+        Self { position, told: None, prompts }
     }
 
     /// The roster at `position`, told the first time it is asked and then
     /// only when it changed (issue 204).
-    pub fn changes_only(position: PromptPosition) -> Self {
-        Self { position, told: Some(Mutex::new(None)) }
+    pub fn changes_only(position: PromptPosition, prompts: Arc<PromptCatalogue>) -> Self {
+        Self { position, told: Some(Mutex::new(None)), prompts }
     }
 
     /// What the agent is to be told now, the roster rendered as `text`: all
@@ -73,7 +78,7 @@ impl PromptProvider for ChannelParticipantsPromptProvider {
         // Work that reaches no session (`Situation::channel`) has nobody to name.
         let Some((me, others)) = participants(situation).await? else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let explanation = situation.profile().framing_explanation();
-        let text = self.text(render(me.as_ref(), &others, explanation.as_deref()));
+        let text = self.text(render(&self.prompts, me.as_ref(), &others, explanation.as_deref())?);
         // Names and introductions are public (issue 176).
         Ok(Prompt::classified(text, Classification::PUBLIC))
     }
@@ -99,70 +104,23 @@ pub(crate) async fn participants(situation: &Situation<'_>) -> Result<Option<(Op
     Ok(Some((me, others)))
 }
 
-/// The prompt part naming the agent itself, `me`, and the `others`.
-/// Introductions of people are marked as their own words: the system prompt
-/// is what models trust most, and what a participant writes about
-/// themselves must not read as the system's instruction (issue 150). How
-/// the others' messages are marked is told with them, `explanation`, as
-/// the agent's model profile words it (issue 135).
-fn render(me: Option<&ActorDescription>, others: &[ActorDescription], explanation: Option<&str>) -> String {
-    let mut text = String::new();
-    if let Some(me) = me {
-        text.push_str(&format!("You are {}.\n", named(me)));
-        if let Some(introduction) = me.introduction.as_ref().map(one_line) {
-            text.push_str(&format!("About you: {introduction}\n"));
-        }
-    }
-    if others.is_empty() {
-        text.push_str("Nobody else is in this channel.\n");
-        return titled("Who is in this channel", &text);
-    }
-    // Not "to address them": to a model, an @handle offered as the form of
-    // address is one for every greeting (issue 442).
-    text.push_str("The others:\n");
-    for participant in others {
-        let line = match (participant.is_person(), participant.introduction.as_ref().map(one_line)) {
-            (true, Some(introduction)) => format!("{} In their own words: \"{introduction}\"", described(participant)),
-            (false, Some(introduction)) => format!("{} {introduction}", described(participant)),
-            (_, None) => described(participant),
-        };
-        text.push_str(&format!("- {line}\n"));
-    }
-    // A mention of an agent is a request to respond, not a form of address
-    // (issues 438, 442): agents that greet each other with `@` keep asking
-    // the next one to answer. Said as when which form is written, with the
-    // cases that are no request named - there the habit sits -, and bounded
-    // to the one participant needed now: allowed for every task, an @ is
-    // written for everybody (`work/quiet_agents/MENTIONS.md`, finding 4).
-    // `@all` addresses every one of them, with a handle or without (issue 401).
-    if let Some(agent) = others.iter().find(|participant| !participant.is_person()) {
-        let name = &agent.name;
-        text.push_str(&format!(
-            "When to write an @handle, and when a name:\n\
-             - @handle, or @all for all of them: only when you need that participant to answer you or to act, now. Mentioning an agent this way makes it stop and take a turn of its own.\n\
-             - Name, without @: in everything else - when you greet, thank, praise, agree, answer, or speak about someone. \"Thanks, {name}\", \"as {name} said\".\n\
-             - Check every @ before you send: if you do not need an answer or an action from that participant, write the name instead.\n"
-        ));
-    }
-    if let Some(explanation) = explanation {
-        text.push_str(&format!("{explanation}\n"));
-    }
-    titled("Who is in this channel", &text)
-}
-
-/// A participant with its handle and whether it is a person or an agent:
-/// `Kaya (@kaya), a person.`
-fn described(participant: &ActorDescription) -> String {
-    let kind = if participant.is_person() { "a person" } else { "an agent" };
-    format!("{}, {kind}.", named(participant))
-}
-
-/// A participant's name with its handle, if it has one: `Kaya (@kaya)`.
-fn named(participant: &ActorDescription) -> String {
-    match participant.handle() {
-        Some(handle) => format!("{} (@{handle})", participant.name),
-        None => participant.name.to_string(),
-    }
+/// The prompt part of `prompts` naming the agent itself, `me`, and the
+/// `others`. Introductions of people are marked as their own words: the
+/// system prompt is what models trust most, and what a participant writes
+/// about themselves must not read as the system's instruction (issue 150).
+/// Where an agent is among the others, it is told when to mention one, with
+/// the first of them as the example (issues 438, 442). How the others'
+/// messages are marked is told with them, `explanation`, as the agent's
+/// model profile words it (issue 135).
+fn render(prompts: &PromptCatalogue, me: Option<&ActorDescription>, others: &[ActorDescription], explanation: Option<&str>) -> Result<String, PromptError> {
+    let described = |participant: &ActorDescription| context! {
+        name => participant.name.as_str(),
+        handle => participant.handle(),
+        person => participant.is_person(),
+        introduction => participant.introduction.as_ref().map(one_line),
+    };
+    let example = others.iter().find(|participant| !participant.is_person()).map(|agent| agent.name.as_str());
+    prompts.render(TEXT, context! { me => me.map(described), others => others.iter().map(described).collect::<Vec<_>>(), example, explanation })
 }
 
 /// An introduction on one line, so that it cannot break out of its entry.
@@ -172,11 +130,12 @@ fn one_line(introduction: &Introduction) -> String {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(CHANNEL_PARTICIPANTS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
-        |descriptor, _context| {
+        ComponentKind::new(CHANNEL_PARTICIPANTS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
+        |descriptor, context| {
             let position = PromptPosition::of_params(&descriptor.params)?;
             let changes_only = flag_of_params(&descriptor.params, "changes_only")?;
-            let provider = if changes_only { ChannelParticipantsPromptProvider::changes_only(position) } else { ChannelParticipantsPromptProvider::new(position) };
+            let prompts = Arc::clone(context.service::<PromptCatalogue>()?);
+            let provider = if changes_only { ChannelParticipantsPromptProvider::changes_only(position, prompts) } else { ChannelParticipantsPromptProvider::new(position, prompts) };
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(provider));
             Ok(facets)
@@ -218,7 +177,8 @@ mod tests {
     fn the_agent_is_named_first_and_people_speak_in_their_own_words() {
         let me = participant("Jonathan", false, Some("A quiz master."));
         let others = [participant("Kaya", true, Some("I run the budget.")), participant("Sassy", false, None)];
-        let text = render(Some(&me), &others, None);
+        let prompts = testing::prompts();
+        let text = render(&prompts, Some(&me), &others, None).unwrap();
         assert_eq!(text, "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
             About you: A quiz master.\n\
@@ -229,9 +189,9 @@ mod tests {
             - @handle, or @all for all of them: only when you need that participant to answer you or to act, now. Mentioning an agent this way makes it stop and take a turn of its own.\n\
             - Name, without @: in everything else - when you greet, thank, praise, agree, answer, or speak about someone. \"Thanks, Sassy\", \"as Sassy said\".\n\
             - Check every @ before you send: if you do not need an answer or an action from that participant, write the name instead.\n");
-        assert!(render(Some(&me), &[], Some("Marked.")).ends_with("Nobody else is in this channel.\n"), "nothing to explain without others");
-        assert!(render(Some(&me), &others, Some("Messages of the others begin ...")).ends_with("write the name instead.\nMessages of the others begin ...\n"), "told with the others (issue 135)");
-        assert_eq!(render(Some(&me), &others[..1], None), "[Who is in this channel]\n\
+        assert!(render(&prompts, Some(&me), &[], Some("Marked.")).unwrap().ends_with("Nobody else is in this channel.\n"), "nothing to explain without others");
+        assert!(render(&prompts, Some(&me), &others, Some("Messages of the others begin ...")).unwrap().ends_with("write the name instead.\nMessages of the others begin ...\n"), "told with the others (issue 135)");
+        assert_eq!(render(&prompts, Some(&me), &others[..1], None).unwrap(), "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
             About you: A quiz master.\n\
             The others:\n\
@@ -240,15 +200,16 @@ mod tests {
 
     #[test]
     fn telling_only_of_changes_tells_the_roster_again_only_when_it_changed() {
-        let changes = ChannelParticipantsPromptProvider::changes_only(PromptPosition::Start);
-        let roster = |others: &[ActorDescription]| render(None, others, None);
+        let changes = ChannelParticipantsPromptProvider::changes_only(PromptPosition::Start, testing::prompts());
+        let prompts = testing::prompts();
+        let roster = |others: &[ActorDescription]| render(&prompts, None, others, None).unwrap();
         let (kaya, bob) = (participant("Kaya", true, None), participant("Bob", true, None));
         let first = roster(std::slice::from_ref(&kaya));
         assert_eq!(changes.text(first.clone()), first, "told the first time");
         assert_eq!(changes.text(first.clone()), "", "not again unchanged");
         let both = roster(&[kaya, bob]);
         assert_eq!(changes.text(both.clone()), both, "all of it again, without an account of what changed (issue 410)");
-        assert_eq!(ChannelParticipantsPromptProvider::new(PromptPosition::Start).text(first.clone()), first, "told every time without it");
+        assert_eq!(ChannelParticipantsPromptProvider::new(PromptPosition::Start, testing::prompts()).text(first.clone()), first, "told every time without it");
     }
 
     #[test]
@@ -328,7 +289,7 @@ mod tests {
         state.begin_turn(Work::new(EventContext::new(session.id, channel.id, ActorId::None, String::new()), None, context.clone(), channel.classification.clone(), Default::default()));
         let turn = Turn::of(jonathan.id, "Jonathan".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(jonathan.id))).expect("a turn was begun");
 
-        let prompt = ChannelParticipantsPromptProvider::new(PromptPosition::Start).get_prompt(&turn.situation()).await.unwrap();
+        let prompt = ChannelParticipantsPromptProvider::new(PromptPosition::Start, testing::prompts()).get_prompt(&turn.situation()).await.unwrap();
         assert_eq!(prompt.text, "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
             About you: A quiz master.\n\
@@ -356,7 +317,7 @@ mod tests {
         state.begin_turn(Work::new(EventContext::new(session.id(), channel.id(), ActorId::None, String::new()), None, context, channel.classification(), Default::default()));
         let turn = Turn::of(outsider, "outsider".to_string(), &mut state, AgentStateHandle::detached(), actor_runtime_in(channel, ActorId::Agent(outsider))).expect("a turn was begun");
         assert!(matches!(turn.situation().session().await, Err(ViewError::SessionNotFound(_))), "reached, but not to be read (issue 399)");
-        let failed = ChannelParticipantsPromptProvider::new(PromptPosition::Start).get_prompt(&turn.situation()).await;
+        let failed = ChannelParticipantsPromptProvider::new(PromptPosition::Start, testing::prompts()).get_prompt(&turn.situation()).await;
         assert!(matches!(failed, Err(ContextError::View(ViewError::SessionNotFound(_)))), "left to its fail policy: {failed:?}");
     }
 }

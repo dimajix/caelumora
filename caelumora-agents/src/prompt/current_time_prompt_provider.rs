@@ -14,17 +14,18 @@
 //! the component leaves its agents to the times of the messages.
 
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
 pub const CURRENT_TIME_PROMPT_PROVIDER_KIND: &str = "current_time_prompt_provider";
 
-/// The title of its part.
-const TITLE: &str = "Current date and time";
+/// Its text in the prompt catalogue.
+const TEXT: &str = "agents.current_time";
 
 #[derive(Debug)]
 pub struct CurrentTimePromptProvider {
@@ -32,12 +33,13 @@ pub struct CurrentTimePromptProvider {
     /// What it reads the time from: the system's clock, or a fixed one in
     /// tests.
     clock: fn() -> DateTime<Utc>,
+    prompts: Arc<PromptCatalogue>,
 }
 
 impl CurrentTimePromptProvider {
     /// The current time at `position`, read from the system's clock.
-    pub fn new(position: PromptPosition) -> Self {
-        Self { position, clock: Utc::now }
+    pub fn new(position: PromptPosition, prompts: Arc<PromptCatalogue>) -> Self {
+        Self { position, clock: Utc::now, prompts }
     }
 }
 
@@ -49,7 +51,7 @@ impl PromptProvider for CurrentTimePromptProvider {
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         let zone = situation.time_zone();
-        let text = titled(TITLE, &format!("It is {} ({zone}).", zone.format_long((self.clock)())));
+        let text = self.prompts.render(TEXT, context! { time => zone.format_long((self.clock)()), zone => zone.to_string() })?;
         // What time it is is no secret of anything.
         Ok(Prompt::classified(text, Classification::PUBLIC))
     }
@@ -57,11 +59,11 @@ impl PromptProvider for CurrentTimePromptProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(CURRENT_TIME_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
-        |descriptor, _context| {
+        ComponentKind::new(CURRENT_TIME_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
+        |descriptor, context| {
             let position = PromptPosition::of_params_or(&descriptor.params, PromptPosition::BeforeTurnInput)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(CurrentTimePromptProvider::new(position)));
+            facets.insert::<dyn PromptProvider>(Arc::new(CurrentTimePromptProvider::new(position, Arc::clone(context.service::<PromptCatalogue>()?))));
             Ok(facets)
         },
     );
@@ -70,6 +72,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing;
     use caelumora_runtime::agent::state::AgentStateHandle;
     use caelumora_runtime::session::testing::detached_actor_runtime;
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -91,7 +94,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_agent_is_told_the_time_in_the_time_zone_its_turn_records() {
-        let provider = CurrentTimePromptProvider { position: PromptPosition::BeforeTurnInput, clock: sunday };
+        let provider = CurrentTimePromptProvider { position: PromptPosition::BeforeTurnInput, clock: sunday, prompts: testing::prompts() };
         let prompt = told(&provider, TimeZone::new("Europe/Berlin").unwrap()).await;
         assert_eq!(prompt.text, "[Current date and time]\nIt is Sunday, 18 October 2026, 14:33 (Europe/Berlin).\n");
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));

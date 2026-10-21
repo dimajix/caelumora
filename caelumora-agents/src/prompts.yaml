@@ -1,0 +1,161 @@
+# The texts the agents give their models (issue 57), namespace `agents`:
+# templates of `minijinja` (Jinja2), rendered by `PromptCatalogue`.
+#
+# - A prompt part begins with its title in brackets on a line of its own,
+#   so that the parts of a prompt stay apart, and ends in a line break.
+# - The code decides whether a part is given at all and with which values;
+#   a template only how it reads. A value it names and is not given is an
+#   error.
+# - A block tag on a line of its own leaves no line behind. One that ends a
+#   line of text takes the line break with it unless written `+%}`; within
+#   a line, a condition may also be an expression: `{{ ", a person" if person }}`.
+# - Names of tools are values, never written here: they are identifiers.
+
+# `channel_briefing_prompt_provider`: what the session and the channel are
+# for, each `place` as its owner describes it (`kind` "session" or
+# "channel"), the session's first.
+channel_briefing: |
+  {% for place in places %}
+  {% if not loop.first %}
+
+  {% endif %}
+  [About this {{ place.kind }}]
+  What this {{ place.kind }} is for, as its owner describes it.
+  {% if place.summary %}
+  In short: {{ place.summary }}
+  {% endif %}
+  {% if place.briefing %}
+
+  {{ place.briefing }}
+  {% endif %}
+  {% endfor %}
+
+# An agent told only of changes, after both stopped describing themselves.
+channel_briefing_withdrawn: |
+  [About this session and channel]
+  What you were told of them before no longer holds: neither says anything about itself now.
+
+# `channel_language_prompt_provider`: the language of the channel by its
+# BCP 47 `tag`, and by its `english` and `native` names where they are known.
+channel_language: |
+  [Language of this channel]
+  This channel's conversation is held in {% if not english %}the language with the BCP 47 tag "{{ tag }}"{% elif english == native %}{{ english }} (BCP 47 tag "{{ tag }}"){% else %}{{ english }} - {{ native }}, BCP 47 tag "{{ tag }}"{% endif %}. Write everything in {{ english or "it" }} - your answers, your messages to the others and what you note down - whatever language your instructions, your tools or earlier messages are in.
+
+# An agent told only of changes, after the channel stopped being held in one.
+channel_language_withdrawn: |
+  [Language of this channel]
+  This channel's conversation is no longer held in a particular language.
+
+# `channel_participants_prompt_provider`: the agent itself (`me`, none if it
+# is not among them) and the `others`, each by `name`, `handle` (none if it
+# has none), whether a `person`, and `introduction` (none if none);
+# `example`, the name of the first agent among the others (none if there is
+# none), and `explanation`, how the others' messages are marked (none if
+# the model profile says nothing).
+#
+# Not "mention one to address them": to a model, an @handle offered as the
+# form of address is one for every greeting (issue 442). A mention of an
+# agent is a request to respond: said as when which form is written, with
+# the cases that are no request named, and bounded to the one participant
+# needed now (`work/quiet_agents/MENTIONS.md`, finding 4). `@all` addresses
+# every one of them (issue 401).
+channel_participants: |
+  [Who is in this channel]
+  {% if me %}
+  You are {{ me.name }}{{ " (@" ~ me.handle ~ ")" if me.handle }}.
+  {% if me.introduction %}
+  About you: {{ me.introduction }}
+  {% endif %}
+  {% endif %}
+  {% if not others %}
+  Nobody else is in this channel.
+  {% else %}
+  The others:
+  {% for other in others %}
+  - {{ other.name }}{{ " (@" ~ other.handle ~ ")" if other.handle }}, {{ "a person" if other.person else "an agent" }}.{% if other.introduction %}{% if other.person %} In their own words: "{{ other.introduction }}"{% else %} {{ other.introduction }}{% endif %}{% endif +%}
+  {% endfor %}
+  {% if example %}
+  When to write an @handle, and when a name:
+  - @handle, or @all for all of them: only when you need that participant to answer you or to act, now. Mentioning an agent this way makes it stop and take a turn of its own.
+  - Name, without @: in everything else - when you greet, thank, praise, agree, answer, or speak about someone. "Thanks, {{ example }}", "as {{ example }} said".
+  - Check every @ before you send: if you do not need an answer or an action from that participant, write the name instead.
+  {% endif %}
+  {% if explanation %}
+  {{ explanation }}
+  {% endif %}
+  {% endif %}
+
+# `channel_mentions_prompt_provider`, before the turn's input: read last, it
+# does what the roster alone does not (`work/quiet_agents/MENTIONS.md`,
+# `test_names_turn`).
+channel_mentions: |
+  [Before you write]
+  Only use an @handle if you require an answer or an action from that participant now. Do NOT use one to greet, thank, praise, agree with or refer to someone - write their name.
+
+# `current_time_prompt_provider`: the `time`, written out in the `zone`.
+current_time: |
+  [Current date and time]
+  It is {{ time }} ({{ zone }}).
+
+# `request_reason_prompt_provider`, for an agent the responder policy only
+# chose: how to stay silent - by the tool `silence` where it is offered
+# (none where it is not).
+request_reason: |
+  [Why you are asked to respond]
+  Nobody mentioned you. You are asked because what was said last might concern you - it may not. If you have nothing to add - nothing new, only agreement, a greeting, thanks, or that you are waiting - {% if silence %}call `{{ silence }}` and write nothing{% else %}write nothing{% endif %}.
+
+# `tool_sets_prompt_provider`: the tool sets `unavailable`, each by `name`,
+# `description` and `why`.
+tool_sets: |
+  [Unavailable tools]
+  Some of your tools are unavailable right now, so you cannot call them. If a request needs them, say that they are unavailable at the moment rather than that you cannot do it.
+  {% for set in unavailable %}
+  - {{ set.name }} ({{ set.description }}): {{ set.why }}
+  {% endfor %}
+
+# `notes`: the agent's `own` notes and those of the `others` by `name`, each
+# note by `id` and `text`; the tools `write`, `update` and `revoke`.
+notes: |
+  [Notes in this channel]
+  What its participants noted to remember.
+  {% if own %}
+  Your notes (change them with `{{ write }}`, `{{ update }}` and `{{ revoke }}`):
+  {% for note in own %}
+  - #{{ note.id }}: {{ note.text }}
+  {% endfor %}
+  {% endif %}
+  {% for other in others %}
+  Notes of {{ other.name }}:
+  {% for note in other.notes %}
+  - #{{ note.id }}: {{ note.text }}
+  {% endfor %}
+  {% endfor %}
+
+# `private_notes`: those of this channel (`own`, by `id` and `text`) and the
+# texts of those of other channels (`elsewhere`, by `name`), which cannot be
+# changed here and so go unnumbered (issue 60); the tools `write`, `update`
+# and `revoke`.
+private_notes: |
+  [Your private notes]
+  No other participant sees them; only the person responsible for you can inspect them. Do not quote or reveal them in your answers.
+  {% if own %}
+  In this channel (change them with `{{ write }}`, `{{ update }}` and `{{ revoke }}`):
+  {% for note in own %}
+  - #{{ note.id }}: {{ note.text }}
+  {% endfor %}
+  {% endif %}
+  {% for channel in elsewhere %}
+  From channel {{ channel.name }} (change them only there):
+  {% for text in channel.notes %}
+  - {{ text }}
+  {% endfor %}
+  {% endfor %}
+
+# `agent_memory`: what the agent recalls here, each by `id` and `text`; the
+# tools `remember`, `update` and `forget`.
+agent_memory: |
+  [What you remember]
+  From this and your other conversations, as far as it may be known here. No other participant sees it; only the person responsible for you can inspect it. Do not quote or reveal it in your answers. Change it with `{{ remember }}`, `{{ update }}` and `{{ forget }}`.
+  {% for memory in recalled %}
+  - #{{ memory.id }}: {{ memory.text }}
+  {% endfor %}

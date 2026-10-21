@@ -5,6 +5,10 @@
 //! `ContextProvider` and any number of `PromptProvider`s (issue 98). A
 //! component that offers a prompt part along with another facet - tools,
 //! say - stays in `components`.
+//!
+//! What the parts say is the agents' namespace of the prompt catalogue
+//! (`PROMPTS`, issue 57): a provider gets the catalogue when it is made and
+//! renders its text from it.
 
 pub mod channel_briefing_prompt_provider;
 pub mod channel_language_prompt_provider;
@@ -23,10 +27,18 @@ use caelumora_runtime::view::ViewError;
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::prompt_catalogue::PromptError;
 use caelumora_model::store::StoreError;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt::Debug;
+
+/// The namespace of the agents' texts in the prompt catalogue.
+pub const NAMESPACE: &str = "agents";
+
+/// The agents' texts (issue 57), added to the catalogue under `NAMESPACE`
+/// by `AgentsPlugin`.
+pub const PROMPTS: &str = include_str!("../prompts.yaml");
 
 /// Where a prompt part goes in the context (issue 47).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -226,6 +238,10 @@ pub enum ContextError {
     /// What the store reported, judged as store errors are.
     #[error("{0}")]
     Store(#[from] StoreError),
+    /// A text of the prompt catalogue that cannot be had - a fault of the
+    /// texts or of the provider, named by its key.
+    #[error("{0}")]
+    Prompt(#[from] PromptError),
     /// A prompt provider that fails closed failed with `cause`.
     #[error("component '{component}' failed")]
     Component { component: String, #[source] cause: Box<ContextError> },

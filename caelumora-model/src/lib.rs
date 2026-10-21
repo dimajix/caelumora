@@ -13,6 +13,7 @@ pub mod role;
 pub mod chain;
 pub mod kept;
 pub mod context;
+pub mod prompt_catalogue;
 pub mod digest;
 pub mod tool;
 pub mod message;

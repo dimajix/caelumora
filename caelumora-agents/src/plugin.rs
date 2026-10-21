@@ -40,6 +40,7 @@ impl Plugin for AgentsPlugin {
 
     fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
         register_components(runtime.components());
+        runtime.prompts().add(prompt::NAMESPACE, prompt::PROMPTS)?;
         let kinds = runtime.agent_kinds();
         kinds.register(PersonalityKind::Internal, AgentActor::COMPONENT_FACETS, |agent, personality, runtime| async move {
             Ok(Box::new(AgentActor::new(agent, personality, runtime).await?) as Box<dyn Actor>)

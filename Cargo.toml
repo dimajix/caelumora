@@ -47,6 +47,10 @@ futures = "0.3"
 jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
 meval = "0.2.0"
 mime_guess = "2.0.5"
+# The prompt catalogue (issue 57): templates with loops and conditions, no
+# access to files or the network. `loader` only for templates of owned names
+# and sources, read from the catalogue's files.
+minijinja = { version = "2.24", default-features = false, features = ["builtins", "loader", "multi_template", "serde"] }
 nix = { version = "0.31", features = ["signal", "process"] }
 percent-encoding = "2.3"
 rand = "0.10.3"

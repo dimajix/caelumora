@@ -20,14 +20,20 @@
 //! `changes_only`), as the roster and the language are.
 
 use caelumora_runtime::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
 use caelumora_model::value::text::{Briefing, Summary};
 use std::sync::{Arc, Mutex};
 
 pub const CHANNEL_BRIEFING_PROMPT_PROVIDER_KIND: &str = "channel_briefing_prompt_provider";
+
+/// Its texts in the prompt catalogue: the descriptions, and that what was
+/// told of them no longer holds.
+const TEXT: &str = "agents.channel_briefing";
+const WITHDRAWN: &str = "agents.channel_briefing_withdrawn";
 
 #[derive(Debug)]
 pub struct ChannelBriefingPromptProvider {
@@ -35,39 +41,40 @@ pub struct ChannelBriefingPromptProvider {
     /// Whether it tells only of changes: then what it told last, `None`
     /// before it told anything. A plain lock, never held across an await.
     told: Option<Mutex<Option<String>>>,
+    prompts: Arc<PromptCatalogue>,
 }
 
 impl ChannelBriefingPromptProvider {
     /// The descriptions at `position`, told every time it is asked.
-    pub fn new(position: PromptPosition) -> Self {
-        Self { position, told: None }
+    pub fn new(position: PromptPosition, prompts: Arc<PromptCatalogue>) -> Self {
+        Self { position, told: None, prompts }
     }
 
     /// The descriptions at `position`, told the first time it is asked and
     /// then only when they changed.
-    pub fn changes_only(position: PromptPosition) -> Self {
-        Self { position, told: Some(Mutex::new(None)) }
+    pub fn changes_only(position: PromptPosition, prompts: Arc<PromptCatalogue>) -> Self {
+        Self { position, told: Some(Mutex::new(None)), prompts }
     }
 
     /// What the agent is to be told now, the descriptions rendered as
     /// `text`.
-    fn text(&self, text: String) -> String {
-        let Some(told) = &self.told else { return text };
+    fn text(&self, text: String) -> Result<String, PromptError> {
+        let Some(told) = &self.told else { return Ok(text) };
         let mut told = told.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         match told.as_deref() {
-            Some(before) if before == text => String::new(),
+            Some(before) if before == text => Ok(String::new()),
             // Nothing from the start: there is nothing to take back.
             None if text.is_empty() => {
                 *told = Some(text);
-                String::new()
+                Ok(String::new())
             }
             Some(_) if text.is_empty() => {
                 *told = Some(text);
-                titled("About this session and channel", "What you were told of them before no longer holds: neither says anything about itself now.")
+                self.prompts.render(WITHDRAWN, ())
             }
             _ => {
                 *told = Some(text.clone());
-                text
+                Ok(text)
             }
         }
     }
@@ -83,38 +90,44 @@ impl PromptProvider for ChannelBriefingPromptProvider {
         // Work that reaches no session (`Situation::channel`) has no place to describe.
         let Some(channel) = situation.channel().await? else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
         let session = channel.session();
-        let ours = described("session", session.summary(), session.briefing());
-        let its = described("channel", channel.summary(), channel.briefing());
+        let places = [("session", session.summary(), session.briefing()), ("channel", channel.summary(), channel.briefing())];
         // A session's descriptions are public; a channel's are the channel's.
-        let classification = if its.is_empty() { Classification::PUBLIC } else { channel.classification().clone() };
-        let text = self.text([ours, its].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join("\n"));
+        let classification = if says_nothing(&places[1]) { Classification::PUBLIC } else { channel.classification().clone() };
+        let text = self.text(render(&self.prompts, &places)?)?;
         Ok(Prompt::classified(text, classification))
     }
 }
 
-/// The part describing the `place` - "session" or "channel" - by its
-/// `summary` and `briefing`; empty if it has neither.
-fn described(place: &str, summary: Option<&Summary>, briefing: Option<&Briefing>) -> String {
-    if summary.is_none() && briefing.is_none() {
-        return String::new();
+/// A place - its kind, "session" or "channel", its summary and its
+/// briefing.
+type Place<'a> = (&'a str, Option<&'a Summary>, Option<&'a Briefing>);
+
+/// Whether `place` has neither a summary nor a briefing.
+fn says_nothing((_, summary, briefing): &Place<'_>) -> bool {
+    summary.is_none() && briefing.is_none()
+}
+
+/// The parts of `prompts` describing each of `places` by its summary and
+/// briefing, those that say nothing left out; empty if none says anything.
+fn render(prompts: &PromptCatalogue, places: &[Place<'_>]) -> Result<String, PromptError> {
+    let places: Vec<_> = places.iter()
+        .filter(|place| !says_nothing(place))
+        .map(|(kind, summary, briefing)| context! { kind, summary => summary.map(|s| s.as_str()), briefing => briefing.map(|b| b.as_str()) })
+        .collect();
+    if places.is_empty() {
+        return Ok(String::new());
     }
-    let mut text = format!("What this {place} is for, as its owner describes it.\n");
-    if let Some(summary) = summary {
-        text.push_str(&format!("In short: {summary}\n"));
-    }
-    if let Some(briefing) = briefing {
-        text.push_str(&format!("\n{briefing}\n"));
-    }
-    titled(&format!("About this {place}"), &text)
+    prompts.render(TEXT, context! { places })
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(CHANNEL_BRIEFING_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
-        |descriptor, _context| {
+        ComponentKind::new(CHANNEL_BRIEFING_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
+        |descriptor, context| {
             let position = PromptPosition::of_params(&descriptor.params)?;
             let changes_only = flag_of_params(&descriptor.params, "changes_only")?;
-            let provider = if changes_only { ChannelBriefingPromptProvider::changes_only(position) } else { ChannelBriefingPromptProvider::new(position) };
+            let prompts = Arc::clone(context.service::<PromptCatalogue>()?);
+            let provider = if changes_only { ChannelBriefingPromptProvider::changes_only(position, prompts) } else { ChannelBriefingPromptProvider::new(position, prompts) };
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(provider));
             Ok(facets)
@@ -127,7 +140,7 @@ mod tests {
     use super::*;
     use caelumora_runtime::agent::state::AgentStateHandle;
     use crate::turn::Turn;
-    use crate::testing::TestAgents;
+    use crate::testing::{self, TestAgents};
     use caelumora_runtime::testing::TestRuntime;
     use caelumora_runtime::session::SessionLoop;
     use caelumora_runtime::session::testing::actor_runtime_in;
@@ -146,24 +159,33 @@ mod tests {
     #[test]
     fn a_place_is_described_by_its_summary_and_briefing() {
         let (summary, briefing) = (Summary::new("Planning the release.").unwrap(), Briefing::new("Dates are in UTC.\nBe brief.").unwrap());
-        assert_eq!(described("channel", Some(&summary), Some(&briefing)),
+        let prompts = testing::prompts();
+        assert_eq!(render(&prompts, &[("channel", Some(&summary), Some(&briefing))]).unwrap(),
             "[About this channel]\nWhat this channel is for, as its owner describes it.\nIn short: Planning the release.\n\nDates are in UTC.\nBe brief.\n");
-        assert_eq!(described("session", Some(&Summary::new("Release 2.0").unwrap()), None), "[About this session]\nWhat this session is for, as its owner describes it.\nIn short: Release 2.0\n");
-        assert_eq!(described("session", None, None), "", "a place that says nothing adds nothing");
+        let release = Summary::new("Release 2.0").unwrap();
+        assert_eq!(render(&prompts, &[("session", Some(&release), None)]).unwrap(), "[About this session]\nWhat this session is for, as its owner describes it.\nIn short: Release 2.0\n");
+        assert_eq!(render(&prompts, &[("session", None, None)]).unwrap(), "", "a place that says nothing adds nothing");
+        assert_eq!(render(&prompts, &[("session", Some(&release), None), ("channel", None, Some(&briefing))]).unwrap(),
+            "[About this session]\nWhat this session is for, as its owner describes it.\nIn short: Release 2.0\n\n\
+             [About this channel]\nWhat this channel is for, as its owner describes it.\n\nDates are in UTC.\nBe brief.\n",
+            "the parts a line apart");
+        assert_eq!(render(&prompts, &[("session", None, None), ("channel", None, Some(&briefing))]).unwrap(),
+            "[About this channel]\nWhat this channel is for, as its owner describes it.\n\nDates are in UTC.\nBe brief.\n",
+            "no line before the first part");
     }
 
     #[test]
     fn told_every_time_unless_only_changes_are_told() {
-        let always = ChannelBriefingPromptProvider::new(PromptPosition::Start);
-        assert_eq!(always.text("a".to_string()), always.text("a".to_string()), "every turn");
+        let always = ChannelBriefingPromptProvider::new(PromptPosition::Start, testing::prompts());
+        assert_eq!(always.text("a".to_string()).unwrap(), always.text("a".to_string()).unwrap(), "every turn");
 
-        let changes = ChannelBriefingPromptProvider::changes_only(PromptPosition::Start);
-        assert_eq!(changes.text(String::new()), "", "nothing from the start: nothing to tell");
-        assert_eq!(changes.text("a".to_string()), "a", "what is said first");
-        assert_eq!(changes.text("a".to_string()), "", "not again while it stays");
-        assert_eq!(changes.text("b".to_string()), "b", "but when it changes");
-        assert!(changes.text(String::new()).contains("no longer holds"), "and when it is taken back");
-        assert_eq!(changes.text(String::new()), "");
+        let changes = ChannelBriefingPromptProvider::changes_only(PromptPosition::Start, testing::prompts());
+        assert_eq!(changes.text(String::new()).unwrap(), "", "nothing from the start: nothing to tell");
+        assert_eq!(changes.text("a".to_string()).unwrap(), "a", "what is said first");
+        assert_eq!(changes.text("a".to_string()).unwrap(), "", "not again while it stays");
+        assert_eq!(changes.text("b".to_string()).unwrap(), "b", "but when it changes");
+        assert!(changes.text(String::new()).unwrap().contains("no longer holds"), "and when it is taken back");
+        assert_eq!(changes.text(String::new()).unwrap(), "");
     }
 
     #[tokio::test]
@@ -200,7 +222,7 @@ mod tests {
         let context = SecurityContext::default().next(ActorId::Agent(agent.id), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(EventContext::new(session.id, channel.id, ActorId::None, String::new()), None, context.clone(), channel.classification.clone(), Default::default()));
-        let provider = ChannelBriefingPromptProvider::new(PromptPosition::Start);
+        let provider = ChannelBriefingPromptProvider::new(PromptPosition::Start, testing::prompts());
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(prompt.text.contains("In short: Release 2.0") && !prompt.text.contains("[About this channel]"), "{}", prompt.text);
         assert_eq!(prompt.classification, Some(Classification::PUBLIC), "a session's descriptions are public");

@@ -56,7 +56,7 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
 /// 336); the component that failed named before its cause.
 fn context_message(error: &ContextError) -> Option<String> {
     match error {
-        ContextError::Failed(_) => Some(error.to_string()),
+        ContextError::Failed(_) | ContextError::Prompt(_) => Some(error.to_string()),
         ContextError::View(e) => view_message(e),
         ContextError::Store(e) => store_message(e),
         ContextError::Component { cause, .. } => context_message(cause).map(|cause| format!("{error}: {cause}")),

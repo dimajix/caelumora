@@ -589,9 +589,27 @@ remembers - is a *prompt part*. The `ContextProvider` decides where the parts go
 what it was handed. A part is never stored in the transcript, which stays a stable prefix.
 
 Every part the runtime writes has one form: a short title in brackets on a line of its own -
-`[Who is in this channel]`, `[Your private notes]` - then what needs explaining, then the content
-(`prompt::titled`). A part that says nothing is no part. The personality's own system prompt stays
-as written.
+`[Who is in this channel]`, `[Your private notes]` - then what needs explaining, then the content;
+`prompt::titled` gives a text the code holds the same form. A part that says nothing is no part.
+The personality's own system prompt stays as written.
+
+### The prompt catalogue
+
+What the runtime's parts say is kept apart from the code that fills them in, in the prompt
+catalogue (`PromptCatalogue` in `caelumora-model`, issue 57), so that a text can be tuned without a
+change of code. Every crate brings its texts in a YAML file it compiles in - the agents'
+`caelumora-agents/src/prompts.yaml` - and adds them under its namespace when its plugin registers
+(`RuntimeBuilder::prompts`): `agents.channel_participants` is the roster. The catalogue is a
+service of the runtime; a provider takes it when it is made (`ComponentKind::uses`).
+
+A text is a whole part, title and all: a template of `minijinja` (Jinja2), given its values by
+name, that may branch and loop over them - the roster over the participants, the notes over their
+sections. The code decides whether a part is given at all and with which values - whether an agent
+is among the others, which name serves as the example, an introduction on one line -, the template
+only how it reads. Names of tools are values, never text: they are identifiers. A template that does
+not parse keeps the runtime from starting; a value it names and is not given fails the part
+(`ContextError::Prompt`), as a provider's error does. The conventions of the templates - block tags
+on lines of their own, `+%}` where one ends a line of text - are at the top of each file.
 
 ### The `ContextProvider`
 

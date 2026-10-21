@@ -44,6 +44,10 @@ store of the users - with `service_of`. While it registers, a plugin
     kinds use (`ComponentKind::uses`), its views read through (`Views::service`) and its routes
     take when they are built;
 *   registers its component kinds (`components()`), as `register_all` does for the core's;
+*   adds the texts it gives models to the prompt catalogue (`prompts()`, issue 57), under a
+    namespace of its own, from a file it compiles in - the agents' `agents`, from
+    `caelumora-agents/src/prompts.yaml` -; its component kinds that write for a model use the
+    catalogue as a service (see [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue));
 *   registers the kinds of agent it brings (`agent_kinds()`, an `AgentKinds`): for a kind of
     personality, what builds its agents' actors and which facets their components are asked for.
     The agents' plugin (`AgentsPlugin`, issue 370) registers both kinds there are; a program

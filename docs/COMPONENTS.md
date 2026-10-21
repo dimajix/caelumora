@@ -250,7 +250,7 @@ by the agents' plugin (`caelumora_agents::plugin::register_components`, issue 37
 |---|---|
 | `tool/` | tool providers (`calculator_tool`, `ask_user_tool`, ...) |
 | `command/` | command providers (`help_command`, `wakeup_command`, `nudge_command`) |
-| `prompt/` | prompt providers (`static_system_prompt_provider`, `channel_participants_prompt_provider`, ...) and the context providers (`turn_context_provider`, `external_context_provider`), with what their parts share (`Prompt`, `Section`, `titled`) |
+| `prompt/` | prompt providers (`static_system_prompt_provider`, `channel_participants_prompt_provider`, ...) and the context providers (`turn_context_provider`, `external_context_provider`), with what their parts share (`Prompt`, `Section`, `titled`) and the agents' texts in the prompt catalogue (`PROMPTS`) |
 | `llm/` | the facet through which an agent asks its model, the defusing of control tokens any kind may use, and no kind: each model provider is a plugin (`ollama_client` in `caelumora-ollama`) |
 | `moderator/` | the moderator and its responder policies |
 | `compaction/` | `/compact` (`compaction`, in `command.rs`, since a module cannot hold a file of its own name) and the compaction policies (`threshold_compaction_policy`) and strategies (`summary_compaction`) |
@@ -270,6 +270,9 @@ They follow one convention:
 *   **Struct:** the kind in CamelCase, with `Provider` for a `_tool` or `_command` kind
     (`CalculatorToolProvider`) and `Component` for a feature (`NotesComponent`).
 *   **Names:** every tool and command name is a constant (`CALCULATE_TOOL_NAME`).
+*   **Texts:** what a prompt part says is a text of the prompt catalogue, its key a constant
+    (`TEXT`), rendered from the catalogue the component takes as a service
+    ([AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)).
 *   **Construction:** the factory builds the struct literally; there is a `new` only where
     something is checked.
 *   **Parameters:** the turn is always the parameter `turn`.

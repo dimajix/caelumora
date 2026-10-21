@@ -37,6 +37,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use caelumora_model::work::Work;
+use caelumora_model::prompt_catalogue::PromptCatalogue;
+use crate::prompt::{NAMESPACE, PROMPTS};
 
 /// The agents in the world of a test, as a plugin (issue 373): the agents'
 /// plugin (`AgentsPlugin`) and a model that is not to be asked
@@ -146,6 +148,15 @@ impl LLMClient for Unasked {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }
+}
+
+/// The prompt catalogue with the agents' texts, as `AgentsPlugin` adds them
+/// - for a provider a test makes itself.
+pub fn prompts() -> Arc<PromptCatalogue> {
+    let mut catalogue = PromptCatalogue::new();
+    // The texts are compiled in; that they can be read is what this tests too.
+    catalogue.add(NAMESPACE, PROMPTS).unwrap_or_else(|e| panic!("the agents' texts cannot be read: {e}"));
+    Arc::new(catalogue)
 }
 
 /// The component kinds the tests of the agents build with, resolving
