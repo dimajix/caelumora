@@ -102,7 +102,9 @@ entries it replaces one by one: a copy of that file, changed where it is to say 
 or only the entries that differ. What a file leaves out, and a namespace without a file, stay as
 they are; other files than `.yaml` ones are not read. A variant falls back to `default`, `default`
 to the texts compiled in. A variant's name is lower case letters, digits, `_` and `-`; a path is
-read as `seed` is, from where the program runs.
+read as `seed` is, from where the program runs. Which variant a model is given, its component
+names (`prompt_texts` of `ollama_client`, `a2a_agent` and `decision_policy`): one that is not
+configured keeps the component from being built.
 
 The variants are read when the runtime is built, after every plugin added its texts, and checked
 whole: a file of no namespace, a text the defaults do not have, a template that does not parse
@@ -144,6 +146,7 @@ component_defaults:
 | `sender_format` | How the model is told who wrote a message of another participant: `none`, `prefix` or `xml` (see [AGENT-TURN.md](AGENT-TURN.md#who-said-what)) | `prefix` |
 | `sender_style` | By which name a sender is marked: `handle` or `name` | `handle` |
 | `message_times` | Whether the marker says when the message was written, in the session's time zone (see [AGENT-TURN.md](AGENT-TURN.md#who-said-what)) | `true` |
+| `prompt_texts` | Which variant of the texts the model is given (see [The texts given to models](#the-texts-given-to-models)); one not configured keeps the agent from being built | the default |
 | `context_size` | How many tokens the model's context holds, sent to Ollama as `num_ctx`; left out, Ollama's default applies - which may be far below what the model was trained for, and Ollama cuts a longer prompt off without saying so | left out |
 
 An unknown parameter is refused, and the agent does not start. Which values suit which model, as

@@ -36,7 +36,7 @@ use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::context::{ModelProfile, SenderFormat, SenderStyle};
 use caelumora_model::message::{estimated_tokens, Message, MessageId};
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError, PromptVariant};
 use crate::NAMESPACE;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
@@ -102,13 +102,17 @@ struct DecisionPolicyConfig {
     sender_format: SenderFormat,
     #[serde(default)]
     sender_style: SenderStyle,
+    /// The variant of the questions the model is asked (issue 57); the
+    /// default unless configured.
+    #[serde(default)]
+    prompt_texts: Option<PromptVariant>,
 }
 
 impl DecisionPolicyConfig {
     /// How the model is given what was said - without the times of the
     /// messages (issue 424), which who is to respond does not depend on.
     fn profile(&self) -> ModelProfile {
-        ModelProfile { sender_format: self.sender_format, sender_style: self.sender_style, ..ModelProfile::default() }
+        ModelProfile { sender_format: self.sender_format, sender_style: self.sender_style, prompt_texts: self.prompt_texts, ..ModelProfile::default() }
     }
 
     /// Nothing if the threshold is a probability and at least one may be
@@ -340,6 +344,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         |descriptor, context| {
             let config: DecisionPolicyConfig = config_of_params(&descriptor.params)?;
             config.check()?;
+            context.service::<PromptCatalogue>()?.require_variant(config.prompt_texts)?;
             let secret_manager = Arc::clone(context.service::<SecretManager>()?);
             let profile = config.profile();
             let client = DecisionClient::new(config.endpoint, config.model, config.keep_alive, secret_manager)

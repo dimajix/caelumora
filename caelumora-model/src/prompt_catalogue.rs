@@ -22,9 +22,11 @@
 //! it, unless written `+%}`. A text ends in the line break its file gives it.
 
 use crate::config::parse_yaml;
+use crate::intern::intern;
 use minijinja::{AutoEscape, Environment, UndefinedBehavior};
 use serde::de::{MapAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
@@ -48,6 +50,49 @@ pub const CORE_PROMPTS: &str = include_str!("prompts.yaml");
 /// The variant that overrides the defaults for every model (issue 57), as
 /// the configuration names it among the others.
 pub const DEFAULT_VARIANT: &str = "default";
+
+/// The name of a variant of the texts (issue 57), as a model's component
+/// names the one its model is given (`ModelProfile::prompt_texts`): lower
+/// case letters, digits, `_` and `-`. Kept once per name for the rest of
+/// the process, so that a profile that names one stays `Copy`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PromptVariant(&'static str);
+
+impl PromptVariant {
+    /// The variant `name`.
+    ///
+    /// # Errors
+    /// `PromptError::VariantNamed` for a name that is none.
+    pub fn new(name: &str) -> Result<Self, PromptError> {
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-') {
+            return Err(PromptError::VariantNamed(name.to_string()));
+        }
+        Ok(Self(intern(name)))
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        self.0
+    }
+}
+
+impl fmt::Display for PromptVariant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl Serialize for PromptVariant {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for PromptVariant {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        Self::new(&name).map_err(D::Error::custom)
+    }
+}
 
 /// The texts given to models, by key: those of every namespace added, and
 /// the variants that override some of them.
@@ -123,9 +168,7 @@ impl PromptCatalogue {
     /// is checked of what is not a text of the catalogue's - neither the
     /// name of a file nor of a value is quoted with a path.
     pub fn add_variant(&mut self, variant: &str, dir: &Path) -> Result<(), PromptError> {
-        if variant.is_empty() || !variant.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-') {
-            return Err(PromptError::VariantNamed(variant.to_string()));
-        }
+        PromptVariant::new(variant)?;
         let unreadable = |e: io::Error| PromptError::VariantUnreadable { variant: variant.to_string(), cause: e.kind().to_string() };
         let mut files: Vec<_> = fs::read_dir(dir).map_err(unreadable)?
             .map(|entry| entry.map(|entry| entry.path()))
@@ -166,8 +209,20 @@ impl PromptCatalogue {
     }
 
     /// Whether `variant` was added - the default always is.
-    pub fn has_variant(&self, variant: &str) -> bool {
-        variant == DEFAULT_VARIANT || self.variants.contains(variant)
+    pub fn has_variant(&self, variant: PromptVariant) -> bool {
+        variant.as_str() == DEFAULT_VARIANT || self.variants.contains(variant.as_str())
+    }
+
+    /// Nothing if the variant `named` by a model's component - if it names
+    /// one - was added.
+    ///
+    /// # Errors
+    /// `PromptError::NoVariant` if it was not.
+    pub fn require_variant(&self, named: Option<PromptVariant>) -> Result<(), PromptError> {
+        match named {
+            Some(variant) if !self.has_variant(variant) => Err(PromptError::NoVariant(variant)),
+            _ => Ok(()),
+        }
     }
 
     /// The text `key` - `namespace.key` -, rendered with `values`.
@@ -262,6 +317,8 @@ pub enum PromptError {
     Invalid { key: String, #[source] cause: minijinja::Error },
     #[error("'{0}' is no name of a variant of the texts: lower case letters, digits, '_' and '-'")]
     VariantNamed(String),
+    #[error("the texts have no variant '{0}': it is not configured (`prompts`)")]
+    NoVariant(PromptVariant),
     #[error("the texts of the variant '{variant}' cannot be read: {cause}")]
     VariantUnreadable { variant: String, cause: String },
     #[error("the variant '{variant}' has a file of '{namespace}', which is no namespace of texts")]
@@ -362,7 +419,10 @@ mod tests {
         assert_eq!(catalogue.render_in(Some("gemma4"), "agents.tools.notes.description", ()).unwrap(), "Your notes.", "in a group, too");
         assert_eq!(catalogue.render_in(Some("gemma4"), "agents.farewell", ()).unwrap(), "Goodbye.", "what a variant leaves out, as the default variant has it");
         assert_eq!(catalogue.render("agents.farewell", ()).unwrap(), "Goodbye.");
-        assert!(catalogue.has_variant("gemma4") && catalogue.has_variant(DEFAULT_VARIANT) && !catalogue.has_variant("llama"));
+        let variant = |name| PromptVariant::new(name).unwrap();
+        assert!(catalogue.has_variant(variant("gemma4")) && catalogue.has_variant(variant(DEFAULT_VARIANT)) && !catalogue.has_variant(variant("llama")));
+        assert!(catalogue.require_variant(None).is_ok() && catalogue.require_variant(Some(variant("gemma4"))).is_ok());
+        assert_eq!(catalogue.require_variant(Some(variant("llama"))).expect_err("not configured").to_string(), "the texts have no variant 'llama': it is not configured (`prompts`)");
     }
 
     #[test]

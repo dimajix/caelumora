@@ -22,6 +22,7 @@ use self::client::{A2aClient, Responses};
 use self::translation::{wire_message, Translation, ACCEPTED_OUTPUT_MODES};
 use self::wire::{method, SendConfiguration, SendMessageParams, StreamResponse, TaskParams, WireTask, TASK_NOT_CANCELABLE};
 use async_trait::async_trait;
+use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptVariant};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{message_times_by_default, ModelProfile, SenderFormat, SenderStyle};
 use caelumora_model::external_agent::{ConversationId, TaskId};
@@ -78,6 +79,10 @@ struct A2aAgentConfig {
     /// session's time zone (issue 424) - unless told otherwise.
     #[serde(default = "message_times_by_default")]
     message_times: bool,
+    /// The variant of the texts the remote agent is given (issue 57); the
+    /// default unless configured.
+    #[serde(default)]
+    prompt_texts: Option<PromptVariant>,
 }
 
 impl A2aAgentConfig {
@@ -107,7 +112,7 @@ impl A2aAgentComponent {
     fn new(id: String, config: A2aAgentConfig, secret_manager: Arc<SecretManager>) -> Result<Self, ComponentError> {
         let (timeout, refresh) = (config.timeout(), config.refresh());
         let client = A2aClient::new(id, config.endpoint, timeout, refresh, secret_manager)?;
-        let profile = ModelProfile { sender_format: config.sender_format, sender_style: config.sender_style, message_times: config.message_times, ..ModelProfile::default() };
+        let profile = ModelProfile { sender_format: config.sender_format, sender_style: config.sender_style, message_times: config.message_times, prompt_texts: config.prompt_texts, ..ModelProfile::default() };
         Ok(Self { client: Arc::new(client), classification: config.classification, profile })
     }
 
@@ -239,9 +244,10 @@ impl ModelProfileProvider for A2aAgentComponent {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(A2A_AGENT_KIND).provides::<dyn ExternalAgent>().provides::<dyn ModelProfileProvider>().uses::<SecretManager>(),
+        ComponentKind::new(A2A_AGENT_KIND).provides::<dyn ExternalAgent>().provides::<dyn ModelProfileProvider>().uses::<SecretManager>().uses::<PromptCatalogue>(),
         |descriptor, context| {
             let config: A2aAgentConfig = config_of_params(&descriptor.params)?;
+            context.service::<PromptCatalogue>()?.require_variant(config.prompt_texts)?;
             let component = Arc::new(A2aAgentComponent::new(descriptor.id.clone(), config, Arc::clone(context.service::<SecretManager>()?))?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ExternalAgent>(Arc::<A2aAgentComponent>::clone(&component));

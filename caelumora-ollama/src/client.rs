@@ -43,6 +43,7 @@ use caelumora_agents::llm::control_tokens::ControlTokens;
 use caelumora_agents::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
 use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_runtime::remote::{describe_chain, describe_request_error};
+use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptVariant};
 use caelumora_model::remote::RemoteEndpoint;
 use async_stream::stream;
 use async_trait::async_trait;
@@ -522,6 +523,10 @@ struct OllamaClientConfig {
     sender_style: SenderStyle,
     #[serde(default = "message_times_by_default")]
     message_times: bool,
+    /// The variant of the texts its model is given (issue 57); the default
+    /// unless configured.
+    #[serde(default)]
+    prompt_texts: Option<PromptVariant>,
     #[serde(default)]
     context_size: Option<u64>,
 }
@@ -600,6 +605,7 @@ impl OllamaClient {
                 sender_format: config.sender_format,
                 sender_style: config.sender_style,
                 message_times: config.message_times,
+                prompt_texts: config.prompt_texts,
             },
             context_size: config.context_size,
             control_tokens,
@@ -821,9 +827,10 @@ pub fn register(registry: &mut ComponentRegistry) {
     let control_tokens = Arc::new(ControlTokenCache::default());
     let running_context_sizes = Arc::new(RunningContextSizes::default());
     registry.register(
-        ComponentKind::new(OLLAMA_CLIENT_KIND).provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(),
-        move |descriptor, _context| {
+        ComponentKind::new(OLLAMA_CLIENT_KIND).provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>().uses::<PromptCatalogue>(),
+        move |descriptor, context| {
             let config = OllamaClientConfig::of(&descriptor.params)?;
+            context.service::<PromptCatalogue>()?.require_variant(config.prompt_texts)?;
             let client = Arc::new(OllamaClient::new(config, Arc::clone(&control_tokens), Arc::clone(&running_context_sizes)));
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn LLMClient>(Arc::<OllamaClient>::clone(&client));
@@ -845,6 +852,12 @@ mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::net::TcpListener;
+    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_model::security::SecurityContext;
+    use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::type_map::TypeKey;
+    use caelumora_runtime::component::{ComponentContainer, ComponentContext};
+    use caelumora_runtime::runtime::Services;
 
     #[test]
     fn test_ollama_chat_message_from_with_tool_calls() {
@@ -1072,6 +1085,34 @@ mod tests {
         assert!(same_model("llama3", "llama3:latest"));
         assert!(same_model("registry.local:5000/llama3", "registry.local:5000/llama3:latest"), "a port is no tag");
         assert!(!same_model("qwen3:8b", "qwen3:14b"));
+    }
+
+    /// Issue 57: the model is given the variant of the texts its component
+    /// names, and a component that names one not configured is not built.
+    #[tokio::test]
+    async fn the_model_is_given_the_variant_of_the_texts_its_component_names() {
+        let mut prompts = PromptCatalogue::new();
+        let gemma = tempfile::tempdir().unwrap();
+        prompts.add_variant("gemma4", gemma.path()).unwrap();
+        let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
+        // As the agents' plugin declares it.
+        registry.single::<dyn ModelProfileProvider>(None);
+        register(&mut registry);
+        let registry = Arc::new(registry);
+        let context = ComponentContext::new(SecurityContext::default(), Services::empty().with(Arc::new(prompts)));
+        let profile_of = |params: Value| {
+            let (registry, context) = (Arc::clone(&registry), context.clone());
+            async move {
+                let config = ComponentConfig { component_nodes: vec![ComponentDescriptor { params, ..ComponentDescriptor::new("model", OLLAMA_CLIENT_KIND) }] };
+                let container = ComponentContainer::from_config(&config, &[TypeKey::of::<dyn ModelProfileProvider>()], &registry, &context).await?;
+                Ok::<_, ComponentError>(container.one::<dyn ModelProfileProvider>().await?.profile())
+            }
+        };
+        assert_eq!(profile_of(json!({ "prompt_texts": "gemma4" })).await.unwrap().prompt_texts, Some(PromptVariant::new("gemma4").unwrap()));
+        assert_eq!(profile_of(json!({})).await.unwrap().prompt_texts, None, "the default unless configured");
+        let refused = profile_of(json!({ "prompt_texts": "llama" })).await.expect_err("not configured").to_string();
+        assert!(refused.contains("no variant 'llama'"), "{refused}");
+        assert!(profile_of(json!({ "prompt_texts": "Gemma 4" })).await.is_err(), "no name of a variant");
     }
 
     #[test]

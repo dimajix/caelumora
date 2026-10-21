@@ -26,7 +26,7 @@ use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::kept::Kept;
 use crate::message::{estimated_tokens, Message, MessageId, MessageRole};
-use crate::prompt_catalogue::{context, PromptCatalogue, PromptError, CORE};
+use crate::prompt_catalogue::{context, PromptCatalogue, PromptError, PromptVariant, CORE};
 use crate::store::{EntityKind, Stored};
 use crate::tool::ToolSet;
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
@@ -212,6 +212,11 @@ pub struct ModelProfile {
     /// How a sender is named in the marker.
     #[serde(default)]
     pub sender_style: SenderStyle,
+    /// Which variant of the texts of the prompt catalogue the model is given
+    /// (issue 57), as its component names it; `None`: the default. Recorded
+    /// with the context, so that what a model saw is worded as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_texts: Option<PromptVariant>,
     /// Whether the marker says when the message was written too (issue 424),
     /// in the time zone of the context (`FrameRef::time_zone`). Never on
     /// the agent's own messages, which carry no marker: a model whose own
