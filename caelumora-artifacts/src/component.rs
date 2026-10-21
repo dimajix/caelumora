@@ -100,7 +100,7 @@ impl ToolProvider for ArtifactTool {
     }
 
     fn tools(&self) -> Vec<Tool> {
-        let string = ToolParameters::string;
+        let string = |text: &str| ToolParameters::string().described(text);
         vec![Tool {
             name: PUBLISH_ARTIFACT.to_string(),
             description: "Publish a file of the session's workspace as an artifact for the users of the channel: a fixed copy of it as it is now, kept beyond the workspace and downloaded at this message. Publishing again under the same name adds a version. Use it for a result to be kept; to point to a file for a look now, use publish_file.".to_string(),

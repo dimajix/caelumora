@@ -134,8 +134,8 @@ pub(crate) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
             ),
             ToolParameters::object(
                 [
-                    ("command", ToolParameters::shell("The command line, as bash reads it")),
-                    ("wait_secs", ToolParameters::number(format!("How long to wait for it to end, at most {most} seconds; {most} unless given"))),
+                    ("command", ToolParameters::shell().described("The command line, as bash reads it")),
+                    ("wait_secs", ToolParameters::number().described(format!("How long to wait for it to end, at most {most} seconds; {most} unless given"))),
                 ],
                 ["command"],
             ),
@@ -147,9 +147,9 @@ pub(crate) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
             format!("New output of a command {RUN_COMMAND} returned as still running, from the next_offset of its last result, waiting for it to end as {RUN_COMMAND} does."),
             ToolParameters::object(
                 [
-                    ("id", ToolParameters::string("The id of the command")),
-                    ("offset", ToolParameters::number("The next_offset of the last result about it; 0 for all it printed")),
-                    ("wait_secs", ToolParameters::number(format!("How long to wait for it to end, at most {most} seconds"))),
+                    ("id", ToolParameters::string().described("The id of the command")),
+                    ("offset", ToolParameters::number().described("The next_offset of the last result about it; 0 for all it printed")),
+                    ("wait_secs", ToolParameters::number().described(format!("How long to wait for it to end, at most {most} seconds"))),
                 ],
                 ["id"],
             ),
@@ -159,7 +159,7 @@ pub(crate) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
         tool(
             KILL_COMMAND,
             "End a command that is still running, with everything it started.".to_string(),
-            ToolParameters::object([("id", ToolParameters::string("The id of the command"))], ["id"]),
+            ToolParameters::object([("id", ToolParameters::string().described("The id of the command"))], ["id"]),
             false,
             SHELL_PRESENTATION,
         ),

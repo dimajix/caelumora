@@ -139,9 +139,9 @@ pub fn classification_argument(params: &Value) -> ToolResult<Classification> {
 pub fn reclassify_parameters(what: &str) -> ToolParameters {
     ToolParameters::object(
         [
-            ("id", ToolParameters::number(format!("The number of {what}"))),
-            ("level", ToolParameters::string("The new level: public, internal, confidential or strictly_confidential")),
-            ("compartments", ToolParameters::array(ToolParameters::string("A compartment"), "Who it is meant for; none: everybody of the level. Public takes none.")),
+            ("id", ToolParameters::number().described(format!("The number of {what}"))),
+            ("level", ToolParameters::string().described("The new level: public, internal, confidential or strictly_confidential")),
+            ("compartments", ToolParameters::array(ToolParameters::string().described("A compartment")).described("Who it is meant for; none: everybody of the level. Public takes none.")),
         ],
         ["id", "level"],
     )

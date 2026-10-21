@@ -29,7 +29,7 @@ impl ToolProvider for CalculatorToolProvider {
             name: CALCULATE_TOOL_NAME.to_string(),
             description: "Evaluates a mathematical expression".to_string(),
             parameters: ToolParameters::object(
-                vec![("expression", ToolParameters::string("Mathematical expression to evaluate (e.g., '2 + 2', 'sin(pi/2)', 'exp(1)')"))],
+                vec![("expression", ToolParameters::string().described("Mathematical expression to evaluate (e.g., '2 + 2', 'sin(pi/2)', 'exp(1)')"))],
                 vec!["expression"],
             ),
             requires_approval: false,

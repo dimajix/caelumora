@@ -83,7 +83,7 @@ impl ToolProvider for AgentMemoryComponent {
                     a second on the same thing."
                     .to_string(),
                 parameters: ToolParameters::object(
-                    [("text", ToolParameters::string("What to remember"))],
+                    [("text", ToolParameters::string().described("What to remember"))],
                     ["text"],
                 ),
                 requires_approval: false,
@@ -97,7 +97,7 @@ impl ToolProvider for AgentMemoryComponent {
                     it keeps its number, and from then on you recall it where what was said here may be known."
                     .to_string(),
                 parameters: ToolParameters::object(
-                    [("id", ToolParameters::number("The number of what you remember")), ("text", ToolParameters::string("Its new text"))],
+                    [("id", ToolParameters::number().described("The number of what you remember")), ("text", ToolParameters::string().described("Its new text"))],
                     ["id", "text"],
                 ),
                 requires_approval: false,
@@ -109,7 +109,7 @@ impl ToolProvider for AgentMemoryComponent {
                 name: FORGET_TOOL_NAME.to_string(),
                 description: "Forget one of the things you remember, by its number.".to_string(),
                 parameters: ToolParameters::object(
-                    [("id", ToolParameters::number("The number of what you remember"))],
+                    [("id", ToolParameters::number().described("The number of what you remember"))],
                     ["id"],
                 ),
                 requires_approval: false,

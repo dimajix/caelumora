@@ -234,7 +234,7 @@ impl ToolProvider for SkillsComponent {
                 description: "Load a skill by its name - a procedure to follow for the task at hand. Its text follows the \
                     result. The channel sees which skill you loaded, not what it says; do not quote it to them."
                     .to_string(),
-                parameters: ToolParameters::object([("name", ToolParameters::string("The name of the skill"))], ["name"]),
+                parameters: ToolParameters::object([("name", ToolParameters::string().described("The name of the skill"))], ["name"]),
                 requires_approval: false,
                 // Its result names the skill; its text is given to the agent,
                 // never published (issue 389).
@@ -252,10 +252,10 @@ impl ToolProvider for SkillsComponent {
                     .to_string(),
                 parameters: ToolParameters::object(
                     [
-                        ("name", ToolParameters::string("A short name, e.g. release-notes")),
-                        ("description", ToolParameters::string("What it is for, in one line: what the catalogue shows")),
-                        ("body", ToolParameters::string("The steps, in Markdown")),
-                        ("scope", ToolParameters::string("\"session\" for this session alone, \"user\" for every session of your owner")),
+                        ("name", ToolParameters::string().described("A short name, e.g. release-notes")),
+                        ("description", ToolParameters::string().described("What it is for, in one line: what the catalogue shows")),
+                        ("body", ToolParameters::string().described("The steps, in Markdown")),
+                        ("scope", ToolParameters::string().described("\"session\" for this session alone, \"user\" for every session of your owner")),
                     ],
                     ["name", "description", "body", "scope"],
                 ),
@@ -271,9 +271,9 @@ impl ToolProvider for SkillsComponent {
                     .to_string(),
                 parameters: ToolParameters::object(
                     [
-                        ("name", ToolParameters::string("The name of the skill")),
-                        ("description", ToolParameters::string("What it is for, in one line, if that changes")),
-                        ("body", ToolParameters::string("The steps, in Markdown, if they change")),
+                        ("name", ToolParameters::string().described("The name of the skill")),
+                        ("description", ToolParameters::string().described("What it is for, in one line, if that changes")),
+                        ("body", ToolParameters::string().described("The steps, in Markdown, if they change")),
                     ],
                     ["name"],
                 ),

@@ -46,18 +46,18 @@ impl ToolProvider for AskUserToolProvider {
     fn tools(&self) -> Vec<Tool> {
         let choice = ToolParameters::object(
             vec![
-                ("label", ToolParameters::string("The answer as the user chooses it; unique within the question")),
-                ("description", ToolParameters::string("What choosing it means, if the label does not say")),
-                ("recommended", ToolParameters::boolean("Whether you recommend this choice; mark at most one")),
+                ("label", ToolParameters::string().described("The answer as the user chooses it; unique within the question")),
+                ("description", ToolParameters::string().described("What choosing it means, if the label does not say")),
+                ("recommended", ToolParameters::boolean().described("Whether you recommend this choice; mark at most one")),
             ],
             vec!["label"],
         );
         let question = ToolParameters::object(
             vec![
-                ("header", ToolParameters::string(format!("A short label for the question, at most {MAX_HEADER_CHARS} characters"))),
-                ("question", ToolParameters::string("The question, without its possible answers")),
-                ("choices", ToolParameters::array(choice, format!("The possible answers, 2 to {MAX_CHOICES}; leave out for a free-text answer"))),
-                ("multi_select", ToolParameters::boolean("Whether several choices may be chosen")),
+                ("header", ToolParameters::string().described(format!("A short label for the question, at most {MAX_HEADER_CHARS} characters"))),
+                ("question", ToolParameters::string().described("The question, without its possible answers")),
+                ("choices", ToolParameters::array(choice).described(format!("The possible answers, 2 to {MAX_CHOICES}; leave out for a free-text answer"))),
+                ("multi_select", ToolParameters::boolean().described("Whether several choices may be chosen")),
             ],
             vec!["header", "question"],
         );
@@ -78,8 +78,8 @@ impl ToolProvider for AskUserToolProvider {
             ),
             parameters: ToolParameters::object(
                 vec![
-                    ("questions", ToolParameters::array(question, format!("The questions, 1 to {MAX_QUESTIONS}"))),
-                    ("ask", ToolParameters::array(ToolParameters::string("A handle"), "The users to ask, by their handles; at least one")),
+                    ("questions", ToolParameters::array(question).described(format!("The questions, 1 to {MAX_QUESTIONS}"))),
+                    ("ask", ToolParameters::array(ToolParameters::string().described("A handle")).described("The users to ask, by their handles; at least one")),
                 ],
                 vec!["questions", "ask"],
             ),

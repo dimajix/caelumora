@@ -183,7 +183,7 @@ fn path(text: &str) -> ToolResult<WorkspacePath> {
 
 pub(crate) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
     let asks = |name: &str| config.requires_approval.required(read_only(name));
-    let string = ToolParameters::string;
+    let string = |text: &str| ToolParameters::string().described(text);
     vec![
         tool(
             LIST_FILES,
@@ -198,8 +198,8 @@ pub(crate) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
             ToolParameters::object(
                 [
                     ("path", string("The file, relative to the workspace's top")),
-                    ("start_line", ToolParameters::number("The first line to give, counted from 1; 1 unless given")),
-                    ("line_count", ToolParameters::number("How many lines to give; all to the end unless given")),
+                    ("start_line", ToolParameters::number().described("The first line to give, counted from 1; 1 unless given")),
+                    ("line_count", ToolParameters::number().described("How many lines to give; all to the end unless given")),
                 ],
                 ["path"],
             ),
@@ -213,7 +213,7 @@ pub(crate) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
                 [
                     ("pattern", string("A regular expression (Rust syntax), matched against each line")),
                     ("path", string("The directory to search, with what lies below it, or a single file; the whole workspace unless given")),
-                    ("max_matches", ToolParameters::number(format!("How many matches to give at most; {DEFAULT_MATCHES} unless given"))),
+                    ("max_matches", ToolParameters::number().described(format!("How many matches to give at most; {DEFAULT_MATCHES} unless given"))),
                 ],
                 ["pattern"],
             ),
@@ -235,7 +235,7 @@ pub(crate) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
                     ("path", string("The file, relative to the workspace's top")),
                     ("old_text", string("The text to replace, exactly as it is in the file")),
                     ("new_text", string("The text to put in its place")),
-                    ("replace_all", ToolParameters::boolean("Whether to replace every occurrence; false unless given")),
+                    ("replace_all", ToolParameters::boolean().described("Whether to replace every occurrence; false unless given")),
                 ],
                 ["path", "old_text", "new_text"],
             ),

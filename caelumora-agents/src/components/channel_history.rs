@@ -53,9 +53,9 @@ impl ToolProvider for ChannelHistoryComponent {
             ),
             parameters: ToolParameters::object(
                 [
-                    ("channel", ToolParameters::string("The name of the channel")),
-                    ("last", ToolParameters::number("How many of the latest messages to return")),
-                    ("query", ToolParameters::string("Only messages containing this text, ignoring case")),
+                    ("channel", ToolParameters::string().described("The name of the channel")),
+                    ("last", ToolParameters::number().described("How many of the latest messages to return")),
+                    ("query", ToolParameters::string().described("Only messages containing this text, ignoring case")),
                 ],
                 ["channel"],
             ),

@@ -27,7 +27,7 @@ impl ToolProvider for EchoToolProvider {
             name: ECHO_TOOL_NAME.to_string(),
             description: "Echoes the input back".to_string(),
             parameters: ToolParameters::object(
-                vec![("message", ToolParameters::string("Input message to be echoed back"))],
+                vec![("message", ToolParameters::string().described("Input message to be echoed back"))],
                 vec!["message"],
             ),
             requires_approval: false,

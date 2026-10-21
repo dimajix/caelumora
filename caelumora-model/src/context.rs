@@ -1045,7 +1045,7 @@ mod tests {
     fn the_tools_offered_are_resolved_from_their_set() {
         use crate::tool::ToolParameters;
         let mut state = AgentChannelState::default();
-        let echo = Tool { name: "echo".to_string(), description: "echoes".to_string(), parameters: ToolParameters::object([("text", ToolParameters::string("what"))], ["text"]), requires_approval: true, visibility: Default::default(), classification: None, presentation: Default::default() };
+        let echo = Tool { name: "echo".to_string(), description: "echoes".to_string(), parameters: ToolParameters::object([("text", ToolParameters::string().described("what"))], ["text"]), requires_approval: true, visibility: Default::default(), classification: None, presentation: Default::default() };
         let offered = vec![ToolSet::new("echo_tool", "echoes", vec![echo])];
         let digest = digest::tool_sets(&offered);
         state.offered_tools.keep(digest, || offered.clone());

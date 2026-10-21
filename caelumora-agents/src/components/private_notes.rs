@@ -79,7 +79,7 @@ impl ToolProvider for PrivateNotesComponent {
                     and self-contained, and update one rather than writing a second on the same thing."
                     .to_string(),
                 parameters: ToolParameters::object(
-                    [("text", ToolParameters::string("What to note"))],
+                    [("text", ToolParameters::string().described("What to note"))],
                     ["text"],
                 ),
                 requires_approval: false,
@@ -93,7 +93,7 @@ impl ToolProvider for PrivateNotesComponent {
                     Give its whole new text; it keeps its number."
                     .to_string(),
                 parameters: ToolParameters::object(
-                    [("id", ToolParameters::number("The number of your private note")), ("text", ToolParameters::string("Its new text"))],
+                    [("id", ToolParameters::number().described("The number of your private note")), ("text", ToolParameters::string().described("Its new text"))],
                     ["id", "text"],
                 ),
                 requires_approval: false,
@@ -106,7 +106,7 @@ impl ToolProvider for PrivateNotesComponent {
                 description: "Revoke one of your private notes of this channel, by its number."
                     .to_string(),
                 parameters: ToolParameters::object(
-                    [("id", ToolParameters::number("The number of your private note"))],
+                    [("id", ToolParameters::number().described("The number of your private note"))],
                     ["id"],
                 ),
                 requires_approval: false,

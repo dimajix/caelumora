@@ -83,7 +83,7 @@ impl ToolProvider for NotesComponent {
                     rather than writing a second on the same thing."
                     .to_string(),
                 parameters: ToolParameters::object(
-                    [("text", ToolParameters::string("What to note"))],
+                    [("text", ToolParameters::string().described("What to note"))],
                     ["text"],
                 ),
                 requires_approval: false,
@@ -97,7 +97,7 @@ impl ToolProvider for NotesComponent {
                     it is no longer quite right. Give its whole new text; it keeps its number."
                     .to_string(),
                 parameters: ToolParameters::object(
-                    [("id", ToolParameters::number("The number of your note")), ("text", ToolParameters::string("Its new text"))],
+                    [("id", ToolParameters::number().described("The number of your note")), ("text", ToolParameters::string().described("Its new text"))],
                     ["id", "text"],
                 ),
                 requires_approval: false,
@@ -111,7 +111,7 @@ impl ToolProvider for NotesComponent {
                     no longer true or no longer needed."
                     .to_string(),
                 parameters: ToolParameters::object(
-                    [("id", ToolParameters::number("The number of your note"))],
+                    [("id", ToolParameters::number().described("The number of your note"))],
                     ["id"],
                 ),
                 requires_approval: false,
@@ -139,7 +139,7 @@ impl ToolProvider for NotesComponent {
                     revoked or reclassified in that channel."
                     .to_string(),
                 parameters: ToolParameters::object(
-                    [("channel", ToolParameters::string("The name of the channel; omit it for all channels"))],
+                    [("channel", ToolParameters::string().described("The name of the channel; omit it for all channels"))],
                     Vec::<&str>::new(),
                 ),
                 requires_approval: false,

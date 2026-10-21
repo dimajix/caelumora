@@ -101,16 +101,13 @@ impl ToolProvider for CreatePlanToolProvider {
                 most {} steps, those appended included.", Plan::MAX_STEPS),
             parameters: ToolParameters::object(
                 [
-                    ("summary", ToolParameters::string("One-sentence summary of the overall approach")),
+                    ("summary", ToolParameters::string().described("One-sentence summary of the overall approach")),
                     (
                         "steps",
-                        ToolParameters::array(
-                            ToolParameters::object(
-                                [("description", ToolParameters::string("What this step will do"))],
+                        ToolParameters::array(ToolParameters::object(
+                                [("description", ToolParameters::string().described("What this step will do"))],
                                 ["description"],
-                            ),
-                            "Ordered list of steps",
-                        ),
+                            )).described("Ordered list of steps"),
                     ),
                 ],
                 ["summary", "steps"],

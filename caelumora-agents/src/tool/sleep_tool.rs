@@ -55,7 +55,7 @@ impl ToolProvider for SleepToolProvider {
             name: SLEEP_TOOL_NAME.to_string(),
             description: format!("Waits the given number of seconds, at most {MAX_SECONDS}, and then says so. For testing."),
             parameters: ToolParameters::object(
-                vec![("seconds", ToolParameters::number(format!("How long to wait; {} unless given", self.seconds)))],
+                vec![("seconds", ToolParameters::number().described(format!("How long to wait; {} unless given", self.seconds)))],
                 Vec::<&str>::new(),
             ),
             requires_approval: self.requires_approval,
