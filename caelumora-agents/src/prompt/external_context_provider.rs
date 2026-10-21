@@ -70,7 +70,7 @@ mod tests {
     use caelumora_runtime::agent::state::AgentStateHandle;
     use crate::prompt::static_system_prompt_provider::StaticSystemPromptProvider;
     use crate::prompt::PromptPosition;
-    use caelumora_runtime::session::testing::detached_actor_runtime;
+    use crate::testing::detached_actor_runtime;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::component::ComponentFailPolicy;
     use caelumora_model::confidentiality::Classification;

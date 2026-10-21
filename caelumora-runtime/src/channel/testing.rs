@@ -281,7 +281,7 @@ impl ChannelLoop {
     /// as it saw it (`AgentContextView`).
     pub async fn agent_context(&self, agent: AgentId) -> AgentContextView {
         let state = self.stored_agent_channel_state(agent).await.expect("the state is read");
-        AgentContextView::of(agent, self.id, state, Arc::clone(&self.history_store), Arc::clone(self.runtime.transcript_store()))
+        AgentContextView::of(agent, self.id, state, Arc::clone(&self.history_store), Arc::clone(self.runtime.transcript_store()), Arc::clone(self.runtime.prompts()))
     }
 
     /// The runtime of this channel built again, as after a restart

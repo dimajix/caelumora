@@ -22,8 +22,8 @@ impl Turn<'_> {
     /// way a recorded message's context is (`ContextResolver`, issue 136),
     /// so the two cannot diverge.
     pub(crate) fn full_context(&self) -> Result<(Vec<Message>, Vec<Tool>)> {
-        let resolved = ContextResolver::of(self.agent_channel_state)
-            .resolve(&self.current().work.context, self.turn_id(), ActorId::Agent(self.agent_id))
+        let resolved = ContextResolver::of(self.agent_channel_state, self.runtime.prompts())
+            .resolve(&self.current().work.context, self.turn_id(), ActorId::Agent(self.agent_id))?
             .context("the context of the turn names what the agent's state does not hold")?;
         let messages = self.as_messages(resolved.items);
         // The backends are given the tools natively, which knows no sets.
@@ -44,8 +44,8 @@ impl Turn<'_> {
     pub fn context_until(&self, last: Digest) -> Result<Vec<Message>> {
         let FrameRef { profile, time_zone, .. } = self.current().work.context.frame;
         let reference = ContextRef { transcript: Some(last), frame: FrameRef { profile, time_zone, ..FrameRef::default() } };
-        let resolved = ContextResolver::of(self.agent_channel_state)
-            .resolve(&reference, self.turn_id(), ActorId::Agent(self.agent_id))
+        let resolved = ContextResolver::of(self.agent_channel_state, self.runtime.prompts())
+            .resolve(&reference, self.turn_id(), ActorId::Agent(self.agent_id))?
             .context("the transcript holds no such entry")?;
         Ok(self.as_messages(resolved.items))
     }
@@ -115,6 +115,7 @@ impl Turn<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing;
     use caelumora_runtime::transport::Discard;
     use crate::turn::tests::seen;
     use caelumora_model::actor::EventContext;
@@ -272,8 +273,9 @@ mod tests {
         // The same tools, treated otherwise: offered so then.
         let fourths = take_turn(&mut state, vec![tool("echo", true), tool("notes", false)], &[&fourth]);
 
-        let offered = |said: &Message| ContextResolver::of(&state).resolve(&state.context_of(said).expect("sent with it"), said.turn_id.expect("a turn's"), ActorId::Agent(agent))
-            .expect("everything it names is here").tool_sets.into_iter().flat_map(|set| set.tools).map(|t| (t.name, t.requires_approval)).collect::<Vec<_>>();
+        let prompts = testing::prompts();
+        let offered = |said: &Message| ContextResolver::of(&state, &prompts).resolve(&state.context_of(said).expect("sent with it"), said.turn_id.expect("a turn's"), ActorId::Agent(agent))
+            .expect("worded").expect("everything it names is here").tool_sets.into_iter().flat_map(|set| set.tools).map(|t| (t.name, t.requires_approval)).collect::<Vec<_>>();
         let named = |offer: Vec<(String, bool)>| offer.into_iter().map(|(name, asks)| format!("{name}{}", if asks { "?" } else { "" })).collect::<Vec<_>>();
         assert_eq!(named(offered(&firsts[0])), ["echo", "notes?"]);
         assert_eq!(named(offered(&firsts[1])), ["echo", "notes?"], "the whole turn offers the same tools");

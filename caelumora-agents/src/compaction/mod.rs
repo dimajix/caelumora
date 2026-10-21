@@ -27,6 +27,7 @@ use crate::turn::Turn;
 use crate::situation::Situation;
 use caelumora_runtime::component::ComponentRegistry;
 use async_trait::async_trait;
+use caelumora_model::prompt_catalogue::PromptError;
 use caelumora_model::context::KnowledgeRef;
 use caelumora_model::store::EntityKind;
 use std::fmt::Debug;
@@ -130,6 +131,9 @@ pub enum CompactionError {
     NoSession,
     #[error("the context could not be replaced")]
     NotReplaced,
+    /// A text it is given, or asks its model with, cannot be had (issue 57).
+    #[error("{0}")]
+    Prompt(#[from] PromptError),
 }
 
 /// Registers the compaction kinds with `registry`, and the policy and the

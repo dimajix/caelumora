@@ -180,3 +180,15 @@ personality and component, and repeat them in each.
   (`ToolParameters::describe`, prepared in a commit of its own: the schema is built without
   descriptions). Groups of texts in the catalogue's files, which are read with strict booleans.
   The texts were compared with those before, word for word, for every tool of the agents.
+- **2026-10-21** — Step 1, commit 3: the namespace `core` (`caelumora-model/src/prompts.yaml`),
+  added by `RuntimeBuilder::new` - the notices of the `ContextResolver`, which is given the
+  catalogue (`ContextResolver::of`, `on_path`, `ModelProfile::given_messages`), and the
+  explanation of how messages are marked. In `agents`: the results of tool calls, the plan's
+  instructions, what was heard while working, the part on planning and the compaction's texts.
+  Decided with the maintainer: the turn and the actor reach the catalogue through
+  `ActorRuntime::prompts`; the notices are worded anew as a context is resolved, also for what an
+  agent saw afterwards; what the model is told of why a turn was given up is the catalogue's
+  (`core.given_up_cause`), while `GivenUpReason::cause` stays for logs and frontends
+  ([443](443-errors-carry-only-an-english-text.md)); and a tool result whose message cannot be had
+  is given with its status alone, logged, while one only its agent may see is withheld without its
+  mark. Every text was compared with the one before, word for word.

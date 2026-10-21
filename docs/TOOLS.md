@@ -143,7 +143,10 @@ Every call ends with a result the model can act on.
     `timed_out`, `declined`, `invalid_arguments`, `failed`, `not_executed` (the tool never ran),
     `interrupted` (it ran, but was broken off) and `unknown_tool` (with the tools that do exist).
     The status is stored with the result, so that refusals and failures can be told from results.
-    The wording lives in `crate::tool`.
+    The wording is the prompt catalogue's (`agents.results`, issue 57); what went wrong, the
+    error's own text. A message that cannot be had is logged, and the model is given the status
+    alone: the call is answered all the same. A result only its agent may see is given only with
+    the mark that says so, and withheld without it.
 *   No call is left without a result. A turn that ends while calls of its step have none answers
     them as `not_executed`, saying why the turn ended.
 

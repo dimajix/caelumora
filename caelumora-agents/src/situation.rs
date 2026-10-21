@@ -21,6 +21,7 @@ use caelumora_model::actor::{ActorId, RequestReason};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextResolver, ModelProfile};
+use caelumora_model::prompt_catalogue::PromptError;
 use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::ToolSet;
@@ -159,8 +160,11 @@ impl<'a> Situation<'a> {
     /// (`ContextResolver::token_positions`, issue 284): how full its context
     /// is, and where it may be cut. `None` if the work's context cannot be
     /// resolved.
-    pub fn token_positions(&self) -> Option<(Vec<u64>, bool)> {
-        ContextResolver::of(self.agent_channel_state).token_positions(&self.work.context, self.work.turn_id, ActorId::Agent(self.agent_id))
+    ///
+    /// # Errors
+    /// `PromptError` if a text it is given cannot be had.
+    pub fn token_positions(&self) -> Result<Option<(Vec<u64>, bool)>, PromptError> {
+        ContextResolver::of(self.agent_channel_state, self.runtime.prompts()).token_positions(&self.work.context, self.work.turn_id, ActorId::Agent(self.agent_id))
     }
 
     /// How the agent's model is given its context (issue 135): what a

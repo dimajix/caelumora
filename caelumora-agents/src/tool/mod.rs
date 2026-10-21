@@ -26,7 +26,8 @@ use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::view::{ViewError, WorkspaceView};
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus, ToolParameters};
-use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use caelumora_model::turn::GivenUpReason;
 use crate::prompt::NAMESPACE;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -35,7 +36,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 use chrono::Utc;
 
 #[derive(Debug, thiserror::Error)]
@@ -192,56 +193,69 @@ pub fn text_argument(params: &Value) -> ToolResult<String> {
     Ok(text.to_string())
 }
 
+/// The text `key` of `prompts` for the result of a tool call (issue 57),
+/// rendered with `values`.
+fn result_text(prompts: &PromptCatalogue, key: &str, values: impl Serialize) -> Result<String, PromptError> {
+    prompts.render(&format!("{NAMESPACE}.results.{key}"), values)
+}
+
 /// What the model is given as the result of a tool call that produced none
 /// (issue 15): a small JSON object with the `status` and a `message` that
 /// says what happened and what to do next, e.g.
 /// `{"status":"denied","message":"The user declined ..."}`. Successful
-/// results are passed on unchanged.
-fn unsuccessful_result(status: ToolResultStatus, message: &str) -> String {
-    serde_json::json!({ "status": status, "message": message }).to_string()
-}
-
-/// What the model is given as the result of a call that succeeded: the
-/// tool's `value` - marked as the agent's alone if the channel does not see
-/// it (issue 66), i.e. if the call's result is its owner's
-/// (`Visibility::Owner`). The answer text is always published, so a result
-/// the channel does not see is worthless redacted if the model quotes it.
-/// A value that is text - a skill loaded, the text of a remote tool - is
-/// given as the text it is (issue 22), not as a JSON string; any other as
-/// JSON.
-pub fn successful_result(value: Value, visibility: ToolVisibility) -> String {
-    const OWNERS: &str = "Only you see this result - the channel does not. Do not quote or reveal it in your answers.";
-    match (value, visibility.result.is_channel()) {
-        (Value::String(text), true) => text,
-        (Value::String(text), false) => format!("{text}\n\n[{OWNERS}]"),
-        (value, true) => value.to_string(),
-        (value, false) => serde_json::json!({ "result": value, "note": OWNERS }).to_string(),
+/// results are passed on unchanged. A `message` that cannot be had is
+/// logged, and the model is given the status alone: what happened, if not
+/// what to do next - the call is answered all the same.
+fn unsuccessful_result(status: ToolResultStatus, message: Result<String, PromptError>) -> String {
+    match message {
+        Ok(message) => serde_json::json!({ "status": status, "message": message }).to_string(),
+        Err(e) => {
+            error!("The model is told only the status '{status:?}' of a tool call: {e}");
+            serde_json::json!({ "status": status }).to_string()
+        }
     }
 }
 
+/// What the model is given as the result of a call that succeeded: the
+/// tool's `value` - marked as the agent's alone, by the text of `prompts`,
+/// if the channel does not see it (issue 66), i.e. if the call's result is
+/// its owner's (`Visibility::Owner`). The answer text is always published,
+/// so a result the channel does not see is worthless redacted if the model
+/// quotes it. A value that is text - a skill loaded, the text of a remote
+/// tool - is given as the text it is (issue 22), not as a JSON string; any
+/// other as JSON.
+///
+/// # Errors
+/// `PromptError` if the mark is needed and cannot be had: the result is
+/// not to be given without it.
+pub fn successful_result(prompts: &PromptCatalogue, value: Value, visibility: ToolVisibility) -> Result<String, PromptError> {
+    if visibility.result.is_channel() {
+        return Ok(match value {
+            Value::String(text) => text,
+            value => value.to_string(),
+        });
+    }
+    let owners = result_text(prompts, "owners", ())?;
+    Ok(match value {
+        Value::String(text) => format!("{text}\n\n[{owners}]"),
+        value => serde_json::json!({ "result": value, "note": owners }).to_string(),
+    })
+}
+
 /// The result for a call a user declined.
-pub(crate) fn denied_result() -> String {
-    unsuccessful_result(
-        ToolResultStatus::Denied,
-        "The user declined this tool call. Do not repeat it; continue without it or ask the user how to proceed.",
-    )
+pub(crate) fn denied_result(prompts: &PromptCatalogue) -> String {
+    unsuccessful_result(ToolResultStatus::Denied, result_text(prompts, "denied", ()))
 }
 
 /// The result for a call nobody approved in time.
-pub(crate) fn timed_out_result() -> String {
-    unsuccessful_result(
-        ToolResultStatus::TimedOut,
-        "No one approved this tool call in time; it was not executed. You may ask the user whether to try again.",
-    )
+pub(crate) fn timed_out_result(prompts: &PromptCatalogue) -> String {
+    unsuccessful_result(ToolResultStatus::TimedOut, result_text(prompts, "timed_out", ()))
 }
 
 /// The result for a call whose questions a person declined to answer
 /// (issue 165), by saying so or by writing a message instead.
-pub(crate) fn declined_result() -> String {
-    unsuccessful_result(
-        ToolResultStatus::Declined,
-        "The user declined to answer the questions of this tool call; it was not executed. Read what they wrote instead, if anything, and go on without the answers or ask differently.",
-    )
+pub(crate) fn declined_result(prompts: &PromptCatalogue) -> String {
+    unsuccessful_result(ToolResultStatus::Declined, result_text(prompts, "declined", ()))
 }
 
 /// The result for a call that was approved but has no result when its
@@ -249,22 +263,16 @@ pub(crate) fn declined_result() -> String {
 /// before the call ran (issue 377), or before its result was stored. The
 /// runtime cannot tell which, so it never runs the call again - the model
 /// decides.
-pub(crate) fn not_executed_result() -> String {
-    unsuccessful_result(
-        ToolResultStatus::NotExecuted,
-        "This tool call was not executed: the session was stopped or the server restarted before it ran. Decide again whether to call it; if its effect matters, check first.",
-    )
+pub(crate) fn not_executed_result(prompts: &PromptCatalogue) -> String {
+    unsuccessful_result(ToolResultStatus::NotExecuted, result_text(prompts, "not_executed", ()))
 }
 
 /// The result for a call that was running when its turn was cancelled or
 /// given up (issue 161): it was interrupted, and what it did before stays
 /// done. The runtime cannot tell how far it got - the model checks before
 /// it calls it again.
-pub(crate) fn interrupted_result() -> String {
-    unsuccessful_result(
-        ToolResultStatus::Interrupted,
-        "This tool call was interrupted while it ran, because the turn ended. It may have taken effect in part or in full. Check its effect before calling it again.",
-    )
+pub(crate) fn interrupted_result(prompts: &PromptCatalogue) -> String {
+    unsuccessful_result(ToolResultStatus::Interrupted, result_text(prompts, "interrupted", ()))
 }
 
 /// Why a running call is broken off (issues 161, 276), which decides what
@@ -281,83 +289,84 @@ pub enum Interruption {
 }
 
 impl Interruption {
-    /// The result of a call interrupted so, `after` it ran so long.
-    fn result(&self, after: Duration) -> String {
+    /// The result of a call interrupted so, `after` it ran so long, worded
+    /// by `prompts`.
+    fn result(&self, prompts: &PromptCatalogue, after: Duration) -> String {
+        let seconds = format!("{:.1}", after.as_secs_f64());
         match self {
-            Self::TurnEnded => interrupted_result(),
-            Self::Stopped => unsuccessful_result(
-                ToolResultStatus::Interrupted,
-                &format!("This tool call was interrupted after {:.1} seconds while it ran, because the session was stopped; your turn resumed when it ran again. It may have taken effect in part or in full. Check its effect before calling it again.", after.as_secs_f64()),
-            ),
-            Self::ByUser(by) => unsuccessful_result(
-                ToolResultStatus::Interrupted,
-                &format!("{by} interrupted this tool call after {:.1} seconds while it ran; your turn goes on. It may have taken effect in part or in full. Check its effect before calling it again, and decide how to go on - differently, or by asking the user.", after.as_secs_f64()),
-            ),
+            Self::TurnEnded => interrupted_result(prompts),
+            Self::Stopped => unsuccessful_result(ToolResultStatus::Interrupted, result_text(prompts, "interrupted_stopped", context! { seconds })),
+            Self::ByUser(by) => unsuccessful_result(ToolResultStatus::Interrupted, result_text(prompts, "interrupted_by_user", context! { by, seconds })),
         }
     }
 }
 
 /// The result for a call that a user, `by`, interrupted before it ran
 /// (issue 276): it was not run, and the turn goes on.
-pub(crate) fn skipped_result(by: &str) -> String {
-    unsuccessful_result(
-        ToolResultStatus::NotExecuted,
-        &format!("{by} interrupted this tool call before it ran; it was not executed, and your turn goes on. Decide whether to call it again."),
-    )
+pub(crate) fn skipped_result(prompts: &PromptCatalogue, by: &str) -> String {
+    unsuccessful_result(ToolResultStatus::NotExecuted, result_text(prompts, "skipped", context! { by }))
 }
 
 /// The result for a call that had no result when its turn ended (issue
-/// 148): it never ran, `because` - why the turn ended, as in "the turn
-/// ended before it ran, because it was cancelled".
-pub(crate) fn abandoned_result(because: &str) -> String {
-    unsuccessful_result(
-        ToolResultStatus::NotExecuted,
-        &format!("This tool call was not executed: the turn ended before it ran, because {because}. Decide again whether to call it."),
-    )
+/// 148): it never ran, because of what the text `cause` of `prompts` says -
+/// "the turn ended before it ran, because it was cancelled" (`TurnEnd`).
+pub(crate) fn abandoned_result(prompts: &PromptCatalogue, cause: &TurnEnd) -> String {
+    let message = prompts.render(&cause.key(), ())
+        .and_then(|cause| result_text(prompts, "abandoned", context! { cause }));
+    unsuccessful_result(ToolResultStatus::NotExecuted, message)
+}
+
+/// Why a turn ended with calls that never ran (issue 148), as the model is
+/// told it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TurnEnd<'a> {
+    /// It was taken over as it stood, cancelled or not.
+    Committed { cancelled: bool },
+    /// It was given up for its reason.
+    GivenUp(&'a GivenUpReason),
+}
+
+impl TurnEnd<'_> {
+    /// The key of the text that says why: the core's for a turn given up
+    /// (`core.given_up_cause`), the agents' otherwise.
+    fn key(&self) -> String {
+        match self {
+            TurnEnd::Committed { cancelled: true } => format!("{NAMESPACE}.results.ended_because.cancelled"),
+            TurnEnd::Committed { cancelled: false } => format!("{NAMESPACE}.results.ended_because.ended"),
+            TurnEnd::GivenUp(reason) => reason.cause_key(),
+        }
+    }
 }
 
 /// The result for a call whose result is classified `classification`, which
 /// may not flow into the channel (issue 133). The model is told the
 /// classification, so that it can tell the user why, and not to look for
 /// the result elsewhere.
-pub(crate) fn withheld_result(classification: &Classification) -> String {
-    unsuccessful_result(
-        ToolResultStatus::Withheld,
-        &format!("The result of this tool call is classified {classification}, which may not be shown in this channel; it was withheld. Do not try to obtain it another way; tell the user if it matters."),
-    )
+pub(crate) fn withheld_result(prompts: &PromptCatalogue, classification: &Classification) -> String {
+    unsuccessful_result(ToolResultStatus::Withheld, result_text(prompts, "withheld", context! { classification => classification.to_string() }))
 }
 
 /// The result for a call the policy does not permit. Deliberately without the
 /// reason: telling the model why describes the policy to something that may
 /// try to route around it. The reason is in the log.
-pub(crate) fn forbidden_result() -> String {
-    unsuccessful_result(
-        ToolResultStatus::Forbidden,
-        "This tool call is not permitted. Do not retry it; continue without it or tell the user that you cannot do this.",
-    )
+pub(crate) fn forbidden_result(prompts: &PromptCatalogue) -> String {
+    unsuccessful_result(ToolResultStatus::Forbidden, result_text(prompts, "forbidden", ()))
 }
 
 impl ToolError {
-    /// The status and the model-facing result for a call that failed with
-    /// this error. `available` names the tools that do exist, offered when
-    /// the model called one that does not.
-    pub fn to_result(&self, available: &[String]) -> (ToolResultStatus, String) {
+    /// The status and the model-facing result, worded by `prompts`, for a
+    /// call that failed with this error. `available` names the tools that do
+    /// exist, offered when the model called one that does not. What went
+    /// wrong is the error's own text, which is no text of the catalogue
+    /// (issue 57).
+    pub fn to_result(&self, prompts: &PromptCatalogue, available: &[String]) -> (ToolResultStatus, String) {
         let (status, message) = match self {
-            ToolError::PermissionDenied(_) => return (ToolResultStatus::Forbidden, forbidden_result()),
-            ToolError::UnknownTool(name) => (
-                ToolResultStatus::UnknownTool,
-                format!("There is no tool named '{}'. Available tools: {}.", name, if available.is_empty() { "none".to_string() } else { available.join(", ") }),
-            ),
-            ToolError::InvalidParameter(reason) => (
-                ToolResultStatus::InvalidArguments,
-                format!("The arguments were invalid: {}. Correct them and call the tool again.", reason),
-            ),
-            ToolError::ExecutionFailed(reason) => (
-                ToolResultStatus::Failed,
-                format!("The tool failed: {}", reason),
-            ),
+            ToolError::PermissionDenied(_) => return (ToolResultStatus::Forbidden, forbidden_result(prompts)),
+            ToolError::UnknownTool(name) => (ToolResultStatus::UnknownTool, result_text(prompts, "unknown_tool", context! { name, available })),
+            ToolError::InvalidParameter(reason) => (ToolResultStatus::InvalidArguments, result_text(prompts, "invalid_arguments", context! { reason })),
+            ToolError::ExecutionFailed(reason) => (ToolResultStatus::Failed, result_text(prompts, "failed", context! { reason })),
         };
-        (status, unsuccessful_result(status, &message))
+        (status, unsuccessful_result(status, message))
     }
 }
 
@@ -625,7 +634,7 @@ impl ToolExecutor {
                 let after = (finished_at - started_at).to_std().unwrap_or_default();
                 info!(tool = %call.function_name, duration_ms = after.as_millis(), by_user = matches!(interruption, Interruption::ByUser(_)), "Tool interrupted");
                 // A fixed text of the runtime's: as the turn (issue 168).
-                let mut result = ToolCallResult::of(call, ToolResultStatus::Interrupted, interruption.result(after), turn.situation().label());
+                let mut result = ToolCallResult::of(call, ToolResultStatus::Interrupted, interruption.result(self.runtime.prompts(), after), turn.situation().label());
                 result.started_at = Some(started_at);
                 result.finished_at = Some(finished_at);
                 return result;
@@ -653,7 +662,7 @@ impl ToolExecutor {
     /// what to do next, classified as the channel.
     fn failed(&self, call: &ToolCall, error: ToolError, turn: &Turn<'_>) -> ToolCallResult {
         let available: Vec<String> = turn.tools().map(|t| t.name.clone()).collect();
-        let (status, content) = error.to_result(&available);
+        let (status, content) = error.to_result(self.runtime.prompts(), &available);
         ToolCallResult::of(call, status, content, turn.situation().classification())
     }
 
@@ -669,9 +678,16 @@ impl ToolExecutor {
         let context = turn.situation().security_context();
         if !self.confidentiality.may_publish(context, &classification, &channel) {
             debug!(tool = %call.function_name, %classification, "Withheld a result the channel does not admit");
-            return ToolCallResult::of(call, ToolResultStatus::Withheld, withheld_result(&classification), channel);
+            return ToolCallResult::of(call, ToolResultStatus::Withheld, withheld_result(self.runtime.prompts(), &classification), channel);
         }
-        ToolCallResult::of(call, ToolResultStatus::Ok, successful_result(output.value, call.visibility), classification)
+        match successful_result(self.runtime.prompts(), output.value, call.visibility) {
+            Ok(content) => ToolCallResult::of(call, ToolResultStatus::Ok, content, classification),
+            // Not given without the mark that it is the agent's alone.
+            Err(e) => {
+                error!(tool = %call.function_name, "Withheld a result only its agent may see, which cannot be marked so: {e}");
+                ToolCallResult::of(call, ToolResultStatus::Withheld, unsuccessful_result(ToolResultStatus::Withheld, Err(e)), channel)
+            }
+        }
     }
 
     /// How `call`, made by the model in `turn`, is admitted: a call that
@@ -694,12 +710,12 @@ impl ToolExecutor {
         // asked as it is admitted, not again when it runs.
         if self.access_policy.require(turn.situation().security_context(), ActionType::CallTool(call), |_| ()).await.is_err() {
             info!("Tool call '{}' by agent {} forbidden by the access policy", call.function_name, agent);
-            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.situation().label()));
+            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(self.runtime.prompts()), turn.situation().label()));
         }
         let rule = self.place_rule(call);
         if let Some((rule_id, RuleDecision::Deny)) = rule {
             info!(rule = %rule_id, "Tool call '{}' by agent {} denied by a rule", call.function_name, agent);
-            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(), turn.situation().label()));
+            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(self.runtime.prompts()), turn.situation().label()));
         }
         let description = match self.providers.describe(call) {
             Ok(description) => description,
@@ -781,6 +797,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{self, TestAgents};
     use caelumora_model::event::GlobalEvent;
     use crate::turn::Turn;
     use caelumora_runtime::session::testing::{bare_session, detached_actor_runtime_in};
@@ -898,7 +915,7 @@ mod tests {
             (ToolError::PermissionDenied("rule 7: no shell after 18:00".to_string()), ToolResultStatus::Forbidden, "not permitted"),
         ];
         for (error, expected, fragment) in cases {
-            let (status, result) = error.to_result(&available);
+            let (status, result) = error.to_result(&testing::prompts(), &available);
             assert_eq!(status, expected);
             let json = parse(&result);
             assert_eq!(json["status"], serde_json::to_value(expected).unwrap());
@@ -909,17 +926,17 @@ mod tests {
 
     #[test]
     fn a_policy_refusal_does_not_disclose_the_policy() {
-        let (_, result) = ToolError::PermissionDenied("rule 7: no shell after 18:00".to_string()).to_result(&[]);
+        let (_, result) = ToolError::PermissionDenied("rule 7: no shell after 18:00".to_string()).to_result(&testing::prompts(), &[]);
         assert!(!result.contains("rule 7"), "{}", result);
-        assert_eq!(result, forbidden_result());
+        assert_eq!(result, forbidden_result(&testing::prompts()));
     }
 
     #[test]
     fn denial_and_timeout_are_distinguishable() {
-        assert_eq!(parse(&denied_result())["status"], "denied");
-        assert_eq!(parse(&timed_out_result())["status"], "timed_out");
-        assert!(denied_result().contains("Do not repeat it"));
-        assert!(timed_out_result().contains("ask the user whether to try again"));
+        assert_eq!(parse(&denied_result(&testing::prompts()))["status"], "denied");
+        assert_eq!(parse(&timed_out_result(&testing::prompts()))["status"], "timed_out");
+        assert!(denied_result(&testing::prompts()).contains("Do not repeat it"));
+        assert!(timed_out_result(&testing::prompts()).contains("ask the user whether to try again"));
     }
 
     fn executor(access_policy: Arc<dyn AccessPolicy>) -> ToolExecutor {
@@ -957,7 +974,7 @@ mod tests {
         let session = Session { approval_rules: places.session, ..bare_session(SessionId::new()) };
         let mut channel = Channel::build(session.id, ActorId::None, Name::new("main").unwrap(), Default::default(), Classification::CHANNEL_DEFAULT, None);
         channel.approval_rules = places.channel;
-        let runtime = detached_actor_runtime_in(TestRuntime { access_policy, confidentiality, config, ..Default::default() }.build(), session, channel);
+        let runtime = detached_actor_runtime_in(TestRuntime { access_policy, confidentiality, config, plugins: vec![&TestAgents], ..Default::default() }.build(), session, channel);
         let (session, channel) = (Arc::clone(runtime.session_controller()), Arc::clone(runtime.channel_controller()));
         let executor = ToolExecutor::new(providers, runtime).unwrap();
         (executor, session, channel)
@@ -981,7 +998,7 @@ mod tests {
         };
 
         let denied = admitted(guarded(Arc::clone(&access_policy), false, Places { system: vec![rule("test_tool", RuleDecision::Deny)], ..Default::default() })).await;
-        assert!(matches!(denied, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result()), "the system's, as the policy refuses: {denied:?}");
+        assert!(matches!(denied, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result(&testing::prompts())), "the system's, as the policy refuses: {denied:?}");
         let asked = admitted(guarded(Arc::clone(&access_policy), false, Places { channel: vec![rule("test_tool", RuleDecision::Ask)], ..Default::default() })).await;
         assert!(matches!(asked, Admission::Ask { explicit: true, .. }), "the channel's, of a tool that would not ask: {asked:?}");
         let both = admitted(guarded(Arc::clone(&access_policy), false, Places { session: vec![rule("*", RuleDecision::Ask)], channel: vec![rule("test_tool", RuleDecision::Deny)], ..Default::default() })).await;
@@ -1019,7 +1036,7 @@ mod tests {
         let mut context = Turn::under_way(agent_id, &mut agent_channel_state);
 
         let admitted = executor.admit(&call("test_tool"), &context).await;
-        assert!(matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result()), "refused before anyone is asked: {admitted:?}");
+        assert!(matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result(&testing::prompts())), "refused before anyone is asked: {admitted:?}");
         let result = executor.execute(&call("test_tool"), None, &mut context, std::future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::Ok, "running asks the policy nothing more: only an admitted call is run");
     }
@@ -1214,7 +1231,7 @@ mod tests {
 
         let result = executor.execute(&call("hanging_tool"), None, &mut turn, ending).await;
         assert_eq!(result.status, ToolResultStatus::Interrupted, "not waited for once the turn ends");
-        assert_eq!(result.content, interrupted_result());
+        assert_eq!(result.content, interrupted_result(&testing::prompts()));
         let (started_at, finished_at) = (result.started_at.expect("it ran"), result.finished_at.expect("until it was interrupted"));
         assert!(finished_at >= started_at);
 
@@ -1283,21 +1300,21 @@ mod tests {
     #[test]
     fn a_result_the_channel_does_not_see_is_marked_for_the_model() {
         let value = json!({"secret": 42});
-        let public = successful_result(value.clone(), ToolVisibility::SHOWN);
+        let public = successful_result(&testing::prompts(), value.clone(), ToolVisibility::SHOWN).unwrap();
         assert_eq!(parse(&public), value, "passed on unchanged");
 
-        let hidden = parse(&successful_result(value.clone(), ToolVisibility::CALL_ONLY));
+        let hidden = parse(&successful_result(&testing::prompts(), value.clone(), ToolVisibility::CALL_ONLY).unwrap());
         assert_eq!(hidden["result"], value);
         assert!(hidden["note"].as_str().unwrap().contains("Do not quote or reveal it"));
-        let without_result = parse(&successful_result(value.clone(), ToolVisibility::WITHOUT_RESULT));
+        let without_result = parse(&successful_result(&testing::prompts(), value.clone(), ToolVisibility::WITHOUT_RESULT).unwrap());
         assert_eq!(without_result, hidden, "the result is what counts, not the arguments");
     }
 
     #[test]
     fn a_result_that_is_text_is_given_as_text() {
         let text = json!("1. Collect.\n2. Group.");
-        assert_eq!(successful_result(text.clone(), ToolVisibility::SHOWN), "1. Collect.\n2. Group.", "not a JSON string");
-        let hidden = successful_result(text, ToolVisibility::CALL_ONLY);
+        assert_eq!(successful_result(&testing::prompts(), text.clone(), ToolVisibility::SHOWN).unwrap(), "1. Collect.\n2. Group.", "not a JSON string");
+        let hidden = successful_result(&testing::prompts(), text, ToolVisibility::CALL_ONLY).unwrap();
         assert!(hidden.starts_with("1. Collect.\n2. Group.\n\n[") && hidden.contains("Do not quote or reveal it"), "{hidden}");
     }
 }

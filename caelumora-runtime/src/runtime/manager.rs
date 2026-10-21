@@ -7,6 +7,7 @@ use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use anyhow::Result;
 use caelumora_model::approval::ApprovalRule;
+use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::channel::ChannelId;
 use crate::agent::state::AgentStates;
 use caelumora_model::component::ComponentConfig;
@@ -80,6 +81,10 @@ pub struct RuntimeManager {
     /// The services components may use (issue 296), each given to the
     /// kinds that declare it (`ComponentKind::uses`), and the views.
     pub(super) services: Services,
+    /// The texts given to models (issue 57), also among the `services`:
+    /// what the runtime itself words for a model - what an agent saw, as
+    /// its context is resolved again.
+    pub(super) prompts: Arc<PromptCatalogue>,
     /// The sections of the seed the plugins claimed (issue 323).
     pub(super) seed_sections: BTreeMap<String, Arc<dyn SeedSection>>,
 }
@@ -170,6 +175,9 @@ impl RuntimeManager {
     pub fn user_manager(&self) -> &Arc<UserManager> { &self.user_manager }
 
     pub fn services(&self) -> &Services { &self.services }
+
+    /// The texts given to models (issue 57).
+    pub fn prompts(&self) -> &Arc<PromptCatalogue> { &self.prompts }
 
     /// The kinds of agent it runs (issue 370): how an agent's actor is
     /// built, and which facets its components are asked for.

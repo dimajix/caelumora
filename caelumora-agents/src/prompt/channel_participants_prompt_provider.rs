@@ -77,7 +77,7 @@ impl PromptProvider for ChannelParticipantsPromptProvider {
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         // Work that reaches no session (`Situation::channel`) has nobody to name.
         let Some((me, others)) = participants(situation).await? else { return Ok(Prompt::classified(String::new(), Classification::PUBLIC)) };
-        let explanation = situation.profile().framing_explanation();
+        let explanation = situation.profile().framing_explanation(&self.prompts)?;
         let text = self.text(render(&self.prompts, me.as_ref(), &others, explanation.as_deref())?);
         // Names and introductions are public (issue 176).
         Ok(Prompt::classified(text, Classification::PUBLIC))

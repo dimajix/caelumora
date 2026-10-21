@@ -323,3 +323,114 @@ tools:
     level: "The new level: public, internal, confidential or strictly_confidential"
     compartments: "Who it is meant for; none: everybody of the level. Public takes none."
     compartments.item: A compartment
+
+# What the model is told of a tool call that produced no result of its own
+# (issue 15), as the `message` beside its `status` - what happened, and what
+# to do next -, and the mark of a result only the agent sees (issue 66). A
+# message that cannot be had leaves the status alone; a result without its
+# mark is withheld.
+results:
+  owners: Only you see this result - the channel does not. Do not quote or reveal it in your answers.
+  denied: The user declined this tool call. Do not repeat it; continue without it or ask the user how to proceed.
+  timed_out: No one approved this tool call in time; it was not executed. You may ask the user whether to try again.
+  declined: >-
+    The user declined to answer the questions of this tool call; it was not executed. Read what they
+    wrote instead, if anything, and go on without the answers or ask differently.
+  not_executed: >-
+    This tool call was not executed: the session was stopped or the server restarted before it ran.
+    Decide again whether to call it; if its effect matters, check first.
+  interrupted: >-
+    This tool call was interrupted while it ran, because the turn ended. It may have taken effect in
+    part or in full. Check its effect before calling it again.
+  # `seconds`: how long it ran.
+  interrupted_stopped: >-
+    This tool call was interrupted after {{ seconds }} seconds while it ran, because the session was
+    stopped; your turn resumed when it ran again. It may have taken effect in part or in full. Check
+    its effect before calling it again.
+  # `by`: who interrupted it; `seconds`: how long it ran.
+  interrupted_by_user: >-
+    {{ by }} interrupted this tool call after {{ seconds }} seconds while it ran; your turn goes on.
+    It may have taken effect in part or in full. Check its effect before calling it again, and decide
+    how to go on - differently, or by asking the user.
+  # `by`: who interrupted it (issue 276).
+  skipped: >-
+    {{ by }} interrupted this tool call before it ran; it was not executed, and your turn goes on.
+    Decide whether to call it again.
+  # `cause`: why the turn ended - one of `ended_because`, or of the core's
+  # `given_up_cause` for a turn given up (issue 148).
+  abandoned: >-
+    This tool call was not executed: the turn ended before it ran, because {{ cause }}. Decide again
+    whether to call it.
+  ended_because:
+    cancelled: it was cancelled
+    ended: it ended
+  # `classification`: that of the result, which may not flow into the
+  # channel (issue 133).
+  withheld: >-
+    The result of this tool call is classified {{ classification }}, which may not be shown in this
+    channel; it was withheld. Do not try to obtain it another way; tell the user if it matters.
+  # Deliberately without the reason: telling the model why describes the
+  # policy to something that may try to route around it.
+  forbidden: >-
+    This tool call is not permitted. Do not retry it; continue without it or tell the user that you
+    cannot do this.
+  # `name`: the tool called; `available`: those there are.
+  unknown_tool: "There is no tool named '{{ name }}'. Available tools: {{ available|join(', ') if available else 'none' }}."
+  # `reason`: what the error says.
+  invalid_arguments: "The arguments were invalid: {{ reason }}. Correct them and call the tool again."
+  failed: "The tool failed: {{ reason }}"
+
+# `create_plan_tool`, in the system prompt: when to plan - by the tool
+# `create_plan`. It stays for the whole turn, also once a plan is carried
+# out: the instructions of its steps (`plan`) dominate by then.
+planning: |
+  [Planning]
+  Before responding, decide whether this request needs research or multiple steps to complete. If it does, gather any information you need using the available tools, then call `{{ create_plan }}` once with a short summary and an ordered list of the steps you will take to fulfill the request. For simple requests that need no research and no multiple steps, skip `{{ create_plan }}` entirely and just answer directly.
+
+# The instructions of a plan carried out in a turn, placed after the turn's
+# messages so far (`Turn::advance_plan`).
+plan:
+  # Step `number` of `total`, which is to do what `description` says.
+  step: |-
+    Step {{ number }} of {{ total }}: {{ description }}
+
+    Work on this step now, using any tools you need. When you are finished, describe the outcome.
+  # Once every step is done: the `steps` by their descriptions.
+  finalize: |-
+    You have completed every step of the plan:
+    {% for step in steps %}
+    {{ loop.index }}. {{ step }}
+    {% endfor %}
+    {% if not steps %}
+
+    {% endif %}
+
+    Now provide your final, complete answer to the user's original request, incorporating what you learned.
+  # After a compaction replaced the plan (issue 284): its `summary`, its
+  # `steps`, each by `description` and `state` - "done", "under_way" or
+  # "to_do" -, and the `instruction` of the step under way.
+  overview: |-
+    You are carrying out a plan: {{ summary }}
+    {% for step in steps %}
+    {{ loop.index }}. [{{ "done" if step.state == "done" else ("under way" if step.state == "under_way" else "to do") }}] {{ step.description }}
+    {% endfor %}
+
+    {{ instruction }}
+
+# After what was said while the agent worked (issue 431).
+heard_while_working: >-
+  What is just above was said by others, or happened, while you were working. Take them into account
+  from here on: if they change what you were asked, act on that. Otherwise go on with your work. If
+  they ask you something, answer it in your final answer.
+
+# `summary_compaction`: what its model is asked to summarise for - going on
+# from the summary alone -, leaving out what a restorer gives again, of the
+# `kinds` named; and the title of the summary.
+compaction:
+  instruction: >-
+    Summarise the conversation above for yourself, so that you can go on from the summary alone: what
+    the task is and who asked for it, what was decided and agreed, what was done - with which files,
+    tools and results that still matter -, and what is still open. Keep names, numbers and identifiers
+    exact. Answer with the summary only.{{ " Leave out the text of anything given to you as a " ~ kinds|join(" or ") ~ ": it is given to you again." if kinds }}
+  # `text`: the summary, ending in a line break.
+  summary: "[Summary of the conversation so far]\n{{ text }}"

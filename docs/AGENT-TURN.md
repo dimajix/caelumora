@@ -600,7 +600,13 @@ catalogue (`PromptCatalogue` in `caelumora-model`, issue 57), so that a text can
 change of code. Every crate brings its texts in a YAML file it compiles in - the agents'
 `caelumora-agents/src/prompts.yaml` - and adds them under its namespace when its plugin registers
 (`RuntimeBuilder::prompts`): `agents.channel_participants` is the roster. The catalogue is a
-service of the runtime; a provider takes it when it is made (`ComponentKind::uses`).
+service of the runtime; a provider takes it when it is made (`ComponentKind::uses`), what the
+turn or the actor words itself - a plan's instructions, what was heard while it worked, the
+results of tool calls - through its runtime (`ActorRuntime::prompts`). The core's texts are the
+namespace `core` (`caelumora-model/src/prompts.yaml`): what the `ContextResolver` tells the model as
+it resolves a context - a turn given up, who joined or left - and how the messages of others are
+marked (`ModelProfile::framing_explanation`). They are worded anew each time a context is
+resolved, also when what an agent saw is asked for afterwards: with the texts as they are then.
 
 A text is a whole part, title and all: a template of `minijinja` (Jinja2), given its values by
 name, that may branch and loop over them - the roster over the participants, the notes over their

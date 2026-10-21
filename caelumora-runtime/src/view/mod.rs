@@ -46,6 +46,7 @@ use crate::controller::ControllerManager;
 use crate::runtime::{RuntimeManager, Services};
 use crate::session::{Found, SessionLoop, SessionManager};
 use crate::workspace::WorkspaceManager;
+use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, Reading, Place};
@@ -196,6 +197,8 @@ pub struct Views {
     /// Where what an agent was given on an older branch of its transcript
     /// is read (issue 380).
     transcripts: Arc<dyn TranscriptStore>,
+    /// The texts what an agent saw is worded with again (issue 57).
+    prompts: Arc<PromptCatalogue>,
     components: Arc<ComponentRegistry>,
     workspaces: Arc<WorkspaceManager>,
     /// Where a session's workspace is asked whether it may be used in a
@@ -217,6 +220,7 @@ impl Views {
             states: Arc::clone(runtime.state_store()),
             histories: Arc::clone(runtime.history_store()),
             transcripts: Arc::clone(runtime.transcript_store()),
+            prompts: Arc::clone(runtime.prompts()),
             components: Arc::clone(runtime.component_registry()),
             workspaces: Arc::clone(runtime.workspace_manager()),
             controllers: Arc::clone(runtime.controller_manager()),
@@ -272,6 +276,11 @@ impl Views {
 
     pub(crate) fn transcripts(&self) -> &Arc<dyn TranscriptStore> {
         &self.transcripts
+    }
+
+    /// The texts given to models (issue 57).
+    pub(crate) fn prompts(&self) -> &Arc<PromptCatalogue> {
+        &self.prompts
     }
 
     pub(crate) fn components(&self) -> &ComponentRegistry {

@@ -27,9 +27,20 @@ use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+#[cfg(test)]
+use std::sync::OnceLock;
 
 /// The values a text is rendered with, by name: `context!{ name => "Sassy" }`.
 pub use minijinja::context;
+
+/// The namespace of the core's texts: what `caelumora-model` writes for a
+/// model - the notices of a context as it is resolved, the explanation of
+/// how messages are marked.
+pub const CORE: &str = "core";
+
+/// The core's texts, added to the catalogue under `CORE` when the runtime
+/// is built (`RuntimeBuilder::new`).
+pub const CORE_PROMPTS: &str = include_str!("prompts.yaml");
 
 /// The texts given to models, by key: those of every namespace added.
 #[derive(Debug)]
@@ -146,6 +157,18 @@ pub enum PromptError {
     NamespaceTaken(String),
     #[error("the text '{key}' cannot be rendered")]
     Invalid { key: String, #[source] cause: minijinja::Error },
+}
+
+/// A catalogue with the core's texts alone, for the tests of what renders
+/// them.
+#[cfg(test)]
+pub(crate) fn core() -> &'static PromptCatalogue {
+    static CATALOGUE: OnceLock<PromptCatalogue> = OnceLock::new();
+    CATALOGUE.get_or_init(|| {
+        let mut catalogue = PromptCatalogue::new();
+        catalogue.add(CORE, CORE_PROMPTS).unwrap_or_else(|e| panic!("the core's texts cannot be read: {e}"));
+        catalogue
+    })
 }
 
 #[cfg(test)]

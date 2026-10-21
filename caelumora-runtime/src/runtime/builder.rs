@@ -9,7 +9,7 @@ use caelumora_model::approval::ApprovalRule;
 use crate::agent::state::AgentStates;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::config::{AppConfig, BackendConfig};
-use caelumora_model::prompt_catalogue::PromptCatalogue;
+use caelumora_model::prompt_catalogue::{PromptCatalogue, CORE, CORE_PROMPTS};
 use caelumora_model::secret::{SecretManager, SecretProvider};
 use caelumora_model::security::AccessPolicy;
 use caelumora_model::user_provider::{UserManager, UserProvider};
@@ -158,6 +158,9 @@ impl RuntimeBuilder {
             .with(Arc::clone(&confidentiality))
             .with(Arc::clone(&secret_manager))
             .with(Arc::clone(&workspaces));
+        // The core's texts, before any plugin adds its own.
+        let mut prompts = PromptCatalogue::new();
+        prompts.add(CORE, CORE_PROMPTS)?;
         Ok(Self {
             backend,
             state_store,
@@ -182,7 +185,7 @@ impl RuntimeBuilder {
             agents,
             scope_members,
             services,
-            prompts: PromptCatalogue::new(),
+            prompts,
             backends,
             backend_services,
             sections: config.plugins.clone(),
@@ -353,7 +356,8 @@ impl RuntimeBuilder {
             bail!("The configuration has a section '{name}' that no plugin claims");
         }
         self.component_registry.set_defaults(&self.component_defaults)?;
-        self.services.insert(Arc::new(self.prompts));
+        let prompts = Arc::new(self.prompts);
+        self.services.insert(Arc::clone(&prompts));
         let scoped = Arc::new(ScopedEntities::new(self.scope_members));
         let participation = Arc::new(Participation::new(Arc::clone(&self.entity_stores.agents), Arc::clone(&self.controller_manager), Arc::clone(&self.access_policy), Arc::clone(&self.confidentiality)));
         Ok(RuntimeManager {
@@ -381,6 +385,7 @@ impl RuntimeBuilder {
             actors: Arc::new(ActorManager::new()),
             scoped,
             services: self.services,
+            prompts,
             seed_sections: self.seed_sections,
         })
     }

@@ -51,7 +51,8 @@ impl ThresholdCompactionPolicy {
 
 impl CompactionPolicy for ThresholdCompactionPolicy {
     fn is_due(&self, situation: &Situation<'_>) -> bool {
-        let Some((positions, true)) = situation.token_positions() else { return false };
+        // A text that cannot be had fails the next call of the model, not this.
+        let Ok(Some((positions, true))) = situation.token_positions() else { return false };
         let tokens = positions.last().copied().unwrap_or(0);
         let size = situation.agent_channel_state().used.and_then(|usage| usage.context_size);
         let Some(size) = size.filter(|size| *size > 0) else {

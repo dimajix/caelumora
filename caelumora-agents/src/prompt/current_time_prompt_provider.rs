@@ -74,7 +74,7 @@ mod tests {
     use super::*;
     use crate::testing;
     use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::session::testing::detached_actor_runtime;
+    use crate::testing::detached_actor_runtime;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::value::time_zone::TimeZone;
     use caelumora_model::work::Work;

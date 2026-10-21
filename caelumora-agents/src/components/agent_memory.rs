@@ -249,7 +249,8 @@ mod tests {
     use caelumora_runtime::agent::state::{AgentStateHandle, AgentStates};
     use caelumora_runtime::runtime::{ActorRuntime, RuntimeManager};
     use caelumora_runtime::session::SessionLoop;
-    use caelumora_runtime::session::testing::{actor_runtime_in, detached_actor_runtime, main_channel, running_channel};
+    use caelumora_runtime::session::testing::{actor_runtime_in, main_channel, running_channel};
+    use crate::testing::detached_actor_runtime;
     use crate::tool::ToolError;
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{AgentChannelState, AgentId};
