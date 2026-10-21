@@ -293,6 +293,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [411](411-call-limit-ends-turn-silently.md) | done | When a turn has asked its model `MAX_MODEL_CALLS` times, it ends as if it were done - no message, no reason, only a warning in the server's log - so the users see an agent stop in the middle of its work, and a plan under way is lost with the turn. |
 | [415](415-messages-of-a-turn-not-grouped.md) | done | The chat shows every message of an agent as a bubble of its own, named and spaced like any other, so a turn of several messages cannot be told apart from several turns one after the other. |
 | [425](425-session-language.md) | done | Only a channel can be held in a language, so the language of a session is set again on each of its channels, a channel added later is held in none, and nothing that belongs to the session as a whole - the formatting of times by its time zone among it - has a language to go by. |
+| [443](443-errors-carry-only-an-english-text.md) | open | What an error tells a person - a problem detail of the REST API, what a failed turn or command tells its owner - is an English text written by the runtime, with nothing beside it from which a frontend could say the same in the person's language. |
 
 ## Context and knowledge
 
