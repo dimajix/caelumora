@@ -104,7 +104,8 @@ they are; other files than `.yaml` ones are not read. A variant falls back to `d
 to the texts compiled in. A variant's name is lower case letters, digits, `_` and `-`; a path is
 read as `seed` is, from where the program runs. Which variant a model is given, its component
 names (`prompt_texts` of `ollama_client`, `a2a_agent` and `decision_policy`): one that is not
-configured keeps the component from being built.
+configured keeps the component from being built. The example configuration names one, `gemma4`
+in `examples/prompts/gemma4`, which the model of Sassy in the example seed is given.
 
 The variants are read when the runtime is built, after every plugin added its texts, and checked
 whole: a file of no namespace, a text the defaults do not have, a template that does not parse

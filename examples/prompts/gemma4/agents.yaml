@@ -1,0 +1,9 @@
+# The variant `gemma4` of the texts the agents give their models (issue 57,
+# docs/CONFIGURATION.md), namespace `agents`: what replaces an entry of
+# caelumora-agents/src/prompts.yaml for a model whose component names it
+# (`prompt_texts: gemma4`). An example: every entry left out is given as it
+# is compiled in.
+
+# What the model is told of a tool call the user declined.
+results:
+  denied: The user declined this tool call, so it did not run. Do not call it again with the same arguments; go on without it, or ask the user what they would like instead.

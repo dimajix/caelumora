@@ -253,14 +253,18 @@ mod tests {
 
     /// The runtime of the program, with its plugins, over `store`, with the
     /// policy of the example configuration, which knows the roles the
-    /// example seed names.
+    /// example seed names, and its variants of the texts, which the
+    /// example seed's models are given (issue 57) - read from where the
+    /// program runs, the root of the sources.
     fn runtime(store: &Arc<MemoryStore>) -> RuntimeManager {
         let config = AppConfig::load(example("config.yaml")).unwrap();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let prompts = config.prompts.iter().map(|(variant, dir)| (variant.clone(), root.join(dir))).collect();
         let access_policy = Arc::new(AllowAllPolicy::new());
         let secrets = Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
         let (rest_plugins, plugins) = (rest_plugins(), plugins());
         let plugins = all(&rest_plugins, &plugins);
-        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, access_policy, config.create_confidentiality_policy(), &AppConfig::default(), ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)), Backends::with_plugins(&plugins)).unwrap();
+        let mut builder = RuntimeBuilder::new(Arc::<MemoryStore>::clone(store), Arc::<MemoryStore>::clone(store), secrets, access_policy, config.create_confidentiality_policy(), &AppConfig { prompts, ..AppConfig::default() }, ComponentRegistry::built_in(Arc::<MemoryStore>::clone(store)), Backends::with_plugins(&plugins)).unwrap();
         for plugin in plugins {
             builder.plugin(plugin).unwrap();
         }
