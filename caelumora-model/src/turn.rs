@@ -17,6 +17,7 @@ use crate::confidentiality::Classification;
 use crate::context::KnowledgeRef;
 use crate::message::Message;
 use crate::work::Work;
+use crate::prompt_catalogue::CORE;
 use serde::{Deserialize, Serialize};
 
 /// Why a turn was given up.
@@ -54,8 +55,24 @@ impl GivenUpReason {
         matches!(self, GivenUpReason::Failed { .. } | GivenUpReason::Lowered { .. } | GivenUpReason::CallLimit { .. })
     }
 
-    /// Why the turn was given up, as its agent is told: "… because it
-    /// failed". A fixed text, which says nothing of the conversation.
+    /// The key of the text of the prompt catalogue that tells its agent's
+    /// model why (issue 57): `core.given_up_cause.<kind>`, its kind as it is
+    /// stored.
+    pub fn cause_key(&self) -> String {
+        let kind = match self {
+            GivenUpReason::Failed { .. } => "failed",
+            GivenUpReason::Lowered { .. } => "lowered",
+            GivenUpReason::Left => "left",
+            GivenUpReason::Retried => "retried",
+            GivenUpReason::CallLimit { .. } => "call_limit",
+        };
+        format!("{CORE}.given_up_cause.{kind}")
+    }
+
+    /// Why the turn was given up, as logs and frontends tell it: "… because
+    /// it failed". A fixed text, which says nothing of the conversation.
+    /// What its agent's model is told is the prompt catalogue's
+    /// (`core.given_up_cause`).
     pub fn cause(&self) -> &'static str {
         match self {
             GivenUpReason::Failed { .. } => "it failed",

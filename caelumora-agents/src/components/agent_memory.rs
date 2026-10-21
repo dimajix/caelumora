@@ -19,13 +19,15 @@
 //! own, seen by its owner in the context panel only. Its entries are
 //! numbered differently from notes, on purpose: see `AgentMemory::remember`.
 
+use crate::prompt::NAMESPACE;
 use crate::components::notes::NOTE_PRESENTATION;
 use crate::memory::AgentMemory;
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::prompt::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
 use crate::situation::Situation;
-use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{described, classification_argument, id_argument, reclassify_parameters, tool_text, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::question::Answers;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
@@ -45,6 +47,9 @@ pub const UPDATE_MEMORY_TOOL_NAME: &str = "update_memory";
 pub const FORGET_TOOL_NAME: &str = "forget";
 pub const RECLASSIFY_MEMORY_TOOL_NAME: &str = "reclassify_memory";
 
+/// The text of its prompt part in the prompt catalogue.
+const TEXT: &str = "agents.agent_memory";
+
 pub struct AgentMemoryComponent {
     /// The policy that decides what may be recalled, asked in the context
     /// of the work it serves - the agent's, with its owner's rights (issues
@@ -52,6 +57,12 @@ pub struct AgentMemoryComponent {
     access_policy: Arc<dyn AccessPolicy>,
     /// What may flow where (issue 304): what it recalls, how it reclassifies.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// The texts of its prompt part (issue 57).
+    prompts: Arc<PromptCatalogue>,
+    /// What its tool set is for and its tools, as the prompt catalogue
+    /// words them.
+    description: String,
+    tools: Vec<Tool>,
 }
 
 impl Debug for AgentMemoryComponent {
@@ -63,67 +74,11 @@ impl Debug for AgentMemoryComponent {
 #[async_trait]
 impl ToolProvider for AgentMemoryComponent {
     fn description(&self) -> String {
-        "Your memory: what you should know across all your channels and sessions.".to_string()
+        self.description.clone()
     }
 
     fn tools(&self) -> Vec<Tool> {
-        vec![
-            Tool {
-                name: REMEMBER_TOOL_NAME.to_string(),
-                description: "Remember something beyond this conversation - in your other channels and \
-                    sessions too, wherever what was said here may be known. No other participant sees it; \
-                    only the person responsible for you can inspect it. Do not quote or reveal it in your \
-                    answers. Keep an entry short and self-contained, and update one rather than remembering \
-                    a second on the same thing."
-                    .to_string(),
-                parameters: ToolParameters::object(
-                    [("text", ToolParameters::string("What to remember"))],
-                    ["text"],
-                ),
-                requires_approval: false,
-                visibility: ToolVisibility::HIDDEN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-            Tool {
-                name: UPDATE_MEMORY_TOOL_NAME.to_string(),
-                description: "Change one of the things you remember, by its number. Give its whole new text; \
-                    it keeps its number, and from then on you recall it where what was said here may be known."
-                    .to_string(),
-                parameters: ToolParameters::object(
-                    [("id", ToolParameters::number("The number of what you remember")), ("text", ToolParameters::string("Its new text"))],
-                    ["id", "text"],
-                ),
-                requires_approval: false,
-                visibility: ToolVisibility::HIDDEN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-            Tool {
-                name: FORGET_TOOL_NAME.to_string(),
-                description: "Forget one of the things you remember, by its number.".to_string(),
-                parameters: ToolParameters::object(
-                    [("id", ToolParameters::number("The number of what you remember"))],
-                    ["id"],
-                ),
-                requires_approval: false,
-                visibility: ToolVisibility::HIDDEN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-            Tool {
-                name: RECLASSIFY_MEMORY_TOOL_NAME.to_string(),
-                description: "Change how one of the things you remember is classified, by its number: its \
-                    level and the compartments it is meant for, never above this channel. It decides where \
-                    you recall it. Releasing it - a lower level, or further compartments - makes it readable by a wider circle; a user has to approve it."
-                    .to_string(),
-                parameters: reclassify_parameters("what you remember"),
-                requires_approval: true,
-                visibility: ToolVisibility::HIDDEN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-        ]
+        self.tools.clone()
     }
 
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
@@ -141,6 +96,63 @@ impl ToolProvider for AgentMemoryComponent {
 }
 
 impl AgentMemoryComponent {
+    /// The component, deciding by `access_policy` and `confidentiality`;
+    /// its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of its texts cannot be had.
+    pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
+        let tools = vec![
+            described(&prompts, NAMESPACE, AGENT_MEMORY_KIND, Tool {
+                name: REMEMBER_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [("text", ToolParameters::string())],
+                    ["text"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+            described(&prompts, NAMESPACE, AGENT_MEMORY_KIND, Tool {
+                name: UPDATE_MEMORY_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [("id", ToolParameters::number()), ("text", ToolParameters::string())],
+                    ["id", "text"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+            described(&prompts, NAMESPACE, AGENT_MEMORY_KIND, Tool {
+                name: FORGET_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [("id", ToolParameters::number())],
+                    ["id"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+            described(&prompts, NAMESPACE, AGENT_MEMORY_KIND, Tool {
+                name: RECLASSIFY_MEMORY_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: reclassify_parameters(&prompts)?,
+                requires_approval: true,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+        ];
+        let description = tool_text(&prompts, NAMESPACE, AGENT_MEMORY_KIND, "description", ())?;
+        Ok(Self { access_policy, confidentiality, prompts, description, tools })
+    }
+
     /// `remember(text)`: remembers `text`, taken over when the turn
     /// completes.
     async fn execute_remember(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
@@ -201,28 +213,25 @@ impl PromptProvider for AgentMemoryComponent {
                 knowledge.push(KnowledgeRef { channel: memory.origin.channel, session: memory.origin.session.id, source, classification: Classification::join_all(from_there) });
             }
         }
-        Ok(Prompt::of_knowledge(render(&recalled), knowledge))
+        Ok(Prompt::of_knowledge(render(&self.prompts, &recalled)?, knowledge))
     }
 }
 
-/// The prompt part for what the agent recalls here.
-fn render(recalled: &[Memory]) -> String {
-    let preamble = format!(
-        "From this and your other conversations, as far as it may be known here. \
-        No other participant sees it; only the person responsible for you can inspect it. Do not quote or \
-        reveal it in your answers. Change it with `{REMEMBER_TOOL_NAME}`, `{UPDATE_MEMORY_TOOL_NAME}` and `{FORGET_TOOL_NAME}`."
-    );
-    render_sections("What you remember", &preamble, &[Section::lines(recalled.iter().map(|m| format!("#{}: {}", m.id, m.text)).collect())])
+/// The prompt part of `prompts` for what the agent `recalled` here.
+fn render(prompts: &PromptCatalogue, recalled: &[Memory]) -> Result<String, PromptError> {
+    let recalled: Vec<_> = recalled.iter().map(|m| context! { id => m.id.to_string(), text => m.text }).collect();
+    prompts.render(TEXT, context! { recalled, remember => REMEMBER_TOOL_NAME, update => UPDATE_MEMORY_TOOL_NAME, forget => FORGET_TOOL_NAME })
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(AGENT_MEMORY_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn AccessPolicy>().uses::<dyn ConfidentialityPolicy>(),
+        ComponentKind::new(AGENT_MEMORY_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn AccessPolicy>().uses::<dyn ConfidentialityPolicy>().uses::<PromptCatalogue>(),
         |_descriptor, context| {
-            let component = Arc::new(AgentMemoryComponent {
-                access_policy: Arc::clone(context.service::<dyn AccessPolicy>()?),
-                confidentiality: Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
-            });
+            let component = Arc::new(AgentMemoryComponent::new(
+                Arc::clone(context.service::<dyn AccessPolicy>()?),
+                Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
+                Arc::clone(context.service::<PromptCatalogue>()?),
+            )?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<AgentMemoryComponent>::clone(&component));
             facets.insert::<dyn PromptProvider>(component);
@@ -236,12 +245,13 @@ mod tests {
     use super::*;
     use caelumora_model::confidentiality::{ConfidentialityRules, Compartments, Reading, Place};
     use caelumora_runtime::transport::Discard;
-    use crate::testing::TestAgents;
+    use crate::testing::{self, TestAgents};
     use caelumora_runtime::testing::TestRuntime;
     use caelumora_runtime::agent::state::{AgentStateHandle, AgentStates};
     use caelumora_runtime::runtime::{ActorRuntime, RuntimeManager};
     use caelumora_runtime::session::SessionLoop;
-    use caelumora_runtime::session::testing::{actor_runtime_in, detached_actor_runtime, main_channel, running_channel};
+    use caelumora_runtime::session::testing::{actor_runtime_in, main_channel, running_channel};
+    use crate::testing::detached_actor_runtime;
     use crate::tool::ToolError;
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -299,13 +309,13 @@ mod tests {
     /// The component of an agent owned by `owner`, asking `access_policy`, the
     /// flow decided by the rules of no compartments.
     fn component(access_policy: Arc<dyn AccessPolicy>, owner: ActorId) -> Memory {
-        Memory { component: AgentMemoryComponent { access_policy, confidentiality: Arc::new(ConfidentialityRules::default()) }, owner }
+        Memory { component: AgentMemoryComponent::new(access_policy, Arc::new(ConfidentialityRules::default()), testing::prompts()).unwrap(), owner }
     }
 
     /// The component of an agent owned by `owner`, the flow decided by
     /// `confidentiality` (issue 304).
     fn component_under(confidentiality: Arc<dyn ConfidentialityPolicy>, owner: ActorId) -> Memory {
-        Memory { component: AgentMemoryComponent { access_policy: Arc::new(OwnershipPolicy::new()), confidentiality }, owner }
+        Memory { component: AgentMemoryComponent::new(Arc::new(OwnershipPolicy::new()), confidentiality, testing::prompts()).unwrap(), owner }
     }
 
     async fn handle(agent: AgentId) -> Arc<AgentStateHandle> {
@@ -682,7 +692,7 @@ mod tests {
 
     #[test]
     fn every_entry_acted_on_is_shown_as_a_note_to_the_owner_alone() {
-        let tools = AgentMemoryComponent { access_policy: Arc::new(OwnershipPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()) }.tools();
+        let tools = AgentMemoryComponent::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()), testing::prompts()).unwrap().tools();
         assert!(tools.iter().all(|t| (t.presentation, t.visibility) == (NOTE_PRESENTATION, ToolVisibility::HIDDEN)));
     }
 }

@@ -45,10 +45,11 @@ use caelumora_runtime::transport::EventSender;
 use caelumora_runtime::terminal::{Shell, Terminal};
 use caelumora_runtime::runtime::ActorRuntime;
 #[cfg(test)]
-use caelumora_runtime::session::testing::detached_actor_runtime;
+use crate::testing::detached_actor_runtime;
 use caelumora_runtime::workspace::WorkspaceResult;
 use crate::situation::Situation;
 use anyhow::Result;
+use caelumora_model::prompt_catalogue::PromptError;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::turn::TurnState;
@@ -220,12 +221,17 @@ impl<'a> Turn<'a> {
     /// issue 284). Written at once, so a component compacts only once
     /// nothing can fail any more. Returns the heads of the transcript before
     /// and after, `None` if nothing was compacted.
-    pub fn compact(&mut self, replacement: Vec<(Message, Option<KnowledgeRef>)>, keep_from: Option<Digest>) -> Option<(Digest, Digest)> {
+    ///
+    /// # Errors
+    /// `PromptError` if the plan cannot be worded to be named again;
+    /// nothing is compacted then.
+    pub fn compact(&mut self, replacement: Vec<(Message, Option<KnowledgeRef>)>, keep_from: Option<Digest>) -> Result<Option<(Digest, Digest)>, PromptError> {
         let replaced = replacement.len();
-        let heads = self.agent_channel_state.compact(ActorId::Agent(self.agent_id), replacement, keep_from)?;
+        let wording = self.plan_wording()?;
+        let Some(heads) = self.agent_channel_state.compact(ActorId::Agent(self.agent_id), replacement, keep_from, self.runtime.prompts()) else { return Ok(None) };
         let replacement_end = replaced.checked_sub(1).and_then(|last| self.agent_channel_state.transcript.entries().nth(last)).map(|node| node.digest);
-        self.name_plan_again(replacement_end);
-        Some(heads)
+        self.name_plan_again(replacement_end, wording);
+        Ok(Some(heads))
     }
 
     /// Records `message` as said by the turn: into the agent's transcript
@@ -279,7 +285,7 @@ impl<'a> Turn<'a> {
     pub(crate) fn tool_calls(&mut self) -> ToolCalls<'_> {
         debug_assert!(self.agent_channel_state.turn.is_some(), "a turn's working state changed while no turn runs");
         let turn = self.agent_channel_state.turn.get_or_insert_with(TurnState::default);
-        ToolCalls::new(turn, &self.agent_name)
+        ToolCalls::new(turn, &self.agent_name, self.runtime.prompts())
     }
 
     /// Whether the turn was given or read private knowledge of the agent -
@@ -370,6 +376,7 @@ fn event_for(message: Message, partial: bool) -> ActorEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing;
     use caelumora_model::actor::EventContext;
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::context::{ContextItem, ContextResolver, PromptPart};
@@ -396,7 +403,7 @@ mod tests {
     /// `state`; `None` for a message it did not produce.
     pub(super) fn seen(state: &AgentChannelState, agent: AgentId, said: &Message) -> Option<Vec<ContextItem>> {
         let reference = state.context_of(said)?;
-        Some(ContextResolver::of(state).resolve(&reference, said.turn_id?, ActorId::Agent(agent))?.items)
+        Some(ContextResolver::of(state, &testing::prompts()).resolve(&reference, said.turn_id?, ActorId::Agent(agent)).expect("worded")?.items)
     }
 
     #[test]

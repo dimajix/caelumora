@@ -1,0 +1,444 @@
+# The texts the agents give their models (issue 57), namespace `agents`:
+# templates of `minijinja` (Jinja2), rendered by `PromptCatalogue`.
+#
+# - A prompt part begins with its title in brackets on a line of its own,
+#   so that the parts of a prompt stay apart, and ends in a line break.
+# - The code decides whether a part is given at all and with which values;
+#   a template only how it reads. A value it names and is not given is an
+#   error.
+# - A block tag on a line of its own leaves no line behind. One that ends a
+#   line of text takes the line break with it unless written `+%}`; within
+#   a line, a condition may also be an expression: `{{ ", a person" if person }}`.
+# - Names of tools are values, never written here: they are identifiers.
+
+# `static_system_prompt_provider` configured with a `title`: its `text`
+# under it, in the form of every part the runtime writes.
+titled: |-
+  [{{ title }}]
+  {{ text }}{{ "\n" if text is not endingwith "\n" }}
+
+# `channel_briefing_prompt_provider`: what the session and the channel are
+# for, each `place` as its owner describes it (`kind` "session" or
+# "channel"), the session's first.
+channel_briefing: |
+  {% for place in places %}
+  {% if not loop.first %}
+
+  {% endif %}
+  [About this {{ place.kind }}]
+  What this {{ place.kind }} is for, as its owner describes it.
+  {% if place.summary %}
+  In short: {{ place.summary }}
+  {% endif %}
+  {% if place.briefing %}
+
+  {{ place.briefing }}
+  {% endif %}
+  {% endfor %}
+
+# An agent told only of changes, after both stopped describing themselves.
+channel_briefing_withdrawn: |
+  [About this session and channel]
+  What you were told of them before no longer holds: neither says anything about itself now.
+
+# `channel_language_prompt_provider`: the language of the channel by its
+# BCP 47 `tag`, and by its `english` and `native` names where they are known.
+channel_language: |
+  [Language of this channel]
+  This channel's conversation is held in {% if not english %}the language with the BCP 47 tag "{{ tag }}"{% elif english == native %}{{ english }} (BCP 47 tag "{{ tag }}"){% else %}{{ english }} - {{ native }}, BCP 47 tag "{{ tag }}"{% endif %}. Write everything in {{ english or "it" }} - your answers, your messages to the others and what you note down - whatever language your instructions, your tools or earlier messages are in.
+
+# An agent told only of changes, after the channel stopped being held in one.
+channel_language_withdrawn: |
+  [Language of this channel]
+  This channel's conversation is no longer held in a particular language.
+
+# `channel_participants_prompt_provider`: the agent itself (`me`, none if it
+# is not among them) and the `others`, each by `name`, `handle` (none if it
+# has none), whether a `person`, and `introduction` (none if none);
+# `example`, the name of the first agent among the others (none if there is
+# none), and `explanation`, how the others' messages are marked (none if
+# the model profile says nothing).
+#
+# Not "mention one to address them": to a model, an @handle offered as the
+# form of address is one for every greeting (issue 442). A mention of an
+# agent is a request to respond: said as when which form is written, with
+# the cases that are no request named, and bounded to the one participant
+# needed now (`work/quiet_agents/MENTIONS.md`, finding 4). `@all` addresses
+# every one of them (issue 401).
+channel_participants: |
+  [Who is in this channel]
+  {% if me %}
+  You are {{ me.name }}{{ " (@" ~ me.handle ~ ")" if me.handle }}.
+  {% if me.introduction %}
+  About you: {{ me.introduction }}
+  {% endif %}
+  {% endif %}
+  {% if not others %}
+  Nobody else is in this channel.
+  {% else %}
+  The others:
+  {% for other in others %}
+  - {{ other.name }}{{ " (@" ~ other.handle ~ ")" if other.handle }}, {{ "a person" if other.person else "an agent" }}.{% if other.introduction %}{% if other.person %} In their own words: "{{ other.introduction }}"{% else %} {{ other.introduction }}{% endif %}{% endif +%}
+  {% endfor %}
+  {% if example %}
+  When to write an @handle, and when a name:
+  - @handle, or @all for all of them: only when you need that participant to answer you or to act, now. Mentioning an agent this way makes it stop and take a turn of its own.
+  - Name, without @: in everything else - when you greet, thank, praise, agree, answer, or speak about someone. "Thanks, {{ example }}", "as {{ example }} said".
+  - Check every @ before you send: if you do not need an answer or an action from that participant, write the name instead.
+  {% endif %}
+  {% if explanation %}
+  {{ explanation }}
+  {% endif %}
+  {% endif %}
+
+# `channel_mentions_prompt_provider`, before the turn's input: read last, it
+# does what the roster alone does not (`work/quiet_agents/MENTIONS.md`,
+# `test_names_turn`).
+channel_mentions: |
+  [Before you write]
+  Only use an @handle if you require an answer or an action from that participant now. Do NOT use one to greet, thank, praise, agree with or refer to someone - write their name.
+
+# `current_time_prompt_provider`: the `time`, written out in the `zone`.
+current_time: |
+  [Current date and time]
+  It is {{ time }} ({{ zone }}).
+
+# `request_reason_prompt_provider`, for an agent the responder policy only
+# chose: how to stay silent - by the tool `silence` where it is offered
+# (none where it is not).
+request_reason: |
+  [Why you are asked to respond]
+  Nobody mentioned you. You are asked because what was said last might concern you - it may not. If you have nothing to add - nothing new, only agreement, a greeting, thanks, or that you are waiting - {% if silence %}call `{{ silence }}` and write nothing{% else %}write nothing{% endif %}.
+
+# `tool_sets_prompt_provider`: the tool sets `unavailable`, each by `name`,
+# `description` and `why`.
+tool_sets: |
+  [Unavailable tools]
+  Some of your tools are unavailable right now, so you cannot call them. If a request needs them, say that they are unavailable at the moment rather than that you cannot do it.
+  {% for set in unavailable %}
+  - {{ set.name }} ({{ set.description }}): {{ set.why }}
+  {% endfor %}
+
+# `notes`: the agent's `own` notes and those of the `others` by `name`, each
+# note by `id` and `text`; the tools `write`, `update` and `revoke`.
+notes: |
+  [Notes in this channel]
+  What its participants noted to remember.
+  {% if own %}
+  Your notes (change them with `{{ write }}`, `{{ update }}` and `{{ revoke }}`):
+  {% for note in own %}
+  - #{{ note.id }}: {{ note.text }}
+  {% endfor %}
+  {% endif %}
+  {% for other in others %}
+  Notes of {{ other.name }}:
+  {% for note in other.notes %}
+  - #{{ note.id }}: {{ note.text }}
+  {% endfor %}
+  {% endfor %}
+
+# `private_notes`: those of this channel (`own`, by `id` and `text`) and the
+# texts of those of other channels (`elsewhere`, by `name`), which cannot be
+# changed here and so go unnumbered (issue 60); the tools `write`, `update`
+# and `revoke`.
+private_notes: |
+  [Your private notes]
+  No other participant sees them; only the person responsible for you can inspect them. Do not quote or reveal them in your answers.
+  {% if own %}
+  In this channel (change them with `{{ write }}`, `{{ update }}` and `{{ revoke }}`):
+  {% for note in own %}
+  - #{{ note.id }}: {{ note.text }}
+  {% endfor %}
+  {% endif %}
+  {% for channel in elsewhere %}
+  From channel {{ channel.name }} (change them only there):
+  {% for text in channel.notes %}
+  - {{ text }}
+  {% endfor %}
+  {% endfor %}
+
+# `agent_memory`: what the agent recalls here, each by `id` and `text`; the
+# tools `remember`, `update` and `forget`.
+agent_memory: |
+  [What you remember]
+  From this and your other conversations, as far as it may be known here. No other participant sees it; only the person responsible for you can inspect it. Do not quote or reveal it in your answers. Change it with `{{ remember }}`, `{{ update }}` and `{{ forget }}`.
+  {% for memory in recalled %}
+  - #{{ memory.id }}: {{ memory.text }}
+  {% endfor %}
+
+# The descriptions of the tools (issue 57), under the kind of the component
+# that offers them: `description` is that of its tool set, `<tool>` that of
+# a tool, `<tool>.<parameter>` that of a parameter - `.<field>` of a field of
+# what it holds, `.item` of an entry of a list; the entries of a list of
+# objects have their fields under the list's path
+# (`ToolParameters::describe`).
+tools:
+  calculator_tool:
+    description: Evaluate mathematical expressions.
+    calculate: Evaluates a mathematical expression
+    calculate.expression: Mathematical expression to evaluate (e.g., '2 + 2', 'sin(pi/2)', 'exp(1)')
+
+  # `max_questions`, `max_choices`, `max_header_chars`: the limits of a call.
+  ask_user_tool:
+    description: Ask users of the channel and wait for their answers.
+    ask_user: >-
+      Asks users of the channel one or more questions and waits for their answer, then goes on with
+      it. Use it when you need a decision or information from a user before you can go on. Put the
+      possible answers of a question into `choices`, never into the question text: the user can only
+      choose what is in `choices`, and may always write another answer instead. For yes or no, offer
+      the two as choices. Ask questions that do not depend on each other together, at most
+      {{ max_questions }} in one call; ask a question whose answer changes another in a call of its
+      own. Name in `ask` the users to ask by their handles, e.g. `@alice`, or `@all` for every user
+      here; only their answer counts. The result gives the answers in the order of the questions; a
+      question the user did not answer is `declined`. If the user declines the whole call, or writes
+      a message instead, the call is answered as declined: go on with what they wrote.
+    ask_user.questions: The questions, 1 to {{ max_questions }}
+    ask_user.questions.header: A short label for the question, at most {{ max_header_chars }} characters
+    ask_user.questions.question: The question, without its possible answers
+    ask_user.questions.choices: The possible answers, 2 to {{ max_choices }}; leave out for a free-text answer
+    ask_user.questions.choices.label: The answer as the user chooses it; unique within the question
+    ask_user.questions.choices.description: What choosing it means, if the label does not say
+    ask_user.questions.choices.recommended: Whether you recommend this choice; mark at most one
+    ask_user.questions.multi_select: Whether several choices may be chosen
+    ask_user.ask: The users to ask, by their handles; at least one
+    ask_user.ask.item: A handle
+
+  stop_tool:
+    description: End your part in the conversation.
+    stop: Signal that you have finished your task and have no further input.
+    bye: Signal that you want to say good-bye and stop the conversation.
+    silence: Signal that you do not want to respond to the last message and stay silent instead.
+
+  # `max_seconds`: the longest it waits; `seconds`: how long it waits unless told.
+  sleep_tool:
+    description: Wait for a while, for testing.
+    sleep: Waits the given number of seconds, at most {{ max_seconds }}, and then says so. For testing.
+    sleep.seconds: How long to wait; {{ seconds }} unless given
+
+  echo_tool:
+    description: Echo the input, for testing.
+    echo: Echoes the input back
+    echo.message: Input message to be echoed back
+
+  # `max_last`, `default_last`: how many messages a call returns; `read_notes`:
+  # the tool that lists the channels.
+  channel_history:
+    description: Read the history of the other channels of this session.
+    read_history: >-
+      Read the conversation of another channel of this session: its latest messages, or those
+      containing a text. Returns at most {{ max_last }} messages, the latest {{ default_last }}
+      unless you ask for another number. Use `{{ read_notes }}` without a channel to find out which
+      channels there are.
+    read_history.channel: The name of the channel
+    read_history.last: How many of the latest messages to return
+    read_history.query: Only messages containing this text, ignoring case
+
+  # `max_steps`: the most steps a plan has.
+  create_plan_tool:
+    description: Plan a larger piece of work in steps before doing it.
+    create_plan: >-
+      Submit your structured multi-step plan for the user's request. Call this once you have
+      gathered enough information (using other tools if needed) to describe how you will address the
+      request. For simple requests that need no research or multiple steps, just answer directly
+      instead of calling this. If a plan is already in progress, calling this again appends the
+      given steps to it instead of replacing it - use that to add more work once you discover it's
+      needed, whether mid-step or after the original steps are done. A plan has at most
+      {{ max_steps }} steps, those appended included.
+    create_plan.summary: One-sentence summary of the overall approach
+    create_plan.steps: Ordered list of steps
+    create_plan.steps.description: What this step will do
+
+  notes:
+    description: "Notes in this channel: what you want to remember here, and what the others noted."
+    write_note: >-
+      Note something worth remembering in this channel - a fact, a decision, a preference of the
+      user. Every participant of the channel is shown your notes from now on, you included. Keep a
+      note short and self-contained, and update one rather than writing a second on the same thing.
+    write_note.text: What to note
+    update_note: >-
+      Change what one of your own notes in this channel says, by its number, when it is no longer
+      quite right. Give its whole new text; it keeps its number.
+    update_note.id: The number of your note
+    update_note.text: Its new text
+    revoke_note: >-
+      Revoke one of your own notes in this channel, by its number, when it is no longer true or no
+      longer needed.
+    revoke_note.id: The number of your note
+    reclassify_note: >-
+      Change how one of your notes in this channel is classified, by its number: its level and the
+      compartments it is meant for, never above this channel. Releasing it - a lower level, or
+      further compartments - makes it readable by a wider circle; a user has to approve it.
+    reclassify_note.id: The number of your note
+    read_notes: >-
+      Read what the agents of another channel of this session noted. Without a channel, lists every
+      channel you may read with its notes - also how to find out which channels there are. The notes
+      of your own channel are already shown to you. Notes of another channel come without numbers:
+      they can only be updated, revoked or reclassified in that channel.
+    read_notes.channel: The name of the channel; omit it for all channels
+
+  private_notes:
+    description: >-
+      Your private notes: what only you should remember across your channels of this session.
+    write_private_note: >-
+      Note something privately - no other participant sees it; only the person responsible for you
+      can inspect it. Do not quote or reveal your private notes in your answers. You are shown your
+      private notes from now on, in this channel and in your other channels of this session where
+      that reveals nothing to someone who may not know it. Keep a note short and self-contained, and
+      update one rather than writing a second on the same thing.
+    write_private_note.text: What to note
+    update_private_note: >-
+      Change what one of your private notes of this channel says, by its number. Give its whole new
+      text; it keeps its number.
+    update_private_note.id: The number of your private note
+    update_private_note.text: Its new text
+    revoke_private_note: Revoke one of your private notes of this channel, by its number.
+    revoke_private_note.id: The number of your private note
+    reclassify_private_note: >-
+      Change how one of your private notes of this channel is classified, by its number: its level
+      and the compartments it is meant for, never above this channel. It decides in which of your
+      other channels you are shown it. Releasing it - a lower level, or further compartments - makes
+      it readable by a wider circle; a user has to approve it.
+    reclassify_private_note.id: The number of your private note
+
+  agent_memory:
+    description: >-
+      Your memory: what you should know across all your channels and sessions.
+    remember: >-
+      Remember something beyond this conversation - in your other channels and sessions too,
+      wherever what was said here may be known. No other participant sees it; only the person
+      responsible for you can inspect it. Do not quote or reveal it in your answers. Keep an entry
+      short and self-contained, and update one rather than remembering a second on the same thing.
+    remember.text: What to remember
+    update_memory: >-
+      Change one of the things you remember, by its number. Give its whole new text; it keeps its
+      number, and from then on you recall it where what was said here may be known.
+    update_memory.id: The number of what you remember
+    update_memory.text: Its new text
+    forget: Forget one of the things you remember, by its number.
+    forget.id: The number of what you remember
+    reclassify_memory: >-
+      Change how one of the things you remember is classified, by its number: its level and the
+      compartments it is meant for, never above this channel. It decides where you recall it.
+      Releasing it - a lower level, or further compartments - makes it readable by a wider circle; a
+      user has to approve it.
+    reclassify_memory.id: The number of what you remember
+
+  # What every tool that reclassifies is given beside the number of what it
+  # reclassifies (`tool::reclassify_parameters`).
+  reclassify:
+    level: "The new level: public, internal, confidential or strictly_confidential"
+    compartments: "Who it is meant for; none: everybody of the level. Public takes none."
+    compartments.item: A compartment
+
+# What the model is told of a tool call that produced no result of its own
+# (issue 15), as the `message` beside its `status` - what happened, and what
+# to do next -, and the mark of a result only the agent sees (issue 66). A
+# message that cannot be had leaves the status alone; a result without its
+# mark is withheld.
+results:
+  owners: Only you see this result - the channel does not. Do not quote or reveal it in your answers.
+  denied: The user declined this tool call. Do not repeat it; continue without it or ask the user how to proceed.
+  timed_out: No one approved this tool call in time; it was not executed. You may ask the user whether to try again.
+  declined: >-
+    The user declined to answer the questions of this tool call; it was not executed. Read what they
+    wrote instead, if anything, and go on without the answers or ask differently.
+  not_executed: >-
+    This tool call was not executed: the session was stopped or the server restarted before it ran.
+    Decide again whether to call it; if its effect matters, check first.
+  interrupted: >-
+    This tool call was interrupted while it ran, because the turn ended. It may have taken effect in
+    part or in full. Check its effect before calling it again.
+  # `seconds`: how long it ran.
+  interrupted_stopped: >-
+    This tool call was interrupted after {{ seconds }} seconds while it ran, because the session was
+    stopped; your turn resumed when it ran again. It may have taken effect in part or in full. Check
+    its effect before calling it again.
+  # `by`: who interrupted it; `seconds`: how long it ran.
+  interrupted_by_user: >-
+    {{ by }} interrupted this tool call after {{ seconds }} seconds while it ran; your turn goes on.
+    It may have taken effect in part or in full. Check its effect before calling it again, and decide
+    how to go on - differently, or by asking the user.
+  # `by`: who interrupted it (issue 276).
+  skipped: >-
+    {{ by }} interrupted this tool call before it ran; it was not executed, and your turn goes on.
+    Decide whether to call it again.
+  # `cause`: why the turn ended - one of `ended_because`, or of the core's
+  # `given_up_cause` for a turn given up (issue 148).
+  abandoned: >-
+    This tool call was not executed: the turn ended before it ran, because {{ cause }}. Decide again
+    whether to call it.
+  ended_because:
+    cancelled: it was cancelled
+    ended: it ended
+  # `classification`: that of the result, which may not flow into the
+  # channel (issue 133).
+  withheld: >-
+    The result of this tool call is classified {{ classification }}, which may not be shown in this
+    channel; it was withheld. Do not try to obtain it another way; tell the user if it matters.
+  # Deliberately without the reason: telling the model why describes the
+  # policy to something that may try to route around it.
+  forbidden: >-
+    This tool call is not permitted. Do not retry it; continue without it or tell the user that you
+    cannot do this.
+  # `name`: the tool called; `available`: those there are.
+  unknown_tool: "There is no tool named '{{ name }}'. Available tools: {{ available|join(', ') if available else 'none' }}."
+  # `reason`: what the error says.
+  invalid_arguments: "The arguments were invalid: {{ reason }}. Correct them and call the tool again."
+  failed: "The tool failed: {{ reason }}"
+
+# `create_plan_tool`, in the system prompt: when to plan - by the tool
+# `create_plan`. It stays for the whole turn, also once a plan is carried
+# out: the instructions of its steps (`plan`) dominate by then.
+planning: |
+  [Planning]
+  Before responding, decide whether this request needs research or multiple steps to complete. If it does, gather any information you need using the available tools, then call `{{ create_plan }}` once with a short summary and an ordered list of the steps you will take to fulfill the request. For simple requests that need no research and no multiple steps, skip `{{ create_plan }}` entirely and just answer directly.
+
+# The instructions of a plan carried out in a turn, placed after the turn's
+# messages so far (`Turn::advance_plan`).
+plan:
+  # Step `number` of `total`, which is to do what `description` says.
+  step: |-
+    Step {{ number }} of {{ total }}: {{ description }}
+
+    Work on this step now, using any tools you need. When you are finished, describe the outcome.
+  # Once every step is done: the `steps` by their descriptions.
+  finalize: |-
+    You have completed every step of the plan:
+    {% for step in steps %}
+    {{ loop.index }}. {{ step }}
+    {% endfor %}
+    {% if not steps %}
+
+    {% endif %}
+
+    Now provide your final, complete answer to the user's original request, incorporating what you learned.
+  # After a compaction replaced the plan (issue 284): its `summary`, its
+  # `steps`, each by `description` and `state` - "done", "under_way" or
+  # "to_do" -, and the `instruction` of the step under way.
+  overview: |-
+    You are carrying out a plan: {{ summary }}
+    {% for step in steps %}
+    {{ loop.index }}. [{{ "done" if step.state == "done" else ("under way" if step.state == "under_way" else "to do") }}] {{ step.description }}
+    {% endfor %}
+
+    {{ instruction }}
+
+# After what was said while the agent worked (issue 431).
+heard_while_working: >-
+  What is just above was said by others, or happened, while you were working. Take them into account
+  from here on: if they change what you were asked, act on that. Otherwise go on with your work. If
+  they ask you something, answer it in your final answer.
+
+# `summary_compaction`: what its model is asked to summarise for - going on
+# from the summary alone -, leaving out what a restorer gives again, of the
+# `kinds` named; and the title of the summary.
+compaction:
+  instruction: >-
+    Summarise the conversation above for yourself, so that you can go on from the summary alone: what
+    the task is and who asked for it, what was decided and agreed, what was done - with which files,
+    tools and results that still matter -, and what is still open. Keep names, numbers and identifiers
+    exact. Answer with the summary only.{{ " Leave out the text of anything given to you as a " ~ kinds|join(" or ") ~ ": it is given to you again." if kinds }}
+  # `text`: the summary.
+  summary: |-
+    [Summary of the conversation so far]
+    {{ text }}{{ "\n" if text is not endingwith "\n" }}

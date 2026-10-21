@@ -785,7 +785,7 @@ mod tests {
 
     #[test]
     fn a_command_line_proposes_the_rule_for_the_commands_beginning_as_it_begins() {
-        let parameters = ToolParameters::object([("command", ToolParameters::shell("a line")), ("cwd", ToolParameters::string("where"))], ["command"]);
+        let parameters = ToolParameters::object([("command", ToolParameters::shell().described("a line")), ("cwd", ToolParameters::string().described("where"))], ["command"]);
         let running = |command: &str| call("run_command", json!({ "command": command, "cwd": "main" }));
         let proposed = |command: &str| ToolMatcher::proposed(&running(command), &parameters);
         let shell = |words: &[&str]| ArgumentMatcher::Shell { shell: words.iter().map(|word| word.to_string()).collect() };
@@ -801,7 +801,7 @@ mod tests {
         for line in ["ls && rm x", "ls $(rm x)"] {
             assert_eq!(proposed(line).arguments["command"], ArgumentMatcher::Pattern(regex::escape(line)), "{line}: that line alone");
         }
-        let plain = ToolParameters::object([("command", ToolParameters::string("plain"))], ["command"]);
+        let plain = ToolParameters::object([("command", ToolParameters::string().described("plain"))], ["command"]);
         assert_eq!(ToolMatcher::proposed(&running("ls"), &plain), ToolMatcher::exact(&running("ls")), "a string in no language");
     }
 

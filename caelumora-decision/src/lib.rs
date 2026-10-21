@@ -9,6 +9,13 @@
 //! agents should respond to a message (`policy`), and the plugin that
 //! registers it (`plugin`).
 
+/// The namespace of the questions of the decision model in the prompt
+/// catalogue (issue 57).
+pub const NAMESPACE: &str = "decision";
+
+/// Their texts, added to the catalogue under `NAMESPACE` by the plugin.
+pub const PROMPTS: &str = include_str!("prompts.yaml");
+
 pub mod client;
 pub mod plugin;
 pub mod policy;

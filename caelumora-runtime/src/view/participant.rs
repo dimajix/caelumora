@@ -15,6 +15,7 @@
 use super::context::AgentContextView;
 use super::{ViewError, ViewResult, Views};
 use async_trait::async_trait;
+use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::actor::{ActorDescription, ActorId};
 use caelumora_model::value::name::Name;
 use caelumora_model::value::text::Introduction;
@@ -104,7 +105,7 @@ pub(super) async fn participant_state(views: &Views, participant: &Participant, 
         },
         Participant::Agent(id) => match views.agent_of(*id).await {
             Some(agent) => Arc::new(AgentParticipantState {
-                participant: AgentParticipant(StateRef { agent: agent.id, channel, store: Arc::clone(views.states()), histories: Arc::clone(views.histories()), transcripts: Arc::clone(views.transcripts()) }),
+                participant: AgentParticipant(StateRef { agent: agent.id, channel, store: Arc::clone(views.states()), histories: Arc::clone(views.histories()), transcripts: Arc::clone(views.transcripts()), prompts: Arc::clone(views.prompts()) }),
                 agent,
                 personalities: Arc::clone(&views.stores().personalities),
                 personality: OnceCell::new(),
@@ -174,6 +175,8 @@ struct StateRef {
     histories: Arc<dyn HistoryStore>,
     /// Where its transcript is read beyond what the state holds (issue 380).
     transcripts: Arc<dyn TranscriptStore>,
+    /// The texts what it saw is worded with again (issue 57).
+    prompts: Arc<PromptCatalogue>,
 }
 
 impl StateRef {
@@ -253,6 +256,6 @@ impl AgentParticipant {
     /// at the position `from`.
     pub(super) async fn context(&self) -> ViewResult<AgentContextView> {
         let place = &self.0;
-        Ok(AgentContextView::of(place.agent, place.channel, self.stored().await?, Arc::clone(&place.histories), Arc::clone(&place.transcripts)))
+        Ok(AgentContextView::of(place.agent, place.channel, self.stored().await?, Arc::clone(&place.histories), Arc::clone(&place.transcripts), Arc::clone(&place.prompts)))
     }
 }

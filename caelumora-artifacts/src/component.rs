@@ -24,7 +24,9 @@ use caelumora_agents::turn::Turn;
 use caelumora_agents::situation::Situation;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
 use caelumora_runtime::terminal::WorkspacePath;
-use caelumora_agents::tool::{arguments, usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_agents::tool::{arguments, described, tool_text, usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_model::prompt_catalogue::PromptCatalogue;
+use crate::NAMESPACE;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -53,8 +55,11 @@ struct ArtifactToolConfig {
 
 #[derive(Debug)]
 pub struct ArtifactTool {
-    config: ArtifactToolConfig,
     artifacts: Arc<ArtifactManager>,
+    /// What its tool set is for and its tool, as the configuration or the
+    /// prompt catalogue words them (issue 57).
+    description: String,
+    tools: Vec<Tool>,
 }
 
 #[derive(Deserialize)]
@@ -69,12 +74,29 @@ struct Publish {
 
 impl ArtifactTool {
     /// The tool of a component configured with `params`, publishing a file
-    /// of the turn's workspace through `artifacts`.
+    /// of the turn's workspace through `artifacts`, its texts from `prompts`.
     ///
     /// # Errors
-    /// `ComponentError::InvalidConfig` for parameters it does not take.
-    pub fn new(params: &Value, artifacts: Arc<ArtifactManager>) -> ComponentResult<Self> {
-        Ok(Self { config: config_of_params(params)?, artifacts })
+    /// `ComponentError::InvalidConfig` for parameters it does not take;
+    /// `ComponentError::Prompt` if a text cannot be had.
+    pub fn new(params: &Value, artifacts: Arc<ArtifactManager>, prompts: &PromptCatalogue) -> ComponentResult<Self> {
+        let config: ArtifactToolConfig = config_of_params(params)?;
+        let string = ToolParameters::string;
+        let tool = Tool {
+            name: PUBLISH_ARTIFACT.to_string(),
+            description: String::new(),
+            parameters: ToolParameters::object([("path", string()), ("name", string()), ("description", string())], ["path"]),
+            requires_approval: config.requires_approval.required(false),
+            visibility: ToolVisibility::SHOWN,
+            classification: None,
+            presentation: ARTIFACT_PUBLISH_PRESENTATION,
+        };
+        let tools = vec![described(prompts, NAMESPACE, ARTIFACT_TOOL_KIND, tool, ())?];
+        let description = match &config.description {
+            Some(description) => description.clone(),
+            None => tool_text(prompts, NAMESPACE, ARTIFACT_TOOL_KIND, "description", ())?,
+        };
+        Ok(Self { artifacts, description, tools })
     }
 }
 
@@ -94,29 +116,11 @@ impl From<ArtifactError> for ToolError {
 #[async_trait]
 impl ToolProvider for ArtifactTool {
     fn description(&self) -> String {
-        self.config.description.clone().unwrap_or_else(|| {
-            "Artifacts: results published from the session's workspace as fixed versions, kept beyond the workspace and downloaded where they were published.".to_string()
-        })
+        self.description.clone()
     }
 
     fn tools(&self) -> Vec<Tool> {
-        let string = ToolParameters::string;
-        vec![Tool {
-            name: PUBLISH_ARTIFACT.to_string(),
-            description: "Publish a file of the session's workspace as an artifact for the users of the channel: a fixed copy of it as it is now, kept beyond the workspace and downloaded at this message. Publishing again under the same name adds a version. Use it for a result to be kept; to point to a file for a look now, use publish_file.".to_string(),
-            parameters: ToolParameters::object(
-                [
-                    ("path", string("The file, relative to the workspace's top")),
-                    ("name", string("The artifact's name, at most 100 characters; the file's name unless given")),
-                    ("description", string("What it is, in a sentence, for whoever downloads it")),
-                ],
-                ["path"],
-            ),
-            requires_approval: self.config.requires_approval.required(false),
-            visibility: ToolVisibility::SHOWN,
-            classification: None,
-            presentation: ARTIFACT_PUBLISH_PRESENTATION,
-        }]
+        self.tools.clone()
     }
 
     /// Its tool where a file can be published: where the work may use a
@@ -177,11 +181,11 @@ impl ToolProvider for ArtifactTool {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(ARTIFACT_TOOL_KIND).provides::<dyn ToolProvider>().uses::<ArtifactManager>(),
+        ComponentKind::new(ARTIFACT_TOOL_KIND).provides::<dyn ToolProvider>().uses::<ArtifactManager>().uses::<PromptCatalogue>(),
         |descriptor, context| {
             let artifacts = Arc::clone(context.service::<ArtifactManager>()?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactTool::new(&descriptor.params, artifacts)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactTool::new(&descriptor.params, artifacts, context.service::<PromptCatalogue>()?)?));
             Ok(facets)
         },
     );

@@ -1,10 +1,12 @@
 //! The `calculator_tool` component: a tool that evaluates mathematical
 //! expressions.
 
+use crate::prompt::NAMESPACE;
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{described, arguments, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
+use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde::Deserialize;
@@ -16,27 +18,43 @@ pub const CALCULATOR_TOOL_KIND: &str = "calculator_tool";
 pub const CALCULATE_TOOL_NAME: &str = "calculate";
 
 #[derive(Debug)]
-pub struct CalculatorToolProvider;
+pub struct CalculatorToolProvider {
+    /// What its tool set is for and its tools, as the prompt catalogue
+    /// words them (issue 57).
+    description: String,
+    tools: Vec<Tool>,
+}
 
-#[async_trait]
-impl ToolProvider for CalculatorToolProvider {
-    fn description(&self) -> String {
-        "Evaluate mathematical expressions.".to_string()
-    }
-
-    fn tools(&self) -> Vec<Tool> {
-        vec![Tool {
+impl CalculatorToolProvider {
+    /// The provider, its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of them cannot be had.
+    pub fn new(prompts: &PromptCatalogue) -> Result<Self, PromptError> {
+        let tools = vec![described(prompts, NAMESPACE, CALCULATOR_TOOL_KIND, Tool {
             name: CALCULATE_TOOL_NAME.to_string(),
-            description: "Evaluates a mathematical expression".to_string(),
+            description: String::new(),
             parameters: ToolParameters::object(
-                vec![("expression", ToolParameters::string("Mathematical expression to evaluate (e.g., '2 + 2', 'sin(pi/2)', 'exp(1)')"))],
+                vec![("expression", ToolParameters::string())],
                 vec!["expression"],
             ),
             requires_approval: false,
             visibility: ToolVisibility::SHOWN,
             classification: None,
             presentation: Default::default(),
-        }]
+        }, ())?];
+        Ok(Self { description: tool_text(prompts, NAMESPACE, CALCULATOR_TOOL_KIND, "description", ())?, tools })
+    }
+}
+
+#[async_trait]
+impl ToolProvider for CalculatorToolProvider {
+    fn description(&self) -> String {
+        self.description.clone()
+    }
+
+    fn tools(&self) -> Vec<Tool> {
+        self.tools.clone()
     }
 
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
@@ -59,10 +77,10 @@ impl ToolProvider for CalculatorToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(CALCULATOR_TOOL_KIND).provides::<dyn ToolProvider>(),
-        |_descriptor, _context| {
+        ComponentKind::new(CALCULATOR_TOOL_KIND).provides::<dyn ToolProvider>().uses::<PromptCatalogue>(),
+        |_descriptor, context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(CalculatorToolProvider));
+            facets.insert::<dyn ToolProvider>(Arc::new(CalculatorToolProvider::new(context.service::<PromptCatalogue>()?)?));
             Ok(facets)
         },
     );
@@ -71,12 +89,13 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use serde_json::json;
 
     #[tokio::test]
     async fn test_calculator_tool() {
-        let provider = CalculatorToolProvider;
+        let provider = CalculatorToolProvider::new(&testing::prompts()).unwrap();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
@@ -99,7 +118,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_calculator_tool_invalid_expression() {
-        let provider = CalculatorToolProvider;
+        let provider = CalculatorToolProvider::new(&testing::prompts()).unwrap();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 

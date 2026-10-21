@@ -5,6 +5,10 @@
 //! `ContextProvider` and any number of `PromptProvider`s (issue 98). A
 //! component that offers a prompt part along with another facet - tools,
 //! say - stays in `components`.
+//!
+//! What the parts say is the agents' namespace of the prompt catalogue
+//! (`PROMPTS`, issue 57): a provider gets the catalogue when it is made and
+//! renders its text from it.
 
 pub mod channel_briefing_prompt_provider;
 pub mod channel_language_prompt_provider;
@@ -23,10 +27,18 @@ use caelumora_runtime::view::ViewError;
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::prompt_catalogue::PromptError;
 use caelumora_model::store::StoreError;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt::Debug;
+
+/// The namespace of the agents' texts in the prompt catalogue.
+pub const NAMESPACE: &str = "agents";
+
+/// The agents' texts (issue 57), added to the catalogue under `NAMESPACE`
+/// by `AgentsPlugin`.
+pub const PROMPTS: &str = include_str!("../prompts.yaml");
 
 /// Where a prompt part goes in the context (issue 47).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -103,61 +115,6 @@ impl From<String> for Prompt {
     }
 }
 
-/// One section of a prompt part that lists entries, e.g. the notes of one
-/// agent: an optional heading, then one `- ` line per entry.
-#[derive(Debug, Clone, Default)]
-pub struct Section {
-    pub heading: Option<String>,
-    pub lines: Vec<String>,
-}
-
-impl Section {
-    /// A section under `heading`.
-    pub fn new(heading: impl Into<String>, lines: Vec<String>) -> Self {
-        Self { heading: Some(heading.into()), lines }
-    }
-
-    /// A section without a heading.
-    pub fn lines(lines: Vec<String>) -> Self {
-        Self { heading: None, lines }
-    }
-}
-
-/// A prompt part titled `title` (issue 249): the title in brackets on a
-/// line of its own, then `text`, which ends in a line break. Empty if `text`
-/// is: a part that says nothing is no part. Every part the runtime writes
-/// is made so, so that the parts of a prompt stay apart.
-pub fn titled(title: &str, text: &str) -> String {
-    if text.is_empty() {
-        return String::new();
-    }
-    let end = if text.ends_with('\n') { "" } else { "\n" };
-    format!("[{title}]\n{text}{end}")
-}
-
-/// A prompt part that lists entries, titled `title`: `preamble` - what the
-/// entries are, if anything needs saying - then each section that has
-/// entries. Empty if none has: a part with nothing to list is no part.
-pub fn render_sections(title: &str, preamble: &str, sections: &[Section]) -> String {
-    let sections: Vec<&Section> = sections.iter().filter(|s| !s.lines.is_empty()).collect();
-    if sections.is_empty() {
-        return String::new();
-    }
-    let mut text = if preamble.is_empty() { String::new() } else { format!("{preamble}\n") };
-    for section in sections {
-        if let Some(heading) = &section.heading {
-            text.push_str(heading);
-            text.push('\n');
-        }
-        for line in &section.lines {
-            text.push_str("- ");
-            text.push_str(line);
-            text.push('\n');
-        }
-    }
-    titled(title, &text)
-}
-
 /// Contributes a prompt part: the system prompt, or other text the model is
 /// given besides the conversation. `TurnContextProvider` composes the parts
 /// of every one of the agent's providers, by position, in the order of its
@@ -226,6 +183,10 @@ pub enum ContextError {
     /// What the store reported, judged as store errors are.
     #[error("{0}")]
     Store(#[from] StoreError),
+    /// A text of the prompt catalogue that cannot be had - a fault of the
+    /// texts or of the provider, named by its key.
+    #[error("{0}")]
+    Prompt(#[from] PromptError),
     /// A prompt provider that fails closed failed with `cause`.
     #[error("component '{component}' failed")]
     Component { component: String, #[source] cause: Box<ContextError> },
@@ -247,28 +208,4 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     static_system_prompt_provider::register(registry);
     tool_sets_prompt_provider::register(registry);
     turn_context_provider::register(registry);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sections_are_rendered_under_the_title_and_preamble_and_empty_ones_left_out() {
-        let text = render_sections("Notes", "What was noted.", &[
-            Section::new("Yours:", vec!["#1: tea".to_string()]),
-            Section::new("Of Sassy:", Vec::new()),
-            Section::lines(vec!["coffee".to_string()]),
-        ]);
-        assert_eq!(text, "[Notes]\nWhat was noted.\nYours:\n- #1: tea\n- coffee\n");
-        assert_eq!(render_sections("Notes", "", &[Section::lines(vec!["tea".to_string()])]), "[Notes]\n- tea\n", "no preamble where none is needed");
-        assert_eq!(render_sections("Notes", "What was noted.", &[Section::new("Yours:", Vec::new())]), "", "nothing to list is no part");
-    }
-
-    #[test]
-    fn a_part_is_titled_and_one_that_says_nothing_is_none() {
-        assert_eq!(titled("Planning", "Plan first."), "[Planning]\nPlan first.\n");
-        assert_eq!(titled("Planning", "Plan first.\n"), "[Planning]\nPlan first.\n", "one line break at the end");
-        assert_eq!(titled("Planning", ""), "");
-    }
 }

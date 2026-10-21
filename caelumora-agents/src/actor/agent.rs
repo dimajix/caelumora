@@ -81,8 +81,9 @@ impl AgentActor {
         let channel_id = actor_runtime.channel_controller().id();
         let agent_id = agent_controller.id();
         // A turn stored under way is resumed (issue 75).
+        let not_executed_text = not_executed_result(actor_runtime.prompts());
         let resume = |state: &mut AgentChannelState| {
-            let not_executed = state.prepare_resume(&not_executed_result());
+            let not_executed = state.prepare_resume(&not_executed_text);
             if not_executed > 0 {
                 warn!("Agent {} in channel {}: {} approved tool calls were not executed before it stopped; the model is told", agent_id, channel_id, not_executed);
             }
@@ -521,7 +522,8 @@ impl AgentActor {
         // its thread, and to answer what it was asked there, since no other
         // turn follows for it. Stored before it is committed.
         if self.body.take_in_during_turn(state, rx).await {
-            self.turn_under_way(state)?.place_turn_prompt(MessageRole::System, HEARD_WHILE_WORKING.to_string());
+            let heard = self.body.runtime.prompts().render(HEARD_WHILE_WORKING, ())?;
+            self.turn_under_way(state)?.place_turn_prompt(MessageRole::System, heard);
             self.body.store(state).await;
         }
         let turn = &mut self.turn_under_way(state)?;
@@ -571,7 +573,7 @@ impl AgentActor {
                     // the next one begins with another model call - or the
                     // plan itself.
                     if converged {
-                        for event in turn.plan_converged() {
+                        for event in turn.plan_converged()? {
                             turn.send_event(event, output).await?;
                         }
                         if turn.plan_progress().is_some() {
@@ -694,7 +696,7 @@ impl AgentActor {
             let progress_after = turn.plan_progress();
             if progress_after != progress_before {
                 if let Some(PlanProgress::Step(idx)) = progress_after {
-                    if let Some(started) = turn.advance_plan(idx) {
+                    if let Some(started) = turn.advance_plan(idx)? {
                         turn.send_event(started, output).await?;
                     }
                 }
@@ -714,10 +716,9 @@ impl AgentActor {
     }
 }
 
-/// What the model is told after what was said while it worked (issue 431).
-const HEARD_WHILE_WORKING: &str = "What is just above was said by others, or happened, while you were working. \
-    Take them into account from here on: if they change what you were asked, act on that. \
-    Otherwise go on with your work. If they ask you something, answer it in your final answer.";
+/// The text of what the model is told after what was said while it worked
+/// (issue 431), in the prompt catalogue.
+const HEARD_WHILE_WORKING: &str = "agents.heard_while_working";
 
 /// Withdraws the requests of the calls a turn `abandoned` as it ended, in
 /// its contexts (`answering`), so that nobody is asked any longer to decide

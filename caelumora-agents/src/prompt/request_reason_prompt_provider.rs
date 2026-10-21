@@ -14,22 +14,24 @@
 //! answer whenever they are asked.
 
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
 use crate::situation::Situation;
 use crate::tool::stop_tool::SILENCE_TOOL_NAME;
 use async_trait::async_trait;
 use caelumora_model::actor::RequestReason;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue};
 use std::sync::Arc;
 
 pub const REQUEST_REASON_PROMPT_PROVIDER_KIND: &str = "request_reason_prompt_provider";
 
-/// The title of its part.
-const TITLE: &str = "Why you are asked to respond";
+/// Its text in the prompt catalogue.
+const TEXT: &str = "agents.request_reason";
 
 #[derive(Debug)]
 pub struct RequestReasonPromptProvider {
     pub position: PromptPosition,
+    pub prompts: Arc<PromptCatalogue>,
 }
 
 #[async_trait]
@@ -45,14 +47,7 @@ impl PromptProvider for RequestReasonPromptProvider {
             return Ok(Prompt::classified(String::new(), Classification::PUBLIC));
         }
         let offered = situation.tool_sets().iter().flat_map(|set| &set.tools).any(|tool| tool.name == SILENCE_TOOL_NAME);
-        let stay_silent = if offered { format!("call `{SILENCE_TOOL_NAME}` and write nothing") } else { "write nothing".to_string() };
-        let text = titled(
-            TITLE,
-            &format!(
-                "Nobody mentioned you. You are asked because what was said last might concern you - it may not. \
-                 If you have nothing to add - nothing new, only agreement, a greeting, thanks, or that you are waiting - {stay_silent}."
-            ),
-        );
+        let text = self.prompts.render(TEXT, context! { silence => offered.then_some(SILENCE_TOOL_NAME) })?;
         // Why someone is asked is no secret of anything.
         Ok(Prompt::classified(text, Classification::PUBLIC))
     }
@@ -60,11 +55,11 @@ impl PromptProvider for RequestReasonPromptProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(REQUEST_REASON_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
-        |descriptor, _context| {
+        ComponentKind::new(REQUEST_REASON_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
+        |descriptor, context| {
             let position = PromptPosition::of_params_or(&descriptor.params, PromptPosition::BeforeTurnInput)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(RequestReasonPromptProvider { position }));
+            facets.insert::<dyn PromptProvider>(Arc::new(RequestReasonPromptProvider { position, prompts: Arc::clone(context.service::<PromptCatalogue>()?) }));
             Ok(facets)
         },
     );
@@ -73,8 +68,9 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing;
     use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::session::testing::detached_actor_runtime;
+    use crate::testing::detached_actor_runtime;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::tool::{Tool, ToolParameters, ToolSet, ToolVisibility};
     use caelumora_model::work::Work;
@@ -95,7 +91,7 @@ mod tests {
         }).collect();
         state.offer_tools(vec![ToolSet::new("stop", "", tools)]);
         let work: Work = state.turn.as_ref().map(|turn| turn.work.clone()).expect("begun");
-        let provider = RequestReasonPromptProvider { position: PromptPosition::BeforeTurnInput };
+        let provider = RequestReasonPromptProvider { position: PromptPosition::BeforeTurnInput, prompts: testing::prompts() };
         let prompt = provider.get_prompt(&Situation::new(AgentId::new(), &work, &state, &AgentStateHandle::detached(), &detached_actor_runtime())).await.unwrap();
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));
         prompt.text

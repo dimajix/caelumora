@@ -49,39 +49,30 @@ pub enum ArgumentLanguage {
     Shell,
 }
 
+/// The parameters of a tool: built as a schema - which there are, of which
+/// type, which are required -, and described apart from it (issue 57):
+/// one by one (`described`), or all of them by their paths, from where the
+/// texts of a tool are kept (`describe`).
 impl ToolParameters {
-    pub fn string(description: impl Into<String>) -> Self {
-        Self::String {
-            description: Some(description.into()),
-            language: None,
-        }
+    pub fn string() -> Self {
+        Self::String { description: None, language: None }
     }
 
     /// A string that is a bash command line.
-    pub fn shell(description: impl Into<String>) -> Self {
-        Self::String {
-            description: Some(description.into()),
-            language: Some(ArgumentLanguage::Shell),
-        }
+    pub fn shell() -> Self {
+        Self::String { description: None, language: Some(ArgumentLanguage::Shell) }
     }
 
-    pub fn number(description: impl Into<String>) -> Self {
-        Self::Number {
-            description: Some(description.into()),
-        }
+    pub fn number() -> Self {
+        Self::Number { description: None }
     }
 
-    pub fn boolean(description: impl Into<String>) -> Self {
-        Self::Boolean {
-            description: Some(description.into()),
-        }
+    pub fn boolean() -> Self {
+        Self::Boolean { description: None }
     }
 
-    pub fn array(items: ToolParameters, description: impl Into<String>) -> Self {
-        Self::Array {
-            items: Box::new(items),
-            description: Some(description.into()),
-        }
+    pub fn array(items: ToolParameters) -> Self {
+        Self::Array { items: Box::new(items), description: None }
     }
 
     pub fn object(
@@ -94,6 +85,62 @@ impl ToolParameters {
                 .map(|(k, v)| (k.into(), v))
                 .collect(),
             required: required.into_iter().map(|s| s.into()).collect(),
+        }
+    }
+
+    /// The parameter, described by `text`. An object has no description of
+    /// its own - what it holds is described - and stays as it is.
+    pub fn described(mut self, text: impl Into<String>) -> Self {
+        if let Some(description) = self.description_mut() {
+            *description = Some(text.into());
+        }
+        self
+    }
+
+    /// Describes every parameter below `path` that is not described yet by
+    /// what `text` answers for its path: `<path>.<name>` for a property of an object, the path of a
+    /// list for each of its entries' properties if they are objects, and
+    /// `<path>.item` for an entry otherwise -
+    /// `ask_user.questions.choices.label`, `ask_user.ask.item`. One
+    /// described already (`described`) keeps its description: a text that
+    /// several tools share.
+    ///
+    /// # Errors
+    /// The first error `text` answers.
+    pub fn describe<E>(&mut self, path: &str, text: &mut impl FnMut(&str) -> Result<String, E>) -> Result<(), E> {
+        match self {
+            ToolParameters::Object { properties, .. } => {
+                for (name, property) in properties {
+                    let path = format!("{path}.{name}");
+                    property.describe_at(&path, text)?;
+                }
+                Ok(())
+            }
+            ToolParameters::Array { items, .. } => match items.as_mut() {
+                ToolParameters::Object { .. } => items.describe(path, text),
+                item => item.describe_at(&format!("{path}.item"), text),
+            },
+            _ => Ok(()),
+        }
+    }
+
+    /// Describes this parameter by the text of `path` unless it is
+    /// described, and what it holds below it.
+    fn describe_at<E>(&mut self, path: &str, text: &mut impl FnMut(&str) -> Result<String, E>) -> Result<(), E> {
+        if let Some(description @ None) = self.description_mut() {
+            *description = Some(text(path)?);
+        }
+        self.describe(path, text)
+    }
+
+    /// Its description, `None` for an object, which has none.
+    fn description_mut(&mut self) -> Option<&mut Option<String>> {
+        match self {
+            ToolParameters::Object { .. } => None,
+            ToolParameters::String { description, .. }
+            | ToolParameters::Number { description }
+            | ToolParameters::Array { description, .. }
+            | ToolParameters::Boolean { description } => Some(description),
         }
     }
 
@@ -489,8 +536,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_parameter_is_described_by_its_path() {
+        let choice = ToolParameters::object([("label", ToolParameters::string())], ["label"]);
+        let question = ToolParameters::object([("header", ToolParameters::string()), ("choices", ToolParameters::array(choice))], ["header"]);
+        let mut parameters = ToolParameters::object(
+            [("questions", ToolParameters::array(question)), ("ask", ToolParameters::array(ToolParameters::string())), ("all", ToolParameters::boolean()), ("level", ToolParameters::string().described("shared"))],
+            ["questions"],
+        );
+        let mut asked = Vec::new();
+        parameters.describe("ask_user", &mut |path: &str| -> Result<String, ()> { asked.push(path.to_string()); Ok(format!("<{path}>")) }).unwrap();
+        asked.sort();
+        assert_eq!(asked, [
+            "ask_user.all", "ask_user.ask", "ask_user.ask.item",
+            "ask_user.questions", "ask_user.questions.choices", "ask_user.questions.choices.label", "ask_user.questions.header",
+        ], "a list of objects is described by its own path and its entries' properties; of other entries by `.item`");
+        let described = serde_json::to_value(&parameters).unwrap();
+        assert_eq!(described["properties"]["questions"]["items"]["properties"]["choices"]["items"]["properties"]["label"]["description"], "<ask_user.questions.choices.label>");
+        assert_eq!(described["properties"]["ask"]["items"]["description"], "<ask_user.ask.item>");
+        assert_eq!(described["properties"]["level"]["description"], "shared", "one described already keeps its description");
+
+        let failed = ToolParameters::object([("a", ToolParameters::string())], ["a"]).describe("t", &mut |path: &str| Err(path.to_string()));
+        assert_eq!(failed, Err("t.a".to_string()), "the first text that cannot be had");
+    }
+
+    #[test]
+    fn a_parameter_is_described_one_by_one_and_an_object_has_no_description() {
+        assert_eq!(ToolParameters::string().described("a channel"), ToolParameters::String { description: Some("a channel".to_string()), language: None });
+        let object = ToolParameters::object([("a", ToolParameters::number())], ["a"]);
+        assert_eq!(object.clone().described("ignored"), object);
+    }
+
+    #[test]
     fn parameters_without_required_ones_are_read_back_as_written() {
-        let parameters = ToolParameters::Object { properties: HashMap::from([("channel".to_string(), ToolParameters::string("a channel"))]), required: Vec::new() };
+        let parameters = ToolParameters::Object { properties: HashMap::from([("channel".to_string(), ToolParameters::string().described("a channel"))]), required: Vec::new() };
         let json = serde_json::to_string(&parameters).unwrap();
         assert!(!json.contains("required"), "an empty list is left out");
         assert_eq!(serde_json::from_str::<ToolParameters>(&json).unwrap(), parameters);
@@ -500,8 +578,8 @@ mod tests {
     fn boolean_and_array_round_trip_through_json() {
         let params = ToolParameters::object(
             vec![
-                ("enabled", ToolParameters::boolean("Whether the feature is enabled")),
-                ("tags", ToolParameters::array(ToolParameters::string("A tag"), "List of tags")),
+                ("enabled", ToolParameters::boolean().described("Whether the feature is enabled")),
+                ("tags", ToolParameters::array(ToolParameters::string().described("A tag")).described("List of tags")),
             ],
             vec!["enabled"],
         );

@@ -5,10 +5,12 @@
 //! parameter `seconds` (default 5) - at most `MAX_SECONDS`, and needs no
 //! approval unless the parameter `requires_approval` says so.
 
+use crate::prompt::NAMESPACE;
 use crate::turn::Turn;
 use caelumora_runtime::component::{flag_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::tool::{arguments, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{described, arguments, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde::Deserialize;
@@ -28,13 +30,35 @@ pub const MAX_SECONDS: f64 = 60.0;
 #[derive(Debug)]
 pub struct SleepToolProvider {
     /// How long a call without `seconds` waits.
-    pub seconds: f64,
-    pub requires_approval: bool,
+    seconds: f64,
+    /// What its tool set is for and its tools, as the prompt catalogue
+    /// words them (issue 57).
+    description: String,
+    tools: Vec<Tool>,
 }
 
-impl Default for SleepToolProvider {
-    fn default() -> Self {
-        Self { seconds: DEFAULT_SECONDS, requires_approval: false }
+impl SleepToolProvider {
+    /// The provider whose tool waits `seconds` unless told otherwise, and
+    /// asks for approval if `requires_approval`; its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of them cannot be had.
+    pub fn new(seconds: f64, requires_approval: bool, prompts: &PromptCatalogue) -> Result<Self, PromptError> {
+        // What its texts are told, written as Rust writes them - `5`, not `5.0`.
+        let values = context! { seconds => seconds.to_string(), max_seconds => MAX_SECONDS.to_string() };
+        let tools = vec![described(prompts, NAMESPACE, SLEEP_TOOL_KIND, Tool {
+            name: SLEEP_TOOL_NAME.to_string(),
+            description: String::new(),
+            parameters: ToolParameters::object(
+                vec![("seconds", ToolParameters::number())],
+                Vec::<&str>::new(),
+            ),
+            requires_approval,
+            visibility: ToolVisibility::SHOWN,
+            classification: None,
+            presentation: Default::default(),
+        }, &values)?];
+        Ok(Self { seconds, description: tool_text(prompts, NAMESPACE, SLEEP_TOOL_KIND, "description", &values)?, tools })
     }
 }
 
@@ -47,22 +71,11 @@ fn duration(seconds: f64) -> Option<Duration> {
 #[async_trait]
 impl ToolProvider for SleepToolProvider {
     fn description(&self) -> String {
-        "Wait for a while, for testing.".to_string()
+        self.description.clone()
     }
 
     fn tools(&self) -> Vec<Tool> {
-        vec![Tool {
-            name: SLEEP_TOOL_NAME.to_string(),
-            description: format!("Waits the given number of seconds, at most {MAX_SECONDS}, and then says so. For testing."),
-            parameters: ToolParameters::object(
-                vec![("seconds", ToolParameters::number(format!("How long to wait; {} unless given", self.seconds)))],
-                Vec::<&str>::new(),
-            ),
-            requires_approval: self.requires_approval,
-            visibility: ToolVisibility::SHOWN,
-            classification: None,
-            presentation: Default::default(),
-        }]
+        self.tools.clone()
     }
 
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
@@ -83,8 +96,8 @@ impl ToolProvider for SleepToolProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(SLEEP_TOOL_KIND).provides::<dyn ToolProvider>(),
-        |descriptor, _context| {
+        ComponentKind::new(SLEEP_TOOL_KIND).provides::<dyn ToolProvider>().uses::<PromptCatalogue>(),
+        |descriptor, context| {
             let seconds = match descriptor.params.get("seconds") {
                 None => DEFAULT_SECONDS,
                 Some(value) => value.as_f64().filter(|s| duration(*s).is_some())
@@ -92,7 +105,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             };
             let requires_approval = flag_of_params(&descriptor.params, "requires_approval")?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(SleepToolProvider { seconds, requires_approval }));
+            facets.insert::<dyn ToolProvider>(Arc::new(SleepToolProvider::new(seconds, requires_approval, context.service::<PromptCatalogue>()?)?));
             Ok(facets)
         },
     );
@@ -101,12 +114,13 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use std::time::Instant;
 
     #[tokio::test]
     async fn sleep_waits_as_long_as_it_is_told_within_its_limit() {
-        let tool = SleepToolProvider { seconds: 0.05, requires_approval: false };
+        let tool = SleepToolProvider::new(0.05, false, &testing::prompts()).unwrap();
         let mut state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut state);
 

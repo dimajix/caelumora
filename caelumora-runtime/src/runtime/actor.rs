@@ -4,6 +4,7 @@ use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, SessionController};
 use anyhow::{anyhow, Result};
+use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::approval::ApprovalRule;
@@ -61,6 +62,10 @@ impl ActorRuntime {
     pub fn secret_manager(&self) -> &Arc<SecretManager> { self.runtime.runtime_manager.secret_manager() }
 
     pub fn services(&self) -> &Services { self.runtime.runtime_manager.services() }
+
+    /// The texts given to models (issue 57): what the actor's work words
+    /// for its model itself - the results of tool calls, a plan's steps.
+    pub fn prompts(&self) -> &Arc<PromptCatalogue> { self.runtime.runtime_manager.prompts() }
 
     /// Where the actor's outbox is kept across its runs (issue 386).
     pub(crate) fn actor_manager(&self) -> &Arc<ActorManager> { self.runtime.runtime_manager.actor_manager() }

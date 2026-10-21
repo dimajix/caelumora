@@ -648,7 +648,7 @@ mod tests {
         let tool = |name: &str, description: &str| Tool {
             name: name.to_string(),
             description: description.to_string(),
-            parameters: ToolParameters::object([("a", ToolParameters::string("x")), ("b", ToolParameters::number("y"))], ["a"]),
+            parameters: ToolParameters::object([("a", ToolParameters::string().described("x")), ("b", ToolParameters::number().described("y"))], ["a"]),
             requires_approval: false,
             visibility: Default::default(),
             classification: None,

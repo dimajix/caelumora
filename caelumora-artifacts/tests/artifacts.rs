@@ -106,7 +106,7 @@ async fn with_the_tool(world: &World, params: Value) -> (Arc<SessionLoop>, Agent
     let docs = world.runtime.workspace_manager().create(&alice, "docs", Scope::UserScope { user_id: world.alice }, "main", None, Classification::general(Confidentiality::Internal)).await.unwrap();
     let session = world.shared_session(&[helper], &[]).await;
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    let tool = ArtifactTool::new(&params, manager(world)).expect("parameters it takes");
+    let tool = ArtifactTool::new(&params, manager(world), world.runtime.prompts()).expect("parameters it takes");
     (session, helper, docs, tool)
 }
 
@@ -170,14 +170,14 @@ async fn the_tool_is_offered_where_the_channel_uses_a_workspace() {
 #[tokio::test]
 async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
     let world = world().await;
-    let tool = |params: Value| ArtifactTool::new(&params, manager(&world)).unwrap();
+    let tool = |params: Value| ArtifactTool::new(&params, manager(&world), world.runtime.prompts()).unwrap();
     let asks = |mode: Value| tool(json!({ "requires_approval": mode })).tools()[0].requires_approval;
     assert!(asks(json!(true)) && asks(json!("unless_read_only")), "it changes what is kept");
     assert!(!asks(json!(false)));
     assert!(tool(json!({})).tools()[0].requires_approval, "unless configured");
     assert_eq!(tool(json!({})).tools()[0].presentation, ARTIFACT_PUBLISH_PRESENTATION);
     assert_eq!(tool(json!({})).describe(PUBLISH_ARTIFACT, &json!({ "path": "out/r.csv", "name": "Report.csv" })).unwrap(), "Publish 'out/r.csv' in the workspace as the artifact 'Report.csv'");
-    assert!(ArtifactTool::new(&json!({ "requires": true }), manager(&world)).is_err(), "nor parameters it does not take");
+    assert!(ArtifactTool::new(&json!({ "requires": true }), manager(&world), world.runtime.prompts()).is_err(), "nor parameters it does not take");
 }
 
 // --- The plugin -----------------------------------------------------------

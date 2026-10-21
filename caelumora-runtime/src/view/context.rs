@@ -17,6 +17,7 @@ use caelumora_model::history::{HistoryPage, Reader};
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::history::History;
 use caelumora_model::message::MessageId;
+use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError};
 use caelumora_model::note::Note;
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
@@ -39,6 +40,9 @@ pub struct AgentContextView {
     state: AgentChannelState,
     histories: Arc<dyn HistoryStore>,
     transcripts: Arc<dyn TranscriptStore>,
+    /// The texts what the agent saw is worded with as it is resolved again
+    /// (issue 57).
+    prompts: Arc<PromptCatalogue>,
 }
 
 /// What the tests of the agents' logic build a view with (issue 370).
@@ -48,13 +52,15 @@ impl AgentContextView {
     /// whose history is `history` after the agent's join - a member from
     /// its start (issue 417) -, reached by nobody: for a test that compares
     /// what an agent was given with what the view shows of it. Both are put
-    /// into a store of their own.
+    /// into a store of their own; what it saw is worded with the core's
+    /// texts.
     ///
     /// # Panics
     /// If `actor` is no agent.
     pub async fn of_state(actor: ActorId, mut state: AgentChannelState, history: History) -> Self {
         use caelumora_model::channel::ChannelState;
         use caelumora_model::history::{Audience, HistoryEntry, Recorded};
+        use caelumora_model::prompt_catalogue::{CORE, CORE_PROMPTS};
         use caelumora_model::store::memory::MemoryStore;
         use caelumora_model::store::StateStore;
         use chrono::Utc;
@@ -69,13 +75,15 @@ impl AgentContextView {
             member.enter(node.entry.clone());
         }
         store.put_channel_state(channel, &mut ChannelState { history: member, ..ChannelState::new(channel) }).await.expect("and a history");
-        Self::of(agent, channel, state, Arc::<MemoryStore>::clone(&store), store)
+        let mut prompts = PromptCatalogue::new();
+        prompts.add(CORE, CORE_PROMPTS).expect("the core's texts are compiled in");
+        Self::of(agent, channel, state, Arc::<MemoryStore>::clone(&store), store, Arc::new(prompts))
     }
 }
 
 impl AgentContextView {
-    pub(crate) fn of(agent: AgentId, channel: ChannelId, state: AgentChannelState, histories: Arc<dyn HistoryStore>, transcripts: Arc<dyn TranscriptStore>) -> Self {
-        Self { agent, channel, state, histories, transcripts }
+    pub(crate) fn of(agent: AgentId, channel: ChannelId, state: AgentChannelState, histories: Arc<dyn HistoryStore>, transcripts: Arc<dyn TranscriptStore>, prompts: Arc<PromptCatalogue>) -> Self {
+        Self { agent, channel, state, histories, transcripts, prompts }
     }
 
     /// The agent whose state this is.
@@ -130,7 +138,9 @@ impl AgentContextView {
             None => Vec::new(),
         };
         let (prompts, offered_tools) = self.transcripts.named_by(self.agent, self.channel, &reference).await.map_err(|source| self.failed(message, source))?;
-        ContextResolver::on_path(&path, &prompts, &offered_tools).resolve(&reference, turn, self.actor()).ok_or_else(unavailable)
+        ContextResolver::on_path(&path, &prompts, &offered_tools, &self.prompts).resolve(&reference, turn, self.actor())
+            .map_err(|source| AgentContextError::Unworded { actor: self.actor(), message, source })?
+            .ok_or_else(unavailable)
     }
 
     /// The classification of the message `message` the agent produced, as
@@ -192,6 +202,10 @@ pub enum AgentContextError {
     /// the log.
     #[error("Reading what {actor} saw failed")]
     Failed { actor: ActorId, message: Option<MessageId>, #[source] source: StoreError },
+    /// A text the agent's model is given as its context is resolved cannot
+    /// be had from the prompt catalogue (issue 57).
+    #[error("What {actor} saw for message {message} cannot be worded")]
+    Unworded { actor: ActorId, message: MessageId, #[source] source: PromptError },
 }
 
 #[cfg(test)]
@@ -325,7 +339,7 @@ mod tests {
         let held = store.get_agent_channel_state(agent, channel).await.expect("get");
         assert!(held.transcript.prefix(&before.expect("a digest")).is_none(), "not held");
 
-        let view = AgentContextView::of(agent, channel, held, Arc::<MemoryStore>::clone(&store), store);
+        let view = AgentContextView::of(agent, channel, held, Arc::<MemoryStore>::clone(&store), store, Arc::new(PromptCatalogue::new()));
         let seen = view.context_of(answer.id).await.expect("read from the store");
         let ids: Vec<MessageId> = seen.items.iter().filter_map(|item| match item {
             ContextItem::Conversation { message } => Some(message.id),

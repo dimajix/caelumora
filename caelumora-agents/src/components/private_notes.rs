@@ -21,14 +21,16 @@
 //! channel, but the agent's owner sees them, and the prompt part, in the
 //! context panel - the audit view of the one responsible for the agent.
 
+use crate::prompt::NAMESPACE;
 use crate::components::notes::NOTE_PRESENTATION;
 use crate::notes::{AgentNotes, NoteKind};
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::prompt::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
 use crate::situation::Situation;
 use caelumora_runtime::view::PrivateNotesElsewhere;
-use crate::tool::{classification_argument, id_argument, reclassify_parameters, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{described, classification_argument, id_argument, reclassify_parameters, tool_text, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::question::Answers;
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
@@ -46,6 +48,9 @@ pub const UPDATE_PRIVATE_NOTE_TOOL_NAME: &str = "update_private_note";
 pub const REVOKE_PRIVATE_NOTE_TOOL_NAME: &str = "revoke_private_note";
 pub const RECLASSIFY_PRIVATE_NOTE_TOOL_NAME: &str = "reclassify_private_note";
 
+/// The text of its prompt part in the prompt catalogue.
+const TEXT: &str = "agents.private_notes";
+
 #[derive(Debug)]
 pub struct PrivateNotesComponent {
     /// The policy that decides whether a note may be reclassified, asked in
@@ -54,73 +59,22 @@ pub struct PrivateNotesComponent {
     access_policy: Arc<dyn AccessPolicy>,
     /// What may flow where (issue 304): what it recalls, how it reclassifies.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// The texts of its prompt part (issue 57).
+    prompts: Arc<PromptCatalogue>,
+    /// What its tool set is for and its tools, as the prompt catalogue
+    /// words them.
+    description: String,
+    tools: Vec<Tool>,
 }
 
 #[async_trait]
 impl ToolProvider for PrivateNotesComponent {
     fn description(&self) -> String {
-        "Your private notes: what only you should remember across your channels of this session.".to_string()
+        self.description.clone()
     }
 
     fn tools(&self) -> Vec<Tool> {
-        vec![
-            Tool {
-                name: WRITE_PRIVATE_NOTE_TOOL_NAME.to_string(),
-                description: "Note something privately - no other participant sees it; only the person \
-                    responsible for you can inspect it. Do not quote or reveal your private notes in \
-                    your answers. You are shown your private notes from now on, in this channel and in your other channels of this \
-                    session where that reveals nothing to someone who may not know it. Keep a note short \
-                    and self-contained, and update one rather than writing a second on the same thing."
-                    .to_string(),
-                parameters: ToolParameters::object(
-                    [("text", ToolParameters::string("What to note"))],
-                    ["text"],
-                ),
-                requires_approval: false,
-                visibility: ToolVisibility::HIDDEN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-            Tool {
-                name: UPDATE_PRIVATE_NOTE_TOOL_NAME.to_string(),
-                description: "Change what one of your private notes of this channel says, by its number. \
-                    Give its whole new text; it keeps its number."
-                    .to_string(),
-                parameters: ToolParameters::object(
-                    [("id", ToolParameters::number("The number of your private note")), ("text", ToolParameters::string("Its new text"))],
-                    ["id", "text"],
-                ),
-                requires_approval: false,
-                visibility: ToolVisibility::HIDDEN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-            Tool {
-                name: REVOKE_PRIVATE_NOTE_TOOL_NAME.to_string(),
-                description: "Revoke one of your private notes of this channel, by its number."
-                    .to_string(),
-                parameters: ToolParameters::object(
-                    [("id", ToolParameters::number("The number of your private note"))],
-                    ["id"],
-                ),
-                requires_approval: false,
-                visibility: ToolVisibility::HIDDEN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-            Tool {
-                name: RECLASSIFY_PRIVATE_NOTE_TOOL_NAME.to_string(),
-                description: "Change how one of your private notes of this channel is classified, by its \
-                    number: its level and the compartments it is meant for, never above this channel. It \
-                    decides in which of your other channels you are shown it. Releasing it - a lower level, or further compartments - makes it readable by a wider circle; a user has to approve it."
-                    .to_string(),
-                parameters: reclassify_parameters("your private note"),
-                requires_approval: true,
-                visibility: ToolVisibility::HIDDEN,
-                classification: None,
-                presentation: NOTE_PRESENTATION,
-            },
-        ]
+        self.tools.clone()
     }
 
     async fn execute(&self, name: &str, params: &Value, _answers: Option<&Answers>, turn: &mut Turn) -> ToolResult<ToolOutput> {
@@ -138,6 +92,63 @@ impl ToolProvider for PrivateNotesComponent {
 }
 
 impl PrivateNotesComponent {
+    /// The component, deciding by `access_policy` and `confidentiality`;
+    /// its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of its texts cannot be had.
+    pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
+        let tools = vec![
+            described(&prompts, NAMESPACE, PRIVATE_NOTES_KIND, Tool {
+                name: WRITE_PRIVATE_NOTE_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [("text", ToolParameters::string())],
+                    ["text"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+            described(&prompts, NAMESPACE, PRIVATE_NOTES_KIND, Tool {
+                name: UPDATE_PRIVATE_NOTE_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [("id", ToolParameters::number()), ("text", ToolParameters::string())],
+                    ["id", "text"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+            described(&prompts, NAMESPACE, PRIVATE_NOTES_KIND, Tool {
+                name: REVOKE_PRIVATE_NOTE_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    [("id", ToolParameters::number())],
+                    ["id"],
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+            described(&prompts, NAMESPACE, PRIVATE_NOTES_KIND, Tool {
+                name: RECLASSIFY_PRIVATE_NOTE_TOOL_NAME.to_string(),
+                description: String::new(),
+                parameters: reclassify_parameters(&prompts)?,
+                requires_approval: true,
+                visibility: ToolVisibility::HIDDEN,
+                classification: None,
+                presentation: NOTE_PRESENTATION,
+            }, ())?,
+        ];
+        let description = tool_text(&prompts, NAMESPACE, PRIVATE_NOTES_KIND, "description", ())?;
+        Ok(Self { access_policy, confidentiality, prompts, description, tools })
+    }
+
     /// `write_private_note(text)`: notes `text` privately, taken over when
     /// the turn completes.
     fn execute_write_private_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
@@ -203,38 +214,35 @@ impl PromptProvider for PrivateNotesComponent {
         if !own.is_empty() {
             knowledge.push(private(situation.channel_id(), AgentNotes::digest(situation, NoteKind::Private), &own));
         }
-        Ok(Prompt::of_knowledge(render(&own, &elsewhere), knowledge))
+        Ok(Prompt::of_knowledge(render(&self.prompts, &own, &elsewhere)?, knowledge))
     }
 }
 
-/// The prompt part for the private notes of this channel (`own`) and of
-/// others; empty if there are none.
-fn render(own: &[Note], elsewhere: &[PrivateNotesElsewhere]) -> String {
-    let mut sections = vec![Section::new(
-        format!("In this channel (change them with `{WRITE_PRIVATE_NOTE_TOOL_NAME}`, `{UPDATE_PRIVATE_NOTE_TOOL_NAME}` and `{REVOKE_PRIVATE_NOTE_TOOL_NAME}`):"),
-        own.iter().map(|n| format!("#{}: {}", n.id, n.text)).collect(),
-    )];
-    // Notes of other channels cannot be changed here, so they go unnumbered
-    // (issue 60).
-    sections.extend(elsewhere.iter().map(|c| Section::new(
-        format!("From channel {} (change them only there):", c.name),
-        c.notes.iter().map(|n| n.text.clone()).collect(),
-    )));
-    render_sections(
-        "Your private notes",
-        "No other participant sees them; only the person responsible for you can inspect them. Do not quote or reveal them in your answers.",
-        &sections,
-    )
+/// The prompt part of `prompts` for the private notes of this channel
+/// (`own`) and of others, channels without notes left out; empty if there
+/// are none. Notes of other channels cannot be changed here, so they go
+/// unnumbered (issue 60).
+fn render(prompts: &PromptCatalogue, own: &[Note], elsewhere: &[PrivateNotesElsewhere]) -> Result<String, PromptError> {
+    let own: Vec<_> = own.iter().map(|n| context! { id => n.id.to_string(), text => n.text }).collect();
+    let elsewhere: Vec<_> = elsewhere.iter()
+        .filter(|c| !c.notes.is_empty())
+        .map(|c| context! { name => c.name, notes => c.notes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>() })
+        .collect();
+    if own.is_empty() && elsewhere.is_empty() {
+        return Ok(String::new());
+    }
+    prompts.render(TEXT, context! { own, elsewhere, write => WRITE_PRIVATE_NOTE_TOOL_NAME, update => UPDATE_PRIVATE_NOTE_TOOL_NAME, revoke => REVOKE_PRIVATE_NOTE_TOOL_NAME })
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(PRIVATE_NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn AccessPolicy>().uses::<dyn ConfidentialityPolicy>(),
+        ComponentKind::new(PRIVATE_NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn AccessPolicy>().uses::<dyn ConfidentialityPolicy>().uses::<PromptCatalogue>(),
         |_descriptor, context| {
-            let component = Arc::new(PrivateNotesComponent {
-                access_policy: Arc::clone(context.service::<dyn AccessPolicy>()?),
-                confidentiality: Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
-            });
+            let component = Arc::new(PrivateNotesComponent::new(
+                Arc::clone(context.service::<dyn AccessPolicy>()?),
+                Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
+                Arc::clone(context.service::<PromptCatalogue>()?),
+            )?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<PrivateNotesComponent>::clone(&component));
             facets.insert::<dyn PromptProvider>(component);
@@ -246,6 +254,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing;
     use caelumora_runtime::transport::Discard;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::message::MessageId;
@@ -260,13 +269,13 @@ mod tests {
 
     #[test]
     fn nothing_noted_gives_no_prompt_part() {
-        assert_eq!(render(&[], &[]), "");
+        assert_eq!(render(&testing::prompts(), &[], &[]).unwrap(), "");
     }
 
     #[test]
     fn the_prompt_part_shows_this_channel_first_then_the_others_by_name() {
         let elsewhere = [PrivateNotesElsewhere { channel: ChannelId::default(), name: "research".to_string(), notes: vec![note(1, "Kaya prefers short answers.")], digest: None }];
-        let text = render(&[note(2, "Remind Kaya of the deadline.")], &elsewhere);
+        let text = render(&testing::prompts(), &[note(2, "Remind Kaya of the deadline.")], &elsewhere).unwrap();
         assert!(text.find("#2: Remind Kaya").unwrap() < text.find("From channel research (change them only there):").unwrap(), "{text}");
         assert!(text.contains("- Kaya prefers short answers."), "unnumbered: it cannot be revoked here");
     }
@@ -274,7 +283,7 @@ mod tests {
     #[tokio::test]
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
-        let tools = PrivateNotesComponent { access_policy: Arc::new(AllowAllPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()) };
+        let tools = PrivateNotesComponent::new(Arc::new(AllowAllPolicy::new()), Arc::new(ConfidentialityRules::default()), testing::prompts()).unwrap();
         let mut turn = Turn::begun(AgentId::new(), &mut state);
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
         let noted = tools.execute(WRITE_PRIVATE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "secret" }), None, &mut turn).await.unwrap();
@@ -303,7 +312,7 @@ mod tests {
 
     #[test]
     fn every_private_note_acted_on_is_shown_as_a_note_to_the_owner_alone() {
-        let tools = PrivateNotesComponent { access_policy: Arc::new(OwnershipPolicy::new()), confidentiality: Arc::new(ConfidentialityRules::default()) }.tools();
+        let tools = PrivateNotesComponent::new(Arc::new(OwnershipPolicy::new()), Arc::new(ConfidentialityRules::default()), testing::prompts()).unwrap().tools();
         assert!(tools.iter().all(|t| (t.presentation, t.visibility) == (NOTE_PRESENTATION, ToolVisibility::HIDDEN)));
     }
 }

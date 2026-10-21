@@ -1,0 +1,114 @@
+# The texts the tools of the workspace give a model (issue 57), namespace
+# `workspace_tools`: templates of `minijinja`, rendered by `PromptCatalogue`;
+# the conventions are those of the agents' file
+# (`caelumora-agents/src/prompts.yaml`). Names of tools are values.
+
+# `workspace_prompt_provider`: the workspace the agent works on in its
+# channel - its `name`, its `classification`, its `description` (none if it
+# has none), whether it is `writable` and has a `shell` -, the instruction
+# files `found` at its top, and the `names` of those a directory may hold;
+# `read_file`, the tool to read them with.
+workspace: |
+  [Your workspace]
+  You work on the files of the workspace "{{ name }}" of this session, which you share with the people and agents of the channels that use it. Everything in it is classified {{ classification }}.
+  {% if description %}
+  What it holds, as its owner describes it: {{ description }}
+  {% endif %}
+  {% if not writable %}
+  You may read its files, not change them, and run no commands in it.
+  {% elif shell %}
+  You can run shell commands in it.
+  {% else %}
+  Its storage gives it no shell: you cannot run commands in it.
+  {% endif %}
+  {% if found %}
+  At its top {{ "lies" if found|length == 1 else "lie" }} {% for file in found %}{{ (" and " if loop.last else ", ") if not loop.first }}`{{ file }}`{% endfor %}, written for agents: how to work on its files - how they are built and tested, how they are laid out, what to keep to. Read {{ "it" if found|length == 1 else "them" }} with `{{ read_file }}` before you work on the files.
+  {% endif %}
+  {% if names %}
+  A directory in it may hold a file of its own named {% for file in names %}{{ (" or " if loop.last else ", ") if not loop.first }}`{{ file }}`{% endfor %}, which says how to work on what lies there: read it before you work there; where it disagrees with one further up, it takes precedence.
+  {% endif %}
+
+# Where the channel may use no workspace.
+no_workspace: |
+  [Your workspace]
+  There is no workspace you can use in this channel: no files to work on, no commands to run.
+
+# The descriptions of the tools (`caelumora_agents::tool::described`): of
+# the shell, `most` the seconds a call waits at most; of the search,
+# `max_matches` and `default_matches`; the tools `run_command`,
+# `command_output` and `kill_command` by name.
+tools:
+  terminal_tool:
+    description: >-
+      The session's workspace: its files, which persist across turns and are shared with the others
+      who use it - list, read, search and change them - and a shell in it, where its storage gives one.
+    run_command: >-
+      Run a shell command (bash) in the session's workspace, a directory whose files persist across
+      turns and are shared with the others who use it. Every command starts in the workspace's top
+      directory: a `cd` does not carry over to the next. Waits up to {{ most }} seconds for it to end,
+      and returns what it printed - standard output and error in the order they came - and its exit
+      code. A command still running then is returned with its id: follow it with {{ command_output }},
+      end it with {{ kill_command }}.
+    run_command.command: The command line, as bash reads it
+    run_command.wait_secs: How long to wait for it to end, at most {{ most }} seconds; {{ most }} unless given
+    command_output: >-
+      New output of a command {{ run_command }} returned as still running, from the next_offset of its
+      last result, waiting for it to end as {{ run_command }} does.
+    command_output.id: The id of the command
+    command_output.offset: The next_offset of the last result about it; 0 for all it printed
+    command_output.wait_secs: How long to wait for it to end, at most {{ most }} seconds
+    kill_command: End a command that is still running, with everything it started.
+    kill_command.id: The id of the command
+    list_files: >-
+      List a directory of the session's workspace: each entry's name, whether it is a directory, its
+      size and when it was changed.
+    list_files.path: The directory, relative to the workspace's top; the top unless given
+    read_file: >-
+      Read a text file of the session's workspace, whole or the lines asked for. A result too long to
+      give at once says where to go on.
+    read_file.path: The file, relative to the workspace's top
+    read_file.start_line: The first line to give, counted from 1; 1 unless given
+    read_file.line_count: How many lines to give; all to the end unless given
+    grep_files: >-
+      Search the text files of the session's workspace for a regular expression: each matching line
+      with its file and line number, at most {{ max_matches }}.
+    grep_files.pattern: A regular expression (Rust syntax), matched against each line
+    grep_files.path: >-
+      The directory to search, with what lies below it, or a single file; the whole workspace unless
+      given
+    grep_files.max_matches: How many matches to give at most; {{ default_matches }} unless given
+    write_file: >-
+      Write a text file of the session's workspace, replacing what it held; the directories it lies in
+      are made.
+    write_file.path: The file, relative to the workspace's top
+    write_file.content: What the file is to hold
+    replace_in_file: >-
+      Replace a piece of text in a text file of the session's workspace. The text must occur exactly
+      once - give enough of what surrounds it - unless every occurrence is to be replaced.
+    replace_in_file.path: The file, relative to the workspace's top
+    replace_in_file.old_text: The text to replace, exactly as it is in the file
+    replace_in_file.new_text: The text to put in its place
+    replace_in_file.replace_all: Whether to replace every occurrence; false unless given
+    move_file: >-
+      Move or rename a file, or a directory with what it holds, of the session's workspace; the
+      directories it is moved into are made. Nothing is moved over: what lies at the target must be
+      deleted first.
+    move_file.from: The file or directory, relative to the workspace's top
+    move_file.to: >-
+      Where it is to lie, relative to the workspace's top - in the same directory to rename it
+    delete_file: Delete a file, or an empty directory, of the session's workspace.
+    delete_file.path: The file or directory, relative to the workspace's top
+    publish_file: >-
+      Offer a file of the session's workspace to the users of the channel for download, at this
+      message: hand over a result this way rather than only naming where it lies. It is a link to the
+      file as it is: changed, moved or deleted later, the download changes or is gone.
+    publish_file.path: The file, relative to the workspace's top
+    publish_file.name: The name to offer it under; its file name unless given
+    publish_file.description: What it is, in a sentence, for whoever downloads it
+
+# What a result says of how to go on, as its `next`: a command still
+# running, to be followed with `command_output` or ended with
+# `kill_command`; a file read in part, from `line` on.
+results:
+  still_running: "It is still running: follow it with {{ command_output }} (id, offset = next_offset), or end it with {{ kill_command }}."
+  read_on: "Not all of it fits into one result: read on with start_line {{ line }}."

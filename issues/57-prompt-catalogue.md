@@ -1,6 +1,6 @@
 # 57 — Prompts are English constants spread through the code
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -74,26 +74,62 @@ by hand from the experiment's patched strings into constants of the code.
     (`prompt_texts: gemma4`), as it names its `sender_style`. A variant holds only the texts it
     changes; every other text is the default's. The choice is explicit: no patterns on model names,
     no automatic matching.
-*   **Templates with named placeholders.** Many texts are put together - the roster from its
-    participants, their handles, whether there are others. Entries are templates with named
-    placeholders (`{handle}`), not finished sentences. A test checks that every key the code uses
-    exists in the default and that the placeholders of every entry, in every variant, are those
-    the code fills in. The format - YAML with `{name}`, or Fluent, which knows variants and
-    languages already - is decided with the first step; YAML is the leaning.
+*   **What goes into it: all prose the runtime gives a model** - prompt parts and their titles,
+    the descriptions of tools, of their parameters and of tool sets, what a model is told of a
+    tool call refused, interrupted or held back, the plan's texts, the compaction's, the marking
+    of senders and the notices of `caelumora-model`, the questions to the decision model. Not in
+    it: the **names of tools**, which are identifiers that transcripts, matchers and approval rules
+    hang on; and the **texts of errors** (`ToolError` and the error types whose `Display` a tool
+    passes on), which are error types, also written to logs, under the rule that an error message
+    names what failed. That a frontend shows errors in its user's language needs technical
+    information beside their text - [443](443-errors-carry-only-an-english-text.md).
+*   **Where it lives: a type of `caelumora-model`**, the lowest crate, since texts are written
+    there too (`context.rs`). Every crate and plugin registers its keys and its default file
+    (`include_str!`) when it registers its components, as it registers its kinds of component;
+    plugins in a namespace of their own and add nothing to the core's catalogue
+    ([PLUGINS.md](../docs/PLUGINS.md)). The catalogue is checked at startup: a key missing from a
+    default, or an override that uses a variable its default does not have, keeps the runtime
+    from starting rather than failing in the middle of a turn.
 *   **The default is compiled in** (`include_str!`), so that the binary is complete without files
     of its own; variants and an operator's overrides come from the configuration. A language, with
     its fallback (`de-CH` -> `de` -> `en`), can later be added to the lookup beside the variant.
-*   **Plugins bring their own keys**, in a namespace of their own, and add nothing to the core's
-    catalogue ([PLUGINS.md](../docs/PLUGINS.md)).
+*   **An entry is a whole part, as a template with loops and conditions.** Most texts are put
+    together - the roster from its participants, the plan from its steps, the catalogue of skills
+    from its skills. With placeholders alone, the catalogue would hold fragments and the code would
+    still decide how they are put together: a variant could change words, but not the structure -
+    a list for prose, the rule before the roster -, and it is the structure that the experiments
+    showed to matter. So an entry is a prompt part, a tool's description, a notice as a whole, and
+    a variant can rewrite it as a whole. The engine is **`minijinja`** (Jinja2): few dependencies,
+    no access to files or the network, a context given by `serde` or `context!{}` without view
+    types of its own. `askama` compiles its templates and allows no overrides; `tera` and
+    `handlebars` can do as much and weigh more; Fluent knows plurals and languages, but no loops.
+    The file is YAML, the templates in block scalars (`|`).
+*   **The code decides whether and with what, the template how it reads.** Whether a part is given
+    at all and which data it gets is decided by the code; the template may branch and loop over
+    those data - an empty list, a person or an agent -, but computes nothing: no filters or
+    functions of our own, and what it needs to tell - whether a participant is an agent, which name
+    serves as the example - the code hands it. Undefined variables are errors
+    (`UndefinedBehavior::Strict`); whitespace is held by `trim_blocks`, `lstrip_blocks` and
+    `keep_trailing_newline`. The variables of a key are those its default uses
+    (`undeclared_variables`): an override may use only these, which is the check at startup, and
+    the tests that compare prompts word for word check the defaults.
 *   **How the catalogue reaches its users**: it is a service that prompt providers, tools and
-    whoever else writes for a model get when they are made and keep as a field; which variant
-    applies they learn from the profile in the `Situation` (`Work::given_as`). Where tool
-    descriptions are built, and how they get the variant, is to be looked at with the first step.
+    whoever else writes for a model get when they are made (`.uses::<…>()`) and keep as a field.
+    Which variant applies they learn from the profile: `ModelProfile` names the variant chosen by
+    the model's component, and since the profile is recorded with every message, so is which texts
+    a model was given. The cost: `ModelProfile` is `Copy` today and becomes `Clone`. Carrying the
+    resolved texts in the `Work` beside the profile instead was set aside: tools, the decision
+    model and the `ContextResolver`, which write outside a turn, would need a second way. Tool
+    descriptions are built in `ToolProvider::tools()`, which knows no `Situation`; in the first
+    step they take the default, and their variants come with the second through `offered`.
 *   **Steps.** First a refactoring without a change of behaviour: the texts move into the
-    catalogue, and the tests that compare prompts word for word keep them the same. Then the
-    variants per model and the override from the configuration. Work on prompt texts in the
-    meantime - such as the rule on mentions - is not held back: it goes into constants as today and
-    moves with the rest.
+    catalogue, and the tests that compare prompts word for word keep them the same. To stay
+    reviewable it is cut into four commits: the catalogue with the prompt parts of
+    `caelumora-agents`; the descriptions of tools; what a model is told of tool calls, the plan,
+    the compaction and the texts of `caelumora-model`; the plugins - skills, workspace tools,
+    artifacts, decision. Then the variants per model and the override from the configuration.
+    Work on prompt texts in the meantime - such as the rule on mentions - is not held back: it goes
+    into constants as today and moves with the rest.
 
 The other options weighed above are thereby set aside: constants in the code cannot be tuned
 without a release; texts as parameters of each component would scatter the overrides over every
@@ -123,3 +159,46 @@ personality and component, and repeat them in each.
   in the catalogue, a variant named by a model's component replaces single texts of the default,
   and [AGENT-TURN.md](../docs/AGENT-TURN.md) and [CONFIGURATION.md](../docs/CONFIGURATION.md)
   describe both.
+- **2026-10-21** — The first step settled with the maintainer (see "Decision"): what goes into the
+  catalogue and what not - the texts of errors became
+  [443](443-errors-carry-only-an-english-text.md); the catalogue as a type of `caelumora-model`,
+  filled by every crate and plugin at registration and checked at startup; entries as whole parts,
+  templates of `minijinja` with loops and conditions instead of placeholders, at the maintainer's
+  suggestion, so that a variant can change how a part is built and not only its words; the variant
+  named in `ModelProfile`; the first step in four commits.
+- **2026-10-21** — Step 1, commit 1: `PromptCatalogue` in `caelumora-model` (`minijinja` 2.24),
+  filled through `RuntimeBuilder::prompts` and offered as a service once the runtime is built; the
+  agents' texts in `caelumora-agents/src/prompts.yaml`, namespace `agents`, rendered by the prompt
+  providers of `prompt/` and by the prompt parts of `notes`, `private_notes` and `agent_memory`,
+  word for word as before. A template that does not parse stops the start; that the code gives every
+  value a text names is checked by the tests, which render every part - the check of overrides
+  against their defaults comes with them in step 2.
+- **2026-10-21** — Step 1, commit 2: the descriptions of the agents' tools, their parameters and
+  their tool sets are texts of the catalogue, under `tools.<kind>` in
+  `caelumora-agents/src/prompts.yaml`. A provider renders them once, when it is made, and keeps its
+  tools; `tool::described` gives a tool and its parameters the texts of their paths
+  (`ToolParameters::describe`, prepared in a commit of its own: the schema is built without
+  descriptions). Groups of texts in the catalogue's files, which are read with strict booleans.
+  The texts were compared with those before, word for word, for every tool of the agents.
+- **2026-10-21** — Step 1, commit 3: the namespace `core` (`caelumora-model/src/prompts.yaml`),
+  added by `RuntimeBuilder::new` - the notices of the `ContextResolver`, which is given the
+  catalogue (`ContextResolver::of`, `on_path`, `ModelProfile::given_messages`), and the
+  explanation of how messages are marked. In `agents`: the results of tool calls, the plan's
+  instructions, what was heard while working, the part on planning and the compaction's texts.
+  Decided with the maintainer: the turn and the actor reach the catalogue through
+  `ActorRuntime::prompts`; the notices are worded anew as a context is resolved, also for what an
+  agent saw afterwards; what the model is told of why a turn was given up is the catalogue's
+  (`core.given_up_cause`), while `GivenUpReason::cause` stays for logs and frontends
+  ([443](443-errors-carry-only-an-english-text.md)); and a tool result whose message cannot be had
+  is given with its status alone, logged, while one only its agent may see is withheld without its
+  mark. Every text was compared with the one before, word for word.
+- **2026-10-21** — Step 1, commit 4, the last of the step: the plugins' texts, each in a namespace
+  and a `src/prompts.yaml` of its own - `skills` (the catalogue, a skill as it is given, the tools),
+  `workspace_tools` (the part on the workspace, the tools, what a result says of how to go on),
+  `artifacts` (the tool) and `decision` (the questions to the decision model). `tool::described`
+  and `tool_text` take the namespace. A part configured with a title is put under it by the
+  catalogue too (`agents.titled`), so `prompt::titled`, `render_sections` and `Section` are gone.
+  The file and shell tools of the workspace take their `TerminalTool` rather than its parts. What
+  is told to people - approvals, the output of commands such as `/skills` - stays in the code
+  ([443](443-errors-carry-only-an-english-text.md)). Every text was compared with the one before,
+  word for word. Step 1 is done; step 2 - the variants per model and the overrides - is open.

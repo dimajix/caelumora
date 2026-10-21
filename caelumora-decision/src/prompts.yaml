@@ -1,0 +1,16 @@
+# The questions the decision model is asked (issue 57), namespace
+# `decision`: templates of `minijinja`, rendered by `PromptCatalogue`; the
+# conventions are those of the agents' file
+# (`caelumora-agents/src/prompts.yaml`).
+
+# A candidate as the model is told of it: its `name`, and how it is
+# introduced, `introduction`, on one line (none if it is not).
+candidate: "{{ name }}{{ ': ' ~ introduction if introduction }}"
+
+# One choice over the candidates and nobody, for up to 32 of them.
+choice:
+  instructions: Which participant of the conversation should respond to the last message? Choose nobody if it needs no answer.
+  nobody: "Nobody: the message needs no answer from any of them."
+
+# One question for each `candidate`, as `candidate` tells of it, beyond.
+noul: "Should this participant respond to the last message? {{ candidate }}"

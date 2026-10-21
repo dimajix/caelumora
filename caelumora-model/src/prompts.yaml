@@ -1,0 +1,36 @@
+# The texts of the core (issue 57), namespace `core`: what the model is told
+# as its context is resolved (`ContextResolver`), and how what it is given is
+# marked. Templates of `minijinja`, rendered by `PromptCatalogue`; the
+# conventions are those of the agents' file (`caelumora-agents/src/prompts.yaml`).
+
+# `ModelProfile::framing_explanation`: how the messages of others are marked
+# - `format` "prefix" or "xml", the sender by `style` "handle" or "name",
+# with when it was written if `times`, `time` an example of one. Without it,
+# models imitate the marker in their answers (`work/sender_names/RESULTS.md`,
+# findings 2 and 3); with a time, as the experiments of issue 424 told it.
+framing: |-
+  Messages of the others {% if format == "prefix" %}begin with their sender's {{ "@handle" if style == "handle" else "name" }}{{ ", when it was written" if times }} and a colon: "{{ "@handle" if style == "handle" else "Name" }}{{ " (" ~ time ~ ")" if times }}: ..."{% else %}are wrapped in an element naming their sender's {{ "@handle" if style == "handle" else "name" }}{{ " and when it was written" if times }}: <message from="{{ "@handle" if style == "handle" else "Name" }}"{{ ' at="' ~ time ~ '"' if times }}>...</message>{% endif %}. Your own messages carry no such marker: answer without one, and never write a message for someone else.
+
+# Where a turn given up ended (issue 258): why - `cause`, one of
+# `given_up_cause` -, whether what it read and said is withheld because the
+# channel was `lowered`, and that what its tools did stays done.
+given_up: |-
+  Your previous turn was given up before it was complete, because {{ cause }}.{{ " What it read and said is withheld; only which tools it called is given." if lowered }} What its tool calls did stays done: do not repeat them unless that is what is wanted.
+
+# Why a turn was given up, by the kind of `GivenUpReason`: "... because it
+# failed".
+given_up_cause:
+  failed: it failed
+  lowered: the channel's classification was lowered
+  left: you left the channel
+  retried: your answer was asked for again
+  call_limit: it asked the model as often as one answer, or one step of a plan, may
+
+# Who joined or left the channel (issue 408), as the channel's notice: the
+# `participant` and who made them, `by`, each named as senders are, `you`
+# and `by_you` if that is the agent itself; `by_self` if they did it
+# themselves, `by_system` if the system did.
+participant_joined: |-
+  Channel notice: {% if by_self %}{{ "You" if you else participant }} joined the channel.{% elif by_system %}{{ "You were" if you else participant ~ " was" }} added to the channel.{% else %}{{ "You" if by_you else by }} added {{ "you" if you else participant }} to the channel.{% endif %}
+participant_left: |-
+  Channel notice: {% if by_self %}{{ "You" if you else participant }} left the channel.{% elif by_system %}{{ "You were" if you else participant ~ " was" }} removed from the channel.{% else %}{{ "You" if by_you else by }} removed {{ "you" if you else participant }} from the channel.{% endif %}

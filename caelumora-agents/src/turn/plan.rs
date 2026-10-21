@@ -7,7 +7,10 @@ use caelumora_model::actor::ActorEvent;
 use caelumora_model::digest::{prompt, Digest};
 use caelumora_model::message::MessageRole;
 use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use crate::prompt::NAMESPACE;
 use std::cmp::Ordering;
+use serde::Serialize;
 use std::collections::HashSet;
 
 impl Turn<'_> {
@@ -55,12 +58,19 @@ impl Turn<'_> {
     /// The instructions are system text placed after the turn's messages so
     /// far (`place_turn_prompt`, issue 49): where the model keeps system
     /// messages only at the start, they are given as user messages.
-    pub(crate) fn advance_plan(&mut self, next: usize) -> Option<ActorEvent> {
-        let plan = self.plan()?.plan.clone();
+    ///
+    /// # Errors
+    /// `PromptError` if the instruction cannot be had; nothing changes then.
+    pub(crate) fn advance_plan(&mut self, next: usize) -> Result<Option<ActorEvent>, PromptError> {
+        let Some(plan) = self.plan().map(|state| state.plan.clone()) else { return Ok(None) };
+        let instruction = match plan.steps.get(next) {
+            Some(step) => plan_step_instruction(self.runtime.prompts(), next + 1, plan.steps.len(), step)?,
+            None => plan_finalize_instruction(self.runtime.prompts(), &plan)?,
+        };
         self.count_model_calls_anew();
-        match plan.steps.get(next) {
+        self.place_turn_prompt(MessageRole::System, instruction);
+        Ok(match plan.steps.get(next) {
             Some(step) => {
-                self.place_turn_prompt(MessageRole::System, plan_step_instruction(next + 1, plan.steps.len(), step));
                 self.set_plan_progress(PlanProgress::Step(next));
                 Some(ActorEvent::PlanStepStarted {
                     turn_id: self.turn_id(),
@@ -70,11 +80,10 @@ impl Turn<'_> {
                 })
             }
             None => {
-                self.place_turn_prompt(MessageRole::System, plan_finalize_instruction(&plan));
                 self.set_plan_progress(PlanProgress::Finalizing);
                 None
             }
-        }
+        })
     }
 
     /// Names the plan in play again after a compaction (issue 284), whose
@@ -88,10 +97,10 @@ impl Turn<'_> {
     ///
     /// The plan's parts are told by their text, which is the plan's state's
     /// (`plan_texts`); a part placed for a plan before it was extended is
-    /// not, and stays where it was carried.
-    pub(super) fn name_plan_again(&mut self, replaced: Option<Digest>) {
-        let Some(PlanState { plan, progress }) = self.plan().cloned() else { return };
-        let texts: HashSet<Digest> = plan_texts(&plan).iter().map(|text| prompt(text)).collect();
+    /// not, and stays where it was carried. Both are worded before anything
+    /// is compacted (`plan_wording`): `wording`.
+    pub(super) fn name_plan_again(&mut self, replaced: Option<Digest>, wording: Option<PlanWording>) {
+        let Some((texts, overview)) = wording else { return };
         let prompts = &self.current().work.context.frame.prompts;
         let of_plan: Vec<usize> = prompts.iter().enumerate().filter(|(_, part)| texts.contains(&part.text)).map(|(at, _)| at).collect();
         let Some(&current) = of_plan.last() else { return };
@@ -103,8 +112,21 @@ impl Turn<'_> {
         let kept = prompts.iter().enumerate().filter(|(at, _)| !dropped.contains(at)).map(|(_, part)| part.clone()).collect();
         self.current_mut().work.context.frame.prompts = kept;
         let label = self.situation().label();
-        let overview = self.keep_prompt(MessageRole::System, plan_overview_instruction(&plan, progress), after, Some(label));
+        let overview = self.keep_prompt(MessageRole::System, overview, after, Some(label));
         self.current_mut().work.context.frame.prompts.push(overview);
+    }
+
+    /// What naming the plan in play again takes (`name_plan_again`), worded
+    /// before the context is compacted: the digests of every text of the
+    /// plan, and its overview where it stands; `None` without a plan.
+    ///
+    /// # Errors
+    /// `PromptError` if one of them cannot be had.
+    pub(super) fn plan_wording(&self) -> Result<Option<PlanWording>, PromptError> {
+        let Some(PlanState { plan, progress }) = self.plan() else { return Ok(None) };
+        let prompts = self.runtime.prompts();
+        let texts = plan_texts(prompts, plan)?.iter().map(|text| prompt(text)).collect();
+        Ok(Some((texts, plan_overview_instruction(prompts, plan, *progress)?)))
     }
 
     /// Moves the plan on after the model answered without calling a tool:
@@ -112,84 +134,81 @@ impl Turn<'_> {
     /// and the next one begins, or the final answer is asked for
     /// (`advance_plan`); after the final answer the plan is over. Returns
     /// the events to announce, in order; none without a plan.
-    pub(crate) fn plan_converged(&mut self) -> Vec<ActorEvent> {
-        let Some(plan) = self.plan() else { return Vec::new() };
+    ///
+    /// # Errors
+    /// As `advance_plan`.
+    pub(crate) fn plan_converged(&mut self) -> Result<Vec<ActorEvent>, PromptError> {
+        let Some(plan) = self.plan() else { return Ok(Vec::new()) };
         match plan.progress {
             PlanProgress::Step(step_index) => {
                 let total_steps = plan.plan.steps.len();
                 let description = plan.plan.steps.get(step_index).map(|s| s.description.clone()).unwrap_or_default();
                 let mut events = vec![ActorEvent::PlanStepFinished { turn_id: self.turn_id(), step_index, total_steps, description }];
-                events.extend(self.advance_plan(step_index + 1));
-                events
+                events.extend(self.advance_plan(step_index + 1)?);
+                Ok(events)
             }
             PlanProgress::Finalizing => {
                 self.take_plan();
-                Vec::new()
+                Ok(Vec::new())
             }
         }
     }
 }
 
+/// The digests of every text of a plan, and its overview where it stands
+/// (`Turn::plan_wording`).
+pub(super) type PlanWording = (HashSet<Digest>, String);
+
+/// The text `key` of `prompts` for a plan (issue 57), rendered with
+/// `values`.
+fn plan_text(prompts: &PromptCatalogue, key: &str, values: impl Serialize) -> Result<String, PromptError> {
+    prompts.render(&format!("{NAMESPACE}.plan.{key}"), values)
+}
+
 /// The instruction to work on step `step_number` of `total_steps`.
-fn plan_step_instruction(step_number: usize, total_steps: usize, step: &PlanStep) -> String {
-    format!(
-        "Step {} of {}: {}\n\nWork on this step now, using any tools you need. \
-         When you are finished, describe the outcome.",
-        step_number, total_steps, step.description
-    )
+fn plan_step_instruction(prompts: &PromptCatalogue, step_number: usize, total_steps: usize, step: &PlanStep) -> Result<String, PromptError> {
+    plan_text(prompts, "step", context! { number => step_number, total => total_steps, description => step.description })
 }
 
 /// The instruction to write the final answer once every step of `plan` is
 /// done.
-fn plan_finalize_instruction(plan: &Plan) -> String {
-    let recap = plan
-        .steps
-        .iter()
-        .enumerate()
-        .map(|(i, s)| format!("{}. {}", i + 1, s.description))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "You have completed every step of the plan:\n{}\n\nNow provide your final, \
-         complete answer to the user's original request, incorporating what you learned.",
-        recap
-    )
+fn plan_finalize_instruction(prompts: &PromptCatalogue, plan: &Plan) -> Result<String, PromptError> {
+    plan_text(prompts, "finalize", context! { steps => plan.steps.iter().map(|s| s.description.as_str()).collect::<Vec<_>>() })
 }
 
 /// The plan named again after a compaction (issue 284): its steps, each
 /// marked done, under way or to do, then the instruction for the step under
 /// way - or, finalizing, the instruction to write the final answer, which
 /// recaps the steps itself.
-fn plan_overview_instruction(plan: &Plan, progress: PlanProgress) -> String {
-    let PlanProgress::Step(current) = progress else { return plan_finalize_instruction(plan) };
-    let Some(step) = plan.steps.get(current) else { return plan_finalize_instruction(plan) };
-    let steps = plan.steps.iter()
+fn plan_overview_instruction(prompts: &PromptCatalogue, plan: &Plan, progress: PlanProgress) -> Result<String, PromptError> {
+    let PlanProgress::Step(current) = progress else { return plan_finalize_instruction(prompts, plan) };
+    let Some(step) = plan.steps.get(current) else { return plan_finalize_instruction(prompts, plan) };
+    let steps: Vec<_> = plan.steps.iter()
         .enumerate()
         .map(|(i, s)| {
-            let mark = match i.cmp(&current) {
+            let state = match i.cmp(&current) {
                 Ordering::Less => "done",
-                Ordering::Equal => "under way",
-                Ordering::Greater => "to do",
+                Ordering::Equal => "under_way",
+                Ordering::Greater => "to_do",
             };
-            format!("{}. [{}] {}", i + 1, mark, s.description)
+            context! { state, description => s.description }
         })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "You are carrying out a plan: {}\n{}\n\n{}",
-        plan.summary, steps, plan_step_instruction(current + 1, plan.steps.len(), step)
-    )
+        .collect();
+    let instruction = plan_step_instruction(prompts, current + 1, plan.steps.len(), step)?;
+    plan_text(prompts, "overview", context! { summary => plan.summary, steps, instruction })
 }
 
 /// Every text `plan` is given to the model as: each step's instruction,
 /// the one to finalize, and its overview at each step.
-fn plan_texts(plan: &Plan) -> Vec<String> {
+fn plan_texts(prompts: &PromptCatalogue, plan: &Plan) -> Result<Vec<String>, PromptError> {
     let total = plan.steps.len();
-    plan.steps.iter()
-        .enumerate()
-        .flat_map(|(i, step)| [plan_step_instruction(i + 1, total, step), plan_overview_instruction(plan, PlanProgress::Step(i))])
-        .chain([plan_finalize_instruction(plan)])
-        .collect()
+    let mut texts = Vec::with_capacity(2 * total + 1);
+    for (i, step) in plan.steps.iter().enumerate() {
+        texts.push(plan_step_instruction(prompts, i + 1, total, step)?);
+        texts.push(plan_overview_instruction(prompts, plan, PlanProgress::Step(i))?);
+    }
+    texts.push(plan_finalize_instruction(prompts, plan)?);
+    Ok(texts)
 }
 
 #[cfg(test)]
@@ -244,7 +263,7 @@ mod tests {
         turn.set_context(Vec::new(), Vec::new());
         turn.set_plan(plan_of(&["first", "second"]));
 
-        let started = turn.advance_plan(1);
+        let started = turn.advance_plan(1).unwrap();
 
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Step(1));
         assert!(turn.situation().agent_channel_state().transcript.messages().iter().all(|m| m.turn_id != Some(turn.turn_id())), "the instruction is no message of the turn");
@@ -273,16 +292,16 @@ mod tests {
         };
 
         use_up(&mut turn);
-        turn.advance_plan(0);
+        turn.advance_plan(0).unwrap();
         assert!(turn.may_call_model(), "the first step begins with calls of its own");
         use_up(&mut turn);
         turn.try_compaction();
-        turn.plan_converged();
+        turn.plan_converged().unwrap();
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Step(1));
         assert!(turn.may_call_model(), "so does the second");
         assert!(turn.may_compact(), "and may be compacted for");
         use_up(&mut turn);
-        turn.plan_converged();
+        turn.plan_converged().unwrap();
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Finalizing);
         assert!(turn.may_call_model(), "and the final answer");
     }
@@ -293,7 +312,7 @@ mod tests {
         let mut turn = Turn::begun(AgentId::default(), &mut state);
         turn.set_plan(plan_of(&["first", "second"]));
 
-        let started = turn.advance_plan(2);
+        let started = turn.advance_plan(2).unwrap();
 
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Finalizing);
         let (_, text) = given(&turn).pop().expect("the instruction to finalize is given to the model");
@@ -315,11 +334,11 @@ mod tests {
             let mut turn = Turn::under_way(agent, &mut state);
             turn.set_context(vec![PromptPart { role: MessageRole::System, text: "Be brief.".to_string(), after: None, classification: None, source: None }], Vec::new());
             turn.set_plan(plan_of(&["only"]));
-            turn.advance_plan(0);
+            turn.advance_plan(0).unwrap();
             let mut internal = step.clone();
             internal.internal = true;
             turn.push_message(internal);
-            turn.advance_plan(1);
+            turn.advance_plan(1).unwrap();
             let roles = given(&turn).into_iter().map(|(role, _)| role).collect::<Vec<_>>();
             use MessageRole::{Assistant, System, User};
             assert_eq!(roles, [System, User, System, Assistant, System], "a model that keeps them in place is given system messages");
@@ -349,7 +368,7 @@ mod tests {
         let mut turn = Turn::begun(AgentId::default(), &mut state);
         turn.set_plan(plan_of(&[]));
 
-        assert!(turn.advance_plan(0).is_none());
+        assert!(turn.advance_plan(0).unwrap().is_none());
         assert_eq!(turn.plan().unwrap().progress, PlanProgress::Finalizing);
     }
 
@@ -372,17 +391,17 @@ mod tests {
     fn a_converged_answer_finishes_its_step_and_the_last_one_asks_for_the_final_answer() {
         let mut state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut state);
-        assert!(turn.plan_converged().is_empty(), "no plan, nothing to move on");
+        assert!(turn.plan_converged().unwrap().is_empty(), "no plan, nothing to move on");
         turn.set_plan(plan_of(&["first", "second"]));
         assert!(turn.in_plan_step());
 
         let kinds = |events: Vec<ActorEvent>| events.iter().map(ActorEvent::kind).collect::<Vec<_>>();
-        assert_eq!(kinds(turn.plan_converged()), ["PlanStepFinished", "PlanStepStarted"]);
+        assert_eq!(kinds(turn.plan_converged().unwrap()), ["PlanStepFinished", "PlanStepStarted"]);
         assert_eq!(turn.plan_progress(), Some(PlanProgress::Step(1)));
-        assert_eq!(kinds(turn.plan_converged()), ["PlanStepFinished"], "the final answer is no step");
+        assert_eq!(kinds(turn.plan_converged().unwrap()), ["PlanStepFinished"], "the final answer is no step");
         assert_eq!(turn.plan_progress(), Some(PlanProgress::Finalizing));
         assert!(!turn.in_plan_step(), "the final answer is not internal");
-        assert!(turn.plan_converged().is_empty());
+        assert!(turn.plan_converged().unwrap().is_empty());
         assert!(turn.plan_progress().is_none(), "the plan is over");
     }
 
@@ -405,9 +424,9 @@ mod tests {
         let mut turn = Turn::begun(AgentId::default(), &mut state);
         turn.set_context(Vec::new(), Vec::new());
         turn.set_plan(plan_of(&["first", "second"]));
-        turn.advance_plan(0);
+        turn.advance_plan(0).unwrap();
         turn.push_message(message("did the first"));
-        turn.advance_plan(1);
+        turn.advance_plan(1).unwrap();
         turn.push_message(message("working on the second"));
         let at_first = turn.situation().agent_channel_state().transcript.entries().next().map(|node| node.digest);
         turn.compact(vec![(message("summary"), None)], at_first).expect("compacted");

@@ -4,6 +4,7 @@ use crate::chain::{Position, Stored};
 use crate::component::ComponentConfig;
 use crate::confidentiality::{Classification, Visibility};
 use crate::context::{ContextResolver, FrameRef, KnowledgeRef, PromptRef};
+use crate::prompt_catalogue::PromptCatalogue;
 #[cfg(any(test, feature = "test-support"))]
 use crate::context::ContextRef;
 use crate::digest::Digest;
@@ -739,10 +740,13 @@ impl AgentChannelState {
     /// message, which is in the copy, the copy before it -, one after an
     /// entry replaced follows the replacement.
     ///
+    /// How full the new branch is, it estimates as the model is given it,
+    /// its notices worded by `catalogue`.
+    ///
     /// `None`, and nothing changes, without a turn under way, if the
     /// transcript is empty, if `keep_from` is not on its active path, or if
     /// the new branch would be empty.
-    pub fn compact(&mut self, actor: ActorId, replacement: Vec<(Message, Option<KnowledgeRef>)>, keep_from: Option<Digest>) -> Option<(Digest, Digest)> {
+    pub fn compact(&mut self, actor: ActorId, replacement: Vec<(Message, Option<KnowledgeRef>)>, keep_from: Option<Digest>, catalogue: &PromptCatalogue) -> Option<(Digest, Digest)> {
         let turn = self.turn.as_mut()?;
         // A compaction comes before a call of the model, never while the
         // calls of a step run: nothing is put aside to be given (issue 389).
@@ -796,9 +800,10 @@ impl AgentChannelState {
         });
         // How full the new branch is: no call measured it yet, and the
         // summary's measured the old one. Estimated once, here, with what the
-        // turn's model is given next (issue 390).
+        // turn's model is given next (issue 390) - a text that cannot be had
+        // leaves it unestimated, and fails the next call of the model.
         let estimated = self.turn.as_ref()
-            .and_then(|turn| ContextResolver::of(self).token_positions(&turn.work.context, turn.work.turn_id, actor))
+            .and_then(|turn| ContextResolver::of(self, catalogue).token_positions(&turn.work.context, turn.work.turn_id, actor).ok().flatten())
             .and_then(|(positions, _)| positions.last().copied());
         if let (Some(used), Some(estimated)) = (self.used.as_mut(), estimated) {
             used.context_tokens = estimated;
@@ -1166,6 +1171,7 @@ impl Journaled for AgentState {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::prompt_catalogue::core;
     use crate::actor::{ActorState, EventContext, RequestReason};
     use crate::confidentiality::Confidentiality;
     use crate::context::{ContextResolver, KnowledgeSource};
@@ -1431,7 +1437,7 @@ pub(crate) mod tests {
         assert_eq!(decoded.transcript.messages().len(), 1, "with what it said, in the transcript (issue 260)");
         assert_eq!(decoded.turn.as_ref().map(|t| t.work.context.transcript), Some(decoded.transcript.digest()), "its context names the transcript's head");
         let context = decoded.turn.as_ref().map(|t| t.work.context.clone()).unwrap_or_default();
-        assert!(ContextResolver::of(&decoded).resolve(&context, turn_id, ActorId::default()).is_some(), "so a resumed turn's next call resolves");
+        assert!(ContextResolver::of(&decoded, core()).resolve(&context, turn_id, ActorId::default()).unwrap().is_some(), "so a resumed turn's next call resolves");
         assert_eq!(decoded.turn.map(|t| t.work.turn_id), waiting.turn.map(|t| t.work.turn_id), "as the same turn");
     }
 
@@ -1571,7 +1577,7 @@ pub(crate) mod tests {
         let answered = state.transcript.entries().find(|n| n.entry.message().is_some_and(|m| m.id == answer.id)).unwrap().digest;
         let recorded = state.context_of(&sent).expect("sent with the answer");
         let turn = first;
-        let resolve = |state: &AgentChannelState| ContextResolver::of(state).resolve(&recorded, turn, agent).map(|r| r.items.len());
+        let resolve = |state: &AgentChannelState| ContextResolver::of(state, core()).resolve(&recorded, turn, agent).unwrap().map(|r| r.items.len());
         let before = resolve(&state);
         let (again, gone) = (said("again", Classification::PUBLIC), said("gone", Classification::PUBLIC));
         state.perceive(vec![again.clone(), gone.clone()]);
@@ -1579,17 +1585,17 @@ pub(crate) mod tests {
         state.transcript.revoke(gone.id, Utc::now());
         let head = state.transcript.digest();
 
-        assert_eq!(state.compact(agent, vec![(said("summary", Classification::PUBLIC), None)], None), None, "not between turns");
+        assert_eq!(state.compact(agent, vec![(said("summary", Classification::PUBLIC), None)], None, core()), None, "not between turns");
         begin(&mut state, Vec::new());
-        assert_eq!(state.compact(agent, Vec::new(), None), None, "not to nothing");
-        assert_eq!(state.compact(agent, Vec::new(), Some(digest::content(b"elsewhere"))), None, "not from what is not on the active path");
+        assert_eq!(state.compact(agent, Vec::new(), None, core()), None, "not to nothing");
+        assert_eq!(state.compact(agent, Vec::new(), Some(digest::content(b"elsewhere")), core()), None, "not from what is not on the active path");
         assert_eq!(state.transcript.digest(), head, "nothing changed");
 
         let summary = Message { sender_id: agent, role: MessageRole::User, prompt_tokens: Some(50), ..said("[Summary] they greeted", Classification::PUBLIC) };
         let source = KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), Some(digest::prompt("steps")));
         let knowledge = KnowledgeRef { channel: Default::default(), session: Default::default(), source, classification: Some(Classification::CHANNEL_DEFAULT) };
         let skill = said("[Skill: steps]", Classification::PUBLIC);
-        let (from, to) = state.compact(agent, vec![(summary.clone(), None), (skill.clone(), Some(knowledge.clone()))], Some(answered)).expect("compacted");
+        let (from, to) = state.compact(agent, vec![(summary.clone(), None), (skill.clone(), Some(knowledge.clone()))], Some(answered), core()).expect("compacted");
 
         assert_eq!(Some(from), head, "from what stood");
         assert_eq!(state.transcript.digest(), Some(to));
@@ -1619,7 +1625,7 @@ pub(crate) mod tests {
         assert_eq!((usage.calls, usage.prompt_tokens), (2, 150), "the answer kept counts once");
 
         let again = state.transcript.entries().find(|n| n.entry.message().is_some_and(|m| m.content.as_deref() == Some("again!"))).map(|n| n.digest);
-        state.compact(agent, Vec::new(), again).expect("compacted again");
+        state.compact(agent, Vec::new(), again, core()).expect("compacted again");
         let ends = state.transcript.entries().filter(|n| matches!(n.entry, TranscriptEntry::Compacted { .. })).count();
         assert_eq!(ends, 1, "an earlier compaction's end is not kept: the copies before it are the new one's");
         assert!(matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::Compacted { .. })));
@@ -1634,7 +1640,7 @@ pub(crate) mod tests {
         state.said(first.clone());
         let kept_from = state.transcript.entries().find(|n| n.entry.message().is_some_and(|m| m.id == first.id)).map(|n| n.digest);
         let summary = Message { sender_id: agent, prompt_tokens: Some(500), completion_tokens: Some(8), ..said("summary", Classification::PUBLIC) };
-        state.compact(agent, vec![(summary, None)], kept_from).expect("compacted");
+        state.compact(agent, vec![(summary, None)], kept_from, core()).expect("compacted");
         assert_eq!(state.used.map(|u| (u.calls, u.context_tokens)), Some((2, 2 + 1)), "the new branch as estimated, not the summary's call over the old one");
 
         let turn = state.turn.take().unwrap().work.turn_id;
@@ -1658,7 +1664,7 @@ pub(crate) mod tests {
             .map(|(text, after)| state.keep_prompt(MessageRole::System, text.to_string(), after, None));
         state.turn.as_mut().unwrap().work.context.frame.prompts = parts.to_vec();
 
-        state.compact(agent, vec![(said("summary", Classification::PUBLIC), None)], kept_at).expect("compacted");
+        state.compact(agent, vec![(said("summary", Classification::PUBLIC), None)], kept_at, core()).expect("compacted");
 
         let on_new: Vec<Option<String>> = state.transcript.entries().map(|n| n.entry.message().and_then(|m| m.content.clone())).collect();
         let anchor = |prompt: &PromptRef| prompt.after.map(|after| state.transcript.entries().position(|n| n.digest == after).map(|at| on_new[at].clone()));
@@ -1670,7 +1676,7 @@ pub(crate) mod tests {
             Some(Some(Some("changed!".to_string()))),
         ], "before everything as it was, after the replacement for what it replaced, after the copy for what was kept - a change's after its message");
         let context = state.turn.as_ref().unwrap().work.context.clone();
-        assert!(ContextResolver::of(&state).resolve(&context, TurnId::new(), agent).is_some(), "every part is placed on the new branch");
+        assert!(ContextResolver::of(&state, core()).resolve(&context, TurnId::new(), agent).unwrap().is_some(), "every part is placed on the new branch");
     }
 
     #[test]
@@ -1769,7 +1775,7 @@ pub(crate) mod tests {
         let mut state = a_state_that_heard("hello", Classification::CHANNEL_DEFAULT);
         begin(&mut state, Vec::new());
         state.said(Message { sender_id: agent, role: MessageRole::Assistant, ..said("first part", Classification::CHANNEL_DEFAULT) });
-        state.compact(agent, vec![(said("[Summary]", Classification::CHANNEL_DEFAULT), None)], None).expect("compacted");
+        state.compact(agent, vec![(said("[Summary]", Classification::CHANNEL_DEFAULT), None)], None, core()).expect("compacted");
         state.transcript.mark_stored();
         state.keep_window();
         assert!(state.transcript.messages().iter().all(|m| m.content.as_deref() != Some("first part")), "not in the transcript held");

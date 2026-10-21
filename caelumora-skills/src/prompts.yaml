@@ -1,0 +1,46 @@
+# The texts skills give a model (issue 57), namespace `skills`: templates
+# of `minijinja`, rendered by `PromptCatalogue`; the conventions are those of
+# the agents' file (`caelumora-agents/src/prompts.yaml`). Names of tools are
+# values.
+
+# The catalogue of the `skills` the agent may load here, each by `name` and
+# `description`; `load_skill`, the tool to load one with.
+catalogue: |
+  [Skills you can load]
+  A skill is a procedure written down for you: how a task is done here. When a task calls for one of these, load it with `{{ load_skill }}` and follow it. A skill a user loaded for you stands in the conversation already, as their message.
+  {% for skill in skills %}
+  - {{ skill.name }}: {{ skill.description }}
+  {% endfor %}
+
+# A skill as the model is given it - loaded by the model, given with
+# `/skill`, given again after a compaction (issues 16, 22): its `name` and
+# its `body`.
+skill: |-
+  [Skill: {{ name }}]
+  {{ body }}{{ "\n" if body is not endingwith "\n" }}
+
+# The descriptions of the tools (`caelumora_agents::tool::described`).
+tools:
+  skills:
+    description: "Skills: procedures written down for you to follow, loaded when a task needs one."
+    list_skills: List the skills you can load here, each with what it is for.
+    load_skill: >-
+      Load a skill by its name - a procedure to follow for the task at hand. Its text follows the
+      result. The channel sees which skill you loaded, not what it says; do not quote it to them.
+    load_skill.name: The name of the skill
+    create_skill: >-
+      Write down a skill: how a task is done here, as you have learnt it - steps to follow, for
+      yourself and other agents of your owner's next time. A skill is for what to do, not for what you
+      know (that is memory). Keep it self-contained; check the skills you can load first, and update
+      one rather than writing a second. It belongs to your owner, and lies in this session's scope or
+      your owner's. A user has to approve it.
+    create_skill.name: A short name, e.g. release-notes
+    create_skill.description: "What it is for, in one line: what the catalogue shows"
+    create_skill.body: The steps, in Markdown
+    create_skill.scope: '"session" for this session alone, "user" for every session of your owner'
+    update_skill: >-
+      Change a skill you can load here that belongs to your owner: what it is for, its steps, or both.
+      Give the whole new text of what you change. A user has to approve it.
+    update_skill.name: The name of the skill
+    update_skill.description: What it is for, in one line, if that changes
+    update_skill.body: The steps, in Markdown, if they change

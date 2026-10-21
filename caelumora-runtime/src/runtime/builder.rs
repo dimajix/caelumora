@@ -9,6 +9,7 @@ use caelumora_model::approval::ApprovalRule;
 use crate::agent::state::AgentStates;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::config::{AppConfig, BackendConfig};
+use caelumora_model::prompt_catalogue::{PromptCatalogue, CORE, CORE_PROMPTS};
 use caelumora_model::secret::{SecretManager, SecretProvider};
 use caelumora_model::security::AccessPolicy;
 use caelumora_model::user_provider::{UserManager, UserProvider};
@@ -65,6 +66,9 @@ pub struct RuntimeBuilder {
     agents: Arc<AgentManager>,
     scope_members: Vec<Arc<dyn ScopeMember>>,
     services: Services,
+    /// The texts given to models, to which the plugins add theirs (issue
+    /// 57); a service once the runtime is built.
+    prompts: PromptCatalogue,
     /// The backends of the core and of the plugins, and what a backend may
     /// ask for - which a plugin's service is made of, too (issue 328).
     backends: Backends,
@@ -154,6 +158,9 @@ impl RuntimeBuilder {
             .with(Arc::clone(&confidentiality))
             .with(Arc::clone(&secret_manager))
             .with(Arc::clone(&workspaces));
+        // The core's texts, before any plugin adds its own.
+        let mut prompts = PromptCatalogue::new();
+        prompts.add(CORE, CORE_PROMPTS)?;
         Ok(Self {
             backend,
             state_store,
@@ -178,6 +185,7 @@ impl RuntimeBuilder {
             agents,
             scope_members,
             services,
+            prompts,
             backends,
             backend_services,
             sections: config.plugins.clone(),
@@ -272,6 +280,13 @@ impl RuntimeBuilder {
     pub fn agent_kinds(&mut self) -> &mut AgentKinds {
         &mut self.agent_kinds
     }
+    /// The texts given to models (issue 57), to add a plugin's with - under
+    /// its namespace, from the file it compiles in. Offered to the
+    /// component kinds that use it once the runtime is built.
+    pub fn prompts(&mut self) -> &mut PromptCatalogue {
+        &mut self.prompts
+    }
+
     /// Offers `service` - a plugin's manager, say - to the component kinds
     /// that use it, to the views and to the routes (`Services`).
     pub fn provide<T: ?Sized + Send + Sync + 'static>(&mut self, service: Arc<T>) {
@@ -341,6 +356,8 @@ impl RuntimeBuilder {
             bail!("The configuration has a section '{name}' that no plugin claims");
         }
         self.component_registry.set_defaults(&self.component_defaults)?;
+        let prompts = Arc::new(self.prompts);
+        self.services.insert(Arc::clone(&prompts));
         let scoped = Arc::new(ScopedEntities::new(self.scope_members));
         let participation = Arc::new(Participation::new(Arc::clone(&self.entity_stores.agents), Arc::clone(&self.controller_manager), Arc::clone(&self.access_policy), Arc::clone(&self.confidentiality)));
         Ok(RuntimeManager {
@@ -368,6 +385,7 @@ impl RuntimeBuilder {
             actors: Arc::new(ActorManager::new()),
             scoped,
             services: self.services,
+            prompts,
             seed_sections: self.seed_sections,
         })
     }

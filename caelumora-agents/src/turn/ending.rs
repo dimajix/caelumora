@@ -7,6 +7,7 @@
 
 use super::Turn;
 use caelumora_runtime::actor::Answering;
+use crate::tool::TurnEnd;
 use crate::turn::tool_calls::ToolCalls;
 use caelumora_runtime::transport::EventSender;
 use caelumora_model::turn::TurnState;
@@ -53,7 +54,7 @@ impl Turn<'_> {
     /// The turn's working state is gone afterwards, so none of it is stored
     /// with the channel state. What is still needed is returned.
     pub(crate) async fn commit(mut self, cancelled: bool, output: &dyn EventSender) -> CommittedTurn {
-        let abandoned_calls = self.abandon_tool_calls(if cancelled { "it was cancelled" } else { "it ended" }, output).await;
+        let abandoned_calls = self.abandon_tool_calls(TurnEnd::Committed { cancelled }, output).await;
         let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let turn_id = turn.work.turn_id;
@@ -83,7 +84,7 @@ impl Turn<'_> {
     /// Returns what its last events are sent with, and the calls it
     /// abandoned.
     pub(crate) async fn give_up(mut self, reason: GivenUpReason, output: &dyn EventSender) -> (Answering, Vec<ToolCallState>) {
-        let abandoned_calls = self.abandon_tool_calls(reason.cause(), output).await;
+        let abandoned_calls = self.abandon_tool_calls(TurnEnd::GivenUp(&reason), output).await;
         let answering = self.answering();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         self.agent_channel_state.give_up_turn(turn.work.turn_id, reason);
@@ -100,10 +101,10 @@ impl Turn<'_> {
     ///
     /// The turn is ending: a failed send is logged, not returned. The
     /// message is kept all the same (`Turn::say`).
-    async fn abandon_tool_calls(&mut self, because: &str, output: &dyn EventSender) -> Vec<ToolCallState> {
+    async fn abandon_tool_calls(&mut self, end: TurnEnd<'_>, output: &dyn EventSender) -> Vec<ToolCallState> {
         let internal = self.in_plan_step();
         let Some(turn) = self.agent_channel_state.turn.as_mut() else { return Vec::new() };
-        let (abandoned, message) = ToolCalls::new(turn, &self.agent_name).abandon(because, internal);
+        let (abandoned, message) = ToolCalls::new(turn, &self.agent_name, self.runtime.prompts()).abandon(end, internal);
         if let Some(message) = message {
             if let Err(e) = self.say(message, output).await {
                 warn!("Agent {}: the answers to the calls it abandoned were not published: {:#}", self.agent_id, e);

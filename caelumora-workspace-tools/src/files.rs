@@ -19,7 +19,8 @@
 //! no UTF-8 is refused. A replacement reads, replaces and writes: what
 //! changed the file in between is overwritten.
 
-use crate::terminal_tool::{tool, TerminalToolConfig};
+use crate::terminal_tool::{next, tool, TerminalTool, TerminalToolConfig};
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
 use caelumora_agents::turn::Turn;
 use caelumora_runtime::terminal::{ByteStream, FileEntry, Terminal, TerminalError, WorkspacePath};
 use caelumora_agents::tool::{arguments, ToolError, ToolResult};
@@ -181,104 +182,46 @@ fn path(text: &str) -> ToolResult<WorkspacePath> {
     WorkspacePath::parse(text).map_err(ToolError::from)
 }
 
-pub(crate) fn tools(config: &TerminalToolConfig) -> Vec<Tool> {
+pub(crate) fn tools(config: &TerminalToolConfig, prompts: &PromptCatalogue) -> Result<Vec<Tool>, PromptError> {
     let asks = |name: &str| config.requires_approval.required(read_only(name));
+    let values = context! { max_matches => MAX_MATCHES, default_matches => DEFAULT_MATCHES };
+    let tool = |name: &str, parameters, requires_approval, presentation| tool(prompts, name, parameters, requires_approval, presentation, &values);
     let string = ToolParameters::string;
-    vec![
-        tool(
-            LIST_FILES,
-            "List a directory of the session's workspace: each entry's name, whether it is a directory, its size and when it was changed.".to_string(),
-            ToolParameters::object([("path", string("The directory, relative to the workspace's top; the top unless given"))], Vec::<&str>::new()),
-            asks(LIST_FILES),
-            FILE_LIST_PRESENTATION,
-        ),
+    Ok(vec![
+        tool(LIST_FILES, ToolParameters::object([("path", string())], Vec::<&str>::new()), asks(LIST_FILES), FILE_LIST_PRESENTATION)?,
         tool(
             READ_FILE,
-            "Read a text file of the session's workspace, whole or the lines asked for. A result too long to give at once says where to go on.".to_string(),
-            ToolParameters::object(
-                [
-                    ("path", string("The file, relative to the workspace's top")),
-                    ("start_line", ToolParameters::number("The first line to give, counted from 1; 1 unless given")),
-                    ("line_count", ToolParameters::number("How many lines to give; all to the end unless given")),
-                ],
-                ["path"],
-            ),
+            ToolParameters::object([("path", string()), ("start_line", ToolParameters::number()), ("line_count", ToolParameters::number())], ["path"]),
             asks(READ_FILE),
             FILE_READ_PRESENTATION,
-        ),
+        )?,
         tool(
             GREP_FILES,
-            format!("Search the text files of the session's workspace for a regular expression: each matching line with its file and line number, at most {MAX_MATCHES}."),
-            ToolParameters::object(
-                [
-                    ("pattern", string("A regular expression (Rust syntax), matched against each line")),
-                    ("path", string("The directory to search, with what lies below it, or a single file; the whole workspace unless given")),
-                    ("max_matches", ToolParameters::number(format!("How many matches to give at most; {DEFAULT_MATCHES} unless given"))),
-                ],
-                ["pattern"],
-            ),
+            ToolParameters::object([("pattern", string()), ("path", string()), ("max_matches", ToolParameters::number())], ["pattern"]),
             asks(GREP_FILES),
             FILE_SEARCH_PRESENTATION,
-        ),
-        tool(
-            WRITE_FILE,
-            "Write a text file of the session's workspace, replacing what it held; the directories it lies in are made.".to_string(),
-            ToolParameters::object([("path", string("The file, relative to the workspace's top")), ("content", string("What the file is to hold"))], ["path", "content"]),
-            asks(WRITE_FILE),
-            FILE_WRITE_PRESENTATION,
-        ),
+        )?,
+        tool(WRITE_FILE, ToolParameters::object([("path", string()), ("content", string())], ["path", "content"]), asks(WRITE_FILE), FILE_WRITE_PRESENTATION)?,
         tool(
             REPLACE_IN_FILE,
-            "Replace a piece of text in a text file of the session's workspace. The text must occur exactly once - give enough of what surrounds it - unless every occurrence is to be replaced.".to_string(),
             ToolParameters::object(
-                [
-                    ("path", string("The file, relative to the workspace's top")),
-                    ("old_text", string("The text to replace, exactly as it is in the file")),
-                    ("new_text", string("The text to put in its place")),
-                    ("replace_all", ToolParameters::boolean("Whether to replace every occurrence; false unless given")),
-                ],
+                [("path", string()), ("old_text", string()), ("new_text", string()), ("replace_all", ToolParameters::boolean())],
                 ["path", "old_text", "new_text"],
             ),
             asks(REPLACE_IN_FILE),
             FILE_EDIT_PRESENTATION,
-        ),
-        tool(
-            MOVE_FILE,
-            "Move or rename a file, or a directory with what it holds, of the session's workspace; the directories it is moved into are made. Nothing is moved over: what lies at the target must be deleted first.".to_string(),
-            ToolParameters::object(
-                [
-                    ("from", string("The file or directory, relative to the workspace's top")),
-                    ("to", string("Where it is to lie, relative to the workspace's top - in the same directory to rename it")),
-                ],
-                ["from", "to"],
-            ),
-            asks(MOVE_FILE),
-            FILE_MOVE_PRESENTATION,
-        ),
-        tool(
-            DELETE_FILE,
-            "Delete a file, or an empty directory, of the session's workspace.".to_string(),
-            ToolParameters::object([("path", string("The file or directory, relative to the workspace's top"))], ["path"]),
-            asks(DELETE_FILE),
-            ToolPresentation::DEFAULT,
-        ),
+        )?,
+        tool(MOVE_FILE, ToolParameters::object([("from", string()), ("to", string())], ["from", "to"]), asks(MOVE_FILE), FILE_MOVE_PRESENTATION)?,
+        tool(DELETE_FILE, ToolParameters::object([("path", string())], ["path"]), asks(DELETE_FILE), ToolPresentation::DEFAULT)?,
         tool(
             PUBLISH_FILE,
-            "Offer a file of the session's workspace to the users of the channel for download, at this message: hand over a result this way rather than only naming where it lies. It is a link to the file as it is: changed, moved or deleted later, the download changes or is gone.".to_string(),
-            ToolParameters::object(
-                [
-                    ("path", string("The file, relative to the workspace's top")),
-                    ("name", string("The name to offer it under; its file name unless given")),
-                    ("description", string("What it is, in a sentence, for whoever downloads it")),
-                ],
-                ["path"],
-            ),
+            ToolParameters::object([("path", string()), ("name", string()), ("description", string())], ["path"]),
             // Never asked (issue 275): it changes nothing, and hands the file
             // to nobody who could not download it already.
             false,
             FILE_PUBLISH_PRESENTATION,
-        ),
-    ]
+        )?,
+    ])
 }
 
 /// What an approver reads: what is read, or the change whole.
@@ -435,10 +378,12 @@ async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &Regex, 
     Ok(json!({ "matches": matches, "files_searched": searched, "files_skipped": skipped, "complete": complete }))
 }
 
-/// Runs the file tool `name` with `params` on `terminal`, the files of
-/// `workspace`, which take a file of `max_file_bytes` at most, recording in
-/// `turn` what was read.
-pub(crate) async fn execute(config: &TerminalToolConfig, name: &str, params: &Value, terminal: &dyn Terminal, workspace: &Workspace, max_file_bytes: u64, turn: &mut Turn<'_>) -> ToolResult<Value> {
+/// Runs the file tool `name` of `tool` with `params` on `terminal`, the
+/// files of `workspace` - as `tool` is configured, with the largest file the
+/// workspaces take and the texts its results give -, recording in `turn`
+/// what was read.
+pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, terminal: &dyn Terminal, workspace: &Workspace, turn: &mut Turn<'_>) -> ToolResult<Value> {
+    let (config, prompts, max_file_bytes) = (&tool.config, tool.prompts.as_ref(), tool.workspaces.max_file_bytes());
     let read = |turn: &mut Turn<'_>, digest| turn.record_knowledge(KnowledgeRef {
         channel: turn.situation().channel_id(),
         session: turn.situation().session_id(),
@@ -475,7 +420,9 @@ pub(crate) async fn execute(config: &TerminalToolConfig, name: &str, params: &Va
             let mut result = json!({ "path": at.to_string(), "content": given, "start_line": start, "end_line": end, "total_lines": lines.len() });
             let asked_end = line_count.map_or(lines.len(), |count| (start - 1 + count).min(lines.len()));
             if end < asked_end {
-                result["next"] = json!(format!("Not all of it fits into one result: read on with start_line {}.", end + 1));
+                if let Some(next) = next(prompts, "read_on", context! { line => end + 1 }) {
+                    result["next"] = json!(next);
+                }
             }
             Ok(result)
         }

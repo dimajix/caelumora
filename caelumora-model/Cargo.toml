@@ -15,6 +15,8 @@ chrono = { workspace = true, features = ["serde"] }
 anyhow.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+# The texts given to models (issue 57).
+minijinja.workspace = true
 derive_more.workspace = true
 bitflags.workspace = true
 async-trait.workspace = true

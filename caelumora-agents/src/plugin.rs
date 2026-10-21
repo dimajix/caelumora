@@ -40,6 +40,7 @@ impl Plugin for AgentsPlugin {
 
     fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
         register_components(runtime.components());
+        runtime.prompts().add(prompt::NAMESPACE, prompt::PROMPTS)?;
         let kinds = runtime.agent_kinds();
         kinds.register(PersonalityKind::Internal, AgentActor::COMPONENT_FACETS, |agent, personality, runtime| async move {
             Ok(Box::new(AgentActor::new(agent, personality, runtime).await?) as Box<dyn Actor>)
@@ -62,7 +63,7 @@ mod tests {
     use caelumora_runtime::moderator::round_robin_policy::ROUND_ROBIN_POLICY_KIND;
     use caelumora_runtime::runtime::Services;
     use super::AgentsPlugin;
-    use crate::testing::test_registry;
+    use crate::testing::{self, test_registry};
     use caelumora_runtime::testing::TestRuntime;
     use crate::tool::echo_tool::ECHO_TOOL_KIND;
     use caelumora_model::component::ComponentConfig;
@@ -93,7 +94,8 @@ mod tests {
     #[tokio::test]
     async fn a_channel_takes_no_tool_and_an_agent_no_moderator() {
         let registry = Arc::new(test_registry(Arc::new(MemoryStore::new())));
-        let context = ComponentContext::new(SecurityContext::default(), Services::empty());
+        // The texts its tools are made with.
+        let context = ComponentContext::new(SecurityContext::default(), Services::empty().with(testing::prompts()));
 
         let channel = config(&[("moderator", POLICY_MODERATOR_KIND), ("policy", ROUND_ROBIN_POLICY_KIND)]);
         ComponentContainer::from_config(&channel, ChannelLoop::COMPONENT_FACETS, &registry, &context).await.expect("its moderator and what it needs");

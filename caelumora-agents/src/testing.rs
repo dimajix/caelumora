@@ -11,10 +11,12 @@ use crate::plugin::{register_components, AgentsPlugin};
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::llm::{LLMClient, LLMError, LLMResult};
 use caelumora_runtime::plugin::Plugin;
-use caelumora_runtime::runtime::RuntimeBuilder;
+use caelumora_runtime::runtime::{ActorRuntime, RuntimeBuilder};
 use anyhow::Result;
 use caelumora_runtime::session::SessionLoop;
-use caelumora_runtime::session::testing::detached_actor_runtime;
+use caelumora_runtime::session::testing::{bare_channel, bare_session, detached_actor_runtime_in};
+use caelumora_runtime::testing::TestRuntime;
+use caelumora_model::session::SessionId;
 use caelumora_runtime::workspace::testing::WithWorkspace;
 use caelumora_runtime::testing::{actor_runtime_in, test_registry as runtime_registry, World, STAFF};
 use async_trait::async_trait;
@@ -37,6 +39,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use caelumora_model::work::Work;
+use caelumora_model::prompt_catalogue::{PromptCatalogue, CORE, CORE_PROMPTS};
+use crate::prompt::{NAMESPACE, PROMPTS};
 
 /// The agents in the world of a test, as a plugin (issue 373): the agents'
 /// plugin (`AgentsPlugin`) and a model that is not to be asked
@@ -146,6 +150,25 @@ impl LLMClient for Unasked {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }
+}
+
+/// The runtime of an actor in a channel of no running session, never
+/// attached, as the runtime's (`caelumora_runtime::session::testing`), with
+/// the agents' plugin - and so the agents' texts (issue 57).
+pub fn detached_actor_runtime() -> ActorRuntime {
+    let session = bare_session(SessionId::new());
+    let channel = bare_channel(session.id);
+    detached_actor_runtime_in(TestRuntime { plugins: vec![&TestAgents], ..Default::default() }.build(), session, channel)
+}
+
+/// The prompt catalogue with the core's texts and the agents', as the
+/// runtime and `AgentsPlugin` add them - for a provider a test makes itself.
+pub fn prompts() -> Arc<PromptCatalogue> {
+    let mut catalogue = PromptCatalogue::new();
+    // The texts are compiled in; that they can be read is what this tests too.
+    catalogue.add(CORE, CORE_PROMPTS).unwrap_or_else(|e| panic!("the core's texts cannot be read: {e}"));
+    catalogue.add(NAMESPACE, PROMPTS).unwrap_or_else(|e| panic!("the agents' texts cannot be read: {e}"));
+    Arc::new(catalogue)
 }
 
 /// The component kinds the tests of the agents build with, resolving

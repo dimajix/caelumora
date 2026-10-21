@@ -56,8 +56,8 @@ fn store(world: &World) -> Arc<dyn EntityStore<Skill>> {
     world.store.entity_store::<Skill>().unwrap()
 }
 
-fn component() -> SkillsComponent {
-    SkillsComponent { position: PromptPosition::Start, requires_approval: ApprovalMode::Always }
+fn component(world: &World) -> SkillsComponent {
+    SkillsComponent::new(PromptPosition::Start, ApprovalMode::Always, Arc::clone(world.runtime.prompts())).unwrap()
 }
 
 /// A session of alice and bob with alice's agent `helper`, in a channel
@@ -78,7 +78,7 @@ async fn call(component: &SkillsComponent, turn: &mut Turn<'_>, name: &str, para
 async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as_knowledge() {
     let world = world().await;
     let (session, helper) = with_an_agent(&world).await;
-    let component = component();
+    let component = component(&world);
     let mut state = AgentChannelState::default();
     let prompt = component.get_prompt(&agent_testing::turn(&session, helper, world.alice, &mut state).situation()).await.unwrap();
     assert_eq!(prompt.text, "", "nothing to list, no part");
@@ -120,7 +120,7 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
 async fn an_agent_writes_a_skill_of_its_owners_classified_as_what_it_saw_and_raises_one_it_changes() {
     let world = world().await;
     let (session, helper) = with_an_agent(&world).await;
-    let component = component();
+    let component = component(&world);
     let mut state = AgentChannelState::default();
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     let created = call(&component, &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.", "scope": "session" })).await.unwrap();
@@ -159,21 +159,23 @@ async fn an_agent_writes_a_skill_of_its_owners_classified_as_what_it_saw_and_rai
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-#[test]
-fn an_approver_is_shown_the_skill_whole() {
-    let component = component();
+#[tokio::test]
+async fn an_approver_is_shown_the_skill_whole() {
+    let world = world().await;
+    let component = component(&world);
     let shown = component.describe(CREATE_SKILL_TOOL_NAME, &serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.\n2. Ship.", "scope": "user" })).unwrap();
     assert_eq!(shown, "Write the skill \"deploy\" (for every session of the agent's owner): How we deploy\n\n1. Build.\n2. Ship.");
     let tools = component.tools();
     assert!(tools.iter().filter(|t| t.name == CREATE_SKILL_TOOL_NAME || t.name == UPDATE_SKILL_TOOL_NAME).all(|t| t.requires_approval), "approved by default");
-    let unapproved = SkillsComponent { position: PromptPosition::Start, requires_approval: ApprovalMode::Never }.tools();
+    let unapproved = SkillsComponent::new(PromptPosition::Start, ApprovalMode::Never, Arc::clone(world.runtime.prompts())).unwrap().tools();
     assert!(unapproved.iter().all(|t| !t.requires_approval), "unless configured otherwise");
 }
 
-#[test]
-fn load_skill_shows_the_channel_which_skill_it_loaded_not_what_it_gave() {
+#[tokio::test]
+async fn load_skill_shows_the_channel_which_skill_it_loaded_not_what_it_gave() {
+    let world = world().await;
     use caelumora_skills::component::{SKILL_LIST_PRESENTATION, SKILL_PRESENTATION};
-    let tools = component().tools();
+    let tools = component(&world).tools();
     let load = tools.iter().find(|t| t.name == LOAD_SKILL_TOOL_NAME).unwrap();
     assert_eq!(load.visibility, ToolVisibility::SHOWN, "its result names the skill; its text is given to the agent, not published (issue 389)");
     let skills: Vec<_> = tools.iter().filter(|t| t.presentation == SKILL_PRESENTATION).map(|t| t.name.as_str()).collect();
@@ -195,11 +197,11 @@ async fn the_skills_given_are_given_again_where_they_may_still_be_loaded() {
     let gone = manager.create(&SecurityContext::system(), "deploy", Scope::GlobalScope, "How we deploy", "1. Build.", internal).await.unwrap();
     let mut state = AgentChannelState::default();
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
-    AgentCommandProvider::execute(&component(), SKILL_COMMAND_NAME, "release-notes", &mut turn).await.expect("given");
+    AgentCommandProvider::execute(&component(&world), SKILL_COMMAND_NAME, "release-notes", &mut turn).await.expect("given");
     manager.rewrite(&SecurityContext::system(), kept.id, "1. Collect.\n2. Group.").await.unwrap();
     manager.delete(&SecurityContext::system(), gone.id).await.unwrap();
 
-    let again = component().give_again(&mut turn, &[gone.id.0, kept.id.0]).await.unwrap();
+    let again = component(&world).give_again(&mut turn, &[gone.id.0, kept.id.0]).await.unwrap();
     let again: Vec<_> = again.iter().map(|given| (given.name.as_str(), given.text.as_str())).collect();
     assert_eq!(again, [("release-notes", "[Skill: release-notes]\n1. Collect.\n2. Group.\n")], "as it is now; not the deleted one");
     drop(turn);

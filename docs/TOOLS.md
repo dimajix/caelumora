@@ -23,6 +23,19 @@ its calls, so that they need not recognise a tool by its name. The presentation 
 what a call does, and whether it waits for anyone, does not depend on it. Approval and
 classification are decided per tool by its provider, not by the personality.
 
+What a tool, its parameters and its tool set say to the model are texts of the prompt catalogue
+(issue 57, see [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)), kept apart from the tool's
+schema. The code builds the schema - the parameters, their types, which are required
+(`ToolParameters::string()`, `object(…)`) -, and `tool::described` gives the tool and each of its
+parameters the text of its path among the tools of its component kind, in the namespace of the
+agents or of the plugin that brings it (`<namespace>.tools.<kind>`): `notes.write_note` is the
+tool's, `notes.write_note.text` its parameter's, `.item` an entry's of a list, and the entries of a
+list of objects are described by their fields under the list's path. A parameter described already
+keeps its text, as the parameters every reclassifying tool shares (`tool::reclassify_parameters`).
+The texts are rendered once, when the component is made; a text missing keeps it from being built.
+A tool of a generic provider, an MCP server's, is described as it describes itself
+(`ToolParameters::described`).
+
 ## Tool sets
 
 The tools of one provider are a *tool set* (`ToolSet`), named after its component, with the
@@ -131,7 +144,10 @@ Every call ends with a result the model can act on.
     `timed_out`, `declined`, `invalid_arguments`, `failed`, `not_executed` (the tool never ran),
     `interrupted` (it ran, but was broken off) and `unknown_tool` (with the tools that do exist).
     The status is stored with the result, so that refusals and failures can be told from results.
-    The wording lives in `crate::tool`.
+    The wording is the prompt catalogue's (`agents.results`, issue 57); what went wrong, the
+    error's own text. A message that cannot be had is logged, and the model is given the status
+    alone: the call is answered all the same. A result only its agent may see is given only with
+    the mark that says so, and withheld without it.
 *   No call is left without a result. A turn that ends while calls of its step have none answers
     them as `not_executed`, saying why the turn ended.
 

@@ -19,7 +19,10 @@
 //! that cannot be reached leaves the files out, not the turn.
 
 use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
-use caelumora_agents::prompt::{ContextError, titled, Prompt, PromptPosition, PromptProvider};
+use caelumora_agents::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
+use crate::terminal_tool::READ_FILE;
+use crate::NAMESPACE;
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
 use caelumora_runtime::terminal::{TerminalError, WorkspacePath};
 use caelumora_runtime::view::WorkspaceView;
 use caelumora_agents::situation::Situation;
@@ -31,14 +34,14 @@ use tracing::warn;
 
 pub const WORKSPACE_PROMPT_PROVIDER_KIND: &str = "workspace_prompt_provider";
 
-const TITLE: &str = "Your workspace";
-
 #[derive(Debug)]
 pub struct WorkspacePromptProvider {
     pub position: PromptPosition,
     /// The names of the files that say how to work on a workspace, each a
     /// file at its root, in the order they are named.
     instruction_files: Vec<WorkspacePath>,
+    /// The texts of its part (issue 57).
+    prompts: Arc<PromptCatalogue>,
 }
 
 /// What the component is configured with besides its position.
@@ -54,19 +57,19 @@ fn default_instruction_files() -> Vec<String> {
 
 impl WorkspacePromptProvider {
     /// It with `instruction_files`, each the name of a file at a
-    /// workspace's root.
+    /// workspace's root, its texts from `prompts`.
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` for a name that is not one of a file
     /// at the root.
-    fn new(position: PromptPosition, instruction_files: &[String]) -> ComponentResult<Self> {
+    fn new(position: PromptPosition, instruction_files: &[String], prompts: Arc<PromptCatalogue>) -> ComponentResult<Self> {
         let instruction_files = instruction_files.iter()
             .map(|name| match WorkspacePath::parse(name) {
                 Ok(path) if !path.is_root() && path.parent().is_root() => Ok(path),
                 _ => Err(ComponentError::InvalidConfig(format!("instruction file '{name}' is not the name of a file at the workspace's root"))),
             })
             .collect::<ComponentResult<_>>()?;
-        Ok(Self { position, instruction_files })
+        Ok(Self { position, instruction_files, prompts })
     }
 
     /// Those of the instruction files that lie at the root of `workspace`,
@@ -100,52 +103,21 @@ impl WorkspacePromptProvider {
     }
 }
 
-/// `names` as a list in a sentence, each quoted as code, the last two
-/// joined by `last`: "`a`, `b` and `c`".
-fn listed(names: &[&WorkspacePath], last: &str) -> String {
-    let quoted: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
-    match quoted.split_last() {
-        None => String::new(),
-        Some((only, [])) => only.clone(),
-        Some((final_name, rest)) => format!("{} {last} {final_name}", rest.join(", ")),
-    }
-}
-
 /// What the agent is told of `workspace`, at whose root lie `found` of the
 /// instruction files `names`, and which it may change if `writable` (issue
-/// 23).
-fn told(workspace: &WorkspaceView, writable: bool, names: &[WorkspacePath], found: &[&WorkspacePath]) -> String {
-    let mut text = format!(
-        "You work on the files of the workspace \"{}\" of this session, which you share with the people and agents of \
-        the channels that use it. Everything in it is classified {}.\n",
-        workspace.name(),
-        workspace.classification(),
-    );
-    if let Some(description) = workspace.description() {
-        text.push_str(&format!("What it holds, as its owner describes it: {description}\n"));
-    }
-    text.push_str(match (writable, workspace.has_shell()) {
-        (false, _) => "You may read its files, not change them, and run no commands in it.\n",
-        (true, true) => "You can run shell commands in it.\n",
-        (true, false) => "Its storage gives it no shell: you cannot run commands in it.\n",
-    });
-    if !found.is_empty() {
-        let (lie, them) = if found.len() == 1 { ("lies", "it") } else { ("lie", "them") };
-        text.push_str(&format!(
-            "At its top {lie} {}, written for agents: how to work on its files - how they are built and tested, how they \
-            are laid out, what to keep to. Read {them} with `read_file` before you work on the files.\n",
-            listed(found, "and"),
-        ));
-    }
-    if !names.is_empty() {
-        let names: Vec<&WorkspacePath> = names.iter().collect();
-        text.push_str(&format!(
-            "A directory in it may hold a file of its own named {}, which says how to work on what lies there: read it \
-            before you work there; where it disagrees with one further up, it takes precedence.\n",
-            listed(&names, "or"),
-        ));
-    }
-    titled(TITLE, &text)
+/// 23), worded by `prompts`.
+fn told(prompts: &PromptCatalogue, workspace: &WorkspaceView, writable: bool, names: &[WorkspacePath], found: &[&WorkspacePath]) -> Result<String, PromptError> {
+    let listed = |paths: &mut dyn Iterator<Item = &WorkspacePath>| paths.map(|path| path.to_string()).collect::<Vec<_>>();
+    prompts.render(&format!("{NAMESPACE}.workspace"), context! {
+        name => workspace.name(),
+        classification => workspace.classification().to_string(),
+        description => workspace.description().map(|description| description.to_string()),
+        writable,
+        shell => workspace.has_shell(),
+        found => listed(&mut found.iter().copied()),
+        names => listed(&mut names.iter()),
+        read_file => READ_FILE,
+    })
 }
 
 #[async_trait]
@@ -159,24 +131,21 @@ impl PromptProvider for WorkspacePromptProvider {
             Some(workspace) => {
                 let found = self.instruction_files_in(&workspace, situation).await;
                 let writable = workspace.may_write().await;
-                Prompt::classified(told(&workspace, writable, &self.instruction_files, &found), workspace.classification().clone())
+                Prompt::classified(told(&self.prompts, &workspace, writable, &self.instruction_files, &found)?, workspace.classification().clone())
             }
-            None => Prompt::classified(
-                titled(TITLE, "There is no workspace you can use in this channel: no files to work on, no commands to run.\n"),
-                Classification::PUBLIC,
-            ),
+            None => Prompt::classified(self.prompts.render(&format!("{NAMESPACE}.no_workspace"), ())?, Classification::PUBLIC),
         })
     }
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(WORKSPACE_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
-        |descriptor, _| {
+        ComponentKind::new(WORKSPACE_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
+        |descriptor, context| {
             let position = PromptPosition::of_params(&descriptor.params)?;
             let WorkspacePromptConfig { instruction_files } = config_of_params(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(WorkspacePromptProvider::new(position, &instruction_files)?));
+            facets.insert::<dyn PromptProvider>(Arc::new(WorkspacePromptProvider::new(position, &instruction_files, Arc::clone(context.service::<PromptCatalogue>()?))?));
             Ok(facets)
         },
     );
@@ -185,6 +154,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prompts;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_runtime::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
@@ -195,7 +165,7 @@ mod tests {
     }
 
     fn provider_of(instruction_files: &[String]) -> WorkspacePromptProvider {
-        WorkspacePromptProvider::new(PromptPosition::Start, instruction_files).unwrap()
+        WorkspacePromptProvider::new(PromptPosition::Start, instruction_files, prompts()).unwrap()
     }
 
     #[tokio::test]
@@ -253,7 +223,7 @@ mod tests {
         assert!(!prompt.text.contains("At its top") && !prompt.text.contains("of its own"), "{}", prompt.text);
 
         for invalid in ["", "docs/AGENTS.md", "../AGENTS.md", "/AGENTS.md"] {
-            assert!(matches!(WorkspacePromptProvider::new(PromptPosition::Start, &[invalid.to_string()]), Err(ComponentError::InvalidConfig(_))), "{invalid:?}");
+            assert!(matches!(WorkspacePromptProvider::new(PromptPosition::Start, &[invalid.to_string()], prompts()), Err(ComponentError::InvalidConfig(_))), "{invalid:?}");
         }
     }
 

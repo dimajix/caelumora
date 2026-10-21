@@ -11,18 +11,23 @@
 //! available it contributes nothing.
 
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, render_sections, Prompt, PromptPosition, PromptProvider, Section};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue};
 use caelumora_model::tool::ToolSet;
 use std::sync::Arc;
 
 pub const TOOL_SETS_PROMPT_PROVIDER_KIND: &str = "tool_sets_prompt_provider";
 
+/// Its text in the prompt catalogue.
+const TEXT: &str = "agents.tool_sets";
+
 #[derive(Debug)]
 pub struct ToolSetsPromptProvider {
     pub position: PromptPosition,
+    pub prompts: Arc<PromptCatalogue>,
 }
 
 #[async_trait]
@@ -33,22 +38,22 @@ impl PromptProvider for ToolSetsPromptProvider {
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         // What the agent is configured with, nothing read from a channel.
-        Ok(Prompt::classified(render(situation.tool_sets()), Classification::PUBLIC))
+        Ok(Prompt::classified(self.render(situation.tool_sets())?, Classification::PUBLIC))
     }
 }
 
-/// The text naming the unavailable sets among `sets`, empty if there are
-/// none.
-fn render(sets: &[ToolSet]) -> String {
-    let lines: Vec<String> = sets.iter()
-        .filter_map(|set| set.unavailable.as_deref().map(|why| format!("{} ({}): {}", set.name, one_line(&set.description), one_line(why))))
-        .collect();
-    render_sections(
-        "Unavailable tools",
-        "Some of your tools are unavailable right now, so you cannot call them. If a request needs them, \
-         say that they are unavailable at the moment rather than that you cannot do it.",
-        &[Section::lines(lines)],
-    )
+impl ToolSetsPromptProvider {
+    /// The text naming the unavailable sets among `sets`, empty if there
+    /// are none.
+    fn render(&self, sets: &[ToolSet]) -> Result<String, ContextError> {
+        let unavailable: Vec<_> = sets.iter()
+            .filter_map(|set| set.unavailable.as_deref().map(|why| context! { name => set.name, description => one_line(&set.description), why => one_line(why) }))
+            .collect();
+        if unavailable.is_empty() {
+            return Ok(String::new());
+        }
+        Ok(self.prompts.render(TEXT, context! { unavailable })?)
+    }
 }
 
 /// `text` on one line, so that it cannot break out of its entry.
@@ -58,11 +63,11 @@ fn one_line(text: &str) -> String {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(TOOL_SETS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>(),
-        |descriptor, _context| {
+        ComponentKind::new(TOOL_SETS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
+        |descriptor, context| {
             let position = PromptPosition::of_params(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(ToolSetsPromptProvider { position }));
+            facets.insert::<dyn PromptProvider>(Arc::new(ToolSetsPromptProvider { position, prompts: Arc::clone(context.service::<PromptCatalogue>()?) }));
             Ok(facets)
         },
     );
@@ -71,6 +76,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing;
     use crate::turn::Turn;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::tool::{Tool, ToolParameters};
@@ -94,7 +100,7 @@ mod tests {
         state.begin_turn(Work::new(Default::default(), None, Default::default(), Classification::CHANNEL_DEFAULT, Default::default()));
         state.offer_tools(sets);
         let turn = Turn::under_way(AgentId::new(), &mut state);
-        let provider = ToolSetsPromptProvider { position: PromptPosition::Start };
+        let provider = ToolSetsPromptProvider { position: PromptPosition::Start, prompts: testing::prompts() };
         provider.get_prompt(&turn.situation()).await.unwrap()
     }
 

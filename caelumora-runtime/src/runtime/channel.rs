@@ -4,6 +4,8 @@ use crate::command::{CommandExecutor, ChannelCommandProvider};
 use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, ControllerManager, SessionController};
 use crate::session::SessionLoop;
+#[cfg(any(test, feature = "test-support"))]
+use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::channel::Channel;
@@ -113,6 +115,10 @@ impl ChannelRuntime {
     pub(crate) fn state_store(&self) -> &Arc<dyn StateStore> { self.runtime_manager.state_store() }
     pub(crate) fn history_store(&self) -> &Arc<dyn HistoryStore> { self.runtime_manager.history_store() }
     pub(crate) fn transcript_store(&self) -> &Arc<dyn TranscriptStore> { self.runtime_manager.transcript_store() }
+
+    /// The texts given to models (issue 57), for the tests' views.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn prompts(&self) -> &Arc<PromptCatalogue> { self.runtime_manager.prompts() }
 
     pub(crate) fn controller_manager(&self) -> &Arc<ControllerManager> { self.runtime_manager.controller_manager() }
 

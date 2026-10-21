@@ -225,7 +225,7 @@ async fn discover_tools(descriptor_id: &str, config: &McpToolConfig, auth_header
 /// `ToolParameters` does not model full JSON Schema.
 fn schema_to_tool_parameters(schema: &Value) -> ToolParameters {
     let Some(obj) = schema.as_object() else {
-        return ToolParameters::string("Unrecognized parameter schema");
+        return ToolParameters::string().described("Unrecognized parameter schema");
     };
 
     let description = obj.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
@@ -253,7 +253,7 @@ fn schema_to_tool_parameters(schema: &Value) -> ToolParameters {
             let items = obj
                 .get("items")
                 .map(schema_to_tool_parameters)
-                .unwrap_or_else(|| ToolParameters::string("Array item"));
+                .unwrap_or_else(|| ToolParameters::string().described("Array item"));
             ToolParameters::Array {
                 items: Box::new(items),
                 description,

@@ -881,7 +881,7 @@ impl ToolProvider for Commands {
         vec![Tool {
             name: "run".to_string(),
             description: "runs a command".to_string(),
-            parameters: ToolParameters::object([("command", ToolParameters::shell("The command line"))], ["command"]),
+            parameters: ToolParameters::object([("command", ToolParameters::shell().described("The command line"))], ["command"]),
             requires_approval: true,
             visibility: Default::default(),
             classification: None,

@@ -26,6 +26,7 @@ use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::kept::Kept;
 use crate::message::{estimated_tokens, Message, MessageId, MessageRole};
+use crate::prompt_catalogue::{context, PromptCatalogue, PromptError, CORE};
 use crate::store::{EntityKind, Stored};
 use crate::tool::ToolSet;
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
@@ -274,32 +275,39 @@ impl ModelProfile {
     /// of an external agent - is given of the active path of `transcript`,
     /// for `agent`: its messages as they stand (`Transcript::messages`) and,
     /// where someone joined or left the channel, what it is told of that
-    /// (issue 408), each as `given` makes it.
-    pub fn given_messages(&self, transcript: &Transcript, agent: ActorId, time_zone: TimeZone) -> Vec<Message> {
-        as_they_stand(transcript.entries())
-            .filter_map(|(node, message)| message.or_else(|| participant_notice(&node.entry, &node.digest, agent, self.sender_style)))
-            .map(|message| self.given(message, agent, false, time_zone))
-            .collect()
+    /// (issue 408), worded by `prompts`, each as `given` makes it.
+    ///
+    /// # Errors
+    /// `PromptError` if the text of a notice cannot be had.
+    pub fn given_messages(&self, prompts: &PromptCatalogue, transcript: &Transcript, agent: ActorId, time_zone: TimeZone) -> Result<Vec<Message>, PromptError> {
+        let mut given = Vec::new();
+        for (node, message) in as_they_stand(transcript.entries()) {
+            let message = match message {
+                Some(message) => Some(message),
+                None => participant_notice(prompts, &node.entry, &node.digest, agent, self.sender_style)?,
+            };
+            given.extend(message.map(|message| self.given(message, agent, false, time_zone)));
+        }
+        Ok(given)
     }
 
     /// What the model is to be told of how the messages of others are framed
-    /// (`frame`) - their senders, and when they were written -, `None` if
-    /// they are not (issues 135, 424): without it, models imitate the marker
-    /// in their answers (`work/sender_names/RESULTS.md`, findings 2 and 3).
-    pub fn framing_explanation(&self) -> Option<String> {
-        let (sender, example) = match self.sender_style {
-            SenderStyle::Handle => ("@handle", "@handle"),
-            SenderStyle::Name => ("name", "Name"),
+    /// (`frame`) - their senders, and when they were written -, worded by
+    /// `prompts` (`core.framing`); `None` if they are not (issues 135, 424).
+    ///
+    /// # Errors
+    /// `PromptError` if the text cannot be had.
+    pub fn framing_explanation(&self, prompts: &PromptCatalogue) -> Result<Option<String>, PromptError> {
+        let format = match self.sender_format {
+            SenderFormat::None => return Ok(None),
+            SenderFormat::Prefix => "prefix",
+            SenderFormat::Xml => "xml",
         };
-        // With a time, as the experiments of issue 424 told it.
-        let marked = match (self.sender_format, self.message_times) {
-            (SenderFormat::None, _) => return None,
-            (SenderFormat::Prefix, false) => format!("begin with their sender's {sender} and a colon: \"{example}: ...\""),
-            (SenderFormat::Prefix, true) => format!("begin with their sender's {sender}, when it was written and a colon: \"{example} ({TIME_EXAMPLE}): ...\""),
-            (SenderFormat::Xml, false) => format!("are wrapped in an element naming their sender's {sender}: <message from=\"{example}\">...</message>"),
-            (SenderFormat::Xml, true) => format!("are wrapped in an element naming their sender's {sender} and when it was written: <message from=\"{example}\" at=\"{TIME_EXAMPLE}\">...</message>"),
+        let style = match self.sender_style {
+            SenderStyle::Handle => "handle",
+            SenderStyle::Name => "name",
         };
-        Some(format!("Messages of the others {marked}. Your own messages carry no such marker: answer without one, and never write a message for someone else."))
+        prompts.render(&format!("{CORE}.framing"), context! { format, style, times => self.message_times, time => TIME_EXAMPLE }).map(Some)
     }
 
     /// Gives every system message of `items` that does not lead them - a
@@ -463,6 +471,8 @@ pub struct ContextResolver<'a> {
     transcript: TranscriptSource<'a>,
     prompts: &'a Kept<String>,
     offered_tools: &'a Kept<Vec<ToolSet>>,
+    /// The texts of the notices it gives the model (issue 57).
+    catalogue: &'a PromptCatalogue,
 }
 
 /// What a `ContextResolver` reads the transcript a reference names from
@@ -493,9 +503,10 @@ type GivenPath<'a> = (Vec<ContextItem>, Vec<(&'a Node<TranscriptEntry>, Vec<Cont
 impl<'a> ContextResolver<'a> {
     /// The resolver over the data of `state`, its transcript as the state
     /// holds it: what the next call of its model and how full its context
-    /// is are resolved against - the head of its active branch.
-    pub fn of(state: &'a AgentChannelState) -> Self {
-        Self { transcript: TranscriptSource::Held(&state.transcript), prompts: &state.prompts, offered_tools: &state.offered_tools }
+    /// is are resolved against - the head of its active branch. Its
+    /// notices are worded by `catalogue`.
+    pub fn of(state: &'a AgentChannelState, catalogue: &'a PromptCatalogue) -> Self {
+        Self { transcript: TranscriptSource::Held(&state.transcript), prompts: &state.prompts, offered_tools: &state.offered_tools, catalogue }
     }
 
     /// The resolver over what was loaded from the store for an older
@@ -504,8 +515,9 @@ impl<'a> ContextResolver<'a> {
     /// transcript (`TranscriptStore::path`, issue 380), the `prompts` and
     /// the `offered_tools` it names (`TranscriptStore::named_by`, issue
     /// 383).
-    pub fn on_path(path: &'a [Node<TranscriptEntry>], prompts: &'a Kept<String>, offered_tools: &'a Kept<Vec<ToolSet>>) -> Self {
-        Self { transcript: TranscriptSource::Path(path), prompts, offered_tools }
+    /// Its notices are worded by `catalogue`.
+    pub fn on_path(path: &'a [Node<TranscriptEntry>], prompts: &'a Kept<String>, offered_tools: &'a Kept<Vec<ToolSet>>, catalogue: &'a PromptCatalogue) -> Self {
+        Self { transcript: TranscriptSource::Path(path), prompts, offered_tools, catalogue }
     }
 
     /// What the model of `agent` is given, or was given, for the message
@@ -517,15 +529,21 @@ impl<'a> ContextResolver<'a> {
     /// it names is not here - a transcript that is not a prefix of this
     /// one, a prompt or a set of tools that was never recorded, or a prompt
     /// whose entry is not in the prefix.
-    pub fn resolve(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Option<ResolvedContext> {
-        let (mut items, entries) = self.given_path(reference, turn, agent)?;
+    ///
+    /// # Errors
+    /// `PromptError` if the text of a notice cannot be had.
+    pub fn resolve(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Result<Option<ResolvedContext>, PromptError> {
+        let Some((mut items, entries)) = self.given_path(reference, turn, agent)? else { return Ok(None) };
         items.extend(entries.into_iter().flat_map(|(_, given)| given));
         reference.frame.profile.place_system_messages(&mut items);
         let tool_sets = match &reference.frame.tools {
-            Some(digest) => self.offered_tools.get(digest)?.clone(),
+            Some(digest) => match self.offered_tools.get(digest) {
+                Some(sets) => sets.clone(),
+                None => return Ok(None),
+            },
             None => Vec::new(),
         };
-        Some(ResolvedContext { reference: reference.clone(), items, tool_sets })
+        Ok(Some(ResolvedContext { reference: reference.clone(), items, tool_sets }))
     }
 
     /// Where each entry of the transcript `reference` names stands in what
@@ -546,8 +564,11 @@ impl<'a> ContextResolver<'a> {
     /// each entry, as `resolve` gives it, a message's reasoning only where
     /// its rule gives it back: on from each measured position, back from
     /// the first; from nothing if none is.
-    pub fn token_positions(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Option<(Vec<u64>, bool)> {
-        let (leading, entries) = self.given_path(reference, turn, agent)?;
+    ///
+    /// # Errors
+    /// As `resolve`.
+    pub fn token_positions(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Result<Option<(Vec<u64>, bool)>, PromptError> {
+        let Some((leading, entries)) = self.given_path(reference, turn, agent)? else { return Ok(None) };
         let size = |items: &[ContextItem]| items.iter().map(ContextItem::estimated_tokens).sum::<u64>();
         let added_from = entries.iter().rposition(|(node, _)| matches!(node.entry, TranscriptEntry::Compacted { .. })).map_or(0, |at| at + 1);
         let measured: Vec<Option<u64>> = entries.iter().enumerate()
@@ -570,16 +591,19 @@ impl<'a> ContextResolver<'a> {
             }
             positions[at + 1] = positions[at] + size(&entries[at].1);
         }
-        Some((positions, first.is_some()))
+        Ok(Some((positions, first.is_some())))
     }
 
     /// What the model of `agent` is given of the transcript `reference`
     /// names, in turn `turn`, entry by entry, with the prompt parts where
     /// they were placed - before `ModelProfile::place_system_messages`.
     /// `None` as for `resolve`, and if a part's entry is not on the path.
-    fn given_path(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Option<GivenPath<'a>> {
+    fn given_path(&self, reference: &ContextRef, turn: TurnId, agent: ActorId) -> Result<Option<GivenPath<'a>>, PromptError> {
         let prefix = match reference.transcript.as_ref() {
-            Some(digest) => self.transcript.prefix(digest)?,
+            Some(digest) => match self.transcript.prefix(digest) {
+                Some(prefix) => prefix,
+                None => return Ok(None),
+            },
             None => Vec::new(),
         };
         let path: Vec<_> = as_they_stand(prefix).collect();
@@ -602,7 +626,7 @@ impl<'a> ContextResolver<'a> {
                 .map(|p| Some(ContextItem::Prompt { digest: p.text, role: p.role, text: self.prompts.get(&p.text)?.clone(), classification: p.classification.clone() }))
                 .collect()
         };
-        let leading = after_entry(None)?;
+        let Some(leading) = after_entry(None) else { return Ok(None) };
         let mut placed = leading.len();
         let mut entries = Vec::with_capacity(path.len());
         for (node, message) in path {
@@ -619,18 +643,18 @@ impl<'a> ContextResolver<'a> {
                 given.push(ContextItem::Conversation { message: profile.given(message, agent, in_turn, reference.frame.time_zone) });
             }
             if let TranscriptEntry::TurnGivenUp { turn_id, reason, at } = &node.entry {
-                given.push(ContextItem::Conversation { message: profile.given(given_up_notice(*turn_id, reason, *at), agent, false, reference.frame.time_zone) });
+                given.push(ContextItem::Conversation { message: profile.given(given_up_notice(self.catalogue, *turn_id, reason, *at)?, agent, false, reference.frame.time_zone) });
             }
-            if let Some(notice) = participant_notice(&node.entry, &node.digest, agent, profile.sender_style) {
+            if let Some(notice) = participant_notice(self.catalogue, &node.entry, &node.digest, agent, profile.sender_style)? {
                 given.push(ContextItem::Conversation { message: profile.given(notice, agent, false, reference.frame.time_zone) });
             }
-            let parts = after_entry(Some(node.digest))?;
+            let Some(parts) = after_entry(Some(node.digest)) else { return Ok(None) };
             placed += parts.len();
             given.extend(parts);
             entries.push((node, given));
         }
         // Every part was placed, none after what is not there.
-        (placed == reference.frame.prompts.len()).then_some((leading, entries))
+        Ok((placed == reference.frame.prompts.len()).then_some((leading, entries)))
     }
 }
 
@@ -647,74 +671,60 @@ impl ContextItem {
 
 /// What the model is told of the turn `turn`, given up at `at` for `reason`
 /// (issue 258), where its end stands: why, and that what its tools did stays
-/// done. A fixed text of the runtime's, which says nothing of the
-/// conversation; its id is the turn's, so that it is the same each time it
-/// is resolved.
-fn given_up_notice(turn: TurnId, reason: &GivenUpReason, at: DateTime<Utc>) -> Message {
-    let withheld = match reason {
-        GivenUpReason::Lowered { .. } => " What it read and said is withheld; only which tools it called is given.",
-        GivenUpReason::Failed { .. } | GivenUpReason::Left | GivenUpReason::Retried | GivenUpReason::CallLimit { .. } => "",
-    };
-    Message {
+/// done, worded by `prompts` (`core.given_up`). A fixed text of the
+/// runtime's, which says nothing of the conversation; its id is the turn's,
+/// so that it is the same each time it is resolved.
+fn given_up_notice(prompts: &PromptCatalogue, turn: TurnId, reason: &GivenUpReason, at: DateTime<Utc>) -> Result<Message, PromptError> {
+    let cause = prompts.render(&reason.cause_key(), ())?;
+    let lowered = matches!(reason, GivenUpReason::Lowered { .. });
+    Ok(Message {
         id: MessageId(turn.0),
         timestamp: at,
         role: MessageRole::System,
-        content: Some(format!(
-            "Your previous turn was given up before it was complete, because {}.{withheld} What its tool calls did stays done: do not repeat them unless that is what is wanted.",
-            reason.cause())),
+        content: Some(prompts.render(&format!("{CORE}.given_up"), context! { cause, lowered })?),
         internal: true,
         turn_id: Some(turn),
         ..Message::new(Classification::PUBLIC)
-    }
+    })
 }
 
 /// What the model of `agent` is told of `entry`, whose digest is `digest`,
 /// if someone joined or left the channel (issue 408): who, and who made
 /// them, named in `style` as the senders of messages are - the agent itself
-/// as "you". A fixed text of the runtime's, marked as the channel's notice,
-/// so that it reads as no participant's, given as a system message where
-/// the model keeps one (`ModelProfile::place_system_messages`); its id is
-/// the entry's, so that it is the same each time it is resolved. `None` for
-/// any other entry.
-fn participant_notice(entry: &TranscriptEntry, digest: &Digest, agent: ActorId, style: SenderStyle) -> Option<Message> {
-    let named = |actor: ActorId, name: &str, you: &str| if actor == agent { you.to_string() } else { style.of(name) };
-    let was = |participant: ActorId| if participant == agent { "were" } else { "was" };
-    let notice = |text: String, at: DateTime<Utc>| Message {
+/// as "you" -, worded by `prompts` (`core.participant_joined`, `…_left`). A
+/// fixed text of the runtime's, marked as the channel's notice, so that it
+/// reads as no participant's, given as a system message where the model
+/// keeps one (`ModelProfile::place_system_messages`); its id is the
+/// entry's, so that it is the same each time it is resolved. `None` for any
+/// other entry.
+fn participant_notice(prompts: &PromptCatalogue, entry: &TranscriptEntry, digest: &Digest, agent: ActorId, style: SenderStyle) -> Result<Option<Message>, PromptError> {
+    let (key, participant, name, by, by_name, at) = match entry {
+        TranscriptEntry::ParticipantJoined { participant, name, by, by_name, at } => ("participant_joined", participant, name, by, by_name, at),
+        TranscriptEntry::ParticipantLeft { participant, name, by, by_name, at } => ("participant_left", participant, name, by, by_name, at),
+        _ => return Ok(None),
+    };
+    let text = prompts.render(&format!("{CORE}.{key}"), context! {
+        participant => style.of(name),
+        you => *participant == agent,
+        by => style.of(by_name),
+        by_you => *by == agent,
+        by_self => by == participant,
+        by_system => *by == ActorId::System,
+    })?;
+    Ok(Some(Message {
         id: MessageId(digest.as_uuid()),
-        timestamp: at,
+        timestamp: *at,
         role: MessageRole::System,
-        content: Some(format!("Channel notice: {text}")),
+        content: Some(text),
         sender_id: ActorId::System,
         ..Message::new(Classification::PUBLIC)
-    };
-    match entry {
-        TranscriptEntry::ParticipantJoined { participant, name, by, by_name, at } => {
-            let text = if by == participant {
-                format!("{} joined the channel.", named(*participant, name, "You"))
-            } else if *by == ActorId::System {
-                format!("{} {} added to the channel.", named(*participant, name, "You"), was(*participant))
-            } else {
-                format!("{} added {} to the channel.", named(*by, by_name, "You"), named(*participant, name, "you"))
-            };
-            Some(notice(text, *at))
-        }
-        TranscriptEntry::ParticipantLeft { participant, name, by, by_name, at } => {
-            let text = if by == participant {
-                format!("{} left the channel.", named(*participant, name, "You"))
-            } else if *by == ActorId::System {
-                format!("{} {} removed from the channel.", named(*participant, name, "You"), was(*participant))
-            } else {
-                format!("{} removed {} from the channel.", named(*by, by_name, "You"), named(*participant, name, "you"))
-            };
-            Some(notice(text, *at))
-        }
-        _ => None,
-    }
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prompt_catalogue::core;
     use chrono::{TimeZone as _, Utc};
     use crate::agent::AgentId;
     use crate::digest::prompt;
@@ -781,10 +791,10 @@ mod tests {
 
         let profile = ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() };
         assert_eq!(profile.given(said(alice, "Alice", MessageRole::User, "hi"), agent, false, Default::default()).content.as_deref(), Some("@alice: hi"), "the profile applies it");
-        assert_eq!(ModelProfile::default().framing_explanation(), None, "nothing to explain where nothing is marked");
-        assert!(profile.framing_explanation().is_some_and(|text| text.contains("\"@handle: ...\"") && text.contains("Your own messages carry no such marker")));
+        assert_eq!(ModelProfile::default().framing_explanation(core()).unwrap(), None, "nothing to explain where nothing is marked");
+        assert!(profile.framing_explanation(core()).unwrap().is_some_and(|text| text.contains("\"@handle: ...\"") && text.contains("Your own messages carry no such marker")));
         let xml = ModelProfile { sender_format: SenderFormat::Xml, sender_style: SenderStyle::Name, ..ModelProfile::default() };
-        assert!(xml.framing_explanation().is_some_and(|text| text.contains("<message from=\"Name\">...</message>")));
+        assert!(xml.framing_explanation(core()).unwrap().is_some_and(|text| text.contains("<message from=\"Name\">...</message>")));
         let recorded: ModelProfile = serde_json::from_value(serde_json::json!({ "reasoning_history": "never", "system_messages": "anywhere", "message_times": false })).unwrap();
         assert_eq!(recorded.sender_format, SenderFormat::None, "a context recorded before was given without markers");
     }
@@ -805,7 +815,7 @@ mod tests {
         let without = ModelProfile { sender_format: SenderFormat::Xml, ..ModelProfile::default() };
         assert_eq!(without.given(said(alice, "hi"), agent, false, berlin).content.as_deref(), Some("<message from=\"@alice\">hi</message>"), "without the switch");
 
-        let explained = |sender_format| ModelProfile { sender_format, message_times: true, ..ModelProfile::default() }.framing_explanation().unwrap_or_default();
+        let explained = |sender_format| ModelProfile { sender_format, message_times: true, ..ModelProfile::default() }.framing_explanation(core()).unwrap().unwrap_or_default();
         assert!(explained(SenderFormat::Xml).contains("<message from=\"@handle\" at=\"Sun 18 Oct 2026, 14:32\">...</message>"), "{}", explained(SenderFormat::Xml));
         assert!(explained(SenderFormat::Prefix).contains("\"@handle (Sun 18 Oct 2026, 14:32): ...\""), "{}", explained(SenderFormat::Prefix));
         assert_eq!(TIME_EXAMPLE, berlin.format(at), "the example is written as the times are");
@@ -823,11 +833,11 @@ mod tests {
         state.transcript.push(Message { sender_id: agent, role: MessageRole::Assistant, ..text("answer") });
         let reference = |sender_format| ContextRef { transcript: state.transcript.digest(), frame: FrameRef { profile: ModelProfile { sender_format, ..ModelProfile::default() }, ..FrameRef::default() } };
 
-        let resolver = ContextResolver::of(&state);
-        let seen = resolver.resolve(&reference(SenderFormat::Prefix), TurnId::new(), agent).expect("resolved");
+        let resolver = ContextResolver::of(&state, core());
+        let seen = resolver.resolve(&reference(SenderFormat::Prefix), TurnId::new(), agent).unwrap().expect("resolved");
         assert_eq!(contents(&seen.items), ["@alice: question", "answer"], "what the model is given, and the context panel shows");
         assert_eq!(state.transcript.messages()[0].content, alice.content, "the transcript keeps it as received");
-        let seen = resolver.resolve(&reference(SenderFormat::None), TurnId::new(), agent).expect("resolved");
+        let seen = resolver.resolve(&reference(SenderFormat::None), TurnId::new(), agent).unwrap().expect("resolved");
         assert_eq!(contents(&seen.items), ["question", "answer"]);
     }
 
@@ -849,8 +859,8 @@ mod tests {
         state.transcript.record(left(bob, "Bob", ActorId::System, "system"));
         let reference = ContextRef { transcript: state.transcript.digest(), frame: FrameRef { profile: ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() }, ..FrameRef::default() } };
 
-        let resolver = ContextResolver::of(&state);
-        let seen = resolver.resolve(&reference, TurnId::new(), agent).expect("resolved");
+        let resolver = ContextResolver::of(&state, core());
+        let seen = resolver.resolve(&reference, TurnId::new(), agent).unwrap().expect("resolved");
         assert_eq!(contents(&seen.items), [
             "@alice: hello",
             "Channel notice: @alice added @bob to the channel.",
@@ -862,9 +872,9 @@ mod tests {
             "Channel notice: @bob was removed from the channel.",
         ], "in the order it happened, unmarked by any participant");
         assert!(seen.items[1..].iter().all(|item| item.role() == MessageRole::User), "not as a system message, which the model would move (issue 49)");
-        let again = resolver.resolve(&reference, TurnId::new(), agent).expect("resolved");
+        let again = resolver.resolve(&reference, TurnId::new(), agent).unwrap().expect("resolved");
         assert_eq!(ids(&seen.items), ids(&again.items), "the same each time it is resolved");
-        let told: Vec<_> = reference.frame.profile.given_messages(&state.transcript, agent, Default::default()).into_iter().filter_map(|m| m.content).collect();
+        let told: Vec<_> = reference.frame.profile.given_messages(core(), &state.transcript, agent, Default::default()).unwrap().into_iter().filter_map(|m| m.content).collect();
         assert_eq!(told, contents(&seen.items), "what a remote agent is given, too");
     }
 
@@ -900,17 +910,17 @@ mod tests {
             },
         };
 
-        let resolver = ContextResolver::of(&state);
+        let resolver = ContextResolver::of(&state, core());
         let turn = TurnId::new();
-        let seen = resolver.resolve(&reference, turn, ActorId::None).expect("everything it names is here");
+        let seen = resolver.resolve(&reference, turn, ActorId::None).unwrap().expect("everything it names is here");
         assert_eq!(contents(&seen.items), ["prompt:system", "earlier", "prompt:notes", "question"]);
 
         let mut elsewhere = reference.clone();
         elsewhere.frame.prompts[1].after = Some(prompt("not an entry"));
-        assert!(resolver.resolve(&elsewhere, turn, ActorId::None).is_none(), "a part after an entry that is not in the prefix");
+        assert!(resolver.resolve(&elsewhere, turn, ActorId::None).unwrap().is_none(), "a part after an entry that is not in the prefix");
         let mut forgotten = reference;
         forgotten.frame.prompts[0].text = prompt("never recorded");
-        assert!(resolver.resolve(&forgotten, turn, ActorId::None).is_none(), "a part whose text was not kept");
+        assert!(resolver.resolve(&forgotten, turn, ActorId::None).unwrap().is_none(), "a part whose text was not kept");
     }
 
     #[test]
@@ -918,7 +928,7 @@ mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let measure = |state: &AgentChannelState| {
             let turn = state.turn.as_ref().unwrap();
-            ContextResolver::of(state).token_positions(&turn.work.context, turn.work.turn_id, agent).unwrap()
+            ContextResolver::of(state, core()).token_positions(&turn.work.context, turn.work.turn_id, agent).unwrap().unwrap()
         };
         // Its reasoning: 100 tokens, as many as it produced in all.
         let call = |prompt: u64, content: &str| Message { sender_id: agent, role: MessageRole::Assistant, prompt_tokens: Some(prompt), completion_tokens: Some(101), reasoning: Some("r".repeat(400)), ..text(content) };
@@ -937,7 +947,7 @@ mod tests {
 
         let kept_from = state.transcript.entries().find(|n| n.entry.message().is_some_and(|m| m.id == first.id)).map(|n| n.digest);
         let summary = Message { sender_id: agent, prompt_tokens: Some(500), completion_tokens: Some(8), ..text("summary") };
-        state.compact(agent, vec![(summary, None)], kept_from).expect("compacted");
+        state.compact(agent, vec![(summary, None)], kept_from, core()).expect("compacted");
         assert_eq!(measure(&state), (vec![0, 2, 103, 113, 113], false), "neither the summary's call nor the copy measure the new branch, and where the compaction's part ends gives nothing");
 
         state.said(call(60, "done"));
@@ -985,7 +995,7 @@ mod tests {
         let second = state.said(own("second"));
 
         let (next, turn_id) = state.turn.as_ref().map(|t| (t.work.context.clone(), t.work.turn_id)).unwrap();
-        let current = ContextResolver::of(&state).resolve(&next, turn_id, agent).expect("the transcript holds the turn's messages");
+        let current = ContextResolver::of(&state, core()).resolve(&next, turn_id, agent).unwrap().expect("the transcript holds the turn's messages");
         assert_eq!(contents(&current.items), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2", "second"]);
         let reasoning = current.items.iter().map(|item| matches!(item, ContextItem::Conversation { message } if message.reasoning.is_some())).collect::<Vec<_>>();
         assert_eq!(reasoning, [false, false, false, true, false, true], "the turn's own reasoning, not an earlier turn's");
@@ -995,7 +1005,7 @@ mod tests {
         // while the turn is under way and once it ended.
         let seen = |state: &AgentChannelState, message: &Message| {
             let context = state.context_of(message).expect("sent with what it was produced from");
-            contents(&ContextResolver::of(state).resolve(&context, turn_id, agent).expect("everything it names is here").items)
+            contents(&ContextResolver::of(state, core()).resolve(&context, turn_id, agent).unwrap().expect("everything it names is here").items)
         };
         assert_eq!(seen(&state, &second), ["earlier", "question", "prompt:step 1", "first", "prompt:step 2"]);
         assert_eq!(state.transcript.digest(), next.transcript, "the turn's context names the transcript's head");
@@ -1045,16 +1055,16 @@ mod tests {
     fn the_tools_offered_are_resolved_from_their_set() {
         use crate::tool::ToolParameters;
         let mut state = AgentChannelState::default();
-        let echo = Tool { name: "echo".to_string(), description: "echoes".to_string(), parameters: ToolParameters::object([("text", ToolParameters::string("what"))], ["text"]), requires_approval: true, visibility: Default::default(), classification: None, presentation: Default::default() };
+        let echo = Tool { name: "echo".to_string(), description: "echoes".to_string(), parameters: ToolParameters::object([("text", ToolParameters::string().described("what"))], ["text"]), requires_approval: true, visibility: Default::default(), classification: None, presentation: Default::default() };
         let offered = vec![ToolSet::new("echo_tool", "echoes", vec![echo])];
         let digest = digest::tool_sets(&offered);
         state.offered_tools.keep(digest, || offered.clone());
 
-        let resolver = ContextResolver::of(&state);
+        let resolver = ContextResolver::of(&state, core());
         let with = |tools| ContextRef { frame: FrameRef { tools, ..FrameRef::default() }, ..ContextRef::default() };
-        assert_eq!(resolver.resolve(&with(Some(digest)), TurnId::new(), ActorId::None).expect("the set is kept").tool_sets, offered);
-        assert!(resolver.resolve(&with(None), TurnId::new(), ActorId::None).expect("no tools offered").tool_sets.is_empty());
-        assert!(resolver.resolve(&with(Some(prompt("never recorded"))), TurnId::new(), ActorId::None).is_none(), "a set that was not kept");
+        assert_eq!(resolver.resolve(&with(Some(digest)), TurnId::new(), ActorId::None).unwrap().expect("the set is kept").tool_sets, offered);
+        assert!(resolver.resolve(&with(None), TurnId::new(), ActorId::None).unwrap().expect("no tools offered").tool_sets.is_empty());
+        assert!(resolver.resolve(&with(Some(prompt("never recorded"))), TurnId::new(), ActorId::None).unwrap().is_none(), "a set that was not kept");
     }
 
     #[test]
@@ -1070,7 +1080,7 @@ mod tests {
             state.turn.as_mut().unwrap().work.context.frame.prompts.push(PromptRef { text: prompt("system prompt"), role: MessageRole::System, after: None, classification: None });
             place(&mut state, MessageRole::System, "instruction");
             let next = state.turn.as_ref().unwrap().work.context.clone();
-            ContextResolver::of(&state).resolve(&next, TurnId::new(), ActorId::None).expect("everything it names is here")
+            ContextResolver::of(&state, core()).resolve(&next, TurnId::new(), ActorId::None).unwrap().expect("everything it names is here")
                 .items.iter().map(ContextItem::role).collect::<Vec<_>>()
         };
         use MessageRole::{System, User};
@@ -1098,8 +1108,8 @@ mod tests {
         let notes = PromptRef { text: prompt("notes"), role: MessageRole::User, after: after_question, classification: None };
         let now = ContextRef { transcript: state.transcript.digest(), frame: FrameRef { prompts: vec![notes], ..FrameRef::default() } };
 
-        let resolver = ContextResolver::of(&state);
-        assert_eq!(contents(&resolver.resolve(&then, TurnId::new(), ActorId::None).expect("resolved").items), ["question", "aside"], "what the model saw then");
-        assert_eq!(contents(&resolver.resolve(&now, TurnId::new(), ActorId::None).expect("resolved").items), ["question, corrected", "prompt:notes"], "what stands now");
+        let resolver = ContextResolver::of(&state, core());
+        assert_eq!(contents(&resolver.resolve(&then, TurnId::new(), ActorId::None).unwrap().expect("resolved").items), ["question", "aside"], "what the model saw then");
+        assert_eq!(contents(&resolver.resolve(&now, TurnId::new(), ActorId::None).unwrap().expect("resolved").items), ["question, corrected", "prompt:notes"], "what stands now");
     }
 }
