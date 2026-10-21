@@ -103,8 +103,9 @@ impl Turn<'_> {
     /// message is kept all the same (`Turn::say`).
     async fn abandon_tool_calls(&mut self, end: TurnEnd<'_>, output: &dyn EventSender) -> Vec<ToolCallState> {
         let internal = self.in_plan_step();
+        let texts = self.situation().texts();
         let Some(turn) = self.agent_channel_state.turn.as_mut() else { return Vec::new() };
-        let (abandoned, message) = ToolCalls::new(turn, &self.agent_name, self.runtime.prompts()).abandon(end, internal);
+        let (abandoned, message) = ToolCalls::new(turn, &self.agent_name, texts).abandon(end, internal);
         if let Some(message) = message {
             if let Err(e) = self.say(message, output).await {
                 warn!("Agent {}: the answers to the calls it abandoned were not published: {:#}", self.agent_id, e);

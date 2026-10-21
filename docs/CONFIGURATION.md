@@ -53,10 +53,12 @@ The persistence (`persistence`) is named the same way, but is the core's alone.
 | `approvals` | What the system restricts of tool calls everywhere: `rules`, each with a `matcher` (`tool`, `*` for every one, and optionally `arguments`, per argument a regular expression, `{ "shell": [words] }` for a command line, or `{ "equals": value }` for the whole value), a `decision` (`ask` or `deny` - the system never allows) and optionally `expires_at`. See [APPROVALS.md](APPROVALS.md#rules-of-a-place). | none |
 | `workspaces` | Where the files of workspaces lie: `max_file_bytes`, the largest file a person may put into one, and `storage`, the storages by name, each a [backend](#backends) - see [Workspace storages](#workspace-storages). A workspace names its storage when it is made. | 50 MiB; no storage - no workspace can be made |
 | `artifacts` | The section of the plugin `caelumora-artifacts` (issue 328): where the content of published artifacts lies: `max_bytes`, the largest version; `storage`, the storages by name, each a [backend](#backends) - so far `type: local`, a directory per artifact under `root`, with `destination` (the most an artifact there may be classified; no bound unless given); and `publish_to`, the storage new artifacts are made in, needed where there are several. An artifact's later versions go where it was made. See [STORAGE.md](STORAGE.md). | 50 MiB; no storage - nothing can be published |
-| `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`LLMClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults, and the program's model ([The model](#the-model)) |
+| `prompts` | The variants of the texts given to models, each by its name and the directory of its files - `default` overriding the defaults for every model. See [The texts given to models](#the-texts-given-to-models). | none - the texts compiled in |
+| `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`LLMClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults, and the program's model ([The model](#the-model)) |
 
 The approval rules and the compartments are checked when the configuration is read; the backends,
-`component_defaults` and the sections of the plugins when the runtime is built.
+`component_defaults`, the sections of the plugins and the variants of `prompts` when the runtime is
+built.
 
 ### Workspace storages
 
@@ -78,6 +80,36 @@ The two Open Terminal storages are the plugin `caelumora-open-terminal`, which `
 
 **`open_terminal_docker` needs the Docker daemon of Caelumora's environment, whose socket is root on
 the host.**
+
+## The texts given to models
+
+What the runtime tells a model in prose - its prompt parts, the descriptions of its tools, what it
+is told of a tool call - are the texts of the prompt catalogue (issue 57, see
+[AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)), compiled in, one file per namespace: the
+core's (`caelumora-model/src/prompts.yaml`), the agents' (`caelumora-agents/src/prompts.yaml`), and
+those of the plugins (`skills`, `workspace_tools`, `artifacts`, `decision`, each in its
+`src/prompts.yaml`). `prompts` names variants of them:
+
+```yaml
+prompts:
+  default: prompts/default    # overrides the defaults for every model
+  gemma4: prompts/gemma4
+```
+
+A variant is a directory with a file per namespace it changes, named after the namespace -
+`agents.yaml`, `core.yaml`, `skills.yaml` - and of the form of the namespace's own file, whose
+entries it replaces one by one: a copy of that file, changed where it is to say something else,
+or only the entries that differ. What a file leaves out, and a namespace without a file, stay as
+they are; other files than `.yaml` ones are not read. A variant falls back to `default`, `default`
+to the texts compiled in. A variant's name is lower case letters, digits, `_` and `-`; a path is
+read as `seed` is, from where the program runs. Which variant a model is given, its component
+names (`prompt_texts` of `ollama_client`, `a2a_agent` and `decision_policy`): one that is not
+configured keeps the component from being built.
+
+The variants are read when the runtime is built, after every plugin added its texts, and checked
+whole: a file of no namespace, a text the defaults do not have, a template that does not parse
+and a value a template names that its default is not given keep the runtime from starting, named
+by the variant, the namespace and the key.
 
 ## The model
 
@@ -114,6 +146,7 @@ component_defaults:
 | `sender_format` | How the model is told who wrote a message of another participant: `none`, `prefix` or `xml` (see [AGENT-TURN.md](AGENT-TURN.md#who-said-what)) | `prefix` |
 | `sender_style` | By which name a sender is marked: `handle` or `name` | `handle` |
 | `message_times` | Whether the marker says when the message was written, in the session's time zone (see [AGENT-TURN.md](AGENT-TURN.md#who-said-what)) | `true` |
+| `prompt_texts` | Which variant of the texts the model is given (see [The texts given to models](#the-texts-given-to-models)); one not configured keeps the agent from being built | the default |
 | `context_size` | How many tokens the model's context holds, sent to Ollama as `num_ctx`; left out, Ollama's default applies - which may be far below what the model was trained for, and Ollama cuts a longer prompt off without saying so | left out |
 
 An unknown parameter is refused, and the agent does not start. Which values suit which model, as

@@ -284,8 +284,9 @@ impl<'a> Turn<'a> {
     /// needs the whole turn in between.
     pub(crate) fn tool_calls(&mut self) -> ToolCalls<'_> {
         debug_assert!(self.agent_channel_state.turn.is_some(), "a turn's working state changed while no turn runs");
+        let texts = self.situation().texts();
         let turn = self.agent_channel_state.turn.get_or_insert_with(TurnState::default);
-        ToolCalls::new(turn, &self.agent_name, self.runtime.prompts())
+        ToolCalls::new(turn, &self.agent_name, texts)
     }
 
     /// Whether the turn was given or read private knowledge of the agent -
@@ -403,7 +404,7 @@ mod tests {
     /// `state`; `None` for a message it did not produce.
     pub(super) fn seen(state: &AgentChannelState, agent: AgentId, said: &Message) -> Option<Vec<ContextItem>> {
         let reference = state.context_of(said)?;
-        Some(ContextResolver::of(state, &testing::prompts()).resolve(&reference, said.turn_id?, ActorId::Agent(agent)).expect("worded")?.items)
+        Some(ContextResolver::of(state, &testing::catalogue()).resolve(&reference, said.turn_id?, ActorId::Agent(agent)).expect("worded")?.items)
     }
 
     #[test]

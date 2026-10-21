@@ -1,12 +1,12 @@
 //! The `stop_tool` component: tools with which an agent ends its part in a
 //! conversation - `stop`, `bye` and `silence`.
 
-use crate::prompt::NAMESPACE;
+use crate::prompt::{NAMESPACE, texts_of, writing_for_the_model};
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
-use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::actor::ActorState;
 use caelumora_model::tool::{Tool, ToolVisibility, ToolParameters};
@@ -33,7 +33,7 @@ impl StopToolProvider {
     ///
     /// # Errors
     /// `PromptError` if one of them cannot be had.
-    pub fn new(prompts: &PromptCatalogue) -> Result<Self, PromptError> {
+    pub fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
         let tool = |name: &str| described(prompts, NAMESPACE, STOP_TOOL_KIND, Tool {
             name: name.to_string(),
             description: String::new(),
@@ -79,11 +79,12 @@ impl ToolProvider for StopToolProvider {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(STOP_TOOL_KIND).provides::<dyn ToolProvider>().uses::<PromptCatalogue>(),
-        |_descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(STOP_TOOL_KIND).provides::<dyn ToolProvider>()),
+        |_descriptor, context| async move {
+            let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(StopToolProvider::new(context.service::<PromptCatalogue>()?)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(StopToolProvider::new(&texts)?));
             Ok(facets)
         },
     );

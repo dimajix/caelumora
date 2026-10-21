@@ -26,8 +26,8 @@ use crate::components::notes::NOTE_PRESENTATION;
 use crate::notes::{AgentNotes, NoteKind};
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use crate::situation::Situation;
 use caelumora_runtime::view::PrivateNotesElsewhere;
 use crate::tool::{described, classification_argument, id_argument, reclassify_parameters, tool_text, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
@@ -60,7 +60,7 @@ pub struct PrivateNotesComponent {
     /// What may flow where (issue 304): what it recalls, how it reclassifies.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     /// The texts of its prompt part (issue 57).
-    prompts: Arc<PromptCatalogue>,
+    prompts: PromptTexts,
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them.
     description: String,
@@ -97,7 +97,7 @@ impl PrivateNotesComponent {
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
-    pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
+    pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, prompts: PromptTexts) -> Result<Self, PromptError> {
         let tools = vec![
             described(&prompts, NAMESPACE, PRIVATE_NOTES_KIND, Tool {
                 name: WRITE_PRIVATE_NOTE_TOOL_NAME.to_string(),
@@ -222,7 +222,7 @@ impl PromptProvider for PrivateNotesComponent {
 /// (`own`) and of others, channels without notes left out; empty if there
 /// are none. Notes of other channels cannot be changed here, so they go
 /// unnumbered (issue 60).
-fn render(prompts: &PromptCatalogue, own: &[Note], elsewhere: &[PrivateNotesElsewhere]) -> Result<String, PromptError> {
+fn render(prompts: &PromptTexts, own: &[Note], elsewhere: &[PrivateNotesElsewhere]) -> Result<String, PromptError> {
     let own: Vec<_> = own.iter().map(|n| context! { id => n.id.to_string(), text => n.text }).collect();
     let elsewhere: Vec<_> = elsewhere.iter()
         .filter(|c| !c.notes.is_empty())
@@ -235,13 +235,14 @@ fn render(prompts: &PromptCatalogue, own: &[Note], elsewhere: &[PrivateNotesElse
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(PRIVATE_NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn AccessPolicy>().uses::<dyn ConfidentialityPolicy>().uses::<PromptCatalogue>(),
-        |_descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(PRIVATE_NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn AccessPolicy>().uses::<dyn ConfidentialityPolicy>()),
+        |_descriptor, context| async move {
+            let texts = texts_of(&context).await?;
             let component = Arc::new(PrivateNotesComponent::new(
                 Arc::clone(context.service::<dyn AccessPolicy>()?),
                 Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
-                Arc::clone(context.service::<PromptCatalogue>()?),
+                texts,
             )?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<PrivateNotesComponent>::clone(&component));

@@ -965,6 +965,7 @@ only through a `ref` to preconfigured components, while a template may write it.
 | `destination` | What the server is cleared for | `public` |
 | `sender_format` | How the model is told who said what: `none`, `prefix` or `xml` | `prefix` |
 | `sender_style` | By which name a sender is marked: `handle` or `name` | `handle` |
+| `prompt_texts` | Which variant of its questions the model is asked (see [CONFIGURATION.md](CONFIGURATION.md#the-texts-given-to-models)) | the default |
 
 What the channel delivers is what its rule and the moderator's `Routing` say, and nothing else; it
 has no broadcast of its own. Nothing goes back to the actor that sent an event but why it was

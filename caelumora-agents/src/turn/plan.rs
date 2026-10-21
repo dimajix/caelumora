@@ -7,7 +7,7 @@ use caelumora_model::actor::ActorEvent;
 use caelumora_model::digest::{prompt, Digest};
 use caelumora_model::message::MessageRole;
 use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use crate::prompt::NAMESPACE;
 use std::cmp::Ordering;
 use serde::Serialize;
@@ -63,9 +63,10 @@ impl Turn<'_> {
     /// `PromptError` if the instruction cannot be had; nothing changes then.
     pub(crate) fn advance_plan(&mut self, next: usize) -> Result<Option<ActorEvent>, PromptError> {
         let Some(plan) = self.plan().map(|state| state.plan.clone()) else { return Ok(None) };
+        let texts = self.situation().texts();
         let instruction = match plan.steps.get(next) {
-            Some(step) => plan_step_instruction(self.runtime.prompts(), next + 1, plan.steps.len(), step)?,
-            None => plan_finalize_instruction(self.runtime.prompts(), &plan)?,
+            Some(step) => plan_step_instruction(&texts, next + 1, plan.steps.len(), step)?,
+            None => plan_finalize_instruction(&texts, &plan)?,
         };
         self.count_model_calls_anew();
         self.place_turn_prompt(MessageRole::System, instruction);
@@ -124,7 +125,7 @@ impl Turn<'_> {
     /// `PromptError` if one of them cannot be had.
     pub(super) fn plan_wording(&self) -> Result<Option<PlanWording>, PromptError> {
         let Some(PlanState { plan, progress }) = self.plan() else { return Ok(None) };
-        let prompts = self.runtime.prompts();
+        let prompts = &self.situation().texts();
         let texts = plan_texts(prompts, plan)?.iter().map(|text| prompt(text)).collect();
         Ok(Some((texts, plan_overview_instruction(prompts, plan, *progress)?)))
     }
@@ -161,18 +162,18 @@ pub(super) type PlanWording = (HashSet<Digest>, String);
 
 /// The text `key` of `prompts` for a plan (issue 57), rendered with
 /// `values`.
-fn plan_text(prompts: &PromptCatalogue, key: &str, values: impl Serialize) -> Result<String, PromptError> {
+fn plan_text(prompts: &PromptTexts, key: &str, values: impl Serialize) -> Result<String, PromptError> {
     prompts.render(&format!("{NAMESPACE}.plan.{key}"), values)
 }
 
 /// The instruction to work on step `step_number` of `total_steps`.
-fn plan_step_instruction(prompts: &PromptCatalogue, step_number: usize, total_steps: usize, step: &PlanStep) -> Result<String, PromptError> {
+fn plan_step_instruction(prompts: &PromptTexts, step_number: usize, total_steps: usize, step: &PlanStep) -> Result<String, PromptError> {
     plan_text(prompts, "step", context! { number => step_number, total => total_steps, description => step.description })
 }
 
 /// The instruction to write the final answer once every step of `plan` is
 /// done.
-fn plan_finalize_instruction(prompts: &PromptCatalogue, plan: &Plan) -> Result<String, PromptError> {
+fn plan_finalize_instruction(prompts: &PromptTexts, plan: &Plan) -> Result<String, PromptError> {
     plan_text(prompts, "finalize", context! { steps => plan.steps.iter().map(|s| s.description.as_str()).collect::<Vec<_>>() })
 }
 
@@ -180,7 +181,7 @@ fn plan_finalize_instruction(prompts: &PromptCatalogue, plan: &Plan) -> Result<S
 /// marked done, under way or to do, then the instruction for the step under
 /// way - or, finalizing, the instruction to write the final answer, which
 /// recaps the steps itself.
-fn plan_overview_instruction(prompts: &PromptCatalogue, plan: &Plan, progress: PlanProgress) -> Result<String, PromptError> {
+fn plan_overview_instruction(prompts: &PromptTexts, plan: &Plan, progress: PlanProgress) -> Result<String, PromptError> {
     let PlanProgress::Step(current) = progress else { return plan_finalize_instruction(prompts, plan) };
     let Some(step) = plan.steps.get(current) else { return plan_finalize_instruction(prompts, plan) };
     let steps: Vec<_> = plan.steps.iter()
@@ -200,7 +201,7 @@ fn plan_overview_instruction(prompts: &PromptCatalogue, plan: &Plan, progress: P
 
 /// Every text `plan` is given to the model as: each step's instruction,
 /// the one to finalize, and its overview at each step.
-fn plan_texts(prompts: &PromptCatalogue, plan: &Plan) -> Result<Vec<String>, PromptError> {
+fn plan_texts(prompts: &PromptTexts, plan: &Plan) -> Result<Vec<String>, PromptError> {
     let total = plan.steps.len();
     let mut texts = Vec::with_capacity(2 * total + 1);
     for (i, step) in plan.steps.iter().enumerate() {

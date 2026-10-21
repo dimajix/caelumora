@@ -21,7 +21,7 @@ use caelumora_model::actor::{ActorId, RequestReason};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ContextResolver, ModelProfile};
-use caelumora_model::prompt_catalogue::PromptError;
+use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::ToolSet;
@@ -171,6 +171,13 @@ impl<'a> Situation<'a> {
     /// prompt part tells of how what it is given is marked.
     pub fn profile(&self) -> ModelProfile {
         self.work.context.frame.profile
+    }
+
+    /// The texts the work words for its model itself (issue 57) - the
+    /// results of tool calls, a plan's instructions -, in the variant its
+    /// profile names: its model's, or the one a turn resumed was begun with.
+    pub fn texts(&self) -> PromptTexts {
+        self.profile().texts(self.runtime.prompts())
     }
 
     /// The time zone the work gives times in (issue 424): its session's as

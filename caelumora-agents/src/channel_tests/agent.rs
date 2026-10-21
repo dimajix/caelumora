@@ -1,6 +1,7 @@
 //! The agent actor in a running channel: its turns, plans, retries, approvals, tool calls, and how
 //! it is cancelled, removed or lowered.
 
+use crate::prompt::ModelProfileProvider;
 use super::*;
 use anyhow::Result;
 use caelumora_model::agent::{AgentChannelState, AgentId, HearsDuringTurn, HearsFrom, RetryRefused};
@@ -301,7 +302,9 @@ impl LLMClient for Gated {
             Ok(MessageEvent::Complete(answer))
         }))
     }
+}
 
+impl ModelProfileProvider for Gated {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }
@@ -1037,7 +1040,9 @@ impl LLMClient for FailsWhere {
             None => Box::pin(futures::stream::pending()),
         }
     }
+}
 
+impl ModelProfileProvider for FailsWhere {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }
@@ -1149,7 +1154,9 @@ impl LLMClient for FailsAfter {
             })])),
         }
     }
+}
 
+impl ModelProfileProvider for FailsAfter {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }
@@ -1250,9 +1257,9 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
 /// its transcript as it stands, resolved as a turn's context is.
 fn given_next(stored: &AgentChannelState, agent: AgentId) -> Vec<Message> {
     use caelumora_model::context::{ContextItem, ContextRef, ContextResolver};
-    use crate::testing::prompts;
+    use crate::testing::catalogue;
     let reference = ContextRef { transcript: stored.transcript.digest(), ..ContextRef::default() };
-    ContextResolver::of(stored, &prompts()).resolve(&reference, TurnId::new(), ActorId::Agent(agent)).expect("worded").expect("resolved").items.into_iter()
+    ContextResolver::of(stored, &catalogue()).resolve(&reference, TurnId::new(), ActorId::Agent(agent)).expect("worded").expect("resolved").items.into_iter()
         .filter_map(|item| match item {
             ContextItem::Conversation { message } => Some(message),
             ContextItem::Prompt { .. } => None,

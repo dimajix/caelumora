@@ -20,7 +20,7 @@
 //! changed the file in between is overwritten.
 
 use crate::terminal_tool::{next, tool, TerminalTool, TerminalToolConfig};
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_agents::turn::Turn;
 use caelumora_runtime::terminal::{ByteStream, FileEntry, Terminal, TerminalError, WorkspacePath};
 use caelumora_agents::tool::{arguments, ToolError, ToolResult};
@@ -182,7 +182,7 @@ fn path(text: &str) -> ToolResult<WorkspacePath> {
     WorkspacePath::parse(text).map_err(ToolError::from)
 }
 
-pub(crate) fn tools(config: &TerminalToolConfig, prompts: &PromptCatalogue) -> Result<Vec<Tool>, PromptError> {
+pub(crate) fn tools(config: &TerminalToolConfig, prompts: &PromptTexts) -> Result<Vec<Tool>, PromptError> {
     let asks = |name: &str| config.requires_approval.required(read_only(name));
     let values = context! { max_matches => MAX_MATCHES, default_matches => DEFAULT_MATCHES };
     let tool = |name: &str, parameters, requires_approval, presentation| tool(prompts, name, parameters, requires_approval, presentation, &values);
@@ -383,7 +383,7 @@ async fn search(terminal: &dyn Terminal, start: WorkspacePath, pattern: &Regex, 
 /// workspaces take and the texts its results give -, recording in `turn`
 /// what was read.
 pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, terminal: &dyn Terminal, workspace: &Workspace, turn: &mut Turn<'_>) -> ToolResult<Value> {
-    let (config, prompts, max_file_bytes) = (&tool.config, tool.prompts.as_ref(), tool.workspaces.max_file_bytes());
+    let (config, prompts, max_file_bytes) = (&tool.config, &tool.prompts, tool.workspaces.max_file_bytes());
     let read = |turn: &mut Turn<'_>, digest| turn.record_knowledge(KnowledgeRef {
         channel: turn.situation().channel_id(),
         session: turn.situation().session_id(),

@@ -8,7 +8,7 @@ use crate::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use crate::command::AgentCommandProvider;
 use crate::compaction::{CompactionPolicy, CompactionStrategy};
 use caelumora_runtime::component::ComponentImpl;
-use crate::prompt::ContextProvider;
+use crate::prompt::{ContextProvider, ModelProfileProvider};
 use crate::llm::LLMClient;
 use caelumora_runtime::logging::{agent_span, envelope_span};
 use crate::message::{EmitOutProcessor, PerceiveInProcessor};
@@ -64,6 +64,7 @@ impl AgentActor {
     pub const COMPONENT_FACETS: &[TypeKey] = &[
         TypeKey::of::<dyn ContextProvider>(),
         TypeKey::of::<dyn LLMClient>(),
+        TypeKey::of::<dyn ModelProfileProvider>(),
         TypeKey::of::<dyn CompactionPolicy>(),
         TypeKey::of::<dyn CompactionStrategy>(),
         TypeKey::of::<dyn PerceiveInProcessor>(),
@@ -81,9 +82,11 @@ impl AgentActor {
         let channel_id = actor_runtime.channel_controller().id();
         let agent_id = agent_controller.id();
         // A turn stored under way is resumed (issue 75).
-        let not_executed_text = not_executed_result(actor_runtime.prompts());
+        let prompts = Arc::clone(actor_runtime.prompts());
         let resume = |state: &mut AgentChannelState| {
-            let not_executed = state.prepare_resume(&not_executed_text);
+            // In the variant the turn was begun with.
+            let profile = state.turn.as_ref().map(|turn| turn.work.context.frame.profile).unwrap_or_default();
+            let not_executed = state.prepare_resume(&not_executed_result(&profile.texts(&prompts)));
             if not_executed > 0 {
                 warn!("Agent {} in channel {}: {} approved tool calls were not executed before it stopped; the model is told", agent_id, channel_id, not_executed);
             }
@@ -96,7 +99,7 @@ impl AgentActor {
         let tool_executor = ToolExecutor::new(components.get_all::<dyn ToolProvider>(None)?, body.runtime.clone())?;
 
         Ok(AgentActor {
-            body: body.with_profile(llm_client.profile()),
+            body,
             llm_client,
             compaction_policy,
             compaction,
@@ -149,7 +152,7 @@ impl AgentActor {
         output: &dyn EventSender,
     ) -> Result<()> {
         let (_, work) = self.body.work_for(request);
-        let turn_id = state.begin_turn(work.given_as(self.llm_client.profile()));
+        let turn_id = state.begin_turn(work.given_as(self.body.profile));
         self.body.control.begin_turn(turn_id);
         let mut turn = self.turn_under_way(state)?;
         // Judged for whoever asked, in the channel as the turn begins.

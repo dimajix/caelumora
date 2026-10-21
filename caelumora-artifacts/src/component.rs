@@ -14,6 +14,7 @@
 //! all the same, and fails and says so. The result is classified as the
 //! artifact, which is classified as the workspace.
 
+use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use crate::manager::{ArtifactError, ArtifactManager};
 use async_trait::async_trait;
 use caelumora_model::question::Answers;
@@ -25,7 +26,7 @@ use caelumora_agents::situation::Situation;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult};
 use caelumora_runtime::terminal::WorkspacePath;
 use caelumora_agents::tool::{arguments, described, tool_text, usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
-use caelumora_model::prompt_catalogue::PromptCatalogue;
+use caelumora_model::prompt_catalogue::PromptTexts;
 use crate::NAMESPACE;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -79,7 +80,7 @@ impl ArtifactTool {
     /// # Errors
     /// `ComponentError::InvalidConfig` for parameters it does not take;
     /// `ComponentError::Prompt` if a text cannot be had.
-    pub fn new(params: &Value, artifacts: Arc<ArtifactManager>, prompts: &PromptCatalogue) -> ComponentResult<Self> {
+    pub fn new(params: &Value, artifacts: Arc<ArtifactManager>, prompts: &PromptTexts) -> ComponentResult<Self> {
         let config: ArtifactToolConfig = config_of_params(params)?;
         let string = ToolParameters::string;
         let tool = Tool {
@@ -180,12 +181,13 @@ impl ToolProvider for ArtifactTool {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(ARTIFACT_TOOL_KIND).provides::<dyn ToolProvider>().uses::<ArtifactManager>().uses::<PromptCatalogue>(),
-        |descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(ARTIFACT_TOOL_KIND).provides::<dyn ToolProvider>().uses::<ArtifactManager>()),
+        |descriptor, context| async move {
+            let texts = texts_of(&context).await?;
             let artifacts = Arc::clone(context.service::<ArtifactManager>()?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactTool::new(&descriptor.params, artifacts, context.service::<PromptCatalogue>()?)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactTool::new(&descriptor.params, artifacts, &texts)?));
             Ok(facets)
         },
     );

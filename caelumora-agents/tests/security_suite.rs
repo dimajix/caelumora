@@ -14,6 +14,7 @@
 //! permissions the action needs. Each test names the scenario or action of
 //! issue 198 it checks; the issue says what is expected and why.
 
+use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_model::store::query::Query;
 use std::sync::{Arc, Mutex};
 
@@ -643,9 +644,10 @@ async fn with_a_command_to_approve(command: &str) -> (World, Arc<SessionLoop>, A
 async fn with_a_call_of(call: Message, tool: ComponentDescriptor) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, AgentId) {
     let model = Arc::new(Once(Mutex::new(Some(call))));
     let world = World::with(&[&TestAgents], |registry| {
-        registry.register(ComponentKind::new("once").provides::<dyn LLMClient>(), move |_, _| {
+        registry.register(ComponentKind::new("once").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
+            facets.insert::<dyn ModelProfileProvider>(Arc::<Once>::clone(&model));
             Ok(facets)
         });
         registry.register(ComponentKind::new("commands").provides::<dyn ToolProvider>(), |_, _| {
@@ -724,9 +726,10 @@ async fn with_a_call_asking_whom(ask: Addressee, sensitive: bool, asker: fn(&Wor
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
     let world = World::with(&[&TestAgents], |registry| {
-        registry.register(ComponentKind::new("once").provides::<dyn LLMClient>(), move |_, _| {
+        registry.register(ComponentKind::new("once").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
+            facets.insert::<dyn ModelProfileProvider>(Arc::<Once>::clone(&model));
             Ok(facets)
         });
         registry.register(ComponentKind::new("asking").provides::<dyn ToolProvider>(), move |_, _| {
@@ -1178,9 +1181,10 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
     };
     let model = Arc::new(Once(Mutex::new(Some(call))));
     let world = World::with(&[&TestAgents], |registry| {
-        registry.register(ComponentKind::new("once").provides::<dyn LLMClient>(), move |_, _| {
+        registry.register(ComponentKind::new("once").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
+            facets.insert::<dyn ModelProfileProvider>(Arc::<Once>::clone(&model));
             Ok(facets)
         });
         registry.register(ComponentKind::new("outward").provides::<dyn ToolProvider>(), |_, _| {
@@ -1423,7 +1427,9 @@ impl LLMClient for Held {
             Ok(MessageEvent::Complete(answer))
         }).boxed()
     }
+}
 
+impl ModelProfileProvider for Held {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }
@@ -1446,9 +1452,10 @@ async fn bob_speaks_while_alices_turn_works(others: OthersWords, alice_again: Op
     });
     let world = World::with(&[&TestAgents], |registry| {
         let model = Arc::clone(&model);
-        registry.register(ComponentKind::new("held").provides::<dyn LLMClient>(), move |_, _| {
+        registry.register(ComponentKind::new("held").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), move |_, _| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn LLMClient>(Arc::<Held>::clone(&model));
+            facets.insert::<dyn ModelProfileProvider>(Arc::<Held>::clone(&model));
             Ok(facets)
         });
     }).await;
@@ -1613,7 +1620,9 @@ impl ExternalAgent for RemoteAtWork {
     fn classification(&self) -> Option<Classification> {
         self.declared.clone()
     }
+}
 
+impl ModelProfileProvider for RemoteAtWork {
     fn profile(&self) -> ModelProfile {
         ModelProfile::default()
     }
@@ -1629,9 +1638,11 @@ async fn with_remote_at_work(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Op
 /// there is one.
 async fn with_remote(calls: &Arc<Mutex<Vec<&'static str>>>, declared: Option<Classification>, gate: Option<Arc<Semaphore>>) -> World {
     let calls = Arc::clone(calls);
-    World::with(&[&TestAgents], |registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>().uses::<SecretManager>(), move |_, context| {
+    World::with(&[&TestAgents], |registry| registry.register(ComponentKind::new("remote_at_work").provides::<dyn ExternalAgent>().provides::<dyn ModelProfileProvider>().uses::<SecretManager>(), move |_, context| {
         let mut facets = ComponentFacets::empty();
-        facets.insert::<dyn ExternalAgent>(Arc::new(RemoteAtWork { secrets: Arc::clone(context.service::<SecretManager>()?), calls: Arc::clone(&calls), declared: declared.clone(), gate: gate.clone() }));
+        let remote = Arc::new(RemoteAtWork { secrets: Arc::clone(context.service::<SecretManager>()?), calls: Arc::clone(&calls), declared: declared.clone(), gate: gate.clone() });
+        facets.insert::<dyn ExternalAgent>(Arc::<RemoteAtWork>::clone(&remote));
+        facets.insert::<dyn ModelProfileProvider>(remote);
         Ok(facets)
     })).await
 }

@@ -14,7 +14,6 @@ use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::secret::SecretError;
-use caelumora_model::context::ModelProfile;
 use caelumora_model::security::SecurityContext;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
@@ -129,11 +128,6 @@ pub trait ExternalAgent: Send + Sync + Debug {
     /// channel. Its answers are classified as what their work has seen -
     /// this and all it was given (`Work::label`, issue 212).
     fn classification(&self) -> Option<Classification>;
-
-    /// How the remote agent is given what was said: of the profile, only
-    /// how senders are marked matters to it (issue 135) - A2A has no place
-    /// for a sender, so it is marked in the content, as for a model.
-    fn profile(&self) -> ModelProfile;
 }
 
 /// Registers `ExternalAgent` with `registry`, as a facet of which an
@@ -148,6 +142,8 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 /// Stand-ins for a remote agent, for the tests of what uses the facet.
 #[cfg(test)]
 pub(crate) mod testing {
+    use crate::prompt::ModelProfileProvider;
+    use caelumora_model::context::ModelProfile;
     use super::*;
     use futures::StreamExt;
     use std::collections::VecDeque;
@@ -259,7 +255,9 @@ pub(crate) mod testing {
         fn classification(&self) -> Option<Classification> {
             self.declared.clone()
         }
+    }
 
+    impl ModelProfileProvider for ScriptedExternalAgent {
         fn profile(&self) -> ModelProfile {
             self.profile
         }

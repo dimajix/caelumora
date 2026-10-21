@@ -1,6 +1,7 @@
 //! The external agent actor in a running channel: what it is given, how it answers, and the remote
 //! tasks it keeps open.
 
+use crate::prompt::ModelProfileProvider;
 use crate::plugin::AgentsPlugin;
 use super::*;
 use caelumora_model::value::name::Name;
@@ -95,10 +96,11 @@ async fn external_channel(remote: Arc<ScriptedExternalAgent>, components: Compon
 
     let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
     registry.register(
-        ComponentKind::new("test_remote").provides::<dyn ExternalAgent>(),
+        ComponentKind::new("test_remote").provides::<dyn ExternalAgent>().provides::<dyn ModelProfileProvider>(),
         move |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
+            facets.insert::<dyn ModelProfileProvider>(Arc::<ScriptedExternalAgent>::clone(&remote));
             Ok(facets)
         },
     );
@@ -1227,10 +1229,11 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     let store = Arc::new(MemoryStore::new());
     let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
     registry.register(
-        ComponentKind::new("test_remote").provides::<dyn ExternalAgent>(),
+        ComponentKind::new("test_remote").provides::<dyn ExternalAgent>().provides::<dyn ModelProfileProvider>(),
         { let remote = Arc::clone(&remote); move |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ExternalAgent>(Arc::<ScriptedExternalAgent>::clone(&remote));
+            facets.insert::<dyn ModelProfileProvider>(Arc::<ScriptedExternalAgent>::clone(&remote));
             Ok(facets)
         } },
     );

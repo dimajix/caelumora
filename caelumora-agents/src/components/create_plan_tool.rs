@@ -4,11 +4,11 @@
 use crate::prompt::NAMESPACE;
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::prompt::{ContextError, Prompt, PromptProvider};
+use crate::prompt::{ContextError, Prompt, PromptProvider, texts_of, writing_for_the_model};
 use crate::situation::Situation;
 use crate::tool::{described, arguments, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
 use caelumora_model::confidentiality::Classification;
@@ -48,7 +48,7 @@ pub struct CreatePlanToolProvider {
     description: String,
     tools: Vec<Tool>,
     /// The texts of its prompt part.
-    prompts: Arc<PromptCatalogue>,
+    prompts: PromptTexts,
 }
 
 impl CreatePlanToolProvider {
@@ -57,7 +57,7 @@ impl CreatePlanToolProvider {
     ///
     /// # Errors
     /// `PromptError` if one of them cannot be had.
-    pub fn new(prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
+    pub fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
         // What its texts are told.
         let values = context! { max_steps => Plan::MAX_STEPS };
         let tools = vec![described(&prompts, NAMESPACE, CREATE_PLAN_TOOL_KIND, Tool {
@@ -184,10 +184,11 @@ impl ToolProvider for CreatePlanToolProvider {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(CREATE_PLAN_TOOL_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
-        |_descriptor, context| {
-            let provider = Arc::new(CreatePlanToolProvider::new(Arc::clone(context.service::<PromptCatalogue>()?))?);
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(CREATE_PLAN_TOOL_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>()),
+        |_descriptor, context| async move {
+            let texts = texts_of(&context).await?;
+            let provider = Arc::new(CreatePlanToolProvider::new(texts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<CreatePlanToolProvider>::clone(&provider));
             facets.insert::<dyn PromptProvider>(provider);

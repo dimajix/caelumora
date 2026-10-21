@@ -177,13 +177,20 @@ asks itself, to compact on its own (issue 284), and `compaction` asks for `/comp
 ### Facets of which there is exactly one
 
 Of some facets an agent has exactly one: the `ContextProvider`, the `LLMClient`, the
-`CompactionPolicy` and the `CompactionStrategy`; an external agent exactly one `ExternalAgent`; a
-channel exactly one `Moderator` and one `ResponderPolicy`. They are registered with
-`ComponentRegistry::single` by the module that holds the default kind - or, where the core holds no
-kind, by the module of the facet, without one: the `LLMClient`, whose kinds are plugins (issue 329).
-The program names their default among the kinds its plugins brought
-(`ComponentRegistry::set_default_kind`, refused for a kind that is not registered as providing the
-facet): `caelumora-app` and `caelumora-tui` name `ollama_client` of `caelumora-ollama`.
+`ModelProfileProvider`, the `CompactionPolicy` and the `CompactionStrategy`; an external agent
+exactly one `ExternalAgent` and one `ModelProfileProvider`; a channel exactly one `Moderator` and
+one `ResponderPolicy`. They are registered with `ComponentRegistry::single` by the module that holds
+the default kind - or, where the core holds no kind, by the module of the facet, without one: the
+`LLMClient` and the `ModelProfileProvider`, whose kinds are plugins (issue 329). The program names
+their default among the kinds its plugins brought (`ComponentRegistry::set_default_kind`, refused
+for a kind that is not registered as providing the facet): `caelumora-app` and `caelumora-tui` name
+`ollama_client` of `caelumora-ollama` for both.
+
+The `ModelProfileProvider` says how the agent's model is given its context (issue 57): the
+`ModelProfile` - which reasoning it is given back, how senders are marked. It is the facet of its
+own of what the model's component, or an external agent's, declares beside its `LLMClient` or its
+`ExternalAgent`, so that what writes for the model learns how without asking the model itself. The
+agent's body takes it once, as its components are built, and keeps it with every turn.
 
 *   Two components of one container that provide such a facet are refused before anything is built.
 *   If none does, a default is built the first time the facet is asked for. A container that never
@@ -200,6 +207,9 @@ facet): `caelumora-app` and `caelumora-tui` name `ollama_client` of `caelumora-o
     (`set_default_kind`), or else the one it was registered with. The program's choice is kept
     apart from the declaration: a plugin that declares the single after the program named its
     default - the agents' plugin in a test's registry (issue 370) - does not undo it.
+*   A default may provide several singles - a model, its client and its profile (issue 57) - as
+    long as no other default provides one of them too. It is built once for all of them: a
+    container keeps its defaults by the component, not by the facet asked for.
 
 ### Factories and tags
 
@@ -271,8 +281,9 @@ They follow one convention:
     (`CalculatorToolProvider`) and `Component` for a feature (`NotesComponent`).
 *   **Names:** every tool and command name is a constant (`CALCULATE_TOOL_NAME`).
 *   **Texts:** what a prompt part says is a text of the prompt catalogue, its key a constant
-    (`TEXT`), rendered from the catalogue the component takes as a service
-    ([AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)); so are the descriptions of its tools,
+    (`TEXT`), rendered from the texts the component takes when it is made, in the variant of its
+    model (`prompt::texts_of`, its kind `prompt::writing_for_the_model`,
+    [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)); so are the descriptions of its tools,
     rendered when it is made (`new`, which fails if one is missing) and kept with its tools
     ([TOOLS.md](TOOLS.md)).
 *   **Construction:** the factory builds the struct literally; there is a `new` only where
@@ -344,8 +355,8 @@ query or fragment.
 | `tool_sets_prompt_provider` | `PromptProvider` | `position` (`start`) | Tells the model which of its tool sets are unavailable and why, nothing while all are available ([TOOLS.md](TOOLS.md#tool-sets)). |
 | `turn_context_provider` | `ContextProvider` | - | The default context provider of an agent run here: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
 | `external_context_provider` | `ContextProvider` | - | The default context provider of an external agent: each prompt part on its own, for its actor to give the remote agent when it changed ([CHANNELS.md](CHANNELS.md)). |
-| `a2a_agent` | `ExternalAgent` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins; the card kept for 300 s), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`) | Of the plugin `caelumora-a2a`, registered where it is joined. An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built; an agent not reached where its card said has its card read again at the next request. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
-| `ollama_client` | `LLMClient` | `endpoint` (`http://127.0.0.1:11434`, no timeout, no `auth`), `model` (`gemma4:26b`), `think`, `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `context_size` (Ollama's default) | The default model: a model served by Ollama ([CONFIGURATION.md](CONFIGURATION.md#the-model)). Defuses the model's control tokens in every text it sends. |
+| `a2a_agent` | `ExternalAgent`, `ModelProfileProvider` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins; the card kept for 300 s), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the plugin `caelumora-a2a`, registered where it is joined. An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built; an agent not reached where its card said has its card read again at the next request. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
+| `ollama_client` | `LLMClient`, `ModelProfileProvider` | `endpoint` (`http://127.0.0.1:11434`, no timeout, no `auth`), `model` (`gemma4:26b`), `think`, `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default), `context_size` (Ollama's default) | The default model: a model served by Ollama ([CONFIGURATION.md](CONFIGURATION.md#the-model)). Defuses the model's control tokens in every text it sends. |
 | `policy_moderator` | `Moderator` | `mentions_replace_policy` (`anyone`; `agents`), `max_agent_hops` (`3`), `max_span_depth` (`100`), `context_messages` (`10`) | The default moderator of a channel: routes as every channel does, asks the agents a message mentions - nobody for a message to people alone, unless `agents` - and else asks its `ResponderPolicy` whom to ask, told the last `context_messages` messages heard before ([CHANNELS.md](CHANNELS.md#moderators)); ends a chain between agents after `max_agent_hops` hops, and asks nobody to respond to an event `max_span_depth` deep ([CHANNELS.md](CHANNELS.md#chains-between-agents)). |
 | `broadcast_policy` | `ResponderPolicy` | - | Asks every agent. |
 | `round_robin_policy` | `ResponderPolicy` | - | The default policy: the agents take turns. |

@@ -119,8 +119,10 @@ pub(super) struct Graph {
     /// The defaults of singles for this graph alone, in place of the
     /// registry's (`ComponentContainer::with_defaults`).
     own_defaults: HashMap<TypeId, ComponentDescriptor>,
-    /// The defaults built for singles no component of the graph provides.
-    defaults: Mutex<HashMap<TypeId, State>>,
+    /// The defaults built for singles no component of the graph provides,
+    /// by their ids: a default that provides several singles is built once
+    /// and serves all of them.
+    defaults: Mutex<HashMap<String, State>>,
 }
 
 impl Graph {
@@ -209,10 +211,10 @@ impl Graph {
             .ok_or_else(|| ComponentError::InvalidConfig(format!("no component provides {}, and it has no default", facet.name())))?;
         {
             let mut defaults = self.defaults.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            match defaults.get(&facet.id) {
+            match defaults.get(&descriptor.id) {
                 Some(State::Built(node)) => return Ok(Arc::clone(node)),
                 Some(State::Building) => return Err(cycle(asked.map(|(c, f)| (c.to_string(), f)), &descriptor.id)),
-                Some(State::Pending) | None => { defaults.insert(facet.id, State::Building); }
+                Some(State::Pending) | None => { defaults.insert(descriptor.id.clone(), State::Building); }
             }
         }
         let provides = self.registry.provides(&descriptor.kind).unwrap_or_default().to_vec();
@@ -225,7 +227,7 @@ impl Graph {
             )));
         }
         let node = self.construct(&descriptor, &provides).await?;
-        self.defaults.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(facet.id, State::Built(Arc::clone(&node)));
+        self.defaults.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(descriptor.id.clone(), State::Built(Arc::clone(&node)));
         Ok(node)
     }
 }
@@ -364,7 +366,7 @@ mod tests {
     use crate::component::testing::*;
     use crate::component::ComponentKind;
     use caelumora_model::store::memory::MemoryStore;
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
         #[tokio::test]
         async fn components_that_need_each_other_are_refused_naming_both() {
@@ -436,7 +438,39 @@ mod tests {
             assert_eq!(built.load(Ordering::SeqCst), 0, "no other default is built");
 
             let refused = ComponentContainer::with_defaults(&config(&[]), &config(&[("x", "part")]), ASKED, &registry, &test_context()).await;
-            assert!(matches!(refused, Err(ComponentError::InvalidConfig(_))), "a default must provide one single");
+            assert!(matches!(refused, Err(ComponentError::InvalidConfig(_))), "a default must provide a single");
+        }
+
+        /// A default that provides two singles - a model, its client and its
+        /// profile - is built once and serves both, whether it is the kind
+        /// declared or the configuration's.
+        #[tokio::test]
+        async fn a_default_of_two_singles_is_built_once_for_both() {
+            let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
+            let built = Arc::new(AtomicUsize::new(0));
+            let counted = Arc::clone(&built);
+            registry.register(ComponentKind::new("pair").provides::<dyn Choice>().provides::<dyn Other>(), move |descriptor, _| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                let name = Arc::new(Name(descriptor.id.clone()));
+                let mut facets = ComponentFacets::empty();
+                facets.insert::<dyn Choice>(Arc::<Name>::clone(&name));
+                facets.insert::<dyn Other>(name);
+                Ok(facets)
+            });
+            registry.single::<dyn Choice>(Some("pair"));
+            registry.single::<dyn Other>(Some("pair"));
+            let registry = Arc::new(registry);
+            let asked = &[TypeKey::of::<dyn Choice>(), TypeKey::of::<dyn Other>()];
+
+            let graph = ComponentContainer::from_config(&config(&[]), asked, &registry, &test_context()).await.unwrap();
+            graph.one::<dyn Choice>().await.unwrap();
+            graph.one::<dyn Other>().await.unwrap();
+            assert_eq!(built.load(Ordering::SeqCst), 1, "one component for both");
+
+            let configured = ComponentContainer::with_defaults(&config(&[]), &config(&[("model", "pair")]), asked, &registry, &test_context()).await.unwrap();
+            assert_eq!(configured.one::<dyn Choice>().await.unwrap().id, "model");
+            assert_eq!(configured.one::<dyn Other>().await.unwrap().id, "model");
+            assert_eq!(built.load(Ordering::SeqCst), 2, "the configuration's, once as well");
         }
 
         #[tokio::test]

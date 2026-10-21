@@ -1,11 +1,11 @@
 //! The `echo_tool` component: a tool that echoes its input, for testing.
 
-use crate::prompt::NAMESPACE;
+use crate::prompt::{NAMESPACE, texts_of, writing_for_the_model};
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::tool::{described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
-use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde_json::Value;
@@ -28,7 +28,7 @@ impl EchoToolProvider {
     ///
     /// # Errors
     /// `PromptError` if one of them cannot be had.
-    pub fn new(prompts: &PromptCatalogue) -> Result<Self, PromptError> {
+    pub fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
         let tools = vec![described(prompts, NAMESPACE, ECHO_TOOL_KIND, Tool {
             name: ECHO_TOOL_NAME.to_string(),
             description: String::new(),
@@ -66,11 +66,12 @@ impl ToolProvider for EchoToolProvider {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(ECHO_TOOL_KIND).provides::<dyn ToolProvider>().uses::<PromptCatalogue>(),
-        |_descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(ECHO_TOOL_KIND).provides::<dyn ToolProvider>()),
+        |_descriptor, context| async move {
+            let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(EchoToolProvider::new(context.service::<PromptCatalogue>()?)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(EchoToolProvider::new(&texts)?));
             Ok(facets)
         },
     );

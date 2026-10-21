@@ -15,11 +15,11 @@
 
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::prompt::channel_participants_prompt_provider::participants;
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::PromptCatalogue;
+use caelumora_model::prompt_catalogue::PromptTexts;
 use std::sync::Arc;
 
 pub const CHANNEL_MENTIONS_PROMPT_PROVIDER_KIND: &str = "channel_mentions_prompt_provider";
@@ -31,7 +31,7 @@ const TEXT: &str = "agents.channel_mentions";
 #[derive(Debug)]
 pub struct ChannelMentionsPromptProvider {
     pub position: PromptPosition,
-    pub prompts: Arc<PromptCatalogue>,
+    pub prompts: PromptTexts,
 }
 
 #[async_trait]
@@ -50,11 +50,11 @@ impl PromptProvider for ChannelMentionsPromptProvider {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(CHANNEL_MENTIONS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
-        |descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(CHANNEL_MENTIONS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>()),
+        |descriptor, context| async move {
+            let prompts = texts_of(&context).await?;
             let position = PromptPosition::of_params_or(&descriptor.params, PromptPosition::BeforeTurnInput)?;
-            let prompts = Arc::clone(context.service::<PromptCatalogue>()?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(ChannelMentionsPromptProvider { position, prompts }));
             Ok(facets)

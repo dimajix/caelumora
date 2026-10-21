@@ -6,8 +6,8 @@
 //! may carry its own.
 
 use caelumora_runtime::component::{ComponentError, ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, NAMESPACE};
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, NAMESPACE, texts_of, writing_for_the_model};
+use caelumora_model::prompt_catalogue::{context, PromptTexts};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
@@ -45,7 +45,7 @@ impl StaticSystemPromptProvider {
     /// `ComponentError::InvalidConfig` if `prompt` is missing or a parameter
     /// is not what it should be; `ComponentError::Prompt` if the form of a
     /// titled part cannot be had.
-    fn of_params(params: &Value, prompts: &PromptCatalogue) -> Result<Self, ComponentError> {
+    fn of_params(params: &Value, prompts: &PromptTexts) -> Result<Self, ComponentError> {
         let prompt = params.get("prompt")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
@@ -69,11 +69,12 @@ impl StaticSystemPromptProvider {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(STATIC_SYSTEM_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
-        |descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(STATIC_SYSTEM_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>()),
+        |descriptor, context| async move {
+            let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(StaticSystemPromptProvider::of_params(&descriptor.params, context.service::<PromptCatalogue>()?)?));
+            facets.insert::<dyn PromptProvider>(Arc::new(StaticSystemPromptProvider::of_params(&descriptor.params, &texts)?));
             Ok(facets)
         },
     );

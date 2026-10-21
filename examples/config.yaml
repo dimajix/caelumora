@@ -126,8 +126,9 @@ users:
 # not configure its own (issue 99): of some facets an agent has exactly one -
 # the language model it talks to (`LLMClient`, issue 130), or what assembles
 # the model's context (`ContextProvider`) - and a personality without a
-# component for it gets the default. A component here must provide exactly
-# one such facet. Without this section the built-in defaults are used, and
+# component for it gets the default. A component here is the default of each
+# such facet it provides - the model of its client and its profile, built
+# once for both. Without this section the built-in defaults are used, and
 # for the model the program's: `ollama_client` of the plugin caelumora-ollama
 # (issue 329), with the Ollama server at 127.0.0.1:11434 and the model
 # gemma4:26b. Here that model, configured as docs/LLM-MODELS.md
@@ -149,6 +150,16 @@ component_defaults:
       context_size: 65536
 #  - id: context
 #    kind: turn_context_provider
+
+# Variants of the texts given to models (issue 57, docs/CONFIGURATION.md):
+# each a directory with a file per namespace it changes - agents.yaml,
+# core.yaml, skills.yaml, ... -, of the form of the file compiled in
+# (caelumora-agents/src/prompts.yaml, say), whose entries it replaces one by
+# one. `default` overrides the texts for every model. Without this section
+# the texts compiled in are used.
+#prompts:
+#  default: local/prompts/default
+#  gemma4: local/prompts/gemma4
 
 # Who may do what (issue 11). `ownership` - the default - lets owners do
 # everything with their sessions, agents and templates, contributors (e.g.

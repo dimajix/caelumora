@@ -26,7 +26,7 @@ use caelumora_runtime::terminal::TerminalError;
 use caelumora_runtime::view::{ViewError, WorkspaceView};
 use caelumora_runtime::workspace::WorkspaceError;
 use caelumora_model::tool::{Tool, ToolCall, ToolCallResult, ToolCallState, ToolSet, ToolVisibility, ToolResultStatus, ToolParameters};
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::turn::GivenUpReason;
 use crate::prompt::NAMESPACE;
 use serde::de::DeserializeOwned;
@@ -147,7 +147,7 @@ pub fn classification_argument(params: &Value) -> ToolResult<Classification> {
 /// # Errors
 /// `PromptError` if the catalogue has no such text, or it cannot be
 /// rendered with `values`.
-pub fn tool_text(prompts: &PromptCatalogue, namespace: &str, kind: &str, key: &str, values: impl Serialize) -> Result<String, PromptError> {
+pub fn tool_text(prompts: &PromptTexts, namespace: &str, kind: &str, key: &str, values: impl Serialize) -> Result<String, PromptError> {
     prompts.render(&format!("{namespace}.tools.{kind}.{key}"), values)
 }
 
@@ -157,7 +157,7 @@ pub fn tool_text(prompts: &PromptCatalogue, namespace: &str, kind: &str, key: &s
 ///
 /// # Errors
 /// As `tool_text`, for the first text that cannot be had.
-pub fn described(prompts: &PromptCatalogue, namespace: &str, kind: &str, mut tool: Tool, values: impl Serialize) -> Result<Tool, PromptError> {
+pub fn described(prompts: &PromptTexts, namespace: &str, kind: &str, mut tool: Tool, values: impl Serialize) -> Result<Tool, PromptError> {
     tool.description = tool_text(prompts, namespace, kind, &tool.name, &values)?;
     tool.parameters.describe(&tool.name, &mut |path| tool_text(prompts, namespace, kind, path, &values))?;
     Ok(tool)
@@ -169,7 +169,7 @@ pub fn described(prompts: &PromptCatalogue, namespace: &str, kind: &str, mut too
 ///
 /// # Errors
 /// As `tool_text`.
-pub fn reclassify_parameters(prompts: &PromptCatalogue) -> Result<ToolParameters, PromptError> {
+pub fn reclassify_parameters(prompts: &PromptTexts) -> Result<ToolParameters, PromptError> {
     let shared = |key| tool_text(prompts, NAMESPACE, "reclassify", key, ());
     Ok(ToolParameters::object(
         [
@@ -196,7 +196,7 @@ pub fn text_argument(params: &Value) -> ToolResult<String> {
 
 /// The text `key` of `prompts` for the result of a tool call (issue 57),
 /// rendered with `values`.
-fn result_text(prompts: &PromptCatalogue, key: &str, values: impl Serialize) -> Result<String, PromptError> {
+fn result_text(prompts: &PromptTexts, key: &str, values: impl Serialize) -> Result<String, PromptError> {
     prompts.render(&format!("{NAMESPACE}.results.{key}"), values)
 }
 
@@ -229,7 +229,7 @@ fn unsuccessful_result(status: ToolResultStatus, message: Result<String, PromptE
 /// # Errors
 /// `PromptError` if the mark is needed and cannot be had: the result is
 /// not to be given without it.
-pub fn successful_result(prompts: &PromptCatalogue, value: Value, visibility: ToolVisibility) -> Result<String, PromptError> {
+pub fn successful_result(prompts: &PromptTexts, value: Value, visibility: ToolVisibility) -> Result<String, PromptError> {
     if visibility.result.is_channel() {
         return Ok(match value {
             Value::String(text) => text,
@@ -244,18 +244,18 @@ pub fn successful_result(prompts: &PromptCatalogue, value: Value, visibility: To
 }
 
 /// The result for a call a user declined.
-pub(crate) fn denied_result(prompts: &PromptCatalogue) -> String {
+pub(crate) fn denied_result(prompts: &PromptTexts) -> String {
     unsuccessful_result(ToolResultStatus::Denied, result_text(prompts, "denied", ()))
 }
 
 /// The result for a call nobody approved in time.
-pub(crate) fn timed_out_result(prompts: &PromptCatalogue) -> String {
+pub(crate) fn timed_out_result(prompts: &PromptTexts) -> String {
     unsuccessful_result(ToolResultStatus::TimedOut, result_text(prompts, "timed_out", ()))
 }
 
 /// The result for a call whose questions a person declined to answer
 /// (issue 165), by saying so or by writing a message instead.
-pub(crate) fn declined_result(prompts: &PromptCatalogue) -> String {
+pub(crate) fn declined_result(prompts: &PromptTexts) -> String {
     unsuccessful_result(ToolResultStatus::Declined, result_text(prompts, "declined", ()))
 }
 
@@ -264,7 +264,7 @@ pub(crate) fn declined_result(prompts: &PromptCatalogue) -> String {
 /// before the call ran (issue 377), or before its result was stored. The
 /// runtime cannot tell which, so it never runs the call again - the model
 /// decides.
-pub(crate) fn not_executed_result(prompts: &PromptCatalogue) -> String {
+pub(crate) fn not_executed_result(prompts: &PromptTexts) -> String {
     unsuccessful_result(ToolResultStatus::NotExecuted, result_text(prompts, "not_executed", ()))
 }
 
@@ -272,7 +272,7 @@ pub(crate) fn not_executed_result(prompts: &PromptCatalogue) -> String {
 /// given up (issue 161): it was interrupted, and what it did before stays
 /// done. The runtime cannot tell how far it got - the model checks before
 /// it calls it again.
-pub(crate) fn interrupted_result(prompts: &PromptCatalogue) -> String {
+pub(crate) fn interrupted_result(prompts: &PromptTexts) -> String {
     unsuccessful_result(ToolResultStatus::Interrupted, result_text(prompts, "interrupted", ()))
 }
 
@@ -292,7 +292,7 @@ pub enum Interruption {
 impl Interruption {
     /// The result of a call interrupted so, `after` it ran so long, worded
     /// by `prompts`.
-    fn result(&self, prompts: &PromptCatalogue, after: Duration) -> String {
+    fn result(&self, prompts: &PromptTexts, after: Duration) -> String {
         let seconds = format!("{:.1}", after.as_secs_f64());
         match self {
             Self::TurnEnded => interrupted_result(prompts),
@@ -304,14 +304,14 @@ impl Interruption {
 
 /// The result for a call that a user, `by`, interrupted before it ran
 /// (issue 276): it was not run, and the turn goes on.
-pub(crate) fn skipped_result(prompts: &PromptCatalogue, by: &str) -> String {
+pub(crate) fn skipped_result(prompts: &PromptTexts, by: &str) -> String {
     unsuccessful_result(ToolResultStatus::NotExecuted, result_text(prompts, "skipped", context! { by }))
 }
 
 /// The result for a call that had no result when its turn ended (issue
 /// 148): it never ran, because of what the text `cause` of `prompts` says -
 /// "the turn ended before it ran, because it was cancelled" (`TurnEnd`).
-pub(crate) fn abandoned_result(prompts: &PromptCatalogue, cause: &TurnEnd) -> String {
+pub(crate) fn abandoned_result(prompts: &PromptTexts, cause: &TurnEnd) -> String {
     let message = prompts.render(&cause.key(), ())
         .and_then(|cause| result_text(prompts, "abandoned", context! { cause }));
     unsuccessful_result(ToolResultStatus::NotExecuted, message)
@@ -343,14 +343,14 @@ impl TurnEnd<'_> {
 /// may not flow into the channel (issue 133). The model is told the
 /// classification, so that it can tell the user why, and not to look for
 /// the result elsewhere.
-pub(crate) fn withheld_result(prompts: &PromptCatalogue, classification: &Classification) -> String {
+pub(crate) fn withheld_result(prompts: &PromptTexts, classification: &Classification) -> String {
     unsuccessful_result(ToolResultStatus::Withheld, result_text(prompts, "withheld", context! { classification => classification.to_string() }))
 }
 
 /// The result for a call the policy does not permit. Deliberately without the
 /// reason: telling the model why describes the policy to something that may
 /// try to route around it. The reason is in the log.
-pub(crate) fn forbidden_result(prompts: &PromptCatalogue) -> String {
+pub(crate) fn forbidden_result(prompts: &PromptTexts) -> String {
     unsuccessful_result(ToolResultStatus::Forbidden, result_text(prompts, "forbidden", ()))
 }
 
@@ -360,7 +360,7 @@ impl ToolError {
     /// exist, offered when the model called one that does not. What went
     /// wrong is the error's own text, which is no text of the catalogue
     /// (issue 57).
-    pub fn to_result(&self, prompts: &PromptCatalogue, available: &[String]) -> (ToolResultStatus, String) {
+    pub fn to_result(&self, prompts: &PromptTexts, available: &[String]) -> (ToolResultStatus, String) {
         let (status, message) = match self {
             ToolError::PermissionDenied(_) => return (ToolResultStatus::Forbidden, forbidden_result(prompts)),
             ToolError::UnknownTool(name) => (ToolResultStatus::UnknownTool, result_text(prompts, "unknown_tool", context! { name, available })),
@@ -635,7 +635,7 @@ impl ToolExecutor {
                 let after = (finished_at - started_at).to_std().unwrap_or_default();
                 info!(tool = %call.function_name, duration_ms = after.as_millis(), by_user = matches!(interruption, Interruption::ByUser(_)), "Tool interrupted");
                 // A fixed text of the runtime's: as the turn (issue 168).
-                let mut result = ToolCallResult::of(call, ToolResultStatus::Interrupted, interruption.result(self.runtime.prompts(), after), turn.situation().label());
+                let mut result = ToolCallResult::of(call, ToolResultStatus::Interrupted, interruption.result(&turn.situation().texts(), after), turn.situation().label());
                 result.started_at = Some(started_at);
                 result.finished_at = Some(finished_at);
                 return result;
@@ -663,7 +663,7 @@ impl ToolExecutor {
     /// what to do next, classified as the channel.
     fn failed(&self, call: &ToolCall, error: ToolError, turn: &Turn<'_>) -> ToolCallResult {
         let available: Vec<String> = turn.tools().map(|t| t.name.clone()).collect();
-        let (status, content) = error.to_result(self.runtime.prompts(), &available);
+        let (status, content) = error.to_result(&turn.situation().texts(), &available);
         ToolCallResult::of(call, status, content, turn.situation().classification())
     }
 
@@ -679,9 +679,9 @@ impl ToolExecutor {
         let context = turn.situation().security_context();
         if !self.confidentiality.may_publish(context, &classification, &channel) {
             debug!(tool = %call.function_name, %classification, "Withheld a result the channel does not admit");
-            return ToolCallResult::of(call, ToolResultStatus::Withheld, withheld_result(self.runtime.prompts(), &classification), channel);
+            return ToolCallResult::of(call, ToolResultStatus::Withheld, withheld_result(&turn.situation().texts(), &classification), channel);
         }
-        match successful_result(self.runtime.prompts(), output.value, call.visibility) {
+        match successful_result(&turn.situation().texts(), output.value, call.visibility) {
             Ok(content) => ToolCallResult::of(call, ToolResultStatus::Ok, content, classification),
             // Not given without the mark that it is the agent's alone.
             Err(e) => {
@@ -711,12 +711,12 @@ impl ToolExecutor {
         // asked as it is admitted, not again when it runs.
         if self.access_policy.require(turn.situation().security_context(), ActionType::CallTool(call), |_| ()).await.is_err() {
             info!("Tool call '{}' by agent {} forbidden by the access policy", call.function_name, agent);
-            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(self.runtime.prompts()), turn.situation().label()));
+            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(&turn.situation().texts()), turn.situation().label()));
         }
         let rule = self.place_rule(call);
         if let Some((rule_id, RuleDecision::Deny)) = rule {
             info!(rule = %rule_id, "Tool call '{}' by agent {} denied by a rule", call.function_name, agent);
-            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(self.runtime.prompts()), turn.situation().label()));
+            return Admission::Answered(ToolCallResult::of(call, ToolResultStatus::Forbidden, forbidden_result(&turn.situation().texts()), turn.situation().label()));
         }
         let description = match self.providers.describe(call) {
             Ok(description) => description,

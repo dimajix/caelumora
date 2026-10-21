@@ -15,6 +15,7 @@ use caelumora_model::value::language::Language;
 use caelumora_model::work::TurnId;
 use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::component::{ComponentError, ComponentRegistry};
+use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_agents::llm::LLMClient;
 use caelumora_agents::plugin::AgentsPlugin;
 use caelumora_runtime::plugin::Plugin;
@@ -501,7 +502,8 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
 /// # Errors
 /// If a plugin that brings a default kind is not among `plugins`.
 fn default_kinds(components: &mut ComponentRegistry) -> Result<(), ComponentError> {
-    components.set_default_kind::<dyn LLMClient>(OLLAMA_CLIENT_KIND)
+    components.set_default_kind::<dyn LLMClient>(OLLAMA_CLIENT_KIND)?;
+    components.set_default_kind::<dyn ModelProfileProvider>(OLLAMA_CLIENT_KIND)
 }
 
 #[tokio::main]

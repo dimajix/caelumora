@@ -1,6 +1,6 @@
 # 57 — Prompts are English constants spread through the code
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -202,3 +202,37 @@ personality and component, and repeat them in each.
   is told to people - approvals, the output of commands such as `/skills` - stays in the code
   ([443](443-errors-carry-only-an-english-text.md)). Every text was compared with the one before,
   word for word. Step 1 is done; step 2 - the variants per model and the overrides - is open.
+- **2026-10-21** — Step 2 settled with the maintainer, refining "Decision":
+  - **Variants and overrides are directories of files**, named in the configuration: `prompts:
+    { default: <dir>, gemma4: <dir> }`, `default` overriding the defaults for every model. A file
+    of a directory is named after its namespace (`agents.yaml`, `core.yaml`, …) and has the form
+    of the built-in file, so that one is copied and changed; its entries override one by one, and
+    what it leaves out is the default's. At startup an unknown namespace or key, a template that
+    does not parse and a variable its default does not have stop the runtime; so does a variant a
+    component names that is not configured, when the component is built.
+  - **The profile has a facet of its own, `ModelProfileProvider`**, of which an agent has one:
+    provided by the model's component - `ollama_client` beside its `LLMClient` - or by an
+    external agent's, without being a model; `profile()` leaves `LLMClient` and the external
+    agent's facet. The profile stays `Copy`: the variant it names is a `PromptVariant`, an
+    interned name, rather than a `String`.
+  - **A component that writes for a model takes its texts in its model's variant when it is
+    made**: the catalogue as a service, the profile through the facet (`.needs`), the texts as a
+    view of the catalogue in that variant (`PromptTexts`). A running agent's profile cannot
+    change - its components are built once, as its actor starts -, so its tools are rendered once,
+    for the active variant alone. The turn and the actor word theirs in their model's variant;
+    the `ContextResolver` in the variant of the profile a context was recorded with.
+  - **Commits**: first, that a default may provide several singles and is built once for all of
+    them - `ComponentRegistry::defaults_of` took one single per default, and a container built a
+    default for each facet asked, so a model as the default of both its client and its profile
+    would have been refused, or built twice; the facet, without a change of behaviour; the
+    directories, their lookup and the checks; `PromptVariant` in the profile, named by the
+    parameter `prompt_texts` of the model's components; the view, with which components, turn and
+    actor render.
+- **2026-10-21** — Step 2 done, and with it the issue: a variant named by a model's component
+  replaces single texts of the default. `PromptTexts` is the catalogue in a variant: a component
+  that writes for the model takes it when it is made, in the variant of its model's profile
+  (`prompt::texts_of`, `writing_for_the_model`); the work words its own texts in the variant of
+  its profile (`Situation::texts`); the `ContextResolver` in the variant a context was recorded
+  with; `decision_policy` in its own. AGENT-TURN.md and CONFIGURATION.md describe both. Not done,
+  and not needed for it: a command that writes the texts compiled in as a starting point for a
+  variant (`caelumora prompts export <dir>`), mentioned in the discussion.

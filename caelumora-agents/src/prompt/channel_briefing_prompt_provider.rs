@@ -20,11 +20,11 @@
 //! `changes_only`), as the roster and the language are.
 
 use caelumora_runtime::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::value::text::{Briefing, Summary};
 use std::sync::{Arc, Mutex};
 
@@ -41,18 +41,18 @@ pub struct ChannelBriefingPromptProvider {
     /// Whether it tells only of changes: then what it told last, `None`
     /// before it told anything. A plain lock, never held across an await.
     told: Option<Mutex<Option<String>>>,
-    prompts: Arc<PromptCatalogue>,
+    prompts: PromptTexts,
 }
 
 impl ChannelBriefingPromptProvider {
     /// The descriptions at `position`, told every time it is asked.
-    pub fn new(position: PromptPosition, prompts: Arc<PromptCatalogue>) -> Self {
+    pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, told: None, prompts }
     }
 
     /// The descriptions at `position`, told the first time it is asked and
     /// then only when they changed.
-    pub fn changes_only(position: PromptPosition, prompts: Arc<PromptCatalogue>) -> Self {
+    pub fn changes_only(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, told: Some(Mutex::new(None)), prompts }
     }
 
@@ -109,7 +109,7 @@ fn says_nothing((_, summary, briefing): &Place<'_>) -> bool {
 
 /// The parts of `prompts` describing each of `places` by its summary and
 /// briefing, those that say nothing left out; empty if none says anything.
-fn render(prompts: &PromptCatalogue, places: &[Place<'_>]) -> Result<String, PromptError> {
+fn render(prompts: &PromptTexts, places: &[Place<'_>]) -> Result<String, PromptError> {
     let places: Vec<_> = places.iter()
         .filter(|place| !says_nothing(place))
         .map(|(kind, summary, briefing)| context! { kind, summary => summary.map(|s| s.as_str()), briefing => briefing.map(|b| b.as_str()) })
@@ -121,12 +121,12 @@ fn render(prompts: &PromptCatalogue, places: &[Place<'_>]) -> Result<String, Pro
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(CHANNEL_BRIEFING_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
-        |descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(CHANNEL_BRIEFING_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>()),
+        |descriptor, context| async move {
+            let prompts = texts_of(&context).await?;
             let position = PromptPosition::of_params(&descriptor.params)?;
             let changes_only = flag_of_params(&descriptor.params, "changes_only")?;
-            let prompts = Arc::clone(context.service::<PromptCatalogue>()?);
             let provider = if changes_only { ChannelBriefingPromptProvider::changes_only(position, prompts) } else { ChannelBriefingPromptProvider::new(position, prompts) };
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(provider));

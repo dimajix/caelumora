@@ -18,12 +18,12 @@
 //! again after a restart.
 
 use caelumora_runtime::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorId};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::value::text::Introduction;
 use std::sync::{Arc, Mutex};
 
@@ -38,18 +38,18 @@ pub struct ChannelParticipantsPromptProvider {
     /// Whether it tells only of changes: then what it told last, `None`
     /// before it told anything. A plain lock, never held across an await.
     told: Option<Mutex<Option<String>>>,
-    prompts: Arc<PromptCatalogue>,
+    prompts: PromptTexts,
 }
 
 impl ChannelParticipantsPromptProvider {
     /// The roster at `position`, told every time it is asked.
-    pub fn new(position: PromptPosition, prompts: Arc<PromptCatalogue>) -> Self {
+    pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, told: None, prompts }
     }
 
     /// The roster at `position`, told the first time it is asked and then
     /// only when it changed (issue 204).
-    pub fn changes_only(position: PromptPosition, prompts: Arc<PromptCatalogue>) -> Self {
+    pub fn changes_only(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, told: Some(Mutex::new(None)), prompts }
     }
 
@@ -112,7 +112,7 @@ pub(crate) async fn participants(situation: &Situation<'_>) -> Result<Option<(Op
 /// the first of them as the example (issues 438, 442). How the others'
 /// messages are marked is told with them, `explanation`, as the agent's
 /// model profile words it (issue 135).
-fn render(prompts: &PromptCatalogue, me: Option<&ActorDescription>, others: &[ActorDescription], explanation: Option<&str>) -> Result<String, PromptError> {
+fn render(prompts: &PromptTexts, me: Option<&ActorDescription>, others: &[ActorDescription], explanation: Option<&str>) -> Result<String, PromptError> {
     let described = |participant: &ActorDescription| context! {
         name => participant.name.as_str(),
         handle => participant.handle(),
@@ -129,12 +129,12 @@ fn one_line(introduction: &Introduction) -> String {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(CHANNEL_PARTICIPANTS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
-        |descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(CHANNEL_PARTICIPANTS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>()),
+        |descriptor, context| async move {
+            let prompts = texts_of(&context).await?;
             let position = PromptPosition::of_params(&descriptor.params)?;
             let changes_only = flag_of_params(&descriptor.params, "changes_only")?;
-            let prompts = Arc::clone(context.service::<PromptCatalogue>()?);
             let provider = if changes_only { ChannelParticipantsPromptProvider::changes_only(position, prompts) } else { ChannelParticipantsPromptProvider::new(position, prompts) };
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(provider));

@@ -16,7 +16,7 @@ use crate::situation::Situation;
 use crate::command::AgentCommandProvider;
 use caelumora_runtime::command::CommandExecutor;
 use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentImpl};
-use crate::prompt::ContextProvider;
+use crate::prompt::{ContextProvider, ModelProfileProvider};
 use caelumora_runtime::controller::{AgentController, PersonalityController};
 use crate::message::PerceiveInProcessor;
 use caelumora_runtime::runtime::ActorRuntime;
@@ -78,8 +78,8 @@ pub(super) struct AgentBody {
     /// personality's components, behind the executor that checks who may
     /// see and ask for them.
     pub(super) commands: CommandExecutor<dyn AgentCommandProvider>,
-    /// How its model is given its context, kept with every turn of it; the
-    /// default for an agent that runs elsewhere.
+    /// How its model is given its context, kept with every turn of it - its
+    /// model's, or its remote agent's (`ModelProfileProvider`).
     pub(super) profile: ModelProfile,
     /// The agent's own state, shared with its actors in other channels and
     /// sessions (issue 62).
@@ -101,9 +101,8 @@ impl AgentBody {
     /// for (issue 337), with the components of `defaults` as the defaults of
     /// the singles they provide - for its actor to take its own from. Its
     /// state in the channel is made fit to run from by `resume`, as its
-    /// actor resumes, and its run control stands where that state says. Its
-    /// commands' turns have the default profile, and it hands nothing over
-    /// (`with_profile`, `handing_over`).
+    /// actor resumes, and its run control stands where that state says. It
+    /// hands nothing over (`handing_over`).
     ///
     /// # Errors
     /// If its components cannot be built, its commands collide
@@ -134,6 +133,7 @@ impl AgentBody {
         .await?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
         let context_provider = components.one::<dyn ContextProvider>().await?;
+        let profile = components.one::<dyn ModelProfileProvider>().await?.profile();
         let commands = Self::command_executor(&components, &runtime)?;
         let mut state = runtime.load_channel_state().await?;
         resume(&mut state);
@@ -148,19 +148,13 @@ impl AgentBody {
             context_provider,
             hand_over: hand_over_nothing,
             commands,
-            profile: ModelProfile::default(),
+            profile,
             agent_state,
             built_from: components.components(),
             state: Mutex::new(state),
             control,
         };
         Ok((body, components))
-    }
-
-    /// This body, whose commands' turns are given their context as `profile`
-    /// says: its model's.
-    pub(super) fn with_profile(self, profile: ModelProfile) -> Self {
-        Self { profile, ..self }
     }
 
     /// This body, handing a change its transcript did not take to

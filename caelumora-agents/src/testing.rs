@@ -4,6 +4,7 @@
 //! turn to work in, the models, a call an agent makes in a workspace.
 //! Behind the feature `test-support`, as the runtime's `testing` is.
 
+use crate::prompt::ModelProfileProvider;
 use caelumora_runtime::agent::state::AgentStateHandle;
 use crate::turn::Turn;
 use crate::tool::ToolProvider;
@@ -39,7 +40,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use caelumora_model::work::Work;
-use caelumora_model::prompt_catalogue::{PromptCatalogue, CORE, CORE_PROMPTS};
+use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts, CORE, CORE_PROMPTS};
 use crate::prompt::{NAMESPACE, PROMPTS};
 
 /// The agents in the world of a test, as a plugin (issue 373): the agents'
@@ -146,7 +147,9 @@ impl LLMClient for Unasked {
         let refused = LLMError::Connection { endpoint: UNASKED_MODEL_KIND.to_string(), reason: "the model of a test is not to be asked".to_string() };
         futures::stream::iter([Err(refused)]).boxed()
     }
+}
 
+impl ModelProfileProvider for Unasked {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }
@@ -162,13 +165,20 @@ pub fn detached_actor_runtime() -> ActorRuntime {
 }
 
 /// The prompt catalogue with the core's texts and the agents', as the
-/// runtime and `AgentsPlugin` add them - for a provider a test makes itself.
-pub fn prompts() -> Arc<PromptCatalogue> {
+/// runtime and `AgentsPlugin` add them - for what resolves a context in a
+/// test.
+pub fn catalogue() -> Arc<PromptCatalogue> {
     let mut catalogue = PromptCatalogue::new();
     // The texts are compiled in; that they can be read is what this tests too.
     catalogue.add(CORE, CORE_PROMPTS).unwrap_or_else(|e| panic!("the core's texts cannot be read: {e}"));
     catalogue.add(NAMESPACE, PROMPTS).unwrap_or_else(|e| panic!("the agents' texts cannot be read: {e}"));
     Arc::new(catalogue)
+}
+
+/// Its texts as a model of the default variant is given them - for a
+/// provider a test makes itself.
+pub fn prompts() -> PromptTexts {
+    PromptTexts::new(catalogue(), None)
 }
 
 /// The component kinds the tests of the agents build with, resolving
@@ -193,12 +203,15 @@ pub fn with_agent_kinds(registry: &mut ComponentRegistry) {
 /// (`UNASKED_MODEL_KIND`) as the default - the core names none, each
 /// program names its own (issue 329), and so do the tests.
 fn with_unasked_model(registry: &mut ComponentRegistry) {
-    registry.register(ComponentKind::new(UNASKED_MODEL_KIND).provides::<dyn LLMClient>(), |_, _| {
+    registry.register(ComponentKind::new(UNASKED_MODEL_KIND).provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), |_, _| {
+        let model = Arc::new(Unasked);
         let mut facets = ComponentFacets::empty();
-        facets.insert::<dyn LLMClient>(Arc::new(Unasked));
+        facets.insert::<dyn LLMClient>(Arc::<Unasked>::clone(&model));
+        facets.insert::<dyn ModelProfileProvider>(model);
         Ok(facets)
     });
     registry.set_default_kind::<dyn LLMClient>(UNASKED_MODEL_KIND).expect("registered as providing it");
+    registry.set_default_kind::<dyn ModelProfileProvider>(UNASKED_MODEL_KIND).expect("registered as providing it");
 }
 
 /// A model that answers its first call with `answer`, and no other.
@@ -213,7 +226,9 @@ impl LLMClient for Once {
             None => futures::stream::pending().boxed(),
         }
     }
+}
 
+impl ModelProfileProvider for Once {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }
@@ -254,9 +269,10 @@ pub fn asked_as_a_call_on_the_workspace(asked: &[String]) {
 /// `answer`, registered with `registry`.
 pub fn register_once(registry: &mut ComponentRegistry, kind: &str, answer: Message) {
     let model = Arc::new(Once(Mutex::new(Some(answer))));
-    registry.register(ComponentKind::new(kind).provides::<dyn LLMClient>(), move |_, _| {
+    registry.register(ComponentKind::new(kind).provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), move |_, _| {
         let mut facets = ComponentFacets::empty();
         facets.insert::<dyn LLMClient>(Arc::<Once>::clone(&model));
+        facets.insert::<dyn ModelProfileProvider>(Arc::<Once>::clone(&model));
         Ok(facets)
     });
 }

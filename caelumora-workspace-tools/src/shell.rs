@@ -12,7 +12,7 @@
 //! as the REST server does for them.
 
 use crate::terminal_tool::{next, tool, TerminalTool, TerminalToolConfig};
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_runtime::terminal::{CommandState, Shell};
 use caelumora_model::workspace::CommandStatus;
 use caelumora_agents::tool::{arguments, ToolError, ToolResult};
@@ -77,7 +77,7 @@ fn wait(config: &TerminalToolConfig, asked: Option<f64>) -> Duration {
 
 /// `state` as the model is given it: the output cut from the front to
 /// what a result may hold.
-fn result(config: &TerminalToolConfig, prompts: &PromptCatalogue, state: CommandState) -> Value {
+fn result(config: &TerminalToolConfig, prompts: &PromptTexts, state: CommandState) -> Value {
     let mut output = state.output;
     let mut truncated = state.truncated;
     if output.len() > config.max_output_bytes {
@@ -122,7 +122,7 @@ struct Follow {
     wait_secs: Option<f64>,
 }
 
-pub(crate) fn tools(config: &TerminalToolConfig, prompts: &PromptCatalogue) -> Result<Vec<Tool>, PromptError> {
+pub(crate) fn tools(config: &TerminalToolConfig, prompts: &PromptTexts) -> Result<Vec<Tool>, PromptError> {
     let most = config.max_wait_secs.min(MAX_WAIT_SECS);
     let values = context! { most, run_command => RUN_COMMAND, command_output => COMMAND_OUTPUT, kill_command => KILL_COMMAND };
     Ok(vec![
@@ -161,7 +161,7 @@ pub(crate) fn describe(name: &str, params: &Value) -> ToolResult<String> {
 /// Runs the shell tool `name` of `tool` with `params` on `shell`, the workspace's as
 /// the turn's channel sees it.
 pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, shell: Arc<dyn Shell>) -> ToolResult<Value> {
-    let (config, prompts) = (&tool.config, tool.prompts.as_ref());
+    let (config, prompts) = (&tool.config, &tool.prompts);
     let state = match name {
         RUN_COMMAND => {
             let Run { command, wait_secs } = arguments(params)?;
@@ -189,6 +189,7 @@ pub(crate) async fn execute(tool: &TerminalTool, name: &str, params: &Value, she
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::prompt_catalogue::PromptCatalogue;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_agents::tool::ToolProvider;
     use crate::terminal_tool::tests::tool as terminal_tool;
@@ -267,7 +268,7 @@ mod tests {
         let config: TerminalToolConfig = serde_json::from_value(json!({ "max_output_bytes": 2 })).unwrap();
         let state = CommandState { id: "x".to_string(), status: CommandStatus::Completed, exit_code: Some(0), output: "abcdéf".to_string(), next_offset: 7, truncated: false };
         // No text of how to go on is needed for a command that ended.
-        let result = result(&config, &PromptCatalogue::new(), state);
+        let result = result(&config, &PromptTexts::new(Arc::new(PromptCatalogue::new()), None), state);
         assert_eq!((result["output"].as_str(), result["truncated"].as_bool()), (Some("f"), Some(true)), "the cut falls inside é and moves past it: {result}");
     }
 }

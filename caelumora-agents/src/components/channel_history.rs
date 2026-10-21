@@ -7,14 +7,14 @@
 //! written as the model is given the times of its own channel's (issue
 //! 424): in the turn's time zone, in the same form.
 
-use crate::prompt::NAMESPACE;
+use crate::prompt::{NAMESPACE, texts_of, writing_for_the_model};
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
 use crate::components::notes::READ_NOTES_TOOL_NAME;
 use crate::tool::{described, arguments, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
 use caelumora_model::chain::Position;
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::confidentiality::Classification;
@@ -50,7 +50,7 @@ impl ChannelHistoryComponent {
     ///
     /// # Errors
     /// `PromptError` if one of them cannot be had.
-    pub fn new(prompts: &PromptCatalogue) -> Result<Self, PromptError> {
+    pub fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
         // What its texts are told.
         let values = context! { max_last => MAX_LAST, default_last => DEFAULT_LAST, read_notes => READ_NOTES_TOOL_NAME };
         let tools = vec![described(prompts, NAMESPACE, CHANNEL_HISTORY_KIND, Tool {
@@ -138,11 +138,12 @@ fn wanted(query: Option<&str>) -> Filter<HistoryField> {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(CHANNEL_HISTORY_KIND).provides::<dyn ToolProvider>().uses::<PromptCatalogue>(),
-        |_descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(CHANNEL_HISTORY_KIND).provides::<dyn ToolProvider>()),
+        |_descriptor, context| async move {
+            let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ChannelHistoryComponent::new(context.service::<PromptCatalogue>()?)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(ChannelHistoryComponent::new(&texts)?));
             Ok(facets)
         },
     );

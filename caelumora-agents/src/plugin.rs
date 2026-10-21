@@ -95,7 +95,7 @@ mod tests {
     async fn a_channel_takes_no_tool_and_an_agent_no_moderator() {
         let registry = Arc::new(test_registry(Arc::new(MemoryStore::new())));
         // The texts its tools are made with.
-        let context = ComponentContext::new(SecurityContext::default(), Services::empty().with(testing::prompts()));
+        let context = ComponentContext::new(SecurityContext::default(), Services::empty().with(testing::catalogue()));
 
         let channel = config(&[("moderator", POLICY_MODERATOR_KIND), ("policy", ROUND_ROBIN_POLICY_KIND)]);
         ComponentContainer::from_config(&channel, ChannelLoop::COMPONENT_FACETS, &registry, &context).await.expect("its moderator and what it needs");
@@ -118,6 +118,6 @@ mod tests {
         // As in `examples/config.yaml`.
         assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());
         let refused = manager(serde_json::json!([{"id": "context", "kind": "calculator_tool"}])).expect_err("provides no context");
-        assert!(refused.to_string().contains("exactly one facet"), "{refused}");
+        assert!(refused.to_string().contains("provides no facet of which there is one"), "{refused}");
     }
 }

@@ -11,11 +11,11 @@
 //! available it contributes nothing.
 
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue};
+use caelumora_model::prompt_catalogue::{context, PromptTexts};
 use caelumora_model::tool::ToolSet;
 use std::sync::Arc;
 
@@ -27,7 +27,7 @@ const TEXT: &str = "agents.tool_sets";
 #[derive(Debug)]
 pub struct ToolSetsPromptProvider {
     pub position: PromptPosition,
-    pub prompts: Arc<PromptCatalogue>,
+    pub prompts: PromptTexts,
 }
 
 #[async_trait]
@@ -62,12 +62,13 @@ fn one_line(text: &str) -> String {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(TOOL_SETS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
-        |descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(TOOL_SETS_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>()),
+        |descriptor, context| async move {
+            let texts = texts_of(&context).await?;
             let position = PromptPosition::of_params(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(ToolSetsPromptProvider { position, prompts: Arc::clone(context.service::<PromptCatalogue>()?) }));
+            facets.insert::<dyn PromptProvider>(Arc::new(ToolSetsPromptProvider { position, prompts: texts }));
             Ok(facets)
         },
     );
