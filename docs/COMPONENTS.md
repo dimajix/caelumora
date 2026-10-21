@@ -200,6 +200,9 @@ facet): `caelumora-app` and `caelumora-tui` name `ollama_client` of `caelumora-o
     (`set_default_kind`), or else the one it was registered with. The program's choice is kept
     apart from the declaration: a plugin that declares the single after the program named its
     default - the agents' plugin in a test's registry (issue 370) - does not undo it.
+*   A default may provide several singles - a model, its client and its profile (issue 57) - as
+    long as no other default provides one of them too. It is built once for all of them: a
+    container keeps its defaults by the component, not by the facet asked for.
 
 ### Factories and tags
 

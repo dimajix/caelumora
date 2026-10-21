@@ -215,13 +215,14 @@ impl ComponentRegistry {
     }
 
     /// Takes the configuration's defaults (`AppConfig::component_defaults`):
-    /// each of its components replaces the default kind of the one single it
-    /// provides, for every container.
+    /// each of its components replaces the default kind of the singles it
+    /// provides, for every container - a model, of its `LLMClient` and of
+    /// its profile alike, built once for both.
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` naming the component if one is a
-    /// `ref`, has an unknown kind, does not provide exactly one single, or
-    /// provides one that another of them provides too; nothing is taken then.
+    /// `ref`, has an unknown kind, provides no single, or provides one that
+    /// another of them provides too; nothing is taken then.
     pub fn set_defaults(&mut self, config: &ComponentConfig) -> ComponentResult<()> {
         self.defaults = self.defaults_of(config)?;
         Ok(())
@@ -242,16 +243,17 @@ impl ComponentRegistry {
             let registration = self.kinds.get(&node.kind)
                 .ok_or_else(|| ComponentError::InvalidConfig(format!("component default '{}' has the unknown kind '{}'", node.id, node.kind)))?;
             let singles: Vec<&Single> = registration.provides.iter().filter_map(|f| self.singles.get(&f.id)).collect();
-            let [single] = singles.as_slice() else {
+            if singles.is_empty() {
                 return Err(ComponentError::InvalidConfig(format!(
-                    "component default '{}' ({}) must provide exactly one facet of which there is one per agent, not {}",
-                    node.id, node.kind, singles.len()
+                    "component default '{}' ({}) provides no facet of which there is one per agent", node.id, node.kind
                 )));
-            };
-            if let Some(other) = defaults.insert(single.facet.id, node.clone()) {
-                return Err(ComponentError::InvalidConfig(format!(
-                    "component defaults '{}' and '{}' both provide {}", other.id, node.id, single.facet.name()
-                )));
+            }
+            for single in singles {
+                if let Some(other) = defaults.insert(single.facet.id, node.clone()) {
+                    return Err(ComponentError::InvalidConfig(format!(
+                        "component defaults '{}' and '{}' both provide {}", other.id, node.id, single.facet.name()
+                    )));
+                }
             }
         }
         Ok(defaults)
@@ -692,7 +694,7 @@ mod tests {
             for (nodes, expected) in [
                 (config(&[("x", PRECONFIGURED_REF_KIND)]), "cannot be a ref"),
                 (config(&[("x", "unknown")]), "unknown kind 'unknown'"),
-                (config(&[("x", "part")]), "exactly one facet"),
+                (config(&[("x", "part")]), "provides no facet of which there is one"),
                 (config(&[("x", "other"), ("y", "default")]), "'x' and 'y' both provide Choice"),
             ] {
                 let message = registry.set_defaults(&nodes).expect_err(expected).to_string();

@@ -118,6 +118,6 @@ mod tests {
         // As in `examples/config.yaml`.
         assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}])).is_ok());
         let refused = manager(serde_json::json!([{"id": "context", "kind": "calculator_tool"}])).expect_err("provides no context");
-        assert!(refused.to_string().contains("exactly one facet"), "{refused}");
+        assert!(refused.to_string().contains("provides no facet of which there is one"), "{refused}");
     }
 }
