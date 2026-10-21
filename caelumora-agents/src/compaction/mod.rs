@@ -11,8 +11,9 @@
 //! part of its transcript. Of either the agent has exactly one.
 //!
 //! Whatever the strategy, the context is replaced, not rewritten: the
-//! transcript begins anew on a branch of its own, and what the agent saw
-//! before stays recorded and resolvable (`AgentChannelState::compact`).
+//! transcript begins anew on a branch of its own (`Transcript::compact`),
+//! and what the agent saw before stays recorded and resolvable
+//! (`AgentChannelState::compact`).
 //!
 //! What a component gave the agent - a skill loaded - is given again after
 //! a compaction by that component, a [`KnowledgeRestorer`] (issue 323): a

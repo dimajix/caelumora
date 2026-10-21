@@ -527,8 +527,8 @@ old one but does not continue it:
 
 *   **A branch of its own.** The transcript begins anew from the root with what replaces the older
     messages - a summary, what is given again, each a `Given` entry, the summary without a source -
-    and then copies of the entries kept, as they stand. Every copy gets a digest of its own, since
-    what precedes it is another.
+    and then copies of the entries kept, as they stand (`Transcript::compact`). Every copy gets a
+    digest of its own, since what precedes it is another.
 *   **The old branch stays**, in the store. Every reference recorded before resolves to what it
     did; the resolver does not know there was a compaction.
 *   **Prompt parts are carried over.** A part the turn placed after an entry kept follows its
