@@ -151,6 +151,60 @@ impl Chain<TranscriptEntry> {
         given
     }
 
+    /// Begins the active path anew as a compaction does (issue 16): a branch
+    /// of its own from the root, with `replacement` - what stands for the
+    /// older entries - given to read, each as its source if it is knowledge
+    /// (issue 389), after it the entries of the active path from `keep_from`
+    /// on - `None`: none - as they stand, and after them where the
+    /// compaction's part of the branch ends (`TranscriptEntry::Compacted`,
+    /// issue 387).
+    ///
+    /// Nothing is removed: the old branch stays, and every digest it had
+    /// names what it did. Of the entries kept, a message is copied as it
+    /// stands - a change of it is in it, one taken back is left out - and a
+    /// turn's end as it is, an earlier compaction's end not at all
+    /// (`TranscriptEntry::copy_standing`); every copy gets a digest of its
+    /// own, since what comes before it is another.
+    ///
+    /// Returns where each entry of the old path stands on the new branch: one
+    /// replaced at the end of the replacement - `None` without one -, one
+    /// kept at its copy, or at the copy before it if it has none - a change
+    /// of a message, which is in its copy. `None`, and nothing changes, if
+    /// the active path is empty, if `keep_from` is not on it, or if the new
+    /// branch would be empty.
+    pub fn compact(&mut self, replacement: Vec<(Message, Option<KnowledgeSource>)>, keep_from: Option<Digest>) -> Option<HashMap<Digest, Option<Digest>>> {
+        let path: Vec<_> = self.entries().collect();
+        if path.is_empty() {
+            return None;
+        }
+        let start = match keep_from {
+            None => path.len(),
+            Some(first) => path.iter().position(|node| node.digest == first)?,
+        };
+        let replaced: Vec<Digest> = path[..start].iter().map(|node| node.digest).collect();
+        // Each entry kept with its copy as it stands, `None` if none is made.
+        let kept: Vec<(Digest, Option<TranscriptEntry>)> = as_they_stand(path[start..].iter().copied())
+            .map(|(node, standing)| (node.digest, node.entry.copy_standing(standing)))
+            .collect();
+        if replacement.is_empty() && kept.iter().all(|(_, copy)| copy.is_none()) {
+            return None;
+        }
+        self.start_anew();
+        for (message, source) in replacement {
+            self.give(message, source);
+        }
+        let replacement_end = self.digest();
+        let mut moved: HashMap<Digest, Option<Digest>> = replaced.into_iter().map(|old| (old, replacement_end)).collect();
+        for (old, copy) in kept {
+            if let Some(copy) = copy {
+                self.record(copy);
+            }
+            moved.insert(old, self.digest());
+        }
+        self.record(TranscriptEntry::Compacted { at: Utc::now() });
+        Some(moved)
+    }
+
     /// Appends `msgs`.
     pub fn extend(&mut self, msgs: Vec<Message>) {
         for m in msgs {
@@ -270,7 +324,7 @@ impl TranscriptEntry {
     /// takes part as they are. Nothing of
     /// a change, which is in the copy of its message, nor of an earlier
     /// compaction's end, which ends what that compaction wrote.
-    pub(crate) fn copy_standing(&self, standing: Option<Message>) -> Option<TranscriptEntry> {
+    fn copy_standing(&self, standing: Option<Message>) -> Option<TranscriptEntry> {
         match (self, standing) {
             (TranscriptEntry::Message(_), Some(message)) => Some(TranscriptEntry::Message(message)),
             (TranscriptEntry::Given { source, .. }, Some(message)) => Some(TranscriptEntry::Given { message, source: *source }),
@@ -601,5 +655,53 @@ mod tests {
         transcript.move_head(fork.as_ref());
         assert!(!transcript.revoke(id(2), Utc::now()), "not given to the model any more");
         assert_eq!(transcript.all_entries().len(), 2, "nothing recorded");
+    }
+
+    /// Issues 16, 387, 389: a compaction writes a branch of its own - the
+    /// replacement, then what it keeps as it stands, then its end - and says
+    /// where every entry of the old path stands on it.
+    #[test]
+    fn a_compaction_begins_a_branch_of_its_own_and_says_where_the_old_entries_stand_on_it() {
+        let mut transcript = Transcript::default();
+        assert_eq!(transcript.compact(vec![(make_message(id(9)), None)], None), None, "not an empty transcript");
+        let turn = TurnId::new();
+        transcript.push(make_message(id(1)));
+        transcript.push(make_message(id(2)));
+        transcript.record(TranscriptEntry::TurnFinished { turn_id: turn, at: Utc::now() });
+        transcript.extend(vec![make_message(id(3)), make_message(id(4))]);
+        transcript.modify(Message { content: Some("changed".to_string()), ..make_message(id(3)) });
+        transcript.revoke(id(4), Utc::now());
+        transcript.record(TranscriptEntry::Compacted { at: Utc::now() });
+        let old: Vec<Digest> = transcript.entries().map(|n| n.digest).collect();
+        let head = transcript.digest();
+
+        assert_eq!(transcript.compact(Vec::new(), None), None, "not to nothing");
+        assert_eq!(transcript.compact(Vec::new(), old.last().copied()), None, "nor to an earlier compaction's end alone");
+        assert_eq!(transcript.compact(vec![(make_message(id(9)), None)], Some(digest::prompt("elsewhere"))), None, "not from what is not on the active path");
+        assert_eq!((transcript.digest(), transcript.all_entries().len()), (head, old.len()), "nothing changed");
+
+        let source = KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), Some(digest::prompt("steps")));
+        let moved = transcript.compact(vec![(make_message(id(10)), None), (make_message(id(11)), Some(source))], Some(old[1])).expect("compacted");
+
+        let new: Vec<_> = transcript.entries().collect();
+        let entries: Vec<(&str, Option<MessageId>)> = new.iter().map(|n| match &n.entry {
+            TranscriptEntry::Message(m) => ("said", Some(m.id)),
+            TranscriptEntry::Given { message, .. } => ("given", Some(message.id)),
+            TranscriptEntry::TurnFinished { turn_id, .. } if *turn_id == turn => ("finished", None),
+            TranscriptEntry::Compacted { .. } => ("compacted", None),
+            _ => ("other", None),
+        }).collect();
+        assert_eq!(entries, [("given", Some(id(10))), ("given", Some(id(11))), ("said", Some(id(2))), ("finished", None), ("said", Some(id(3))), ("compacted", None)],
+            "the replacement given, what was kept as it stands - the message taken back, the changes and the earlier end left out -, then its end");
+        assert_eq!(new[4].entry.message().and_then(|m| m.content.as_deref()), Some("changed"), "a change is in its message's copy");
+        let sources: Vec<_> = new[..2].iter().map(|n| match &n.entry { TranscriptEntry::Given { source, .. } => *source, _ => None }).collect();
+        assert_eq!(sources, [None, Some(source)], "each as it was given, knowledge or not");
+        assert!(transcript.prefix(&head.unwrap()).is_some(), "the old branch stays");
+
+        let at = |i: usize| Some(new[i].digest);
+        let stands: Vec<Option<Digest>> = old.iter().map(|digest| moved.get(digest).copied().flatten()).collect();
+        assert_eq!(stands, [at(1), at(2), at(3), at(4), at(4), at(4), at(4), at(4)],
+            "a replaced entry at the replacement's end, a kept one at its copy, or the copy before it");
+        assert_eq!(moved.len(), old.len(), "every entry of the old path");
     }
 }
