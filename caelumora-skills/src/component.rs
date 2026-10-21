@@ -49,9 +49,9 @@ use caelumora_agents::command::AgentCommandProvider;
 use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_agents::compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use caelumora_agents::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
+use caelumora_agents::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
 use caelumora_agents::tool::{arguments, described, tool_text, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use crate::NAMESPACE;
 use caelumora_runtime::view::SessionView;
 use chrono::Utc;
@@ -87,7 +87,7 @@ pub struct SkillsComponent {
     description: String,
     tools: Vec<Tool>,
     /// The texts of its catalogue and of a skill given.
-    prompts: Arc<PromptCatalogue>,
+    prompts: PromptTexts,
 }
 
 /// What the component is configured with besides its position.
@@ -190,7 +190,7 @@ impl SkillsComponent {
     ///
     /// # Errors
     /// `PromptError` if one of them cannot be had.
-    pub fn new(position: PromptPosition, requires_approval: ApprovalMode, prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
+    pub fn new(position: PromptPosition, requires_approval: ApprovalMode, prompts: PromptTexts) -> Result<Self, PromptError> {
         let tool = |name: &str, parameters, requires_approval, presentation| {
             let tool = Tool { name: name.to_string(), description: String::new(), parameters, requires_approval, visibility: ToolVisibility::SHOWN, classification: None, presentation };
             described(&prompts, NAMESPACE, SKILLS_KIND, tool, ())
@@ -472,17 +472,17 @@ impl KnowledgeRestorer for SkillsComponent {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(SKILLS_KIND)
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(SKILLS_KIND)
             .provides::<dyn PromptProvider>()
             .provides::<dyn ToolProvider>()
             .provides::<dyn AgentCommandProvider>()
-            .provides::<dyn KnowledgeRestorer>()
-            .uses::<PromptCatalogue>(),
-        |descriptor, context| {
+            .provides::<dyn KnowledgeRestorer>()),
+        |descriptor, context| async move {
+            let texts = texts_of(&context).await?;
             let position = PromptPosition::of_params(&descriptor.params)?;
             let SkillsConfig { requires_approval } = config_of_params(&descriptor.params)?;
-            let component = Arc::new(SkillsComponent::new(position, requires_approval, Arc::clone(context.service::<PromptCatalogue>()?))?);
+            let component = Arc::new(SkillsComponent::new(position, requires_approval, texts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::<SkillsComponent>::clone(&component));
             facets.insert::<dyn ToolProvider>(Arc::<SkillsComponent>::clone(&component));

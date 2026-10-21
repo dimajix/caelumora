@@ -36,7 +36,7 @@ use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::context::{ModelProfile, SenderFormat, SenderStyle};
 use caelumora_model::message::{estimated_tokens, Message, MessageId};
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError, PromptVariant};
+use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError, PromptTexts, PromptVariant};
 use crate::NAMESPACE;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
@@ -171,8 +171,8 @@ pub struct DecisionPolicy {
     destination: Classification,
     profile: ModelProfile,
     confidentiality: Arc<dyn ConfidentialityPolicy>,
-    /// What the model is asked.
-    prompts: Arc<PromptCatalogue>,
+    /// What the model is asked, in the variant it names.
+    prompts: PromptTexts,
 }
 
 #[async_trait]
@@ -303,19 +303,19 @@ fn options(candidates: &[ActorDescription]) -> Vec<String> {
 
 /// The text `key` of `prompts` for the decision model, rendered with
 /// `values`.
-fn text(prompts: &PromptCatalogue, key: &str, values: impl Serialize) -> Result<String, PromptError> {
+fn text(prompts: &PromptTexts, key: &str, values: impl Serialize) -> Result<String, PromptError> {
     prompts.render(&format!("{NAMESPACE}.{key}"), values)
 }
 
 /// Who `candidate` is, for the model: its name, and how it is introduced,
 /// on one line.
-fn described(prompts: &PromptCatalogue, candidate: &ActorDescription) -> Result<String, PromptError> {
+fn described(prompts: &PromptTexts, candidate: &ActorDescription) -> Result<String, PromptError> {
     let introduction = candidate.introduction.as_ref().map(|introduction| introduction.as_str().split_whitespace().collect::<Vec<_>>().join(" "));
     text(prompts, "candidate", context! { name => candidate.name.as_str(), introduction })
 }
 
 /// One `choice` over the candidates, by `options`, and nobody.
-fn choice(prompts: &PromptCatalogue, candidates: &[ActorDescription], options: &[String]) -> Result<BTreeMap<String, Question>, PromptError> {
+fn choice(prompts: &PromptTexts, candidates: &[ActorDescription], options: &[String]) -> Result<BTreeMap<String, Question>, PromptError> {
     let mut criteria = BTreeMap::new();
     for (option, candidate) in options.iter().zip(candidates) {
         criteria.insert(option.clone(), Some(described(prompts, candidate)?));
@@ -326,7 +326,7 @@ fn choice(prompts: &PromptCatalogue, candidates: &[ActorDescription], options: &
 }
 
 /// One `noul` per candidate, by its option.
-fn nouls(prompts: &PromptCatalogue, candidates: &[ActorDescription], options: &[String]) -> Result<BTreeMap<String, Question>, PromptError> {
+fn nouls(prompts: &PromptTexts, candidates: &[ActorDescription], options: &[String]) -> Result<BTreeMap<String, Question>, PromptError> {
     options.iter().zip(candidates).map(|(option, candidate)| {
         let instructions = text(prompts, "noul", context! { candidate => described(prompts, candidate)? })?;
         Ok((option.clone(), Question::Noul { instructions }))
@@ -344,7 +344,9 @@ pub fn register(registry: &mut ComponentRegistry) {
         |descriptor, context| {
             let config: DecisionPolicyConfig = config_of_params(&descriptor.params)?;
             config.check()?;
-            context.service::<PromptCatalogue>()?.require_variant(config.prompt_texts)?;
+            let catalogue = context.service::<PromptCatalogue>()?;
+            catalogue.require_variant(config.prompt_texts)?;
+            let prompts = PromptTexts::new(Arc::clone(catalogue), config.prompt_texts);
             let secret_manager = Arc::clone(context.service::<SecretManager>()?);
             let profile = config.profile();
             let client = DecisionClient::new(config.endpoint, config.model, config.keep_alive, secret_manager)
@@ -357,7 +359,7 @@ pub fn register(registry: &mut ComponentRegistry) {
                 destination: config.destination.unwrap_or(Classification::PUBLIC),
                 profile,
                 confidentiality: Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
-                prompts: Arc::clone(context.service::<PromptCatalogue>()?),
+                prompts,
             };
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ResponderPolicy>(Arc::new(policy));
@@ -444,11 +446,11 @@ mod tests {
         }
     }
 
-    /// The catalogue with the questions of the decision model.
-    fn prompts() -> Arc<PromptCatalogue> {
+    /// The questions of the decision model, as compiled in.
+    fn prompts() -> PromptTexts {
         let mut catalogue = PromptCatalogue::new();
         catalogue.add(NAMESPACE, PROMPTS).expect("the questions are compiled in");
-        Arc::new(catalogue)
+        PromptTexts::new(Arc::new(catalogue), None)
     }
 
     fn agent(name: &str, introduction: Option<&str>) -> ActorDescription {

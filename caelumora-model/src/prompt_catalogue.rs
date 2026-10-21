@@ -32,6 +32,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 #[cfg(test)]
 use std::sync::OnceLock;
 
@@ -91,6 +92,31 @@ impl<'de> Deserialize<'de> for PromptVariant {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
         Self::new(&name).map_err(D::Error::custom)
+    }
+}
+
+/// The texts of a catalogue as a model is given them (issue 57): in the
+/// variant its profile names, else as the default. What writes for a model
+/// takes it when it is made - the variant of its model - and keeps it; a
+/// context resolved again is worded in the variant it was recorded with.
+#[derive(Debug, Clone)]
+pub struct PromptTexts {
+    catalogue: Arc<PromptCatalogue>,
+    variant: Option<PromptVariant>,
+}
+
+impl PromptTexts {
+    /// The texts of `catalogue` in `variant`, the default for `None`.
+    pub fn new(catalogue: Arc<PromptCatalogue>, variant: Option<PromptVariant>) -> Self {
+        Self { catalogue, variant }
+    }
+
+    /// The text `key` - `namespace.key` -, rendered with `values`.
+    ///
+    /// # Errors
+    /// As `PromptCatalogue::render`.
+    pub fn render(&self, key: &str, values: impl Serialize) -> Result<String, PromptError> {
+        self.catalogue.render_in(self.variant, key, values)
     }
 }
 
@@ -240,8 +266,8 @@ impl PromptCatalogue {
     ///
     /// # Errors
     /// As `render`.
-    pub fn render_in(&self, variant: Option<&str>, key: &str, values: impl Serialize) -> Result<String, PromptError> {
-        let of_variant = variant.and_then(|variant| self.templates.get_template(&variant_key(variant, key)).ok());
+    pub fn render_in(&self, variant: Option<PromptVariant>, key: &str, values: impl Serialize) -> Result<String, PromptError> {
+        let of_variant = variant.and_then(|variant| self.templates.get_template(&variant_key(variant.as_str(), key)).ok());
         let template = match of_variant {
             Some(template) => template,
             None => self.templates.get_template(key).map_err(|_| PromptError::Unknown(key.to_string()))?,
@@ -332,12 +358,12 @@ pub enum PromptError {
 /// A catalogue with the core's texts alone, for the tests of what renders
 /// them.
 #[cfg(test)]
-pub(crate) fn core() -> &'static PromptCatalogue {
-    static CATALOGUE: OnceLock<PromptCatalogue> = OnceLock::new();
+pub(crate) fn core() -> &'static Arc<PromptCatalogue> {
+    static CATALOGUE: OnceLock<Arc<PromptCatalogue>> = OnceLock::new();
     CATALOGUE.get_or_init(|| {
         let mut catalogue = PromptCatalogue::new();
         catalogue.add(CORE, CORE_PROMPTS).unwrap_or_else(|e| panic!("the core's texts cannot be read: {e}"));
-        catalogue
+        Arc::new(catalogue)
     })
 }
 
@@ -412,14 +438,16 @@ mod tests {
         let gemma = variant_dir(&[("agents.yaml", "greeting: \"Hi {{ name }}!\"\ntools:\n  notes:\n    description: Your notes.\n"), ("README.md", "not read")]);
         catalogue.add_variant(DEFAULT_VARIANT, variant_dir(&[("agents.yaml", "farewell: Goodbye.\n")]).path()).unwrap();
         catalogue.add_variant("gemma4", gemma.path()).unwrap();
-        let greeting = |variant| catalogue.render_in(variant, "agents.greeting", context! { name => "Kaya" }).unwrap();
+        let variant = |name: &str| PromptVariant::new(name).unwrap();
+        let catalogue = Arc::new(catalogue);
+        let greeting = |name: Option<&str>| PromptTexts::new(Arc::clone(&catalogue), name.map(variant)).render("agents.greeting", context! { name => "Kaya" }).unwrap();
         assert_eq!(greeting(Some("gemma4")), "Hi Kaya!", "the variant's");
         assert_eq!(greeting(None), "Hello, Kaya.", "the default's where none is asked for");
         assert_eq!(greeting(Some("llama")), "Hello, Kaya.", "and for a variant that has no such text");
-        assert_eq!(catalogue.render_in(Some("gemma4"), "agents.tools.notes.description", ()).unwrap(), "Your notes.", "in a group, too");
-        assert_eq!(catalogue.render_in(Some("gemma4"), "agents.farewell", ()).unwrap(), "Goodbye.", "what a variant leaves out, as the default variant has it");
+        let gemma = PromptTexts::new(Arc::clone(&catalogue), Some(variant("gemma4")));
+        assert_eq!(gemma.render("agents.tools.notes.description", ()).unwrap(), "Your notes.", "in a group, too");
+        assert_eq!(gemma.render("agents.farewell", ()).unwrap(), "Goodbye.", "what a variant leaves out, as the default variant has it");
         assert_eq!(catalogue.render("agents.farewell", ()).unwrap(), "Goodbye.");
-        let variant = |name| PromptVariant::new(name).unwrap();
         assert!(catalogue.has_variant(variant("gemma4")) && catalogue.has_variant(variant(DEFAULT_VARIANT)) && !catalogue.has_variant(variant("llama")));
         assert!(catalogue.require_variant(None).is_ok() && catalogue.require_variant(Some(variant("gemma4"))).is_ok());
         assert_eq!(catalogue.require_variant(Some(variant("llama"))).expect_err("not configured").to_string(), "the texts have no variant 'llama': it is not configured (`prompts`)");
@@ -439,7 +467,7 @@ mod tests {
             let error = catalogue.add_variant("gemma4", dir.path()).expect_err(refused).to_string();
             assert!(error.contains(refused), "{error}");
             assert!(!error.contains(&dir.path().display().to_string()), "no path: {error}");
-            assert_eq!(catalogue.render_in(Some("gemma4"), "agents.farewell", ()).unwrap(), "Bye.", "nothing taken");
+            assert_eq!(catalogue.render_in(Some(PromptVariant::new("gemma4").unwrap()), "agents.farewell", ()).unwrap(), "Bye.", "nothing taken");
         }
         let mut catalogue = texts();
         assert!(matches!(catalogue.add_variant("Gemma 4", variant_dir(&[]).path()), Err(PromptError::VariantNamed(_))));

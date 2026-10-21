@@ -26,7 +26,8 @@ use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::kept::Kept;
 use crate::message::{estimated_tokens, Message, MessageId, MessageRole};
-use crate::prompt_catalogue::{context, PromptCatalogue, PromptError, PromptVariant, CORE};
+use crate::prompt_catalogue::{context, PromptCatalogue, PromptError, PromptTexts, PromptVariant, CORE};
+use std::sync::Arc;
 use crate::store::{EntityKind, Stored};
 use crate::tool::ToolSet;
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
@@ -280,16 +281,16 @@ impl ModelProfile {
     /// of an external agent - is given of the active path of `transcript`,
     /// for `agent`: its messages as they stand (`Transcript::messages`) and,
     /// where someone joined or left the channel, what it is told of that
-    /// (issue 408), worded by `prompts`, each as `given` makes it.
+    /// (issue 408), worded by `texts`, each as `given` makes it.
     ///
     /// # Errors
     /// `PromptError` if the text of a notice cannot be had.
-    pub fn given_messages(&self, prompts: &PromptCatalogue, transcript: &Transcript, agent: ActorId, time_zone: TimeZone) -> Result<Vec<Message>, PromptError> {
+    pub fn given_messages(&self, texts: &PromptTexts, transcript: &Transcript, agent: ActorId, time_zone: TimeZone) -> Result<Vec<Message>, PromptError> {
         let mut given = Vec::new();
         for (node, message) in as_they_stand(transcript.entries()) {
             let message = match message {
                 Some(message) => Some(message),
-                None => participant_notice(prompts, &node.entry, &node.digest, agent, self.sender_style)?,
+                None => participant_notice(texts, &node.entry, &node.digest, agent, self.sender_style)?,
             };
             given.extend(message.map(|message| self.given(message, agent, false, time_zone)));
         }
@@ -298,11 +299,11 @@ impl ModelProfile {
 
     /// What the model is to be told of how the messages of others are framed
     /// (`frame`) - their senders, and when they were written -, worded by
-    /// `prompts` (`core.framing`); `None` if they are not (issues 135, 424).
+    /// `texts` (`core.framing`); `None` if they are not (issues 135, 424).
     ///
     /// # Errors
     /// `PromptError` if the text cannot be had.
-    pub fn framing_explanation(&self, prompts: &PromptCatalogue) -> Result<Option<String>, PromptError> {
+    pub fn framing_explanation(&self, texts: &PromptTexts) -> Result<Option<String>, PromptError> {
         let format = match self.sender_format {
             SenderFormat::None => return Ok(None),
             SenderFormat::Prefix => "prefix",
@@ -312,7 +313,13 @@ impl ModelProfile {
             SenderStyle::Handle => "handle",
             SenderStyle::Name => "name",
         };
-        prompts.render(&format!("{CORE}.framing"), context! { format, style, times => self.message_times, time => TIME_EXAMPLE }).map(Some)
+        texts.render(&format!("{CORE}.framing"), context! { format, style, times => self.message_times, time => TIME_EXAMPLE }).map(Some)
+    }
+
+    /// The texts of `catalogue` as the model is given them: in the variant
+    /// it names (issue 57).
+    pub fn texts(&self, catalogue: &Arc<PromptCatalogue>) -> PromptTexts {
+        PromptTexts::new(Arc::clone(catalogue), self.prompt_texts)
     }
 
     /// Gives every system message of `items` that does not lead them - a
@@ -476,8 +483,9 @@ pub struct ContextResolver<'a> {
     transcript: TranscriptSource<'a>,
     prompts: &'a Kept<String>,
     offered_tools: &'a Kept<Vec<ToolSet>>,
-    /// The texts of the notices it gives the model (issue 57).
-    catalogue: &'a PromptCatalogue,
+    /// The texts of the notices it gives the model (issue 57), each worded
+    /// in the variant of the context it resolves.
+    catalogue: &'a Arc<PromptCatalogue>,
 }
 
 /// What a `ContextResolver` reads the transcript a reference names from
@@ -510,7 +518,7 @@ impl<'a> ContextResolver<'a> {
     /// holds it: what the next call of its model and how full its context
     /// is are resolved against - the head of its active branch. Its
     /// notices are worded by `catalogue`.
-    pub fn of(state: &'a AgentChannelState, catalogue: &'a PromptCatalogue) -> Self {
+    pub fn of(state: &'a AgentChannelState, catalogue: &'a Arc<PromptCatalogue>) -> Self {
         Self { transcript: TranscriptSource::Held(&state.transcript), prompts: &state.prompts, offered_tools: &state.offered_tools, catalogue }
     }
 
@@ -521,7 +529,7 @@ impl<'a> ContextResolver<'a> {
     /// the `offered_tools` it names (`TranscriptStore::named_by`, issue
     /// 383).
     /// Its notices are worded by `catalogue`.
-    pub fn on_path(path: &'a [Node<TranscriptEntry>], prompts: &'a Kept<String>, offered_tools: &'a Kept<Vec<ToolSet>>, catalogue: &'a PromptCatalogue) -> Self {
+    pub fn on_path(path: &'a [Node<TranscriptEntry>], prompts: &'a Kept<String>, offered_tools: &'a Kept<Vec<ToolSet>>, catalogue: &'a Arc<PromptCatalogue>) -> Self {
         Self { transcript: TranscriptSource::Path(path), prompts, offered_tools, catalogue }
     }
 
@@ -623,6 +631,8 @@ impl<'a> ContextResolver<'a> {
             })
             .collect();
         let profile = &reference.frame.profile;
+        // As the context was recorded: in the variant its model was given.
+        let texts = profile.texts(self.catalogue);
         // The parts after the transcript entry `after` - `None`: before
         // everything.
         let after_entry = |after: Option<Digest>| -> Option<Vec<ContextItem>> {
@@ -648,9 +658,9 @@ impl<'a> ContextResolver<'a> {
                 given.push(ContextItem::Conversation { message: profile.given(message, agent, in_turn, reference.frame.time_zone) });
             }
             if let TranscriptEntry::TurnGivenUp { turn_id, reason, at } = &node.entry {
-                given.push(ContextItem::Conversation { message: profile.given(given_up_notice(self.catalogue, *turn_id, reason, *at)?, agent, false, reference.frame.time_zone) });
+                given.push(ContextItem::Conversation { message: profile.given(given_up_notice(&texts, *turn_id, reason, *at)?, agent, false, reference.frame.time_zone) });
             }
-            if let Some(notice) = participant_notice(self.catalogue, &node.entry, &node.digest, agent, profile.sender_style)? {
+            if let Some(notice) = participant_notice(&texts, &node.entry, &node.digest, agent, profile.sender_style)? {
                 given.push(ContextItem::Conversation { message: profile.given(notice, agent, false, reference.frame.time_zone) });
             }
             let Some(parts) = after_entry(Some(node.digest)) else { return Ok(None) };
@@ -676,17 +686,17 @@ impl ContextItem {
 
 /// What the model is told of the turn `turn`, given up at `at` for `reason`
 /// (issue 258), where its end stands: why, and that what its tools did stays
-/// done, worded by `prompts` (`core.given_up`). A fixed text of the
+/// done, worded by `texts` (`core.given_up`). A fixed text of the
 /// runtime's, which says nothing of the conversation; its id is the turn's,
 /// so that it is the same each time it is resolved.
-fn given_up_notice(prompts: &PromptCatalogue, turn: TurnId, reason: &GivenUpReason, at: DateTime<Utc>) -> Result<Message, PromptError> {
-    let cause = prompts.render(&reason.cause_key(), ())?;
+fn given_up_notice(texts: &PromptTexts, turn: TurnId, reason: &GivenUpReason, at: DateTime<Utc>) -> Result<Message, PromptError> {
+    let cause = texts.render(&reason.cause_key(), ())?;
     let lowered = matches!(reason, GivenUpReason::Lowered { .. });
     Ok(Message {
         id: MessageId(turn.0),
         timestamp: at,
         role: MessageRole::System,
-        content: Some(prompts.render(&format!("{CORE}.given_up"), context! { cause, lowered })?),
+        content: Some(texts.render(&format!("{CORE}.given_up"), context! { cause, lowered })?),
         internal: true,
         turn_id: Some(turn),
         ..Message::new(Classification::PUBLIC)
@@ -696,19 +706,19 @@ fn given_up_notice(prompts: &PromptCatalogue, turn: TurnId, reason: &GivenUpReas
 /// What the model of `agent` is told of `entry`, whose digest is `digest`,
 /// if someone joined or left the channel (issue 408): who, and who made
 /// them, named in `style` as the senders of messages are - the agent itself
-/// as "you" -, worded by `prompts` (`core.participant_joined`, `…_left`). A
+/// as "you" -, worded by `texts` (`core.participant_joined`, `…_left`). A
 /// fixed text of the runtime's, marked as the channel's notice, so that it
 /// reads as no participant's, given as a system message where the model
 /// keeps one (`ModelProfile::place_system_messages`); its id is the
 /// entry's, so that it is the same each time it is resolved. `None` for any
 /// other entry.
-fn participant_notice(prompts: &PromptCatalogue, entry: &TranscriptEntry, digest: &Digest, agent: ActorId, style: SenderStyle) -> Result<Option<Message>, PromptError> {
+fn participant_notice(texts: &PromptTexts, entry: &TranscriptEntry, digest: &Digest, agent: ActorId, style: SenderStyle) -> Result<Option<Message>, PromptError> {
     let (key, participant, name, by, by_name, at) = match entry {
         TranscriptEntry::ParticipantJoined { participant, name, by, by_name, at } => ("participant_joined", participant, name, by, by_name, at),
         TranscriptEntry::ParticipantLeft { participant, name, by, by_name, at } => ("participant_left", participant, name, by, by_name, at),
         _ => return Ok(None),
     };
-    let text = prompts.render(&format!("{CORE}.{key}"), context! {
+    let text = texts.render(&format!("{CORE}.{key}"), context! {
         participant => style.of(name),
         you => *participant == agent,
         by => style.of(by_name),
@@ -729,7 +739,7 @@ fn participant_notice(prompts: &PromptCatalogue, entry: &TranscriptEntry, digest
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prompt_catalogue::core;
+    use crate::prompt_catalogue::{core, CORE_PROMPTS};
     use chrono::{TimeZone as _, Utc};
     use crate::agent::AgentId;
     use crate::digest::prompt;
@@ -796,10 +806,10 @@ mod tests {
 
         let profile = ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() };
         assert_eq!(profile.given(said(alice, "Alice", MessageRole::User, "hi"), agent, false, Default::default()).content.as_deref(), Some("@alice: hi"), "the profile applies it");
-        assert_eq!(ModelProfile::default().framing_explanation(core()).unwrap(), None, "nothing to explain where nothing is marked");
-        assert!(profile.framing_explanation(core()).unwrap().is_some_and(|text| text.contains("\"@handle: ...\"") && text.contains("Your own messages carry no such marker")));
+        assert_eq!(ModelProfile::default().framing_explanation(&ModelProfile::default().texts(core())).unwrap(), None, "nothing to explain where nothing is marked");
+        assert!(profile.framing_explanation(&ModelProfile::default().texts(core())).unwrap().is_some_and(|text| text.contains("\"@handle: ...\"") && text.contains("Your own messages carry no such marker")));
         let xml = ModelProfile { sender_format: SenderFormat::Xml, sender_style: SenderStyle::Name, ..ModelProfile::default() };
-        assert!(xml.framing_explanation(core()).unwrap().is_some_and(|text| text.contains("<message from=\"Name\">...</message>")));
+        assert!(xml.framing_explanation(&ModelProfile::default().texts(core())).unwrap().is_some_and(|text| text.contains("<message from=\"Name\">...</message>")));
         let recorded: ModelProfile = serde_json::from_value(serde_json::json!({ "reasoning_history": "never", "system_messages": "anywhere", "message_times": false })).unwrap();
         assert_eq!(recorded.sender_format, SenderFormat::None, "a context recorded before was given without markers");
     }
@@ -820,7 +830,7 @@ mod tests {
         let without = ModelProfile { sender_format: SenderFormat::Xml, ..ModelProfile::default() };
         assert_eq!(without.given(said(alice, "hi"), agent, false, berlin).content.as_deref(), Some("<message from=\"@alice\">hi</message>"), "without the switch");
 
-        let explained = |sender_format| ModelProfile { sender_format, message_times: true, ..ModelProfile::default() }.framing_explanation(core()).unwrap().unwrap_or_default();
+        let explained = |sender_format| ModelProfile { sender_format, message_times: true, ..ModelProfile::default() }.framing_explanation(&ModelProfile::default().texts(core())).unwrap().unwrap_or_default();
         assert!(explained(SenderFormat::Xml).contains("<message from=\"@handle\" at=\"Sun 18 Oct 2026, 14:32\">...</message>"), "{}", explained(SenderFormat::Xml));
         assert!(explained(SenderFormat::Prefix).contains("\"@handle (Sun 18 Oct 2026, 14:32): ...\""), "{}", explained(SenderFormat::Prefix));
         assert_eq!(TIME_EXAMPLE, berlin.format(at), "the example is written as the times are");
@@ -879,7 +889,7 @@ mod tests {
         assert!(seen.items[1..].iter().all(|item| item.role() == MessageRole::User), "not as a system message, which the model would move (issue 49)");
         let again = resolver.resolve(&reference, TurnId::new(), agent).unwrap().expect("resolved");
         assert_eq!(ids(&seen.items), ids(&again.items), "the same each time it is resolved");
-        let told: Vec<_> = reference.frame.profile.given_messages(core(), &state.transcript, agent, Default::default()).unwrap().into_iter().filter_map(|m| m.content).collect();
+        let told: Vec<_> = reference.frame.profile.given_messages(&ModelProfile::default().texts(core()), &state.transcript, agent, Default::default()).unwrap().into_iter().filter_map(|m| m.content).collect();
         assert_eq!(told, contents(&seen.items), "what a remote agent is given, too");
     }
 
@@ -1054,6 +1064,28 @@ mod tests {
             context_size: None,
             context_tokens: 330,
         }), "not the other agent's call; the turn given up and the one under way count, the context as the last call measured it, its answer included");
+    }
+
+    /// Issue 57: a context is worded in the variant of the texts it was
+    /// recorded with - for the next call of the model and for what it saw,
+    /// asked afterwards, alike.
+    #[test]
+    fn a_context_is_worded_in_the_variant_it_was_recorded_with() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("core.yaml"), "given_up_cause:\n  left: you walked out\n").unwrap();
+        let mut catalogue = PromptCatalogue::new();
+        catalogue.add(CORE, CORE_PROMPTS).unwrap();
+        catalogue.add_variant("gemma4", dir.path()).unwrap();
+        let catalogue = Arc::new(catalogue);
+        let mut state = AgentChannelState::default();
+        state.transcript.record(TranscriptEntry::TurnGivenUp { turn_id: TurnId::new(), reason: GivenUpReason::Left, at: Utc::now() });
+        let worded = |profile| {
+            let reference = ContextRef { transcript: state.transcript.digest(), frame: FrameRef { profile, ..FrameRef::default() } };
+            contents(&ContextResolver::of(&state, &catalogue).resolve(&reference, TurnId::new(), ActorId::None).unwrap().expect("resolved").items)
+        };
+        let gemma = ModelProfile { prompt_texts: Some(PromptVariant::new("gemma4").unwrap()), ..ModelProfile::default() };
+        assert!(worded(gemma)[0].contains("because you walked out."), "{:?}", worded(gemma));
+        assert!(worded(ModelProfile::default())[0].contains("because you left the channel."), "the default where it was recorded without one");
     }
 
     #[test]

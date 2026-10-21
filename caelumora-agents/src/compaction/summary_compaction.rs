@@ -11,8 +11,8 @@
 use crate::turn::Turn;
 use crate::compaction::{Compaction, CompactionError, CompactionStrategy, GivenAgain, KnowledgeRestorer};
 use caelumora_runtime::component::{ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, config_of_params};
-use crate::prompt::NAMESPACE;
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use crate::prompt::{NAMESPACE, texts_of, writing_for_the_model};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use crate::llm::LLMClient;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -50,7 +50,7 @@ pub struct SummaryCompaction {
     /// for its kind.
     restorers: Vec<Arc<dyn KnowledgeRestorer>>,
     /// What its model is asked, and how the summary is titled (issue 57).
-    prompts: Arc<PromptCatalogue>,
+    prompts: PromptTexts,
 }
 
 /// What the component is configured with.
@@ -305,8 +305,9 @@ impl CompactionStrategy for SummaryCompaction {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
-        ComponentKind::new(SUMMARY_COMPACTION_KIND).provides::<dyn CompactionStrategy>().needs::<dyn LLMClient>().needs::<dyn KnowledgeRestorer>().uses::<PromptCatalogue>(),
+        writing_for_the_model(ComponentKind::new(SUMMARY_COMPACTION_KIND).provides::<dyn CompactionStrategy>().needs::<dyn LLMClient>().needs::<dyn KnowledgeRestorer>()),
         |descriptor, context| async move {
+            let prompts = texts_of(&context).await?;
             let SummaryCompactionConfig { keep } = config_of_params(&descriptor.params)?;
             if !(0.0..1.0).contains(&keep) {
                 return Err(ComponentError::InvalidConfig(format!("'keep' is a share of the context size, at least 0 and less than 1, not {keep}")));
@@ -315,7 +316,6 @@ pub fn register(registry: &mut ComponentRegistry) {
             let llm_client = context.one::<dyn LLMClient>().await?.facet;
             // What the agent's components give again, each of its kind.
             let restorers = context.all::<dyn KnowledgeRestorer>().await?.into_iter().map(|restorer| restorer.facet).collect();
-            let prompts = Arc::clone(context.service::<PromptCatalogue>()?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn CompactionStrategy>(Arc::new(SummaryCompaction { llm_client, keep, restorers, prompts }));
             Ok(facets)

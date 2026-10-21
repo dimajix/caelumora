@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use caelumora_model::work::Work;
-use caelumora_model::prompt_catalogue::{PromptCatalogue, CORE, CORE_PROMPTS};
+use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts, CORE, CORE_PROMPTS};
 use crate::prompt::{NAMESPACE, PROMPTS};
 
 /// The agents in the world of a test, as a plugin (issue 373): the agents'
@@ -165,13 +165,20 @@ pub fn detached_actor_runtime() -> ActorRuntime {
 }
 
 /// The prompt catalogue with the core's texts and the agents', as the
-/// runtime and `AgentsPlugin` add them - for a provider a test makes itself.
-pub fn prompts() -> Arc<PromptCatalogue> {
+/// runtime and `AgentsPlugin` add them - for what resolves a context in a
+/// test.
+pub fn catalogue() -> Arc<PromptCatalogue> {
     let mut catalogue = PromptCatalogue::new();
     // The texts are compiled in; that they can be read is what this tests too.
     catalogue.add(CORE, CORE_PROMPTS).unwrap_or_else(|e| panic!("the core's texts cannot be read: {e}"));
     catalogue.add(NAMESPACE, PROMPTS).unwrap_or_else(|e| panic!("the agents' texts cannot be read: {e}"));
     Arc::new(catalogue)
+}
+
+/// Its texts as a model of the default variant is given them - for a
+/// provider a test makes itself.
+pub fn prompts() -> PromptTexts {
+    PromptTexts::new(catalogue(), None)
 }
 
 /// The component kinds the tests of the agents build with, resolving

@@ -95,7 +95,7 @@ mod tests {
     async fn a_channel_takes_no_tool_and_an_agent_no_moderator() {
         let registry = Arc::new(test_registry(Arc::new(MemoryStore::new())));
         // The texts its tools are made with.
-        let context = ComponentContext::new(SecurityContext::default(), Services::empty().with(testing::prompts()));
+        let context = ComponentContext::new(SecurityContext::default(), Services::empty().with(testing::catalogue()));
 
         let channel = config(&[("moderator", POLICY_MODERATOR_KIND), ("policy", ROUND_ROBIN_POLICY_KIND)]);
         ComponentContainer::from_config(&channel, ChannelLoop::COMPONENT_FACETS, &registry, &context).await.expect("its moderator and what it needs");

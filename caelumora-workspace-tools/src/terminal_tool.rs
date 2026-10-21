@@ -28,13 +28,14 @@
 //! that only read; `command_output`, `kill_command` and `publish_file`
 //! never ask.
 
+use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use crate::{files, shell, NAMESPACE};
 use caelumora_agents::turn::Turn;
 use caelumora_agents::situation::Situation;
 use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_runtime::workspace::{WorkspaceError, WorkspaceManager};
 use caelumora_agents::tool::{described, proposed_matcher, tool_text, usable_workspace, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
-use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use async_trait::async_trait;
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::question::Answers;
@@ -94,7 +95,7 @@ pub struct TerminalTool {
     description: String,
     tools: Vec<Tool>,
     /// What its results say of how to go on.
-    pub(crate) prompts: Arc<PromptCatalogue>,
+    pub(crate) prompts: PromptTexts,
 }
 
 impl TerminalTool {
@@ -103,7 +104,7 @@ impl TerminalTool {
     ///
     /// # Errors
     /// `PromptError` if one of them cannot be had.
-    pub(crate) fn new(config: TerminalToolConfig, workspaces: Arc<WorkspaceManager>, prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
+    pub(crate) fn new(config: TerminalToolConfig, workspaces: Arc<WorkspaceManager>, prompts: PromptTexts) -> Result<Self, PromptError> {
         let mut tools = shell::tools(&config, &prompts)?;
         tools.extend(files::tools(&config, &prompts)?);
         let description = match &config.description {
@@ -119,7 +120,7 @@ impl TerminalTool {
 ///
 /// # Errors
 /// `PromptError` if one of its texts cannot be had.
-pub(crate) fn tool(prompts: &PromptCatalogue, name: &str, parameters: ToolParameters, requires_approval: bool, presentation: ToolPresentation, values: impl Serialize) -> Result<Tool, PromptError> {
+pub(crate) fn tool(prompts: &PromptTexts, name: &str, parameters: ToolParameters, requires_approval: bool, presentation: ToolPresentation, values: impl Serialize) -> Result<Tool, PromptError> {
     let tool = Tool { name: name.to_string(), description: String::new(), parameters, requires_approval, visibility: ToolVisibility::SHOWN, classification: None, presentation };
     described(prompts, NAMESPACE, TERMINAL_TOOL_KIND, tool, values)
 }
@@ -128,7 +129,7 @@ pub(crate) fn tool(prompts: &PromptCatalogue, name: &str, parameters: ToolParame
 /// (`results.<key>`) rendered with `values`; `None`, logged, if it cannot be
 /// had - the result is given without it, as what happened is given without
 /// what to do next where a message is missing (issue 57).
-pub(crate) fn next(prompts: &PromptCatalogue, key: &str, values: impl Serialize) -> Option<String> {
+pub(crate) fn next(prompts: &PromptTexts, key: &str, values: impl Serialize) -> Option<String> {
     prompts.render(&format!("{NAMESPACE}.results.{key}"), values)
         .inspect_err(|e| error!("A result of the workspace's tools is given without saying how to go on: {e}"))
         .ok()
@@ -221,12 +222,12 @@ impl ToolProvider for TerminalTool {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(TERMINAL_TOOL_KIND).provides::<dyn ToolProvider>().uses::<WorkspaceManager>().uses::<PromptCatalogue>(),
-        |descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(TERMINAL_TOOL_KIND).provides::<dyn ToolProvider>().uses::<WorkspaceManager>()),
+        |descriptor, context| async move {
+            let prompts = texts_of(&context).await?;
             let config: TerminalToolConfig = config_of_params(&descriptor.params)?;
             let workspaces = Arc::clone(context.service::<WorkspaceManager>()?);
-            let prompts = Arc::clone(context.service::<PromptCatalogue>()?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(TerminalTool::new(config, workspaces, prompts)?));
             Ok(facets)
@@ -237,7 +238,8 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::prompts;
+    use crate::{catalogue, prompts};
+    use caelumora_agents::testing::with_agent_kinds;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_runtime::component::{ComponentContainer, ComponentContext};
     use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
@@ -280,11 +282,13 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn is_built_without_parameters() {
         let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
+        // The agents' kinds, with a model whose profile names the variant.
+        with_agent_kinds(&mut registry);
         register(&mut registry);
         let config = ComponentConfig { component_nodes: vec![ComponentDescriptor::new("terminal", TERMINAL_TOOL_KIND)] };
         let world = session_with_workspace().await;
         // The world runs the core alone: the texts of these tools are added.
-        let context = ComponentContext::new(SecurityContext::default(), world.runtime.services().clone().with(prompts()));
+        let context = ComponentContext::new(SecurityContext::default(), world.runtime.services().clone().with(catalogue()));
         let container = ComponentContainer::from_config(&config, &[TypeKey::of::<dyn ToolProvider>()], &Arc::new(registry), &context).await;
         assert!(container.is_ok(), "{:?}", container.err());
     }

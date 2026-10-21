@@ -14,11 +14,11 @@
 //! the component leaves its agents to the times of the messages.
 
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue};
+use caelumora_model::prompt_catalogue::{context, PromptTexts};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
@@ -33,12 +33,12 @@ pub struct CurrentTimePromptProvider {
     /// What it reads the time from: the system's clock, or a fixed one in
     /// tests.
     clock: fn() -> DateTime<Utc>,
-    prompts: Arc<PromptCatalogue>,
+    prompts: PromptTexts,
 }
 
 impl CurrentTimePromptProvider {
     /// The current time at `position`, read from the system's clock.
-    pub fn new(position: PromptPosition, prompts: Arc<PromptCatalogue>) -> Self {
+    pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, clock: Utc::now, prompts }
     }
 }
@@ -58,12 +58,13 @@ impl PromptProvider for CurrentTimePromptProvider {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(CURRENT_TIME_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
-        |descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(CURRENT_TIME_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>()),
+        |descriptor, context| async move {
+            let texts = texts_of(&context).await?;
             let position = PromptPosition::of_params_or(&descriptor.params, PromptPosition::BeforeTurnInput)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(CurrentTimePromptProvider::new(position, Arc::clone(context.service::<PromptCatalogue>()?))));
+            facets.insert::<dyn PromptProvider>(Arc::new(CurrentTimePromptProvider::new(position, texts)));
             Ok(facets)
         },
     );

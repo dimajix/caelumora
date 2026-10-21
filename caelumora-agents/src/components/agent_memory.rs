@@ -24,8 +24,8 @@ use crate::components::notes::NOTE_PRESENTATION;
 use crate::memory::AgentMemory;
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use crate::situation::Situation;
 use crate::tool::{described, classification_argument, id_argument, reclassify_parameters, tool_text, text_argument, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
@@ -58,7 +58,7 @@ pub struct AgentMemoryComponent {
     /// What may flow where (issue 304): what it recalls, how it reclassifies.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     /// The texts of its prompt part (issue 57).
-    prompts: Arc<PromptCatalogue>,
+    prompts: PromptTexts,
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them.
     description: String,
@@ -101,7 +101,7 @@ impl AgentMemoryComponent {
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
-    pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
+    pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, prompts: PromptTexts) -> Result<Self, PromptError> {
         let tools = vec![
             described(&prompts, NAMESPACE, AGENT_MEMORY_KIND, Tool {
                 name: REMEMBER_TOOL_NAME.to_string(),
@@ -218,19 +218,20 @@ impl PromptProvider for AgentMemoryComponent {
 }
 
 /// The prompt part of `prompts` for what the agent `recalled` here.
-fn render(prompts: &PromptCatalogue, recalled: &[Memory]) -> Result<String, PromptError> {
+fn render(prompts: &PromptTexts, recalled: &[Memory]) -> Result<String, PromptError> {
     let recalled: Vec<_> = recalled.iter().map(|m| context! { id => m.id.to_string(), text => m.text }).collect();
     prompts.render(TEXT, context! { recalled, remember => REMEMBER_TOOL_NAME, update => UPDATE_MEMORY_TOOL_NAME, forget => FORGET_TOOL_NAME })
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(AGENT_MEMORY_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn AccessPolicy>().uses::<dyn ConfidentialityPolicy>().uses::<PromptCatalogue>(),
-        |_descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(AGENT_MEMORY_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn AccessPolicy>().uses::<dyn ConfidentialityPolicy>()),
+        |_descriptor, context| async move {
+            let texts = texts_of(&context).await?;
             let component = Arc::new(AgentMemoryComponent::new(
                 Arc::clone(context.service::<dyn AccessPolicy>()?),
                 Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
-                Arc::clone(context.service::<PromptCatalogue>()?),
+                texts,
             )?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<AgentMemoryComponent>::clone(&component));

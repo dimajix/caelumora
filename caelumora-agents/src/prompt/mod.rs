@@ -21,13 +21,13 @@ pub mod static_system_prompt_provider;
 pub mod tool_sets_prompt_provider;
 pub mod turn_context_provider;
 
-use caelumora_runtime::component::{ComponentError, ComponentImpl, ComponentRegistry};
+use caelumora_runtime::component::{ComponentContext, ComponentError, ComponentImpl, ComponentKind, ComponentRegistry, ComponentResult};
 use crate::situation::Situation;
 use caelumora_runtime::view::ViewError;
 use async_trait::async_trait;
 use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::PromptError;
+use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError, PromptTexts};
 use caelumora_model::store::StoreError;
 use serde::Deserialize;
 use serde_json::Value;
@@ -182,6 +182,27 @@ pub trait ModelProfileProvider: Send + Sync + Debug {
     fn profile(&self) -> ModelProfile;
 }
 
+/// `kind`, declaring what a component of it needs to write for the agent's
+/// model (issue 57): the prompt catalogue, and the profile that names the
+/// variant of its texts (`texts_of`).
+pub fn writing_for_the_model(kind: ComponentKind) -> ComponentKind {
+    kind.uses::<PromptCatalogue>().needs::<dyn ModelProfileProvider>()
+}
+
+/// The texts a component writes for the agent's model with, as it is
+/// built (issue 57): the catalogue, in the variant the profile of the
+/// model names. A running agent's profile does not change - its components
+/// are built once, as its actor starts -, so a component keeps them. Its
+/// kind declares what this takes (`writing_for_the_model`).
+///
+/// # Errors
+/// What building the model's component reports; `ComponentError::NoService`
+/// if the kind does not declare it uses the catalogue.
+pub async fn texts_of(context: &ComponentContext) -> ComponentResult<PromptTexts> {
+    let profile = context.one::<dyn ModelProfileProvider>().await?.profile();
+    Ok(profile.texts(context.service::<PromptCatalogue>()?))
+}
+
 /// Why what an agent's model is to be given cannot be had (issue 336):
 /// what a `ContextProvider` or a `PromptProvider` answers. A plugin's
 /// provider translates its own errors into it, deciding there what may be
@@ -223,4 +244,94 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     static_system_prompt_provider::register(registry);
     tool_sets_prompt_provider::register(registry);
     turn_context_provider::register(registry);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::{LLMClient, LLMResult};
+    use crate::prompt::current_time_prompt_provider::CURRENT_TIME_PROMPT_PROVIDER_KIND;
+    use crate::testing::{test_registry, TestAgents};
+    use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
+    use crate::tool::{denied_result, ToolProvider};
+    use async_trait::async_trait;
+    use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_model::config::AppConfig;
+    use caelumora_model::message::{Message, MessageEvent};
+    use caelumora_model::prompt_catalogue::PromptVariant;
+    use caelumora_model::security::SecurityContext;
+    use caelumora_model::store::memory::MemoryStore;
+    use caelumora_model::tool::Tool;
+    use caelumora_model::type_map::TypeKey;
+    use caelumora_model::work::Work;
+    use caelumora_runtime::agent::state::AgentStateHandle;
+    use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentFacets};
+    use caelumora_runtime::session::testing::{bare_channel, bare_session, detached_actor_runtime_in};
+    use caelumora_runtime::testing::TestRuntime;
+    use caelumora_model::session::SessionId;
+    use futures::stream::BoxStream;
+    use futures::StreamExt;
+    use std::sync::Arc;
+
+    /// A model whose profile names the variant `gemma4`, never asked.
+    #[derive(Debug)]
+    struct Gemma;
+
+    #[async_trait]
+    impl LLMClient for Gemma {
+        async fn chat_completion(&self, _: &[Message], _: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>> {
+            futures::stream::empty().boxed()
+        }
+    }
+
+    impl ModelProfileProvider for Gemma {
+        fn profile(&self) -> ModelProfile {
+            ModelProfile { prompt_texts: Some(PromptVariant::new("gemma4").unwrap()), ..ModelProfile::default() }
+        }
+    }
+
+    /// Issue 57: what writes for a model takes its texts in the variant the
+    /// model's profile names - a prompt part and a tool as they are built,
+    /// what the work words itself by the profile of the work -, and falls
+    /// back to the default for what the variant leaves out.
+    #[tokio::test]
+    async fn the_texts_are_given_in_the_variant_of_the_model() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("agents.yaml"), "current_time: |\n  [Now]\n  {{ time }}\ntools:\n  calculator_tool:\n    calculate: Computes.\nresults:\n  denied: Declined.\n").unwrap();
+        let store = Arc::new(MemoryStore::new());
+        let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
+        registry.register(ComponentKind::new("gemma").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(), |_, _| {
+            let model = Arc::new(Gemma);
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn LLMClient>(Arc::<Gemma>::clone(&model));
+            facets.insert::<dyn ModelProfileProvider>(model);
+            Ok(facets)
+        });
+        let config = AppConfig { prompts: [("gemma4".to_string(), dir.path().to_path_buf())].into(), ..AppConfig::default() };
+        let runtime = TestRuntime { store, config, registry: Some(registry), plugins: vec![&TestAgents], ..Default::default() }.build();
+
+        let components = ComponentConfig { component_nodes: vec![
+            ComponentDescriptor::new("model", "gemma"),
+            ComponentDescriptor::new("time", CURRENT_TIME_PROMPT_PROVIDER_KIND),
+            ComponentDescriptor::new("calculator", CALCULATOR_TOOL_KIND),
+        ] };
+        let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
+        let built = ComponentContainer::from_config(&components, &[TypeKey::of::<dyn PromptProvider>(), TypeKey::of::<dyn ToolProvider>()], runtime.component_registry(), &context).await.unwrap();
+        let calculator = built.get_all::<dyn ToolProvider>(None).unwrap().remove(0);
+        assert_eq!(calculator.tools()[0].description, "Computes.", "the tool, in its model's variant");
+        assert_eq!(calculator.description(), "Evaluate mathematical expressions.", "what the variant leaves out, as the default");
+
+        let session = bare_session(SessionId::new());
+        let channel = bare_channel(session.id);
+        let actor_runtime = detached_actor_runtime_in(Arc::clone(&runtime), session, channel);
+        let work = Work::default().given_as(Gemma.profile());
+        let (state, agent_state) = (AgentChannelState::default(), AgentStateHandle::detached());
+        let situation = Situation::new(AgentId::new(), &work, &state, &agent_state, &actor_runtime);
+        let time = built.get_all::<dyn PromptProvider>(None).unwrap().remove(0);
+        assert!(time.get_prompt(&situation).await.unwrap().text.starts_with("[Now]\n"), "the prompt part, too");
+        assert!(denied_result(&situation.texts()).contains("Declined."), "and what the work words itself, by its profile");
+        let elsewhere = Work::default();
+        assert!(denied_result(&Situation::new(AgentId::new(), &elsewhere, &state, &agent_state, &actor_runtime).texts()).contains("The user declined"), "work of another profile, as it");
+    }
 }

@@ -19,11 +19,11 @@
 //! (`channel_participants_prompt_provider`).
 
 use caelumora_runtime::component::{flag_of_params, ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::value::language::Language;
 use std::sync::{Arc, Mutex};
 
@@ -40,18 +40,18 @@ pub struct ChannelLanguagePromptProvider {
     /// Whether it tells only of changes: then the language it told last,
     /// `None` before it told any. A plain lock, never held across an await.
     told: Option<Mutex<Option<Option<Language>>>>,
-    prompts: Arc<PromptCatalogue>,
+    prompts: PromptTexts,
 }
 
 impl ChannelLanguagePromptProvider {
     /// The language at `position`, told every time it is asked.
-    pub fn new(position: PromptPosition, prompts: Arc<PromptCatalogue>) -> Self {
+    pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, told: None, prompts }
     }
 
     /// The language at `position`, told the first time it is asked and then
     /// only when it changed.
-    pub fn changes_only(position: PromptPosition, prompts: Arc<PromptCatalogue>) -> Self {
+    pub fn changes_only(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, told: Some(Mutex::new(None)), prompts }
     }
 
@@ -99,19 +99,19 @@ impl PromptProvider for ChannelLanguagePromptProvider {
 /// named in English and in itself where `Language::names` knows it - a
 /// model follows a name more surely than a tag - and always by its tag,
 /// which says the region.
-fn render(prompts: &PromptCatalogue, language: Option<&Language>) -> Result<String, PromptError> {
+fn render(prompts: &PromptTexts, language: Option<&Language>) -> Result<String, PromptError> {
     let Some(language) = language else { return Ok(String::new()) };
     let (english, native) = language.names().unzip();
     prompts.render(TEXT, context! { tag => language.to_string(), english, native })
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(CHANNEL_LANGUAGE_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
-        |descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(CHANNEL_LANGUAGE_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>()),
+        |descriptor, context| async move {
+            let prompts = texts_of(&context).await?;
             let position = PromptPosition::of_params(&descriptor.params)?;
             let changes_only = flag_of_params(&descriptor.params, "changes_only")?;
-            let prompts = Arc::clone(context.service::<PromptCatalogue>()?);
             let provider = if changes_only { ChannelLanguagePromptProvider::changes_only(position, prompts) } else { ChannelLanguagePromptProvider::new(position, prompts) };
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(provider));

@@ -273,8 +273,8 @@ mod tests {
         // The same tools, treated otherwise: offered so then.
         let fourths = take_turn(&mut state, vec![tool("echo", true), tool("notes", false)], &[&fourth]);
 
-        let prompts = testing::prompts();
-        let offered = |said: &Message| ContextResolver::of(&state, &prompts).resolve(&state.context_of(said).expect("sent with it"), said.turn_id.expect("a turn's"), ActorId::Agent(agent))
+        let catalogue = testing::catalogue();
+        let offered = |said: &Message| ContextResolver::of(&state, &catalogue).resolve(&state.context_of(said).expect("sent with it"), said.turn_id.expect("a turn's"), ActorId::Agent(agent))
             .expect("worded").expect("everything it names is here").tool_sets.into_iter().flat_map(|set| set.tools).map(|t| (t.name, t.requires_approval)).collect::<Vec<_>>();
         let named = |offer: Vec<(String, bool)>| offer.into_iter().map(|(name, asks)| format!("{name}{}", if asks { "?" } else { "" })).collect::<Vec<_>>();
         assert_eq!(named(offered(&firsts[0])), ["echo", "notes?"]);

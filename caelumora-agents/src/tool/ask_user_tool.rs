@@ -7,12 +7,12 @@
 //! runtime's (see `ToolProvider::questions`). Its questions are never
 //! sensitive: their answers go to the model.
 
-use crate::prompt::NAMESPACE;
+use crate::prompt::{NAMESPACE, texts_of, writing_for_the_model};
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use crate::tool::{described, arguments, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
 use async_trait::async_trait;
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::{Addressee, Answers, Question, Questions, MAX_CHOICES, MAX_HEADER_CHARS, MAX_QUESTIONS};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
@@ -41,7 +41,7 @@ impl AskUserToolProvider {
     ///
     /// # Errors
     /// `PromptError` if one of them cannot be had.
-    pub fn new(prompts: &PromptCatalogue) -> Result<Self, PromptError> {
+    pub fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
         let limits = context! { max_questions => MAX_QUESTIONS, max_choices => MAX_CHOICES, max_header_chars => MAX_HEADER_CHARS };
         let choice = ToolParameters::object(
             vec![
@@ -117,11 +117,12 @@ impl ToolProvider for AskUserToolProvider {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(ASK_USER_TOOL_KIND).provides::<dyn ToolProvider>().uses::<PromptCatalogue>(),
-        |_descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(ASK_USER_TOOL_KIND).provides::<dyn ToolProvider>()),
+        |_descriptor, context| async move {
+            let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(AskUserToolProvider::new(context.service::<PromptCatalogue>()?)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(AskUserToolProvider::new(&texts)?));
             Ok(facets)
         },
     );

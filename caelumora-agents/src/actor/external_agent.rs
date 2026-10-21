@@ -295,7 +295,7 @@ impl ExternalAgentActor {
         // now - every message, and every change of one, as it may have used
         // either version (issue 236).
         state.classifications_given().iter().for_each(|c| work.see(c));
-        let given = work.context.frame.profile.given_messages(self.body.runtime.prompts(), &state.transcript, self.id(), work.context.frame.time_zone)?;
+        let given = work.context.frame.profile.given_messages(&work.context.frame.profile.texts(self.body.runtime.prompts()), &state.transcript, self.id(), work.context.frame.time_zone)?;
         // A task that asked back before the channel was lowered is not
         // taken up: it is cancelled, and the request begins a new one.
         if let Some(asking) = state.remote.asking().cloned() {

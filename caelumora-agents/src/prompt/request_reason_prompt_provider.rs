@@ -14,13 +14,13 @@
 //! answer whenever they are asked.
 
 use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
 use crate::situation::Situation;
 use crate::tool::stop_tool::SILENCE_TOOL_NAME;
 use async_trait::async_trait;
 use caelumora_model::actor::RequestReason;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue};
+use caelumora_model::prompt_catalogue::{context, PromptTexts};
 use std::sync::Arc;
 
 pub const REQUEST_REASON_PROMPT_PROVIDER_KIND: &str = "request_reason_prompt_provider";
@@ -31,7 +31,7 @@ const TEXT: &str = "agents.request_reason";
 #[derive(Debug)]
 pub struct RequestReasonPromptProvider {
     pub position: PromptPosition,
-    pub prompts: Arc<PromptCatalogue>,
+    pub prompts: PromptTexts,
 }
 
 #[async_trait]
@@ -54,12 +54,13 @@ impl PromptProvider for RequestReasonPromptProvider {
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(REQUEST_REASON_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>().uses::<PromptCatalogue>(),
-        |descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(REQUEST_REASON_PROMPT_PROVIDER_KIND).provides::<dyn PromptProvider>()),
+        |descriptor, context| async move {
+            let texts = texts_of(&context).await?;
             let position = PromptPosition::of_params_or(&descriptor.params, PromptPosition::BeforeTurnInput)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(RequestReasonPromptProvider { position, prompts: Arc::clone(context.service::<PromptCatalogue>()?) }));
+            facets.insert::<dyn PromptProvider>(Arc::new(RequestReasonPromptProvider { position, prompts: texts }));
             Ok(facets)
         },
     );

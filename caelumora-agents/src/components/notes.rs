@@ -14,7 +14,7 @@ use crate::prompt::NAMESPACE;
 use crate::notes::{AgentNotes, NoteKind};
 use crate::turn::Turn;
 use caelumora_runtime::component::{ComponentFacets, ComponentRegistry, ComponentKind};
-use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider};
+use crate::prompt::{ContextError, Prompt, PromptPosition, PromptProvider, texts_of, writing_for_the_model};
 use crate::situation::Situation;
 use caelumora_model::question::Answers;
 use caelumora_model::snapshot::PublishedNotes;
@@ -25,7 +25,7 @@ use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
-use caelumora_model::prompt_catalogue::{context, PromptCatalogue, PromptError};
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::security::AccessPolicy;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
@@ -65,7 +65,7 @@ pub struct NotesComponent {
     /// What may flow where (issue 304): what it recalls, how it reclassifies.
     confidentiality: Arc<dyn ConfidentialityPolicy>,
     /// The texts of its prompt part (issue 57).
-    prompts: Arc<PromptCatalogue>,
+    prompts: PromptTexts,
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them.
     description: String,
@@ -103,7 +103,7 @@ impl NotesComponent {
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
-    pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, prompts: Arc<PromptCatalogue>) -> Result<Self, PromptError> {
+    pub fn new(access_policy: Arc<dyn AccessPolicy>, confidentiality: Arc<dyn ConfidentialityPolicy>, prompts: PromptTexts) -> Result<Self, PromptError> {
         let tools = vec![
             described(&prompts, NAMESPACE, NOTES_KIND, Tool {
                 name: WRITE_NOTE_TOOL_NAME.to_string(),
@@ -293,7 +293,7 @@ impl PromptProvider for NotesComponent {
 
 /// The prompt part of `prompts` for `own` notes and those of `others` by
 /// name, those without notes left out; empty if there are none.
-fn render<'a>(prompts: &PromptCatalogue, own: &[Note], others: impl Iterator<Item = (&'a str, &'a [Note])>) -> Result<String, PromptError> {
+fn render<'a>(prompts: &PromptTexts, own: &[Note], others: impl Iterator<Item = (&'a str, &'a [Note])>) -> Result<String, PromptError> {
     let numbered = |notes: &[Note]| notes.iter().map(|n| context! { id => n.id.to_string(), text => n.text }).collect::<Vec<_>>();
     let others: Vec<_> = others.filter(|(_, notes)| !notes.is_empty()).map(|(name, notes)| context! { name, notes => numbered(notes) }).collect();
     if own.is_empty() && others.is_empty() {
@@ -303,13 +303,14 @@ fn render<'a>(prompts: &PromptCatalogue, own: &[Note], others: impl Iterator<Ite
 }
 
 pub fn register(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn AccessPolicy>().uses::<dyn ConfidentialityPolicy>().uses::<PromptCatalogue>(),
-        |_descriptor, context| {
+    registry.register_async(
+        writing_for_the_model(ComponentKind::new(NOTES_KIND).provides::<dyn ToolProvider>().provides::<dyn PromptProvider>().uses::<dyn AccessPolicy>().uses::<dyn ConfidentialityPolicy>()),
+        |_descriptor, context| async move {
+            let texts = texts_of(&context).await?;
             let component = Arc::new(NotesComponent::new(
                 Arc::clone(context.service::<dyn AccessPolicy>()?),
                 Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
-                Arc::clone(context.service::<PromptCatalogue>()?),
+                texts,
             )?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<NotesComponent>::clone(&component));

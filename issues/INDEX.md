@@ -310,7 +310,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [51](51-agent-private-notes.md) | done | An agent knows in each channel only what was said there; it has no private knowledge that carries over to its other channels. |
 | [54](54-private-notes-visible-to-users.md) | done | Private notes meant for the agent alone are visible to users, in the context panel and as the tool call in the chat. |
 | [55](55-notes-by-reflection.md) | open | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |
-| [57](57-prompt-catalogue.md) | in progress | The prompts the runtime gives models are English constants spread through the code, in one variant for every language and model. |
+| [57](57-prompt-catalogue.md) | done | The prompts the runtime gives models are English constants spread through the code, in one variant for every language and model. |
 | [58](58-notes-in-every-prompt.md) | open | Every note is put into every prompt in full, which grows without bound, and the writing agent sees its notes a second time as tool calls - revoked ones included. |
 | [59](59-retrieval-of-notes.md) | open | Knowledge reaches the model only in full or when the model itself searches for it; nothing selects what is relevant to the turn. |
 | [60](60-note-ids-in-prompts.md) | done | Notes of its own that an agent is shown from other channels carry no usable id, so it cannot revoke them, and ids from other chains are ambiguous. |

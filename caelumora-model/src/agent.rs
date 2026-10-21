@@ -29,6 +29,7 @@ use crate::value::text::{Description, Introduction};
 use crate::value::ValueError;
 use crate::work::{TurnId, Work};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use tracing::warn;
@@ -746,7 +747,7 @@ impl AgentChannelState {
     /// `None`, and nothing changes, without a turn under way, if the
     /// transcript is empty, if `keep_from` is not on its active path, or if
     /// the new branch would be empty.
-    pub fn compact(&mut self, actor: ActorId, replacement: Vec<(Message, Option<KnowledgeRef>)>, keep_from: Option<Digest>, catalogue: &PromptCatalogue) -> Option<(Digest, Digest)> {
+    pub fn compact(&mut self, actor: ActorId, replacement: Vec<(Message, Option<KnowledgeRef>)>, keep_from: Option<Digest>, catalogue: &Arc<PromptCatalogue>) -> Option<(Digest, Digest)> {
         let turn = self.turn.as_mut()?;
         // A compaction comes before a call of the model, never while the
         // calls of a step run: nothing is put aside to be given (issue 389).

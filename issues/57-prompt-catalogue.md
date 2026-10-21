@@ -1,6 +1,6 @@
 # 57 — Prompts are English constants spread through the code
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -228,3 +228,11 @@ personality and component, and repeat them in each.
     directories, their lookup and the checks; `PromptVariant` in the profile, named by the
     parameter `prompt_texts` of the model's components; the view, with which components, turn and
     actor render.
+- **2026-10-21** — Step 2 done, and with it the issue: a variant named by a model's component
+  replaces single texts of the default. `PromptTexts` is the catalogue in a variant: a component
+  that writes for the model takes it when it is made, in the variant of its model's profile
+  (`prompt::texts_of`, `writing_for_the_model`); the work words its own texts in the variant of
+  its profile (`Situation::texts`); the `ContextResolver` in the variant a context was recorded
+  with; `decision_policy` in its own. AGENT-TURN.md and CONFIGURATION.md describe both. Not done,
+  and not needed for it: a command that writes the texts compiled in as a starting point for a
+  variant (`caelumora prompts export <dir>`), mentioned in the discussion.

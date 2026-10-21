@@ -281,8 +281,9 @@ They follow one convention:
     (`CalculatorToolProvider`) and `Component` for a feature (`NotesComponent`).
 *   **Names:** every tool and command name is a constant (`CALCULATE_TOOL_NAME`).
 *   **Texts:** what a prompt part says is a text of the prompt catalogue, its key a constant
-    (`TEXT`), rendered from the catalogue the component takes as a service
-    ([AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)); so are the descriptions of its tools,
+    (`TEXT`), rendered from the texts the component takes when it is made, in the variant of its
+    model (`prompt::texts_of`, its kind `prompt::writing_for_the_model`,
+    [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)); so are the descriptions of its tools,
     rendered when it is made (`new`, which fails if one is missing) and kept with its tools
     ([TOOLS.md](TOOLS.md)).
 *   **Construction:** the factory builds the struct literally; there is a `new` only where

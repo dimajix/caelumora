@@ -1257,9 +1257,9 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
 /// its transcript as it stands, resolved as a turn's context is.
 fn given_next(stored: &AgentChannelState, agent: AgentId) -> Vec<Message> {
     use caelumora_model::context::{ContextItem, ContextRef, ContextResolver};
-    use crate::testing::prompts;
+    use crate::testing::catalogue;
     let reference = ContextRef { transcript: stored.transcript.digest(), ..ContextRef::default() };
-    ContextResolver::of(stored, &prompts()).resolve(&reference, TurnId::new(), ActorId::Agent(agent)).expect("worded").expect("resolved").items.into_iter()
+    ContextResolver::of(stored, &catalogue()).resolve(&reference, TurnId::new(), ActorId::Agent(agent)).expect("worded").expect("resolved").items.into_iter()
         .filter_map(|item| match item {
             ContextItem::Conversation { message } => Some(message),
             ContextItem::Prompt { .. } => None,

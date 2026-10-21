@@ -404,6 +404,7 @@ impl RuntimeBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_model::prompt_catalogue::PromptVariant;
     use caelumora_model::user_provider::Credential;
 
     #[tokio::test]
@@ -442,8 +443,8 @@ mod tests {
         let runtime = RuntimeBuilder::from_config(&AppConfig::from_yaml(&config).unwrap(), &[]).unwrap().build().unwrap();
         let prompts = runtime.prompts();
         assert_eq!(prompts.render("core.given_up_cause.failed", ()).unwrap(), "it broke", "the default overridden");
-        assert_eq!(prompts.render_in(Some("gemma4"), "core.given_up_cause.left", ()).unwrap(), "you went");
-        assert_eq!(prompts.render_in(Some("gemma4"), "core.given_up_cause.failed", ()).unwrap(), "it broke", "a variant falls back to the overridden default");
+        assert_eq!(prompts.render_in(Some(PromptVariant::new("gemma4").unwrap()), "core.given_up_cause.left", ()).unwrap(), "you went");
+        assert_eq!(prompts.render_in(Some(PromptVariant::new("gemma4").unwrap()), "core.given_up_cause.failed", ()).unwrap(), "it broke", "a variant falls back to the overridden default");
 
         std::fs::write(dir.path().join("gemma4").join("core.yaml"), "given_up_cause:\n  gone: away\n").unwrap();
         let refused = RuntimeBuilder::from_config(&AppConfig::from_yaml(&config).unwrap(), &[]).unwrap().build().map(|_| ()).expect_err("no such text");

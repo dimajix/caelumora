@@ -82,9 +82,11 @@ impl AgentActor {
         let channel_id = actor_runtime.channel_controller().id();
         let agent_id = agent_controller.id();
         // A turn stored under way is resumed (issue 75).
-        let not_executed_text = not_executed_result(actor_runtime.prompts());
+        let prompts = Arc::clone(actor_runtime.prompts());
         let resume = |state: &mut AgentChannelState| {
-            let not_executed = state.prepare_resume(&not_executed_text);
+            // In the variant the turn was begun with.
+            let profile = state.turn.as_ref().map(|turn| turn.work.context.frame.profile).unwrap_or_default();
+            let not_executed = state.prepare_resume(&not_executed_result(&profile.texts(&prompts)));
             if not_executed > 0 {
                 warn!("Agent {} in channel {}: {} approved tool calls were not executed before it stopped; the model is told", agent_id, channel_id, not_executed);
             }

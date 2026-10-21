@@ -602,13 +602,28 @@ catalogue (`PromptCatalogue` in `caelumora-model`, issue 57), so that a text can
 change of code. Every crate brings its texts in a YAML file it compiles in - the agents'
 `caelumora-agents/src/prompts.yaml` - and adds them under its namespace when its plugin registers
 (`RuntimeBuilder::prompts`): `agents.channel_participants` is the roster. The catalogue is a
-service of the runtime; a provider takes it when it is made (`ComponentKind::uses`), what the
-turn or the actor words itself - a plan's instructions, what was heard while it worked, the
-results of tool calls - through its runtime (`ActorRuntime::prompts`). The core's texts are the
-namespace `core` (`caelumora-model/src/prompts.yaml`): what the `ContextResolver` tells the model as
-it resolves a context - a turn given up, who joined or left - and how the messages of others are
-marked (`ModelProfile::framing_explanation`). They are worded anew each time a context is
-resolved, also when what an agent saw is asked for afterwards: with the texts as they are then.
+service of the runtime. The core's texts are the namespace `core`
+(`caelumora-model/src/prompts.yaml`): what the `ContextResolver` tells the model as it resolves a
+context - a turn given up, who joined or left - and how the messages of others are marked
+(`ModelProfile::framing_explanation`).
+
+**Variants.** The configuration may name variants of the texts (`prompts`, see
+[CONFIGURATION.md](CONFIGURATION.md#the-texts-given-to-models)), and a model's component the one its
+model is given (`prompt_texts`): its profile names it (`ModelProfile::prompt_texts`, a
+`PromptVariant`). Every text is had through a view of the catalogue in a variant (`PromptTexts`),
+which falls back to the default for what it leaves out:
+
+*   A component that writes for the model takes the view when it is made, in the variant of its
+    model's profile (`prompt::texts_of`; its kind declares what that takes,
+    `prompt::writing_for_the_model`), and keeps it: a running agent's profile does not change, its
+    components being built once, as its actor starts. Its tools are rendered then, for that variant
+    alone.
+*   What the work words itself - a plan's instructions, what was heard while it worked, the results
+    of tool calls - is worded in the variant of the work's profile (`Situation::texts`): its
+    model's, or the one a turn resumed after a restart was begun with.
+*   The `ContextResolver` words a context in the variant it was recorded with (`FrameRef::profile`),
+    each time it resolves it - also when what an agent saw is asked for afterwards, with the texts
+    of that variant as they are then.
 
 A text is a whole part, title and all: a template of `minijinja` (Jinja2), given its values by
 name, that may branch and loop over them - the roster over the participants, the notes over their

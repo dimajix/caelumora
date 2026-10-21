@@ -11,7 +11,7 @@
 //! Running is the actor's - it owns the executor.
 
 use caelumora_model::actor::{ActorEvent, ActorId};
-use caelumora_model::prompt_catalogue::PromptCatalogue;
+use caelumora_model::prompt_catalogue::PromptTexts;
 use caelumora_model::turn::TurnState;
 use caelumora_model::approval::{ApprovalDecision, ApprovalId, ApprovalStatus};
 use caelumora_model::message::{Message, MessageId, MessageRole};
@@ -27,11 +27,11 @@ use crate::tool::{abandoned_result, declined_result, denied_result, skipped_resu
 pub(crate) struct ToolCalls<'t> {
     turn: &'t mut TurnState,
     agent_name: &'t str,
-    prompts: &'t PromptCatalogue,
+    prompts: PromptTexts,
 }
 
 impl<'t> ToolCalls<'t> {
-    pub(crate) fn new(turn: &'t mut TurnState, agent_name: &'t str, prompts: &'t PromptCatalogue) -> Self {
+    pub(crate) fn new(turn: &'t mut TurnState, agent_name: &'t str, prompts: PromptTexts) -> Self {
         Self { turn, agent_name, prompts }
     }
 
@@ -82,8 +82,8 @@ impl<'t> ToolCalls<'t> {
                 ToolCallStatus::WaitingUser { id: question, questions }
             }
             (ApprovalStatus::Approved, None) => ToolCallStatus::Ready { answers: None },
-            (ApprovalStatus::Denied, _) => ToolCallStatus::Finished(ToolCallResult { approval: call.approval.clone(), ..ToolCallResult::of(&call.tool_call, ToolResultStatus::Denied, denied_result(self.prompts), label) }),
-            (ApprovalStatus::Timeout, _) => ToolCallStatus::Finished(ToolCallResult { approval: call.approval.clone(), ..ToolCallResult::of(&call.tool_call, ToolResultStatus::TimedOut, timed_out_result(self.prompts), label) }),
+            (ApprovalStatus::Denied, _) => ToolCallStatus::Finished(ToolCallResult { approval: call.approval.clone(), ..ToolCallResult::of(&call.tool_call, ToolResultStatus::Denied, denied_result(&self.prompts), label) }),
+            (ApprovalStatus::Timeout, _) => ToolCallStatus::Finished(ToolCallResult { approval: call.approval.clone(), ..ToolCallResult::of(&call.tool_call, ToolResultStatus::TimedOut, timed_out_result(&self.prompts), label) }),
         };
         Some(self.turn.pending_questions().into_iter()
             .filter(|request| Some(request.id) == asks)
@@ -120,7 +120,7 @@ impl<'t> ToolCalls<'t> {
     pub(crate) fn decline(&mut self, id: QuestionId, by: ActorId, by_name: String) -> Result<ActorEvent, QuestionError> {
         // A fixed text of the runtime's: as the turn (issue 168).
         let label = self.turn.work.label();
-        let declined = declined_result(self.prompts);
+        let declined = declined_result(&self.prompts);
         let call = self.asking(id, by)?;
         let ToolCallStatus::WaitingUser { questions, .. } = &call.status else { return Err(QuestionError::NotOpen) };
         let closed = ActorEvent::QuestionClosed { id, shown_to: questions.shown_to() };
@@ -167,7 +167,7 @@ impl<'t> ToolCalls<'t> {
         // A fixed text of the runtime's: as the turn (issue 168).
         let label = self.turn.work.label();
         if let Some(call) = self.turn.tool_calls.get_mut(index) {
-            let result = ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, skipped_result(self.prompts, by), label);
+            let result = ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, skipped_result(&self.prompts, by), label);
             finish(call, result);
         }
     }
@@ -184,7 +184,7 @@ impl<'t> ToolCalls<'t> {
         let mut abandoned = Vec::new();
         for call in self.turn.tool_calls.iter_mut().filter(|c| !c.is_finished()) {
             abandoned.push(call.clone());
-            let content = abandoned_result(self.prompts, &end);
+            let content = abandoned_result(&self.prompts, &end);
             let result = ToolCallResult::of(&call.tool_call, ToolResultStatus::NotExecuted, content, label.clone());
             finish(call, result);
         }
@@ -241,7 +241,6 @@ fn finish(call: &mut ToolCallState, mut result: ToolCallResult) {
 mod tests {
     use super::*;
     use crate::testing;
-    use std::sync::{Arc, OnceLock};
     use caelumora_model::agent::AgentId;
     use caelumora_model::approval::ToolMatcher;
     use caelumora_model::question::{Addressee, Question, Questions};
@@ -254,8 +253,7 @@ mod tests {
     }
 
     fn view(turn: &mut TurnState) -> ToolCalls<'_> {
-        static PROMPTS: OnceLock<Arc<PromptCatalogue>> = OnceLock::new();
-        ToolCalls::new(turn, "agent", PROMPTS.get_or_init(testing::prompts))
+        ToolCalls::new(turn, "agent", testing::prompts())
     }
 
     fn a_turn() -> TurnState {

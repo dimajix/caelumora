@@ -4,6 +4,7 @@
 //! The tests of an action that acts in someone's name assert what it asks,
 //! as the suite does for the core's.
 
+use caelumora_model::prompt_catalogue::PromptTexts;
 use caelumora_model::history::testing::{items_of, messages_of};
 use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
@@ -57,7 +58,7 @@ fn store(world: &World) -> Arc<dyn EntityStore<Skill>> {
 }
 
 fn component(world: &World) -> SkillsComponent {
-    SkillsComponent::new(PromptPosition::Start, ApprovalMode::Always, Arc::clone(world.runtime.prompts())).unwrap()
+    SkillsComponent::new(PromptPosition::Start, ApprovalMode::Always, PromptTexts::new(Arc::clone(world.runtime.prompts()), None)).unwrap()
 }
 
 /// A session of alice and bob with alice's agent `helper`, in a channel
@@ -167,7 +168,7 @@ async fn an_approver_is_shown_the_skill_whole() {
     assert_eq!(shown, "Write the skill \"deploy\" (for every session of the agent's owner): How we deploy\n\n1. Build.\n2. Ship.");
     let tools = component.tools();
     assert!(tools.iter().filter(|t| t.name == CREATE_SKILL_TOOL_NAME || t.name == UPDATE_SKILL_TOOL_NAME).all(|t| t.requires_approval), "approved by default");
-    let unapproved = SkillsComponent::new(PromptPosition::Start, ApprovalMode::Never, Arc::clone(world.runtime.prompts())).unwrap().tools();
+    let unapproved = SkillsComponent::new(PromptPosition::Start, ApprovalMode::Never, PromptTexts::new(Arc::clone(world.runtime.prompts()), None)).unwrap().tools();
     assert!(unapproved.iter().all(|t| !t.requires_approval), "unless configured otherwise");
 }
 
