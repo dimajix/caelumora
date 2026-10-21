@@ -156,10 +156,11 @@ component_defaults:
 # core.yaml, skills.yaml, ... -, of the form of the file compiled in
 # (caelumora-agents/src/prompts.yaml, say), whose entries it replaces one by
 # one. `default` overrides the texts for every model. Without this section
-# the texts compiled in are used.
-#prompts:
+# the texts compiled in are used. Sassy's model is given `gemma4`
+# (examples/seed.yaml).
+prompts:
 #  default: local/prompts/default
-#  gemma4: local/prompts/gemma4
+  gemma4: examples/prompts/gemma4
 
 # Who may do what (issue 11). `ownership` - the default - lets owners do
 # everything with their sessions, agents and templates, contributors (e.g.
