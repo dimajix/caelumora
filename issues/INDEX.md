@@ -382,6 +382,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [349](349-core-review-epic.md) | done | Epic for the review of agents, sessions and channels of 2026-10-14: the bracket around issues 350–361 and their recommended order. |
 | [378](378-resource-management-epic.md) | open | Epic for resource management: the bracket around 376, 379–383 and 218, which reduce what the server holds in memory, and their recommended order. |
 | [391](391-history-and-transcript-review-epic.md) | done | Epic for the review of the history and the transcript of 2026-10-16: the bracket around issues 392–398 and their recommended order. |
+| [444](444-texts-compiled-in-cannot-be-exported.md) | open | A variant of the texts given to models is a directory of files of the form of those compiled in, but whoever runs the program without its sources has no copy of them to begin one with. |
 
 ## Code structure
 
