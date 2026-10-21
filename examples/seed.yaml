@@ -150,17 +150,17 @@ personalities:
   - id: private-notes
     kind: private_notes
     fail_policy: FailClosed
-  # The program's model (examples/config.yaml), given the variant `gemma4` of
-  # the texts (issue 57, examples/prompts/gemma4). A model of its own replaces
-  # the default whole, so it names every parameter the default names.
+  # The configuration's model (`component_defaults` of examples/config.yaml),
+  # given the variant `gemma4` of the texts (issue 57,
+  # examples/prompts/gemma4). It builds on that default (issue 445) and names
+  # only what differs; a configuration without a default `model` keeps Sassy
+  # from being built.
   - id: model
-    kind: ollama_client
+    kind: default
     params:
-      model: "gemma4:26b"
-      sender_format: xml
-      sender_style: handle
-      context_size: 65536
-      prompt_texts: gemma4
+      id: model
+      params:
+        prompt_texts: gemma4
     fail_policy: FailClosed
 # An agent that runs elsewhere, reached over A2A (issue 179) - for instance
 # a Hermes Agent with its A2A plugin. Set the endpoint's `url` to where it

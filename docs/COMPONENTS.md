@@ -33,6 +33,9 @@ graph that refers to it, so secrets are resolved as that caller and a list the c
 cannot be built. The price is that the components are not shared between references: a
 preconfigured `mcp_tool` discovers its tools on its own for every personality that uses it.
 
+A descriptor of the reserved kind `default` builds on one of the defaults of the singles, with
+params of its own over the default's ([Building on a default](#building-on-a-default)).
+
 ### Sharing components between personalities
 
 What many personalities should have alike - the channel's context, the tools every agent needs - is
@@ -210,6 +213,49 @@ agent's body takes it once, as its components are built, and keeps it with every
 *   A default may provide several singles - a model, its client and its profile (issue 57) - as
     long as no other default provides one of them too. It is built once for all of them: a
     container keeps its defaults by the component, not by the facet asked for.
+*   The ids of the configuration's defaults are unique: by its id a component builds on one.
+
+#### Building on a default
+
+A personality that wants one parameter of its model changed - the variant of the texts, say - does
+not write out a model of its own with every parameter of the default, which would no longer follow
+a change of the default (issue 445). It writes a descriptor of the reserved kind `default`, as a
+`ref` is written: its `params` name the default it builds on, by its `id`, and give the params that
+differ.
+
+```yaml
+component_defaults:              # of the configuration
+  - id: model
+    kind: ollama_client
+    params: { model: "gemma4:26b", sender_format: xml, context_size: 65536 }
+personalities:                   # of the seed
+- name: sassy-assistant
+  components:
+  - id: model
+    kind: default
+    params:
+      id: model                  # the default it builds on
+      params: { prompt_texts: gemma4 }
+    fail_policy: FailClosed
+```
+
+*   The component is of the default's kind, with the default's params and its own over them. Its
+    id, tags and fail policy are its own.
+*   The params are merged one level deep: each it gives replaces the default's of its name whole.
+    An `endpoint` given takes nothing of the default's along - not its `timeout_secs`, and not an
+    `auth`, so that a secret the default sends to its server is never sent where a personality
+    points it.
+*   The default is found among the defaults the container was built with first (an external
+    agent's `ContextProvider`), then among the configuration's. One that is not configured keeps
+    the component from being built, with a message that names it: a seed that builds on `model`
+    needs a configuration whose default has that id.
+*   It may stand among preconfigured components as well; there it builds on the defaults of the
+    container that includes them. A default cannot build on a default itself.
+*   What the container was built from (`ComponentContainer::components`) shows the component as it
+    is built, its params merged; `ComponentRegistry::kind_of` tells the default's kind.
+*   A component that builds on a default of a kind only an operator configures counts as written,
+    since what the operator decides are the params: a request that names it is refused as one that
+    writes the kind (`ComponentError::OperatorOnly`).
 
 ### Factories and tags
 

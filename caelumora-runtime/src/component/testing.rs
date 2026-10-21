@@ -79,8 +79,8 @@ pub fn causes(error: &ComponentError) -> Vec<&ComponentError> {
 
 pub const NAMED: &[TypeKey] = &[TypeKey::of::<dyn Named>()];
 
-/// A registry with the single `Choice`, the kinds `default` and `other`
-/// that provide it, and how often `default` was built.
+/// A registry with the single `Choice`, the kinds `declared` and `other`
+/// that provide it, and how often `declared` was built.
 pub fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
     let mut registry = ComponentRegistry::new(Arc::new(MemoryStore::new()));
     let built = Arc::new(AtomicUsize::new(0));
@@ -90,12 +90,12 @@ pub fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
         facets.insert::<dyn Choice>(Arc::new(Name(id.to_string())));
         facets
     };
-    registry.register(ComponentKind::new("default").provides::<dyn Choice>(), move |descriptor, _| {
+    registry.register(ComponentKind::new("declared").provides::<dyn Choice>(), move |descriptor, _| {
         counted.fetch_add(1, Ordering::SeqCst);
         Ok(choice(&descriptor.id))
     });
     registry.register(ComponentKind::new("other").provides::<dyn Choice>(), move |descriptor, _| Ok(choice(&descriptor.id)));
     registry.register(ComponentKind::new("part").provides::<dyn Named>(), |descriptor, _| Ok(named(&descriptor.id)));
-    registry.single::<dyn Choice>(Some("default"));
+    registry.single::<dyn Choice>(Some("declared"));
     (registry, built)
 }

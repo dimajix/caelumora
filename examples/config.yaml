@@ -140,6 +140,9 @@ users:
 #      think: true
 #      reasoning_history: current_turn
 #      system_messages: only_at_start
+# A personality may build on one of these by its id, and name only the
+# parameters that differ (`kind: default`, issue 445): Sassy in
+# examples/seed.yaml builds on `model`.
 component_defaults:
   - id: model
     kind: ollama_client
