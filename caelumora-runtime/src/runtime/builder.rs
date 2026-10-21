@@ -9,7 +9,7 @@ use caelumora_model::approval::ApprovalRule;
 use crate::agent::state::AgentStates;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::config::{AppConfig, BackendConfig};
-use caelumora_model::prompt_catalogue::{PromptCatalogue, CORE, CORE_PROMPTS};
+use caelumora_model::prompt_catalogue::{PromptCatalogue, CORE, CORE_PROMPTS, DEFAULT_VARIANT};
 use caelumora_model::secret::{SecretManager, SecretProvider};
 use caelumora_model::security::AccessPolicy;
 use caelumora_model::user_provider::{UserManager, UserProvider};
@@ -25,6 +25,7 @@ use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
+use std::path::PathBuf;
 use std::sync::Arc;
 use crate::agent::AgentManager;
 use crate::group::GroupManager;
@@ -69,6 +70,9 @@ pub struct RuntimeBuilder {
     /// The texts given to models, to which the plugins add theirs (issue
     /// 57); a service once the runtime is built.
     prompts: PromptCatalogue,
+    /// The variants of the texts the configuration names, read once every
+    /// plugin added its texts.
+    prompt_variants: BTreeMap<String, PathBuf>,
     /// The backends of the core and of the plugins, and what a backend may
     /// ask for - which a plugin's service is made of, too (issue 328).
     backends: Backends,
@@ -186,6 +190,7 @@ impl RuntimeBuilder {
             scope_members,
             services,
             prompts,
+            prompt_variants: config.prompts.clone(),
             backends,
             backend_services,
             sections: config.plugins.clone(),
@@ -356,6 +361,11 @@ impl RuntimeBuilder {
             bail!("The configuration has a section '{name}' that no plugin claims");
         }
         self.component_registry.set_defaults(&self.component_defaults)?;
+        // The default variant first: the others fall back to it.
+        let (defaults, variants): (Vec<_>, Vec<_>) = self.prompt_variants.iter().partition(|(variant, _)| variant.as_str() == DEFAULT_VARIANT);
+        for (variant, dir) in defaults.into_iter().chain(variants) {
+            self.prompts.add_variant(variant, dir)?;
+        }
         let prompts = Arc::new(self.prompts);
         self.services.insert(Arc::clone(&prompts));
         let scoped = Arc::new(ScopedEntities::new(self.scope_members));
@@ -416,4 +426,28 @@ mod tests {
             assert!(names.iter().all(|name| message.contains(name)), "{yaml:?} gave: {message}");
         }
     }
+
+    /// Issue 57: the variants of the texts the configuration names are read
+    /// as the runtime is built, after every plugin added its texts, and one
+    /// that does not fit keeps it from being built.
+    #[test]
+    fn the_variants_of_the_texts_are_read_when_the_runtime_is_built() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("default")).unwrap();
+        std::fs::write(dir.path().join("default").join("core.yaml"), "given_up_cause:\n  failed: it broke\n").unwrap();
+        std::fs::create_dir(dir.path().join("gemma4")).unwrap();
+        std::fs::write(dir.path().join("gemma4").join("core.yaml"), "given_up_cause:\n  left: you went\n").unwrap();
+        let yaml = |variants: &str| format!("prompts:\n{variants}");
+        let config = yaml(&format!("  gemma4: \"{0}/gemma4\"\n  default: \"{0}/default\"\n", dir.path().display()));
+        let runtime = RuntimeBuilder::from_config(&AppConfig::from_yaml(&config).unwrap(), &[]).unwrap().build().unwrap();
+        let prompts = runtime.prompts();
+        assert_eq!(prompts.render("core.given_up_cause.failed", ()).unwrap(), "it broke", "the default overridden");
+        assert_eq!(prompts.render_in(Some("gemma4"), "core.given_up_cause.left", ()).unwrap(), "you went");
+        assert_eq!(prompts.render_in(Some("gemma4"), "core.given_up_cause.failed", ()).unwrap(), "it broke", "a variant falls back to the overridden default");
+
+        std::fs::write(dir.path().join("gemma4").join("core.yaml"), "given_up_cause:\n  gone: away\n").unwrap();
+        let refused = RuntimeBuilder::from_config(&AppConfig::from_yaml(&config).unwrap(), &[]).unwrap().build().map(|_| ()).expect_err("no such text");
+        assert!(format!("{refused:#}").contains("'core.given_up_cause.gone'"), "{refused:#}");
+    }
+
 }

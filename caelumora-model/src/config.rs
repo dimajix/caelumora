@@ -261,6 +261,12 @@ pub struct AppConfig {
     /// Where the files of workspaces lie (issue 253). No storage unless
     /// configured: then no workspace can be made.
     pub workspaces: WorkspacesConfig,
+    /// The variants of the texts given to models (issue 57), each by its
+    /// name and the directory of its files, one per namespace - `default`
+    /// overriding the defaults for every model. Read and checked when the
+    /// runtime is built (`PromptCatalogue::add_variant`). None unless
+    /// configured: the texts compiled in.
+    pub prompts: BTreeMap<String, PathBuf>,
     /// The sections of the plugins, by name, as they were written: each
     /// read by the plugin that claims it (issue 323).
     #[serde(flatten)]
@@ -314,6 +320,7 @@ impl Default for AppConfig {
             server: ServerConfig::default(),
             approvals: ApprovalsConfig::default(),
             workspaces: WorkspacesConfig::default(),
+            prompts: BTreeMap::new(),
             plugins: BTreeMap::new(),
         }
     }
