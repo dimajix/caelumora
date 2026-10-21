@@ -177,13 +177,20 @@ asks itself, to compact on its own (issue 284), and `compaction` asks for `/comp
 ### Facets of which there is exactly one
 
 Of some facets an agent has exactly one: the `ContextProvider`, the `LLMClient`, the
-`CompactionPolicy` and the `CompactionStrategy`; an external agent exactly one `ExternalAgent`; a
-channel exactly one `Moderator` and one `ResponderPolicy`. They are registered with
-`ComponentRegistry::single` by the module that holds the default kind - or, where the core holds no
-kind, by the module of the facet, without one: the `LLMClient`, whose kinds are plugins (issue 329).
-The program names their default among the kinds its plugins brought
-(`ComponentRegistry::set_default_kind`, refused for a kind that is not registered as providing the
-facet): `caelumora-app` and `caelumora-tui` name `ollama_client` of `caelumora-ollama`.
+`ModelProfileProvider`, the `CompactionPolicy` and the `CompactionStrategy`; an external agent
+exactly one `ExternalAgent` and one `ModelProfileProvider`; a channel exactly one `Moderator` and
+one `ResponderPolicy`. They are registered with `ComponentRegistry::single` by the module that holds
+the default kind - or, where the core holds no kind, by the module of the facet, without one: the
+`LLMClient` and the `ModelProfileProvider`, whose kinds are plugins (issue 329). The program names
+their default among the kinds its plugins brought (`ComponentRegistry::set_default_kind`, refused
+for a kind that is not registered as providing the facet): `caelumora-app` and `caelumora-tui` name
+`ollama_client` of `caelumora-ollama` for both.
+
+The `ModelProfileProvider` says how the agent's model is given its context (issue 57): the
+`ModelProfile` - which reasoning it is given back, how senders are marked. It is the facet of its
+own of what the model's component, or an external agent's, declares beside its `LLMClient` or its
+`ExternalAgent`, so that what writes for the model learns how without asking the model itself. The
+agent's body takes it once, as its components are built, and keeps it with every turn.
 
 *   Two components of one container that provide such a facet are refused before anything is built.
 *   If none does, a default is built the first time the facet is asked for. A container that never

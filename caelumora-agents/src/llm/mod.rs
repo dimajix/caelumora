@@ -8,7 +8,6 @@ pub mod control_tokens;
 use caelumora_runtime::component::ComponentRegistry;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::{Classification, Confidentiality};
-use caelumora_model::context::ModelProfile;
 use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::tool::Tool;
 use futures::stream::BoxStream;
@@ -56,13 +55,6 @@ pub trait LLMClient: Send + Sync + Debug {
     /// on `unlabelled_message`. The stream owns the request; dropping it
     /// abandons it.
     async fn chat_completion(&self, context: &[Message], tools: &[Tool]) -> BoxStream<'static, LLMResult<MessageEvent>>;
-
-    /// How the model is to be given its context - which reasoning of
-    /// earlier messages, say (issue 63). A property of the model, fixed in
-    /// the context of every turn and applied where the model's input is
-    /// resolved (`ContextResolver`), so that `context` holds only what the
-    /// model is to see.
-    fn profile(&self) -> ModelProfile;
 }
 
 /// Registers the `LLMClient` with `registry` as a facet of which an agent

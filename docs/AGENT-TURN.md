@@ -449,7 +449,8 @@ it was offered and what is recorded as offered are the same.
 ### Reasoning given back
 
 Which reasoning of earlier messages a model is given again is a property of the model, declared in
-its `ModelProfile` as a `ReasoningHistory`:
+its `ModelProfile` - which the model's component provides as its `ModelProfileProvider` - as a
+`ReasoningHistory`:
 
 | Rule | The model is given |
 |---|---|

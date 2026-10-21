@@ -30,6 +30,7 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
 use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_agents::external::{ExternalAgent, ExternalAgentResult, ExternalStream, OutboundMessage};
+use caelumora_agents::prompt::ModelProfileProvider;
 use futures::StreamExt;
 use futures::stream::once;
 use serde::Deserialize;
@@ -225,7 +226,12 @@ impl ExternalAgent for A2aAgentComponent {
     fn classification(&self) -> Option<Classification> {
         self.classification.clone()
     }
+}
 
+/// How the remote agent is given what was said: of the profile, only how
+/// senders are marked matters to it (issue 135) - A2A has no place for a
+/// sender, so it is marked in the content, as for a model.
+impl ModelProfileProvider for A2aAgentComponent {
     fn profile(&self) -> ModelProfile {
         self.profile
     }
@@ -233,12 +239,13 @@ impl ExternalAgent for A2aAgentComponent {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(A2A_AGENT_KIND).provides::<dyn ExternalAgent>().uses::<SecretManager>(),
+        ComponentKind::new(A2A_AGENT_KIND).provides::<dyn ExternalAgent>().provides::<dyn ModelProfileProvider>().uses::<SecretManager>(),
         |descriptor, context| {
             let config: A2aAgentConfig = config_of_params(&descriptor.params)?;
-            let component = A2aAgentComponent::new(descriptor.id.clone(), config, Arc::clone(context.service::<SecretManager>()?))?;
+            let component = Arc::new(A2aAgentComponent::new(descriptor.id.clone(), config, Arc::clone(context.service::<SecretManager>()?))?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ExternalAgent>(Arc::new(component));
+            facets.insert::<dyn ExternalAgent>(Arc::<A2aAgentComponent>::clone(&component));
+            facets.insert::<dyn ModelProfileProvider>(component);
             Ok(facets)
         },
     );

@@ -19,6 +19,7 @@ use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes;
 use caelumora_rest_server::state::AppState;
 use caelumora_runtime::component::{ComponentError, ComponentRegistry};
+use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_agents::llm::LLMClient;
 use caelumora_agents::plugin::AgentsPlugin;
 use caelumora_runtime::plugin::Plugin;
@@ -193,7 +194,8 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
 /// # Errors
 /// If a plugin that brings a default kind is not among `plugins`.
 fn default_kinds(components: &mut ComponentRegistry) -> Result<(), ComponentError> {
-    components.set_default_kind::<dyn LLMClient>(OLLAMA_CLIENT_KIND)
+    components.set_default_kind::<dyn LLMClient>(OLLAMA_CLIENT_KIND)?;
+    components.set_default_kind::<dyn ModelProfileProvider>(OLLAMA_CLIENT_KIND)
 }
 
 /// Every plugin of the program, which it builds its runtime with:

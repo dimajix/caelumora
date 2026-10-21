@@ -4,6 +4,7 @@
 //! the agents' logic into a crate of its own (issue 370); what they share
 //! with the runtime's tests is `channel::testing`.
 
+use crate::prompt::ModelProfileProvider;
 use caelumora_runtime::channel::*;
 use caelumora_runtime::channel::testing::*;
 use caelumora_runtime::session::testing::user;
@@ -101,7 +102,9 @@ impl LLMClient for NeverAnswers {
     {
         Box::pin(futures::stream::pending())
     }
+}
 
+impl ModelProfileProvider for NeverAnswers {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }
@@ -114,33 +117,39 @@ pub(super) async fn stuck_in_a_model_call() -> Stuck {
     stuck
 }
 
+/// A model of a test: its client and its profile from one object, as a
+/// model's component gives both (issue 57).
+pub(super) trait TestModel: LLMClient + ModelProfileProvider {}
+
+impl<T: LLMClient + ModelProfileProvider> TestModel for T {}
+
 /// A running channel with alice and an agent that talks to `model` and
 /// has `components`, after alice said "hello".
-async fn with_an_agent(model: Arc<dyn LLMClient>, components: ComponentConfig) -> Stuck {
+async fn with_an_agent(model: Arc<dyn TestModel>, components: ComponentConfig) -> Stuck {
     with_an_agent_under(Arc::new(AllowAllPolicy::new()), model, components).await
 }
 
 /// `with_an_agent`, under `access_policy`.
-async fn with_an_agent_under(access_policy: Arc<dyn AccessPolicy>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> Stuck {
+async fn with_an_agent_under(access_policy: Arc<dyn AccessPolicy>, model: Arc<dyn TestModel>, components: ComponentConfig) -> Stuck {
     start(agent_channel(access_policy, model, components).await).await
 }
 
 /// A channel of alice and an agent that talks to `model` and has
 /// `components`, under `access_policy`, built but not running.
-pub(super) async fn agent_channel(access_policy: Arc<dyn AccessPolicy>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
+pub(super) async fn agent_channel(access_policy: Arc<dyn AccessPolicy>, model: Arc<dyn TestModel>, components: ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
     agent_channel_hearing(HearsDuringTurn::default(), access_policy, model, components).await
 }
 
 /// A running channel with alice and an agent that talks to `model`, has
 /// `components` and hears, between the steps of a turn, as `hears` says
 /// (issue 431), after alice said "hello".
-async fn with_an_agent_hearing(hears: HearsDuringTurn, model: Arc<dyn LLMClient>, components: ComponentConfig) -> Stuck {
+async fn with_an_agent_hearing(hears: HearsDuringTurn, model: Arc<dyn TestModel>, components: ComponentConfig) -> Stuck {
     start(agent_channel_hearing(hears, Arc::new(AllowAllPolicy::new()), model, components).await).await
 }
 
 /// `agent_channel`, of an agent whose personality hears between the
 /// steps of a turn as `hears` says (issue 431).
-async fn agent_channel_hearing(hears: HearsDuringTurn, access_policy: Arc<dyn AccessPolicy>, model: Arc<dyn LLMClient>, components: ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
+async fn agent_channel_hearing(hears: HearsDuringTurn, access_policy: Arc<dyn AccessPolicy>, model: Arc<dyn TestModel>, components: ComponentConfig) -> (Arc<ChannelLoop>, SecurityContext, AgentId, UserId) {
     let store = Arc::new(MemoryStore::new());
     let (context, agent, alice) = alice_and_an_agent(&store, components).await;
     let system = SecurityContext::system();
@@ -152,10 +161,12 @@ async fn agent_channel_hearing(hears: HearsDuringTurn, access_policy: Arc<dyn Ac
     // a kind of its own and made every agent's default.
     let mut registry = test_registry(Arc::<MemoryStore>::clone(&store));
     registry.register(
-        ComponentKind::new("test_model").provides::<dyn LLMClient>(),
+        ComponentKind::new("test_model").provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(),
         move |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn LLMClient>(Arc::clone(&model));
+            let (client, profile): (Arc<dyn LLMClient>, Arc<dyn ModelProfileProvider>) = (Arc::clone(&model) as _, Arc::clone(&model) as _);
+            facets.insert::<dyn LLMClient>(client);
+            facets.insert::<dyn ModelProfileProvider>(profile);
             Ok(facets)
         },
     );
@@ -191,7 +202,9 @@ impl LLMClient for Scripted {
             None => Box::pin(futures::stream::pending()),
         }
     }
+}
 
+impl ModelProfileProvider for Scripted {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }

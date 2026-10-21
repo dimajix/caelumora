@@ -400,10 +400,6 @@ mod tests {
             };
             futures::stream::iter(vec![Ok(MessageEvent::Complete(answer))]).boxed()
         }
-
-        fn profile(&self) -> ModelProfile {
-            Default::default()
-        }
     }
 
     fn entry(content: &str, role: MessageRole, turn: Option<TurnId>) -> Entry {

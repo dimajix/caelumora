@@ -41,6 +41,7 @@
 use caelumora_runtime::component::{config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
 use caelumora_agents::llm::control_tokens::ControlTokens;
 use caelumora_agents::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
+use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_runtime::remote::{describe_chain, describe_request_error};
 use caelumora_model::remote::RemoteEndpoint;
 use async_stream::stream;
@@ -806,7 +807,10 @@ impl LLMClient for OllamaClient {
 
         Box::pin(output)
     }
+}
 
+/// How the model is given its context, as the component is configured.
+impl ModelProfileProvider for OllamaClient {
     fn profile(&self) -> ModelProfile {
         self.profile
     }
@@ -817,11 +821,13 @@ pub fn register(registry: &mut ComponentRegistry) {
     let control_tokens = Arc::new(ControlTokenCache::default());
     let running_context_sizes = Arc::new(RunningContextSizes::default());
     registry.register(
-        ComponentKind::new(OLLAMA_CLIENT_KIND).provides::<dyn LLMClient>(),
+        ComponentKind::new(OLLAMA_CLIENT_KIND).provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(),
         move |descriptor, _context| {
             let config = OllamaClientConfig::of(&descriptor.params)?;
+            let client = Arc::new(OllamaClient::new(config, Arc::clone(&control_tokens), Arc::clone(&running_context_sizes)));
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn LLMClient>(Arc::new(OllamaClient::new(config, Arc::clone(&control_tokens), Arc::clone(&running_context_sizes))));
+            facets.insert::<dyn LLMClient>(Arc::<OllamaClient>::clone(&client));
+            facets.insert::<dyn ModelProfileProvider>(client);
             Ok(facets)
         },
     );

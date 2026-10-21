@@ -1,6 +1,7 @@
 //! The agent actor in a running channel: its turns, plans, retries, approvals, tool calls, and how
 //! it is cancelled, removed or lowered.
 
+use crate::prompt::ModelProfileProvider;
 use super::*;
 use anyhow::Result;
 use caelumora_model::agent::{AgentChannelState, AgentId, HearsDuringTurn, HearsFrom, RetryRefused};
@@ -301,7 +302,9 @@ impl LLMClient for Gated {
             Ok(MessageEvent::Complete(answer))
         }))
     }
+}
 
+impl ModelProfileProvider for Gated {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }
@@ -1037,7 +1040,9 @@ impl LLMClient for FailsWhere {
             None => Box::pin(futures::stream::pending()),
         }
     }
+}
 
+impl ModelProfileProvider for FailsWhere {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }
@@ -1149,7 +1154,9 @@ impl LLMClient for FailsAfter {
             })])),
         }
     }
+}
 
+impl ModelProfileProvider for FailsAfter {
     fn profile(&self) -> ModelProfile {
         Default::default()
     }

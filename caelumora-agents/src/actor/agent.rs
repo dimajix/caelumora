@@ -8,7 +8,7 @@ use crate::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use crate::command::AgentCommandProvider;
 use crate::compaction::{CompactionPolicy, CompactionStrategy};
 use caelumora_runtime::component::ComponentImpl;
-use crate::prompt::ContextProvider;
+use crate::prompt::{ContextProvider, ModelProfileProvider};
 use crate::llm::LLMClient;
 use caelumora_runtime::logging::{agent_span, envelope_span};
 use crate::message::{EmitOutProcessor, PerceiveInProcessor};
@@ -64,6 +64,7 @@ impl AgentActor {
     pub const COMPONENT_FACETS: &[TypeKey] = &[
         TypeKey::of::<dyn ContextProvider>(),
         TypeKey::of::<dyn LLMClient>(),
+        TypeKey::of::<dyn ModelProfileProvider>(),
         TypeKey::of::<dyn CompactionPolicy>(),
         TypeKey::of::<dyn CompactionStrategy>(),
         TypeKey::of::<dyn PerceiveInProcessor>(),
@@ -96,7 +97,7 @@ impl AgentActor {
         let tool_executor = ToolExecutor::new(components.get_all::<dyn ToolProvider>(None)?, body.runtime.clone())?;
 
         Ok(AgentActor {
-            body: body.with_profile(llm_client.profile()),
+            body,
             llm_client,
             compaction_policy,
             compaction,
@@ -149,7 +150,7 @@ impl AgentActor {
         output: &dyn EventSender,
     ) -> Result<()> {
         let (_, work) = self.body.work_for(request);
-        let turn_id = state.begin_turn(work.given_as(self.llm_client.profile()));
+        let turn_id = state.begin_turn(work.given_as(self.body.profile));
         self.body.control.begin_turn(turn_id);
         let mut turn = self.turn_under_way(state)?;
         // Judged for whoever asked, in the channel as the turn begins.

@@ -31,7 +31,7 @@ use caelumora_runtime::actor::{Actor, Answering};
 use crate::command::AgentCommandProvider;
 use caelumora_runtime::component::ComponentImpl;
 use crate::prompt::external_context_provider::EXTERNAL_CONTEXT_PROVIDER_KIND;
-use crate::prompt::ContextProvider;
+use crate::prompt::{ContextProvider, ModelProfileProvider};
 use caelumora_runtime::controller::{AgentController, PersonalityController};
 use crate::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, OutboundMessage, Said};
 use caelumora_runtime::logging::envelope_span;
@@ -120,6 +120,7 @@ impl ExternalAgentActor {
     /// through its body.
     pub const COMPONENT_FACETS: &[TypeKey] = &[
         TypeKey::of::<dyn ExternalAgent>(),
+        TypeKey::of::<dyn ModelProfileProvider>(),
         TypeKey::of::<dyn PerceiveInProcessor>(),
         TypeKey::of::<dyn ContextProvider>(),
         TypeKey::of::<dyn AgentCommandProvider>(),
@@ -237,7 +238,7 @@ impl ExternalAgentActor {
         // context of what comes of it, so that the context is resolved as it
         // was given (issue 135).
         let (answering, work) = self.body.work_for(request);
-        let mut work = work.given_as(self.remote.profile());
+        let mut work = work.given_as(self.body.profile);
         // A turn of its own, whose token `cancel`, `stop` and `leave` reach.
         self.body.control.begin_turn(work.turn_id);
         let token = self.body.control.token();

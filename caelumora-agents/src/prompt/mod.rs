@@ -25,7 +25,7 @@ use caelumora_runtime::component::{ComponentError, ComponentImpl, ComponentRegis
 use crate::situation::Situation;
 use caelumora_runtime::view::ViewError;
 use async_trait::async_trait;
-use caelumora_model::context::{KnowledgeRef, PromptPart};
+use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::PromptError;
 use caelumora_model::store::StoreError;
@@ -168,6 +168,20 @@ pub trait ContextProvider: Send + Sync + Debug {
     async fn current_context(&self, situation: &Situation<'_>) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError>;
 }
 
+/// How an agent's model is to be given its context (issue 57): the profile
+/// of the model - which reasoning of earlier messages it is given back, how
+/// the senders of others' messages are marked, say (issues 63, 135). A
+/// property of the model, fixed for as long as its component lives, kept in
+/// the context of every turn and applied where the model's input is
+/// resolved (`ContextResolver`). An agent has exactly one: its model's
+/// component provides it beside its `LLMClient`, an external agent's beside
+/// its `ExternalAgent` - so what writes for a model learns how without
+/// asking the model itself. Without a default in the core, as the
+/// `LLMClient`: the program names the kind of its model for both.
+pub trait ModelProfileProvider: Send + Sync + Debug {
+    fn profile(&self) -> ModelProfile;
+}
+
 /// Why what an agent's model is to be given cannot be had (issue 336):
 /// what a `ContextProvider` or a `PromptProvider` answers. A plugin's
 /// provider translates its own errors into it, deciding there what may be
@@ -197,6 +211,7 @@ pub enum ContextError {
 /// default kind (issue 99).
 pub fn register_all(registry: &mut ComponentRegistry) {
     registry.single::<dyn ContextProvider>(Some(turn_context_provider::TURN_CONTEXT_PROVIDER_KIND));
+    registry.single::<dyn ModelProfileProvider>(None);
 
     channel_briefing_prompt_provider::register(registry);
     channel_language_prompt_provider::register(registry);
